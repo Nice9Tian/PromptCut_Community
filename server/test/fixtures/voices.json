@@ -1,0 +1,37 @@
+{
+  "_note": "API 账号里实际建出来、合成成功过的音色 id。只有 id，没有 API Key，可以提交。复刻 / 设计出的音色属于建它的那个账号，换 API Key 就用不了；7 天内没被正式调用会被 MiniMax 删除（这两条都已经正式合成过）。voice-smoke.mjs 用这里的 id 跑真实合成。",
+  "apiBaseUrl": "https://api.openlux.ai",
+  "verifiedAt": "2026-09-11",
+  "minimax": {
+    "clone": [
+      {
+        "voiceId": "pcVideoMale1789119355225",
+        "name": "视频人声复刻（男）",
+        "source": "一段 13.7 秒的自拍口播视频，去掉开头静音后 12.9 秒；本人已同意用于配音",
+        "model": "speech-2.8-hd"
+      }
+    ],
+    "design": [
+      {
+        "voiceId": "ttv-voice-2026091117192326-qbJw7b1h",
+        "name": "解说腔（音色设计）",
+        "prompt": "年轻男声，短视频影视解说腔，语速偏快，吐字清晰，带一点悬念感和调侃。",
+        "model": "speech-2.8-hd"
+      }
+    ],
+    "system": ["female-shaonv", "male-qn-jingying"]
+  },
+  "kling": {
+    "official": [
+      { "voiceId": "chat1_female_new-3", "name": "温柔姐姐" },
+      { "voiceId": "ai_kaiya", "name": "阳光男生" },
+      { "voiceId": "genshin_vindi2", "name": "阳光少年" },
+      { "voiceId": "yizhipiannan-v1", "name": "译制片男声" }
+    ],
+    "rejected": ["829826792415842333"]
+  },
+  "vidu": {
+    "system": ["female-shaonv", "male-qn-jingying"]
+  },
+  "billing": "MiniMax 音色设计、快速复刻各 ¥9.9 一个，首次用该音色合成时才扣；普通合成 speech-2.8-hd 约 ¥3.5 / 万字符"
+}

@@ -1,0 +1,66 @@
+node_modules
+dist
+# 在线构建(vite build --mode online,C10a):部署时拷到托管端 /editor/
+dist-online
+out
+/data/
+.DS_Store
+*.log
+AGY-TASK-*.md
+desktop/.cache
+desktop/src-tauri/runtime
+__pycache__/
+*.pyc
+tsconfig.tsbuildinfo
+
+# AI 助手:会话历史与每个会话的附件工作文件夹(server/vite-plugin-chats.ts)
+.pc-chats/
+.pc-work/
+
+# 本地草稿(server/vite-plugin-projects.ts):每份草稿一个 .proc 文件
+.pc-projects/
+
+# 本地环境变量:诊断报告收集端的地址和令牌在里面(见 tools/report-worker/)
+# 只写 .env.local 不够 —— 裸 .env 和 .env.production 一样是密钥文件
+.env
+.env.*
+!.env.example
+
+# Google Cloud 控制台下载的 OAuth 客户端 JSON:文件名里是客户端 ID,文件里是客户端密钥。
+# 它本来该放在仓库之外(本机位置记在 docs/local.md),这几行是万一有人拖进来时的兜底。
+client_secret_*.json
+client_secret*.json
+
+# wrangler 的本地缓存
+.wrangler/
+
+# Rust 编译产物。desktop/src-tauri/target 早就在忽略里,tools/ 下面几个小工具的
+# 漏了 —— 单是 tools/report-worker/target 就有一两个 G
+tools/*/target/
+
+# Skill 模式的临时落脚点:上一次任务的 id、.proc 的独占锁。
+# 只写 *.proc.lock,**不要写 *.lock** —— Cargo.lock 是要进仓库的
+.pc-last-*.txt
+*.proc.lock
+undefined.lock
+
+# 桌面版的发版产物(安装包和补丁都是几百 MB,不进仓库)
+desktop/release/
+
+# 诊断报告收件箱的本机常量(tools/report-inbox-gui/):Worker 地址 + ADMIN_KEY。
+# ADMIN_KEY 能读所有人的报告,绝不能进仓库。要交接就发 inbox.local.example.json
+tools/report-inbox-gui/inbox.local.json
+# 本地诊断、Agent 讨论、测试副本和验收产物
+/work/
+reply_to_users_goal.md
+
+# 本机说明:只和这台机器有关的环境信息(docs/semantics/guide_files/constraints.md 的「本机信息不进仓库」)
+docs/local.md
+# 多机跑法作废后仍留在主工作区的本机状态日志（交接日志已摘进 docs/archive/handover-log-2026-09.md）
+docs/auto_long_work/local.md
+
+# 本机自建的 Agent 入口（见 README「给 coding agent 的入口」）：会被各家工具无条件注入，不入库
+/AGENTS.md
+/CLAUDE.md
+# 给读不到本机规则的工具（codex、agy 等）准备的简版要求，由本机生成，不入库
+/my_agent/

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.tauri.app/capability/2",
+  "identifier": "account",
+  "description": "Account credentials are available only to the exact main editor origin.",
+  "windows": ["main"],
+  "local": false,
+  "remote": { "urls": ["http://127.0.0.1:5210/*"] },
+  "permissions": ["allow-account-bridge"]
+}

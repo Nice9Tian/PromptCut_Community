@@ -1,0 +1,297 @@
+/* 开始页面。用的是皮肤里那套变量,跟编辑器同一套配色 */
+.sp {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-canvas);
+  color: var(--ink);
+  font-family: var(--font-sans);
+}
+
+.sp-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--bg-panel);
+}
+.sp-brand { font-weight: 600; font-size: 14px; }
+.sp-bar-spacer { flex: 1 1 auto; }
+
+.sp-main {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 20px 24px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+/* ── 开始创作 ─────────────────────────────────────── */
+.sp-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  min-height: 140px;
+  padding: 24px;
+  border: 0;
+  border-radius: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--on-accent);
+  /* 品牌渐变,定义在 skins.ts 的 --ui-accent-grad;换皮肤会跟着变 */
+  background: var(--ui-accent-grad, linear-gradient(100deg, var(--accent), color-mix(in srgb, var(--accent) 10%, #7b5cff)));
+}
+.sp-hero:hover { filter: brightness(1.06); }
+.sp-hero:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.sp-hero-plus { font-size: 26px; line-height: 1; }
+.sp-hero-text { font-size: 17px; font-weight: 600; }
+.sp-hero-sub { font-size: 12px; opacity: 0.85; }
+
+/* ── 分区 ─────────────────────────────────────────── */
+.sp-section { display: flex; flex-direction: column; gap: 10px; }
+.sp-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.sp-section-title { margin: 0; font-size: 14px; font-weight: 600; }
+.sp-section-actions { display: flex; align-items: center; gap: 8px; }
+.sp-muted { font-size: 12px; color: var(--ink-muted); }
+.sp-ok { font-size: 12px; color: var(--accent); }
+
+.sp-ghost-btn {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--hairline);
+  background: var(--fill-subtle);
+  color: var(--ink);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sp-ghost-btn:hover:not(:disabled) { border-color: var(--hairline-strong); }
+.sp-ghost-btn:disabled { opacity: 0.55; cursor: default; }
+
+.sp-error {
+  font-size: 12px;
+  color: var(--danger);
+  padding: 8px 10px;
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+.sp-empty {
+  font-size: 12px;
+  color: var(--ink-muted);
+  padding: 20px;
+  text-align: center;
+  border: 1px dashed var(--hairline);
+  border-radius: 8px;
+}
+
+/* ── 拓展功能 ─────────────────────────────────────── */
+.sp-ext-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 10px;
+}
+.sp-ext-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--bg-panel);
+}
+.sp-ext-icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--fill-subtle);
+  color: var(--accent);
+}
+.sp-ext-body { min-width: 0; flex: 1 1 auto; }
+.sp-ext-name { font-size: 13px; font-weight: 600; }
+.sp-ext-desc { font-size: 12px; color: var(--ink-muted); margin-top: 2px; }
+.sp-ext-state { font-size: 12px; margin-top: 4px; overflow-wrap: anywhere; }
+
+/* ── 本地草稿 ─────────────────────────────────────── */
+.sp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 14px;
+}
+.sp-draft { position: relative; display: flex; flex-direction: column; gap: 6px; }
+.sp-draft-thumb {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  width: 100%;
+  padding: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  background: #000;
+  display: grid;
+  place-items: center;
+  font-family: inherit;
+}
+.sp-draft-thumb:hover:not(:disabled) { border-color: var(--accent); }
+.sp-draft-thumb:disabled { cursor: default; }
+.sp-draft-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.sp-draft-placeholder { font-size: 12px; color: var(--ink-muted); }
+.sp-draft-busy {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  color: var(--ink);
+  background: rgb(0 0 0 / 0.55);
+}
+.sp-draft-meta { min-width: 0; }
+.sp-draft-name {
+  font-size: 12px;
+  font-weight: 600;
+  /* 名字长就截断,不要把格子撑歪 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sp-draft-sub { font-size: 11px; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+.sp-draft.is-broken .sp-draft-thumb { border-color: var(--danger); }
+.sp-draft.is-broken .sp-draft-placeholder { color: var(--danger); }
+
+/* 删除按钮平时藏着,鼠标进格子或键盘聚焦才出现 */
+.sp-draft-del {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 0;
+  background: rgb(0 0 0 / 0.6);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+}
+.sp-draft:hover .sp-draft-del,
+.sp-draft-del:focus-visible { opacity: 1; }
+.sp-draft-del:hover { background: var(--danger); }
+
+/* 听写扩展卡里的安装进度和报错 */
+.sp-ext-progress { margin-top: 8px; }
+.sp-ext-error { margin-top: 6px; font-size: 12px; color: var(--danger, #ef4444); overflow-wrap: anywhere; }
+
+/* ── 存储 ─────────────────────────────────────────── */
+.sp-storage-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 10px;
+}
+.sp-storage-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  font-size: 12px;
+}
+.sp-storage-label { font-size: 13px; font-weight: 600; }
+.sp-storage-figure { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.sp-storage-figure .sp-muted { font-weight: 400; }
+.sp-storage-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--fill-subtle);
+  overflow: hidden;
+}
+.sp-storage-bar > span { display: block; height: 100%; background: var(--accent); }
+.sp-storage-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+.sp-storage-input {
+  width: 72px;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--hairline);
+  background: var(--bg-canvas);
+  color: var(--ink);
+}
+.sp-storage-notice {
+  font-size: 12px;
+  color: var(--accent);
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+}
+
+.sp-export-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+.sp-export-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  flex-wrap: wrap;
+}
+.sp-export-row + .sp-export-row { border-top: 1px solid var(--hairline); }
+.sp-export-main { min-width: 0; flex: 1 1 260px; }
+.sp-export-name {
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sp-export-tag {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 400;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--fill-subtle);
+  color: var(--ink-muted);
+}
+.sp-export-tag.is-warn { color: var(--danger); }
+.sp-export-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.sp-danger-btn:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
+.sp-account-form { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 16px 0; }
+.sp-account-form label { display: flex; flex-direction: column; gap: 6px; flex: 1 1 180px; }
+.sp-account-form input:not([type="checkbox"]) { min-width: 0; padding: 9px 12px; background: var(--bg-panel); color: inherit; border: 1px solid var(--hairline); border-radius: 8px; font: inherit; }
+.sp-primary-btn { padding: 10px 14px; border: 0; border-radius: 8px; font: inherit; color: var(--on-accent); background: var(--accent); cursor: pointer; }
+.sp-primary-btn:disabled { opacity: .55; cursor: default; }
+.sp-account-form .sp-account-check { flex-direction: row; align-items: center; flex: 0 1 auto; }
+.sp-account-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 8px 0; }

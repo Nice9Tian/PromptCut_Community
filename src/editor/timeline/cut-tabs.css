@@ -1,0 +1,230 @@
+/*
+ * 时间轴上方的剪辑标签栏(CutTabs.tsx 的 CutTabBar)和时间轴上的剪辑段(ClipView 的 data-pc-cut-segment)。
+ * 全部走 --ui-* 变量,深浅皮肤都跟着换。
+ */
+.pc-tl-cuts {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  height: 30px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--ui-border);
+  background: var(--ui-bg, #111016);
+  flex-shrink: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.pc-tl-cut {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  max-width: 200px;
+  margin-top: 4px;
+  border-radius: 6px 6px 0 0;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  color: var(--ui-fg-muted, #A6A4B2);
+  font-size: 11.5px;
+}
+.pc-tl-cut:hover {
+  background: color-mix(in oklab, var(--ui-fg, #F2F1F6) 6%, transparent);
+}
+.pc-tl-cut.is-on {
+  background: var(--ui-panel-2, #2C2B34);
+  border-color: var(--ui-border, #3a3946);
+  color: var(--ui-fg, #F2F1F6);
+  box-shadow: inset 0 2px 0 var(--ui-accent, #00DBDB);
+}
+
+.pc-tl-cut-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 100%;
+  padding: 0 4px 0 10px;
+  cursor: pointer;
+  user-select: none;
+}
+.pc-tl-cut-main:focus-visible {
+  outline: none;
+  box-shadow: var(--ui-focus-ring, 0 0 0 2px #00DBDB);
+  border-radius: 4px;
+}
+.pc-tl-cut-glyph {
+  display: grid;
+  place-items: center;
+  color: inherit;
+  opacity: 0.8;
+}
+.pc-tl-cut.is-on .pc-tl-cut-glyph {
+  color: var(--ui-accent, #00DBDB);
+  opacity: 1;
+}
+.pc-tl-cut-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pc-tl-cut-input {
+  width: 96px;
+  box-sizing: border-box;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 3px;
+  outline: 1px solid var(--ui-accent, #00DBDB);
+  background: var(--ui-bg, #111016);
+  color: var(--ui-fg, #F2F1F6);
+  font: inherit;
+  line-height: 18px;
+}
+
+.pc-tl-cut-x {
+  width: 18px;
+  height: 18px;
+  margin: 0 4px 0 2px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.6;
+}
+.pc-tl-cut-x:hover {
+  opacity: 1;
+  background: color-mix(in oklab, var(--ui-fg, #F2F1F6) 12%, transparent);
+}
+/* 最后一个标签:不画「×」,只留同宽的空位(标题提示为什么) */
+.pc-tl-cut-x.is-off {
+  cursor: default;
+  opacity: 0;
+}
+
+.pc-tl-cut-add {
+  align-self: center;
+  width: 24px;
+  height: 22px;
+  margin-left: 4px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ui-fg-muted, #A6A4B2);
+  cursor: pointer;
+}
+.pc-tl-cut-add:hover {
+  color: var(--ui-fg, #F2F1F6);
+  background: color-mix(in oklab, var(--ui-fg, #F2F1F6) 8%, transparent);
+}
+
+/* 时间轴上的剪辑段:上下两排胶片齿孔,一眼和素材段分开。
+   齿孔只画在正文那一格里(.pc-clip-body),不穿过上面那条叠加带 ——
+   穿过去的话带本身就成了虚线,和同一行别的片段对不上(2026-10-24 用户看出来的)。
+   底色仍由 skins.css 的 .pc-clip 画,这里不再整组重写 background。 */
+.pc-clip[data-pc-cut-segment] .pc-clip-body {
+  background:
+    repeating-linear-gradient(90deg, color-mix(in oklab, var(--clip-ink, #000) 40%, transparent) 0 4px, transparent 4px 9px) 0 2px / 100% 3px no-repeat,
+    repeating-linear-gradient(90deg, color-mix(in oklab, var(--clip-ink, #000) 40%, transparent) 0 4px, transparent 4px 9px) 0 calc(100% - 2px) / 100% 3px no-repeat;
+}
+/* 被引用剪辑事后变短:超出它总时长的那一截透明无声,斜线标出来 */
+.pc-clip-cut-over {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(135deg, rgba(0, 0, 0, 0.35) 0 4px, transparent 4px 8px);
+}
+
+/* 素材库「剪辑」组的格子 */
+/*
+ * 名字和时长压在底边(和视频、图片格子的标题条同一个位置、同一个字号起步),不随格子高度被挤:
+ * 总览组框里的缩略只有约 95×53 像素,以前名字排在上半截、被 flex 挤成 1 像素高,几乎看不见(2026-10-20 线上实测)。
+ */
+.pc-lib-cut {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 2px;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  box-sizing: border-box;
+  padding: 8px 8px 9px;
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid var(--ui-border, #3a3946);
+  background:
+    repeating-linear-gradient(90deg, color-mix(in oklab, var(--ui-fg, #F2F1F6) 14%, transparent) 0 5px, transparent 5px 11px) 0 4px / 100% 4px no-repeat,
+    repeating-linear-gradient(90deg, color-mix(in oklab, var(--ui-fg, #F2F1F6) 14%, transparent) 0 5px, transparent 5px 11px) 0 calc(100% - 4px) / 100% 4px no-repeat,
+    var(--ui-panel-2, #2C2B34);
+  color: var(--ui-fg, #F2F1F6);
+  cursor: grab;
+  position: relative;
+  text-align: left;
+  font: inherit;
+}
+.pc-lib-cut.is-on {
+  border-color: var(--ui-accent, #00DBDB);
+  box-shadow: inset 0 0 0 1px var(--ui-accent, #00DBDB);
+}
+.pc-lib-cut-name {
+  flex-shrink: 0;
+  font-size: 13px;
+  line-height: 17px;
+  font-weight: 600;
+  color: var(--ui-fg, #F2F1F6);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pc-lib-cut-meta {
+  flex-shrink: 0;
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--ui-fg-muted, #A6A4B2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pc-lib-cut-acts {
+  position: absolute;
+  top: 10px;
+  right: 6px;
+  display: none;
+  gap: 2px;
+}
+.pc-lib-cut:hover .pc-lib-cut-acts,
+.pc-lib-cut:focus-within .pc-lib-cut-acts {
+  display: flex;
+}
+.pc-lib-cut-act {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--ui-bg, #111016) 70%, transparent);
+  color: var(--ui-fg, #F2F1F6);
+  cursor: pointer;
+  font-size: 12px;
+}
+.pc-lib-cut-act:hover {
+  background: var(--ui-accent-soft, rgba(0, 219, 219, 0.2));
+}
+.pc-lib-cut-act:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.pc-lib-cut-new {
+  margin: 0 0 8px;
+}

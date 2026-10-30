@@ -1,0 +1,40 @@
+.hud-wrapper {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: flex;
+}
+.hud-pos-center {
+  align-items: center;
+  justify-content: center;
+}
+.hud-pos-bottom {
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 120px;
+}
+.hud-pos-left {
+  align-items: center;
+  justify-content: flex-start;
+  padding-left: 120px;
+}
+.hud-pos-right {
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 120px;
+}
+
+.hud-glass {
+  pointer-events: auto;
+  background-color: var(--pc-glass-bg, rgba(10, 12, 16, 0.55));
+  backdrop-filter: blur(var(--pc-glass-blur, 24px));
+  -webkit-backdrop-filter: blur(var(--pc-glass-blur, 24px));
+  border: var(--pc-border-width, 1px) solid var(--pc-glass-border, rgba(255, 255, 255, 0.14));
+  border-radius: var(--pc-radius, 32px);
+  color: var(--pc-fg, #f3f4f6);
+  padding: 48px;
+  box-shadow: var(--pc-shadow, 0 24px 48px rgba(0, 0, 0, 0.4));
+}
+
+/* 文字卡批次追加:舞台四角定位(pin-board 用) */
+.hud-corner-bl { align-items: flex-end; justify-content: flex-start; padding: 0 0 100px 120px; }

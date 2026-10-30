@@ -1,0 +1,231 @@
+/*
+ * 共享样式类(界面改版契约 §4):浮在画布上的卡片、竖向 rail、筛选胶囊、图标按钮、主按钮、分区标题。
+ * 由 skins.css 引入,开始页和编辑器都全局加载;左栏、右栏、时间轴等各处直接用这些类名,
+ * 不要在自己的样式里再写一份同名规则。
+ * 颜色、圆角只读 --ui-* 变量(useSkin 按皮肤写到 <html> 上),括号里的回退值只在变量缺席时兜底。
+ */
+
+/* ── 卡片:浮在画布上的面板,靠 1px 描边和明度差分层,不用投影 ───────────── */
+.pc-card-surface {
+  background-color: var(--ui-bg-2, #1B1A21);
+  border: 1px solid var(--ui-border, #2A2932);
+  border-radius: var(--ui-radius-xl, 10px);
+  overflow: hidden;
+}
+
+/* ── rail:竖向图标栏,背景透明露出画布 ─────────────────────────────── */
+.pc-rail {
+  width: var(--ui-rail-w, 64px);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background-color: transparent;
+  align-items: center;
+  padding: 8px 0;
+}
+
+/* rail 项:56 方按钮,上面 22px 图标(svg)、下面 11px 标签(span),默认次文字色 */
+.pc-rail-item {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--ui-radius-lg, 8px);
+  color: var(--ui-fg-muted, #A6A4B2);
+  background-color: transparent;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  position: relative;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+.pc-rail-item:not(.is-on):not(:disabled):hover {
+  background-color: var(--ui-panel-2, #2C2B34);
+  color: var(--ui-fg, #F2F1F6);
+}
+.pc-rail-item:not(:disabled):active {
+  background-color: var(--ui-float, #383742);
+}
+
+/* 选中项:浅色底 + 主文字色,再贴 rail 外侧边画一条 3px 强调色竖条(左 rail 画在左、右 rail 画在右) */
+.pc-rail-item.is-on {
+  background-color: var(--ui-panel, #23222A);
+  color: var(--ui-fg, #F2F1F6);
+}
+.pc-rail--left .pc-rail-item.is-on::before {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: 16px;
+  bottom: 16px;
+  width: 3px;
+  background-color: var(--ui-accent, #00DBDB);
+  border-radius: 0 3px 3px 0;
+}
+.pc-rail--right .pc-rail-item.is-on::after {
+  content: "";
+  position: absolute;
+  right: -4px;
+  top: 16px;
+  bottom: 16px;
+  width: 3px;
+  background-color: var(--ui-accent, #00DBDB);
+  border-radius: 3px 0 0 3px;
+}
+
+.pc-rail-item svg {
+  width: 22px;
+  height: 22px;
+}
+.pc-rail-item span {
+  font-size: 11px;
+  line-height: 1;
+}
+
+/* rail 里的分隔线 */
+.pc-rail-sep {
+  width: 32px;
+  height: 1px;
+  background-color: var(--ui-border, #2A2932);
+  margin: 4px 0;
+}
+
+/* ── 筛选胶囊:常态 L3 底,悬停升到 L4;.is-on 强调色填充 ───────────────── */
+.pc-chip {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--ui-radius, 6px);
+  background-color: var(--ui-panel-2, #2C2B34);
+  color: var(--ui-fg, #F2F1F6);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pc-chip:not(.is-on):not(:disabled):hover {
+  background-color: var(--ui-float, #383742);
+}
+.pc-chip:not(.is-on):not(:disabled):active {
+  background-color: color-mix(in oklab, var(--ui-panel-2, #2C2B34) 78%, var(--ui-bg, #111016));
+}
+.pc-chip.is-on {
+  background-color: var(--ui-accent, #00DBDB);
+  color: var(--ui-accent-fg, #ffffff);
+}
+.pc-chip.is-on:not(:disabled):hover {
+  background-color: var(--ui-accent-hover, #9571FF);
+}
+.pc-chip.is-on:not(:disabled):active {
+  background-color: var(--ui-accent-press, #613CC7);
+}
+
+/* 胶囊里的下拉小箭头和 × 关闭;× 悬停时垫一层跟着文字色走的淡底,深浅皮肤都看得见 */
+.pc-chip-caret {
+  width: 14px;
+  height: 14px;
+  opacity: 0.7;
+}
+.pc-chip-x {
+  width: 14px;
+  height: 14px;
+  opacity: 0.7;
+  border-radius: var(--ui-radius-sm, 4px);
+}
+.pc-chip-x:hover {
+  opacity: 1;
+  background-color: color-mix(in oklab, var(--ui-fg, #F2F1F6) 16%, transparent);
+}
+
+/* ── 图标按钮:32 方透明底,悬停 L3;aria-pressed 的可激活按钮用淡强调色底 + 强调色图标 ── */
+.pc-icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--ui-radius, 6px);
+  background-color: transparent;
+  color: var(--ui-fg, #F2F1F6);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+.pc-icon-btn:not([aria-pressed="true"]):not(:disabled):hover {
+  background-color: var(--ui-panel-2, #2C2B34);
+}
+.pc-icon-btn:not([aria-pressed="true"]):not(:disabled):active {
+  background-color: var(--ui-float, #383742);
+}
+.pc-icon-btn[aria-pressed="true"] {
+  background-color: var(--ui-accent-soft, rgba(0, 219, 219, 0.2));
+  color: var(--ui-accent, #00DBDB);
+}
+.pc-icon-btn[aria-pressed="true"]:not(:disabled):hover {
+  background-color: color-mix(in oklab, var(--ui-accent-soft, rgba(0, 219, 219, 0.2)) 72%, var(--ui-accent, #00DBDB));
+}
+
+/* ── 主按钮:强调色实心,36 高;.is-block 占满一行 ─────────────────────── */
+.pc-btn-primary {
+  height: 36px;
+  border-radius: var(--ui-radius, 6px);
+  background: var(--ui-accent-grad, #00DBDB);
+  color: var(--ui-accent-fg, #ffffff);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  font-size: 14px;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+}
+.pc-btn-primary:not(:disabled):hover {
+  background: var(--ui-accent-grad-hover, #9571FF);
+}
+.pc-btn-primary:not(:disabled):active {
+  background: var(--ui-accent-grad-press, #613CC7);
+}
+.pc-btn-primary.is-block {
+  width: 100%;
+  display: flex;
+}
+
+/* ── 几类按钮共用的状态 ───────────────────────────────────────────── */
+
+/* 键盘焦点:统一用 --ui-focus-ring 外圈,替掉 motion.css 给所有元素加的 outline(本文件在它之后引入) */
+.pc-rail-item:focus-visible,
+.pc-chip:focus-visible,
+.pc-icon-btn:focus-visible,
+.pc-btn-primary:focus-visible {
+  outline: none;
+  box-shadow: var(--ui-focus-ring, 0 0 0 2px var(--ui-accent, #00DBDB));
+}
+
+/* 禁用:半透明,悬停 / 按下都没有反应(上面各条悬停、按下规则都排除了 :disabled) */
+.pc-rail-item:disabled,
+.pc-chip:disabled,
+.pc-icon-btn:disabled,
+.pc-btn-primary:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+/* motion.css 给所有按钮加了悬停提亮、按下缩小([data-skin] button:hover,特异性更高),禁用的要压回去 */
+[data-skin] .pc-rail-item:disabled,
+[data-skin] .pc-chip:disabled,
+[data-skin] .pc-icon-btn:disabled,
+[data-skin] .pc-btn-primary:disabled {
+  filter: none;
+  transform: none;
+}
+
+/* ── 抽屉 / 面板顶部标题 ─────────────────────────────────────────── */
+.pc-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ui-fg, #F2F1F6);
+}

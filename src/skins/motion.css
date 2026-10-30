@@ -1,0 +1,107 @@
+/* 焦点发光基础样式 (即使禁用动效也必须保留) */
+[data-skin] *:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 1px;
+}
+[data-skin] select:focus, 
+[data-skin] input:focus, 
+[data-skin] textarea:focus {
+  border-color: var(--ui-accent);
+  outline: none;
+}
+
+/* 左栏卡片库格子 hover 边框色 */
+[data-skin] [data-pc-card]:hover {
+  border-color: var(--ui-accent) !important;
+}
+
+/* 动效：悬停、回弹、面板分隔线、时间轴等 */
+@media (prefers-reduced-motion: no-preference) {
+  /* 按钮动画 */
+  [data-skin] button, 
+  [data-skin] [class*="ai-"][class*="-btn"],
+  [data-skin] [class*="ais-btn"] {
+    transition: filter 160ms cubic-bezier(0.16, 1, 0.3, 1), transform 160ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  
+  [data-skin] button:hover,
+  [data-skin] [class*="ai-"][class*="-btn"]:hover,
+  [data-skin] [class*="ais-btn"]:hover {
+    filter: brightness(1.1);
+  }
+  
+  [data-skin] button:active,
+  [data-skin] [class*="ai-"][class*="-btn"]:active,
+  [data-skin] [class*="ais-btn"]:active {
+    transform: scale(0.97);
+  }
+
+  /* 焦点发光阴影 */
+  [data-skin] select:focus, 
+  [data-skin] input:focus, 
+  [data-skin] textarea:focus {
+    box-shadow: var(--ui-glow);
+  }
+
+  /* 对话框淡入/上浮 */
+  @keyframes ais-backdrop-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes ais-dialog-up {
+    from { opacity: 0; transform: translateY(8px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  [data-skin] .ais-backdrop {
+    animation: ais-backdrop-fade 160ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  [data-skin] .ais-dialog {
+    animation: ais-dialog-up 160ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* 左栏卡片库格子动效 */
+  [data-skin] [data-pc-card] {
+    transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 200ms cubic-bezier(0.16, 1, 0.3, 1), border-color 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  [data-skin] [data-pc-card]:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--ui-shadow);
+  }
+}
+
+/*
+ * 入场动效:由 src/editor/enterMotion.ts 的 playEnter 在「真的刚出现」那一刻挂类、演完摘类。
+ * 用在左栏切分区、打开组 / 回到总览、右栏切页、新消息、队列行、报告卡。
+ * 常驻挂载、靠 display 显隐的面板不能把 animation 写在常驻类上,否则每次重新显示都会重放。
+ * 位移用独立的 translate 属性,不占 transform:元素自己的 transform(按下缩小之类)照常叠上去。
+ */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes pc-enter-rise {
+    from { opacity: 0; translate: 0 6px; }
+    to { opacity: 1; translate: 0 0; }
+  }
+  @keyframes pc-enter-from-right {
+    from { opacity: 0; translate: 8px 0; }
+    to { opacity: 1; translate: 0 0; }
+  }
+  @keyframes pc-enter-from-left {
+    from { opacity: 0; translate: -8px 0; }
+    to { opacity: 1; translate: 0 0; }
+  }
+  @keyframes pc-enter-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  .pc-enter-rise {
+    animation: pc-enter-rise 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .pc-enter-from-right {
+    animation: pc-enter-from-right 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .pc-enter-from-left {
+    animation: pc-enter-from-left 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .pc-enter-fade {
+    animation: pc-enter-fade 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+}

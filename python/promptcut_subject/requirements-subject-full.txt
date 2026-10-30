@@ -1,0 +1,17 @@
+# full 档：在 light 档之上再加 Grounding DINO tiny（开放词汇检测）。
+# 装这份**之前**要先装 requirements-subject-light.txt —— 它带来 onnxruntime，
+# YuNet / RT-DETR 那两条路不走 torch。
+#
+# 和 requirements-track.txt 一样：Windows 上 PyPI 的 torch 轮子就是 CPU 版，
+# 不用另外指定 index。实测 2026-09 用自带解释器 pip download 这份清单，
+# 26 个轮子共 164 MB（torch 118 MB + numpy 12 + transformers 11 + pillow 7 +
+# sympy 6 + tokenizers 2.6，其余都是零头）；加 --extra-index-url
+# https://download.pytorch.org/whl/cpu 抓到的是 2.14.0+cpu，大小一模一样，
+# 所以打包脚本不用为它开特例。
+#
+# 检测是离线批处理（一帧 ~1 秒），CPU 够用；要 GPU 将来单独出拓展。
+torch>=2.2,<3
+transformers>=4.40,<5
+pillow>=10
+numpy>=1.24
+safetensors

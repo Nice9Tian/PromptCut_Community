@@ -1,0 +1,1218 @@
+{
+ "source": "https://github.com/magicuidesign/magicui (apps/www/registry/magicui)",
+ "license": "MIT",
+ "fetched": "2026-09-07",
+ "tiers": {
+  "1": "现在就能搬",
+  "2": "管线暂不支持(WebGL/三维库)",
+  "3": "交互或滚动驱动,要改成参数驱动",
+  "deps": "引了没装的库,搬时要处理"
+ },
+ "components": [
+  {
+   "name": "android",
+   "id": "mu-android",
+   "file": "server/catalog/magicui/android.tsx",
+   "description": "Android 手机外框",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "width",
+    "height",
+    "src",
+    "videoSrc"
+   ],
+   "imported": null
+  },
+  {
+   "name": "animated-beam",
+   "id": "mu-animated-beam",
+   "file": "server/catalog/magicui/animated-beam.tsx",
+   "description": "两个元素之间一道流动的光束(SVG 路径)",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "curvature",
+    "reverse",
+    "pathColor",
+    "pathWidth",
+    "pathOpacity",
+    "gradientStartColor",
+    "gradientStopColor",
+    "delay",
+    "duration",
+    "repeat",
+    "repeatDelay",
+    "startXOffset",
+    "startYOffset",
+    "endXOffset",
+    "endYOffset"
+   ],
+   "imported": null
+  },
+  {
+   "name": "animated-circular-progress-bar",
+   "id": "mu-animated-circular-progress-bar",
+   "file": "server/catalog/magicui/animated-circular-progress-bar.tsx",
+   "description": "环形进度条,数值滚动到目标",
+   "tier": "deps",
+   "blockers": [
+    "[keyframes] animate-in"
+   ],
+   "props": [
+    "max",
+    "min",
+    "value",
+    "gaugePrimaryColor",
+    "gaugeSecondaryColor"
+   ],
+   "imported": "mu-circular-progress"
+  },
+  {
+   "name": "animated-gradient-text",
+   "id": "mu-animated-gradient-text",
+   "file": "server/catalog/magicui/animated-gradient-text.tsx",
+   "description": "渐变色在文字上流动",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "speed",
+    "colorFrom",
+    "colorTo"
+   ],
+   "imported": null
+  },
+  {
+   "name": "animated-grid-pattern",
+   "id": "mu-animated-grid-pattern",
+   "file": "server/catalog/magicui/animated-grid-pattern.tsx",
+   "description": "背景网格,随机方块闪烁",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "width",
+    "height",
+    "x",
+    "y",
+    "strokeDasharray",
+    "numSquares",
+    "maxOpacity",
+    "duration",
+    "repeatDelay"
+   ],
+   "imported": null
+  },
+  {
+   "name": "animated-list",
+   "id": "mu-animated-list",
+   "file": "server/catalog/magicui/animated-list.tsx",
+   "description": "列表项依次滑入,像通知流",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "delay"
+   ],
+   "imported": null
+  },
+  {
+   "name": "animated-shiny-text",
+   "id": "mu-animated-shiny-text",
+   "file": "server/catalog/magicui/animated-shiny-text.tsx",
+   "description": "一道高光从文字上扫过",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "shimmerWidth"
+   ],
+   "imported": "mu-animated-shiny-text"
+  },
+  {
+   "name": "animated-subscribe-button",
+   "id": "mu-animated-subscribe-button",
+   "file": "server/catalog/magicui/animated-subscribe-button.tsx",
+   "description": "订阅按钮,点击后变形(交互)",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "subscribeStatus"
+   ],
+   "imported": null
+  },
+  {
+   "name": "animated-theme-toggler",
+   "id": "mu-animated-theme-toggler",
+   "file": "server/catalog/magicui/animated-theme-toggler.tsx",
+   "description": "明暗主题切换动画(交互)",
+   "tier": "deps",
+   "blockers": [
+    "[deps] import \"lucide-react\""
+   ],
+   "props": [
+    "duration",
+    "fromCenter",
+    "theme"
+   ],
+   "imported": null
+  },
+  {
+   "name": "aurora-text",
+   "id": "mu-aurora-text",
+   "file": "server/catalog/magicui/aurora-text.tsx",
+   "description": "极光色渐变在文字上缓慢流动",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "colors",
+    "speed"
+   ],
+   "imported": null
+  },
+  {
+   "name": "avatar-circles",
+   "id": "mu-avatar-circles",
+   "file": "server/catalog/magicui/avatar-circles.tsx",
+   "description": "一排叠放的圆形头像",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "numPeople"
+   ],
+   "imported": null
+  },
+  {
+   "name": "backlight",
+   "id": "mu-backlight",
+   "file": "server/catalog/magicui/backlight.tsx",
+   "description": "背光辉光",
+   "tier": 1,
+   "blockers": [],
+   "props": [],
+   "imported": null
+  },
+  {
+   "name": "bento-grid",
+   "id": "mu-bento-grid",
+   "file": "server/catalog/magicui/bento-grid.tsx",
+   "description": "便当盒式的信息网格布局",
+   "tier": "deps",
+   "blockers": [
+    "[deps] import \"@radix-ui/react-icons\"",
+    "[deps] import \"@/components/ui/button\""
+   ],
+   "props": [],
+   "imported": null
+  },
+  {
+   "name": "blur-fade",
+   "id": "mu-blur-fade",
+   "file": "server/catalog/magicui/blur-fade.tsx",
+   "description": "模糊淡入",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "duration",
+    "delay",
+    "offset",
+    "direction",
+    "inView",
+    "blur"
+   ],
+   "imported": "mu-blur-fade"
+  },
+  {
+   "name": "border-beam",
+   "id": "mu-border-beam",
+   "file": "server/catalog/magicui/border-beam.tsx",
+   "description": "边框上一道光沿轮廓跑",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "size",
+    "duration",
+    "delay",
+    "colorFrom",
+    "colorTo",
+    "reverse",
+    "initialOffset",
+    "borderWidth"
+   ],
+   "imported": null
+  },
+  {
+   "name": "client-tweet-card",
+   "id": "mu-client-tweet-card",
+   "file": "server/catalog/magicui/client-tweet-card.tsx",
+   "description": "client tweet card",
+   "tier": "deps",
+   "blockers": [
+    "[deps] import \"react-tweet\"",
+    "[deps] import \"@/registry/magicui/tweet-card\""
+   ],
+   "props": [],
+   "imported": null
+  },
+  {
+   "name": "code-comparison",
+   "id": "mu-code-comparison",
+   "file": "server/catalog/magicui/code-comparison.tsx",
+   "description": "左右两栏代码对比",
+   "tier": "deps",
+   "blockers": [
+    "[deps] import \"@shikijs/transformers\"",
+    "[deps] import \"lucide-react\"",
+    "[deps] import \"next-themes\""
+   ],
+   "props": [
+    "beforeCode",
+    "afterCode",
+    "language",
+    "filename",
+    "lightTheme",
+    "darkTheme",
+    "highlightColor"
+   ],
+   "imported": null
+  },
+  {
+   "name": "comic-text",
+   "id": "mu-comic-text",
+   "file": "server/catalog/magicui/comic-text.tsx",
+   "description": "漫画风格的立体文字",
+   "tier": 1,
+   "blockers": [],
+   "props": [],
+   "imported": null
+  },
+  {
+   "name": "confetti",
+   "id": "mu-confetti",
+   "file": "server/catalog/magicui/confetti.tsx",
+   "description": "彩带纸屑喷发(canvas)",
+   "tier": "deps",
+   "blockers": [
+    "[deps] import \"canvas-confetti\"",
+    "[deps] import \"canvas-confetti\"",
+    "[deps] import \"@/components/ui/button\""
+   ],
+   "props": [],
+   "imported": null
+  },
+  {
+   "name": "cool-mode",
+   "id": "mu-cool-mode",
+   "file": "server/catalog/magicui/cool-mode.tsx",
+   "description": "点击喷粒子(交互)",
+   "tier": 3,
+   "blockers": [
+    "[3] 鼠标/滚动事件"
+   ],
+   "props": [],
+   "imported": null
+  },
+  {
+   "name": "dia-text-reveal",
+   "id": "mu-dia-text-reveal",
+   "file": "server/catalog/magicui/dia-text-reveal.tsx",
+   "description": "文字逐段显现",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "colors",
+    "textColor",
+    "duration",
+    "delay",
+    "repeat",
+    "repeatDelay",
+    "startOnView",
+    "once",
+    "fixedWidth"
+   ],
+   "imported": null
+  },
+  {
+   "name": "dock",
+   "id": "mu-dock",
+   "file": "server/catalog/magicui/dock.tsx",
+   "description": "macOS 风格 Dock,悬停放大(交互)",
+   "tier": 3,
+   "blockers": [
+    "[3] 鼠标/滚动事件",
+    "[deps] import \"class-variance-authority\""
+   ],
+   "props": [
+    "iconSize",
+    "iconMagnification",
+    "disableMagnification",
+    "iconDistance",
+    "direction"
+   ],
+   "imported": null
+  },
+  {
+   "name": "dot-pattern",
+   "id": "mu-dot-pattern",
+   "file": "server/catalog/magicui/dot-pattern.tsx",
+   "description": "背景圆点阵列",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "width",
+    "height",
+    "x",
+    "y",
+    "cx",
+    "cy",
+    "cr",
+    "glow"
+   ],
+   "imported": null
+  },
+  {
+   "name": "dotted-map",
+   "id": "mu-dotted-map",
+   "file": "server/catalog/magicui/dotted-map.tsx",
+   "description": "用圆点画的世界地图",
+   "tier": "deps",
+   "blockers": [
+    "[deps] import \"svg-dotted-map\""
+   ],
+   "props": [
+    "width",
+    "height",
+    "mapSamples",
+    "dotColor",
+    "markerColor",
+    "dotRadius",
+    "stagger",
+    "pulse"
+   ],
+   "imported": null
+  },
+  {
+   "name": "file-tree",
+   "id": "mu-file-tree",
+   "file": "server/catalog/magicui/file-tree.tsx",
+   "description": "文件树目录结构",
+   "tier": "deps",
+   "blockers": [
+    "[deps] import \"@radix-ui/react-accordion\"",
+    "[deps] import \"lucide-react\"",
+    "[deps] import \"@/components/ui/button\"",
+    "[deps] import \"@/components/ui/scroll-area\""
+   ],
+   "props": [],
+   "imported": null
+  },
+  {
+   "name": "flickering-grid",
+   "id": "mu-flickering-grid",
+   "file": "server/catalog/magicui/flickering-grid.tsx",
+   "description": "闪烁的像素网格背景(canvas)",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "squareSize",
+    "gridGap",
+    "flickerChance",
+    "color",
+    "width",
+    "height",
+    "maxOpacity"
+   ],
+   "imported": null
+  },
+  {
+   "name": "floating-3d-particles",
+   "id": "mu-floating-3d-particles",
+   "file": "server/catalog/magicui/floating-3d-particles.tsx",
+   "description": "3D 漂浮粒子",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "quantity",
+    "color",
+    "size",
+    "opacity",
+    "drift",
+    "depth"
+   ],
+   "imported": null
+  },
+  {
+   "name": "glare-hover",
+   "id": "mu-glare-hover",
+   "file": "server/catalog/magicui/glare-hover.tsx",
+   "description": "悬停时的眩光(交互)",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "width",
+    "height",
+    "background",
+    "opacity",
+    "angle",
+    "size",
+    "duration",
+    "playOnce"
+   ],
+   "imported": null
+  },
+  {
+   "name": "globe",
+   "id": "mu-globe",
+   "file": "server/catalog/magicui/globe.tsx",
+   "description": "可拖动的 3D 地球(WebGL)",
+   "tier": 2,
+   "blockers": [
+    "[2] 三维库",
+    "[3] 鼠标/滚动事件",
+    "[deps] import \"cobe\""
+   ],
+   "props": [],
+   "imported": null
+  },
+  {
+   "name": "glyph-matrix",
+   "id": "mu-glyph-matrix",
+   "file": "server/catalog/magicui/glyph-matrix.tsx",
+   "description": "字形矩阵",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "glyphs",
+    "cellSize",
+    "mutationRate",
+    "interval",
+    "fadeBottom",
+    "color"
+   ],
+   "imported": null
+  },
+  {
+   "name": "grid-pattern",
+   "id": "mu-grid-pattern",
+   "file": "server/catalog/magicui/grid-pattern.tsx",
+   "description": "背景方格线",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "width",
+    "height",
+    "x",
+    "y",
+    "strokeDasharray"
+   ],
+   "imported": null
+  },
+  {
+   "name": "hero-video-dialog",
+   "id": "mu-hero-video-dialog",
+   "file": "server/catalog/magicui/hero-video-dialog.tsx",
+   "description": "点击缩略图弹出视频(交互)",
+   "tier": "deps",
+   "blockers": [
+    "[deps] import \"lucide-react\""
+   ],
+   "props": [
+    "videoSrc",
+    "thumbnailSrc",
+    "thumbnailAlt"
+   ],
+   "imported": null
+  },
+  {
+   "name": "hexagon-pattern",
+   "id": "mu-hexagon-pattern",
+   "file": "server/catalog/magicui/hexagon-pattern.tsx",
+   "description": "六边形背景图案",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "radius",
+    "gap",
+    "x",
+    "y",
+    "direction",
+    "strokeDasharray"
+   ],
+   "imported": null
+  },
+  {
+   "name": "highlighter",
+   "id": "mu-highlighter",
+   "file": "server/catalog/magicui/highlighter.tsx",
+   "description": "手绘荧光笔划过文字",
+   "tier": "deps",
+   "blockers": [
+    "[deps] import \"rough-notation\"",
+    "[deps] import \"rough-notation/lib/model\""
+   ],
+   "props": [
+    "color",
+    "strokeWidth",
+    "animationDuration",
+    "iterations",
+    "padding",
+    "multiline",
+    "isView"
+   ],
+   "imported": null
+  },
+  {
+   "name": "hyper-text",
+   "id": "mu-hyper-text",
+   "file": "server/catalog/magicui/hyper-text.tsx",
+   "description": "文字乱码后逐个定格",
+   "tier": 3,
+   "blockers": [
+    "[3] 鼠标/滚动事件"
+   ],
+   "props": [
+    "duration",
+    "delay",
+    "startOnView",
+    "animateOnHover"
+   ],
+   "imported": null
+  },
+  {
+   "name": "icon-cloud",
+   "id": "mu-icon-cloud",
+   "file": "server/catalog/magicui/icon-cloud.tsx",
+   "description": "旋转的图标球(canvas)",
+   "tier": 3,
+   "blockers": [
+    "[3] 鼠标/滚动事件",
+    "[deps] import \"lucide-react\"",
+    "[deps] import \"react-dom/server\"",
+    "[deps] import \"@/components/ui/button\""
+   ],
+   "props": [
+    "images",
+    "showControl"
+   ],
+   "imported": null
+  },
+  {
+   "name": "interactive-grid-pattern",
+   "id": "mu-interactive-grid-pattern",
+   "file": "server/catalog/magicui/interactive-grid-pattern.tsx",
+   "description": "跟随鼠标高亮的方格(交互)",
+   "tier": 3,
+   "blockers": [
+    "[3] 鼠标/滚动事件"
+   ],
+   "props": [
+    "width",
+    "height",
+    "squaresClassName"
+   ],
+   "imported": null
+  },
+  {
+   "name": "interactive-hover-button",
+   "id": "mu-interactive-hover-button",
+   "file": "server/catalog/magicui/interactive-hover-button.tsx",
+   "description": "悬停展开的按钮(交互)",
+   "tier": "deps",
+   "blockers": [
+    "[deps] import \"lucide-react\""
+   ],
+   "props": [],
+   "imported": null
+  },
+  {
+   "name": "iphone",
+   "id": "mu-iphone",
+   "file": "server/catalog/magicui/iphone.tsx",
+   "description": "iPhone 外框",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "src",
+    "videoSrc"
+   ],
+   "imported": null
+  },
+  {
+   "name": "kinetic-text",
+   "id": "mu-kinetic-text",
+   "file": "server/catalog/magicui/kinetic-text.tsx",
+   "description": "动感文字",
+   "tier": 1,
+   "blockers": [],
+   "props": [],
+   "imported": null
+  },
+  {
+   "name": "lens",
+   "id": "mu-lens",
+   "file": "server/catalog/magicui/lens.tsx",
+   "description": "放大镜跟随鼠标(交互)",
+   "tier": 3,
+   "blockers": [
+    "[3] 鼠标/滚动事件"
+   ],
+   "props": [
+    "zoomFactor",
+    "lensSize",
+    "isStatic",
+    "duration",
+    "lensColor",
+    "ariaLabel"
+   ],
+   "imported": null
+  },
+  {
+   "name": "light-rays",
+   "id": "mu-light-rays",
+   "file": "server/catalog/magicui/light-rays.tsx",
+   "description": "从上方洒下的光线",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "count",
+    "color",
+    "blur",
+    "speed",
+    "length"
+   ],
+   "imported": null
+  },
+  {
+   "name": "line-shadow-text",
+   "id": "mu-line-shadow-text",
+   "file": "server/catalog/magicui/line-shadow-text.tsx",
+   "description": "带斜线阴影的大字",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "shadowColor"
+   ],
+   "imported": null
+  },
+  {
+   "name": "magic-card",
+   "id": "mu-magic-card",
+   "file": "server/catalog/magicui/magic-card.tsx",
+   "description": "聚光灯跟随鼠标的卡片(交互)",
+   "tier": 3,
+   "blockers": [
+    "[3] 鼠标/滚动事件",
+    "[deps] import \"next-themes\""
+   ],
+   "props": [
+    "gradientSize",
+    "gradientFrom",
+    "gradientTo"
+   ],
+   "imported": null
+  },
+  {
+   "name": "marquee",
+   "id": "mu-marquee",
+   "file": "server/catalog/magicui/marquee.tsx",
+   "description": "横向无限滚动的跑马灯",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "reverse",
+    "pauseOnHover",
+    "vertical",
+    "repeat"
+   ],
+   "imported": null
+  },
+  {
+   "name": "meteors",
+   "id": "mu-meteors",
+   "file": "server/catalog/magicui/meteors.tsx",
+   "description": "流星划过背景",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "number",
+    "minDelay",
+    "maxDelay",
+    "minDuration",
+    "maxDuration",
+    "angle"
+   ],
+   "imported": null
+  },
+  {
+   "name": "morphing-text",
+   "id": "mu-morphing-text",
+   "file": "server/catalog/magicui/morphing-text.tsx",
+   "description": "两个词之间模糊变形",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "texts"
+   ],
+   "imported": null
+  },
+  {
+   "name": "neon-gradient-card",
+   "id": "mu-neon-gradient-card",
+   "file": "server/catalog/magicui/neon-gradient-card.tsx",
+   "description": "霓虹渐变描边的卡片",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "firstColor",
+    "secondColor"
+   ],
+   "imported": null
+  },
+  {
+   "name": "noise-texture",
+   "id": "mu-noise-texture",
+   "file": "server/catalog/magicui/noise-texture.tsx",
+   "description": "噪点纹理",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "frequency",
+    "octaves",
+    "slope",
+    "noiseOpacity"
+   ],
+   "imported": null
+  },
+  {
+   "name": "number-ticker",
+   "id": "mu-number-ticker",
+   "file": "server/catalog/magicui/number-ticker.tsx",
+   "description": "数字从 0 滚动到目标",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "value",
+    "startValue",
+    "direction",
+    "delay",
+    "decimalPlaces"
+   ],
+   "imported": "mu-number-ticker"
+  },
+  {
+   "name": "orbiting-circles",
+   "id": "mu-orbiting-circles",
+   "file": "server/catalog/magicui/orbiting-circles.tsx",
+   "description": "元素绕中心公转",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "reverse",
+    "duration",
+    "delay",
+    "radius",
+    "path",
+    "iconSize",
+    "speed"
+   ],
+   "imported": null
+  },
+  {
+   "name": "particles",
+   "id": "mu-particles",
+   "file": "server/catalog/magicui/particles.tsx",
+   "description": "漂浮的粒子背景(canvas)",
+   "tier": 3,
+   "blockers": [
+    "[3] 鼠标/滚动事件"
+   ],
+   "props": [
+    "quantity",
+    "staticity",
+    "ease",
+    "size",
+    "refresh",
+    "color",
+    "vx",
+    "vy"
+   ],
+   "imported": null
+  },
+  {
+   "name": "pixel-image",
+   "id": "mu-pixel-image",
+   "file": "server/catalog/magicui/pixel-image.tsx",
+   "description": "图片从像素块逐渐清晰",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "src",
+    "grayscaleAnimation",
+    "pixelFadeInDuration",
+    "maxAnimationDelay",
+    "colorRevealDelay"
+   ],
+   "imported": null
+  },
+  {
+   "name": "pointer",
+   "id": "mu-pointer",
+   "file": "server/catalog/magicui/pointer.tsx",
+   "description": "自定义鼠标指针(交互)",
+   "tier": 3,
+   "blockers": [
+    "[3] 鼠标/滚动事件"
+   ],
+   "props": [],
+   "imported": null
+  },
+  {
+   "name": "progressive-blur",
+   "id": "mu-progressive-blur",
+   "file": "server/catalog/magicui/progressive-blur.tsx",
+   "description": "边缘渐进模糊遮罩",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "height",
+    "position"
+   ],
+   "imported": null
+  },
+  {
+   "name": "pulsating-button",
+   "id": "mu-pulsating-button",
+   "file": "server/catalog/magicui/pulsating-button.tsx",
+   "description": "脉冲呼吸的按钮",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "pulseColor",
+    "duration",
+    "distance",
+    "variant"
+   ],
+   "imported": null
+  },
+  {
+   "name": "rainbow-button",
+   "id": "mu-rainbow-button",
+   "file": "server/catalog/magicui/rainbow-button.tsx",
+   "description": "彩虹描边流动的按钮",
+   "tier": "deps",
+   "blockers": [
+    "[deps] import \"@radix-ui/react-slot\"",
+    "[deps] import \"class-variance-authority\""
+   ],
+   "props": [
+    "asChild"
+   ],
+   "imported": null
+  },
+  {
+   "name": "retro-grid",
+   "id": "mu-retro-grid",
+   "file": "server/catalog/magicui/retro-grid.tsx",
+   "description": "复古透视网格地面",
+   "tier": 2,
+   "blockers": [
+    "[2] WebGL"
+   ],
+   "props": [
+    "angle",
+    "cellSize",
+    "opacity",
+    "lightLineColor",
+    "darkLineColor"
+   ],
+   "imported": null
+  },
+  {
+   "name": "ripple-button",
+   "id": "mu-ripple-button",
+   "file": "server/catalog/magicui/ripple-button.tsx",
+   "description": "点击水波纹按钮(交互)",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "rippleColor",
+    "duration"
+   ],
+   "imported": null
+  },
+  {
+   "name": "ripple",
+   "id": "mu-ripple",
+   "file": "server/catalog/magicui/ripple.tsx",
+   "description": "从中心扩散的涟漪圆环",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "mainCircleSize",
+    "mainCircleOpacity",
+    "numCircles"
+   ],
+   "imported": null
+  },
+  {
+   "name": "safari",
+   "id": "mu-safari",
+   "file": "server/catalog/magicui/safari.tsx",
+   "description": "Safari 浏览器窗口外框",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "url",
+    "imageSrc",
+    "videoSrc"
+   ],
+   "imported": null
+  },
+  {
+   "name": "scroll-based-velocity",
+   "id": "mu-scroll-based-velocity",
+   "file": "server/catalog/magicui/scroll-based-velocity.tsx",
+   "description": "滚动越快字跑越快(滚动驱动)",
+   "tier": 3,
+   "blockers": [
+    "[3] 滚动驱动"
+   ],
+   "props": [
+    "baseVelocity",
+    "scrollReactivity"
+   ],
+   "imported": null
+  },
+  {
+   "name": "scroll-progress",
+   "id": "mu-scroll-progress",
+   "file": "server/catalog/magicui/scroll-progress.tsx",
+   "description": "页面滚动进度条(滚动驱动)",
+   "tier": 3,
+   "blockers": [
+    "[3] 滚动驱动"
+   ],
+   "props": [],
+   "imported": null
+  },
+  {
+   "name": "shimmer-button",
+   "id": "mu-shimmer-button",
+   "file": "server/catalog/magicui/shimmer-button.tsx",
+   "description": "扫光的按钮",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "shimmerColor",
+    "shimmerSize",
+    "borderRadius",
+    "shimmerDuration",
+    "background"
+   ],
+   "imported": null
+  },
+  {
+   "name": "shine-border",
+   "id": "mu-shine-border",
+   "file": "server/catalog/magicui/shine-border.tsx",
+   "description": "边框上的流光",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "borderWidth",
+    "duration"
+   ],
+   "imported": null
+  },
+  {
+   "name": "shiny-button",
+   "id": "mu-shiny-button",
+   "file": "server/catalog/magicui/shiny-button.tsx",
+   "description": "闪光按钮",
+   "tier": 1,
+   "blockers": [],
+   "props": [],
+   "imported": null
+  },
+  {
+   "name": "smooth-cursor",
+   "id": "mu-smooth-cursor",
+   "file": "server/catalog/magicui/smooth-cursor.tsx",
+   "description": "平滑跟随的光标(交互)",
+   "tier": 3,
+   "blockers": [
+    "[3] 鼠标/滚动事件"
+   ],
+   "props": [],
+   "imported": null
+  },
+  {
+   "name": "sparkles-text",
+   "id": "mu-sparkles-text",
+   "file": "server/catalog/magicui/sparkles-text.tsx",
+   "description": "文字周围闪烁的星星",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "sparklesCount"
+   ],
+   "imported": null
+  },
+  {
+   "name": "spinning-text",
+   "id": "mu-spinning-text",
+   "file": "server/catalog/magicui/spinning-text.tsx",
+   "description": "环形排列并旋转的文字",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "duration",
+    "reverse",
+    "radius"
+   ],
+   "imported": null
+  },
+  {
+   "name": "striped-pattern",
+   "id": "mu-striped-pattern",
+   "file": "server/catalog/magicui/striped-pattern.tsx",
+   "description": "斜条纹背景",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "direction"
+   ],
+   "imported": null
+  },
+  {
+   "name": "terminal",
+   "id": "mu-terminal",
+   "file": "server/catalog/magicui/terminal.tsx",
+   "description": "终端窗口逐行打字",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "delay",
+    "startOnView"
+   ],
+   "imported": null
+  },
+  {
+   "name": "text-3d-flip",
+   "id": "mu-text-3d-flip",
+   "file": "server/catalog/magicui/text-3d-flip.tsx",
+   "description": "文字 3D 翻转",
+   "tier": 3,
+   "blockers": [
+    "[3] 鼠标/滚动事件"
+   ],
+   "props": [
+    "textClassName",
+    "flipTextClassName",
+    "staggerDuration",
+    "rotateDirection"
+   ],
+   "imported": null
+  },
+  {
+   "name": "text-animate",
+   "id": "mu-text-animate",
+   "file": "server/catalog/magicui/text-animate.tsx",
+   "description": "文字按字/词/行入场,多种效果",
+   "tier": 3,
+   "blockers": [
+    "[3] whileHover/whileTap/whileInView"
+   ],
+   "props": [
+    "segmentClassName",
+    "delay",
+    "duration",
+    "startOnView",
+    "once",
+    "accessible"
+   ],
+   "imported": null
+  },
+  {
+   "name": "text-reveal",
+   "id": "mu-text-reveal",
+   "file": "server/catalog/magicui/text-reveal.tsx",
+   "description": "滚动时逐词显现(滚动驱动)",
+   "tier": 3,
+   "blockers": [
+    "[3] 滚动驱动"
+   ],
+   "props": [],
+   "imported": null
+  },
+  {
+   "name": "tweet-card",
+   "id": "mu-tweet-card",
+   "file": "server/catalog/magicui/tweet-card.tsx",
+   "description": "嵌入的推文卡片(联网)",
+   "tier": "deps",
+   "blockers": [
+    "[deps] import \"react-tweet\"",
+    "[deps] import \"react-tweet/api\""
+   ],
+   "props": [],
+   "imported": null
+  },
+  {
+   "name": "typing-animation",
+   "id": "mu-typing-animation",
+   "file": "server/catalog/magicui/typing-animation.tsx",
+   "description": "打字机效果",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "words",
+    "duration",
+    "typeSpeed",
+    "deleteSpeed",
+    "delay",
+    "pauseDelay",
+    "loop",
+    "startOnView",
+    "showCursor",
+    "blinkCursor",
+    "cursorStyle"
+   ],
+   "imported": "mu-typing"
+  },
+  {
+   "name": "video-text",
+   "id": "mu-video-text",
+   "file": "server/catalog/magicui/video-text.tsx",
+   "description": "视频填充在文字里",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "src",
+    "autoPlay",
+    "muted",
+    "loop",
+    "preload",
+    "textAnchor",
+    "dominantBaseline",
+    "fontFamily"
+   ],
+   "imported": null
+  },
+  {
+   "name": "warp-background",
+   "id": "mu-warp-background",
+   "file": "server/catalog/magicui/warp-background.tsx",
+   "description": "四周向内飞的光条",
+   "tier": 1,
+   "blockers": [],
+   "props": [
+    "perspective",
+    "beamsPerSide",
+    "beamSize",
+    "beamDelayMax",
+    "beamDelayMin",
+    "beamDuration",
+    "gridColor"
+   ],
+   "imported": null
+  }
+ ]
+}

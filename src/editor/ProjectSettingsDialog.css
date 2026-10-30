@@ -1,0 +1,55 @@
+/*
+ * 项目名称输入框。
+ *
+ * 单独放这里而不是并进 ui/toolbar.css:另一个会话正在按设计稿重构顶栏那一套样式,
+ * 往同一个文件里加行两边都容易被覆盖。规格照着 .pc-dialog-opt 抄,和对话框里
+ * 其他控件同高同圆角,换皮肤跟着变。
+ */
+.pc-dialog-input,
+.pc-dialog-select {
+  height: 28px;
+  min-width: 0;
+  /* 行是 space-between,名字比选项按钮长,让输入框吃掉剩下的宽度 */
+  flex: 1 1 auto;
+  margin-left: 16px;
+  padding: 0 10px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius, 4px);
+  background: var(--ui-panel-2);
+  color: var(--ui-fg);
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1;
+  transition: border-color 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.pc-dialog-input::placeholder {
+  color: var(--ui-fg-muted);
+}
+.pc-dialog-input:hover {
+  border-color: color-mix(in oklab, var(--ui-border-strong) 70%, var(--ui-fg));
+}
+.pc-dialog-input:focus {
+  outline: none;
+  border-color: var(--ui-accent);
+}
+
+/*
+ * 帧率下拉(pinned 架构 7)。规格照 .pc-dialog-input 抄,只多两件事:
+ * 原生下拉箭头留着(换皮肤跟着 color-scheme 走,不画自己那一套),
+ * 宽度不吃满整行 —— 它右边是「应用分辨率」那一行的数字,对齐比铺满好看。
+ */
+.pc-dialog-select {
+  flex: 0 0 auto;
+  min-width: 108px;
+  padding: 0 6px 0 10px;
+  cursor: pointer;
+  /* 下拉展开的那一片由浏览器画,跟着当前明暗走 */
+  color-scheme: inherit;
+}
+.pc-dialog-select:hover {
+  border-color: color-mix(in oklab, var(--ui-border-strong) 70%, var(--ui-fg));
+}
+.pc-dialog-select:focus {
+  outline: none;
+  border-color: var(--ui-accent);
+}

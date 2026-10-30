@@ -1,0 +1,785 @@
+.diagonal-stripes {
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.05),
+    rgba(255, 255, 255, 0.05) 10px,
+    transparent 10px,
+    transparent 20px
+  );
+}
+
+/* 声音关闭必须一眼可见，不能只靠悬停或参数面板。极窄片段的图标由 ClipView 画在裁切框外。 */
+.pc-clip.is-audio-muted { border-color: #f5bf4f !important; box-shadow: inset 0 -3px 0 #f5bf4f; }
+.pc-clip-mute-badge { position: absolute; right: 3px; bottom: 3px; z-index: 25; display: inline-flex; align-items: center; gap: 3px; padding: 1px 4px; min-height: 16px; border: 1px solid #ffdd91; border-radius: 4px; color: #211503; background: #f5bf4f; font-size: 10px; line-height: 14px; font-weight: 700; pointer-events: none; white-space: nowrap; }
+.pc-clip-mute-badge.is-compact { width: 18px; height: 16px; padding: 1px 2px; bottom: auto; justify-content: center; }
+.pc-track-mute-summary { flex: none; border-radius: 3px; padding: 1px 3px; color: #211503; background: #f5bf4f; font-size: 9px; font-weight: 700; white-space: nowrap; }
+
+/* ── 时间轴的两条滚动条:右侧竖条(原生)和底部横条(Scrollbar.tsx)同一套样子 ──────────
+ * 可见部分都是 10px 粗、全圆角,同一个淡底槽、同一个滑块色;外面各留 2px,占位 14px。
+ * 竖条只在时间轴里改,全局皮肤那条 6px 的滚动条(skins.css)不动。
+ * 选择器前面挂 [data-pc="timeline"],特异性压过全局的 [data-skin] ::-webkit-scrollbar-*,
+ * 不用管两份 CSS 谁先加载。 */
+[data-pc="timeline"] {
+  --pc-tl-sb-track: color-mix(in oklab, var(--ui-fg, #e5e5e5) 6%, transparent);
+  --pc-tl-sb-thumb: var(--ui-scroll-thumb, #404040);
+  --pc-tl-sb-thumb-hover: var(--ui-scroll-thumb-hover, #737373);
+  /* 横条两端的把手帽:往前景色里混一点,深色皮肤里更亮、浅色皮肤里更深,总之比条身显眼 */
+  --pc-tl-sb-cap: color-mix(in oklab, var(--pc-tl-sb-thumb) 68%, var(--ui-fg, #e5e5e5));
+  --pc-tl-sb-cap-hover: color-mix(in oklab, var(--pc-tl-sb-thumb-hover) 72%, var(--ui-fg, #e5e5e5));
+  --pc-tl-sb-cap-active: color-mix(in oklab, var(--pc-tl-sb-thumb-hover) 42%, var(--ui-fg, #e5e5e5));
+  /* 把手上的竖纹往底色那边走,和把手帽反着来,两种明暗的皮肤里都看得见 */
+  --pc-tl-sb-grip: color-mix(in oklab, var(--ui-bg-2, #0a0a0a) 78%, transparent);
+}
+
+/* 自定义横向滚动条接管后隐藏原生横条，竖条保留。 */
+[data-pc="timeline"] .pc-tl-scroll::-webkit-scrollbar:horizontal { height: 0; }
+[data-pc="timeline"] .pc-tl-scroll::-webkit-scrollbar:vertical { width: 14px; }
+/* 底槽和滑块都用 2px 透明边 + padding-box 裁掉,可见宽度正好 10px,和底部横条对齐 */
+[data-pc="timeline"] .pc-tl-scroll::-webkit-scrollbar-track {
+  background: var(--pc-tl-sb-track);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+[data-pc="timeline"] .pc-tl-scroll::-webkit-scrollbar-thumb {
+  background: var(--pc-tl-sb-thumb);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+[data-pc="timeline"] .pc-tl-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--pc-tl-sb-thumb-hover);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+/* 底部横条:一行 14px 高 = 上 2 + 条身 10 + 下 2。
+ * 右边的 padding 由 Scrollbar.tsx 按竖条实际占的宽度写进来,底槽就停在竖条那一格的左边,
+ * 右下角空出一个 14×14 的角,和原生滚动条的拐角一样;没有竖条时底槽一直伸到右边。 */
+.pc-tl-hbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  height: 14px;
+  background: var(--ui-bg-2, #0a0a0a);
+}
+.pc-tl-hbar-track {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 10px;
+  margin: 0 2px;
+  border-radius: 999px;
+  background: var(--pc-tl-sb-track);
+  cursor: pointer;
+}
+.pc-tl-hbar-thumb {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  border-radius: 999px;
+  background: var(--pc-tl-sb-thumb);
+  cursor: grab;
+  transition: background-color 0.12s;
+}
+.pc-tl-hbar-thumb:hover,
+.pc-tl-hbar-thumb[data-drag] {
+  background: var(--pc-tl-sb-thumb-hover);
+}
+/* 中间一截:按住平移 */
+.pc-tl-hbar-pan {
+  flex: 1;
+  min-width: 0;
+  cursor: grab;
+}
+.pc-tl-hbar-thumb[data-drag="pan"],
+.pc-tl-hbar-thumb[data-drag="pan"] .pc-tl-hbar-pan {
+  cursor: grabbing;
+}
+/* 两端把手帽:12px 宽,常驻显示,颜色比条身亮一档,中间两道 1×6 的竖纹 */
+.pc-tl-hbar-grip {
+  position: relative;
+  flex: none;
+  width: 12px;
+  background: var(--pc-tl-sb-cap);
+  color: var(--pc-tl-sb-grip);
+  cursor: ew-resize;
+  transition: background-color 0.12s;
+}
+.pc-tl-hbar-grip.is-left {
+  border-radius: 999px 0 0 999px;
+}
+.pc-tl-hbar-grip.is-right {
+  border-radius: 0 999px 999px 0;
+}
+.pc-tl-hbar-grip::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 50%;
+  width: 1px;
+  margin-left: -2px;
+  background: currentColor;
+  box-shadow: 3px 0 0 currentColor;
+  pointer-events: none;
+}
+.pc-tl-hbar-thumb:hover .pc-tl-hbar-grip,
+.pc-tl-hbar-thumb[data-drag] .pc-tl-hbar-grip {
+  background: var(--pc-tl-sb-cap-hover);
+}
+/* 指着的那个把手、正在拖的那个把手再亮一档 */
+.pc-tl-hbar-thumb .pc-tl-hbar-grip:hover,
+.pc-tl-hbar-thumb[data-drag="left"] .pc-tl-hbar-grip.is-left,
+.pc-tl-hbar-thumb[data-drag="right"] .pc-tl-hbar-grip.is-right {
+  background: var(--pc-tl-sb-cap-active);
+}
+
+/* One continuous edge, shared with the footer. The resize hit target stays
+ * six pixels wide but must not draw a second line inside the header column. */
+.pc-tl-headers {
+  border-right: 1px solid var(--ui-border);
+  /* 序列栏往右投一道窄阴影,和右边的片段区分开;横向滚动时片段从阴影底下滑过去。
+     列是 sticky + z-30,阴影盖在轨道上面。深浅皮肤用同一个黑,浅色里淡、深色里几乎只加深边缘 */
+  box-shadow: 6px 0 10px -6px rgba(0, 0, 0, 0.28);
+}
+.pc-tl-header-resize [data-pc-resize="x"].pc-gutter {
+  background-image: none;
+}
+
+/* ── 时间线(配色诊断与修正 v2 整屏,底部) ───────────────────────────────
+ * 整块 L1(见 editor/shell.css);选中的序列行 L2;控件 L3。 */
+
+/* 顶部工具行:40 高 */
+.pc-tl-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 14px;
+  height: 40px;
+  border-bottom: 1px solid var(--ui-border);
+  flex-shrink: 0;
+  font-size: 11.5px;
+}
+/* 行高分段(小/中/大):一圈控件描边,选中格实心强调色 */
+.pc-tl-seg {
+  display: flex;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius, 6px);
+  overflow: hidden;
+}
+.pc-tl-seg button {
+  padding: 3px 11px;
+  font-size: 11.5px;
+  font-family: inherit;
+  color: var(--ui-fg-muted);
+  background: var(--ui-panel-2);
+  border: 0;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.pc-tl-seg button:hover {
+  color: var(--ui-fg);
+}
+.pc-tl-seg button.is-on {
+  color: var(--ui-accent-fg);
+  background: var(--ui-accent);
+}
+.pc-tl-meta {
+  font-family: var(--ui-font-mono);
+  font-size: 11px;
+  color: var(--ui-fg-faint);
+  white-space: nowrap;
+}
+.pc-tl-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--ui-float);
+}
+.pc-tl-iconbtn {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--ui-radius, 6px);
+  color: var(--ui-fg);
+  cursor: pointer;
+}
+.pc-tl-iconbtn:hover {
+  background: var(--ui-panel-2);
+}
+.pc-tl-iconbtn.is-on {
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+}
+.pc-tl-zoom {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  height: 28px;
+  border-radius: var(--ui-radius-lg, 8px);
+  background: var(--ui-panel);
+  border: 1px solid var(--ui-border);
+}
+.pc-tl-zoom-track {
+  position: relative;
+  width: 96px;
+  height: 3px;
+  background: var(--ui-panel-2);
+}
+.pc-tl-zoom-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--ui-fg-muted);
+}
+.pc-tl-zoom-knob {
+  position: absolute;
+  top: -4px;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  background: var(--ui-fg);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.pc-tl-zoom input[type="range"] {
+  position: absolute;
+  inset: -8px 0;
+  width: 100%;
+  height: 19px;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* 序列列表头:和标尺同高(index.tsx 按 RULER_H 行内给),等宽小字,字距拉开 */
+.pc-tl-hdr {
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  font-family: var(--ui-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  color: var(--ui-fg-faint);
+}
+/* 标尺下面那一行空行(index.tsx 的 .pc-tl-toprow):行头列这一侧底边画分隔线,线紧贴在第一条序列上方。
+   用内阴影不用 border,不占高度,两侧空行保持和行高一样 */
+.pc-tl-headers > .pc-tl-toprow {
+  box-shadow: inset 0 -1px 0 var(--ui-border);
+}
+/* 序列行:拖动把手 + 名字 + 右侧常驻的两个图标(不再悬停才出现) */
+.pc-tl-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--ui-border);
+  color: var(--ui-fg-faint);
+  cursor: grab;
+}
+.pc-tl-row:hover,
+.pc-tl-row.is-on {
+  background: var(--ui-panel);
+}
+.pc-tl-row.is-dragging {
+  background: var(--ui-panel);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.55);
+  cursor: grabbing;
+}
+.pc-tl-row-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--ui-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pc-tl-row-name.is-muted {
+  color: var(--ui-fg-muted);
+}
+.pc-tl-row-name input {
+  width: 100%;
+  background: var(--ui-bg-2);
+  color: var(--ui-fg);
+  border: 1px solid var(--ui-accent);
+  outline: none;
+  padding: 1px 4px;
+  font: inherit;
+  font-size: 12.5px;
+  border-radius: var(--ui-radius-sm, 4px);
+}
+.pc-tl-row-acts {
+  display: flex;
+  gap: 8px;
+  color: var(--ui-fg-faint);
+}
+.pc-tl-row-acts button {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: inherit;
+  cursor: pointer;
+  border-radius: var(--ui-radius-sm, 4px);
+}
+.pc-tl-row-acts button:hover {
+  color: var(--ui-fg);
+  background: var(--ui-panel-2);
+}
+.pc-tl-row-acts button.is-active {
+  color: var(--ui-danger);
+}
+.pc-tl-addtrack-wrap {
+  padding: 11px 12px;
+}
+.pc-tl-addtrack {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--ui-panel-2);
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius, 6px);
+  padding: 5px 11px;
+  color: var(--ui-fg);
+  font-size: 11.5px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.pc-tl-addtrack:hover {
+  background: var(--ui-float);
+}
+
+/* 标尺:高度由 Ruler.tsx 的 RULER_H 行内给;底边线由预渲染进度(.pc-tl-ruler-progress)画 */
+.pc-tl-ruler {
+  box-sizing: border-box;
+}
+/* 次刻度:1×4 短竖线;主刻度:1×10 竖线,右边 4px 跟时间。都在标尺行里竖向居中 */
+.pc-tl-tick {
+  position: absolute;
+  top: 8px;
+  width: 1px;
+  height: 4px;
+  background: var(--ui-border-strong);
+  pointer-events: none;
+}
+.pc-tl-tick.is-major {
+  top: 5px;
+  height: 10px;
+  background: color-mix(in oklab, var(--ui-fg-faint) 70%, transparent);
+}
+.pc-tl-tick-label {
+  position: absolute;
+  left: 4px;
+  /* 竖向中心和主刻度线中心、播放头时间胶囊中心对齐:标尺行扣掉底边 2px 进度线后的中线(22 高 → 10px)。
+     标签挂在主刻度线(top 5、高 10)里面,所以相对它是 5px */
+  top: 5px;
+  transform: translateY(-50%);
+  font-family: var(--ui-font-mono);
+  font-size: 10.5px;
+  line-height: 12px;
+  color: var(--ui-fg-faint);
+  white-space: nowrap;
+}
+/* 底边线 = 预渲染进度 */
+.pc-tl-ruler-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+/* 新建序列落区:26 高,虚线控件描边,淡强调色底 */
+.pc-tl-newzone {
+  height: 26px;
+  background: color-mix(in oklab, var(--ui-accent) 7%, transparent);
+  border: 1px dashed var(--ui-border-strong);
+  border-radius: var(--ui-radius-lg, 8px);
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  font-size: 11.5px;
+  color: var(--ui-fg-faint);
+}
+.pc-tl-newzone.is-armed {
+  border-color: var(--ui-fg-muted);
+  background: color-mix(in oklab, var(--ui-fg-muted) 10%, transparent);
+}
+.pc-tl-newzone.is-target {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-soft);
+}
+
+/* 片段两端的修剪把手:悬停时出一条居中的圆角白条 */
+.pc-clip-trim:hover::after {
+  content: "";
+  position: absolute;
+  top: 30%;
+  bottom: 30%;
+  left: 50%;
+  width: 3px;
+  transform: translateX(-50%);
+  background: white;
+  border-radius: 1.5px;
+}
+
+/* 空轨道占位:轨道行(TrackRow 根上的 .pc-tl-track)里一个片段都没有时,内缩画一个 1px 虚线、
+   圆角的框,提示这里能放东西。不加元素、不加文字,片段一放进来框就消失。
+   伪元素不吃鼠标,拖放照样落在行上;落点预览(z-30)和锁定遮罩(z-50)都盖在它上面。
+   隐藏的轨道不渲染片段,所以也会显示这个框。 */
+.pc-tl-track:not(:has(.pc-clip))::before {
+  content: "";
+  position: absolute;
+  inset: 4px 8px;
+  border: 1px dashed var(--ui-border-strong);
+  border-radius: var(--ui-radius-lg, 8px);
+  pointer-events: none;
+}
+
+/* 播放头上的时间胶囊:主文字色底、底色字。竖向中心 = 标尺行中线(top 由 Playhead.tsx 给),
+   和标尺上的刻度时间同一个高度;按自身宽度水平居中在播放头上 */
+.pc-tl-playhead-label {
+  position: absolute;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--ui-fg);
+  color: var(--ui-bg);
+  font-family: var(--ui-font-mono);
+  font-weight: 600;
+  font-size: 10px;
+  line-height: 14px;
+  padding: 0 6px;
+  border-radius: 999px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* 底部状态栏:细一点,放在画布上 */
+.pc-statusbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 24px;
+  padding: 0 14px;
+  flex-shrink: 0;
+  background: transparent;
+  font-family: var(--ui-font-mono);
+  font-size: 10.5px;
+  color: var(--ui-fg-faint);
+}
+.pc-statusbar-right {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.pc-statusbar-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ui-success);
+}
+.pc-statusbar-dot.is-dirty {
+  background: var(--ui-warn);
+}
+
+/* 时间轴右键菜单:portal 在 body 上(见 ContextMenu.tsx),不在 [data-pc="timeline"] 里,颜色直接取皮肤变量。
+   z 要高过编辑台里所有面板,和左栏右键菜单(z-[900])同一档。 */
+.pc-tl-ctxmenu {
+  z-index: 900;
+  background: var(--ui-float, #262626);
+  border: 1px solid var(--ui-border-strong, #404040);
+  border-radius: var(--ui-radius-lg, 8px);
+  box-shadow: var(--ui-shadow, 0 12px 32px rgba(0, 0, 0, 0.45));
+  color: var(--ui-fg, #e5e5e5);
+}
+.pc-tl-ctxmenu-item:hover {
+  background: var(--ui-panel-2, #404040);
+}
+
+/* ── 镜头切换标记 ─────────────────────────────────────────────
+   画在片段内部、内容之上，但不吃鼠标事件：拖片段、改长度都要照常。 */
+.pc-shot-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 12;
+}
+
+.pc-shot-cut,
+.pc-shot-dissolve {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
+.pc-shot-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+}
+.pc-shot-line--end { right: 0; }
+
+/* 溶解是一段区间，底色标出渐变范围；硬切没有跨度，只有一条线 */
+.pc-shot-dissolve {
+  background: linear-gradient(
+    to right,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.28) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+}
+
+.pc-shot-thumb {
+  height: 22px;
+  width: auto;
+  display: block;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+}
+
+/* 溶解：两张叠着画，后一张半透明压在前一张上 */
+.pc-shot-stack {
+  position: absolute;
+  width: max-content;
+  left: 50%;
+  bottom: 2px;
+  transform: translateX(-50%);
+  display: block;
+}
+.pc-shot-thumb--over {
+  position: absolute;
+  left: 8px;
+  top: 4px;
+  opacity: 0.72;
+}
+
+/* 硬切的缩略图靠在竖线右侧（切换之后那一边），不居中 */
+.pc-shot-stack--cut {
+  left: 2px;
+  transform: none;
+}
+
+/* ── 预渲染绿条(AE 顶上那条)──────────────────────────────────
+   绿 = 拖过去立刻有画面;空白 = 要等它渲完(一张约 4 秒)。
+   段的算法在 src/editor/preview/bakeCoverage.ts,画法上宁可少画不能多画。 */
+
+/* 底槽:整条片子多长。比面板底色亮一点,好看出"还有多少没预渲染" */
+.pc-tl-renderbar-track {
+  background: var(--ui-panel-2);
+}
+/* 低帧率那一档:黄。拖过去有画面,但最多差 0.25 秒 */
+.pc-tl-renderbar-coarse {
+  background: var(--ui-warn);
+}
+/* 原始帧率那一档:绿。逐帧精确,盖在黄的上面 */
+.pc-tl-renderbar-done {
+  background: var(--ui-success);
+}
+/* 正在渲的那一刻:一道竖线。绿条一时不动时,它说明"没死,正卡在这儿" */
+.pc-tl-renderbar-now {
+  width: 2px;
+  background: var(--ui-warn);
+}
+
+.pc-audio-waveform { position: absolute; left: 0; bottom: 1px; width: 100%; height: 16px; opacity: .45; pointer-events: none; }
+
+.pc-clip-volume-dialog { margin: auto; width: min(360px, calc(100vw - 32px)); padding: 20px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-xl, 12px); background: var(--ui-bg-2); color: var(--ui-fg); box-shadow: 0 12px 48px #0008; font-size: 13px; }
+.pc-clip-volume-dialog::backdrop { background: #0008; }
+.pc-clip-volume-dialog h3 { margin: 0 0 8px; font-size: 16px; font-weight: 600; }
+.pc-clip-volume-dialog p { margin: 10px 0; color: var(--ui-fg-muted); font-size: 12px; }
+.pc-volume-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-volume-controls { display: flex; align-items: center; gap: 12px; margin: 20px 0; }
+.pc-volume-controls input[type=range] { flex: 1; min-width: 0; accent-color: var(--ui-accent); }
+.pc-volume-controls input[type=number] { width: 64px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-sm, 4px); padding: 4px; background: var(--ui-bg); color: var(--ui-fg); }
+.pc-volume-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.pc-volume-actions button { padding: 6px 10px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius, 6px); cursor: pointer; }
+.pc-volume-actions button[type=submit] { background: var(--ui-accent-grad); color: white; }
+.pc-volume-actions button:disabled { opacity: .4; cursor: default; }
+
+/* ── 叠加卡:片段里的那条带(editor/timeline/OverlayBand.tsx、overlays.ts)──────
+   挂在片段上的东西原来时间轴上一个字都不显示,只能到左栏检查器里翻。
+   取色全部跟着片段走:`--clip` 是轨道色、`--clip-ink` 是它的墨色(skins.css 的 .pc-clip)。 */
+
+/* 这一格每个片段都留着,没挂东西时透明 —— 只给挂了东西的片段留,同一行里的名字会一高一低 */
+.pc-ov-band {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  padding: 0 3px;
+  overflow: hidden;
+  background: color-mix(in oklab, var(--clip-ink) 20%, transparent);
+  box-shadow: inset 0 -1px 0 color-mix(in oklab, var(--clip-ink) 26%, transparent);
+}
+.pc-ov-band.is-empty {
+  background: transparent;
+  box-shadow: none;
+}
+.pc-ov-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 92px;
+  height: 13px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--clip) 78%, var(--ui-fg));
+  color: var(--clip-ink);
+  font-family: inherit;
+  font-size: 9.5px;
+  line-height: 13px;
+  cursor: pointer;
+}
+.pc-ov-chip:hover { background: color-mix(in oklab, var(--clip) 62%, var(--ui-fg)); }
+.pc-ov-chip:focus-visible { outline: 1.5px solid var(--clip-ink); outline-offset: 1px; }
+.pc-ov-chip .g { font-family: var(--ui-font-mono); opacity: 0.75; }
+.pc-ov-chip .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 带里摆不下的收成 +N:高度不随数量涨,点开挑 */
+.pc-ov-more,
+.pc-ov-pill {
+  flex: none;
+  height: 13px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--clip-ink) 30%, transparent);
+  color: var(--clip-ink);
+  font-family: var(--ui-font-mono);
+  font-size: 9.5px;
+  line-height: 13px;
+  cursor: pointer;
+}
+.pc-ov-more:hover,
+.pc-ov-pill:hover { background: color-mix(in oklab, var(--clip-ink) 46%, transparent); }
+.pc-ov-more:focus-visible,
+.pc-ov-pill:focus-visible { outline: 1.5px solid var(--clip-ink); outline-offset: 1px; }
+/* 小行高那一档没有带:+N 跟在名字后面靠右,和手机版同一个样子 */
+.pc-ov-pill { height: 14px; line-height: 14px; }
+/* 指着片段才出现,平时不占注意力 */
+.pc-ov-add {
+  flex: none;
+  margin-left: auto;
+  width: 13px;
+  height: 13px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--clip-ink);
+  font-family: var(--ui-font-mono);
+  font-size: 11px;
+  line-height: 13px;
+  opacity: 0;
+  cursor: pointer;
+}
+.pc-clip:hover .pc-ov-add,
+.pc-ov-add:focus-visible { opacity: 0.8; }
+.pc-ov-add:hover { background: color-mix(in oklab, var(--clip-ink) 26%, transparent); opacity: 1; }
+
+/* 名字和时长排同一行:分两行的话,中行高扣掉叠加带只剩 23px,标题会被切掉上半截 */
+.pc-clip-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  overflow: hidden;
+}
+.pc-clip-line {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+.pc-clip-line .nm { font-weight: 500; }
+.pc-clip-line .du { opacity: 0.7; }
+
+/* ── 右键菜单:菜单头与下一级 ────────────────────────────────────
+   菜单头是「我现在动的是哪一段 / 哪一张」的唯一凭据,底下就是复制和删除。
+   叠加卡那一侧填底(底色取那一段的轨道色),选错了一眼看得出来;普通片段的菜单不填底。 */
+.pc-tl-ctxhead {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  margin: 0 4px 4px;
+  padding: 4px 8px 6px;
+  border-bottom: 1px solid var(--ui-border);
+}
+.pc-tl-ctxhead b {
+  flex: none;
+  max-width: 60%;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ui-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pc-tl-ctxhead span {
+  min-width: 0;
+  font-size: 11px;
+  color: var(--ui-fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pc-tl-ctxhead.is-fill {
+  --hd: var(--ui-track-text);
+  padding: 5px 8px;
+  border-bottom: 0;
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--hd) 22%, var(--ui-float));
+  box-shadow: inset 2px 0 0 var(--hd);
+}
+.pc-tl-ctxhead.is-fill[data-track-kind="video"] { --hd: var(--ui-track-video); }
+.pc-tl-ctxhead.is-fill[data-track-kind="audio"] { --hd: var(--ui-track-audio); }
+.pc-tl-ctxhead.is-fill[data-track-kind="image"] { --hd: var(--ui-track-image); }
+.pc-tl-ctxhead.is-fill[data-track-kind="fx"] { --hd: var(--ui-track-fx); }
+.pc-tl-ctxhead.is-fill[data-track-kind="transition"] { --hd: var(--ui-track-transition); }
+.pc-tl-ctxhead.is-fill[data-track-kind="sticker"] { --hd: var(--ui-track-sticker); }
+
+.pc-tl-ctxmenu-item { display: flex; align-items: center; gap: 10px; }
+.pc-tl-ctxmenu-item .lb { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-tl-ctxmenu-item .hint {
+  flex: none;
+  font-family: var(--ui-font-mono);
+  font-size: 10.5px;
+  color: var(--ui-fg-muted);
+  white-space: nowrap;
+}
+.pc-tl-ctxmenu-item .chev { flex: none; font-family: var(--ui-font-mono); color: var(--ui-fg-muted); }
+.pc-tl-ctxmenu-item.has-sub:hover .chev { color: inherit; }
+.pc-tl-ctxmenu-item.is-danger { color: var(--ui-danger); }
+
+/* 停用的叠加卡:虚线 + 名字划掉。挂载和逐段参数都留着,只是这一段上不生效 ——
+   调不出想要的效果时先关掉比一比,不用摘掉再回左栏的库里找回来重填参数。 */
+.pc-ov-chip.is-off {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--clip-ink) 40%, transparent);
+  opacity: 0.6;
+}
+.pc-ov-chip.is-off:hover { background: color-mix(in oklab, var(--clip-ink) 12%, transparent); opacity: 0.85; }
+.pc-ov-chip.is-off .n { text-decoration: line-through; }
+.pc-tl-ctxmenu-item.is-dim { opacity: 0.6; }
+.pc-tl-ctxmenu-item.is-dim .lb { text-decoration: line-through; }

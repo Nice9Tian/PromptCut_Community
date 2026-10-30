@@ -1,0 +1,270 @@
+/**
+ * 来源: Magic UI 的全局样式 apps/www/styles/globals.css
+ *       (https://github.com/magicuidesign/magicui) — MIT License
+ *
+ * MagicUI 组件的动画靠 Tailwind 主题里的 --animate-* 变量生成 animate-* 工具类;那些变量在它们
+ * 自己的 globals.css 里,我们这边没有,直接搬过来的组件会「有 class 没动画」。
+ *
+ * 本地改动:
+ * - 不用 @theme(它只对 src/index.css 那一次编译生效,从这里 import 进来的 CSS 里写了也没用),
+ *   改成同名的普通 class:.animate-shiny-text { animation: ... }。类名和 MagicUI 一模一样,
+ *   组件源码一个字不用改。
+ * - 只搬 --animate-* 声明和它们引用的 @keyframes,别的主题变量不要。
+ * - 由 src/cards/magicui/index.ts 引入一次,全站可用。
+ */
+
+.animate-accordion-down { animation: accordion-down 0.2s ease-out; }
+.animate-accordion-up { animation: accordion-up 0.2s ease-out; }
+.animate-gradient { animation: gradient 8s linear infinite; }
+.animate-meteor { animation: meteor 5s linear infinite; }
+.animate-marquee { animation: marquee var(--duration) infinite linear; }
+.animate-marquee-vertical { animation: marquee-vertical var(--duration) linear infinite; }
+.animate-spin-around { animation: spin-around calc(var(--speed) * 2) infinite linear; }
+.animate-shiny-text { animation: shiny-text 8s infinite; }
+.animate-shimmer-slide { animation: shimmer-slide var(--speed) ease-in-out infinite alternate; }
+.animate-ripple { animation: ripple var(--duration, 2s) ease calc(var(--i, 0) * 0.2s) infinite; }
+.animate-rippling { animation: rippling var(--duration, 0.6s) ease-out; }
+.animate-line { animation: line 2s linear infinite; }
+.animate-orbit { animation: orbit calc(var(--duration) * 1s) linear infinite; }
+.animate-background-position-spin { animation: background-position-spin 3000ms infinite alternate; }
+.animate-shine { animation: shine var(--duration) infinite linear; }
+.animate-pulse { animation: pulse var(--duration) ease-out infinite; }
+.animate-pulse-ripple { animation: pulse-ripple var(--duration) cubic-bezier(0.16, 1, 0.3, 1) infinite; }
+.animate-rainbow { animation: rainbow var(--speed, 2s) infinite linear; }
+.animate-line-shadow { animation: line-shadow 15s linear infinite; }
+.animate-aurora { animation: aurora 8s ease-in-out infinite alternate; }
+.animate-ping { animation: ping 1s cubic-bezier(0, 0, 0.2, 1) infinite; }
+.animate-blink-cursor { animation: blink-cursor 1.2s step-end infinite; }
+
+@keyframes accordion-down {
+    from {
+      height: 0;
+    }
+    to {
+      height: var(--radix-accordion-content-height);
+    }
+  }
+
+@keyframes accordion-up {
+    from {
+      height: var(--radix-accordion-content-height);
+    }
+    to {
+      height: 0;
+    }
+  }
+
+@keyframes gradient {
+    to {
+      background-position: var(--bg-size, 300%) 0;
+    }
+  }
+
+@keyframes meteor {
+    0% {
+      transform: rotate(var(--angle)) translateX(0);
+      opacity: 1;
+    }
+    70% {
+      opacity: 1;
+    }
+    100% {
+      transform: rotate(var(--angle)) translateX(-500px);
+      opacity: 0;
+    }
+  }
+
+@keyframes marquee {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(calc(-100% - var(--gap)));
+    }
+  }
+
+@keyframes marquee-vertical {
+    from {
+      transform: translateY(0);
+    }
+    to {
+      transform: translateY(calc(-100% - var(--gap)));
+    }
+  }
+
+@keyframes spin-around {
+    0% {
+      transform: translateZ(0) rotate(0);
+    }
+    15%,
+    35% {
+      transform: translateZ(0) rotate(90deg);
+    }
+    65%,
+    85% {
+      transform: translateZ(0) rotate(270deg);
+    }
+    100% {
+      transform: translateZ(0) rotate(360deg);
+    }
+  }
+
+@keyframes shiny-text {
+    0%,
+    90%,
+    100% {
+      background-position: calc(-100% - var(--shiny-width)) 0;
+    }
+    30%,
+    60% {
+      background-position: calc(100% + var(--shiny-width)) 0;
+    }
+  }
+
+@keyframes shimmer-slide {
+    to {
+      transform: translate(calc(100cqw - 100%), 0);
+    }
+  }
+
+@keyframes ripple {
+    0%,
+    100% {
+      transform: translate(-50%, -50%) scale(1);
+    }
+    50% {
+      transform: translate(-50%, -50%) scale(0.9);
+    }
+  }
+
+@keyframes rippling {
+    0% {
+      opacity: 1;
+    }
+    100% {
+      transform: scale(2);
+      opacity: 0;
+    }
+  }
+
+@keyframes line {
+    0% {
+      mask-position-x: 0%;
+    }
+    100% {
+      mask-position-x: 100%;
+    }
+  }
+
+@keyframes orbit {
+    0% {
+      transform: rotate(calc(var(--angle) * 1deg))
+        translateY(calc(var(--radius) * 1px)) rotate(calc(var(--angle) * -1deg));
+    }
+    100% {
+      transform: rotate(calc(var(--angle) * 1deg + 360deg))
+        translateY(calc(var(--radius) * 1px))
+        rotate(calc((var(--angle) * -1deg) - 360deg));
+    }
+  }
+
+@keyframes background-position-spin {
+    0% {
+      background-position: top center;
+    }
+    100% {
+      background-position: bottom center;
+    }
+  }
+
+@keyframes shine {
+    0% {
+      background-position: 0% 0%;
+    }
+    50% {
+      background-position: 100% 100%;
+    }
+    to {
+      background-position: 0% 0%;
+    }
+  }
+
+@keyframes pulse {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 var(--pulse-color, oklch(from var(--bg) l c h / 0.5));
+    }
+    50% {
+      box-shadow: 0 0 0 var(--distance) var(--pulse-color, oklch(from var(--bg) l c h / 0.5));
+    }
+  }
+
+@keyframes pulse-ripple {
+    0% {
+      box-shadow: 0 0 0 0 oklch(from var(--pulse-color, var(--bg)) l c h / 1);
+    }
+    100% {
+      box-shadow: 0 0 0 var(--distance) oklch(from var(--pulse-color, var(--bg)) l c h / 0);
+    }
+  }
+
+@keyframes rainbow {
+    0% {
+      background-position: 0%;
+    }
+    100% {
+      background-position: 200%;
+    }
+  }
+
+@keyframes line-shadow {
+    0% {
+      background-position: 0 0;
+    }
+    100% {
+      background-position: 100% -100%;
+    }
+  }
+
+@keyframes aurora {
+    0% {
+      background-position: 0% 50%;
+      transform: rotate(-5deg) scale(0.9);
+    }
+    25% {
+      background-position: 50% 100%;
+      transform: rotate(5deg) scale(1.1);
+    }
+    50% {
+      background-position: 100% 50%;
+      transform: rotate(-3deg) scale(0.95);
+    }
+    75% {
+      background-position: 50% 0%;
+      transform: rotate(3deg) scale(1.05);
+    }
+    100% {
+      background-position: 0% 50%;
+      transform: rotate(-5deg) scale(0.9);
+    }
+  }
+
+@keyframes ping {
+    75%,
+    100% {
+      transform: scale(2);
+      opacity: 0;
+    }
+  }
+
+@keyframes blink-cursor {
+    0%,
+    49% {
+      opacity: 1;
+    }
+    50%,
+    100% {
+      opacity: 0;
+    }
+  }
+

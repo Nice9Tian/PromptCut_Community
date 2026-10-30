@@ -1,0 +1,81 @@
+/* 桌面 APP 会话在 AI 栏里的分组(DesktopSessionsStrip.tsx)。报告卡沿用 chat/agent.css 的 .ai-report */
+.pc-desktop-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--hairline, rgba(127, 127, 127, 0.2));
+  max-height: 45%;
+  overflow-y: auto;
+  flex: 0 0 auto;
+}
+
+.pc-desktop-group {
+  border: 1px solid var(--ui-border-strong, rgba(127, 127, 127, 0.3));
+  border-radius: var(--ui-radius, 6px);
+  background: var(--ui-panel-2, transparent);
+}
+.pc-desktop-group.is-busy {
+  border-color: var(--ui-accent);
+}
+
+.pc-desktop-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  color: var(--ui-fg);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.pc-desktop-vendor {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--ui-accent-soft);
+  color: var(--ui-fg);
+  font-weight: 600;
+}
+.pc-desktop-id {
+  flex: 0 0 auto;
+  color: var(--ui-fg-muted);
+}
+.pc-desktop-op {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ui-fg-muted);
+}
+.pc-desktop-group.is-busy .pc-desktop-op {
+  color: var(--ui-fg);
+}
+.pc-desktop-caret {
+  flex: 0 0 auto;
+  color: var(--ui-fg-muted);
+}
+
+.pc-desktop-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 8px 8px;
+}
+.pc-desktop-empty {
+  font-size: 12px;
+  color: var(--ui-fg-muted);
+}
+.pc-desktop-error {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--danger, #d33);
+  white-space: pre-wrap;
+  max-height: 6em;
+  overflow: hidden;
+}

@@ -1,0 +1,81 @@
+.cl-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgb(0 0 0 / 0.5);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.cl-dialog {
+  width: min(440px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: var(--bg-panel);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.45);
+  color: var(--ink);
+}
+
+.cl-head { display: flex; align-items: center; justify-content: space-between; }
+.cl-title { font-size: 14px; font-weight: 600; }
+.cl-x {
+  width: 24px; height: 24px; border-radius: 6px;
+  border: 1px solid transparent; background: transparent; color: var(--ink-muted);
+  font-size: 16px; line-height: 1; cursor: pointer;
+}
+.cl-x:hover { border-color: var(--hairline); color: var(--ink); }
+
+.cl-hint { font-size: 12px; color: var(--ink-muted); line-height: 1.6; }
+.cl-hint b { color: var(--ink); font-weight: 600; }
+
+.cl-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--hairline); }
+.cl-tabs button {
+  padding: 6px 10px; font-size: 12px; color: var(--ink-muted);
+  background: transparent; border: none; border-bottom: 2px solid transparent; cursor: pointer;
+}
+.cl-tabs button.is-active { color: var(--ink); border-bottom-color: var(--accent); }
+
+.cl-qr { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 6px 0; }
+.cl-qr-box {
+  position: relative; width: 220px; height: 220px; border-radius: 8px; overflow: hidden;
+  background: #fff; display: grid; place-items: center;
+}
+.cl-qr-box img { width: 220px; height: 220px; display: block; }
+.cl-qr-box.is-dim img { opacity: 0.15; }
+.cl-qr-ph { color: #999; font-size: 24px; }
+.cl-qr-retry { position: absolute; }
+
+.cl-status { font-size: 12px; color: var(--ink-muted); text-align: center; line-height: 1.6; }
+.cl-status.is-scanned { color: var(--ink); }
+.cl-status.is-ok { color: var(--ok, #6c6); }
+.cl-status.is-expired, .cl-status.is-error { color: var(--danger, #e66); }
+.cl-sub { color: var(--ink-faint); font-size: 11px; }
+
+.cl-browser { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 6px 0; }
+
+/* 桌面壳模式:站点登录页(子 webview)摆在这块空上;登录页要宽一点才好用,框跟着放大 */
+.cl-shell-hole { width: 100%; height: 560px; background: #fff; border-radius: 6px; }
+.cl-dialog:has(.cl-shell-hole) { width: min(960px, 100%); }
+
+.cl-done { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
+.cl-check {
+  width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center;
+  background: rgb(80 200 120 / 0.15); color: var(--ok, #6c6); font-size: 18px; flex: none;
+}
+.cl-done-line { font-size: 13px; font-weight: 600; }
+.cl-done-sub { font-size: 12px; color: var(--ink-muted); }
+.cl-done .cl-btn { margin-left: auto; }
+
+.cl-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.cl-btn {
+  padding: 6px 12px; font-size: 12px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--hairline-strong); background: var(--bg-canvas); color: var(--ink);
+}
+.cl-btn:hover { border-color: var(--ink-muted); }
+.cl-btn:disabled { opacity: 0.5; cursor: default; }
+.cl-btn.is-primary { background: var(--accent); border-color: var(--accent); color: var(--bg-canvas, #111); font-weight: 600; }

@@ -1,0 +1,11 @@
+export type CreativityLevel = 'low' | 'medium' | 'high';
+export const CREATIVITY_LEVELS: readonly CreativityLevel[];
+export const DEFAULT_CREATIVITY: CreativityLevel;
+export const CREATIVITY_LABEL: Readonly<Record<CreativityLevel, string>>;
+export const CREATIVITY_SHORT: Readonly<Record<CreativityLevel, string>>;
+export const CREATIVITY_HINT: Readonly<Record<CreativityLevel, string>>;
+export function normalizeCreativity(value: unknown): CreativityLevel | null;
+export function projectCreativity(project: { creativity?: unknown } | null | undefined): CreativityLevel;
+export function effectiveCreativity(override: unknown, projectLevel: unknown): CreativityLevel;
+export function creativityRank(level: unknown): number;
+export function creativityAllows(current: unknown, required: unknown): boolean;

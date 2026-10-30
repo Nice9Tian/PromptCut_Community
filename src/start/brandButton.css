@@ -1,0 +1,108 @@
+/*
+ * 「流光」主按钮：官网首页那颗「打开网页版 / Open on Web」的样子，存成一份固定的样式。
+ *
+ * 出处：VisuHive 仓库 `site/assets/home.css` 的 `.btn` / `.btn-brand`
+ *（用户 2026-10-23：「把官网这个按钮保存成固定样式，替换手机版和桌面版登录界面的那个『登录』按钮。」）
+ *
+ * 三件事合起来才是那颗按钮：
+ *   1. 品牌渐变在按钮里**缓缓流动** —— 渐变首尾同色、横向铺两倍宽，挪一整幅正好接得上，7 秒一轮；
+ *   2. 每隔几秒有一道**高光斜着扫过**，光带垫在文字下面（按钮自成层叠上下文，光带 z-index −1）；
+ *   3. 顶上一条很淡的**内描边**，让它看着是凸的。
+ *
+ * **颜色是写死的**，不跟皮肤走 —— 用户要的就是「固定样式」。取的是官网深色那组：
+ * `--accent` #00dbdb、`--accent-2` #6f69fb、`--accent-fg` #111016。
+ * 代价：换皮肤（`src/skins/` 十套）时这颗键不跟着变，仍是青→紫。要它跟着变，
+ * 把下面的 #00dbdb / #6f69fb / #111016 换回 `var(--ui-accent)` 一类即可。
+ *
+ * **几何尺寸不照搬官网那颗**（46px 高、8px 圆角、15.5px 字）：登录表单里的按钮要和输入框那一套
+ * 对齐（9px 圆角、13px 字、10px 14px 内边距），所以这里只换「长相」，大小仍由各自的登录样式定。
+ *
+ * 用法：给元素加 `.ps-brand-btn`；两个登录页的那颗键已经在下面的选择器里点名了，不用改标记。
+ */
+
+.ps-brand-btn,
+.ps-login .ps-login-form .ps-primary-btn,
+.pcm .ps-m-login-form .btn.primary {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  background: linear-gradient(90deg, #00dbdb, #6f69fb 50%, #00dbdb) 0 0 / 200% 100%;
+  color: #111016;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.28);
+  animation: ps-brand-flow 7s linear infinite;
+  transition: transform 0.18s cubic-bezier(0.2, 0.7, 0.2, 1), box-shadow 0.18s, filter 0.18s;
+}
+
+/* 斜着扫过去的那道高光 */
+.ps-brand-btn::after,
+.ps-login .ps-login-form .ps-primary-btn::after,
+.pcm .ps-m-login-form .btn.primary::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  left: 0;
+  z-index: -1;
+  width: 42%;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.5), transparent);
+  transform: translateX(-140%) skewX(-20deg);
+  animation: ps-brand-sheen 3.8s cubic-bezier(0.2, 0.7, 0.2, 1) infinite;
+}
+
+.ps-brand-btn:hover:not(:disabled),
+.ps-login .ps-login-form .ps-primary-btn:hover:not(:disabled),
+.pcm .ps-m-login-form .btn.primary:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.28), 0 10px 24px -14px #6f69fb;
+  animation-duration: 3.5s;
+  filter: none;
+}
+
+/*
+ * 按不动的时候：停掉流动和扫光（那是「可以点」的信号，灰着还在动会让人以为在加载），
+ * 并且**换成平的一块**，不是把渐变调半透明。
+ *
+ * 原来沿用的是各自登录样式里的 `:disabled { opacity: .5 }`。那一条配纯色按钮没问题，
+ * 配这个渐变就成了一块「颜色还在、整体发虚」的东西，看着像没加载好、或者像透明度被调错了
+ * （用户 2026-10-23 看到的就是这个：「感觉透明度只有 60% 的样子」）。
+ * 改成不透明的灰底 + 淡字：一眼就是「还不能点」，填完账号密码再亮起来。
+ */
+.ps-brand-btn:disabled,
+.ps-login .ps-login-form .ps-primary-btn:disabled,
+.pcm .ps-m-login-form .btn.primary:disabled {
+  opacity: 1;
+  background: var(--fill-subtle);
+  color: var(--ink-faint);
+  box-shadow: none;
+  animation-play-state: paused;
+}
+.ps-brand-btn:disabled::after,
+.ps-login .ps-login-form .ps-primary-btn:disabled::after,
+.pcm .ps-m-login-form .btn.primary:disabled::after {
+  animation-play-state: paused;
+  opacity: 0;
+}
+
+@keyframes ps-brand-flow {
+  to { background-position: -200% 0; }
+}
+
+@keyframes ps-brand-sheen {
+  0%, 58% { transform: translateX(-140%) skewX(-20deg); }
+  100% { transform: translateX(340%) skewX(-20deg); }
+}
+
+/* 要求减少动效时停在静止的渐变上（左半幅正好是青→紫，就是官网那颗静止时的样子） */
+@media (prefers-reduced-motion: reduce) {
+  .ps-brand-btn,
+  .ps-brand-btn::after,
+  .ps-login .ps-login-form .ps-primary-btn,
+  .ps-login .ps-login-form .ps-primary-btn::after,
+  .pcm .ps-m-login-form .btn.primary,
+  .pcm .ps-m-login-form .btn.primary::after {
+    animation: none;
+  }
+  .ps-brand-btn::after,
+  .ps-login .ps-login-form .ps-primary-btn::after,
+  .pcm .ps-m-login-form .btn.primary::after { opacity: 0; }
+}

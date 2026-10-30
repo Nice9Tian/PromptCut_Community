@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-is-proc-locked"
+description = "Enables the is_proc_locked command without any pre-configured scope."
+commands.allow = ["is_proc_locked"]
+
+[[permission]]
+identifier = "deny-is-proc-locked"
+description = "Denies the is_proc_locked command without any pre-configured scope."
+commands.deny = ["is_proc_locked"]

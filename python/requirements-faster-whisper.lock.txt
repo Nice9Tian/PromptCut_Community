@@ -1,0 +1,30 @@
+# faster-whisper 的锁定依赖（云端 Agent 的 stt_install 受控安装作业只认这类文件，不认模型给的任何包名或参数）。
+#
+# 版本取自 2026-10-13 在开发机上装好并转写通过的那一组（requirements-faster-whisper.txt 解出来的整棵树），
+# 不含 yt_dlp（素材采集用，转写不需要）。
+# 这份没有哈希：部署者在目标节点（Linux）上用 `pip-compile --generate-hashes` 重新解一份、
+# 通过节点配置里的 runtime.requirements[引擎名] 指过去，pip 看到哈希会自动开启 --require-hashes。
+anyio==4.15.1
+av==18.1.0
+certifi==2026.7.22
+click==8.5.0
+colorama==0.4.6 ; sys_platform == "win32"
+ctranslate2==4.8.2
+faster_whisper==1.2.1
+filelock==3.32.5
+flatbuffers==25.12.19
+fsspec==2026.7.0
+h11==0.16.0
+hf_xet==1.6.0
+httpcore==1.0.9
+httpx==0.28.1
+huggingface_hub==1.30.0
+idna==3.19
+numpy==2.4.6
+onnxruntime==1.29.0
+packaging==26.3
+protobuf==7.36.1
+pyyaml==6.0.3
+tokenizers==0.23.2
+tqdm==4.70.0
+typing_extensions==4.16.0

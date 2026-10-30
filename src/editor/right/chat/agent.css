@@ -1,0 +1,1247 @@
+/*
+ * 思考块。按配色规范「全屏只留一个实心强调色」(导出按钮),这里绝不能用
+ * --accent 做背景,否则又是两个强调色打架。思考是过程不是结论,所以比助手
+ * 气泡再退一档:L1 底 + 虚线描边 + 弱化文字,一眼看出它不是回复本身。
+ */
+.ai-thinking {
+  background: var(--ui-bg-2);
+  border: 1px dashed var(--hairline);
+  border-radius: 3px;
+  padding: 10px;
+  color: var(--ink-faint);
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.ai-thinking-head {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--ink-faint);
+  opacity: 0.75;
+  margin-bottom: 4px;
+}
+
+.ai-tool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--hairline);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--ink-muted);
+  cursor: pointer;
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ai-tool-chip.ok {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.ai-tool-chip.err {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.ai-tool-chip.info {
+  cursor: default;
+}
+.ai-tool-name {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.ai-tool-caret {
+  margin-left: auto;
+  padding-left: 6px;
+  opacity: 0.6;
+}
+.ai-tool-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.ai-tool-detail {
+  padding-left: 8px;
+  border-left: 2px solid var(--hairline);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* 末尾那一块(结果 / 文件 / 原始数据里最后一段)的下外边距清掉:它可能正好是气泡里最后一样东西 */
+.ai-tool-detail > :last-child,
+.ai-tool-raw > :last-child {
+  margin-bottom: 0;
+}
+.ai-tool-label {
+  font-size: 10px;
+  color: var(--ink-faint);
+}
+.ai-tool-pre {
+  overflow-x: auto;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  background: var(--bg-canvas);
+  padding: 6px;
+  margin: 0 0 4px;
+  border-radius: 4px;
+}
+.ai-tool-pre.wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ai-tool-files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.ai-tool-file {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+/* ── 工具结果的可视化(ToolVisual.tsx):看图的位图、改卡的参数差异、前后两段动图 ── */
+.ai-visual { display: flex; flex-direction: column; gap: 10px; }
+.ai-visual-note { font-size: 12px; color: var(--ink-muted); }
+.ai-visual-images { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.ai-visual-images figure,
+.ai-visual-gif { margin: 0; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ai-visual-images img { width: 100%; height: auto; display: block; border-radius: 6px; border: 1px solid var(--hairline); background: var(--fill-subtle); }
+.ai-visual-images figcaption,
+.ai-visual-gif figcaption { font-size: 11px; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+.ai-visual-diff { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+.ai-visual-diff li { display: grid; grid-template-columns: minmax(80px, max-content) minmax(0, 1fr) auto minmax(0, 1fr); gap: 6px; align-items: baseline; }
+.ai-visual-diff .k { font-family: var(--font-mono); color: var(--ink-muted); }
+.ai-visual-diff .from { color: var(--ink-faint); text-decoration: line-through; text-decoration-color: var(--hairline); overflow-wrap: anywhere; }
+.ai-visual-diff .arrow { color: var(--ink-faint); }
+.ai-visual-diff .to { color: var(--ink); overflow-wrap: anywhere; }
+.ai-visual-gifs { display: flex; align-items: center; gap: 8px; }
+.ai-visual-gifs .ai-visual-gif { flex: 1 1 0; }
+.ai-visual-arrow { flex: none; color: var(--ink-muted); font-size: 16px; }
+.ai-visual-gif .box { position: relative; aspect-ratio: 16 / 9; border-radius: 6px; border: 1px solid var(--hairline); background: var(--fill-subtle); overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.ai-visual-gif .box img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.ai-visual-gif.is-loading .box img { position: absolute; inset: 0; opacity: 0; }
+.ai-visual-gif .box button { font-size: 12px; background: none; border: 1px solid var(--hairline); border-radius: 4px; color: var(--ink); padding: 4px 8px; cursor: pointer; }
+.ai-tool-raw { margin-top: 4px; }
+.ai-tool-raw > summary { font-size: 11px; color: var(--ink-faint); cursor: pointer; }
+
+.ai-tool-img {
+  max-width: 100%;
+  border-radius: 4px;
+  display: block;
+}
+
+/* ── 简洁模式:做过的操作折成一行 ───────────────────────── */
+
+/* ── 执行中动画 ─────────────────────────────────────── */
+/* 「正在做什么」+ 轮次小字这一块:两行之间 2px;和气泡里别的块之间仍是气泡的 gap */
+.ai-activity-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+/*
+ * 单行居中:行高取整数 17px,11px 的转圈图标上下各 3px、3px 的跳点上下各 7px,都落在整像素上,
+ * 和文字行盒的中线对齐。不带外边距,只有这一行的气泡四边留白才一样。
+ */
+.ai-activity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 17px;
+  color: var(--ink-muted);
+}
+.ai-activity-text {
+  overflow-wrap: anywhere;
+}
+/* 轮次和成败,比正在做什么次要一档,所以缩进对齐在转圈图标之后(11px 图标 + 6px 间距) */
+.ai-activity-meta {
+  margin: 0 0 0 17px;
+  font-size: 11px;
+  color: var(--ink-muted);
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
+}
+.ai-spinner {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 auto;
+  border: 1.5px solid var(--hairline);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  display: inline-block;
+  animation: ai-spin 0.7s linear infinite;
+}
+@keyframes ai-spin {
+  to { transform: rotate(360deg); }
+}
+.ai-activity-dots {
+  display: inline-flex;
+  gap: 3px;
+}
+.ai-activity-dots i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.35;
+  animation: ai-dot 1.2s ease-in-out infinite;
+}
+.ai-activity-dots i:nth-child(2) { animation-delay: 0.15s; }
+.ai-activity-dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes ai-dot {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-2px); }
+}
+
+/* 系统设了「减少动态效果」就不要转圈跳点 */
+@media (prefers-reduced-motion: reduce) {
+  .ai-spinner { animation: none; border-top-color: var(--accent); }
+  .ai-activity-dots i { animation: none; opacity: 0.6; }
+}
+
+/* ── 简洁模式:一排图标代表刚做过的几件事 ──────────────
+   相邻的同类操作叠进一个图标(最多 5 个,见 iconRuns.ts),颜色区分动作类型,新的会弹出来 ——
+   用户看得见条目在变多,不会以为卡住了。点一下让气泡里的操作详细预览控件跳到它那一项(不在这里摊开清单)。
+   图标边长用 small_cube(--pc-cube-s),和素材库的方块同一个尺度。 */
+.ai-ops-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.ai-ops {
+  display: flex;
+  flex-wrap: wrap;
+  /* 10px 而不是方块间距的 8px:hover / 聚焦时要放大、发光,挨太近会压到邻居 */
+  gap: 10px;
+  padding: 2px;
+  align-items: center;
+}
+.ai-op {
+  position: relative;
+  flex: 0 0 auto;
+  width: var(--pc-cube-s, 64px);
+  height: var(--pc-cube-s, 64px);
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-lg, 8px);
+  cursor: pointer;
+  background-color: var(--chip, var(--ui-fg-faint, #6b6a75));
+  /* 中央一枚白色字形(见下面按动作类型给的 --chip-icon),颜色和字形各说一遍,色觉障碍也认得出 */
+  background-image: var(--chip-icon, none);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 28px 28px;
+  transition: transform 160ms ease, box-shadow 160ms ease;
+  /* 新图标挂载时弹一下。历史消息一次性铺开时也只弹这一次,不循环。
+     动的是独立的 scale 属性而不是 transform:动画填充住的 transform 会一直压着 hover / 聚焦时的放大 */
+  animation: ai-op-pop 260ms cubic-bezier(0.16, 1, 0.5, 1) both;
+}
+.ai-op:hover {
+  transform: scale(1.06);
+}
+.ai-op:focus-visible {
+  outline: 2px solid var(--ui-accent, #00DBDB);
+  outline-offset: 2px;
+}
+/*
+ * 操作详细预览控件当前显示的那一项:
+ *   用户在这个气泡里点过图标 / 翻过页 → is-selected:强调色描边 + 略放大;
+ *   还没点过、消息在跑(自动跟踪最新)→ is-focus:只发光。
+ */
+.ai-op.is-focus {
+  box-shadow: 0 0 16px var(--ui-accent-soft, rgba(0, 219, 219, 0.35));
+}
+.ai-op.is-selected {
+  transform: scale(1.06);
+  box-shadow: 0 0 0 2px var(--ui-accent, #00DBDB), 0 0 12px var(--ui-accent-soft, rgba(0, 219, 219, 0.35));
+}
+/*
+ * 小结图标:外面一张折了角的文档,里面画 ✓ 或 !。和操作失败的「红底一个大 !」分得开 ——
+ * 绿底文档 ✓ = 没问题,黄底文档 ! = 报了问题,红底文档 ! = 这一轮出错收尾
+ */
+.ai-op--summary.tone-ok { --chip: var(--ui-success, #4f9e5c); --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2014%2014'%20fill%3D'none'%20stroke%3D'%23fff'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20stroke-width%3D'1.4'%20d%3D'M2.1%201h6.7l3.1%203.1V13H2.1z'%2F%3E%3Cpath%20stroke-width%3D'1.4'%20d%3D'M8.8%201v3.1h3.1'%2F%3E%3Cpath%20stroke-width%3D'1.5'%20d%3D'M4.7%208.4l1.6%201.6%203.1-3.4'%2F%3E%3C%2Fsvg%3E"); }
+.ai-op--summary.tone-warn,
+.ai-op--summary.tone-err { --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2014%2014'%20fill%3D'none'%20stroke%3D'%23fff'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20stroke-width%3D'1.4'%20d%3D'M2.1%201h6.7l3.1%203.1V13H2.1z'%2F%3E%3Cpath%20stroke-width%3D'1.4'%20d%3D'M8.8%201v3.1h3.1'%2F%3E%3Cpath%20stroke-width%3D'1.5'%20d%3D'M7%205.6v3.1'%2F%3E%3Ccircle%20cx%3D'7'%20cy%3D'10.6'%20r%3D'.8'%20fill%3D'%23fff'%20stroke%3D'none'%2F%3E%3C%2Fsvg%3E"); }
+/*
+ * 文档字形画在 14 格里(别的图标是 12 格),上下才放得下;背景取 32px —— 偶数,(64 − 32) / 2 落在整像素上,
+ * 不会被浏览器把位置吸附到半像素而偏到一边。比例尺比别的图标略小一点(32/14 对 28/12),
+ * 所以文档画宽一点(2.1 ~ 11.8+ 描边,关于中线对称),量出来和「查看」的眼睛一样宽
+ */
+.ai-op--summary {
+  background-size: 32px 32px;
+}
+.ai-op.ai-op--summary.ai-opcard-chip {
+  background-size: 14px 14px;
+}
+.ai-op--summary.tone-warn { --chip: var(--ui-warn, #e0a13a); }
+.ai-op--summary.tone-err { --chip: var(--ui-danger, #e2564d); }
+/* 叠了 2 个以上:右下角一个 ×n */
+.ai-op-count {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  min-width: 18px;
+  box-sizing: border-box;
+  padding: 0 4px;
+  border-radius: var(--ui-radius-sm, 4px);
+  background: rgb(0 0 0 / 0.5);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+/* 装引擎的进度条占整行,不挤在图标中间 */
+.ai-ops-install {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+/*
+ * 动作类型 —— 读取最暗(深灰底 + 放大镜),它们数量最多但最不值得注意。
+ * 颜色的分工:红色只留给「失败」。删除是灰底垃圾桶,不用红 —— 以前删除和失败都是红的,
+ * 用户扫一眼分不出「删了东西」和「出错了」。修改用黄绿而不是黄:黄在用户眼里是警告。
+ */
+.ai-op--add { --chip: var(--ui-success, #4ade80); --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2012%2012'%20fill%3D'none'%20stroke%3D'%23fff'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M6%202.5v7M2.5%206h7'%2F%3E%3C%2Fsvg%3E"); }
+.ai-op--remove { --chip: #6b7280; --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2012%2012'%20fill%3D'none'%20stroke%3D'%23fff'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M2%203.5h8M4.8%203.5V2.3h2.4v1.2M3.2%203.5l.5%206h4.6l.5-6M5.2%205.5v2.5M6.8%205.5v2.5'%2F%3E%3C%2Fsvg%3E"); }
+.ai-op--edit { --chip: #a3c22a; --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2012%2012'%20fill%3D'none'%20stroke%3D'%23fff'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M2.5%209.5l.6-2.4%205-5%201.8%201.8-5%205zM7.3%202.9l1.8%201.8'%2F%3E%3C%2Fsvg%3E"); }
+/* 下载:和「处理」同色(都是要等的活儿),白色下箭头 + 托盘把它认出来 —— 光靠蓝方块看不出在下东西 */
+.ai-op--download { --chip: var(--ui-accent, #60a5fa); --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2012%2012'%20fill%3D'none'%20stroke%3D'%23fff'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M6%202.1v5.3M3.7%205.9L6%208.2l2.3-2.3M2.9%2010h6.2'%2F%3E%3C%2Fsvg%3E"); }
+/*
+ * 处理(转写、追踪、检测、预渲染、自动流程这类要跑一阵的):深黄底 + 一圈白点。
+ * 先算出 10 个圆心,从正上方顺时针排(起点 -> 末尾),末尾 4 个透明度 0.8 / 0.6 / 0.4 / 0.2 递减,
+ * 看着像转圈的加载,一眼知道是在跑的活儿。和「修改」的黄绿分得开:这边偏橙
+ */
+.ai-op--job { --chip: #b8860b; --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2012%2012'%20fill%3D'%23fff'%3E%3Ccircle%20cx%3D'6'%20cy%3D'2.1'%20r%3D'0.95'%2F%3E%3Ccircle%20cx%3D'8.29'%20cy%3D'2.84'%20r%3D'0.95'%2F%3E%3Ccircle%20cx%3D'9.71'%20cy%3D'4.79'%20r%3D'0.95'%2F%3E%3Ccircle%20cx%3D'9.71'%20cy%3D'7.21'%20r%3D'0.95'%2F%3E%3Ccircle%20cx%3D'8.29'%20cy%3D'9.16'%20r%3D'0.95'%2F%3E%3Ccircle%20cx%3D'6'%20cy%3D'9.9'%20r%3D'0.95'%2F%3E%3Ccircle%20cx%3D'3.71'%20cy%3D'9.16'%20r%3D'0.95'%20fill-opacity%3D'0.8'%2F%3E%3Ccircle%20cx%3D'2.29'%20cy%3D'7.21'%20r%3D'0.95'%20fill-opacity%3D'0.6'%2F%3E%3Ccircle%20cx%3D'2.29'%20cy%3D'4.79'%20r%3D'0.95'%20fill-opacity%3D'0.4'%2F%3E%3Ccircle%20cx%3D'3.71'%20cy%3D'2.84'%20r%3D'0.95'%20fill-opacity%3D'0.2'%2F%3E%3C%2Fsvg%3E"); }
+/* 多 Agent(declare_scope、send_message、check_messages、list_agents):深紫底 + 白色聊天气泡 */
+.ai-op--agent { --chip: #5b2aa8; --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2012%2012'%20fill%3D'none'%20stroke%3D'%23fff'%20stroke-width%3D'1.4'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M3.4%202.3h5.2a1.9%201.9%200%200%201%201.9%201.9v2.9a1.9%201.9%200%200%201-1.9%201.9H5.6L3.2%2010.4V9A1.9%201.9%200%200%201%201.5%207.1V4.2a1.9%201.9%200%200%201%201.9-1.9z'%2F%3E%3C%2Fsvg%3E"); }
+/* 界面操作(play、pause、seek、switch_*):只动编辑台界面、不改项目。比「查看」再深一档的蓝 + 白色点击的手 */
+.ai-op--ui { --chip: #23489c; --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'%23fff'%20stroke-width%3D'2.3'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M9%2012.5V4.6a1.6%201.6%200%200%201%203.2%200V11'%2F%3E%3Cpath%20d%3D'M12.2%2010.6a1.6%201.6%200%200%201%203.2%200V12'%2F%3E%3Cpath%20d%3D'M15.4%2011.2a1.6%201.6%200%200%201%203.2%200v1.3'%2F%3E%3Cpath%20d%3D'M18.6%2012.2a1.6%201.6%200%200%201%203.2%200v3.3a6.5%206.5%200%200%201-6.5%206.5h-1.6a6%206%200%200%201-4.9-2.6l-4-5.7a1.7%201.7%200%200%201%202.6-2.2L9%2013.2'%2F%3E%3C%2Fsvg%3E"); }
+/* 查看画面(see_frames、view_*):比「处理」深一档的蓝 + 白色眼睛,和翻数据的放大镜分开 */
+.ai-op--look { --chip: #2b5fc7; --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2012%2012'%20fill%3D'none'%20stroke%3D'%23fff'%20stroke-width%3D'1.4'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M1.2%206C2.6%203.5%204.2%202.7%206%202.7s3.4.8%204.8%203.3C9.4%208.5%207.8%209.3%206%209.3S2.6%208.5%201.2%206z'%2F%3E%3Ccircle%20cx%3D'6'%20cy%3D'6'%20r%3D'1.5'%20fill%3D'%23fff'%20stroke%3D'none'%2F%3E%3C%2Fsvg%3E"); }
+/*
+ * 等待:没在干活,灰蓝底 + 白色 Zzz。先定两端 —— 左下大 Z(边长 2.4、笔画 1.1)、右上小 Z(1.8、0.95),
+ * 关于方块中心对称;中间那个取两者插值(中心、边长、笔画都取中点),正好落在正中。拐角圆角 r = 边长/4。
+ */
+.ai-op--wait { --chip: #475569; --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2012%2012'%20fill%3D'none'%20stroke%3D'%23fff'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20stroke-width%3D'1.1'%20d%3D'M1.25%208.35H3.05Q3.65%208.35%203.23%208.77L1.67%2010.33Q1.25%2010.75%201.85%2010.75H3.65'%2F%3E%3Cpath%20stroke-width%3D'1.02'%20d%3D'M4.95%204.95H6.53Q7.05%204.95%206.68%205.32L5.32%206.68Q4.95%207.05%205.48%207.05H7.05'%2F%3E%3Cpath%20stroke-width%3D'0.95'%20d%3D'M8.65%201.55H10Q10.45%201.55%2010.13%201.87L8.97%203.03Q8.65%203.35%209.1%203.35H10.45'%2F%3E%3C%2Fsvg%3E"); }
+.ai-op--read {
+  /* 深灰:比别的动作暗一档(读取最不值得注意),但比面板亮,不至于看成空位 */
+  --chip: #3c4552;
+  --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2012%2012'%20fill%3D'none'%20stroke%3D'%23fff'%20stroke-width%3D'1.5'%20stroke-linecap%3D'round'%3E%3Ccircle%20cx%3D'5.2'%20cy%3D'5.2'%20r%3D'2.8'%2F%3E%3Cpath%20d%3D'M7.3%207.3l2.4%202.4'%2F%3E%3C%2Fsvg%3E");
+}
+
+/* 还没出结果:轻轻呼吸,和「已经做完」区分开 */
+.ai-op.is-run {
+  animation: ai-op-pop 260ms cubic-bezier(0.16, 1, 0.5, 1) both,
+    ai-op-breathe 1.1s ease-in-out 260ms infinite;
+}
+/* 失败:红色方块 + 白色叹号,盖过动作类型的颜色和图标 —— 出错比「做的是哪类动作」更要紧 */
+.ai-op.is-err {
+  --chip: var(--ui-danger, #f87171);
+  --chip-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2012%2012'%20fill%3D'none'%20stroke%3D'%23fff'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M6%202.6v4.2'%2F%3E%3Ccircle%20cx%3D'6'%20cy%3D'9.2'%20r%3D'.9'%20fill%3D'%23fff'%20stroke%3D'none'%2F%3E%3C%2Fsvg%3E");
+  border-color: transparent;
+}
+
+@keyframes ai-op-pop {
+  from { opacity: 0; scale: 0.3; }
+  70% { scale: 1.12; }
+  to { opacity: 1; scale: 1; }
+}
+@keyframes ai-op-breathe {
+  50% { opacity: 0.45; }
+}
+
+/* 动效敏感的人只要状态,不要跳动 */
+@media (prefers-reduced-motion: reduce) {
+  .ai-op,
+  .ai-op.is-run {
+    animation: none;
+    transition: none;
+  }
+  .ai-op:hover,
+  .ai-op.is-selected {
+    transform: none;
+  }
+}
+
+/*
+ * 思考里的步骤条。
+ *
+ * 这些「**Clarifying article link and scope**」是模型报的进度,不是给人读的推理。
+ * 原样铺成文字会把正文顶开、把阅读切断,所以压成一行行的小字,和 .ai-thinking 一样
+ * 退到 ink-faint 那一档 —— 存在感低于回复本身,但一眼能看到走到哪一步了。
+ *
+ * 只有最后一条、且消息还没结束时才动(is-live)。已经过去的步骤是静止的小圆点,
+ * 满屏都在呼吸的话反而看不出哪一步是当下。
+ */
+/* 详细模式里的一段思考:步骤条 +(打开「显示思考」时)原文块,两者之间 6px,外面不带外边距 */
+.ai-thinking-part {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.ai-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ai-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--ink-faint);
+  min-width: 0;
+}
+.ai-step-dot {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.45;
+}
+.ai-step-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.ai-step.is-live .ai-step-dot {
+  opacity: 1;
+  animation: ai-step-breathe 1.4s ease-in-out infinite;
+}
+.ai-step.is-live .ai-step-label {
+  color: var(--ink-soft, var(--ink-faint));
+}
+@keyframes ai-step-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.45; }
+  50% { transform: scale(1.6); opacity: 1; }
+}
+/* 跟随系统「减少动态效果」:呼吸只是提示,不该硬塞给对动画敏感的人 */
+@media (prefers-reduced-motion: reduce) {
+  .ai-step.is-live .ai-step-dot { animation: none; opacity: 1; }
+}
+
+/* ── 操作清单里的一行:名称、成败、耗时、结果摘要 ── */
+.ai-tool-chip.has-meta {
+  display: flex;
+  width: 100%;
+  box-sizing: border-box;
+  gap: 6px;
+}
+.ai-tool-chip.has-meta .ai-tool-name {
+  flex: none;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-tool-dur {
+  flex: none;
+  color: var(--ui-fg-faint, var(--ink-faint));
+  font-variant-numeric: tabular-nums;
+}
+.ai-tool-sum {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ui-fg-faint, var(--ink-faint));
+}
+
+/*
+ * 报告卡(report_progress 交上来的三组条目)。
+ * 文字回复默认不显示之后,这就是用户读到的「结论」:阶段卡紧凑、退一档;
+ * 本轮小结多一圈半透明强调色描边 —— 醒目一点,但不用实心强调色(全屏只留导出按钮那一个)。
+ */
+.ai-report {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  /* 四边内边距一样;和气泡里前后块的间距交给气泡的 gap,自己不带外边距 */
+  padding: 10px;
+  border-radius: var(--ui-radius-lg, 8px);
+  background: var(--ui-panel, rgb(255 255 255 / 0.04));
+  border: 1px solid var(--ui-border, var(--hairline));
+  font-size: 12px;
+  line-height: 1.55;
+  min-width: 0;
+}
+.ai-report.is-final {
+  padding: 12px;
+  border-color: var(--ui-accent-soft, rgba(0, 219, 219, 0.45));
+}
+/* 在等用户回话:球在他那边,所以换成提醒色,和「做完了」的强调色分开 */
+.ai-report.is-blocked {
+  border-color: var(--ui-warn, #e0a13a);
+  box-shadow: inset 2px 0 0 var(--ui-warn, #e0a13a);
+}
+.ai-report-head {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ui-fg-muted, var(--ink-muted));
+}
+.ai-report.is-final .ai-report-head {
+  font-size: 12px;
+  color: var(--ui-fg, var(--ink));
+}
+.ai-report.is-blocked .ai-report-head {
+  color: var(--ui-warn, #e0a13a);
+}
+.ai-report-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ai-report-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--ui-fg-muted, var(--ink-muted));
+}
+.ai-report-mark {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: inline-grid;
+  place-items: center;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+/* 已完成:绿色 ✓;待办:弱色 ○(没有底色,存在感最低);问题:琥珀色 ! —— 红色只留给「失败」 */
+.ai-report-group.is-done .ai-report-mark {
+  background: var(--ui-success, #4ade80);
+  color: #0b0b0f;
+}
+.ai-report-group.is-todo .ai-report-mark {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ui-fg-faint, var(--ink-faint));
+}
+.ai-report-group.is-problem .ai-report-mark {
+  background: var(--ui-warn, #f5a524);
+  color: #0b0b0f;
+}
+.ai-report-list {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--ui-fg, var(--ink));
+  overflow-wrap: anywhere;
+}
+.ai-report-group.is-todo .ai-report-list {
+  color: var(--ui-fg-muted, var(--ink-muted));
+}
+/* 条目之间 1px(和原来两边 1px 折叠后一样),首尾不带外边距:报告卡四边的内边距才一样 */
+.ai-report-list li {
+  margin: 0;
+}
+.ai-report-list li + li {
+  margin-top: 1px;
+}
+.ai-report-list li::marker {
+  color: var(--ui-fg-faint, var(--ink-faint));
+}
+.ai-report-empty {
+  color: var(--ui-fg-faint, var(--ink-faint));
+}
+
+/*
+ * 「思考与原文」。文字回复和思考原文默认都不显示,打开「显示思考」才在气泡底部出现这一块:
+ * 左边一道 2px 竖线、底色退一档,一眼看出这是过程材料,不是交给用户的结论。
+ */
+.ai-rawlog {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  /* 四边内边距一样;和上面报告卡之间的距离交给气泡的 gap */
+  padding: 10px;
+  border-left: 2px solid var(--ui-border-strong, var(--hairline-strong));
+  background: var(--ui-bg, rgb(0 0 0 / 0.12));
+  border-radius: 0 var(--ui-radius, 6px) var(--ui-radius, 6px) 0;
+  min-width: 0;
+}
+.ai-rawlog-head {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 11px;
+  color: var(--ui-fg-muted, var(--ink-muted));
+  cursor: pointer;
+}
+.ai-rawlog-head:hover {
+  color: var(--ui-fg, var(--ink));
+}
+.ai-rawlog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.ai-rawlog-thinking {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--ui-fg-faint, var(--ink-faint));
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * 操作详细预览控件(OpDetailPreview.tsx)。一个气泡只放一个,画面、操作卡、小结、收到的消息都一页页排在这里。
+ * 画框固定 180px 高:聊天栏只有三百来像素宽,再高就把下一条消息顶出一屏;文字页在框里滚。
+ * 翻页靠 translateX 平移整条轨道;拖动时关掉过渡,画面跟手。
+ */
+/* 助手气泡的宽度本来跟着内容走,画框自己没有内容宽度,气泡会缩成一个图标那么宽。
+   所以带轮播的气泡直接占满它能占的宽度(和 .ai-message 的 max-width 一致),轮播铺满气泡;
+   画框高度封顶 180px,图片按原尺寸显示(只缩不放),在画框里居中 */
+.ai-message.assistant:has(.ai-carousel) {
+  width: 85%;
+}
+.ai-carousel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+.ai-carousel-frame {
+  position: relative;
+  width: 100%;
+  height: 180px;
+  border-radius: var(--ui-radius-lg, 8px);
+  background: var(--ui-bg, #0d0d10);
+  overflow: hidden;
+  cursor: grab;
+  user-select: none;
+  /* 竖着的触摸滚动留给消息列表,横着的归轮播 */
+  touch-action: pan-y;
+  outline: none;
+}
+.ai-carousel-frame:focus-visible {
+  box-shadow: var(--ui-focus-ring, 0 0 0 2px var(--ui-accent, #00DBDB));
+}
+.ai-carousel-frame.is-dragging {
+  cursor: grabbing;
+}
+.ai-carousel-track {
+  display: flex;
+  height: 100%;
+  transition: transform 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  will-change: transform;
+}
+.ai-carousel-frame.is-dragging .ai-carousel-track {
+  transition: none;
+}
+.ai-carousel-page {
+  position: relative;
+  flex: 0 0 100%;
+  height: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+/* 图片别被浏览器当成可拖走的东西,否则按住一拖出来的是图片的拖影而不是翻页 */
+.ai-carousel img {
+  -webkit-user-drag: none;
+}
+.ai-carousel-img {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+  pointer-events: none;
+}
+/* 当前页还没渲染好:盖一层提示,不露出半截图 */
+.ai-carousel-wait {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  color: var(--ui-fg-faint, var(--ink-faint));
+  background: var(--ui-bg, #0d0d10);
+  pointer-events: none;
+}
+.ai-carousel-note {
+  padding: 0 12px;
+  font-size: 12px;
+  text-align: center;
+  color: var(--ui-fg-faint, var(--ink-faint));
+}
+/* 左右 22% 是翻页区:鼠标停在哪一侧,那一侧的箭头才露出来 */
+.ai-carousel-arrow {
+  position: absolute;
+  top: 50%;
+  width: 26px;
+  height: 26px;
+  margin-top: -13px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.55);
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  pointer-events: none;
+}
+.ai-carousel-arrow.is-prev {
+  left: 8px;
+}
+.ai-carousel-arrow.is-next {
+  right: 8px;
+}
+.ai-carousel-arrow.is-on {
+  opacity: 1;
+}
+/* 键盘聚焦时两侧箭头都淡淡露出来,提示可以按 ← / → */
+.ai-carousel-frame:focus-visible .ai-carousel-arrow {
+  opacity: 0.7;
+}
+/* 修改页:上面前后两段动图,下面参数差异;画框只有 180px 高,差异多了就在框里滚 */
+.ai-carousel-change {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+.ai-carousel-change .ai-visual-gifs {
+  flex: 1 1 auto;
+  min-height: 0;
+  align-items: stretch;
+  /* 气泡变宽时动图不跟着拉宽,成对居中 */
+  justify-content: center;
+}
+.ai-carousel-change .ai-visual-gifs .ai-visual-gif {
+  flex: 0 1 240px;
+  min-height: 0;
+}
+.ai-carousel-change .ai-visual-gif .box {
+  flex: 1 1 auto;
+  min-height: 0;
+  aspect-ratio: auto;
+}
+.ai-carousel-change .ai-visual-arrow {
+  align-self: center;
+}
+.ai-carousel-change .ai-visual-diff {
+  flex: 0 1 auto;
+  max-height: 40%;
+  overflow-y: auto;
+  font-size: 11px;
+}
+.ai-carousel-diff {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 10px;
+  overflow-y: auto;
+}
+/* 文字页(操作卡、小结、收到的消息)和画面页的「详情」:卡片一张张竖排,在画框里滚;文字能选中复制 */
+.ai-carousel-page.is-ops,
+.ai-carousel-page.is-summary,
+.ai-carousel-page.is-inbound {
+  align-items: stretch;
+  justify-content: stretch;
+}
+.ai-odp-text {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 8px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: auto;
+  user-select: text;
+}
+/* 一次操作 / 一条收到的消息一张卡:头一行类别小方块 + 类别 + 名字 + 耗时,下面是内容 */
+.ai-opcard {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px;
+  border-radius: var(--ui-radius, 6px);
+  background: var(--ui-panel, #23222a);
+}
+.ai-opcard.is-err {
+  box-shadow: inset 2px 0 0 var(--ui-danger, #e2564d);
+}
+.ai-opcard-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+}
+/* 行首小方块复用操作图标的底色和字形(ai-op--*、tone-*),缩成 20px,不吃鼠标、不弹不放大 */
+.ai-op.ai-opcard-chip {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background-size: 12px 12px;
+  animation: none;
+  transform: none;
+  box-shadow: none;
+  cursor: default;
+  pointer-events: none;
+}
+.ai-opcard-kind {
+  flex: none;
+  font-weight: 600;
+  color: var(--ui-fg, #f2f1f6);
+}
+.ai-opcard-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--ui-font-mono, monospace);
+  font-size: 11px;
+  color: var(--ui-fg-muted, #a6a4b2);
+}
+.ai-opcard-name.is-plain {
+  font-family: inherit;
+}
+.ai-opcard-dur {
+  flex: none;
+  margin-left: auto;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ui-fg-faint, #6b6a75);
+}
+.ai-opcard-params {
+  font-size: 11px;
+  color: var(--ui-fg-faint, #6b6a75);
+  overflow-wrap: anywhere;
+}
+.ai-opcard-text {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ui-fg, #f2f1f6);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ai-opcard-text.is-faint {
+  color: var(--ui-fg-faint, #6b6a75);
+}
+.ai-opcard-to {
+  font-size: 11px;
+  color: var(--ui-fg-muted, #a6a4b2);
+}
+.ai-opcard-msg + .ai-opcard-msg {
+  margin-top: 4px;
+}
+.ai-opcard-error {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ui-danger, #e2564d);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ai-opcard-fields {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+.ai-opcard-fields .row {
+  display: grid;
+  grid-template-columns: minmax(56px, max-content) minmax(0, 1fr);
+  gap: 8px;
+}
+.ai-opcard-fields dt {
+  font-family: var(--ui-font-mono, monospace);
+  font-size: 11px;
+  color: var(--ui-fg-muted, #a6a4b2);
+}
+.ai-opcard-fields dd {
+  margin: 0;
+  color: var(--ui-fg, #f2f1f6);
+  overflow-wrap: anywhere;
+}
+.ai-opcard-list {
+  margin: 2px 0 0;
+  padding-left: 16px;
+  font-size: 12px;
+  color: var(--ui-fg, #f2f1f6);
+  overflow-wrap: anywhere;
+}
+.ai-opcard-list li.more {
+  list-style: none;
+  color: var(--ui-fg-faint, #6b6a75);
+}
+/* 画面页上叠的两层:上方这次操作的头一行(字加阴影,压在亮画面上也看得清),下方结果里的 note(半透明加深底)。都不吃鼠标 */
+.ai-odp-over-head {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 8px 10px;
+  pointer-events: none;
+}
+.ai-odp-over-head .ai-opcard-kind,
+.ai-odp-over-head .ai-opcard-name,
+.ai-odp-over-head .ai-opcard-dur {
+  color: #fff;
+  text-shadow: 0 1px 3px rgb(0 0 0 / 0.8);
+}
+.ai-odp-over-head .ai-opcard-name,
+.ai-odp-over-head .ai-opcard-dur {
+  color: rgb(255 255 255 / 0.85);
+}
+.ai-odp-over-note {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #fff;
+  background: rgb(0 0 0 / 0.55);
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  /* 太长就截成两行 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* 修改页 / 差异页自己有标签和文字:给上下两层让出位置 */
+.ai-carousel-page:has(> .ai-odp-over-head) > .ai-carousel-change,
+.ai-carousel-page:has(> .ai-odp-over-head) > .ai-carousel-diff {
+  padding-top: 36px;
+}
+.ai-carousel-page:has(> .ai-odp-over-note) > .ai-carousel-change,
+.ai-carousel-page:has(> .ai-odp-over-note) > .ai-carousel-diff {
+  padding-bottom: 32px;
+}
+/* 顶部一行:这一页是什么 +「详情」+ 不在跟踪最新时的「点击跟踪最新」 */
+.ai-odp-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--ui-fg-muted, var(--ink-muted));
+}
+/* 「点击跟踪最新」:图标 + 文字,平时没有底色,鼠标移上去才出底色 */
+.ai-odp-follow {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--ui-radius-sm, 4px);
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  color: var(--ui-accent, #00DBDB);
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+.ai-odp-follow svg {
+  width: 12px;
+  height: 12px;
+}
+.ai-odp-follow:hover {
+  background: var(--ui-accent-soft, rgba(0, 219, 219, 0.2));
+}
+.ai-odp-follow:focus-visible {
+  outline: 2px solid var(--ui-accent, #00DBDB);
+  outline-offset: 1px;
+}
+/* 底部一行:圆点居中,页数靠右 */
+.ai-odp-foot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 12px;
+}
+.ai-odp-foot .ai-carousel-count {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+}
+.ai-carousel-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-carousel-count {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--ui-fg-faint, var(--ink-faint));
+}
+.ai-carousel-dots {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+/* 圆点本身 6px,外面一圈透明边框把点击范围撑到 12px */
+.ai-carousel-dot {
+  width: 6px;
+  height: 6px;
+  box-sizing: content-box;
+  padding: 0;
+  border: 3px solid transparent;
+  border-radius: 6px;
+  background: var(--ui-fg-faint, #6b6a75);
+  background-clip: content-box;
+  opacity: 0.55;
+  cursor: pointer;
+  transition: width 160ms ease, opacity 160ms ease, background-color 160ms ease, transform 160ms ease;
+}
+.ai-carousel-dot:hover {
+  opacity: 0.9;
+}
+.ai-carousel-dot.is-on {
+  width: 14px;
+  opacity: 1;
+  background-color: var(--ui-accent, #00DBDB);
+}
+.ai-carousel-dot:focus-visible {
+  outline: 2px solid var(--ui-accent, #00DBDB);
+  outline-offset: -1px;
+}
+/* 圆点只显示当前页附近几个(OpDetailPreview 的 MAX_DOTS):窗口外还有页时最外侧的点缩小 */
+.ai-carousel-dot.is-edge {
+  transform: scale(0.6);
+}
+/* 还没渲染好的页:点更淡;点过它(等它好了自动切)就一闪一闪 */
+.ai-carousel-dot.is-pending {
+  opacity: 0.25;
+  cursor: progress;
+}
+.ai-carousel-dot.is-wanted {
+  animation: ai-carousel-wanted 1s ease-in-out infinite;
+}
+@keyframes ai-carousel-wanted {
+  50% { opacity: 0.8; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-carousel-track,
+  .ai-carousel-dot,
+  .ai-carousel-arrow {
+    transition: none;
+  }
+  .ai-carousel-dot.is-wanted {
+    animation: none;
+  }
+}
+
+/*
+ * 输入框上方的思考条带(ThinkingStrip.tsx):只显示此刻这一步。
+ * 以前是气泡里一串竖排的步骤,几十步之后很长,「现在」反而沉在最底下。
+ */
+.ai-tstrip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* 四边内边距一样:16px 的行高 + 上下各 8px = 32px 高,单行文字、圆点、计时都居中 */
+  min-height: 32px;
+  box-sizing: border-box;
+  margin: 0 8px 6px;
+  padding: 8px;
+  line-height: 16px;
+  border-radius: var(--ui-radius, 6px);
+  background: var(--ui-panel, var(--fill-subtle));
+  color: var(--ui-fg-muted, var(--ink-muted));
+  font-size: 12px;
+  min-width: 0;
+}
+.ai-tstrip-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ui-accent, #00DBDB);
+  animation: ai-step-breathe 1.4s ease-in-out infinite;
+}
+.ai-tstrip-textwrap {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+.ai-tstrip-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  animation: ai-tstrip-in 220ms ease both;
+}
+.ai-tstrip-time {
+  flex: none;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ui-fg-faint, var(--ink-faint));
+}
+/* 步骤变了:新的一句从下面淡入 */
+@keyframes ai-tstrip-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-tstrip-dot,
+  .ai-tstrip-text {
+    animation: none;
+  }
+}
+
+/*
+ * 气泡里 Agent 说的话(send_message 发给 user,或没调它时的文字回复),2026-10-20 用户定「气泡里面只展示在做什么」。
+ * 一句一块,按先后排;操作和汇报在下面的「Agent 操作」里。
+ */
+.ai-saying {
+  overflow-wrap: anywhere;
+}
+.ai-saying > :first-child { margin-top: 0; }
+.ai-saying > :last-child { margin-bottom: 0; }
+.ai-saying-none {
+  font-size: 12px;
+  color: var(--ui-fg-muted, #A6A4B2);
+}
+/* 点气泡让「Agent 操作」切到这一轮:可点的有手型,正在看的那一轮描一圈淡强调色 */
+.ai-message.assistant.is-selectable { cursor: pointer; }
+.ai-message.assistant.is-selected {
+  box-shadow: 0 0 0 1px var(--ui-accent-soft, rgba(0, 219, 219, 0.35));
+}
+
+/* AI 栏底部的「Agent 操作」:一轮的操作图标、操作详细预览、阶段 / 本轮小结(ActivityPanel.tsx) */
+.pc-activity {
+  margin: 0 10px 6px;
+  border: 1px solid var(--ui-border, #3A3944);
+  border-radius: 8px;
+  background: var(--ui-panel, #23222A);
+  font-size: 12px;
+  flex: none;
+  min-width: 0;
+}
+.pc-activity-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 4px;
+}
+.pc-activity-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  background: none;
+  border: 0;
+  color: var(--ui-fg-muted, #A6A4B2);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.pc-activity-count {
+  color: var(--ui-fg-faint, #77758A);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pc-activity-nav {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--ui-fg-muted, #A6A4B2);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.pc-activity-nav:hover:not(:disabled) { background: var(--ui-panel-2, #2C2B34); color: var(--ui-fg, #F2F1F6); }
+.pc-activity-nav:disabled { opacity: 0.35; cursor: default; }
+.pc-activity-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border-top: 1px solid var(--ui-border, #3A3944);
+  /* 窗口矮时不把上面的对话挤没:正文最多占三成高,其余滚动 */
+  max-height: 30vh;
+  overflow-y: auto;
+  min-width: 0;
+}
+/* 内容比最大高度高时滚动,子块不被压扁 */
+.pc-activity-body > * { flex: none; }
+.pc-activity-prompt {
+  color: var(--ui-fg-faint, #77758A);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ai-activity-empty {
+  color: var(--ui-fg-faint, #77758A);
+}
+.ai-activity-verbose {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 画面页右上角的「撤销这步」:叠层本身不吃鼠标,按钮要吃 */
+.ai-odp-over-undo {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  pointer-events: auto;
+}
+.ai-odp-over-undo .ai-opcard-undo { margin-top: 0 !important; }

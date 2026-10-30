@@ -1,0 +1,126 @@
+/* SKILL 对话框(登记到桌面 APP、接进来的会话、进入 SKILL)。基础壳用 ui/toolbar.css 的 .pc-dialog,这里只放它自己的东西 */
+.pc-skill-dialog {
+  width: 560px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+
+.pc-skill-intro {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ui-fg-muted);
+}
+
+/* 两张登记卡:Claude Code / Codex */
+.pc-skill-providers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.pc-skill-provider {
+  /* 网格项缺省 min-width:auto,长路径会把卡撑出对话框 */
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius, 6px);
+  background: var(--ui-panel-2);
+  color: var(--ui-fg);
+  text-align: left;
+  font-family: inherit;
+  transition: border-color 160ms cubic-bezier(0.16, 1, 0.3, 1), background 160ms;
+}
+.pc-skill-provider:hover:not(:disabled) {
+  border-color: color-mix(in oklab, var(--ui-border-strong) 60%, var(--ui-fg));
+}
+.pc-skill-provider.is-on {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-soft);
+}
+.pc-skill-provider:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.pc-skill-provider-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+.pc-skill-provider-desc {
+  font-size: 12px;
+  color: var(--ui-fg-muted);
+  line-height: 1.5;
+}
+
+.pc-skill-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  font-size: 12px;
+  color: var(--ui-fg-muted);
+}
+.pc-skill-meta code {
+  font-family: var(--ui-font-mono, ui-monospace, monospace);
+  color: var(--ui-fg);
+  overflow-wrap: anywhere;
+}
+
+.pc-skill-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pc-skill-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ui-fg-muted);
+  cursor: pointer;
+}
+.pc-skill-check input { margin-top: 2px; flex: 0 0 auto; }
+
+.pc-skill-msg {
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  color: var(--ui-fg);
+  background: var(--ui-panel-2);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius, 4px);
+  padding: 8px 10px;
+}
+.pc-skill-msg.is-err { color: var(--ui-danger); }
+
+/* 登记卡里的状态、配置文件路径、两个按钮 */
+.pc-skill-target-state { font-size: 12px; line-height: 1.5; }
+.pc-skill-target-state.is-ok { color: var(--ui-success); }
+.pc-skill-target-state.is-warn { color: var(--ui-warning, var(--ui-fg)); }
+.pc-skill-target-state.is-muted { color: var(--ui-fg-muted); }
+.pc-skill-target-state.is-err { color: var(--ui-danger); }
+.pc-skill-target-file {
+  font-family: var(--ui-font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--ui-fg-faint, var(--ui-fg-muted));
+  overflow-wrap: anywhere;
+}
+.pc-skill-target-acts { display: flex; gap: 6px; margin-top: 4px; }
+
+/* 接进来的桌面 APP 会话:一行一个 */
+.pc-skill-sessions { display: flex; flex-direction: column; gap: 4px; max-height: 200px; overflow-y: auto; }
+.pc-skill-session {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px;
+  border-radius: var(--ui-radius, 4px);
+  font-size: 12px;
+  color: var(--ui-fg-muted);
+  background: var(--ui-panel-2);
+}
+.pc-skill-session b { color: var(--ui-fg); font-weight: 600; }
+.pc-skill-session-op { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

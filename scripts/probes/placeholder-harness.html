@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Placeholder plane harness</title>
+<style>
+body{margin:0;background:#141923;color:#e8edf2;font:14px system-ui,sans-serif} header{padding:10px 16px} #stage{position:relative;width:1100px;height:1800px;background:#6280a3;perspective:800px;perspective-origin:50% 50%} .clip{position:absolute;width:190px;height:116px;transform-origin:50% 50%;} .reference{position:absolute;left:18px;top:16px;width:154px;height:84px;box-sizing:border-box;outline:1px solid #fbc34c;pointer-events:none} .sample{width:28px;height:28px;position:absolute;left:81px;top:44px;background:#427bff} .caption{position:absolute;left:0;top:118px;font-size:10px;color:#9aa7bb;white-space:nowrap}
+</style></head><body><header>PromptCut placeholder harness: <span id="count"></span> instances</header><main id="stage"></main>
+<script type="module">
+import React from 'react';
+import {createRoot} from 'react-dom/client';
+import {flushSync} from 'react-dom';
+import {PlaceholderPlane,PLACEHOLDER_CSS,maxAnimated,layersFor} from '/src/render/placeholder/index.ts';
+import {createAnimationPinner} from '/src/render/pinAnimations.ts';
+import {isPlaceholderAnimation,setPlaceholderShown} from '/src/render/placeholder/contract.ts';
+
+const style=document.createElement('style'); style.textContent=PLACEHOLDER_CSS; document.head.append(style);
+const stage=document.getElementById('stage'); const root=createRoot(stage);
+const variants=[
+  ['plain',{}],['rotate45',{transform:'rotate(45deg)'}],['scale03',{transform:'scale(.3)'}],
+  ['scale3',{transform:'scale(3)'}],['perspective',{transform:'rotateY(30deg) rotateX(18deg)'}],
+  ['fade',{opacity:.4}],['multiply',{mixBlendMode:'multiply'}],['screen',{mixBlendMode:'screen'}],
+  ['badge',{}]
+];
+const solid={kind:'solid',box:{left:18,top:16,width:154,height:84}};
+const badge={kind:'badge',center:{x:95,y:58}};
+let generation=0;
+function mount(n=30){
+ document.getElementById('count').textContent=String(n);
+ stage.style.perspective=n>=5?'800px':'none';
+ const version=++generation;
+ flushSync(()=>root.render(React.createElement(React.Fragment,null,Array.from({length:n},(_,i)=>{
+  const [name,appearance]=variants[i%variants.length];
+  const row=Math.floor(i/5),col=i%5;
+  const style={left:30+col*210,top:30+row*132,...appearance};
+  return React.createElement('div',{key:`${version}-${i}`,'data-pc-clip':`c${i}`,className:'clip',style},
+   React.createElement('div',{className:'sample'}),
+   React.createElement('div',{className:'reference'}),
+   React.createElement(PlaceholderPlane,{clipId:`c${i}`,geometry:name==='badge'?badge:solid,reason:'awaiting'}),
+   React.createElement('span',{className:'caption'},name));
+ }))));
+ planes().forEach((p,i)=>{if(i>=maxAnimated)p.setAttribute('data-pc-placeholder-static','');});
+}
+function planes(){return [...document.querySelectorAll('[data-pc-placeholder-plane]')];}
+function animationDemo(){
+ const icon=planes()[0]?.querySelector('.pc-ph-hourglass');
+ const all=createAnimationPinner(document);
+ all.sync(0); all.sync(1000);
+ const frozen=icon?getComputedStyle(icon).transform:null;
+ for(const a of document.getAnimations())if(isPlaceholderAnimation(a))a.play();
+ const filteredDoc={getAnimations:()=>document.getAnimations().filter(a=>!isPlaceholderAnimation(a))};
+ const filtered=createAnimationPinner(filteredDoc);
+ filtered.sync(0); filtered.sync(1000);
+ return {frozen,icon,filtered,all};
+}
+window.placeholderHarness={mount,planes,solid,badge,maxAnimated,layersFor,setPlaceholderShown,animationDemo,isPlaceholderAnimation};
+mount(Number(new URLSearchParams(location.search).get('n')||30));
+</script></body></html>

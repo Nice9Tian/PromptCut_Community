@@ -1,0 +1,682 @@
+.ais-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  padding: 16px;
+}
+
+.ais-dialog {
+  background: var(--bg-panel);
+  color: var(--ink);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 20px;
+  width: 520px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.ais-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.ais-providers {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ais-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  cursor: pointer;
+  background: var(--bg-canvas);
+}
+.ais-row.disabled {
+  cursor: default;
+}
+.ais-row:hover:not(.disabled) {
+  border-color: var(--hairline-strong);
+}
+
+.ais-row-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ais-row-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.ais-row-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.ais-row-version {
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.ais-status-ok {
+  color: var(--accent);
+  font-size: 12px;
+}
+.ais-status-err {
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.ais-auth-action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.ais-auth-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.ais-detail {
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.ais-fixhint {
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.ais-btn {
+  padding: 6px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  background: var(--fill-subtle);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 13px;
+}
+.ais-btn:hover:not(:disabled) {
+  background: var(--fill-hover);
+}
+.ais-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ais-primary-btn {
+  background: var(--accent);
+  color: var(--on-accent);
+  border: none;
+}
+.ais-primary-btn:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.ais-api {
+  margin-left: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  background: var(--fill-subtle);
+  border-radius: 6px;
+}
+
+.ais-api-field select,
+.ais-api-field input {
+  width: 100%;
+  padding: 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--hairline);
+  color: var(--ink);
+  border-radius: 4px;
+  font-family: var(--font-sans);
+}
+
+.ais-api-saved-key {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+.ais-api-saved-acts { display: inline-flex; gap: 6px; flex: 0 0 auto; }
+/* 清理密钥:红字红框,和「更换」区分开 —— 点下去文件就没了 */
+.ais-danger-btn { color: var(--ui-danger); border-color: var(--ui-danger); }
+.ais-danger-btn:hover:not(:disabled) { background: color-mix(in oklab, var(--ui-danger) 14%, transparent); }
+
+.ais-api-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ais-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-top: 1px solid var(--hairline);
+  padding-top: 16px;
+}
+
+.ais-footer-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+}
+
+.ais-use-hint {
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.ais-stt-info {
+  font-size: 11px;
+  color: var(--ink-muted);
+  text-align: center;
+}
+
+.ais-agy-perms {
+  margin-left: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--fill-subtle);
+  border-radius: 6px;
+  border: 1px solid var(--hairline);
+}
+
+.ais-agy-perms-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ais-agy-perms-desc {
+  font-size: 12px;
+  color: var(--ink-muted);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.ais-small-btn {
+  padding: 4px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  background: var(--bg-panel);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12px;
+}
+.ais-small-btn:hover:not(:disabled) {
+  background: var(--fill-hover);
+}
+.ais-small-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── 「更多」里的高级开关 ─────────────────────────────
+   文本协议模式以前是这一页上一个裸勾选框,太容易误点;收进这里,并且把
+   「什么时候才该开」写在旁边,而不是只给一个括号里的短语。 */
+.ais-more {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--fill-subtle);
+}
+/* 「显示」小节常驻在驱动卡片下面,和后面展开的「更多」之间留一道缝 */
+.ais-display {
+  margin-bottom: 12px;
+}
+.ais-more-title {
+  font-size: 11px;
+  color: var(--ink-faint);
+  letter-spacing: 0.04em;
+}
+/* 勾选框和说明并排,说明可以换行,勾选框始终对齐第一行 */
+.ais-more-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+}
+.ais-more-row input[type="checkbox"] {
+  margin-top: 2px;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+.ais-more-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.ais-more-name {
+  font-size: 13px;
+  color: var(--ink);
+}
+/* 说明文字比名称小一号;.ais-detail 本身不定字号,放在这里会跟着对话框正文变得和标题一样大 */
+.ais-more-body .ais-detail {
+  font-size: 12px;
+  line-height: 1.5;
+}
+/* 「更多」按钮靠左,关闭仍然靠右 */
+.ais-footer-spacer { flex: 1 1 auto; }
+.ais-setup-progress { margin-top: 8px; display: grid; gap: 8px; overflow-wrap: anywhere; }
+.ais-setup-progress pre { max-height: 140px; overflow: auto; white-space: pre-wrap; font-size: 11px; }
+.ais-setup-progress a { width: fit-content; text-decoration: none; }
+/* 粘贴授权码：平时收着，不抢「打开登录网页」的位置 */
+.ais-code-paste > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--ink-muted);
+  user-select: none;
+}
+.ais-code-paste > summary:hover { color: var(--ink); }
+.ais-code-paste[open] { display: grid; gap: 8px; }
+.ais-code-row { display: flex; align-items: center; gap: 8px; }
+.ais-code-row input { flex: 1 1 auto; min-width: 0; }
+.ais-code-row button { flex: 0 0 auto; white-space: nowrap; }
+.ais-code-paste .ais-detail { font-size: 12px; line-height: 1.5; }
+
+/* ── API 配置的加密分发 ───────────────────────────────── */
+.ais-share-toggle {
+  margin-top: 10px;
+  border-top: 1px solid var(--hairline);
+  padding-top: 8px;
+}
+.ais-share-toggle > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--ink-muted);
+  user-select: none;
+}
+.ais-share-toggle > summary:hover { color: var(--ink); }
+
+.ais-share {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+}
+.ais-share-tabs {
+  display: inline-flex;
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  overflow: hidden;
+  width: fit-content;
+}
+.ais-share-tabs button {
+  border: 0;
+  background: transparent;
+  color: var(--ink-muted);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ais-share-tabs button:hover { background: var(--fill-hover); color: var(--ink); }
+.ais-share-tabs button.is-on { background: var(--accent); color: var(--on-accent); }
+
+/* 识别码要能一眼抄下来,所以用等宽字体并允许选中换行 */
+.ais-share-code {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ais-share-code code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  padding: 3px 6px;
+  user-select: all;
+}
+
+.ais-share-pane { display: grid; gap: 8px; }
+.ais-share-blob {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  background: var(--bg-canvas);
+  color: var(--ink);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  padding: 6px;
+  resize: vertical;
+  word-break: break-all;
+}
+
+.ais-share-preview {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  background: var(--fill-subtle);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+}
+.ais-share-preview dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  font-size: 12px;
+}
+.ais-share-preview dt { color: var(--ink-muted); white-space: nowrap; }
+.ais-share-preview dd { margin: 0; overflow-wrap: anywhere; }
+
+/* ── 第一级:五个入口的卡片网格 ─────────────────────── */
+.ais-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+.ais-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 14px 12px 12px;
+  min-height: 128px;
+  text-align: left;
+  font-family: inherit;
+  color: var(--ink);
+  background: var(--bg-canvas);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.ais-card:hover {
+  border-color: var(--hairline-strong);
+  background: var(--fill-hover);
+}
+.ais-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.ais-card.is-current {
+  border-color: var(--accent);
+}
+.ais-card-icon {
+  display: flex;
+  color: var(--accent);
+}
+.ais-card-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+.ais-card-tagline {
+  font-size: 11px;
+  color: var(--ink-muted);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+/* 状态贴在卡片底部,几张卡的状态行才对得齐 */
+.ais-card-state {
+  margin-top: auto;
+  font-size: 11px;
+}
+.ais-card-state.is-ok { color: var(--accent); }
+.ais-card-state.is-warn { color: var(--danger); }
+.ais-card-state.is-idle { color: var(--ink-muted); }
+.ais-card-current {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+/* ── 第二级:某一项的配置页 ─────────────────────────── */
+.ais-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--hairline);
+}
+.ais-back-btn { flex: 0 0 auto; }
+.ais-detail-icon { color: var(--accent); }
+.ais-detail-titles { min-width: 0; }
+.ais-detail-titles .ais-title { margin: 0; }
+.ais-detail-body {
+  display: grid;
+  gap: 12px;
+  margin: 12px 0;
+  max-height: 52vh;
+  overflow-y: auto;
+}
+.ais-step {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.ais-step-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+/* 步骤序号:一眼看出「先装、再登录、再授权」 */
+.ais-step-no {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--fill-subtle);
+  border: 1px solid var(--hairline);
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+.ais-step-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+/* 自定义 API 表单:标签固定宽,输入框吃掉剩下的 */
+.ais-api-field > label {
+  display: inline-block;
+  width: 72px;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+/* ── Router 卡片:背景动效强调 ─────────────────────────────────────────
+ * 五张卡里要让 Router 一眼被看见。配色规范定了「全屏只留一个实心强调色」,
+ * 所以不给它实心底,改用动效。
+ *
+ * 关键约束:动效不能压低文字对比度。第一版把强调色铺满整张卡,实测最坏相位下
+ * 次要文字只剩 2.14:1(规范 05 条要求 4.5:1),等于把「次要文字读不清」那条又装回去。
+ * 所以动效**一点都不进内容区**:一圈流光走在边框上(空心环,文字底下没有它),
+ * 外加一层画在卡片外侧的呼吸光晕。两者都碰不到文字,对比度和别的卡完全一样。
+ * 内部铺底那版试过又删了 —— 浅色皮肤上次要文字的基准只有 4.58:1,连 6% 的叠加
+ * 都会压到 4.5 以下,没有安全值。
+ *
+ * 动效照自己的语义做 —— 图标是「中心节点向外分发」,所以是一道光绕着边框转,
+ * 像信号在派发。颜色全走 --accent,深浅皮肤都跟着变。
+ */
+
+/* 转角度而不是转元素:元素不动,遮罩才能稳稳框住边框那一圈 */
+@property --ais-router-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.ais-card[data-entry="router"] {
+  overflow: hidden; /* 动效裁在圆角里 */
+  isolation: isolate; /* 自成层叠上下文,动效层压不到别的卡 */
+  border-color: color-mix(in oklab, var(--accent) 40%, var(--hairline));
+  /* 光晕画在卡片外侧,不进内容区,所以对文字对比度零影响 */
+  animation: ais-router-halo 3.6s ease-in-out infinite;
+}
+
+/* 边框流光:整层只留最外 1.5px 的一圈(两层遮罩相减挖空中间),所以文字底下没有它 */
+.ais-card[data-entry="router"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  padding: 2px;
+  background: conic-gradient(
+    from var(--ais-router-angle),
+    transparent 0deg,
+    var(--accent) 38deg,
+    transparent 104deg,
+    transparent 188deg,
+    color-mix(in oklab, var(--accent) 55%, transparent) 226deg,
+    transparent 286deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: ais-router-sweep 8s linear infinite;
+}
+
+/* 内容压在动效之上。flex 子项不用 position 也吃 z-index,所以不动它们的定位,
+   免得把绝对定位的「正在使用」角标顶偏。 */
+.ais-card[data-entry="router"] > * {
+  z-index: 1;
+}
+.ais-card[data-entry="router"] > .ais-card-current {
+  z-index: 2;
+}
+/* 悬浮时转快一点,反馈这张卡是活的 */
+.ais-card[data-entry="router"]:hover::before {
+  animation-duration: 3.4s;
+}
+
+@keyframes ais-router-halo {
+  0%,
+  100% {
+    box-shadow: 0 0 9px color-mix(in oklab, var(--accent) 16%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 20px color-mix(in oklab, var(--accent) 38%, transparent);
+  }
+}
+@keyframes ais-router-sweep {
+  to {
+    --ais-router-angle: 360deg;
+  }
+}
+
+/* 关掉动画的用户:留一圈静态强调色描边,强调还在,只是不动 */
+@media (prefers-reduced-motion: reduce) {
+  .ais-card[data-entry="router"],
+  .ais-card[data-entry="router"]::before {
+    animation: none;
+  }
+  .ais-card[data-entry="router"] {
+    box-shadow: 0 0 12px color-mix(in oklab, var(--accent) 24%, transparent);
+  }
+  .ais-card[data-entry="router"] {
+    border-color: color-mix(in oklab, var(--accent) 70%, var(--hairline));
+  }
+}
+
+/* 「更多」里有非默认项时的提示点。收起来防误触,但不能收到开着也看不出来 */
+.ais-more-dot {
+  color: var(--accent);
+  font-size: 14px;
+  line-height: 1;
+  margin-left: 3px;
+}
+
+/* 诊断报告去向提示。贴在对话框顶部,点一下就消失,6 秒自动收。
+   用 sticky 而不是 absolute:.ais-dialog 自己是滚动容器,绝对定位的会被滚走 */
+.ais-toast {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  margin-bottom: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.5;
+  /* 文件路径可能很长,要能换行;提示里的换行也得保住 */
+  white-space: pre-wrap;
+  word-break: break-all;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .45);
+  cursor: pointer;
+}
+
+/*
+ * 「自主轮次」的数字框。和上面那行的勾选框占同一列,所以宽度固定、顶部对齐,
+ * 两行的说明文字才会在同一条竖线上起头。
+ */
+.ais-more-num {
+  flex: 0 0 auto;
+  width: 72px;
+  margin-top: 1px;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--bg-canvas);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+}
+.ais-more-num:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* 存下来了 / 填错了,就在标题后面挂一句,不挤走说明文字 */
+.ais-more-note {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--ink-muted);
+}

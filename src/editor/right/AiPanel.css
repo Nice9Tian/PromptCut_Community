@@ -1,0 +1,12 @@
+/*
+ * 一个助手分页的容器。只留容器级规则:从上到下 顶栏 → 登录横幅 → 消息区 → 思考条带 → 队列 → 输入区,
+ * 纵向排满整张卡片。各块自己的样式在 chat/chat.css(布局、头部、气泡、输入区)和
+ * chat/agent.css(工具方块、步骤条、思考块、工具详情)。
+ */
+.ai-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}

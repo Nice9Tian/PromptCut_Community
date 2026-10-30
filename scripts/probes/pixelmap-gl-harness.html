@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>pixel map GL harness</title></head>
+<body>
+<!--
+  R1b 的验收台:只加载 kernel/pixelMap.mjs 和 render/pixelMapGl.ts 两个模块,不起编辑台。
+  由 scripts/probes/pixelmap-gl-probe.mjs 用 puppeteer 驱动。
+-->
+<video id="clip" muted playsinline preload="auto"></video>
+<canvas id="out"></canvas>
+<script type="module">
+import { mapRgba, compilePixelMapGlsl } from "/src/kernel/pixelMap.mjs";
+import { readPixelMap, drawPixelMap, pixelMapGlInfo, pixelMapGlContext, resetPixelMapGl } from "/src/render/pixelMapGl.ts";
+
+const sources = new Map();   // 名字 → ImageBitmap
+const rawOf = new Map();     // 名字 → { w, h, data: Uint8ClampedArray }
+
+const b64ToBytes = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+async function gunzip(bytes) {
+  const s = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return new Uint8Array(await new Response(s).arrayBuffer());
+}
+async function gzipToB64(bytes) {
+  const s = new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"));
+  const out = new Uint8Array(await new Response(s).arrayBuffer());
+  let bin = "";
+  for (let i = 0; i < out.length; i += 0x8000) bin += String.fromCharCode(...out.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+/** 原始 RGBA 进来(node 用 pngjs 解的,和 node 侧参考图用的是同一份字节) */
+async function putSource(name, w, h, gzB64) {
+  const data = new Uint8ClampedArray(await gunzip(b64ToBytes(gzB64)));
+  rawOf.set(name, { w, h, data });
+  // createImageBitmap(ImageData) 是逐字节的,不做色彩转换、不预乘
+  sources.set(name, await createImageBitmap(new ImageData(data, w, h)));
+  return true;
+}
+
+/** 跑一条定义,回 GPU 的输出(gzip + base64 的原始 RGBA,从上往下排) */
+async function runGpu(def, srcName, tgtName, t) {
+  const { w, h } = rawOf.get(srcName);
+  const px = readPixelMap({ def, source: sources.get(srcName), target: tgtName ? sources.get(tgtName) : null, width: w, height: h, t: t ?? 0 });
+  return { w, h, gz: await gzipToB64(new Uint8Array(px.buffer, px.byteOffset, px.byteLength)) };
+}
+
+/** 同一份源像素,用保留下来的 mapRgba 逐像素算一张参考图(和 node 侧对拍用,确认两边一致) */
+async function runCpu(def, srcName, tgtName, t) {
+  const { w, h, data } = rawOf.get(srcName);
+  const tgt = tgtName ? rawOf.get(tgtName).data : null;
+  const out = new Uint8ClampedArray(data.length);
+  for (let i = 0; i < data.length; i += 4) {
+    const target = tgt ? [tgt[i] / 255, tgt[i + 1] / 255, tgt[i + 2] / 255, tgt[i + 3] / 255] : null;
+    const p = mapRgba(def, [data[i] / 255, data[i + 1] / 255, data[i + 2] / 255, data[i + 3] / 255],
+      { x: (i / 4) % w / w, y: Math.floor(i / 4 / w) / h, t: t ?? 0 }, target);
+    out[i] = Math.round(p[0] * 255); out[i + 1] = Math.round(p[1] * 255);
+    out[i + 2] = Math.round(p[2] * 255); out[i + 3] = Math.round(p[3] * 255);
+  }
+  return { w, h, gz: await gzipToB64(new Uint8Array(out.buffer)) };
+}
+
+/** 1080p 视频上量单帧成本:主线程提交耗时,以及 GPU 真实耗时 */
+async function bench(def, videoUrl, w, h, frames) {
+  const v = document.getElementById("clip");
+  v.src = videoUrl;
+  await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = () => rej(new Error("视频加载失败")); });
+  const out = document.getElementById("out");
+  out.width = w; out.height = h;
+
+  // 预热:第一帧要编译 program、分配纹理,单独记
+  const t0 = performance.now();
+  drawPixelMap(out, { def, source: v, width: w, height: h, t: 0 });
+  const warmupMs = performance.now() - t0;
+
+  // 每帧换一个时间点,免得驱动把同一帧的纹理上传优化掉。currentTime 已经在目标上时
+  // 不会再发 seeked,所以要带超时兜底,别在这里挂死。
+  const seek = async (sec) => {
+    if (Math.abs(v.currentTime - sec) < 1e-4) return;
+    v.currentTime = sec;
+    await new Promise((r) => {
+      const done = () => { v.onseeked = null; clearTimeout(id); r(); };
+      const id = setTimeout(done, 2000);
+      v.onseeked = done;
+    });
+  };
+
+  const submit = [];
+  for (let i = 0; i < frames; i++) {
+    await seek(Math.min(v.duration - 0.05, 0.05 + i * 0.05));
+    const a = performance.now();
+    drawPixelMap(out, { def, source: v, width: w, height: h, t: i / 30 });
+    submit.push(performance.now() - a);
+  }
+
+  // GPU 真实耗时:优先计时查询(上传 + 绘制整段),没有就退回同步点前后的墙钟
+  const g = pixelMapGlContext();
+  const ext = g.getExtension("EXT_disjoint_timer_query_webgl2");
+  const gpu = [];
+  let gpuHow;
+  if (ext) {
+    gpuHow = "EXT_disjoint_timer_query_webgl2(上传纹理 + 绘制)";
+    for (let i = 0; i < frames; i++) {
+      await seek(Math.min(v.duration - 0.05, 0.05 + i * 0.05));
+      const q = g.createQuery();
+      g.beginQuery(ext.TIME_ELAPSED_EXT, q);
+      drawPixelMap(out, { def, source: v, width: w, height: h, t: i / 30 });
+      g.endQuery(ext.TIME_ELAPSED_EXT);
+      for (let k = 0; k < 600 && !g.getQueryParameter(q, g.QUERY_RESULT_AVAILABLE); k++) {
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      const disjoint = g.getParameter(ext.GPU_DISJOINT_EXT);
+      if (g.getQueryParameter(q, g.QUERY_RESULT_AVAILABLE) && !disjoint) gpu.push(g.getQueryParameter(q, g.QUERY_RESULT) / 1e6);
+      g.deleteQuery(q);
+    }
+  } else {
+    gpuHow = "gl.finish() 前后的墙钟(没有 EXT_disjoint_timer_query_webgl2)";
+    for (let i = 0; i < frames; i++) {
+      await seek(Math.min(v.duration - 0.05, 0.05 + i * 0.05));
+      const a = performance.now();
+      drawPixelMap(out, { def, source: v, width: w, height: h, t: i / 30 });
+      g.finish();
+      gpu.push(performance.now() - a);
+    }
+  }
+  submit.sort((a, b) => a - b);
+  gpu.sort((a, b) => a - b);
+  return {
+    warmupMs,
+    submitP50: submit[Math.floor(submit.length / 2)],
+    submitMax: submit[submit.length - 1],
+    submitAll: submit,
+    gpuP50: gpu.length ? gpu[Math.floor(gpu.length / 2)] : null,
+    gpuMax: gpu.length ? gpu[gpu.length - 1] : null,
+    gpuAll: gpu,
+    gpuHow,
+  };
+}
+
+window.__pm = {
+  putSource, runGpu, runCpu, bench, resetPixelMapGl,
+  info: () => pixelMapGlInfo(),
+  glsl: (def) => compilePixelMapGlsl(def).fragment,
+};
+window.__pmReady = true;
+</script>
+</body>
+</html>

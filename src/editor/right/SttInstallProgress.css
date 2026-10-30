@@ -1,0 +1,105 @@
+.stt-install {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--fill-subtle);
+  font-size: 12px;
+  color: var(--ink);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.stt-install.is-compact { padding: 10px; }
+.stt-install.done { border-color: var(--accent); }
+.stt-install.failed { border-color: var(--danger); }
+
+.stt-install-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.stt-install-title {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.stt-install-engine {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--ink-muted);
+  background: var(--bg-canvas);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+.stt-install-elapsed {
+  font-size: 11px;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+.stt-install-icon { flex: 0 0 auto; width: 12px; text-align: center; }
+.stt-install.done .stt-install-icon { color: var(--accent); }
+.stt-install.failed .stt-install-icon { color: var(--danger); }
+
+.stt-install-spin {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border: 1.5px solid var(--hairline);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: stt-install-spin 0.7s linear infinite;
+}
+@keyframes stt-install-spin { to { transform: rotate(360deg); } }
+
+/* 进度槽。不确定态时高亮块只占三成宽来回扫,一眼能和确定态区分开 */
+.stt-install-bar {
+  position: relative;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-canvas);
+  overflow: hidden;
+}
+.stt-install-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.stt-install-fill.is-indeterminate { width: 30%; }
+.stt-install.done .stt-install-fill { width: 100%; background: var(--accent); }
+.stt-install.failed .stt-install-fill { width: 100%; background: var(--danger); }
+
+.stt-install-status {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--ink-muted);
+}
+.stt-install-sub { font-size: 11px; opacity: 0.85; font-variant-numeric: tabular-nums; }
+
+.stt-install details { font-size: 11px; color: var(--ink-muted); }
+.stt-install summary { cursor: pointer; }
+.stt-install pre {
+  max-height: 140px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 11px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  padding: 6px;
+  margin: 6px 0 0;
+}
+
+/* 动画偏好:关掉扫动和转圈,静态显示即可 */
+@media (prefers-reduced-motion: reduce) {
+  .stt-install-spin { animation: none; }
+  .stt-install-fill.is-indeterminate { width: 100%; opacity: 0.4; }
+}

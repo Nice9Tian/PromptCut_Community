@@ -1,0 +1,378 @@
+/*
+ * 预览区(中栏)。
+ * 整块装在 Editor.tsx 的 .pc-card-surface 卡片里(--ui-bg-2 底、--ui-radius-xl 圆角),
+ * 自己不铺底色、内边距收小,免得卡片里再套一层画布色、出现双层留白。
+ * 工具行是悬浮的圆角分组框(L2 底);播放栏是一张带 hairline 的圆角卡片。
+ * 工具按钮 28 方:选中 L3 底 + 强调色描边,未选 L2 底 + hairline。
+ */
+.pc-pv {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 10px 12px;
+  height: 100%;
+  min-height: 0;
+  background: transparent;
+}
+
+/* ── 工具行 ─────────────────────────────────────────────────────────── */
+.pc-pv-tools {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+  background: var(--ui-panel);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg, 8px);
+  padding: 4px 8px;
+}
+.pc-pv-tool {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  background: var(--ui-panel);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm, 4px);
+  color: var(--ui-fg-muted);
+  cursor: pointer;
+}
+.pc-pv-tool:hover {
+  color: var(--ui-fg);
+  border-color: var(--ui-border-strong);
+}
+.pc-pv-tool.is-on {
+  background: var(--ui-panel-2);
+  border-color: var(--ui-accent);
+  color: var(--ui-accent);
+}
+.pc-pv-meta {
+  margin-left: auto;
+  font-family: var(--ui-font-mono);
+  font-size: 11px;
+  color: var(--ui-fg-faint);
+  white-space: nowrap;
+}
+.pc-pv-badge {
+  background: var(--ui-accent-soft);
+  color: color-mix(in oklab, var(--ui-accent) 80%, var(--ui-fg));
+  font-size: 10.5px;
+  padding: 3px 8px;
+  border-radius: var(--ui-radius-sm, 4px);
+  white-space: nowrap;
+}
+/*
+ * 「适应窗口」以前是个 <span>:写着能点的字,点了却没反应。
+ * 现在它是真按钮 —— 正适应着窗口时禁用(那时候点它没有任何变化),
+ * 自己缩放平移过之后才亮起来,点一下回到适应窗口。
+ */
+.pc-pv-fit {
+  border: 1px solid transparent;
+  font: inherit;
+  font-size: 10.5px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.pc-pv-fit:hover:not(:disabled) {
+  border-color: var(--ui-accent);
+}
+.pc-pv-fit:disabled {
+  cursor: default;
+  background: var(--ui-panel-2);
+  color: var(--ui-fg-faint);
+}
+
+/* ── 2D / 3D 分页 ───────────────────────────────────────────────────── */
+/* 两页回答的是不同的问题:2D 是成片长什么样,3D 是这些东西在空间里怎么摆。 */
+.pc-pv-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 4px 6px 0;
+  flex: 0 0 auto;
+}
+.pc-pv-tabs button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--ui-fg-muted);
+  font: 12px/1 system-ui, sans-serif;
+  padding: 5px 12px;
+  border-radius: var(--ui-radius-sm, 4px) var(--ui-radius-sm, 4px) 0 0;
+  cursor: pointer;
+}
+.pc-pv-tabs button:hover { color: var(--ui-fg); }
+.pc-pv-tabs button.is-on {
+  color: var(--ui-fg);
+  background: color-mix(in srgb, var(--ui-bg-2) 55%, var(--ui-panel));
+}
+
+/* ── 画面 ───────────────────────────────────────────────────────────── */
+.pc-pv-stage {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  position: relative;
+  overflow: hidden;
+}
+.pc-pv-frame {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--ui-border);
+}
+/* 四角标记:16 方,hairline 强一档 */
+.pc-pv-corner {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  pointer-events: none;
+  z-index: 11;
+  border-color: var(--ui-border-strong);
+  border-style: solid;
+  border-width: 0;
+}
+.pc-pv-corner.tl { left: 10px; top: 10px; border-left-width: 1px; border-top-width: 1px; }
+.pc-pv-corner.tr { right: 10px; top: 10px; border-right-width: 1px; border-top-width: 1px; }
+.pc-pv-corner.bl { left: 10px; bottom: 10px; border-left-width: 1px; border-bottom-width: 1px; }
+.pc-pv-corner.br { right: 10px; bottom: 10px; border-right-width: 1px; border-bottom-width: 1px; }
+
+/* ── 播放栏:L1 卡片 ─────────────────────────────────────────────────── */
+.pc-pv-ctrl {
+  flex-shrink: 0;
+  background: var(--ui-bg-2);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg, 8px);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* 浅色皮肤:L1 和卡片底色一样灰,改用 L2 纯白,和按钮选中后的颜色一致 */
+[data-skin-mode="light"] .pc-pv-ctrl {
+  background: var(--ui-panel);
+}
+.pc-pv-progress {
+  position: relative;
+  height: 3px;
+  background: var(--ui-panel-2);
+  cursor: pointer;
+}
+.pc-pv-progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--ui-accent);
+}
+.pc-pv-progress-knob {
+  position: absolute;
+  top: -4px;
+  width: 11px;
+  height: 11px;
+  margin-left: -5px;
+  background: var(--ui-fg);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.pc-pv-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.pc-pv-btns {
+  display: flex;
+  gap: 7px;
+}
+.pc-pv-btn {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  background: var(--ui-panel-2);
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-sm, 4px);
+  color: var(--ui-fg-muted);
+  cursor: pointer;
+}
+.pc-pv-btn:hover {
+  color: var(--ui-fg);
+  background: var(--ui-float);
+}
+.pc-pv-btn.is-on {
+  border-color: var(--ui-accent);
+  color: var(--ui-accent);
+}
+/* 播放键:主文字色底的圆形 + 画布色图标。深色皮肤下是白底深图标,
+   浅色皮肤下反过来成深底浅图标,落在白卡片上也看得见 */
+.pc-pv-btn--play {
+  background: var(--ui-fg);
+  border-color: var(--ui-fg);
+  color: var(--ui-bg);
+  border-radius: 50%;
+}
+.pc-pv-btn--play:hover {
+  background: color-mix(in oklab, var(--ui-fg) 88%, var(--ui-bg));
+  border-color: color-mix(in oklab, var(--ui-fg) 88%, var(--ui-bg));
+  color: var(--ui-bg);
+}
+.pc-pv-time {
+  font-family: var(--ui-font-mono);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+  color: var(--ui-fg);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: text;
+}
+.pc-pv-time input {
+  width: 62px;
+  background: transparent;
+  color: inherit;
+  border: 0;
+  outline: none;
+  font: inherit;
+  text-align: right;
+}
+.pc-pv-time-total {
+  font-family: var(--ui-font-mono);
+  font-size: 13px;
+  color: var(--ui-fg-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* 音量:扬声器 + 64×3 的滑条,滑条用次文字色而不是强调色(它不是主操作) */
+.pc-pv-vol {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pc-pv-vol-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: var(--ui-fg-muted);
+  cursor: pointer;
+}
+.pc-pv-vol-btn:hover {
+  color: var(--ui-fg);
+}
+.pc-pv-vol-track {
+  position: relative;
+  width: 64px;
+  height: 3px;
+  background: var(--ui-panel-2);
+  cursor: pointer;
+}
+.pc-pv-vol-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--ui-fg-muted);
+}
+.pc-pv-vol input[type="range"] {
+  position: absolute;
+  inset: -8px 0;
+  width: 100%;
+  height: 19px;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* ── 选中描边 + 点击脉冲 ─────────────────────────────────────────────
+ * 描边贴着片段的实体范围(渲染面 bounds()),不是整屏的包裹层。
+ * 刚点中时脉冲一下:描边由粗变细、外圈一圈强调色晕开再消失,
+ * 让用户一眼看清这一下点到的是哪个控件——尤其几张卡叠在一起的时候。 */
+.pc-pv-hit {
+  position: absolute;
+  border: 2px solid var(--ui-accent);
+  pointer-events: none;
+  box-sizing: border-box;
+}
+.pc-pv-hit.is-pulse {
+  animation: pc-pv-pulse 520ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes pc-pv-pulse {
+  0% {
+    border-width: 4px;
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--ui-accent) 55%, transparent);
+  }
+  60% {
+    border-width: 2px;
+    box-shadow: 0 0 0 10px color-mix(in oklab, var(--ui-accent) 0%, transparent);
+  }
+  100% {
+    border-width: 2px;
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pc-pv-hit.is-pulse { animation: none; }
+}
+
+/*
+ * 「这里是透明的」在**全项目只有一种画法**:中灰棋盘格。
+ *
+ * 一共三个地方要表示透明,以前三套值:
+ *   - server/vite-plugin-vision.ts 的 CHECKER_A / CHECKER_B / CHECKER_PX —— 给模型看的 see_frames;
+ *   - 这里的 .pc-3d-checker —— 3D 视图的底;
+ *   - Preview.tsx 里内联写死的另一套(偏暗、跟着皮肤走)—— 2D 画面的底。
+ * 前两个是对齐的,第三个不是。于是同一个项目在 2D 页和 3D 页看到的「透明」长得不一样,
+ * 人和人、人和模型之间说「那块是透明的」时指的都不是同一个东西。现在统一到这一处。
+ *
+ * **为什么是中灰,不是跟着近黑皮肤走。** 这块底要回答的问题是「这儿是不是什么都没有」。
+ * 底色一暗,一张深色的卡和「什么都没画」在屏幕上就长得一模一样 —— 这个坑踩过两次:
+ * see_frames 的黑底让模型连看 20 次都以为卡没渲出来(诊断报告 20260909-045354),
+ * 3D 视图的近黑底也是同一个病。中灰(而不是黑白)是为了深色卡和浅色卡都能从它上面浮出来。
+ * 代价是它在近黑界面里偏亮 —— 但它只在**画面真的透明**的地方露出来,
+ * 露得越多越说明用户需要看见这件事。
+ *
+ * 改这里的值就要同步改 vite-plugin-vision.ts 的那三个常数,反之亦然。
+ */
+.pc-checker,
+.pc-3d-checker {
+  background-color: #6b707b;
+  background-image:
+    linear-gradient(45deg, #8b919c 25%, transparent 25%, transparent 75%, #8b919c 75%),
+    linear-gradient(45deg, #8b919c 25%, transparent 25%, transparent 75%, #8b919c 75%);
+  background-size: 32px 32px;
+  background-position: 0 0, 16px 16px;
+}
+
+/*
+ * 格子上的浮层要自带底色,否则 #94a3b8 的字压在中灰格子上读不出来。
+ *
+ * 两个类名共用这一条,但**类名分开**:`.pc-3d-note` 只表示「状态提示文字」,
+ * `.pc-3d-toggle` 是按钮。按 `.pc-3d-note` 去找「正在渲染…」那条状态提示的人
+ * 不该匹配到一个按钮 —— 这已经绊过一次了。长得一样不是共用类名的理由。
+ */
+.pc-3d-note,
+.pc-3d-toggle {
+  padding: 4px 10px;
+  border-radius: var(--ui-radius, 6px);
+  font: 12px/1.6 system-ui, sans-serif;
+  background: color-mix(in srgb, var(--ui-panel) 92%, transparent);
+  box-shadow: 0 1px 6px rgb(0 0 0 / 35%);
+}
+
+/*
+ * 「2D 视角框」开关。打开时按钮变琥珀色 —— 和它在场景里画出来的那几条线**同一个颜色**,
+ * 所以不用猜"刚才那一下到底加了什么",眼睛顺着颜色就找到了。
+ * 这个琥珀(#f59e0b)和选中描边的青、画幅轮廓的灰蓝都分得开,三者不会看混。
+ */
+.pc-3d-toggle {
+  border: 1px solid var(--ui-border);
+  color: var(--ui-fg-muted);
+  cursor: pointer;
+}
+.pc-3d-toggle:hover {
+  color: var(--ui-fg);
+  border-color: var(--ui-border-strong);
+}
+.pc-3d-toggle.is-on {
+  border-color: #f59e0b;
+  color: #f59e0b;
+}

@@ -1,0 +1,61 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "PromptCut",
+  "version": "0.2.8",
+  "identifier": "com.promptcut.desktop",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "security": {
+      "csp": null
+    },
+    "windows": []
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "publisher": "PromptCut",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": [
+      "binaries/node"
+    ],
+    "resources": {
+      "runtime/": "runtime/"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "SimpChinese",
+          "English"
+        ],
+        "displayLanguageSelector": false,
+        "installerHooks": "./nsis/hooks.nsh"
+      }
+    },
+    "fileAssociations": [
+      {
+        "ext": [
+          "proc"
+        ],
+        "name": "PromptCut Project",
+        "description": "PromptCut 项目文件",
+        "mimeType": "application/json",
+        "role": "Editor"
+      }
+    ]
+  }
+}

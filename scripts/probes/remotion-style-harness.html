@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>remotion 式的框架探针的画面台</title>
+<!--
+  探针 scripts/probes/remotion-style-probe.mjs 用的画面台：一个 1920×1080 的框，往里挂一张卡的组件，按探针给的 t 重渲。
+  只做「把卡的 Component 挂上、换 t、卸掉」这三件事，不带舞台、时钟、预渲染——要比的就是卡片自己在不同的 t 上画出什么。
+  卡片模块经本工作区的开发服务器载入（用户卡走改动层与卡片插件的转换钩子，和编辑器载入它的路相同）。
+-->
+<style>
+  html, body { margin: 0; background: #101418; overflow: hidden; }
+  #stage { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: hidden; background: #101418; }
+</style></head><body><div id="stage"></div>
+<script type="module">
+import React from "react";
+import { createRoot } from "react-dom/client";
+import { flushSync } from "react-dom";
+
+/** 组件抛错时接住，记下来给探针读（不让整页白掉） */
+class Boundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error) { window.__rsError = { name: String(error?.name ?? ""), message: String(error?.message ?? error) }; }
+  render() { return this.state.error ? null : this.props.children; }
+}
+
+const isCardDef = (v) => !!v && typeof v === "object" && typeof v.id === "string" && typeof v.Component === "function";
+let root = null, def = null, params = null, mod = null;
+const render = (t) => flushSync(() => root.render(React.createElement(Boundary, null, React.createElement(def.Component, { params, playToken: 0, t, duration: 10 }))));
+
+window.__rs = {
+  /** 载入一个卡片模块，回它导出的卡片定义的概况 */
+  async load(url) {
+    mod = await import(/* @vite-ignore */ url);
+    def = Object.values(mod).find(isCardDef) ?? null;
+    if (!def) throw new Error(`${url} 里没有卡片定义`);
+    return { id: def.id, frameMode: def.frameMode, frozen: Object.isFrozen(def), defaultsFrozen: Object.isFrozen(def.defaults), componentFrozen: Object.isFrozen(def.Component), exports: Object.keys(mod) };
+  },
+  /** 挂上：从这一刻的 t 开始 */
+  mount(t, overrides = {}) {
+    window.__rsError = null;
+    params = { ...def.defaults, ...overrides };
+    root = createRoot(document.getElementById("stage"));
+    render(t);
+  },
+  /** 同一个挂着的组件换一个 t（顺着播、来回跳都走它） */
+  set(t) { render(t); },
+  unmount() { if (root) flushSync(() => root.unmount()); root = null; },
+  error() { return window.__rsError ?? null; },
+};
+// ?css=1：带上编辑器自己的样式（Tailwind 等），用 Tailwind 类写的卡才排得对（指南的盲写验收脚本用；remotion-style-probe 不带，它的卡都用行内样式）
+if (new URLSearchParams(location.search).get("css") === "1") await import(/* @vite-ignore */ "/src/index.css");
+window.__rsReady = true;
+</script></body></html>

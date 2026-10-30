@@ -1,0 +1,1148 @@
+/*
+ * 右栏的界面样式:整列布局、右侧 rail、剧本页、顶栏、消息气泡、输入区。
+ * Agent 气泡里面的工具方块、步骤条、思考块、工具详情在 agent.css。
+ * 配色一律走 --ui-* 变量并带回退值,皮肤还没加载时也不至于糊成一片。
+ */
+
+/* ── 右栏整列:左边一张卡片,右边贴窗口边缘的 rail ─────────────────── */
+/* 靠右排:收起 / 展开的列宽过渡里卡片宽度不变、比列宽出来的那截从左边溢出被裁掉,rail 始终贴着窗口右边 */
+.pc-right {
+  display: flex;
+  justify-content: flex-end;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+/*
+ * 收起时这张卡片只是 display:none(行内样式),里面的 AiPanel 一个都不卸载。
+ * 宽度按 Editor.tsx 给的 --pc-right-panel-w 定死、不许被压窄:过渡期间消息区不逐帧重排。
+ */
+.pc-right-card {
+  flex: 1 0 var(--pc-right-panel-w, 0px);
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* 收起 / 展开时卡片淡出淡入、带一点横移;和左栏抽屉同一套(left.css),方向朝右 */
+@media (prefers-reduced-motion: no-preference) {
+  [data-pc-rail-anim] .pc-right-card {
+    transition:
+      opacity 200ms cubic-bezier(0.16, 1, 0.3, 1),
+      translate 220ms cubic-bezier(0.16, 1, 0.3, 1),
+      display 220ms allow-discrete;
+  }
+  [data-pc-rail-anim] .pc-right-card[data-pc-collapsed] {
+    opacity: 0;
+    translate: 12px 0;
+  }
+  @starting-style {
+    [data-pc-rail-anim] .pc-right-card {
+      opacity: 0;
+      translate: 12px 0;
+    }
+  }
+}
+
+/*
+ * 剧本页和各 AiPanel 不再堆在这张卡片里:它们各在一个页面节点里(dock/pageNodes),由宿主挪进挪出、
+ * 只显示这一侧选中的那一页 —— 节点样式和显隐见 dock/dock.css。
+ */
+
+/* ── rail 上的 AI 类项:剧本 / 各助手分页(rail 本身左右共用,在 dock/RailBar.tsx + dock/dock.css) ── */
+.pc-rr-tab {
+  position: relative;
+  flex: 0 0 auto;
+}
+.pc-dock-rail .pc-rail-item:focus-visible,
+.pc-rr-x:focus-visible {
+  outline: none;
+  box-shadow: var(--ui-focus-ring, 0 0 0 2px #00DBDB);
+}
+
+/* 剧本已经写了东西:图标右上角一个小圆点 */
+.pc-rr-dot {
+  position: absolute;
+  top: 9px;
+  right: 14px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ui-accent, #00DBDB);
+  box-shadow: 0 0 0 2px var(--ui-bg, #131218);
+}
+
+/*
+ * Agent 头像:圆形字形(编号或标题首字)。颜色用 Agent 专属色 --ui-agent —— 和强调色同明度、同纯度的黄
+ * (skins/agentColor.ts 算的),和普通图标、选中用的强调色分开。studio.css 里 .pc-rail-item span 的 11px 要在这里盖掉。
+ * isolation:下面流光的两个伪元素(z-index:-1)留在头像这一层里,不钻到 rail 背后。
+ */
+.pc-rail-item .pc-rr-glyph {
+  position: relative;
+  isolation: isolate;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  background: color-mix(in oklab, var(--ui-agent, #d6b13c) 14%, var(--ui-panel-2, #2C2B34));
+  color: var(--ui-agent, #d6b13c);
+}
+.pc-rail-item.is-on .pc-rr-glyph {
+  background: color-mix(in oklab, var(--ui-agent, #d6b13c) 26%, var(--ui-panel-2, #2C2B34));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ui-agent, #d6b13c) 45%, transparent);
+}
+
+/*
+ * 正在跑:头像背后一圈转动的锥形渐变,模糊成流动的光;里圈再盖一层底色,只留一圈亮边,字照样看得清。
+ * 转的是 transform(合成层),不逐帧重绘渐变。
+ */
+.pc-rail-item.is-busy .pc-rr-glyph::before,
+.pc-rail-item.is-busy .pc-rr-glyph::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  z-index: -1;
+  pointer-events: none;
+}
+.pc-rail-item.is-busy .pc-rr-glyph::before {
+  inset: -4px;
+  background: conic-gradient(
+    transparent 0turn,
+    var(--ui-agent, #d6b13c) 0.18turn,
+    transparent 0.36turn,
+    transparent 0.5turn,
+    var(--ui-agent, #d6b13c) 0.68turn,
+    transparent 0.86turn
+  );
+  filter: blur(2.5px);
+  will-change: transform;
+  animation: pc-rr-flow 1.6s linear infinite;
+}
+.pc-rail-item.is-busy .pc-rr-glyph::after {
+  inset: 1.5px;
+  background: color-mix(in oklab, var(--ui-agent, #d6b13c) 22%, var(--ui-panel-2, #2C2B34));
+}
+@keyframes pc-rr-flow {
+  to { transform: rotate(1turn); }
+}
+/* 标签超过 4 个字在 JS 里截断;这里再兜一层省略号,防字体偏宽时撑出 56px */
+.pc-rail-item .pc-rr-label {
+  max-width: 52px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 跑完 / 中断、用户还没看这一页:头像右下角一个小点。蓝 = 完成(强调色),黄 = 中断(警告色)。跑的时候没有点,只有流光 */
+.pc-rr-state {
+  position: absolute;
+  top: 26px;
+  left: calc(50% + 7px);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--ui-bg, #131218);
+  pointer-events: none;
+}
+.pc-rr-state.is-done {
+  background: var(--ui-accent, #00DBDB);
+}
+.pc-rr-state.is-interrupted {
+  background: var(--ui-warn, #E0A13A);
+}
+
+/* 其他 Agent 投来的消息还没送达:右上角角标。悬停时让位给关闭按钮 */
+.pc-rr-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: var(--ui-accent, #00DBDB);
+  color: var(--ui-accent-fg, #ffffff);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  pointer-events: none;
+}
+.pc-rr-tab:hover .pc-rr-badge {
+  opacity: 0;
+}
+
+/* 关闭:平时藏着,悬停这一项(或键盘聚焦到它)才出来,免得 rail 上一排 × 抢眼 */
+.pc-rr-x {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--ui-radius-sm, 4px);
+  background: var(--ui-panel-2, #2C2B34);
+  color: var(--ui-fg-muted, #A6A4B2);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+}
+.pc-rr-tab:hover .pc-rr-x,
+.pc-rr-x:focus-visible {
+  opacity: 1;
+}
+.pc-rr-x:hover {
+  color: var(--ui-fg, #F2F1F6);
+  background: var(--ui-float, #34333D);
+}
+.pc-rr-x:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.pc-rr-tab:hover .pc-rr-x:disabled {
+  opacity: 0.35;
+}
+
+/* 跟随系统「减少动态效果」:流光不转,只留一圈静止的光 */
+@media (prefers-reduced-motion: reduce) {
+  .pc-rail-item.is-busy .pc-rr-glyph::before { animation: none; }
+}
+
+/* ── 剧本页:内嵌在右栏卡片里,和助手分页并列 ─────────────────────── */
+.pc-script-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  color: var(--ui-fg, #F2F1F6);
+}
+/* 顶栏:高度、内边距、底边线和助手分页的 .ai-panel-header 一致,左边「收起面板」切页时不挪位置 */
+.pc-script-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  box-sizing: border-box;
+  padding: 6px 14px 6px 8px;
+  border-bottom: 1px solid var(--ui-border, #2A2932);
+}
+.pc-script-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+}
+.pc-script-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ui-fg-faint, #6E6C7A);
+  font-variant-numeric: tabular-nums;
+}
+.pc-script-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ui-fg-muted, #A6A4B2);
+}
+.pc-script-note {
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  border-radius: var(--ui-radius, 6px);
+  background: var(--ui-accent-soft, rgba(0, 219, 219, 0.2));
+  color: var(--ui-fg, #F2F1F6);
+}
+.pc-script-text {
+  flex: 1 1 auto;
+  min-height: 120px;
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  padding: 10px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ui-fg, #F2F1F6);
+  background: var(--ui-panel, #23222A);
+  border: 1px solid var(--ui-border, #2A2932);
+  border-radius: var(--ui-radius-lg, 8px);
+  outline: none;
+}
+.pc-script-text:focus-visible {
+  border-color: var(--ui-accent, #00DBDB);
+}
+.pc-script-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.pc-script-saved {
+  margin-right: auto;
+  font-size: 12px;
+  color: var(--ui-success, #4ade80);
+}
+.pc-script-btn {
+  height: 32px;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 12px;
+  border: 1px solid var(--ui-border-strong, #3A3944);
+  border-radius: var(--ui-radius, 6px);
+  background: var(--ui-panel-2, #2C2B34);
+  color: var(--ui-fg, #F2F1F6);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pc-script-btn:hover:not(:disabled) {
+  background: var(--ui-float, #34333D);
+}
+.pc-script-actions .pc-btn-primary {
+  height: 32px;
+  font-size: 13px;
+}
+.pc-script-page button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.pc-script-page button:focus-visible {
+  outline: none;
+  box-shadow: var(--ui-focus-ring, 0 0 0 2px #00DBDB);
+}
+
+/* ── 顶栏:左边「收起面板」+ 标题 + 连接点,右边三个图标钮 ─────────── */
+.ai-panel-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 48px;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--ui-border, #2A2932);
+  min-width: 0;
+}
+/* 「收起面板」(CollapsePanelButton):助手分页和剧本页顶栏的最左边,标题再长也不许被挤窄 */
+.pc-collapse-btn {
+  flex: 0 0 auto;
+}
+.ai-panel-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ui-fg, #F2F1F6);
+}
+.ai-chat-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-status-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--ui-fg-faint, #6E6C7A);
+}
+.ai-status-dot.is-connected {
+  background-color: var(--ui-success, #4ade80);
+}
+.ai-chat-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+/* 「思考」是带字的可激活按钮:图标 + 两个小字,宽度随内容 */
+.ai-chat-actions .ai-think-btn {
+  width: auto;
+  gap: 4px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+.ai-chat-actions .pc-icon-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--ui-focus-ring, 0 0 0 2px #00DBDB);
+}
+
+/* 一个驱动都没装时顶栏上唯一的按钮 */
+.ai-gear-btn {
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--ui-panel-2, #2C2B34);
+  border: 1px solid var(--ui-border-strong, #3A3944);
+  border-radius: var(--ui-radius, 6px);
+  color: var(--ui-fg, #F2F1F6);
+  cursor: pointer;
+  padding: 6px 10px;
+  min-height: 32px;
+  gap: 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ai-gear-btn:hover {
+  background: var(--ui-float, #34333D);
+}
+.ai-gear-btn:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+
+/* ── 登录横幅、提示条、空状态 ───────────────────────────────────── */
+.ai-banner {
+  flex: 0 0 auto;
+  background: var(--ui-panel-2, #2C2B34);
+  border-bottom: 1px solid var(--ui-danger, #f87171);
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--ui-fg, #F2F1F6);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ai-banner-btn {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 4px 12px;
+  background: var(--ui-accent-grad, #00DBDB);
+  color: var(--ui-accent-fg, #ffffff);
+  border: none;
+  border-radius: var(--ui-radius-sm, 4px);
+  font-size: 12px;
+  cursor: pointer;
+}
+.ai-banner-btn:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+.ai-banner-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ai-toast {
+  flex: 0 0 auto;
+  background: var(--ui-panel-2, #2C2B34);
+  border: 1px solid var(--ui-border, #2A2932);
+  padding: 8px 12px;
+  border-radius: var(--ui-radius, 6px);
+  font-size: 12px;
+  text-align: center;
+  margin: 8px 12px;
+  color: var(--ui-fg, #F2F1F6);
+}
+
+.ai-empty-state {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 20px;
+  align-items: center;
+  text-align: center;
+  color: var(--ui-fg-muted, #A6A4B2);
+}
+.ai-empty-example {
+  width: 100%;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ui-fg, #F2F1F6);
+  background: var(--ui-panel, #23222A);
+  border: 1px solid var(--ui-border, #2A2932);
+  border-radius: var(--ui-radius-lg, 8px);
+  cursor: pointer;
+}
+.ai-empty-example:hover {
+  background: var(--ui-panel-2, #2C2B34);
+}
+
+/* ── 消息区 ─────────────────────────────────────────────────────── */
+.ai-messages {
+  flex: 1 1 auto;
+  /* 输入框拖高、思考条和排队列表同时在时,输入框先缩,消息区至少留 80px(composerHeight.ts 的 MESSAGES_MIN_H) */
+  min-height: 80px;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--ui-bg-2, #1B1A21);
+  /* 滚动位置由 MessageList 自己锚(窗口化后上方占位的高度会换),关掉浏览器的滚动锚定,免得两边一起挪 */
+  overflow-anchor: none;
+}
+
+/* 窗口化的占位(MessageList、listWindow.ts):顶住没渲染的消息的高度。空 div 在 flex 列里会被压扁,不许它缩 */
+.ai-vspacer {
+  flex: none;
+  pointer-events: none;
+}
+
+/*
+ * content-visibility:滚出视口的气泡不参与布局和绘制。每个流式片段都是一次提交,提交后浏览器要把整个
+ * 消息列表重新布局一遍 —— 历史到 1200 次工具调用(5800 个节点)时实测每片段 100+ ms,界面卡死;
+ * 加上这一条之后 13 ms。contain-intrinsic-size 给滚出去的气泡一个估计高度,滚动条不会乱跳。
+ * 现在每条消息外面包了一层 .ai-row(头像 + 气泡),规则挂在这一层上。
+ */
+.ai-messages > .ai-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
+}
+
+/*
+ * 滚动区是 flex 列,子元素缺省可以缩。被 content-visibility 跳过的行最小高度按尺寸约束算是 0,
+ * 内容一超出滚动区就会被压成几像素高,上面那个估计高度根本用不上(2000 条的历史实测滚动总高只有三万多像素,
+ * 打开历史会话贴不到底)。一律不许缩,每条都按自己的高度(或估计高度)排。
+ */
+.ai-messages > * {
+  flex-shrink: 0;
+}
+
+/* 一行 = 一条消息:Agent 靠左带头像,用户靠右不带 */
+.ai-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+.ai-row--user {
+  justify-content: flex-end;
+}
+.ai-row-avatar {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+}
+/* 角色头像本来是方的(RoleAvatar.css),聊天行里统一成圆形 */
+.ai-row-avatar .pc-role-avatar {
+  border-radius: 50%;
+}
+.ai-avatar-ai {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  background: var(--ui-panel-2, #2C2B34);
+  color: var(--ui-fg-muted, #A6A4B2);
+  user-select: none;
+}
+
+/* 两轮之间隔得久:居中一行弱文字时间 */
+.ai-time-sep {
+  align-self: center;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--ui-fg-faint, #6E6C7A);
+  font-variant-numeric: tabular-nums;
+}
+/* 收到了其他 Agent 的消息、后面还没有回复可挂(MessageList):原位一行小字,不画成用户气泡 */
+.ai-inbound-note {
+  align-self: center;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--ui-fg-faint, #6E6C7A);
+}
+
+/*
+ * 气泡四边留一样的 10px;里面各块之间只靠 gap(8px)隔开,哪一块都不许自己带上下外边距 ——
+ * 以前只有一行「正在思考」的气泡上面 14px、下面 8px,单行内容看着不居中。
+ */
+.ai-message {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 85%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 10px;
+  border-radius: var(--ui-radius-lg, 8px);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+/* 兜底:直接子块的上下外边距一律清零。两个类名把特异性抬过各块自己的 margin 写法,不看样式表谁先加载 */
+.ai-message.assistant > *,
+.ai-message.user > * {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+/* Agent 气泡:比消息区底色亮一档的面板色 */
+.ai-message.assistant {
+  background: var(--ui-panel, #23222A);
+  color: var(--ui-fg, #F2F1F6);
+}
+
+/*
+ * 用户气泡:整块强调色。聊天软件里「我说的」和「对方说的」靠颜色分左右,
+ * 用户消息数量少、每条都是一轮的起点,值得最醒目的那一档。
+ */
+.ai-message.user {
+  background: var(--ui-accent, #00DBDB);
+  color: var(--ui-accent-fg, #ffffff);
+}
+/* 强调色底上,链接、引用、代码块的默认颜色都会看不清,一律跟着气泡的字色走 */
+.ai-message.user .ai-message-text a,
+.ai-message.user .ai-message-text blockquote {
+  color: inherit;
+}
+.ai-message.user .ai-message-text a {
+  text-decoration: underline;
+}
+.ai-message.user .ai-message-text pre,
+.ai-message.user .ai-message-text code {
+  color: inherit;
+}
+.ai-message.user .ai-message-text pre {
+  background: rgb(0 0 0 / 0.2);
+  border-color: transparent;
+}
+.ai-message.user .ai-message-error {
+  color: inherit;
+  font-weight: 600;
+}
+/* 云端对话里刚发出、服务端记录还没回来的那条(乐观显示):正在发时略淡,没发出去时描一道警示边 */
+.ai-message.user.is-sending {
+  opacity: 0.78;
+}
+.ai-message.user.is-failed {
+  box-shadow: inset 0 0 0 1.5px var(--ui-danger, #e5484d);
+}
+.ai-message-send-state {
+  font-size: 11.5px;
+  opacity: 0.8;
+  margin-top: 2px;
+}
+/* 断网待发里不发了的那条:气泡里一个「重新发送」小按钮(按当前状态重新走一遍) */
+.ai-message-resend {
+  margin-top: 6px;
+  padding: 2px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: inherit;
+  background: rgb(255 255 255 / 0.16);
+  border: 1px solid rgb(255 255 255 / 0.45);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.ai-message-resend:hover {
+  background: rgb(255 255 255 / 0.28);
+}
+
+/* 用户气泡里的附件:一个文件一枚小胶囊 */
+.ai-bubble-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.ai-bubble-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  min-width: 0;
+  height: 22px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  border-radius: var(--ui-radius-sm, 4px);
+  background: rgb(0 0 0 / 0.2);
+  font-size: 11px;
+}
+.ai-bubble-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-message-text {
+  min-width: 0;
+}
+.ai-message-text p {
+  margin: 0 0 8px 0;
+}
+.ai-message-text p:last-child {
+  margin: 0;
+}
+.ai-message-text pre {
+  background: var(--ui-bg, #131218);
+  padding: 8px;
+  border-radius: var(--ui-radius-sm, 4px);
+  overflow-x: auto;
+  margin: 8px 0;
+  border: 1px solid var(--ui-border, #2A2932);
+}
+.ai-message-text code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.ai-message-text ul {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+/* 和前后块的间距交给气泡的 gap,这几样自己不带外边距 */
+.ai-message-error {
+  color: var(--ui-danger, #f87171);
+  font-size: 12px;
+}
+
+/* 非正常收尾的说明:提示而不是报错,所以不用 danger 色 */
+.ai-message-outcome {
+  padding: 8px;
+  border-left: 2px solid var(--ui-border-strong, #3A3944);
+  background: var(--ui-panel-2, #2C2B34);
+  border-radius: 0 4px 4px 0;
+  font-size: 12px;
+  color: var(--ui-fg-muted, #A6A4B2);
+  overflow-wrap: anywhere;
+}
+
+/* ── 消息片段 ───────────────────────────────────────── */
+/* 详细模式里文字和工具交错出现,段与段之间的气口也是气泡的 gap,这里不再单独加上外边距 */
+.ai-message-attach {
+  font-size: 11px;
+  color: var(--ui-fg-muted, #A6A4B2);
+}
+
+/* ── 模型回复里的 Markdown ───────────────────────────── */
+.ai-message-text h1,
+.ai-message-text h2,
+.ai-message-text h3,
+.ai-message-text h4 {
+  margin: 10px 0 6px;
+  line-height: 1.35;
+  font-weight: 600;
+}
+.ai-message-text h1 { font-size: 16px; }
+.ai-message-text h2 { font-size: 15px; }
+.ai-message-text h3 { font-size: 14px; }
+.ai-message-text h4 { font-size: 13px; }
+/* 首尾那一块不带外边距,气泡四边的留白才一样;列表项、独占一行的公式再往里一层也清掉 */
+.ai-message-text > :first-child { margin-top: 0; }
+.ai-message-text > :last-child { margin-bottom: 0; }
+.ai-message-text > :first-child > li:first-child,
+.ai-message-text > :first-child > .katex-display:first-child { margin-top: 0; }
+.ai-message-text > :last-child > li:last-child,
+.ai-message-text > :last-child > .katex-display:last-child { margin-bottom: 0; }
+
+.ai-message-text ol {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+.ai-message-text li { margin: 2px 0; }
+.ai-message-text li > p { margin: 0; }
+/* 任务列表(- [ ] / - [x])不要项目符号 */
+.ai-message-text li.task-list-item { list-style: none; margin-left: -16px; }
+.ai-message-text li.task-list-item input { margin-right: 6px; }
+
+.ai-message-text blockquote {
+  margin: 8px 0;
+  padding: 2px 0 2px 10px;
+  border-left: 3px solid var(--ui-border-strong, #3A3944);
+  color: var(--ui-fg-muted, #A6A4B2);
+}
+.ai-message-text hr {
+  border: 0;
+  border-top: 1px solid var(--ui-border, #2A2932);
+  margin: 10px 0;
+}
+.ai-message-text a {
+  color: var(--ui-accent, #00DBDB);
+  overflow-wrap: anywhere;
+}
+
+/* 表格:自己横向滚动,不把面板撑宽 */
+.md-table-wrap {
+  overflow-x: auto;
+  margin: 8px 0;
+  border: 1px solid var(--ui-border, #2A2932);
+  border-radius: var(--ui-radius-sm, 4px);
+}
+.md-table-wrap table {
+  border-collapse: collapse;
+  font-size: 12px;
+  width: max-content;
+  min-width: 100%;
+}
+.md-table-wrap th,
+.md-table-wrap td {
+  border-bottom: 1px solid var(--ui-border, #2A2932);
+  padding: 4px 8px;
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+.md-table-wrap th {
+  background: var(--ui-bg, #131218);
+  font-weight: 600;
+}
+.md-table-wrap tr:last-child td { border-bottom: 0; }
+
+/* 公式:独占一行的公式太宽时横向滚动;继承面板文字颜色 */
+.ai-message-text .katex { font-size: 1.02em; }
+.ai-message-text .katex-display {
+  margin: 8px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
+}
+/* 公式写错时 KaTeX 会把原样式子标红显示,别让它糊成一团 */
+.ai-message-text .katex-error {
+  color: var(--ui-danger, #f87171);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+/* ── 输入区:占面板高度的 1/3 ───────────────────────────────────── */
+/*
+ * 固定占三分之一而不是随内容增高:长提示词是常态,输入框一路长高会把消息区挤没,
+ * 用户边写边对照上面的回复就看不到了。字多了在输入框里面滚。
+ *
+ * 做成一张独立的圆角输入框:四周离面板边留 10px,输入框、附件和底部工具条都装在框里,
+ * 和上面的消息区分得开,一眼看得出「这里是我写字的地方」。高度扣掉外边距后仍是三分之一。
+ * 不设 overflow:hidden —— 「✦」「⋯」弹层从工具条往上弹,裁掉就看不见了。
+ */
+.ai-composer {
+  /* 右上角拖柄(.ai-composer-grip)的定位参照;弹层仍以工具条为参照,不受影响 */
+  position: relative;
+  flex: 0 0 calc(33.333% - 10px);
+  min-height: 140px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  margin: 0 10px 10px;
+  border: 1px solid var(--ui-border-strong, #3A3944);
+  border-radius: var(--ui-radius-xl, 10px);
+  /*
+   * 填 L3(--ui-panel-2)。以前是 L2,和四周卡片底色 L1 只差一档,深色皮肤里几乎看不出这是一块填了色的框;
+   * 浅色皮肤里 L2 是纯白、L3 是浅灰,L3 放在 L1 上也照样读得出「这里是输入框」。
+   * 框里的输入框、附件行、工具条都不铺底色,整块只有这一个颜色;
+   * 下拉、附件卡、按钮悬停改用 L4(--ui-float),在这层底上还分得出来。
+   */
+  background: var(--ui-panel-2, #2C2B34);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+/* 浅色皮肤里 L3 浅灰显得发闷,改用 L2 纯白,和 rail 选中项、模式切换选中格同一个颜色 */
+[data-skin-mode="light"] .ai-composer {
+  background: var(--ui-panel, #FFFFFF);
+}
+
+/* 附件卡片在最上;多到一定程度自己滚,不把输入框挤没。右边让出拖柄的位置 */
+.ai-attachments {
+  flex: 0 0 auto;
+  max-height: 40%;
+  overflow-y: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 26px 0 12px;
+}
+.ai-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 2px 4px 2px 8px;
+  border-radius: var(--ui-radius-sm, 4px);
+  border: 1px solid var(--ui-border, #2A2932);
+  background: var(--ui-float, #34333D);
+  color: var(--ui-fg, #F2F1F6);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.ai-attachment-name {
+  min-width: 0;
+}
+.ai-attachment-remove {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--ui-radius-sm, 4px);
+  background: transparent;
+  color: var(--ui-fg-muted, #A6A4B2);
+  font-size: 11px;
+  cursor: pointer;
+}
+.ai-attachment-remove:hover {
+  color: var(--ui-danger, #f87171);
+}
+
+/* ── AI 附件卡片的导入中 / 失败两态 ────────────────────────── */
+.ai-attachment-chip.is-importing {
+  opacity: 0.7;
+}
+.ai-attachment-chip.is-error {
+  border-color: var(--ui-danger, #f87171);
+  color: var(--ui-danger, #f87171);
+  cursor: pointer;
+}
+
+/* 输入框填满中间:不自动增高,超出在内部滚 */
+.ai-composer-input {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  overflow-y: auto;
+  /* 右边多让出 12px:第一行字和占位提示不钻到右上角的拖柄底下 */
+  padding: 12px 26px 6px 14px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ui-fg, #F2F1F6);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.ai-composer-input::placeholder {
+  color: var(--ui-fg-faint, #6E6C7A);
+}
+.ai-composer-input:disabled {
+  opacity: 0.6;
+}
+/* 皮肤的滚动条 12px 宽、贴着输入框右边:滚动槽从拖柄下面开始,滑块顶端不会被拖柄盖住、点不到 */
+.ai-composer-input::-webkit-scrollbar-track {
+  margin-top: 20px;
+}
+
+/*
+ * 右上角的拖柄(Composer.tsx 的 ComposerGrip):14px 见方,离框的上边、右边各 6px,画的是一个「⌝」。
+ * 平时弱色,悬停和拖动时提亮;光标是上下双箭头。类名里不带 -btn,免得吃到皮肤给按钮加的悬停提亮 / 按下缩小。
+ */
+.ai-composer-grip {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  width: 14px;
+  height: 14px;
+  display: grid;
+  place-items: center;
+  color: var(--ui-fg-faint, #6E6C7A);
+  cursor: ns-resize;
+  touch-action: none;
+  transition: color 120ms ease;
+}
+.ai-composer-grip svg {
+  display: block;
+  pointer-events: none;
+}
+.ai-composer-grip:hover,
+.ai-composer-grip.is-dragging {
+  color: var(--ui-fg, #F2F1F6);
+}
+/* 输入框本身没有描边,聚焦时整个圆角框换成强调色描边 + 一圈淡光,知道光标在这儿 */
+.ai-composer:focus-within {
+  border-color: var(--ui-accent, #00DBDB);
+  box-shadow: 0 0 0 3px var(--ui-accent-soft, rgb(0 219 219 / 0.18));
+}
+/* 浅色皮肤的 --ui-accent-soft 接近白色,外圈光看上去像底色溢出边框;只留强调色描边 */
+[data-skin-mode="light"] .ai-composer:focus-within {
+  box-shadow: none;
+}
+/*
+ * 皮肤(motion.css)给所有聚焦的 textarea 挂描边和 glow;这里的输入框装在圆角框里,
+ * 聚焦由外面整个框表现,里面再发一圈光会在工具条上方画出一道横线。
+ */
+[data-skin] .ai-composer-input:focus {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+/* 底部 36px 工具条:左边一组工具,右边发送 / 停止。弹层以它为定位参照 */
+.ai-composer-bar {
+  position: relative;
+  flex: 0 0 36px;
+  height: 36px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 6px;
+  min-width: 0;
+}
+.ai-composer-tools {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.ai-composer-bar .ai-bar-btn {
+  position: relative;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  color: var(--ui-fg-muted, #A6A4B2);
+}
+/*
+ * 悬停 / 弹层开着:L4 底。输入框本身已经是 L3,再用 L3 就看不出来。
+ * 前面多挂一层 .ai-composer:特异性压过 studio.css 里 .pc-icon-btn 的 L3 悬停,不看样式表加载顺序
+ */
+.ai-composer .ai-composer-bar .ai-bar-btn:hover:not(:disabled),
+.ai-composer .ai-composer-bar .ai-bar-btn[aria-expanded="true"] {
+  color: var(--ui-fg, #F2F1F6);
+  background: var(--ui-float, #34333D);
+}
+.ai-composer-bar .ai-bar-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.ai-spark-btn {
+  font-size: 15px;
+  line-height: 1;
+}
+/* 收起来的东西里有非默认设置(分工模式开着、深度自主开着…):按钮右上角一个点 */
+.ai-bar-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ui-accent, #00DBDB);
+}
+/* 驱动方式 / 模型的紧凑下拉:窄栏时先缩它们,文字省略,按钮和发送键不动 */
+.ai-bar-select {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 112px;
+  height: 26px;
+  margin-left: 2px;
+  padding: 0 4px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ui-fg, #F2F1F6);
+  /* L4:输入框底是 L3,下拉要比它再亮一档才看得出是个控件。实心底也保证下拉展开的选项列表不会退成白底 */
+  background: var(--ui-float, #34333D);
+  border: 1px solid var(--ui-border, #2A2932);
+  border-radius: var(--ui-radius-sm, 4px);
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.ai-bar-select:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/*
+ * 运行中右边要放「加入队列」和「■ 停止」两个按钮,窄栏里驱动 / 模型下拉会被挤成一个字母;
+ * 这一轮跑着的时候本来也不该换驱动和模型(模型那组已经是禁用的),干脆先收起来,跑完再出现。
+ */
+.ai-composer.is-streaming .ai-bar-select,
+.ai-composer.is-streaming .ai-composer-tools > :not(.ai-bar-btn):not(.ai-pop-anchor) {
+  display: none;
+}
+.ai-composer-bar .ai-bar-btn:focus-visible,
+.ai-bar-select:focus-visible,
+.ai-composer-bar .ai-send-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--ui-focus-ring, 0 0 0 2px #00DBDB);
+}
+
+/* 发送:小号主按钮;运行中换成中性色的「■ 停止」,别让「停」看着像「再发一次」 */
+.ai-composer-bar .ai-send-btn {
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 0 14px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.ai-composer-bar .ai-send-btn:hover {
+  filter: brightness(1.1);
+}
+.ai-composer-bar .ai-send-btn.is-stop {
+  /* L4:放在 L3 的输入框底上还看得出是个按钮 */
+  background: var(--ui-float, #34333D);
+  color: var(--ui-fg, #F2F1F6);
+  box-shadow: inset 0 0 0 1px var(--ui-border-strong, #3A3944);
+}
+
+/* ── 工具条上的弹层(「✦」菜单、「⋯」运行选项)────────────────────── */
+/* 从工具条往上弹,落在输入框 / 消息区上方;仍在右栏卡片里,不会被卡片裁掉 */
+.ai-pop {
+  position: absolute;
+  z-index: 30;
+  left: 8px;
+  bottom: calc(100% + 2px);
+  max-width: calc(100% - 16px);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  background: var(--ui-float, #34333D);
+  border: 1px solid var(--ui-border-strong, #3A3944);
+  border-radius: var(--ui-radius-lg, 8px);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+}
+.ai-menu {
+  min-width: 180px;
+}
+.ai-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px 0 4px;
+  border: 0;
+  border-radius: var(--ui-radius, 6px);
+  background: transparent;
+  color: var(--ui-fg, #F2F1F6);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ai-menu-item:hover:not(:disabled),
+.ai-menu-item:focus-visible {
+  outline: none;
+  background: var(--ui-panel-2, #2C2B34);
+}
+.ai-menu-item:disabled {
+  color: var(--ui-fg-faint, #6E6C7A);
+  cursor: default;
+}
+/* 左边一格固定宽的图标位:勾选标记、诊断、新建,文字才对得齐 */
+.ai-menu-icon {
+  flex: 0 0 18px;
+  text-align: center;
+  color: var(--ui-accent, #00DBDB);
+}
+.ai-menu-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--ui-border, #2A2932);
+}

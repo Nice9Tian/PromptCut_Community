@@ -1,0 +1,7 @@
+node_modules/
+.cache/
+src-tauri/target/
+src-tauri/runtime/
+src-tauri/binaries/
+.smoke-state.json
+release/

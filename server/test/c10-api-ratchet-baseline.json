@@ -1,0 +1,44 @@
+{
+ "note": "仅供测试。旧本机API棘轮基线原从claude/c10a-integ@5b2fccc拷来并逐步删除归档接口；2026-10-09继续只删到当前在线产物的19条旧本机路径，后续仍只减不增。accountPaths单独记录已批准的0.7.18账号入口8条字面量，新增唯一首次云端Agent告知路由，由c10-ui-gates.test.mjs固定精确集合并拒未知account路径；不能用旧基线或editor/动态字面量放宽账号许可。C10A-API-03仍逐条核实际产物与清单相等。2026-10-23 账号入口由 8 条增到 11 条：新增第三方登录（Google）的 third-party/config（GET）、third-party/login 与 third-party/register（POST），仍是逐条精确登记，unlink 不在内。",
+ "source": "claude/c10a-integ@5b2fccc:server/test/c10a-online-api-paths.json",
+ "projectAccountPaths": [
+  "/hosted/shared/account/members"
+ ],
+ "paths": [
+  "/api/asset",
+  "/api/data/costs",
+  "/api/data/diff",
+  "/api/data/playhead",
+  "/api/data/project",
+  "/api/export",
+  "/api/frames/",
+  "/api/frames/snapshot",
+  "/api/frames/snapshot/",
+  "/api/frames/stream/",
+  "/api/media/file",
+  "/api/media/prefetch",
+  "/api/media/remote",
+  "/api/media/upload-queue/target",
+  "/api/prerender/info",
+  "/api/ui-render/bake-batch",
+  "/api/vision/bake-batch",
+  "/api/vision/bake-evict",
+  "/api/vision/bake-status"
+ ],
+ "accountSource": "docs/plan/account-binding-task.md; docs/plan/account-binding-contract.md; docs/plan/three-versions-018-design.md; src/account/client.ts; src/online/apiGuard.ts",
+ "accountPaths": [
+  "/api/account/cloud-agent-consent",
+  "/api/account/editor/",
+  "/api/account/editor/renew",
+  "/api/account/editor/session",
+  "/api/account/login",
+  "/api/account/logout",
+  "/api/account/me",
+  "/api/account/projects",
+  "/api/account/third-party/config",
+  "/api/account/third-party/login",
+  "/api/account/third-party/register"
+ ],
+ "storagePaths": [],
+ "storageSource": "2026-10-24：网盘导入 /api/media/storage/* 在在线产物里一条都不许有，所以这一桶是空的。当天合连接器时它们曾漏进在线产物，我登记过三条把门弄绿（治标）；同日 claude/drive-connector 给了治本的改法（storageImport.ts 三个函数开头内联 storageImportSupported 判断，在线构建里是编译期常量 false，打包器把代码连同字面量一并剪掉），于是撤销登记。空桶比登记更严：任何 /api/media/storage/ 开头的路径再出现都会被判未许可。"
+}

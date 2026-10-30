@@ -1,0 +1,53 @@
+{
+  "name": "promptcut",
+  "private": true,
+  "version": "0.7.29",
+  "type": "module",
+  "_comment_imports": "下面这四个是浏览器侧云端扩展包的别名（docs/plan/community-boundary.md 第二节）。这里一律指向空桩，两个仓库里逐字一致、也不出现任何闭源路径；真正指到闭源加载表的是 server/vite-plugin-cloud-seams.ts 这个插件（resolveId + enforce:pre，压过这里）。为什么还要在这里兜一层：没挂那个插件的地方（探针自己起的 vite、raw Node）原来是**硬失败**——浏览器侧 transform 直接 500，而不是优雅降级成社区版。有了这一层，漏挂插件最多退化成「没装云端扩展」，不会把页面打死。",
+  "imports": {
+    "#promptcut-cloud-ai": "./src/community/cloudSeamStub.ts",
+    "#promptcut-cloud-account": "./src/community/cloudSeamStub.ts",
+    "#promptcut-cloud-account-ui": "./src/community/cloudSeamStub.ts",
+    "#promptcut-cloud-online": "./src/community/cloudSeamStub.ts"
+  },
+  "scripts": {
+    "dev": "vite --port 5190 --strictPort --host 0.0.0.0",
+    "dev:lan": "node scripts/dev-lan.mjs",
+    "test": "node scripts/test-suite.mjs",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --port 5195",
+    "export": "node scripts/export-frames.mjs",
+    "verify": "node scripts/verify-determinism.mjs",
+    "preview-boxes": "node scripts/preview-boxes.mjs"
+  },
+  "dependencies": {
+    "@tsparticles/engine": "^4.4.0",
+    "@tsparticles/slim": "^4.4.0",
+    "katex": "^0.18.6",
+    "lottie-web": "^5.13.0",
+    "motion": "^12.23.0",
+    "node-pty": "1.1.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "sucrase": "3.35.1",
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
+    "@types/node": "^24.13.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.185.4",
+    "@vitejs/plugin-react": "^6.0.3",
+    "playwright-core": "^1.64.1",
+    "pngjs": "^7.0.0",
+    "puppeteer": "^25.3.0",
+    "tailwindcss": "^4.1.0",
+    "typescript": "~5.9.0",
+    "vite": "^8.1.1"
+  }
+}

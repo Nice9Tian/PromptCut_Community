@@ -1,0 +1,58 @@
+{
+ "key": "triangles",
+ "name": "Triangles",
+ "particles": {
+  "number": {
+   "value": 80,
+   "density": {
+    "enable": true
+   }
+  },
+  "shape": {
+   "type": [
+    "polygon",
+    "triangle"
+   ],
+   "options": {
+    "polygon": {
+     "sides": 3,
+     "particles": {
+      "paint": {
+       "fill": {
+        "color": {
+         "value": "#f00"
+        },
+        "enable": true
+       }
+      }
+     }
+    },
+    "triangle": {
+     "particles": {
+      "paint": {
+       "fill": {
+        "color": {
+         "value": "#0f0"
+        },
+        "enable": true
+       }
+      }
+     }
+    }
+   }
+  },
+  "opacity": {
+   "value": 1
+  },
+  "size": {
+   "value": 30
+  },
+  "move": {
+   "enable": true,
+   "speed": 1
+  }
+ },
+ "background": {
+  "color": "#0d0d0d"
+ }
+}

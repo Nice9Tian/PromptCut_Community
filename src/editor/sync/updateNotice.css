@@ -1,0 +1,63 @@
+/*
+ * 在线浏览器的新版本提示条（语义 `docs/semantics/product/platforms.md` 与 `docs/semantics/mechanism/platforms.md`「在线浏览器」的「新版本提示」）。
+ * 做法参照 `src/editor/sync/sync.css` 的 `.pc-offline-unsent`，固定在底部居中、`bottom: 72px`（位于离线常驻提示 `bottom: 36px` 上方，同时出现时不重叠）。
+ * 手机版编辑器（`src/mobile/`）底部是子导航与分页栏，提示条改放在顶栏正下方，并让顶栏下面空出提示条那么高，不压任何按钮（见文件末）。
+ */
+
+.pc-update-notice {
+  position: fixed;
+  bottom: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 950;
+  /* 按内容取宽：只靠 left: 50% 收缩适配时宽度最多半个视口，手机上一行字会被挤成好几行 */
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  box-sizing: border-box;
+  padding: 6px 12px 6px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--ui-accent);
+  background: var(--ui-panel);
+  color: var(--ui-fg);
+  font-size: 12.5px;
+  line-height: 1.4;
+  box-shadow: var(--ui-shadow, 0 6px 18px rgba(0, 0, 0, 0.35));
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.pc-update-notice--warn {
+  border-color: var(--ui-warn, #e0a030);
+  color: var(--ui-warn, #e0a030);
+}
+
+.pc-update-notice-text {
+  flex: 0 1 auto;
+}
+
+.pc-update-notice-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.pc-update-notice-btn {
+  height: 24px;
+  padding: 0 10px;
+  font-size: 12px;
+  border-radius: 10px;
+}
+
+/* 手机版编辑器：提示条放到顶栏（44px 加刘海留白）正下方；顶栏下面让出提示条的实际高度（`--pc-update-notice-h`，`UpdateNotice.tsx` 量了写上），
+   下面的预览、时间轴、Agent 对话整体下移，同冲突横条 `.cfbar` 那样占位，不盖住内容。开始页没有顶栏，照旧在底部 */
+body:has(.pcm [data-pcm="editor"]) .pc-update-notice {
+  top: calc(env(safe-area-inset-top, 0px) + 48px);
+  bottom: auto;
+}
+body:has(.pc-update-notice) .pcm [data-pcm="editor"] > [data-pcm="topbar"] {
+  margin-bottom: calc(var(--pc-update-notice-h, 38px) + 8px);
+}

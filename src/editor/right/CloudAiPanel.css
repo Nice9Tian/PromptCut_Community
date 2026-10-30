@@ -1,0 +1,42 @@
+/* 「云端」接入方式的 AI 栏(CloudAiPanel.tsx):只多两行小字,其余沿用本机 AI 栏的样式 */
+.pc-cloud-note {
+  flex: 0 0 auto;
+  padding: 2px 12px 4px;
+  font-size: 11px;
+  color: var(--ink-muted);
+  text-align: left;
+}
+.pc-cloud-reconnect { font-size: 12px; line-height: 1.5; }
+.pc-cloud-sender { font-size: 12px; color: var(--muted, #90949d); margin: 0 8px; }
+
+.pc-cloud-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 4px 12px;
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+.pc-cloud-access-label { color: var(--ink-muted); }
+.pc-cloud-control-btn {
+  border: 1px solid var(--line, rgba(255,255,255,.14));
+  border-radius: 6px;
+  padding: 3px 8px;
+  color: var(--ink);
+  background: var(--fill, rgba(255,255,255,.04));
+  cursor: pointer;
+}
+.pc-cloud-control-btn:hover:not(:disabled) { background: var(--fill-hover, rgba(255,255,255,.09)); }
+.pc-cloud-control-btn:disabled { opacity: .55; cursor: default; }
+.pc-cloud-control-note { flex-basis: 100%; line-height: 1.45; }
+.pc-cloud-readonly {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  color: var(--ink-muted);
+  font-size: 12px;
+}

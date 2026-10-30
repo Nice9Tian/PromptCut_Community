@@ -1,0 +1,161 @@
+.pc-app-shell {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--ui-bg, #111);
+  color: var(--ui-fg, #eee);
+}
+
+.pc-app-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+}
+
+.pc-titlebar {
+  position: relative;
+  z-index: 1100;
+  flex: 0 0 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  padding-left: 10px;
+  background: transparent;
+  color: var(--ui-fg, #f5f7fa);
+  border-bottom: none;
+  font-family: var(--ui-font, system-ui, sans-serif);
+  user-select: none;
+}
+
+/* 无边框窗口的顶边拉伸带:盖在标题栏最上面 8px,两头 12px 是斜角。最大化时组件不画它 */
+.pc-titlebar-resize {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 8px;
+  z-index: 2;
+  display: flex;
+}
+
+.pc-titlebar-resize > span { height: 100%; }
+.pc-titlebar-resize-nw { flex: 0 0 12px; cursor: nwse-resize; }
+.pc-titlebar-resize-n { flex: 1 1 auto; cursor: ns-resize; }
+.pc-titlebar-resize-ne { flex: 0 0 12px; cursor: nesw-resize; }
+
+.pc-titlebar-menus {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 100%;
+}
+
+.pc-titlebar-menu-wrap { position: relative; height: 100%; display: flex; align-items: center; }
+
+.pc-titlebar-menu-button {
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid transparent;
+  border-radius: var(--ui-radius, 6px);
+  background: transparent;
+  color: var(--ui-fg-muted, rgba(245, 247, 250, 0.72));
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.pc-titlebar-menu-button:hover,
+.pc-titlebar-menu-button.is-open {
+  color: var(--ui-fg);
+  background: color-mix(in oklab, var(--ui-accent) 14%, var(--ui-panel));
+  border-color: color-mix(in oklab, var(--ui-accent) 42%, var(--ui-border));
+}
+
+.pc-titlebar-menu {
+  position: absolute;
+  top: 39px;
+  left: 0;
+  min-width: 196px;
+  padding: 6px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-lg, 8px);
+  background: var(--ui-float, #222);
+  box-shadow: var(--ui-shadow, 0 14px 34px rgba(0, 0, 0, 0.42));
+}
+
+.pc-titlebar-menu-item {
+  width: 100%;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: var(--ui-radius-sm, 4px);
+  background: transparent;
+  color: var(--ui-fg);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pc-titlebar-menu-item:hover,
+.pc-titlebar-menu-item:focus-visible {
+  outline: none;
+  background: var(--ui-accent-soft);
+  border-color: var(--ui-accent);
+}
+
+.pc-titlebar-menu-item kbd {
+  color: var(--ui-fg-faint);
+  font: 10px var(--ui-font-mono, ui-monospace, monospace);
+}
+
+.pc-titlebar-menu-separator {
+  height: 1px;
+  margin: 5px 4px;
+  background: var(--ui-border-strong);
+}
+
+.pc-titlebar-spacer { flex: 1 1 auto; height: 100%; }
+
+.pc-titlebar-window-controls {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  margin-left: 8px;
+}
+
+.pc-window-control {
+  width: 46px;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ui-fg-muted);
+  font: 18px/1 var(--ui-font, system-ui, sans-serif);
+  cursor: pointer;
+}
+
+.pc-window-control:hover {
+  background: color-mix(in oklab, var(--ui-fg) 10%, transparent);
+  color: var(--ui-fg);
+}
+
+.pc-window-control--close:hover {
+  background: #c42b3c;
+  color: #fff;
+}
+
+@media (max-width: 700px) {
+  .pc-titlebar { padding-left: 8px; }
+  .pc-titlebar-menu-button { padding: 0 7px; }
+  .pc-window-control { width: 40px; }
+}
+
+/* 在线页面置灰的项(桌面才有,见 WindowTitleBar.tsx 的 desktopOnly),与顶栏项目菜单的置灰一个样子 */
+.pc-titlebar-menu-item:disabled { opacity: 0.45; cursor: default; }
+.pc-titlebar-menu-item:disabled:hover { background: transparent; border-color: transparent; }

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>在线卡片运行时的画面台</title>
+<!--
+  探针 scripts/probes/online-remotion-card-probe.mjs 用的画面台：在真 Chrome 里跑在线页面的卡片运行时
+  （`src/online/cardRuntime/` 的转译 `bundleCards`、加载器 `createCardLoader`、页面自带的模块表 `stageHostModules`），
+  把探针给的卡片源码（同步来的用户卡的样子：键 → 文本）转译、载入，再把载入出来的卡的 Component 挂在 1920×1080 的框里按 t 渲。
+  不带账号、不带文档服务、不带舞台 iframe：要看的是「用框架写的卡，经在线页面自己的转译与加载器，在真浏览器里能不能载入、画得对」。
+-->
+<style>
+  html, body { margin: 0; background: #101418; overflow: hidden; }
+  #stage { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: hidden; background: #101418; }
+</style></head><body><div id="stage"></div>
+<script type="module">
+import React from "react";
+import { createRoot } from "react-dom/client";
+import { flushSync } from "react-dom";
+import { bundleCards } from "/src/online/cardRuntime/transpile.browser.ts";
+import { createCardLoader } from "/src/online/cardRuntime/loader.ts";
+import { stageHostModules } from "/src/online/cardRuntime/hostModules.ts";
+import { CARD_RUNTIME_VERSION } from "/src/online/cardRuntime/version.ts";
+
+class Boundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error) { window.__orsError = { name: String(error?.name ?? ""), message: String(error?.message ?? error) }; }
+  render() { return this.state.error ? null : this.props.children; }
+}
+
+const styleHost = [];
+const loader = createCardLoader({
+  runtime: CARD_RUNTIME_VERSION,
+  host: stageHostModules,
+  onStyles(entry, cssFiles) { for (const css of cssFiles) { const s = document.createElement("style"); s.setAttribute("data-pc-card-style", entry); s.textContent = css; document.head.append(s); styleHost.push(s); } },
+});
+let root = null, def = null, params = null;
+const render = (t) => flushSync(() => root.render(React.createElement(Boundary, null, React.createElement(def.Component, { params, playToken: 0, t, duration: 10 }))));
+
+window.__ors = {
+  runtime: CARD_RUNTIME_VERSION,
+  /** sources：{ 键: 文本 }，键形如 src/cards/user/<名>.tsx；entries 是要载入的入口 */
+  async setSources(sources, entries) {
+    const read = (key) => (Object.hasOwn(sources, key) ? { body: sources[key], hash: String(key.length) + ":" + sources[key].length } : null);
+    const bundled = await bundleCards({ entries, read });
+    const bundles = bundled.filter((r) => r.ok).map((r) => r.bundle);
+    const loaded = await loader.setBundles(bundles);
+    return {
+      bundled: bundled.map((r) => (r.ok ? { entry: r.entry, ok: true, lockSuffix: /lockTopLevel|__pcLockTopLevel/.test(r.bundle.modules[0].js) } : { entry: r.entry, ok: false, state: r.state })),
+      loaded: loaded.map((r) => (r.ok ? { entry: r.entry, ok: true, cardIds: r.cardIds } : { entry: r.entry, ok: false, state: r.state })),
+      cards: loader.cards().map((d) => ({ id: d.id, frameMode: d.frameMode, frozen: Object.isFrozen(d), defaultsFrozen: Object.isFrozen(d.defaults) })),
+    };
+  },
+  mount(id, t, overrides = {}) {
+    window.__orsError = null;
+    def = loader.cards().find((d) => d.id === id);
+    if (!def) throw new Error("没载入这张卡：" + id);
+    params = { ...def.defaults, ...overrides };
+    root = createRoot(document.getElementById("stage"));
+    render(t);
+  },
+  set(t) { render(t); },
+  unmount() { if (root) flushSync(() => root.unmount()); root = null; },
+  error() { return window.__orsError ?? null; },
+};
+window.__orsReady = true;
+</script></body></html>

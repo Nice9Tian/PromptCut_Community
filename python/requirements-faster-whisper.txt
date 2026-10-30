@@ -1,0 +1,8 @@
+# faster-whisper：CTranslate2 后端，CPU 上用 int8 量化即可跑，不需要 torch。
+# 依赖显式列出只是为了离线排查方便，pip 自己也会解出同样的树。
+faster-whisper>=1.0.3
+ctranslate2>=4.4.0
+onnxruntime>=1.17.0
+av>=12.0.0
+huggingface-hub>=0.24.0
+tokenizers>=0.15.0

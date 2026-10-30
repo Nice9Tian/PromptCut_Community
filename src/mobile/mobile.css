@@ -1,0 +1,453 @@
+/*
+ * 手机版界面的样式,照演示稿 `prototypes/mobile-ui-demo/index.html`(第四～十三轮)与 README「设计规则」。
+ * 颜色都是 `.pcm` 上的变量,别处不写硬编码颜色(素材缩略图的底色除外);只在 `.pcm` 里生效,不碰桌面界面。
+ */
+.pcm {
+  /* 底色与文字 */
+  --bg: #12151b; --bg-page: #07090c;
+  --panel: #1a1f28; --panel2: #222834; --line: #2d3442;
+  --text: #e6eaf2; --dim: #8b95a8; --white: #fff;
+  /* 青蓝:唯一的交互强调色 */
+  --accent: #26c6e6; --accent-dim: #12404c; --on-accent: #04222a; --accent-soft: #d5f6ff;
+  --accent-deep: color-mix(in srgb, var(--accent) 30%, var(--bg));
+  --accent-deeper: color-mix(in srgb, var(--accent) 12%, var(--bg));
+  --accent-edge: color-mix(in srgb, var(--accent) 50%, var(--bg));
+  /* 酱紫:只标「这是 Agent / 卡片类内容」的身份 */
+  --plum: #8a5a9e; --plum-dim: #3a2a45; --plum-text: #d3a8e6;
+  /* 警示 / 危险 / 成功 */
+  --warn: #e8b04a; --warn-text: #d9c08a;
+  --warn-bg: color-mix(in srgb, var(--warn) 8%, transparent);
+  --warn-bg-2: color-mix(in srgb, var(--warn) 15%, transparent);
+  --warn-bg-3: color-mix(in srgb, var(--warn) 27%, transparent);
+  --warn-chip: color-mix(in srgb, var(--warn) 18%, var(--bg));
+  --danger: #e5604f; --ok: #4cc38a;
+  /* 时间轴片段底色 */
+  --clip-v: #1b5f78; --clip-a: #2b6b4f; --clip-cap: #5b5530;
+  /* 滤镜样片:一块固定的彩色样片套上滤镜,一眼看出冷暖、黑白(同桌面滤镜组的样片) */
+  --fx-sample: linear-gradient(135deg, #e8553a 0%, #f2c14e 35%, #3fa9f5 70%, #2d6a4f 100%);
+  /* 遮罩与描边 */
+  --scrim: #0009; --scrim-light: #0004;
+  --shade-weak: #0006; --shade: #000a; --shade-strong: #000d; --shade-art: #0008;
+  --hair: #ffffff08; --edge: #ffffff22; --haze: #ffffff33; --haze-strong: #ffffff55;
+  --sb-thumb: var(--haze); --sb-thumb-hover: var(--haze-strong);
+  /* 圆角四档、字号五档 */
+  --r-s: 6px; --r-m: 10px; --r-l: 18px; --r-pill: 999px;
+  --fs-xs: 10px; --fs-s: 11px; --fs-m: 12px; --fs-l: 14px; --fs-xl: 16px;
+
+  position: fixed; inset: 0; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--bg); color: var(--text);
+  font: var(--fs-l)/1.4 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  -webkit-text-size-adjust: 100%; overscroll-behavior: none;
+}
+.pcm * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+/* 深色细滚动条:标准写法只给不支持 ::-webkit-scrollbar 的浏览器(Firefox);Chromium 121 起设了标准属性会整套忽略 ::-webkit-scrollbar */
+@supports not selector(::-webkit-scrollbar) { .pcm * { scrollbar-width: thin; scrollbar-color: var(--sb-thumb) transparent; } }
+.pcm ::-webkit-scrollbar { width: 5px; height: 5px; background: transparent; }
+.pcm ::-webkit-scrollbar-track { background: transparent; }
+.pcm ::-webkit-scrollbar-thumb { background: var(--sb-thumb); border-radius: var(--r-s); }
+.pcm ::-webkit-scrollbar-thumb:hover, .pcm ::-webkit-scrollbar-thumb:active { background: var(--sb-thumb-hover); }
+.pcm ::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+.pcm ::-webkit-scrollbar-corner { background: transparent; }
+.pcm button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+.pcm input, .pcm textarea { font: inherit; color: inherit; }
+.pcm svg.ic { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* 通用 */
+.pcm .topbar { flex: none; height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 12px; padding-top: env(safe-area-inset-top); box-sizing: content-box; }
+.pcm .topbar h1 { font-size: var(--fs-xl); margin: 0; flex: 1; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pcm .icon-btn { width: 34px; height: 34px; flex: none; border-radius: var(--r-m); display: grid; place-items: center; color: var(--dim); }
+.pcm .icon-btn svg { width: 22px; height: 22px; }
+.pcm .icon-btn:active { background: var(--panel2); }
+.pcm .icon-btn:disabled { opacity: .35; }
+.pcm .chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: var(--r-pill); font-size: var(--fs-m); background: var(--panel2); color: var(--dim); white-space: nowrap; }
+.pcm .chip.accent { background: var(--accent-dim); color: var(--accent); }
+.pcm .chip.plum { background: var(--plum-dim); color: var(--plum-text); }
+.pcm .chip.warn { background: var(--warn-chip); color: var(--warn); }
+.pcm .btn { height: 38px; padding: 0 16px; border-radius: var(--r-m); background: var(--panel2); font-weight: 500; }
+.pcm .btn.primary { background: var(--accent); color: var(--on-accent); font-weight: 600; }
+.pcm .btn:disabled { opacity: .45; }
+.pcm .btn:active { filter: brightness(1.2); }
+.pcm .dot { width: 8px; height: 8px; border-radius: var(--r-pill); background: var(--ok); display: inline-block; flex: none; }
+.pcm .dot.off { background: var(--line); }
+.pcm .spacer { flex: 1; }
+.pcm .hint { color: var(--dim); font-size: var(--fs-m); margin: 4px 0 10px; }
+.pcm .err { color: var(--danger); font-size: var(--fs-m); margin: 4px 0 10px; }
+
+/* ===== 开始页(项目列表) ===== */
+.pcm .home-body { flex: 1; min-height: 0; overflow: auto; padding: 4px 16px 16px; }
+.pcm .logo { font-size: var(--fs-xl); font-weight: 700; letter-spacing: .5px; flex: 1; }
+.pcm .logo b { color: var(--accent); }
+.pcm .quick { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px 0 18px; }
+.pcm .quick > button { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-m); padding: 14px 12px; text-align: left; }
+.pcm .quick > button.main { background: linear-gradient(135deg, var(--accent-deep), var(--accent-deeper)); border-color: var(--accent-edge); }
+.pcm .quick small { display: block; color: var(--dim); margin-top: 2px; font-size: var(--fs-m); }
+.pcm .quick .big { display: block; margin-bottom: 6px; }
+.pcm .quick .big svg { width: 22px; height: 22px; }
+.pcm h2.sec { font-size: var(--fs-m); color: var(--dim); font-weight: 600; letter-spacing: 1px; margin: 16px 0 8px; }
+.pcm .proj { display: flex; gap: 12px; padding: 10px; background: var(--panel); border-radius: var(--r-m); margin-bottom: 8px; border: 1px solid transparent; width: 100%; text-align: left; }
+.pcm .proj:active { border-color: var(--accent); }
+.pcm .proj .th { width: 84px; height: 52px; border-radius: var(--r-s); flex: none; background: linear-gradient(135deg, var(--accent-deep), var(--plum-dim)); }
+.pcm .proj .meta { flex: 1; min-width: 0; }
+.pcm .proj .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pcm .proj .sub { color: var(--dim); font-size: var(--fs-m); margin-top: 2px; }
+.pcm .proj .tags { margin-top: 6px; display: flex; gap: 6px; }
+.pcm .note-mobile { margin-top: 12px; padding: 10px 12px; border-radius: var(--r-m); background: var(--panel2); color: var(--dim); font-size: var(--fs-m); }
+.pcm .field { margin: 0 0 14px; }
+.pcm .field > label { display: flex; justify-content: space-between; align-items: center; font-size: var(--fs-m); color: var(--dim); margin-bottom: 6px; }
+.pcm .text-in { width: 100%; height: 40px; background: var(--panel2); border: 1px solid var(--line); border-radius: var(--r-s); padding: 0 10px; outline: none; }
+.pcm .text-in:focus { border-color: var(--accent); }
+.pcm .check-row { display: flex; align-items: center; gap: 8px; font-size: var(--fs-m); color: var(--dim); margin-bottom: 12px; }
+.pcm .check-row input { accent-color: var(--accent); width: 16px; height: 16px; }
+
+/* ===== 编辑主界面 ===== */
+.pcm .editor { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.pcm .preview-area { flex: 1; min-height: 0; display: flex; align-items: center; }
+.pcm .editor.is-timeline .preview-area { flex: none; }
+.pcm .stage-wrap { flex: none; width: 100%; padding: 0 12px; }
+.pcm .editor.is-timeline .stage-wrap { padding: 0 44px; }
+.pcm .stage { position: relative; width: 100%; border-radius: var(--r-m); overflow: hidden; background: #000; }
+.pcm .stage .pc-pv--mobile { position: absolute; inset: 0; padding: 0; gap: 0; height: auto; }
+.pcm .stage .pc-pv--mobile .pc-pv-stage { border-radius: 0; }
+.pcm .stage .pc-pv--mobile .pc-pv-corner { display: none; }
+.pcm .stage-btns { position: absolute; right: 6px; top: 6px; display: flex; gap: 4px; z-index: 20; }
+.pcm .sbtn { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs); line-height: 1.4; padding: 2px 8px; border-radius: var(--r-pill); background: var(--shade-strong); color: var(--white); border: 1px solid var(--edge); white-space: nowrap; backdrop-filter: blur(2px); }
+.pcm .sbtn svg { width: 12px; height: 12px; }
+/* 成员按钮上的数字角标(申请加入):外观照下面页签上的 .badge-n,只是跟在文字后面、不悬空 */
+.pcm .sbtn .badge-n { min-width: 16px; height: 16px; border-radius: var(--r-pill); background: var(--danger); color: var(--white); font-size: var(--fs-xs); display: inline-grid; place-items: center; padding: 0 4px; font-weight: 700; }
+.pcm .agent-flag { position: absolute; right: 6px; top: 28px; z-index: 20; font-size: var(--fs-xs); background: var(--plum-dim); color: var(--plum-text); padding: 1px 7px; border-radius: var(--r-pill); animation: pcm-pulse 1.2s infinite; }
+@keyframes pcm-pulse { 50% { opacity: .5; } }
+
+.pcm .cfbar { flex: none; display: flex; align-items: center; gap: 8px; height: 36px; margin: 2px 12px 4px; padding: 0 8px 0 10px; border-radius: var(--r-m); border-left: 3px solid var(--warn); background: var(--warn-bg); color: var(--warn-text); font-size: var(--fs-m); }
+.pcm .cfbar svg { flex: none; color: var(--warn); width: 16px; height: 16px; }
+.pcm .cfbar .txt { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pcm .cfbar button { flex: none; height: 24px; padding: 0 14px; border-radius: var(--r-pill); background: var(--warn-bg-2); color: var(--warn); font-size: var(--fs-m); font-weight: 600; }
+.pcm .cfbar button:active { background: var(--warn-bg-3); }
+/* 只读项目(游客)的说明条:手机上没有悬停说明,置灰的按钮得有一句话讲清为什么 */
+.pcm .robar { flex: none; margin: 2px 12px 4px; padding: 6px 10px; border-radius: var(--r-m); border-left: 3px solid var(--accent); background: var(--accent-deeper); color: var(--dim); font-size: var(--fs-m); }
+
+.pcm .transport { flex: none; display: flex; align-items: center; gap: 6px; padding: 8px 12px 4px; }
+.pcm .transport .tc { font-variant-numeric: tabular-nums; font-size: var(--fs-m); color: var(--dim); min-width: 92px; }
+.pcm .transport .tc b { color: var(--text); font-weight: 600; }
+.pcm .play { width: 38px; height: 38px; flex: none; border-radius: var(--r-pill); background: var(--accent); color: var(--on-accent); display: grid; place-items: center; }
+.pcm .play svg { width: 20px; height: 20px; }
+.pcm .transport .icon-btn svg { width: 22px; height: 22px; }
+
+/* 缩略时间轴 */
+.pcm .pane-default { flex: none; display: flex; flex-direction: column; }
+.pcm .mainhead { flex: none; display: flex; align-items: baseline; justify-content: space-between; padding: 8px 14px 0; }
+.pcm .mainhead b { font-size: var(--fs-l); }
+.pcm .mainhead span { font-size: var(--fs-m); color: var(--text); font-variant-numeric: tabular-nums; }
+.pcm .mainstrip { flex: none; position: relative; }
+/*
+ * touch-action 从 none 改成 pan-x(2026-10-24 用户报「手机版传统式缩略时间轴用触屏没法滑动查看」)。
+ *
+ * 原来写 none,等于把浏览器的原生横向滑动整个关掉,滚动全靠 ThumbStrip 的 onPointerDown 手动改
+ * scrollLeft —— 鼠标上没问题,手指上这条路不稳,而且就算推得动也没有惯性滑动,和手机上别的横向列表不是一个手感。
+ * pan-x 之后横向交给浏览器自己滑(带惯性),竖向手势照样能滚页面;滚动位置换算成当前时间那一段本来就挂在
+ * scroll 事件上,原生滑动照样驱动它,不用改。
+ *
+ * `overscroll-behavior-x: contain` 是给 iPhone 的:横滑到头之后别把手势接力给 Safari 的「侧滑返回」,
+ * 不然划到最后一段再往左划就退出项目了。
+ * 换顺序那一下另说:它要求先选中、再长按拖,所以只给**选中的那一张卡**关掉原生滑动(下一条规则),
+ * 免得长按拖动时浏览器把它当成滑动抢走。
+ */
+/*
+ * 左右那两段「让首尾也能走到正中」的留白，2026-10-25 从占位 div 改成容器自己的 padding。
+ *
+ * 为什么非改不可：WebKit **根本不把那两个占位 div 算进 scrollWidth**。它们是零高度的空盒
+ * （容器 align-items: center，占位没写 height，实测 141.5×0 / 187.5×0），WebKit 算滚动溢出时
+ * 当它们不存在，于是 scrollWidth === clientWidth、整条根本没有滚动区 ——
+ * 手指划不动、程序设 scrollLeft 也不动，连播放时当前帧那条白线都永远停在 0。
+ * Blink 算，所以桌面 Chrome 和无头仿真里一切正常，这个差异藏了很久。
+ *
+ * 用户 2026-10-25 在 iPhone（iOS 18.1.1）上拿五种写法逐一实测，只有这一种能滚：
+ *   占位 div 百分比 → 可滚 0；占位 div 固定 px → 0；内层包 max-content → 0；内层包 inline-flex → 0；
+ *   容器 padding → 可滚 126 px、JS 设得动、手指划得动。
+ * 读数留在 docs/archive/agent-reports/AGENT-claude-strip-snapback.md。
+ *
+ * 左边是 calc(50% - 46px) 而不是 50%：前面还有一颗 40px 宽、右外边距 6px 的「＋」，
+ * 减掉它首卡的左缘才正对正中那条线（和改之前的几何完全一致，offsetLeft 不变，
+ * 所以 ThumbStrip 里按 offsetLeft 算位置的那几处不用动）。
+ */
+.pcm .strip-scroll { display: flex; align-items: center; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; padding: 6px 50% 10px calc(50% - 46px); min-height: 80px; touch-action: pan-x; overscroll-behavior-x: contain; user-select: none; -webkit-user-select: none; }
+/* 选中的卡要能长按拖动换顺序:这一张上不许浏览器接管手势,拖动由 ThumbStrip 自己算 */
+.pcm .strip-scroll .mblock.sel { touch-action: none; }
+.pcm .strip-scroll::-webkit-scrollbar { display: none; }
+/* .sp-l / .sp-r 已删：改用上面那条容器 padding，WebKit 不认空占位 div */
+.pcm .cf-line { position: absolute; left: 50%; top: 2px; bottom: 6px; width: 2px; margin-left: -1px; background: var(--white); border-radius: var(--r-s); box-shadow: 0 0 0 1px var(--shade-weak); z-index: 6; pointer-events: none; }
+.pcm .madd { flex: none; width: 40px; height: 64px; border-radius: var(--r-m); background: var(--panel2); display: grid; place-items: center; margin-right: 6px; color: var(--text); }
+.pcm .madd svg { width: 22px; height: 22px; }
+.pcm .mblock { flex: none; width: 80px; height: 64px; border-radius: var(--r-m); position: relative; overflow: hidden; border: 2px solid transparent; user-select: none; cursor: pointer; background-size: cover; background-position: center; }
+.pcm .mblock .no { position: absolute; left: 5px; top: 4px; font-size: var(--fs-xs); background: var(--shade-weak); padding: 0 5px; border-radius: var(--r-s); }
+.pcm .mblock .du { position: absolute; left: 6px; bottom: 4px; display: inline-flex; align-items: center; gap: 3px; font-size: var(--fs-m); font-weight: 600; text-shadow: 0 1px 3px var(--shade-strong); font-variant-numeric: tabular-nums; color: var(--white); }
+.pcm .mblock .du svg { width: 11px; height: 11px; }
+.pcm .mblock .kic { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--white); opacity: .55; pointer-events: none; }
+.pcm .mblock .kic svg { width: 22px; height: 22px; }
+.pcm .mblock.sel { border-color: var(--accent); }
+.pcm .mblock.lift { z-index: 5; border-color: var(--accent); box-shadow: 0 6px 18px var(--shade); opacity: .92; }
+.pcm .mark { flex: none; width: 24px; height: 24px; margin: 0 3px; border-radius: var(--r-pill); background: var(--panel2); display: grid; place-items: center; font-size: var(--fs-s); color: var(--dim); }
+.pcm .mark.has { background: var(--plum); color: var(--white); }
+.pcm .mark.has.sel { box-shadow: 0 0 0 2px var(--accent); }
+
+/* 子导航栏(缩略预览和时间轴共用) */
+.pcm .subnav { flex: none; display: flex; align-items: stretch; gap: 2px; height: 66px; padding: 6px 8px; background: var(--bg); border-top: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+.pcm .subnav::-webkit-scrollbar { display: none; }
+.pcm .subnav button { flex: 1 0 58px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; border-radius: var(--r-m); color: var(--dim); font-size: var(--fs-s); position: relative; }
+.pcm .subnav button svg { width: 20px; height: 20px; }
+.pcm .subnav button:active { background: var(--accent-dim); color: var(--accent); }
+.pcm .subnav button:disabled { opacity: .35; }
+.pcm .subnav .refbtn { color: var(--accent); }
+
+/* 底部导航栏 */
+.pcm .pager { flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 10px 12px; padding-bottom: max(12px, env(safe-area-inset-bottom)); background: var(--bg); border-top: 1px solid var(--line); }
+.pcm .pager button { position: relative; flex: 1; height: 46px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: var(--fs-s); color: var(--dim); }
+.pcm .pager button svg { width: 22px; height: 22px; }
+.pcm .pager button.on { color: var(--accent); font-weight: 600; }
+.pcm .pager .ico { width: 28px; height: 28px; display: grid; place-items: center; flex: none; }
+.pcm .pager .disc { width: 22px; height: 22px; border-radius: var(--r-pill); display: grid; place-items: center; background: linear-gradient(135deg, var(--accent), var(--plum)); color: var(--white); }
+.pcm .pager .disc svg { width: 13px; height: 13px; stroke-width: 2.4; }
+.pcm .pager button.on .disc { box-shadow: 0 0 0 1.5px var(--bg), 0 0 0 3.3px var(--accent); }
+.pcm .pager .badge-n { position: absolute; top: -1px; left: calc(50% + 6px); z-index: 2; min-width: 16px; height: 16px; border-radius: var(--r-pill); background: var(--danger); color: var(--white); font-size: var(--fs-xs); display: grid; place-items: center; padding: 0 4px; font-weight: 700; }
+
+/* 完整时间轴 */
+.pcm .pane-edit { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.pcm .edit-head { justify-content: space-between; }
+.pcm .edit-head h1 { text-align: center; }
+.pcm .edit-head .icon-btn { color: var(--text); }
+.pcm .edit-head .icon-btn.ok { color: var(--accent); }
+.pcm .timeline { flex: 1; min-height: 0; background: var(--panel); margin: 8px 12px 0; border-radius: var(--r-m); display: flex; flex-direction: column; overflow: hidden; }
+.pcm .tl-scroll { position: relative; flex: 1; overflow-x: auto; overflow-y: auto; touch-action: none; }
+.pcm .tl-inner { position: relative; min-height: 100%; touch-action: none; user-select: none; -webkit-user-select: none; }
+.pcm .ruler { position: sticky; top: 0; z-index: 3; height: 20px; background: var(--panel); border-bottom: 1px solid var(--line); font-size: var(--fs-xs); color: var(--dim); }
+.pcm .ruler span { position: absolute; top: 4px; transform: translateX(-50%); white-space: nowrap; pointer-events: none; }
+.pcm .lane { position: relative; height: 40px; border-bottom: 1px solid var(--hair); }
+.pcm .lane-head { position: sticky; left: 0; z-index: 2; width: 0; }
+.pcm .lane-head span { position: absolute; left: 0; top: 4px; height: 32px; width: 26px; display: grid; place-items: center; background: var(--panel2); border-radius: 0 var(--r-s) var(--r-s) 0; font-size: var(--fs-xs); color: var(--dim); z-index: 2; }
+.pcm .clip { position: absolute; top: 5px; height: 30px; border-radius: var(--r-s); padding: 0 6px 0 10px; display: flex; align-items: center; gap: 4px; font-size: var(--fs-s); overflow: hidden; white-space: nowrap; border: 1.5px solid transparent; cursor: pointer; touch-action: none; color: var(--white); }
+.pcm .clip.k-video, .pcm .clip.k-image { background-color: var(--clip-v); background-image: repeating-linear-gradient(90deg, transparent 0 34px, var(--shade-weak) 34px 36px); }
+.pcm .clip.k-cut { background-color: var(--accent-deep); }
+.pcm .clip.k-card { background: var(--plum); }
+.pcm .clip.k-audio { background: var(--clip-a); }
+.pcm .clip.k-caption { background: var(--clip-cap); }
+.pcm .clip.sel { border-color: var(--accent); }
+/* 叠加卡的计数角标:和「已静音」同一个位置、同一个尺寸(overlayBadge.ts 定什么时候画、画成什么)。
+   最窄那一档加 is-flat —— 只是个记号,不吃点击,整块热区还给片段,入口在子导航的「叠加层」 */
+.pcm .clip .ovm { margin-left: auto; flex: none; display: inline-flex; align-items: center; background: var(--shade); border-radius: var(--r-s); padding: 0 5px; min-height: 16px; font-size: var(--fs-xs); color: var(--accent-soft); }
+.pcm .clip .ovm.is-flat { pointer-events: none; }
+.pcm .clip .mute { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; background: var(--shade); border-radius: var(--r-s); padding: 0 4px; font-size: var(--fs-xs); color: var(--warn); }
+.pcm .clip .mute svg { width: 11px; height: 11px; }
+.pcm .clip .h { position: absolute; top: 0; bottom: 0; width: 8px; background: var(--haze-strong); display: none; }
+.pcm .clip.sel .h { display: block; }
+.pcm .clip .h.l { left: 0; border-radius: var(--r-s) 0 0 var(--r-s); }
+.pcm .clip .h.r { right: 0; border-radius: 0 var(--r-s) var(--r-s) 0; }
+.pcm .playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); z-index: 4; pointer-events: none; }
+.pcm .playhead::before { content: ""; position: absolute; top: 0; left: -5px; border: 6px solid transparent; border-top-color: var(--accent); border-bottom: 0; }
+.pcm .tl-tools { flex: none; display: flex; align-items: center; gap: 6px; padding: 8px 12px; }
+.pcm .tl-tools .zoom { display: flex; gap: 6px; }
+.pcm .tl-tools button { height: 30px; min-width: 30px; padding: 0 8px; border-radius: var(--r-m); background: var(--panel2); font-size: var(--fs-m); color: var(--dim); display: inline-flex; align-items: center; justify-content: center; gap: 4px; white-space: nowrap; }
+.pcm .tl-tools button svg { width: 16px; height: 16px; }
+.pcm .tl-tools button:active { color: var(--accent); }
+.pcm .tl-tools button:disabled { opacity: .35; pointer-events: none; }
+
+/* ===== Agent 分页(演示稿「3. Agent 对话」;语义 workflow/editing.md「手机版界面」) ===== */
+.pcm .pane-agent { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.pcm .agent-page { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.pcm .achat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.pcm .chat-top { flex: none; display: flex; align-items: center; gap: 6px; padding: 0 10px; }
+.pcm .atabs { display: flex; gap: 4px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.pcm .atabs::-webkit-scrollbar { display: none; }
+.pcm .atab { flex: none; display: flex; align-items: center; gap: 4px; height: 30px; padding: 0 4px 0 10px; border-radius: var(--r-m); background: var(--panel2); color: var(--dim); font-size: var(--fs-m); cursor: pointer; }
+.pcm .atab .nm { max-width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pcm .atab .x { width: 16px; height: 16px; border-radius: var(--r-s); display: grid; place-items: center; font-size: var(--fs-s); }
+.pcm .atab .x:active { background: var(--line); }
+.pcm .atab .x-gap { width: 6px; }
+.pcm .atab .dot.run { width: 6px; height: 6px; background: var(--accent); animation: pcm-pulse 1s infinite; }
+.pcm .atab.on { background: var(--accent-dim); color: var(--accent); }
+.pcm .chat-info { flex: none; display: flex; align-items: center; gap: 6px; padding: 8px 14px 4px; font-size: var(--fs-m); color: var(--dim); }
+.pcm .level { display: inline-flex; background: var(--panel2); border-radius: var(--r-m); padding: 2px; }
+.pcm .level button { height: 24px; padding: 0 10px; border-radius: var(--r-s); font-size: var(--fs-m); color: var(--dim); }
+.pcm .level button:disabled { opacity: .5; }
+.pcm button.chip { cursor: pointer; }
+.pcm button.chip:active { background: var(--line); }
+.pcm .achat .note { flex: none; margin: 4px 14px 0; padding: 6px 10px; border-radius: var(--r-s); background: var(--panel2); color: var(--dim); font-size: var(--fs-m); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pcm .achat .note.warn { background: var(--warn-bg); color: var(--warn-text); }
+.pcm .achat .note .btn { height: 26px; padding: 0 10px; font-size: var(--fs-m); }
+.pcm .msgs { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 8px 14px; display: flex; flex-direction: column; gap: 10px; }
+.pcm .msgs > * { flex: none; }
+.pcm .msg { max-width: 88%; padding: 9px 12px; border-radius: var(--r-m); font-size: var(--fs-l); word-break: break-word; }
+.pcm .msg.me { align-self: flex-end; background: var(--accent-dim); color: var(--accent-soft); border-bottom-right-radius: var(--r-s); }
+.pcm .msg.me .plain { white-space: pre-wrap; }
+.pcm .msg.me.is-sending { opacity: .75; }
+.pcm .msg.me .send-state { margin-top: 4px; font-size: var(--fs-s); color: var(--dim); }
+.pcm .msg.me .send-err, .pcm .msg.ag.err { color: var(--danger); font-size: var(--fs-m); }
+.pcm .msg.me .send-err { margin-top: 4px; }
+.pcm .msg.ag { align-self: flex-start; background: var(--panel2); border-bottom-left-radius: var(--r-s); }
+.pcm .msg.ag.note-out { font-size: var(--fs-m); color: var(--dim); }
+.pcm .msg.ag .act { margin-left: 6px; font-size: var(--fs-m); color: var(--dim); }
+.pcm .msg .who { font-size: var(--fs-s); color: var(--dim); margin-bottom: 2px; }
+.pcm .msg .md > :first-child { margin-top: 0; }
+.pcm .msg .md > :last-child { margin-bottom: 0; }
+.pcm .msg .md p { margin: .4em 0; }
+.pcm .msg .md a { color: var(--accent); }
+.pcm .msg .md pre { overflow-x: auto; background: var(--shade-weak); padding: 8px; border-radius: var(--r-s); font-size: var(--fs-m); }
+.pcm .msg .md code { font-size: .92em; }
+.pcm .msg .md ul, .pcm .msg .md ol { margin: .4em 0; padding-left: 1.3em; }
+.pcm .msg .md .md-table-wrap { overflow-x: auto; }
+.pcm .msg .md table { border-collapse: collapse; font-size: var(--fs-m); }
+.pcm .msg .md th, .pcm .msg .md td { border: 1px solid var(--line); padding: 3px 6px; }
+.pcm .ref { display: inline-flex; gap: 4px; align-items: center; background: var(--shade-weak); border-radius: var(--r-s); padding: 1px 6px; font-size: var(--fs-s); margin-bottom: 4px; color: var(--accent); max-width: 100%; }
+.pcm .msg .refs { display: flex; flex-wrap: wrap; gap: 4px; }
+.pcm .refbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.pcm .refbar .ref { font-size: var(--fs-m); padding: 3px 4px 3px 10px; gap: 6px; background: var(--accent-dim); }
+.pcm .refbar .ref b { width: 18px; height: 18px; display: grid; place-items: center; border-radius: var(--r-s); font-weight: 400; cursor: pointer; }
+.pcm .ops { align-self: stretch; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-m); overflow: hidden; }
+.pcm .ops > summary { list-style: none; cursor: pointer; padding: 8px 12px; font-size: var(--fs-m); color: var(--dim); display: flex; align-items: center; gap: 6px; }
+.pcm .ops > summary::-webkit-details-marker { display: none; }
+.pcm .ops > summary::after { content: "›"; margin-left: auto; transition: transform .15s; }
+.pcm .ops[open] > summary::after { transform: rotate(90deg); }
+.pcm .ops .items { padding: 0 12px 10px; display: flex; flex-direction: column; gap: 6px; }
+.pcm .it { display: flex; gap: 8px; align-items: flex-start; font-size: var(--fs-m); }
+.pcm .it b { font-weight: 600; color: var(--text); }
+.pcm .it .mk { flex: none; width: 16px; height: 16px; border-radius: var(--r-pill); margin-top: 1px; display: grid; place-items: center; font-size: var(--fs-xs); }
+.pcm .it.done .mk { background: var(--ok); color: var(--on-ok); }
+.pcm .it.todo .mk { background: var(--line); color: var(--dim); }
+.pcm .it.run .mk { background: var(--accent); color: var(--on-accent); animation: pcm-pulse 1s infinite; }
+.pcm .it.ask .mk { background: var(--warn); color: var(--on-warn); }
+.pcm .it.err .mk { background: var(--danger); color: var(--white); }
+.pcm .ops .rep { margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
+.pcm .ops .rep-title { font-size: var(--fs-s); color: var(--dim); }
+.pcm .param-diff { font-size: var(--fs-s); color: var(--dim); }
+.pcm .queue-note, .pcm .empty .hint { font-size: var(--fs-m); color: var(--dim); text-align: center; }
+.pcm .empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 24px 8px; }
+.pcm .typing { display: inline-block; }
+.pcm .typing i { display: inline-block; width: 5px; height: 5px; margin-right: 3px; border-radius: var(--r-pill); background: var(--dim); animation: pcm-bl 1s infinite; }
+.pcm .typing i:nth-child(2) { animation-delay: .15s; }
+.pcm .typing i:nth-child(3) { animation-delay: .3s; }
+@keyframes pcm-bl { 50% { transform: translateY(-3px); opacity: .4; } }
+.pcm .composer { flex: none; padding: 8px 10px 12px; border-top: 1px solid var(--line); background: var(--bg); }
+.pcm .quicks { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 8px; scrollbar-width: none; }
+.pcm .quicks::-webkit-scrollbar { display: none; }
+.pcm .quicks button { flex: none; height: 28px; padding: 0 10px; border-radius: var(--r-pill); background: var(--panel2); font-size: var(--fs-m); color: var(--dim); }
+.pcm .quicks button:active { color: var(--accent); }
+.pcm .in-row { display: flex; gap: 8px; align-items: flex-end; }
+.pcm .in-row textarea { flex: 1; min-width: 0; min-height: 40px; max-height: 120px; resize: none; border-radius: 20px; border: 1px solid var(--line); background: var(--panel); padding: 9px 14px; line-height: 20px; outline: none; display: block; }
+.pcm .in-row textarea:focus { border-color: var(--accent); }
+.pcm .send { width: 40px; height: 40px; flex: none; border-radius: var(--r-pill); background: var(--accent); color: var(--on-accent); font-weight: 700; display: grid; place-items: center; }
+.pcm .send svg { width: 20px; height: 20px; }
+.pcm .send.is-stop { background: var(--panel2); color: var(--text); }
+
+/* 开始页(没有会话时):预设 + 输入框;刚进项目时带引导动画(光点、指向输入框的箭头、输入框 / 发送按钮的描边脉动) */
+.pcm .start { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; text-align: center; gap: 10px; padding: 24px 20px; min-height: 100%; }
+.pcm .start > :first-child { margin-top: auto; }
+.pcm .start > :last-child { margin-bottom: auto; }
+.pcm .start-title { font-size: var(--fs-xl); font-weight: 600; }
+.pcm .start-hint { max-width: 300px; font-size: var(--fs-m); line-height: 1.6; color: var(--dim); }
+.pcm .preset { width: 100%; max-width: 300px; padding: 10px 12px; font-size: var(--fs-l); color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-m); }
+.pcm .preset:active { border-color: var(--accent); }
+.pcm .orb { position: relative; width: 64px; height: 64px; display: grid; place-items: center; margin-bottom: 4px; }
+.pcm .orb .core { position: relative; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; color: var(--white); background: linear-gradient(135deg, var(--accent), var(--plum)); animation: pcm-breathe 2.8s ease-in-out infinite; }
+.pcm .orb .core svg { width: 18px; height: 18px; stroke-width: 2.2; }
+.pcm .orb .ring { position: absolute; inset: 8px; border-radius: 50%; border: 1px solid var(--accent); opacity: 0; animation: pcm-ripple 2.8s ease-out infinite; }
+.pcm .orb .ring2 { animation-delay: 1.4s; }
+@keyframes pcm-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+@keyframes pcm-ripple { 0% { transform: scale(.8); opacity: .55; } 100% { transform: scale(1.6); opacity: 0; } }
+.pcm .cue { margin-top: 6px; font-size: 20px; line-height: 1; color: var(--accent); animation: pcm-nudge 1.6s ease-in-out infinite; }
+@keyframes pcm-nudge { 0%, 100% { transform: translateY(0); opacity: .55; } 50% { transform: translateY(6px); opacity: 1; } }
+.pcm .composer[data-guide="input"] .in-row textarea { border-color: var(--accent); animation: pcm-glow 2.2s ease-in-out infinite; }
+@keyframes pcm-glow { 0%, 100% { box-shadow: 0 0 0 0 transparent; } 50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); } }
+.pcm .composer[data-guide="send"] .send { animation: pcm-flash 1.1s ease-in-out infinite; }
+@keyframes pcm-flash { 0%, 100% { box-shadow: 0 0 0 0 transparent; filter: none; } 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 45%, transparent); filter: brightness(1.15); } }
+@media (prefers-reduced-motion: reduce) {
+  .pcm .orb .core, .pcm .orb .ring, .pcm .cue, .pcm .composer[data-guide="input"] .in-row textarea, .pcm .composer[data-guide="send"] .send { animation: none; }
+  .pcm .orb .ring { opacity: 0; }
+  .pcm .composer[data-guide="send"] .send { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); }
+}
+
+/* ===== 底部面板 ===== */
+.pcm .scrim { position: absolute; inset: 0; background: var(--scrim); z-index: 40; }
+.pcm .scrim.light { background: var(--scrim-light); }
+.pcm .sheet { position: absolute; left: 0; right: 0; bottom: 0; background: var(--panel); border-radius: var(--r-l) var(--r-l) 0 0; z-index: 41; display: flex; flex-direction: column; max-height: 82%; animation: pcm-up .25s ease; padding-bottom: env(safe-area-inset-bottom); }
+.pcm .sheet.tall { height: 82%; }
+@keyframes pcm-up { from { transform: translateY(105%); } }
+.pcm .grip { width: 100%; height: 24px; flex: none; position: relative; touch-action: none; cursor: grab; }
+.pcm .grip::after { content: ""; position: absolute; left: 50%; top: 10px; width: 38px; height: 4px; margin-left: -19px; border-radius: var(--r-s); background: var(--line); }
+.pcm .sheet-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 4px 14px 8px; touch-action: none; }
+.pcm .sheet-head h3 { margin: 0; font-size: var(--fs-xl); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pcm .sheet-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding: 0 14px 14px; }
+.pcm .seg { display: flex; gap: 4px; padding: 0 14px 8px; overflow-x: auto; flex: none; scrollbar-width: none; }
+.pcm .seg::-webkit-scrollbar { display: none; }
+.pcm .seg button { flex: none; height: 30px; padding: 0 12px; border-radius: var(--r-pill); background: var(--panel2); color: var(--dim); font-size: var(--fs-m); }
+.pcm .seg button.on, .pcm .level button.on { background: var(--accent-dim); color: var(--accent); }
+.pcm .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.pcm .tile { background: var(--panel2); border-radius: var(--r-m); overflow: hidden; text-align: left; border: 1.5px solid transparent; min-width: 0; }
+.pcm .tile.picked, .pcm .tile:active { border-color: var(--accent); }
+.pcm .tile:disabled { opacity: .45; }
+.pcm .tile .pic { aspect-ratio: 16/10; position: relative; display: grid; place-items: center; color: var(--white); background: linear-gradient(135deg, var(--accent-deeper), var(--shade-art)); background-size: cover; background-position: center; }
+.pcm .tile .pic svg { width: 22px; height: 22px; }
+.pcm .tile .cap { padding: 5px 7px 7px; font-size: var(--fs-s); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pcm .tile .cap small { display: block; color: var(--dim); font-size: var(--fs-xs); }
+.pcm .tile .dur { position: absolute; right: 4px; bottom: 3px; font-size: var(--fs-xs); background: var(--shade); padding: 0 4px; border-radius: var(--r-s); }
+.pcm .tile .st { position: absolute; left: 4px; top: 3px; font-size: var(--fs-xs); background: var(--shade); color: var(--text); border-radius: var(--r-s); padding: 0 4px; }
+.pcm .list-row { display: flex; align-items: center; gap: 10px; padding: 10px; background: var(--panel2); border-radius: var(--r-m); margin-bottom: 6px; width: 100%; text-align: left; }
+.pcm .list-row .i { width: 36px; height: 36px; flex: none; border-radius: var(--r-s); display: grid; place-items: center; background: var(--panel); }
+.pcm .list-row .i svg { width: 20px; height: 20px; }
+.pcm .list-row .i.plum { background: var(--plum-dim); color: var(--plum-text); }
+.pcm .list-row .grow { flex: 1; min-width: 0; }
+.pcm .list-row .grow b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pcm .crow { display: flex; align-items: center; gap: 10px; padding: 10px; background: var(--panel2); border-radius: var(--r-m); margin-bottom: 6px; width: 100%; text-align: left; border: 1.5px solid transparent; }
+.pcm .crow.cur { border-color: var(--accent); }
+.pcm .crow .i { width: 36px; height: 36px; flex: none; border-radius: var(--r-s); display: grid; place-items: center; background: var(--panel); }
+.pcm .crow .i svg { width: 20px; height: 20px; }
+.pcm .dropzone { display: block; width: 100%; border: 1.5px dashed var(--line); border-radius: var(--r-m); padding: 12px; text-align: center; color: var(--dim); font-size: var(--fs-m); margin-bottom: 10px; }
+.pcm .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+.pcm .row .t small { display: block; color: var(--dim); font-size: var(--fs-s); }
+.pcm .bar { height: 6px; border-radius: var(--r-s); background: var(--panel2); overflow: hidden; margin: 8px 0 4px; }
+.pcm .bar i { display: block; height: 100%; background: var(--accent); }
+.pcm .num { width: 64px; height: 28px; text-align: right; background: var(--panel2); border: 1px solid var(--line); border-radius: var(--r-s); padding: 0 6px; outline: none; }
+.pcm .num:focus { border-color: var(--accent); }
+.pcm input[type=range] { width: 100%; accent-color: var(--accent); height: 26px; margin: 0; }
+.pcm .toggle { width: 44px; height: 26px; flex: none; border-radius: var(--r-pill); background: var(--line); position: relative; transition: background .15s; }
+.pcm .toggle::after { content: ""; position: absolute; left: 3px; top: 3px; width: 20px; height: 20px; border-radius: var(--r-pill); background: var(--white); transition: left .15s; }
+.pcm .toggle.on { background: var(--accent); }
+.pcm .toggle.on::after { left: 21px; }
+.pcm .wrapnote { background: var(--panel2); padding: 8px 10px; border-radius: var(--r-s); font-size: var(--fs-m); color: var(--dim); margin-bottom: 12px; }
+.pcm .wrapnote b { color: var(--text); }
+.pcm .undo-row { display: flex; gap: 8px; margin-top: 4px; }
+.pcm .undo-row .btn { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
+.pcm .undo-row svg { width: 16px; height: 16px; }
+.pcm .cf-group { background: var(--panel2); border-radius: var(--r-m); margin-bottom: 8px; overflow: hidden; }
+.pcm .cf-head { display: flex; align-items: center; gap: 8px; padding: 10px; }
+.pcm .cf-head .nm { flex: 1; font-weight: 500; min-width: 0; }
+.pcm .cf-sub { padding: 0 10px 8px 34px; display: flex; flex-direction: column; gap: 6px; font-size: var(--fs-m); color: var(--dim); }
+.pcm .cf-foot { display: flex; gap: 8px; padding: 10px 14px 14px; border-top: 1px solid var(--line); flex: none; }
+.pcm .cf-foot .btn { flex: 1; padding: 0 8px; }
+
+.pcm .toast { position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); background: var(--shade-strong); color: var(--white); padding: 8px 14px; border-radius: var(--r-m); font-size: var(--fs-m); z-index: 60; pointer-events: none; max-width: 90%; text-align: center; animation: pcm-fade .2s ease; }
+@keyframes pcm-fade { from { opacity: 0; } }
+.pcm .confirm { position: absolute; inset: 0; z-index: 70; display: grid; place-items: center; background: var(--scrim); padding: 24px; }
+.pcm .confirm > div { width: 100%; max-width: 340px; background: var(--panel); border-radius: var(--r-l); padding: 16px; }
+.pcm .confirm p { margin: 0 0 14px; }
+.pcm .confirm .acts { display: flex; gap: 8px; }
+.pcm .confirm .acts .btn { flex: 1; }
+.pcm .confirm .btn.danger { background: var(--danger); color: var(--white); }
+
+/* 滤镜(卡片库「滤镜」分类、调整面板的滤镜一栏) */
+.pcm .tile.fx { position: relative; }
+.pcm .tile.fx .fx-pick { display: block; width: 100%; text-align: left; padding: 0; background: none; border: 0; color: inherit; }
+.pcm .tile.fx .fx-pick:disabled { opacity: .55; }
+.pcm .fx-swatch { position: absolute; inset: 0; background: var(--fx-sample); }
+.pcm .tile.fx .fx-del { position: absolute; right: 3px; top: 3px; width: 22px; height: 22px; border-radius: var(--r-pill); background: var(--shade); color: var(--text); font-size: var(--fs-l); line-height: 22px; text-align: center; padding: 0; border: 0; }
+.pcm .hint.err { color: var(--danger); }
+
+/* 素材格子、缩略卡的真画面:盖在取色底色上,取到才显示;取不到就还是底色 */
+.pcm .thumb-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.pcm .tile .pic[data-thumb="ready"] > svg { display: none; }
+/* 断网待发里不发了的那条:气泡里一个「重新发送」(按当前状态重新走一遍,同桌面) */
+.pcm .msg.me .resend { margin-top: 6px; padding: 4px 12px; font: inherit; font-size: var(--fs-s); color: inherit;
+  background: rgb(255 255 255 / 0.16); border: 1px solid rgb(255 255 255 / 0.45); border-radius: 999px; }
+
+/* 「调整」表单里停用的那一行:压暗 + 名字划掉。挂载和参数都留着,只是这一段上不生效 */
+.pcm .row.is-off .t { opacity: .55; }
+.pcm .row.is-off .t b { text-decoration: line-through; }
+.pcm .row .icon-btn.ref { color: var(--accent); }
+.pcm .toggle:disabled { opacity: .4; }

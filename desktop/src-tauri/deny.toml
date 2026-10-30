@@ -1,0 +1,45 @@
+# cargo-deny 的许可证闸门。跑:cd desktop/src-tauri && cargo deny check licenses
+#
+# 为什么要有这份文件:不给配置的话 cargo-deny 的 allow 是空的,连 MIT 都会被判「不在
+# 白名单里」而失败 —— 分发前检查清单里那一行因此一直没勾上。这里把「我们确认可以随
+# 二进制分发的许可证」一条条写出来,以后加依赖引进新许可证会当场失败,而不是悄悄混进去。
+#
+# 2026-09-08 全量核过一遍(Tauri 2.11 依赖树,约 460 个 crate):
+#   - **没有 GPL / AGPL / SSPL**;
+#   - LGPL-2.1-or-later 只出现在 r-efi,它是 `MIT OR Apache-2.0 OR LGPL-2.1-or-later`
+#     三选一,我们取 MIT;而且它是 wasi 目标的依赖,Windows 包里根本不参与编译;
+#   - MPL-2.0 有 4 个(cssparser / cssparser-macros / dtoa-short / selectors /
+#     option-ext),弱著佐权**按文件计**,允许静态链进闭源二进制,但要能让用户拿到
+#     这些文件的源码 —— 见 THIRD-PARTY-LICENSES.md 第 4 节的源码获取说明。
+
+[licenses]
+# 分发二进制时这些都只要求署名/保留声明,不要求开放我们自己的源码
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "0BSD",
+    "CC0-1.0",
+    "Unlicense",
+    "Zlib",
+    "Unicode-3.0",
+    # 弱著佐权,按文件计:随包给出源码获取方式即可,不传染到我们的代码
+    "MPL-2.0",
+]
+
+# 同一个 crate 给出多种许可证任选其一时,优先挑这些(数字越大越优先)。
+# r-efi 是 MIT OR Apache-2.0 OR LGPL-2.1-or-later —— 让它落在 MIT 上,
+# 而不是被判成引进了 LGPL。
+[[licenses.clarify]]
+crate = "r-efi"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+# promptcut 自己没有 license 字段(不发布到 crates.io,是本仓库的应用代码)。
+# 私有 crate 不参与许可证判定。
+[licenses.private]
+ignore = true

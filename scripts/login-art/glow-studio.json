@@ -1,0 +1,38 @@
+{
+ "version": 1,
+ "id": "glow-studio",
+ "name": "首页背景光 · 流光（竖版，手机登录）",
+ "width": 560,
+ "height": 1290,
+ "fps": 24,
+ "duration": 28,
+ "themeId": "midnight",
+ "media": [],
+ "tracks": [
+  {
+   "id": "t-glow",
+   "name": "序列 1",
+   "clips": [
+    {
+     "id": "c-glow",
+     "cardId": "pc-brand-glow",
+     "start": 0,
+     "end": 28,
+     "params": {
+      "bg": "#111016",
+      "colA": "#00DBDB",
+      "colB": "#FF7B00",
+      "loopSeconds": 28
+     }
+    }
+   ]
+  }
+ ],
+ "cuts": [
+  {
+   "id": "cut-1",
+   "name": "剪辑1"
+  }
+ ],
+ "activeCutId": "cut-1"
+}

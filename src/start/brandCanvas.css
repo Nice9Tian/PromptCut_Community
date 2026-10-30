@@ -1,0 +1,97 @@
+/*
+ * 登录页左边那块 WebGL 画布的样式。
+ *
+ * 单独一个文件、由 `BrandCanvas.tsx` 自己 import:`start.css` 这会儿由另一个会话在改(顶栏、侧栏收起),
+ * 两边同时动同一个文件一定打架,所以这一支的样式一行都不进那边。
+ */
+
+/* 登录键的「流光」样式（和手机版共用一份，见文件头的说明） */
+@import "./brandButton.css";
+
+.ps-brand-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/*
+ * `start.css` 里有一条 `.ps-login-art > *:not(.ps-aurora) { position: relative; z-index: 1; }` ——
+ * 它是为了把文字抬到底纹上面,但画布也会被它抬上去,反过来盖住标题。
+ * 这里多带一个元素选择符(`canvas`),特异性比它高一档,把画布按回底层。
+ */
+/* 预渲染的循环视频：和画布同一套摆放。object-fit: cover —— 左栏多宽多高都铺满，
+ * 裁掉溢出的那一侧，不拉伸 */
+.ps-brand-loop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+/* 和下面那条画布的理由一样：`.ps-login-art > *:not(.ps-aurora)` 会把它抬到文字那一层，
+ * 多带一个元素选择符把它按回底层 */
+.ps-login-art > video.ps-brand-loop {
+  position: absolute;
+  z-index: 0;
+}
+
+.ps-login-art > canvas.ps-brand-canvas {
+  position: absolute;
+  z-index: 0;
+}
+
+/*
+ * 画布透出来的应该是**整页**的底色。
+ *
+ * `start.css` 给 `.ps-login-art` 铺的是 `--bg-panel`(#23222A,比整页底色 `--bg-canvas` #111016
+ * 浅一档、偏紫),所以 alpha 透出来的地方和右半边对不上,看着像「混了提亮的浅紫」
+ * (用户 2026-10-23 指出,实测左块 rgb(35,34,42)、整页 rgb(17,16,22))。这里按回整页的底色。
+ *
+ * 选择器多带一个元素名,特异性压过 `start.css` 里那条 —— 那个文件归另一个会话,不去动它。
+ */
+.ps-login > section.ps-login-art {
+  background: var(--bg-canvas);
+  /* 去掉左右两块之间那条竖线(用户 2026-10-23 定):画面本来就是渐隐过去的,再画一条线把它切断 */
+  border-right: 0;
+}
+
+/*
+ * 桌面登录页的勾选框:`start.css` 没给它定 `accent-color`,浏览器就按自己的默认色画
+ * (Chrome 上是一格亮蓝),和整页的强调色对不上;手机版那边是定了的,两边看着就不是一套。
+ * 这一行按皮肤的强调色画,两边归一。
+ *
+ * **这条本该写在 `start.css` 的 `.ps-check input` 上** —— 那个文件这会儿归另一个会话,
+ * 不去动它,所以先放在这里(这个文件在桌面登录页也会加载:`OnlineLogin.tsx` 渲染 `BrandCanvas`)。
+ * 合并时把它搬进 `start.css` 即可。
+ */
+.ps-login .ps-check input { accent-color: var(--accent); }
+
+/*
+ * **文字那两块永远要能读**（用户 2026-10-23 指出「登录界面背景的 alpha 显示失败」）。
+ *
+ * 查下来 alpha 本身是好的：画布按直通 alpha 输出（`premultipliedAlpha: false`），实测这一块的 alpha
+ * 从 0 到 255 都有、平均约 121/255，暗处确实透出整页底色。真正坏掉的是**构图**：极光是动的，
+ * 它的亮带会漂到左上角标题和那段说明底下，白字压在青绿亮带上就读不出来了
+ * （定稿截图 `docs/archive/agent-reports/AGENT-claude-vibe-wire-shots/01-login.png` 里那块正好是暗的，
+ * 所以当时没看出来——这是「碰巧对」，不是「本来就对」）。
+ *
+ * 所以在画布之上、文字之下铺一层暗角：上边压住标题那一块，下边压住角标那一行，中间完全不动，
+ * 极光该亮的地方照样亮。用 `::after` 而不是 `::before`：同一层里按文档顺序画，`::after` 在画布之后，
+ * 才盖得住它；文字那几个元素是 `z-index: 1`，仍在这一层之上。
+ * 颜色写死成 `--bg-canvas` 的实际值（#111016）而不是 `color-mix`：这一层要的是「和底色严丝合缝」，
+ * 皮肤换底色时这两行要跟着换，所以就近写在这里、不散到别处。
+ */
+.ps-login > section.ps-login-art::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(to bottom, var(--bg-canvas) 0%, rgba(17, 16, 22, 0.82) 14%, rgba(17, 16, 22, 0.35) 28%, transparent 42%),
+    linear-gradient(to top, var(--bg-canvas) 0%, rgba(17, 16, 22, 0.55) 8%, transparent 20%);
+}

@@ -1,0 +1,75 @@
+/*
+ * K1 的加载遮罩。**只用已有的主题变量**（pinned 交互 2 / 3）：
+ * 这里一个固定色都没有，换皮肤时它跟着换。
+ */
+
+.pc-probe-gate {
+  position: fixed;
+  inset: 0;
+  /* 顶栏、对话框、AI 面板都在 60 以下；遮罩要盖住整个编辑器界面 */
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  /* 不透明：编辑操作被挡（加载阶段的遮罩是 pinned 渲染 1 明写的例外） */
+  background: var(--ui-bg);
+  color: var(--ui-fg);
+  font-family: var(--ui-font);
+  /* 键盘也别穿过去 */
+  user-select: none;
+}
+
+.pc-probe-gate-ring {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 3px solid var(--ui-border);
+  border-top-color: var(--ui-accent);
+  animation: pc-probe-spin 900ms linear infinite;
+}
+
+@keyframes pc-probe-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 转圈会让一部分人不舒服；不转也看得出在忙（下面的进度条和计数在动） */
+@media (prefers-reduced-motion: reduce) {
+  .pc-probe-gate-ring { animation-duration: 3s; }
+}
+
+.pc-probe-gate-title {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pc-probe-gate-card {
+  font-size: 12px;
+  color: var(--ui-fg-muted);
+  font-family: var(--ui-font-mono);
+  max-width: 60vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pc-probe-gate-bar {
+  width: min(280px, 60vw);
+  height: 3px;
+  border-radius: 2px;
+  background: var(--ui-panel-2);
+  overflow: hidden;
+}
+
+.pc-probe-gate-bar > i {
+  display: block;
+  height: 100%;
+  background: var(--ui-accent);
+  transition: width 120ms linear;
+}
+
+.pc-probe-gate-note {
+  font-size: 11px;
+  color: var(--ui-fg-faint);
+}

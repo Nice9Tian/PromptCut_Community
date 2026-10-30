@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>PromptCut</title>
+<style>
+  /*
+   * 后台运行的悬浮窗(编辑界面收起时出现,见 desktop/src-tauri/src/background.rs)。
+   * 整个窗口透明无边框,这里画的圆角卡片就是用户看到的全部。
+   *   单击:打开编辑界面;按住拖:挪位置;右键:「打开编辑界面 / 关闭」菜单(外壳弹的原生菜单)。
+   * SKILL 模式下多显示桌面 APP 会话在做什么,和「上一步动作」的画面。
+   */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; background: transparent; overflow: hidden; }
+  body {
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    user-select: none;
+    cursor: default;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .card {
+    flex: 0 0 72px; height: 72px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 14px;
+    border-radius: 12px;
+    background: rgba(24, 26, 34, 0.94);
+    border: 1px solid rgba(0, 219, 219, 0.55);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+    color: #e6edf6;
+    cursor: pointer;
+  }
+  .card.is-skill { border-color: #00DBDB; }
+  .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #56719b; flex: 0 0 auto;
+  }
+  .card.is-skill .dot { background: #00DBDB; }
+  .card.is-busy .dot { animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  .text { min-width: 0; flex: 1 1 auto; }
+  .title { font-size: 12px; font-weight: 600; color: #00DBDB; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sub {
+    font-size: 11px; color: #8da4c8; margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .hint { font-size: 10px; color: #56719b; margin-top: 1px; }
+
+  /*
+   * 「上一步动作」预览(只在 SKILL 下)。壳只在第一张图到了之后才把窗口撑高,所以没有图的时候
+   * 这块根本不占地方。不放任何控件:它只回答一个问题 —— agent 刚才那一步做出来是什么样。
+   */
+  .preview {
+    display: none;
+    flex-direction: column;
+    gap: 4px;
+    border-radius: 10px;
+    background: rgba(24, 26, 34, 0.94);
+    border: 1px solid rgba(0, 219, 219, 0.45);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+    padding: 6px;
+    overflow: hidden;
+  }
+  .preview.is-on { display: flex; }
+  .preview img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: contain;
+    background: #000;
+    border-radius: 6px;
+    pointer-events: none;
+  }
+  .preview .cap {
+    font-size: 10px; color: #8da4c8;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .preview .cap b { color: #00DBDB; font-weight: 600; }
+</style>
+<script src="overlay-summary.js"></script>
+</head>
+<body>
+  <div class="card" id="card" title="单击打开编辑界面，右键可关闭 PromptCut">
+    <div class="dot"></div>
+    <div class="text">
+      <div class="title" id="title">PromptCut 在后台运行</div>
+      <div class="sub" id="sub">编辑界面已收起，Agent 照常工作</div>
+      <div class="hint">单击打开 · 右键关闭</div>
+    </div>
+  </div>
+  <div class="preview" id="preview" title="AI 上一步做成的时间轴动作，那一刻的画面">
+    <img id="preview-img" alt="上一步动作的画面">
+    <div class="cap" id="preview-cap"></div>
+  </div>
+
+<script>
+  var T = window.__TAURI__;
+  function emit(name) {
+    if (T && T.event && T.event.emit) T.event.emit(name);
+  }
+
+  /*
+   * 单击打开、按住拖动。无边框窗口没有标题栏,拖动交给外壳(startDragging);
+   * 按下后挪了超过几个像素才算拖,松开时没拖过才算单击 —— 免得拖一下就把编辑界面弹出来。
+   * 整张卡和预览块都算(预览块也是悬浮窗的一部分)。
+   */
+  var DRAG_PX = 4;
+  var press = null;
+  document.body.addEventListener('pointerdown', function (e) {
+    if (e.button !== 0) return;
+    press = { x: e.screenX, y: e.screenY, dragged: false };
+  });
+  document.body.addEventListener('pointermove', function (e) {
+    if (!press || press.dragged) return;
+    if (Math.abs(e.screenX - press.x) + Math.abs(e.screenY - press.y) < DRAG_PX) return;
+    press.dragged = true;
+    var w = T && T.window && T.window.getCurrentWindow && T.window.getCurrentWindow();
+    if (w && w.startDragging) w.startDragging();
+  });
+  document.body.addEventListener('pointerup', function (e) {
+    if (e.button !== 0 || !press) return;
+    var clicked = !press.dragged;
+    press = null;
+    if (clicked) emit('pc-overlay-open');
+  });
+  // 右键:外壳弹原生菜单(打开编辑界面 / 关闭)。浏览器自己的右键菜单不要。
+  document.addEventListener('contextmenu', function (e) {
+    e.preventDefault();
+    press = null;
+    emit('pc-overlay-menu');
+  });
+
+  function hhmmss(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    function p(n) { return String(n).padStart(2, '0'); }
+    return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
+
+  if (T && T.event && T.event.listen) {
+    // 外壳推的状态(只在变了的时候推)
+    T.event.listen('pc-overlay-state', function (e) {
+      var s = window.pcOverlay.summarize((e && e.payload) || {});
+      document.getElementById('title').textContent = s.title;
+      document.getElementById('sub').textContent = s.sub;
+      var card = document.getElementById('card');
+      card.classList.toggle('is-skill', s.skill);
+      card.classList.toggle('is-busy', s.busy);
+      // 出了 SKILL,预览收起(窗口高度由壳缩回去)
+      if (!s.skill) document.getElementById('preview').classList.remove('is-on');
+    });
+
+    // 「上一步动作」的预览图:json 的修改时间变了才推一次,所以这里不用去重
+    T.event.listen('pc-skill-preview', function (e) {
+      var d = (e && e.payload) || {};
+      if (!d.data_url) return;
+      document.getElementById('preview-img').src = d.data_url;
+      var c = window.pcOverlay.previewCaption(d, hhmmss);
+      var cap = document.getElementById('preview-cap');
+      cap.textContent = '';
+      var b = document.createElement('b');
+      b.textContent = '上一步';
+      cap.appendChild(b);
+      cap.appendChild(document.createTextNode(' ' + c.what + c.rest));
+      document.getElementById('preview').classList.add('is-on');
+    });
+  }
+
+  // 告诉外壳页面好了:悬浮窗第一次收起时才建,之前推的状态都没收到,让它重推一遍
+  emit('pc-overlay-ready');
+</script>
+</body>
+</html>

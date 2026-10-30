@@ -1,0 +1,1774 @@
+/*
+ * 在线浏览器(电脑身份)的开始页与登录页。用的是皮肤那套变量(`src/skins/skins.css` 把 --ui-* 接成
+ * --bg-canvas / --ink / --accent 这些),所以换皮肤、深浅色都跟着走,这一页里不写死任何颜色。
+ *
+ * 类名前缀 `ps-`(page start),和桌面开始页的 `sp-` 分开:两页并存,桌面版那一页不动。
+ */
+
+.ps {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-canvas);
+  color: var(--ink);
+  font-family: var(--font-sans);
+}
+
+/*
+ * ── 顶栏 ─────────────────────────────────────────
+ * 横向贯穿整页,压在侧栏和主区之上 —— 所以收起键和 Logo 的位置是固定的(用户 2026-10-23 定)。
+ */
+.ps-top {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--bg-panel);
+}
+.ps-top-spacer { flex: 1 1 auto; min-width: 0; }
+
+/* 回首页、收起侧栏:同一种小方钮,固定在最左边 */
+.ps-top-home,
+.ps-top-collapse {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--fill-subtle);
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+.ps-top-home:hover,
+.ps-top-collapse:hover { border-color: var(--hairline-strong); color: var(--ink); }
+.ps-top-collapse[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+/* 已经在开始页:房子点亮,但照样能点(位置固定比「有时候不在」更好找) */
+.ps-top-home[aria-current="page"] { color: var(--accent); border-color: var(--accent); }
+
+.ps-top-title { display: flex; flex-direction: column; min-width: 0; margin-left: 4px; }
+.ps-top-name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ps-top-where { font-size: 11px; color: var(--ink-faint); }
+
+/* 账号:摆在右边那几颗的左侧 */
+.ps-top-account { display: flex; align-items: center; gap: 7px; }
+.ps-top-account-name {
+  max-width: 150px;
+  font-size: 12px;
+  color: var(--ink-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 顶栏下面那一行:侧栏 + 主区 */
+.ps-body-row {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+/* ── 左侧栏:全部项目 ───────────────────────────── */
+.ps-side {
+  /* 宽度由 `sideWidth.ts` 记着,行内样式给 flex-basis;这里的 248 只是没读到时的兜底 */
+  flex-grow: 0;
+  flex-shrink: 0;
+  flex-basis: 248px;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+  /*
+   * 不画常驻的竖线(用户 2026-10-23 定):它和主区平时是连着的一片,
+   * 要拖的时候鼠标压到右边那条缝上才亮一条(`.ps-grip`)。
+   */
+  /* 底色和主区同一张;列表那一块是浮在上面的**一张**面板(issue #5,见 `.ps-side-scroll`) */
+  background: var(--bg-canvas);
+  transition: flex-basis 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+/*
+ * 收起来:宽度收到 0(行内样式给),内容整块滑出去。
+ * `visibility` 延到动画结束才切 —— 这样滑的过程看得见,滑完之后里面的按钮不再能被 Tab 到。
+ */
+.ps-side[data-collapsed="true"] {
+  visibility: hidden;
+  transition:
+    flex-basis 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    visibility 0s 220ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ps-side,
+  .ps-side[data-collapsed="true"] { transition: none; }
+}
+/* 里面这一层钉住原来的宽度(行内样式给):收的时候内容不会先被挤成一条再消失 */
+.ps-side-inner {
+  flex: 0 0 auto;
+  min-height: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  padding-top: 10px;
+}
+
+/*
+ * 能拖宽窄的那条缝(两栏共用,`WidthGrip.tsx`)。**平时一条线都不画**,
+ * 鼠标压上来、或键盘聚焦到它时才亮一条强调色的 —— 用户 2026-10-23:不要常驻的竖线。
+ */
+.ps-grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  cursor: col-resize;
+  z-index: 3;
+  touch-action: none;
+}
+.ps-grip[data-side="right"] { right: -3px; }
+.ps-grip[data-side="left"] { left: -3px; }
+.ps-grip::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: transparent;
+  transition: background 120ms;
+}
+.ps-grip:hover::after,
+.ps-grip:focus-visible::after { background: var(--accent); }
+.ps-grip:focus-visible { outline: none; }
+/*
+ * 面板顶上那一行(用户 2026-10-24:搜索和新建都放进面板,并排一行)。两样都**绝对定位**在这一行里:
+ * 新建键靠右不动,搜索框从它左边起,展开时 `right` 走到 0 **盖住**它。
+ * 只动一个 `right`,两样都不位移、不重排 —— 拿 flex 挤的话新建键会被压扁、字会折行。
+ * 那个 `right` 的收着值由 `ProjectSidebar.tsx` 量出新建键的宽度后给行内样式,这里的 112px 只是量到之前的兜底。
+ */
+.ps-side-head {
+  position: relative;
+  flex: 0 0 auto;
+  height: 32px;
+  margin-bottom: 6px;
+}
+.ps-side-new {
+  position: absolute;
+  right: 0;
+  top: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  color: var(--on-accent);
+  background: var(--ui-accent-grad, linear-gradient(100deg, var(--accent), color-mix(in srgb, var(--accent) 10%, #7b5cff)));
+}
+.ps-side-new:hover { filter: brightness(1.06); }
+.ps-side-new:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+.ps-search {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 112px;
+  height: 100%;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  /* 底色必须是不透明的:展开时它要把新建键整个盖住,透出来就成了两层字叠在一起 */
+  background: var(--fill-subtle);
+  transition: right 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+/* 关了动效的人:直接到位,不滑 */
+@media (prefers-reduced-motion: reduce) {
+  .ps-search { transition: none; }
+}
+/* 自带的那颗清空键不要:自己画了一颗(`.ps-search-clear`),两颗叠在一起很怪 */
+.ps-search input[type="search"]::-webkit-search-cancel-button { display: none; }
+.ps-search-clear {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-faint);
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+.ps-search-clear:hover { background: var(--fill-hover); color: var(--ink); }
+.ps-search-clear:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ps-search:focus-within { border-color: var(--accent); box-shadow: var(--ui-glow); }
+.ps-search input[type="search"]:focus { box-shadow: none; }
+.ps-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.ps-search input::placeholder { color: var(--ink-faint); }
+
+/*
+ * 整栏就是**一张面板**(issue #5,用户原话:「左侧列表栏换成统一的一个面板，不再区分为多个」):
+ * 边框、底色、圆角画在这一层上;搜索与新建那一行(`.ps-side-head`)钉在它顶上、不跟着滚,
+ * 底下是能滚的列表,分组 / 项目 / 已归档各段接着往下排。
+ * 原先是每段各自一张卡(2026-10-23「左侧仿照右侧用模块式」),段与段之间有缝、有各自的边框 —— 那一版已被这条替代。
+ * 右边那条拓展栏(`.ps-ext-sec`)不动,它本来就是分开的几段。
+ */
+.ps-side-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  /* 左右各留 12px:和原来那颗新建键、搜索框站的位置一样 */
+  margin: 2px 12px 12px;
+  padding: 4px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  display: flex;
+  flex-direction: column;
+}
+.ps-side-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+/* 段不再是卡:没有自己的边框和底色,也不互相拉开 —— 面板只有一张 */
+.ps-side-group {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.ps-side-label {
+  padding: 6px 8px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+}
+/* 卡片收起来之后头部不该再留下边那块内边距 */
+.ps-side-group[data-open="false"] .ps-card-head { padding-bottom: 0; }
+.ps-side-body { padding: 0 2px 2px; }
+
+/* 侧栏的一行:分组、项目、Agent 对话、「全部项目」共用 */
+.ps-row {
+  position: relative;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.ps-row:hover { background: var(--fill-hover); }
+.ps-row:focus-visible,
+.ps-row-main:focus-visible,
+.ps-row-caret-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 5px; }
+
+/*
+ * 项目行拆成两颗键之后(issue #15:小三角只管展开,名字才是点进去)。外面那个 .ps-row 这时是个 div,
+ * 样式、悬停、拖放标记都还挂在它身上;里面两颗键自己不画背景,看上去仍是一整行。
+ */
+.ps-row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: inherit;
+}
+.ps-row-caret-btn { padding: 0; border: 0; background: transparent; font: inherit; line-height: 1; cursor: pointer; }
+.ps-row-caret-btn:hover { color: var(--ink); }
+
+/*
+ * 其余可聚焦的元素:焦点圈同样画在**里面**(`outline-offset` 取负)。
+ *
+ * 为什么:这一页好几处的祖先是 `overflow: hidden / auto`(对话列、小窗画框、时间轴那一框、
+ * 缩略图那一排、拓展栏),而浏览器默认的焦点圈画在元素外面 —— 在这些地方会被裁掉一半,
+ * 看上去就是「发光被截断、露出半个方框」(用户 2026-10-23 报的就是这个)。画在里面就永远裁不到。
+ *
+ * 不包括:拖宽窄那条缝(`.ps-grip`)自己用一条竖线表示聚焦;几个文字输入框本身不画圈,
+ * 由外面那一圈(`:focus-within` 的强调色边框)表示聚焦,再画一个圈就重复了。
+ */
+.ps-prompt-send:focus-visible,
+.ps-mode-btn:focus-visible,
+.ps-chip:focus-visible,
+.ps-tile:focus-visible,
+.ps-ghost-btn:focus-visible,
+.ps-link:focus-visible,
+.ps-card-toggle:focus-visible,
+.ps-ext-action:focus-visible,
+.ps-ext-play:focus-visible,
+.ps-ext-seg-btn:focus-visible,
+.ps-ext-undo:focus-visible,
+.ps-ext-row-main:focus-visible,
+.ps-ext-scrub:focus-visible,
+.ps-detail-play:focus-visible,
+.ps-detail-scrub:focus-visible,
+.ps-top-home:focus-visible,
+.ps-top-collapse:focus-visible,
+.ps-chat-vis:focus-visible,
+.ps-chat-ext-btn:focus-visible,
+.ps-side-new:focus-visible,
+.ps-menu-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+/* 当前项:一行一颗键时 aria-current 就在 .ps-row 上;拆成两颗键之后它在里面那颗主键上,外面用 data-current 标 */
+.ps-row[aria-current="true"],
+.ps-row[data-current="true"] { background: var(--ui-accent-soft, var(--fill-subtle)); color: var(--accent); font-weight: 600; }
+.ps-row-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ps-row-count { flex: 0 0 auto; font-size: 11px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.ps-row-caret { flex: 0 0 auto; display: grid; place-items: center; width: 14px; color: var(--ink-muted); transition: transform 120ms; }
+.ps-row-caret[data-open="true"] { transform: rotate(90deg); }
+.ps-row-icon { flex: 0 0 auto; display: grid; place-items: center; width: 16px; color: var(--ink-muted); }
+.ps-row[aria-current="true"] .ps-row-icon,
+.ps-row[data-current="true"] .ps-row-icon { color: var(--accent); }
+
+/*
+ * 下一层。缩进加一条竖导线表示从属,不画逐行的拐角 —— 拐角要分「最后一个」和「中间的」,
+ * 行一多就容易错位。嵌套几层就套几层 .ps-sub,导线自然也就是几条。
+ */
+.ps-sub {
+  margin-left: 15px;
+  padding-left: 9px;
+  border-left: 1px solid var(--hairline);
+}
+/* 没有下一层的行不显示折叠箭头,但位置要留着,否则同一层的图标对不齐 */
+.ps-row-caret[data-empty="true"] { visibility: hidden; }
+
+/* Agent 那一行:比项目再轻一档,图标用 Agent 专属色(和编辑器 rail 上的头像同一个色) */
+.ps-row.is-agent { font-size: 12px; color: var(--ink-muted); }
+.ps-row.is-agent:hover { color: var(--ink); }
+.ps-row-icon.is-agent { color: var(--ui-agent, var(--accent)); }
+
+/* 置顶的小图钉:摆在名字和计数之间 */
+.ps-row-pin {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+}
+
+/* ── 拖着排序 ─────────────────────────────────── */
+/* 拖起来的那一行先淡下去,让人看清自己拖的是哪一条 */
+.ps-row[data-dragging] { opacity: 0.45; }
+/* 落点在目标的上边还是下边,画一条强调色的线 */
+.ps-row[data-drop]::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+.ps-row[data-drop="before"]::after { top: -1px; }
+.ps-row[data-drop="after"]::after { bottom: -1px; }
+
+/* 改名时那一行:布局和普通行一样,名字那一格换成输入框 */
+.ps-row.is-renaming { cursor: default; }
+.ps-rename {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 1px 5px;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  background: var(--bg-canvas);
+  color: var(--ink);
+  font: inherit;
+  outline: none;
+}
+
+/* ── 聊天页 ───────────────────────────────────── */
+/*
+ * 上下两层:标题栏横向填满整页,下面一行才左右分成「对话 + 拓展栏」(用户 2026-10-23 定) ——
+ * 拓展栏只从对话这一块里让出宽度,不把标题栏切断。
+ * 选择器写成 `.ps-main.ps-chat`:`.ps-main` 在这张表里排在后面,单写 `.ps-chat` 同样是一个类,比不过它。
+ */
+.ps-main.ps-chat { display: flex; flex-direction: column; overflow: hidden; }
+.ps-chat-row {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+}
+.ps-chat-col {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/*
+ * ── 右侧拓展栏 ───────────────────────────────────
+ * 不单独划一栏(用户 2026-10-23 定):没有分隔线、不铺自己的底色,就浮在聊天同一张底上,
+ * 每一段是一张卡。所以这里只给内边距和卡与卡之间的间距,底色留给 `.ps` 那一层。
+ */
+.ps-ext {
+  position: relative;
+  flex-grow: 0;
+  flex-shrink: 0;
+  flex-basis: 320px; /* 兜底;实际宽度由 `sideWidth.ts` 记着、行内样式给 */
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px 16px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: transparent;
+}
+.ps-chat-ext-btn {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--fill-subtle);
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+.ps-chat-ext-btn:hover { border-color: var(--hairline-strong); color: var(--ink); }
+.ps-chat-ext-btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+
+/* 一段是一张卡,不是一条横栏。头部那几个类(`.ps-card-*`)左右两栏共用 */
+.ps-ext-sec {
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--bg-panel);
+}
+.ps-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 0 4px;
+}
+.ps-card-toggle {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.ps-card-caret {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  color: var(--ink-muted);
+  transition: transform 120ms;
+}
+.ps-card-caret[data-open="true"] { transform: rotate(90deg); }
+.ps-card-count { font-size: 11px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.ps-ext-body { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+
+/* 占位画面 */
+.ps-ext-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+}
+.ps-ext-frame-tag {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.62);
+  color: #fff;
+  font-size: 11px;
+}
+.ps-ext-play {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  cursor: pointer;
+}
+.ps-ext-play:hover { background: rgba(0, 0, 0, 0.68); }
+
+/* 段头右上角的动作按钮(「详细编辑」)。原来这儿是画框里的全屏键,用户 2026-10-23 换掉了 */
+.ps-ext-action {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  background: var(--fill-subtle);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ps-ext-action:hover { border-color: var(--accent); color: var(--accent); }
+
+/* 播放条叠在画面底部:压一道由下往上的暗角,白字和滑杆在任何画面上都看得清 */
+.ps-ext-transport {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 8px 6px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.66), transparent);
+}
+.ps-ext-scrub { flex: 1 1 auto; min-width: 0; accent-color: var(--accent); }
+/* 栏拖窄了也不许折行(用户 2026-10-23):这一格不收缩、不换行,让进度条去让宽度 */
+.ps-ext-time {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  white-space: nowrap;
+}
+/*
+ * 段落底下那行小字:栏窄的时候只占一行,放不下就省略号(全文挂在 title 上)——
+ * 用户 2026-10-23:右侧缩小以后不要变成多行,这一行小字也算。
+ */
+.ps-ext-todo {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 改动那一段:一行一次操作 */
+.ps-ext-rows { display: flex; flex-direction: column; gap: 4px; }
+.ps-ext-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--fill-subtle);
+}
+.ps-ext-row[data-picked] { border-color: var(--accent); }
+.ps-ext-row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ps-ext-row-top { display: flex; align-items: baseline; gap: 6px; font-size: 12px; }
+.ps-ext-kind { color: var(--ui-agent, var(--accent)); font-weight: 600; }
+.ps-ext-tool { color: var(--ink-muted); font-family: var(--font-mono); font-size: 11px; }
+.ps-ext-ms { margin-left: auto; color: var(--ink-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+.ps-ext-note { margin: 0; font-size: 11px; line-height: 1.6; color: var(--ink-muted); overflow-wrap: anywhere; }
+.ps-ext-undo {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-muted);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ps-ext-undo:hover:not(:disabled) { border-color: var(--hairline-strong); color: var(--ink); }
+.ps-ext-undo:disabled { opacity: 0.5; cursor: default; }
+
+/* 改前 / 改后的那个二选一 */
+.ps-ext-seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--fill-subtle);
+}
+.ps-ext-seg-btn {
+  flex: 1 1 0;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-muted);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ps-ext-seg-btn[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); font-weight: 600; }
+
+.ps-chat-vis {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--fill-subtle);
+  color: var(--ink-muted);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ps-chat-vis[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+
+.ps-chat-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.ps-chat-list {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 22px 24px 8px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/*
+ * 气泡配色照编辑器右栏那一套逐项对齐(`src/editor/right/chat/chat.css` 的 `.ai-message`):
+ * 自己说的话是**整块强调色**,Agent 说的话是**比消息区亮一档的面板色**,两边都套气泡;
+ * 圆角、内边距、字号、行高、最大宽度也一并对齐,免得同一个产品里两套聊天长得不一样。
+ *
+ * 原来这一页自己调了一套(18% 强调色加描边、Agent 侧干脆不套气泡),和软件里对不上(用户 2026-10-23 指出)。
+ * 自己那一侧靠右、不放头像,Agent 那一侧靠左、前面放头像 —— 这一条和编辑器一致,没变。
+ */
+.ps-msg { display: flex; gap: 10px; }
+.ps-msg.is-me { justify-content: flex-end; }
+.ps-bubble {
+  max-width: 85%;
+  box-sizing: border-box;
+  padding: 10px;
+  border-radius: var(--ui-radius-lg, 8px);
+  background: var(--ui-accent, var(--accent));
+  color: var(--ui-accent-fg, var(--on-accent));
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ps-msg-avatar {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin-top: 1px;
+  border-radius: 50%;
+  border: 1px solid var(--hairline);
+  background: var(--fill-subtle);
+  color: var(--ui-agent, var(--accent));
+}
+/* Agent 气泡:和编辑器的 `.ai-message.assistant` 同一档 —— 比消息区底色亮一档的面板色 */
+.ps-msg-body {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 85%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: var(--ui-radius-lg, 8px);
+  background: var(--ui-panel, var(--bg-panel));
+  color: var(--ui-fg, var(--ink));
+  font-size: 13px;
+  line-height: 1.6;
+}
+.ps-msg-text {
+  margin: 0;
+  font-size: inherit;
+  line-height: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 这一轮 Agent 做过的事。气泡里各块只靠 gap 隔开,自己不带上下外边距(和编辑器那一条同理) */
+.ps-actions {
+  padding: 9px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--fill-subtle);
+}
+.ps-actions-head {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ui-agent, var(--accent));
+}
+.ps-actions-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--ink-muted);
+}
+
+/* 输入框上面不画横线(用户 2026-10-23 定):输入框自己有边框,再来一条线就把这一块切断了 */
+.ps-chat-foot {
+  flex: 0 0 auto;
+  padding: 10px 24px 16px;
+  background: var(--bg-canvas);
+}
+.ps-chat-box {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 14px;
+  background: var(--bg-panel);
+  box-sizing: border-box;
+}
+.ps-chat-box:focus-within { border-color: var(--accent); box-shadow: var(--ui-glow); }
+.ps-chat-box textarea.ps-chat-input:focus { box-shadow: none; }
+.ps-chat-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 24px;
+  max-height: 200px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  resize: none;
+  outline: none;
+}
+.ps-chat-input::placeholder { color: var(--ink-faint); }
+.ps-chat-note {
+  max-width: 760px;
+  margin: 7px auto 0;
+  font-size: 11px;
+  color: var(--ink-faint);
+  text-align: center;
+}
+
+/*
+ * ── 详细编辑 ─────────────────────────────────────
+ * 占满整条对话列 —— **连输入框那一截一起**(用户 2026-10-26 改定,issue #4:原来输入框留在它下面,
+ * 「在时间轴编辑界面的正下方感觉怪怪的」)。输入框搬去拓展栏里那块聊天面板(`ExtChatPanel.tsx`),
+ * 人把拓展栏收了才掉回下面来 —— 谁渲染谁由 `ChatView.tsx` 的 `inPanel` 决定,这里不管。
+ * 上面舞台加一排传输控件,下面时间轴。形状照软件里的编辑台。展开时有一下过渡,关了动画的人直接就位。
+ */
+.ps-detail {
+  flex: 1 1 auto;
+  min-height: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  padding: 10px 16px 12px;
+  animation: ps-detail-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes ps-detail-in {
+  from { opacity: 0; transform: scale(0.97) translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ps-detail { animation: none; }
+}
+
+.ps-detail-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding-bottom: 8px;
+}
+.ps-detail-title { font-size: 13px; font-weight: 600; }
+/* 「进入传统式」:这一头上的主行动,实心强调色;旁边的「收起」是次要的,留 ghost */
+.ps-mode-btn {
+  flex: 0 0 auto;
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ps-mode-btn:hover { filter: brightness(1.08); }
+.ps-detail-sub { font-size: 11px; color: var(--ink-faint); }
+
+.ps-detail-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+}
+.ps-detail-screen {
+  position: relative;
+  height: 100%;
+  max-width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+}
+/* 四个角的取景框 */
+.ps-detail-corner {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.72);
+}
+.ps-detail-corner.is-tl { left: 8px; top: 8px; border-right: 0; border-bottom: 0; }
+.ps-detail-corner.is-tr { right: 8px; top: 8px; border-left: 0; border-bottom: 0; }
+.ps-detail-corner.is-bl { left: 8px; bottom: 8px; border-right: 0; border-top: 0; }
+.ps-detail-corner.is-br { right: 8px; bottom: 8px; border-left: 0; border-top: 0; }
+
+.ps-detail-transport {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0 8px;
+}
+.ps-detail-play {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--on-accent);
+  cursor: pointer;
+}
+.ps-detail-play:hover { filter: brightness(1.08); }
+.ps-detail-scrub { flex: 1 1 auto; min-width: 0; accent-color: var(--accent); }
+.ps-detail-time {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * 真时间轴那一框(`src/editor/timeline/` 的 `TimelineView`)。它自己是 `h-full`,
+ * 所以这里要给一截确定的高度 —— 用 auto 的话它量不到高,整条会塌成 0。
+ * 上面的舞台是 `flex: 1`,拿走剩下的。
+ *
+ * 下面那个 `flex-basis` 是**没拖过时**的默认高,跟着窗口走;拖过一次之后由 `DetailEdit.tsx`
+ * 给行内的 `flex-basis` 盖掉(issue #40),双击那条缝又退回这一个。
+ * `max-height` 和拖杆的上限是同一个数(`TL_MAX_RATIO`):存着的那个高度在小窗口上也不会把舞台挤没。
+ * 上面的 8px 是那条缝自己的高(`.pc-gutter` 的 `h-2`),原来那条 `margin-top: 8px` 由它顶上。
+ */
+.ps-detail-tl {
+  flex: 0 0 clamp(240px, 42%, 420px);
+  min-height: 0;
+  max-height: 70%;
+  border-radius: 8px;
+  overflow: hidden;
+}
+/* ── 行的右键菜单 ─────────────────────────────── */
+.ps-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 168px;
+  padding: 4px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.38);
+}
+.ps-menu-head {
+  padding: 5px 8px 6px;
+  font-size: 11px;
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ps-menu-item {
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.ps-menu-item:hover,
+.ps-menu-item:focus-visible { background: var(--fill-hover); outline: none; }
+.ps-menu-item.is-danger { color: var(--danger); }
+.ps-menu-item.is-danger:hover,
+.ps-menu-item.is-danger:focus-visible { background: color-mix(in oklab, var(--danger) 16%, transparent); }
+.ps-menu-sep { height: 1px; margin: 4px 2px; background: var(--hairline); }
+
+
+/* 账号头像:色相由账号名哈希,和 AI 角色头像(src/editor/right/RoleAvatar.tsx)同一路子,不配图片 */
+.ps-avatar {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--hairline-strong);
+  font-size: 12px;
+  font-weight: 600;
+  user-select: none;
+}
+
+/* ── 主区 ─────────────────────────────────────── */
+.ps-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.ps-body {
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 28px 40px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+}
+
+.ps-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 34px 0 10px;
+  text-align: center;
+}
+.ps-hero-kicker { font-size: 12px; letter-spacing: 0.08em; color: var(--ink-muted); }
+.ps-hero-title { margin: 0; font-size: 30px; line-height: 1.25; font-weight: 650; letter-spacing: -0.01em; }
+.ps-hero-sub { font-size: 13px; color: var(--ink-muted); }
+
+/* ── 发一句话建项目 ───────────────────────────── */
+.ps-prompt {
+  width: 100%;
+  max-width: 760px;
+  margin: 14px auto 0;
+  padding: 12px 14px 8px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 14px;
+  background: var(--bg-panel);
+  box-sizing: border-box;
+}
+/*
+ * 聚焦发光:全局样式(`src/skins/motion.css` 的「焦点发光阴影」)给每个 input / textarea 都挂了
+ * `box-shadow: var(--ui-glow)`。但这一页的文字输入框都是**嵌在一个圆角容器里的**、自己没有圆角,
+ * 那层矩形光晕套在圆角框里看着就是「框里又有一个框」(用户 2026-10-23 报的就是这个)。
+ * 所以:光晕挪到外面那层圆角容器上(跟着圆角走),里面的输入框自己不发光。
+ */
+.ps-prompt:focus-within { border-color: var(--accent); box-shadow: var(--ui-glow); }
+/* 选择器写这么长是为了压过全局那条 `[data-skin] textarea:focus`(特异性 0-2-1),短了压不过 */
+.ps-prompt textarea.ps-prompt-input:focus { box-shadow: none; }
+.ps-prompt-input {
+  display: block;
+  width: 100%;
+  min-height: 58px;
+  max-height: 180px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  resize: none;
+  outline: none;
+}
+.ps-prompt-input::placeholder { color: var(--ink-faint); }
+.ps-prompt-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.ps-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-muted);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ps-chip:hover { border-color: var(--hairline-strong); color: var(--ink); }
+.ps-chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+
+/*
+ * 行动点那一颗(传素材):实心强调色,比旁边的画幅 chip 重一档(用户 2026-10-23 定)。
+ * 边框留着但透明,这样和旁边几颗的盒子尺寸算法一致,只靠内边距和字重拉开分量。
+ */
+.ps-chip.is-cta {
+  padding: 6px 13px;
+  font-weight: 650;
+  color: var(--on-accent);
+  border-color: transparent;
+  background: var(--accent);
+  box-shadow: 0 1px 8px color-mix(in oklab, var(--accent) 35%, transparent);
+}
+.ps-chip.is-cta:hover {
+  color: var(--on-accent);
+  border-color: transparent;
+  background: var(--accent);
+  filter: brightness(1.08);
+}
+.ps-chip-plus { font-size: 15px; line-height: 1; }
+.ps-prompt-send {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  color: var(--on-accent);
+  background: var(--accent);
+}
+.ps-prompt-send:disabled { opacity: 0.4; cursor: default; }
+.ps-prompt-send:not(:disabled):hover { filter: brightness(1.08); }
+.ps-prompt-note {
+  max-width: 760px;
+  margin: 8px auto 0;
+  font-size: 12px;
+  color: var(--ink-faint);
+  text-align: center;
+}
+
+/* ── 项目缩略图那一排 ─────────────────────────── */
+.ps-rail { margin-top: 28px; }
+.ps-rail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.ps-rail-title { margin: 0; font-size: 14px; font-weight: 600; }
+.ps-rail-spacer { flex: 1 1 auto; }
+.ps-page-at { font-size: 12px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.ps-page-btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  background: var(--fill-subtle);
+  color: var(--ink);
+  font-family: inherit;
+  cursor: pointer;
+}
+.ps-page-btn:hover:not(:disabled) { border-color: var(--hairline-strong); }
+.ps-page-btn:disabled { opacity: 0.35; cursor: default; }
+
+.ps-strip {
+  display: flex;
+  gap: 12px;
+  overflow: hidden;
+}
+.ps-tile {
+  flex: 0 0 196px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ps-tile { border-radius: 12px; }
+
+/* 缩略图外框是固定 16:9;项目自己的画幅按比例套在里面,所以一排高度齐平又看得出竖屏方屏 */
+.ps-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--fill-subtle);
+  display: grid;
+  place-items: center;
+}
+.ps-tile:hover .ps-frame { border-color: var(--hairline-strong); }
+.ps-shot {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+.ps-badge {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.62);
+  color: #fff;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.ps-tile-name {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ps-tile-meta { font-size: 11px; color: var(--ink-faint); }
+
+/* 第一格:Create A New */
+.ps-tile-new .ps-frame {
+  border-style: dashed;
+  border-color: var(--hairline-strong);
+  background: transparent;
+  gap: 6px;
+  grid-auto-flow: row;
+  align-content: center;
+}
+.ps-tile-new:hover .ps-frame { border-color: var(--accent); color: var(--accent); }
+.ps-tile-new-plus { font-size: 24px; line-height: 1; }
+.ps-tile-new-text { font-size: 12px; font-weight: 600; }
+
+.ps-empty {
+  padding: 28px;
+  border: 1px dashed var(--hairline);
+  border-radius: 10px;
+  color: var(--ink-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.ps-muted { font-size: 12px; color: var(--ink-muted); }
+.ps-ghost-btn {
+  padding: 5px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  background: var(--fill-subtle);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ps-ghost-btn:hover:not(:disabled) { border-color: var(--hairline-strong); }
+.ps-ghost-btn:disabled { opacity: 0.55; cursor: default; }
+.ps-link {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.ps-link:hover { text-decoration: underline; }
+
+/* ── 登录页 ───────────────────────────────────── */
+.ps-login {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  background: var(--bg-canvas);
+  color: var(--ink);
+  font-family: var(--font-sans);
+}
+/*
+ * 左边一块、右边表单:浏览器里第一眼就和桌面版是同一套调性。
+ * 左边这块是深色底 + 参数化镂空(`BrandLattice.tsx`),品牌渐变只从镂空里透出来 ——
+ * 原来是满版高饱和的青到紫,挨着右边的深色表单太扎眼(用户 2026-10-23 说的)。
+ */
+.ps-login-art {
+  position: relative;
+  overflow: hidden;
+  flex: 1 1 46%;
+  min-width: 0;
+  display: none;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 40px;
+  color: var(--ink);
+  background: var(--bg-panel);
+  border-right: 1px solid var(--hairline);
+}
+@media (min-width: 900px) { .ps-login-art { display: flex; } }
+/*
+ * 极光底:三团色斑在跑,上面盖一层条纹毛玻璃,最上面压一层噪点(画法与取舍见 `BrandAurora.tsx`)。
+ * 参数都在这儿 —— 改这几个数就换花样,不用动 TSX。
+ */
+.ps-aurora {
+  --aurora-blur: 64px;      /* 色斑糊到什么程度 */
+  --aurora-alpha: 0.5;      /* 色斑多浓:这一块挨着深色表单,浓了就扎眼 */
+  --stripe-width: 9px;      /* 一道磨砂条多宽 */
+  --stripe-gap: 13px;       /* 两道之间留多少(这一段是清的) */
+  --stripe-angle: 104deg;   /* 条纹的倾角 */
+  --glass-blur: 16px;       /* 磨砂糊多少 */
+  --grain-alpha: 0.055;     /* 颗粒多重 */
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  /* 色斑要糊成一片,这一层自己先定个底色,免得模糊边缘透出画布色 */
+  background: var(--bg-panel);
+}
+/*
+ * 内容压在背景上面。背景那一层有两种实现:CSS 极光(`.ps-aurora`)和 WebGL 画布(`.ps-brand-canvas`,
+ * 在 `brandCanvas.css` 里),两种都不能被抬上来,否则会盖住标题。**以后再加别的背景实现,记得也加进这个排除里。**
+ * 用 `:where()` 让括号里不计特异性,`brandCanvas.css` 那条保底的覆盖照旧压得过这一条。
+ */
+.ps-login-art > *:not(:where(.ps-aurora, .ps-brand-canvas)) { position: relative; z-index: 1; }
+
+.ps-aurora-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(var(--aurora-blur));
+  opacity: var(--aurora-alpha);
+  will-change: transform;
+}
+/* 三团各走各的周期,时长互不整除,所以合起来看不出在重复 */
+.ps-aurora-blob.is-a {
+  left: -18%; top: 4%;
+  width: 78%; aspect-ratio: 1;
+  background: radial-gradient(circle at 50% 50%, var(--ui-accent, #00DBDB), transparent 68%);
+  animation: ps-drift-a 23s ease-in-out infinite alternate;
+}
+.ps-aurora-blob.is-b {
+  right: -24%; top: 26%;
+  width: 86%; aspect-ratio: 1;
+  background: radial-gradient(circle at 50% 50%, var(--ui-accent-2, #6F69FC), transparent 70%);
+  animation: ps-drift-b 31s ease-in-out infinite alternate;
+}
+.ps-aurora-blob.is-c {
+  left: 8%; bottom: -22%;
+  width: 70%; aspect-ratio: 1;
+  background: radial-gradient(circle at 50% 50%, color-mix(in oklab, var(--ui-accent, #00DBDB) 55%, var(--ui-accent-2, #6F69FC)), transparent 66%);
+  animation: ps-drift-c 19s ease-in-out infinite alternate;
+}
+@keyframes ps-drift-a {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to   { transform: translate3d(14%, 10%, 0) scale(1.18); }
+}
+@keyframes ps-drift-b {
+  from { transform: translate3d(0, 0, 0) scale(1.08); }
+  to   { transform: translate3d(-16%, -12%, 0) scale(0.92); }
+}
+@keyframes ps-drift-c {
+  from { transform: translate3d(0, 0, 0) scale(0.95); }
+  to   { transform: translate3d(10%, -16%, 0) scale(1.22); }
+}
+
+/*
+ * 条纹毛玻璃:整层 backdrop-filter 糊身后的极光,再用条纹遮罩只留一道道斜条 ——
+ * 条纹之间没有这一层,极光是清的,于是被切成明暗相间的带子。
+ * 条纹本身还加一点极淡的白,让磨砂那一侧有个边。
+ */
+.ps-aurora-glass {
+  position: absolute;
+  inset: -2%;
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  background: repeating-linear-gradient(
+    var(--stripe-angle),
+    rgba(255, 255, 255, 0.05) 0 var(--stripe-width),
+    transparent var(--stripe-width) calc(var(--stripe-width) + var(--stripe-gap))
+  );
+  mask-image: repeating-linear-gradient(
+    var(--stripe-angle),
+    #000 0 var(--stripe-width),
+    transparent var(--stripe-width) calc(var(--stripe-width) + var(--stripe-gap))
+  );
+  -webkit-mask-image: repeating-linear-gradient(
+    var(--stripe-angle),
+    #000 0 var(--stripe-width),
+    transparent var(--stripe-width) calc(var(--stripe-width) + var(--stripe-gap))
+  );
+}
+
+/* 噪点:滤镜生成的颗粒,压在最上面去掉大色块的塑料感 */
+.ps-aurora-grain {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: var(--grain-alpha);
+  mix-blend-mode: overlay;
+  pointer-events: none;
+}
+
+/* 关了动画的人只看静止的那一帧,构图不变 */
+@media (prefers-reduced-motion: reduce) {
+  .ps-aurora-blob { animation: none; }
+}
+.ps-login-art-title { margin: 0; font-size: 26px; font-weight: 650; line-height: 1.35; }
+.ps-login-art-sub { margin: 10px 0 0; font-size: 14px; color: var(--ink-muted); max-width: 34ch; line-height: 1.7; }
+.ps-login-art-foot { font-size: 12px; color: var(--ink-faint); }
+
+.ps-login-panel {
+  flex: 1 1 54%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px;
+  overflow-y: auto;
+}
+.ps-login-form {
+  width: 100%;
+  max-width: 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ps-login-head { display: flex; flex-direction: column; gap: 6px; margin-bottom: 4px; }
+.ps-login-title { margin: 0; font-size: 20px; font-weight: 650; }
+.ps-field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--ink-muted); }
+.ps-field input {
+  padding: 9px 11px;
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  background: var(--bg-panel);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.ps-field input:focus { border-color: var(--accent); }
+.ps-check { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink-muted); cursor: pointer; }
+.ps-primary-btn {
+  margin-top: 4px;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 9px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--on-accent);
+  background: var(--accent);
+}
+.ps-primary-btn:hover:not(:disabled) { filter: brightness(1.08); }
+.ps-primary-btn:disabled { opacity: 0.5; cursor: default; }
+.ps-login-alt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+.ps-login-sep {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0;
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+.ps-login-sep::before,
+.ps-login-sep::after { content: ""; flex: 1 1 auto; height: 1px; background: var(--hairline); }
+/* 第三方登录那一块:现在只占位,逻辑由账号那边接(见 OnlineLogin.tsx 里的注释) */
+.ps-login-oauth { display: flex; flex-direction: column; gap: 8px; }
+.ps-oauth-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 9px;
+  background: var(--bg-panel);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.ps-oauth-btn:hover { background: var(--fill-hover); }
+.ps-oauth-mark {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--hairline-strong);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ps-login-note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--ink-faint);
+}
+
+/* 窄窗口:侧栏收起来,主区自己滚 */
+@media (max-width: 860px) {
+  /* 宽度由用户拖出来、记在本机，这里不再按窗口宽度改它 */
+  .ps-body { padding: 0 16px 32px; }
+  .ps-hero-title { font-size: 24px; }
+}
+
+/*
+ * ── 接业务层补的几样(2026-10-23,`docs/reports/AGENT-claude-vibe-wire.md`)───────────
+ * 界面形状用户已定稿,这里只补真数据才有的几种状态:发送状态、出错、空态、加载中、真画面、已归档、用链接加入。
+ * 一律用已有的主题变量,长相跟着旁边已有的那一档(小字跟 `.ps-chat-note`、卡片跟 `.ps-menu`)。
+ */
+
+/* 登录页外壳:错误与「正在连接」浮在页面顶上 */
+.ps-vibe-login { position: relative; height: 100%; min-height: 0; }
+.ps-vibe-login[data-busy] .ps-login-form { opacity: 0.6; pointer-events: none; }
+.ps-vibe-login-error,
+.ps-vibe-login-busy {
+  position: absolute;
+  z-index: 5;
+  top: 14px;
+  right: 14px;
+  max-width: min(420px, calc(100% - 28px));
+  padding: 9px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--hairline-strong);
+  background: var(--bg-panel);
+  color: var(--ink);
+  font-size: 13px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+}
+.ps-vibe-login-error { border-color: var(--danger); color: var(--danger); }
+.ps-vibe-loading {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  background: var(--bg-canvas);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 13px;
+}
+
+/* 开始页那行小字出错时 */
+.ps-prompt-note.is-err { color: var(--danger); }
+
+/* 侧栏:一行状态 / 提示;新建不可用时 */
+.ps-side-hint {
+  margin: 4px 8px 6px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--ink-faint);
+}
+.ps-side-hint .ps-link { margin-left: 6px; }
+.ps-side-new:disabled { opacity: 0.5; cursor: default; filter: none; }
+/* 两处都要:`.is-blocked` 是游客开第二条对话时置灰那一行(claude/guest-one-chat),
+   `:disabled` 是游客没有分组时置灰的分组行(claude/groups-local-cloud)。样式相同、来路不同 */
+.ps-row.is-blocked,
+.ps-row:disabled { opacity: 0.5; cursor: default; }
+.ps-row.is-archived .ps-row-icon { opacity: 0.55; }
+.ps-tile:disabled { opacity: 0.5; cursor: default; }
+
+/* 缩略图:真画面盖满那一格,画幅框照旧 */
+.ps-shot { position: relative; overflow: hidden; }
+.ps-shot-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+
+/* 真画面(编辑界面的预览,手机版那一种只出画面的样子):铺满容器,播放键与播放条压在上面 */
+.ps-stage { position: relative; overflow: hidden; background: #000; }
+.ps-stage .pc-pv--mobile { position: absolute; inset: 0; padding: 0; gap: 0; height: auto; }
+.ps-stage .pc-pv--mobile .pc-pv-stage { border-radius: 0; }
+.ps-stage .pc-pv--mobile .pc-pv-corner { display: none; }
+.ps-stage-over { position: absolute; inset: 0; z-index: 3; display: grid; place-items: center; }
+.ps-ext-frame-img { background: var(--fill-subtle); }
+.ps-ext-frame-img img { width: 100%; height: 100%; object-fit: contain; }
+
+/* 聊天:自己那一侧的发送状态、发送者;Agent 那一侧的进行中、出错;空对话的示例句;顶上那条提示 */
+.ps-me-col { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; max-width: 85%; }
+.ps-me-col .ps-bubble { max-width: 100%; }
+.ps-msg-sender { font-size: 11px; color: var(--ink-faint); }
+.ps-msg-state { font-size: 11px; color: var(--ink-faint); }
+.ps-msg-state.is-err { color: var(--danger); }
+.ps-md > :first-child { margin-top: 0; }
+.ps-md > :last-child { margin-bottom: 0; }
+.ps-md p { margin: 0 0 6px; }
+.ps-msg-live { color: var(--ink-muted); font-size: 12px; }
+.ps-msg-err { color: var(--danger); }
+.ps-actions-list { list-style: none; padding-left: 0; }
+.ps-actions-list li[data-state="err"],
+.ps-actions-list li[data-state="ask"] { color: var(--danger); }
+.ps-op-mark { display: inline-block; width: 14px; color: var(--ui-agent, var(--accent)); }
+.ps-op-report { margin-top: 4px; font-weight: 600; color: var(--ink); }
+.ps-chat-empty { display: grid; place-items: center; padding: 48px 0; }
+.ps-chat-example {
+  padding: 9px 14px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  background: var(--bg-panel);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.ps-chat-example:hover { border-color: var(--accent); color: var(--accent); }
+.ps-chat-banner {
+  flex: 0 0 auto;
+  max-width: 760px;
+  width: calc(100% - 48px);
+  margin: 10px auto 0;
+  padding: 8px 12px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  background: var(--fill-subtle);
+  color: var(--ink);
+  font-size: 12px;
+  cursor: pointer;
+}
+.ps-chat-input:disabled { cursor: not-allowed; }
+
+/* 用链接加入:借右键菜单那一套长相,钉在顶栏右下 */
+.ps-menu.ps-join {
+  position: fixed;
+  top: 52px;
+  right: 16px;
+  left: auto;
+  width: min(340px, calc(100vw - 32px));
+  z-index: 40;
+}
+.ps-join-form { display: flex; flex-direction: column; gap: 10px; padding: 6px 10px 10px; }
+.ps-join-msg { margin: 0; font-size: 12px; line-height: 1.6; color: var(--ink-muted); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ps-join-msg[role="alert"] { color: var(--danger); }
+.ps-join-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/*
+ * ── 拓展栏里那块聊天面板 ─────────────────────────
+ * 用户 2026-10-26 定(issue #4):「详细编辑」一展开,时间轴编辑区占满整个聊天区(连输入框一起),
+ * 聊天搬到这条栏里来 —— 和上面两段并排的又一张独立的卡,进场有一下动画。
+ * 高度取「甲」:上面两段照常摊开,这一块吃掉这条栏剩下的;输入框钉在它自己的底。
+ * 组件在 `ExtChatPanel.tsx`,输入框是聊天列底部那个搬过来的同一个(`Composer.tsx`)。
+ */
+.ps-ext-chat {
+  flex: 1 1 auto;
+  min-height: 150px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  transform-origin: 100% 0;
+  animation: ps-ext-chat-in 300ms cubic-bezier(0.2, 0.9, 0.25, 1);
+}
+@keyframes ps-ext-chat-in {
+  0% { opacity: 0; transform: translateX(28px) scale(0.94); }
+  60% { opacity: 1; }
+  100% { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ps-ext-chat { animation: none; }
+}
+.ps-ext-chat-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px 7px 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+.ps-ext-chat-title { font-size: 12px; font-weight: 600; }
+.ps-ext-chat-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/*
+ * 这条栏里的气泡自成一套(`ps-x…`,x = 拓展栏里那块),不和聊天列的 `.ps-msg` 混:
+ * 那边是 760px 宽的阅读版式,这边最窄 250px(`sideWidth.ts` 的 `EXT_WIDTH.min`),
+ * 字号、内边距、头像都小一号。自己那侧靠右、Agent 那侧靠左放头像,这一条和聊天列一致。
+ */
+.ps-xmsg { display: flex; gap: 7px; }
+.ps-xmsg.is-me { justify-content: flex-end; }
+.ps-xbubble {
+  max-width: 90%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 9px;
+  border-radius: var(--ui-radius-lg, 8px);
+  background: var(--ui-accent, var(--accent));
+  color: var(--ui-accent-fg, var(--on-accent));
+  font-size: 12px;
+  line-height: 1.55;
+}
+.ps-xbody {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 92%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 7px 9px;
+  border-radius: var(--ui-radius-lg, 8px);
+  background: var(--fill-subtle);
+  color: var(--ui-fg, var(--ink));
+  font-size: 12px;
+  line-height: 1.55;
+}
+.ps-xavatar {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border-radius: 50%;
+  border: 1px solid var(--hairline);
+  background: var(--fill-subtle);
+  color: var(--ui-agent, var(--accent));
+}
+.ps-xtext { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/*
+ * 收起来的那几条(issue #4:「达到两句以后截断为"..."。只保留最新的一条 Agent 回复」):
+ * 文字截成两行,尾巴的「…」由 line-clamp 自己接上;这一轮的「Agent 操作」整块折起来,
+ * 另标一句「还有 N 条操作」。点一下展开看全文 —— 真的被截到了才给这个样子,一行说完的短句不给
+ * (截没截到是量出来的,见 `ExtChatPanel.tsx` 的 `Foldable`)。
+ */
+.ps-xbubble[data-more],
+.ps-xbody[data-more] { cursor: zoom-in; }
+.ps-xbubble[data-folded] .ps-xtext,
+.ps-xbody[data-folded] .ps-xtext {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  white-space: normal;
+}
+.ps-xbody[data-folded] .ps-xops,
+.ps-xbody[data-folded] .ps-xlive { display: none; }
+.ps-xmore { align-self: flex-start; font-size: 11px; color: var(--ink-faint); }
+.ps-xmsg.is-me .ps-xmore { color: var(--ui-accent-fg, var(--on-accent)); opacity: 0.65; }
+.ps-xlatest { font-size: 10px; color: var(--ink-faint); padding: 0 2px 4px; }
+
+.ps-xops {
+  padding: 6px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  background: var(--bg-panel);
+}
+.ps-xops-head { font-size: 10px; font-weight: 600; letter-spacing: 0.04em; color: var(--ui-agent, var(--accent)); }
+.ps-xops-list { margin: 4px 0 0; padding-left: 16px; font-size: 11px; line-height: 1.7; color: var(--ink-muted); }
+.ps-xlive { margin: 0; font-size: 11px; color: var(--ink-muted); }
+.ps-xlive.is-err { color: var(--danger); }
+
+/* 输入框搬进来之后那一套:外框窄一点,底下那行小字靠左、不再居中 */
+.ps-ext-chat-foot {
+  flex: 0 0 auto;
+  padding: 8px;
+  border-top: 1px solid var(--hairline);
+}
+.ps-ext-chat-foot .ps-chat-box {
+  max-width: none;
+  padding: 7px 9px;
+  border-radius: 11px;
+  background: var(--bg-canvas);
+}
+.ps-ext-chat-foot .ps-chat-input { font-size: 12.5px; line-height: 1.55; min-height: 20px; max-height: 110px; }
+.ps-ext-chat-foot .ps-prompt-send { width: 26px; height: 26px; }
+.ps-ext-chat-foot .ps-chat-note { max-width: none; margin: 6px 2px 0; text-align: left; }

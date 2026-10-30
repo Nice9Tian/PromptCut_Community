@@ -1,0 +1,64 @@
+/*
+ * 悬浮在顶栏下方居中,不占布局空间也不拦点击 —— 它只是个通知,
+ * 用户完全可以不理它继续剪片子。
+ */
+.dep-prompt {
+  position: fixed;
+  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  width: min(460px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  color: var(--ink);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.dep-prompt-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.dep-prompt-body {
+  font-size: 12px;
+  color: var(--ink-muted);
+  line-height: 1.6;
+}
+
+.dep-prompt-error {
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.dep-prompt-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.dep-prompt-btn {
+  font-size: 12px;
+  padding: 5px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--hairline);
+  background: var(--fill-subtle);
+  color: var(--ink);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dep-prompt-btn:hover { border-color: var(--hairline-strong); }
+.dep-prompt-btn:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.dep-prompt-btn.is-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}

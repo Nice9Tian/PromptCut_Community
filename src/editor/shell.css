@@ -1,0 +1,122 @@
+/*
+ * 编辑器外壳:把设计稿(配色诊断与修正 v2)的五级表面按区域分配。
+ *
+ *   窗口栏(原生菜单)  #101316   —— 系统绘制,这里管不到
+ *   画布 / 预览        L0  --ui-bg
+ *   素材库 / 时间线    L1  --ui-bg-2
+ *   工具栏 / 右栏      L2  --ui-panel
+ *   控件               L3  --ui-panel-2
+ *   悬浮 / 分隔        L4  --ui-float
+ *
+ * 各区域的界面大量用 Tailwind 灰阶类,再由 skins.css 统一映射到 --ui-*。
+ * 那张映射表是「全局一刀切」的(950→L0、900→L2、800→L3),但设计稿要求
+ * 不同区域落在不同层级——素材库整块是 L1,里面的控件才是 L3——所以这里按
+ * data-pc 区域再覆盖一层。只改层级归属,不改任何色值。
+ */
+
+/* ── 素材库(左栏)抽屉 L1,控件 L3 ──────────────────────────────
+ * 左栏根节点不刷底色:rail 要露出画布,底色由抽屉的 .pc-card-surface 给。
+ * 分区能被拖到右侧 rail(editor/dock/),所以按分区页面节点的 data-pc-dock-kind="section" 挑,
+ * 不按「在不在 [data-pc=left] 里」—— 否则分区到了右边丢配色,Agent 到了左边反被刷成素材库的层级 */
+[data-skin] [data-pc-dock-kind="section"] .bg-neutral-950,
+[data-skin] [data-pc-dock-kind="section"] .bg-neutral-950\/60 {
+  background-color: var(--ui-bg-2);
+}
+[data-skin] [data-pc-dock-kind="section"] .bg-neutral-900,
+[data-skin] [data-pc-dock-kind="section"] .bg-neutral-900\/60,
+[data-skin] [data-pc-dock-kind="section"] .bg-neutral-900\/40 {
+  background-color: var(--ui-panel-2);
+}
+[data-skin] [data-pc-dock-kind="section"] .bg-neutral-800,
+[data-skin] [data-pc-dock-kind="section"] .bg-neutral-800\/60 {
+  background-color: var(--ui-float);
+}
+[data-skin] [data-pc-dock-kind="section"] .hover\:bg-neutral-800:hover {
+  background-color: var(--ui-float);
+}
+
+/* ── 时间线整块 L1;选中 / 悬浮的行升到 L2 ────────────────────────── */
+[data-skin] [data-pc="timeline"],
+[data-skin] [data-pc="timeline"].bg-neutral-900 {
+  background-color: var(--ui-bg-2);
+}
+[data-skin] [data-pc="timeline"] .bg-neutral-950,
+[data-skin] [data-pc="timeline"] .bg-neutral-900 {
+  background-color: var(--ui-bg-2);
+}
+[data-skin] [data-pc="timeline"] .bg-neutral-800,
+[data-skin] [data-pc="timeline"] .hover\:bg-neutral-800:hover {
+  background-color: var(--ui-panel);
+}
+
+/*
+ * ── 右栏(AI 助手)整块 L1,和消息区同一个颜色 ─────────────────────────
+ * 消息区是 L1。面板底若是 L2,消息区下面「Agent 操作」和输入框四周的边距露出 L2,
+ * 消息区在「Agent 操作」上方齐齐截断,看上去是一条切缝(深色皮肤里最明显);
+ * 浅色皮肤里则是输入框外面那 10px 露出白底,像输入框的白色溢到了面板边上。
+ * 两种皮肤都整块用 L1:「Agent 操作」(L2)和输入框落在连续的底上,顶栏靠下边那条分隔线和消息区分开。
+ */
+[data-skin] .ai-panel {
+  background-color: var(--ui-bg-2);
+}
+
+/*
+ * 拖杆是 8px 缝隙,静止时完全不可见,hover 时中间出现一条 2px 圆头的 --ui-accent-soft 线。
+ */
+.pc-gutter {
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pc-gutter::after {
+  content: "";
+  background-color: var(--ui-accent-soft);
+  border-radius: 99px;
+  opacity: 0;
+  transition: opacity 120ms;
+}
+[data-pc-resize="x"].pc-gutter::after {
+  width: 2px;
+  height: 32px;
+}
+[data-pc-resize="y"].pc-gutter::after {
+  height: 2px;
+  width: 32px;
+}
+.pc-gutter:hover::after,
+body[data-pc-resizing] .pc-gutter::after {
+  opacity: 1;
+}
+.pc-gutter.is-disabled::after {
+  display: none !important;
+}
+
+[data-skin] [data-pc="editor"] > div > .grid > aside,
+[data-skin] [data-pc="editor"] > div > .grid > main {
+  border-left: 0;
+  border-right: 0;
+}
+
+/*
+ * 两侧抽屉 / AI 面板收起、展开时,网格列宽过渡过去。
+ * data-pc-rail-anim 只在收起状态切换的那一刻由 Editor.tsx 挂上一小会儿:拖杆拖宽度、
+ * 窗口变窄时自动收缩面板都不走过渡(否则列宽追着鼠标慢半拍);拖动期间再强制关一次保险。
+ * 过渡期间抽屉 / 面板卡片保持原宽、被列裁掉一截(left.css / chat.css),里面的内容不跟着逐帧重排;
+ * 卡片自己的淡入淡出也挂在这个属性下面。
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .pc-editor-grid[data-pc-rail-anim] {
+    transition: grid-template-columns 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+}
+body[data-pc-resizing] .pc-editor-grid {
+  transition: none;
+}
+
+/* 时间轴卡片左右缩进(避开两侧 rail)跟着收起 / 展开一起滑,和上面网格列宽同一条曲线 */
+@media (prefers-reduced-motion: no-preference) {
+  .pc-editor-bottom {
+    transition: margin 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+}

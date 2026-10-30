@@ -1,0 +1,363 @@
+@import "./motion.css";
+@import "./studio.css";
+
+/* 1. 变量:各皮肤的 --ui-* 由 useSkin 在运行时写到 <html>(数据在 skins.ts / palettes.ts)。
+   这里只把 AI 面板与设置对话框样式里用的无前缀变量接到 --ui-* 上。 */
+[data-skin] {
+  --bg-canvas: var(--ui-bg);
+  --bg-panel: var(--ui-panel);
+  --ink: var(--ui-fg);
+  --ink-muted: var(--ui-fg-muted);
+  --ink-faint: var(--ui-fg-faint);
+  --hairline: var(--ui-border);
+  --hairline-strong: var(--ui-border-strong);
+  --accent: var(--ui-accent);
+  --on-accent: var(--ui-accent-fg);
+  --danger: var(--ui-danger);
+  --fill-subtle: var(--ui-panel-2);
+  --fill-hover: var(--ui-float);
+  --font-sans: var(--ui-font);
+  --font-mono: var(--ui-font-mono);
+}
+
+/* 切换动画（200ms） */
+html.skin-swapping * {
+  transition: background-color 200ms, border-color 200ms, color 200ms, box-shadow 200ms;
+}
+
+/* 基础 body 覆盖 */
+[data-skin] body {
+  background-color: var(--ui-bg);
+  color: var(--ui-fg);
+  font-family: var(--ui-font);
+}
+
+/* aurora 特殊背景增强 */
+[data-skin="aurora"] body {
+  background-image: radial-gradient(circle at top right, rgba(20, 184, 166, 0.05), transparent 40%),
+                    radial-gradient(circle at bottom left, rgba(139, 92, 246, 0.05), transparent 40%);
+}
+
+
+/* 2. 工具类映射：覆盖各种 Tailwind 灰阶类 */
+
+/* 边框色 */
+[data-skin] .border-neutral-800, [data-skin] .border-gray-800 { border-color: var(--ui-border); }
+[data-skin] .border-neutral-700, [data-skin] .border-gray-700 { border-color: var(--ui-border-strong); }
+[data-skin] .border-neutral-600, [data-skin] .border-gray-600 { border-color: var(--ui-border-strong); }
+[data-skin] .border-neutral-500, [data-skin] .border-gray-500 { border-color: var(--ui-accent); }
+[data-skin] .border-white { border-color: var(--ui-fg); }
+[data-skin] .border-white\/10 { border-color: var(--ui-border); }
+[data-skin] .border-white\/20 { border-color: var(--ui-border-strong); }
+[data-skin] .border-black\/20 { border-color: var(--ui-border); }
+[data-skin] .hover\:border-neutral-600:hover { border-color: var(--ui-accent); }
+
+/* 背景色 */
+[data-skin] .bg-neutral-950, [data-skin] .bg-gray-950 { background-color: var(--ui-bg); }
+[data-skin] .bg-neutral-900, [data-skin] .bg-gray-900 { background-color: var(--ui-panel); }
+[data-skin] .bg-neutral-800, [data-skin] .bg-gray-800 { background-color: var(--ui-panel-2); }
+[data-skin] .bg-neutral-700, [data-skin] .bg-gray-700 { background-color: var(--ui-border); }
+[data-skin] .bg-neutral-600, [data-skin] .bg-gray-600 { background-color: var(--ui-border-strong); }
+[data-skin] .bg-neutral-100, [data-skin] .bg-gray-100 { background-color: var(--ui-fg); color: var(--ui-bg); }
+[data-skin] .bg-black { background-color: var(--ui-bg); }
+[data-skin] .bg-black\/20 { background-color: var(--ui-backdrop); }
+[data-skin] .bg-black\/30 { background-color: var(--ui-backdrop); }
+[data-skin] .bg-black\/50 { background-color: var(--ui-backdrop); }
+[data-skin] .bg-black\/60 { background-color: var(--ui-backdrop); }
+[data-skin] .bg-black\/70 { background-color: var(--ui-backdrop); }
+[data-skin] .hover\:bg-neutral-800:hover { background-color: var(--ui-panel-2); }
+[data-skin] .hover\:bg-neutral-700:hover { background-color: var(--ui-border); }
+[data-skin] .hover\:bg-neutral-600:hover { background-color: var(--ui-border-strong); }
+[data-skin] .hover\:bg-white\/30:hover { background-color: var(--ui-accent-soft); }
+
+/* 文字色 */
+[data-skin] .text-neutral-900, [data-skin] .text-gray-900 { color: var(--ui-bg); }
+[data-skin] .text-neutral-700, [data-skin] .text-gray-700 { color: var(--ui-fg-faint); }
+[data-skin] .text-neutral-600, [data-skin] .text-gray-600 { color: var(--ui-fg-faint); }
+[data-skin] .text-neutral-500, [data-skin] .text-gray-500 { color: var(--ui-fg-muted); }
+[data-skin] .text-neutral-400, [data-skin] .text-gray-400 { color: var(--ui-fg-muted); }
+[data-skin] .text-neutral-300, [data-skin] .text-gray-300 { color: var(--ui-fg); }
+[data-skin] .text-neutral-200, [data-skin] .text-gray-200 { color: var(--ui-fg); }
+[data-skin] .text-neutral-100, [data-skin] .text-gray-100 { color: var(--ui-fg); }
+[data-skin] .bg-neutral-950.text-white { color: var(--ui-fg); }
+[data-skin] .hover\:text-white:hover { color: var(--ui-fg); }
+
+/* 3. AI面板/对话框覆盖 */
+[data-skin] .ais-backdrop {
+  background-color: var(--ui-backdrop);
+}
+[data-skin] .ais-dialog {
+  background-color: var(--ui-bg);
+  border-color: var(--ui-border);
+  border-radius: var(--ui-radius);
+  box-shadow: var(--ui-shadow);
+  color: var(--ui-fg);
+}
+/* 右栏整块是 L2(见 editor/shell.css),头部不再单独压到 L1 */
+[data-skin] .ai-panel-header {
+  background-color: var(--ui-panel);
+  border-bottom-color: var(--ui-border);
+}
+
+/* 4. 滚动条覆盖 */
+[data-skin] ::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+[data-skin] ::-webkit-scrollbar-track {
+  background: transparent;
+}
+[data-skin] ::-webkit-scrollbar-thumb {
+  background: var(--ui-scroll-thumb);
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+[data-skin] ::-webkit-scrollbar-thumb:hover {
+  background: var(--ui-scroll-thumb-hover);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+/* ============================================================
+ * 4. 打磨层:让主色真正出现在界面里,给面板和控件加层次
+ * ============================================================ */
+
+/* 应用底色:深色皮肤带一点朝向主色的径向光,浅色皮肤保持干净;流光(studio)系列是扁平风格,不要光晕。
+ * 只铺在编辑器根节点上。原来选的是所有 .bg-neutral-950,时间轴里那些 20px 高的
+ * 小条(范围条、「序列」表头、标尺、底部滚动条)也各自铺了一份 1200×600 的光,
+ * 在那么矮的条里整条都落在 14% 强调色那一段,看上去就是一道横穿序列栏的强调色带。
+ * 深浅直接写进选择器,不再靠后面补一条浅色的 background-image:none 去压:
+ * 带 :not() 的这条特异性更高,那样浅色皮肤反而会被刷上光晕。 */
+[data-skin-mode="dark"]:not([data-skin^="studio-"]) [data-pc="editor"] {
+  background-image:
+    radial-gradient(1200px 600px at 20% -10%, color-mix(in oklab, var(--ui-accent) 14%, transparent), transparent 60%),
+    radial-gradient(900px 500px at 100% 110%, color-mix(in oklab, var(--ui-accent) 8%, transparent), transparent 60%);
+}
+
+/* 通用按钮:双层表面 + 细边 + 悬停时主色描边 */
+[data-skin] button.bg-neutral-800,
+[data-skin] button.bg-neutral-700 {
+  background: linear-gradient(180deg, var(--ui-panel-2), var(--ui-panel));
+  border: 1px solid var(--ui-border);
+  color: var(--ui-fg);
+  box-shadow: inset 0 1px 0 color-mix(in oklab, var(--ui-fg) 8%, transparent), 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+[data-skin] button.bg-neutral-800:hover,
+[data-skin] button.bg-neutral-700:hover,
+[data-skin] button.hover\:bg-neutral-700:hover {
+  background: linear-gradient(180deg, color-mix(in oklab, var(--ui-accent) 22%, var(--ui-panel-2)), var(--ui-panel));
+  border-color: color-mix(in oklab, var(--ui-accent) 60%, var(--ui-border));
+  box-shadow: inset 0 1px 0 color-mix(in oklab, var(--ui-fg) 10%, transparent), var(--ui-glow);
+}
+
+/* 下拉框和输入框 */
+[data-skin] select.bg-neutral-800,
+[data-skin] input.bg-neutral-800,
+[data-skin] input.bg-neutral-900,
+[data-skin] textarea.bg-neutral-900 {
+  background: var(--ui-bg-2);
+  border: 1px solid var(--ui-border);
+  color: var(--ui-fg);
+}
+
+/* 时间轴片段:动效轨用主色渐变,视频轨用偏绿的第二色;带内高光和描边 */
+[data-skin] .bg-blue-600 {
+  background: linear-gradient(180deg, color-mix(in oklab, var(--ui-accent) 88%, white), color-mix(in oklab, var(--ui-accent) 80%, black));
+  border: 1px solid color-mix(in oklab, var(--ui-accent) 60%, black);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 1px 3px rgba(0, 0, 0, 0.35);
+  color: var(--ui-accent-fg);
+}
+[data-skin] .hover\:bg-blue-500:hover {
+  background: linear-gradient(180deg, color-mix(in oklab, var(--ui-accent) 75%, white), var(--ui-accent));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), var(--ui-glow);
+}
+[data-skin] .bg-emerald-600 {
+  background: linear-gradient(180deg, color-mix(in oklab, var(--ui-accent) 35%, #14a37f), color-mix(in oklab, var(--ui-accent) 30%, #0b7a5e));
+  border: 1px solid color-mix(in oklab, var(--ui-accent) 30%, #075e47);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+[data-skin] .hover\:bg-emerald-500:hover {
+  background: linear-gradient(180deg, color-mix(in oklab, var(--ui-accent) 35%, #22c592), color-mix(in oklab, var(--ui-accent) 30%, #119a76));
+}
+[data-skin] .diagonal-stripes { opacity: 0.7; }
+
+/* 卡片库格子:悬停时主色描边、轻微抬升、左侧一道主色 */
+[data-skin] .cursor-grab.bg-neutral-900 {
+  background: linear-gradient(160deg, var(--ui-panel), var(--ui-bg-2));
+  border-color: var(--ui-border);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+[data-skin] .cursor-grab.bg-neutral-900:hover {
+  border-color: color-mix(in oklab, var(--ui-accent) 70%, var(--ui-border));
+  box-shadow: inset 3px 0 0 var(--ui-accent), var(--ui-glow), 0 6px 14px rgba(0, 0, 0, 0.35);
+}
+
+/* 时间轴刻度区与轨道头 */
+[data-skin] footer .bg-neutral-900 { background: var(--ui-bg-2); }
+[data-skin] footer .bg-neutral-800 { background: var(--ui-panel); }
+
+/* ============================================================
+ * 5. 设计稿色卡:语义色 / 轨道色 / 悬浮层 / 强调色状态
+ *    先给所有皮肤一组默认值,再定义「暗室」「亮室」两套完整取值
+ * ============================================================ */
+
+/* 浅色模式:不加底部径向光,面板靠阴影分层(设计稿:L4 = 白 + 阴影) */
+
+/* 悬浮层 L4:菜单、弹窗、悬浮态 */
+[data-skin] .ais-dialog { background: var(--ui-float); box-shadow: var(--ui-shadow); }
+[data-skin] .hover\:bg-neutral-800:hover { background-color: var(--ui-float); }
+
+/* 语义色:状态反馈,不进入常态界面 */
+[data-skin] .text-red-500, [data-skin] .text-red-400 { color: var(--ui-danger); }
+[data-skin] .bg-red-500, [data-skin] .bg-red-600 { background-color: var(--ui-danger); }
+[data-skin] .text-amber-400, [data-skin] .text-yellow-400 { color: var(--ui-warn); }
+[data-skin] .text-emerald-400, [data-skin] .text-green-400 { color: var(--ui-success); }
+[data-skin] .text-sky-400, [data-skin] .text-blue-400 { color: var(--ui-info); }
+
+/* 强调色状态:悬浮 / 按下(主操作按钮与选中) */
+[data-skin] .bg-sky-600, [data-skin] .bg-blue-500.rounded, [data-skin] button.bg-blue-600 {
+  background: var(--ui-accent-grad); color: var(--ui-accent-fg); border-color: var(--ui-accent-press);
+}
+[data-skin] button.bg-blue-600:hover { background: var(--ui-accent-grad-hover); }
+[data-skin] button.bg-blue-600:active { background: var(--ui-accent-grad-press); }
+
+/* 轨道色:片段按素材类型取色(配色规范 03 条)。
+   之前卡片段全是一个色,颜色占满了却不传递信息;现在 data-track-kind 决定用哪一档,
+   文字 / 视频 / 转场 / 特效 一眼读得出。片段上的字用同色的深色版,保证 4.5:1。 */
+.pc-clip {
+  --clip: var(--ui-track-text);
+  --clip-ink: var(--ui-track-ink-text);
+  border-radius: var(--ui-radius, 6px);
+  background: linear-gradient(180deg, color-mix(in oklab, var(--clip) 92%, white), color-mix(in oklab, var(--clip) 88%, black));
+  /* 描边画在内侧:1px 半透明亮线,不占盒子宽度 */
+  border: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+  /* 字色按轨道色亮度挑黑或白(见 skins.ts 的 trackInk),深浅皮肤都过 4.5:1 */
+  color: var(--clip-ink);
+}
+.pc-clip[data-track-kind="video"] { --clip: var(--ui-track-video); --clip-ink: var(--ui-track-ink-video); }
+.pc-clip[data-track-kind="audio"] { --clip: var(--ui-track-audio); --clip-ink: var(--ui-track-ink-audio); }
+.pc-clip[data-track-kind="image"] { --clip: var(--ui-track-image); --clip-ink: var(--ui-track-ink-image); }
+.pc-clip[data-track-kind="text"] { --clip: var(--ui-track-text); --clip-ink: var(--ui-track-ink-text); }
+.pc-clip[data-track-kind="fx"] { --clip: var(--ui-track-fx); --clip-ink: var(--ui-track-ink-fx); }
+.pc-clip[data-track-kind="transition"] { --clip: var(--ui-track-transition); --clip-ink: var(--ui-track-ink-transition); }
+.pc-clip[data-track-kind="sticker"] { --clip: var(--ui-track-sticker); --clip-ink: var(--ui-track-ink-sticker); }
+.pc-clip:not(.is-selected):hover {
+  background: linear-gradient(180deg, color-mix(in oklab, var(--clip) 84%, white), var(--clip));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3), 0 0 10px color-mix(in oklab, var(--clip) 50%, transparent);
+}
+/* 选中:片段外面描一圈 2px 主文字色轮廓(outline 不占盒子、不压住片段里的内容),不动填充 */
+.pc-clip.is-selected {
+  outline: 2px solid var(--ui-fg);
+  outline-offset: 0;
+}
+/* 跨轨拖到放不下的位置(ClipView 的 dragState.forbidden):半透明红底 + 红色虚线框。
+   上面 .pc-clip 把 Tailwind 的 border 和底色都盖掉了,「放不下」的提示要在这里补回来;
+   拖动时鼠标正压在片段上,也不能被 :hover 的渐变冲掉 */
+.pc-clip.is-forbidden,
+.pc-clip.is-forbidden:hover {
+  background: color-mix(in oklab, var(--ui-danger) 50%, transparent);
+  border: 1px dashed var(--ui-danger);
+  box-shadow: none;
+}
+
+/* 转场:片段两端的淡化区间画一层往边缘变暗的渐变,宽度就是淡入淡出的秒数。
+   有转场的那一端一眼看得出来,不用点开属性面板去查 */
+.pc-clip-fade {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+.pc-clip-fade.is-in {
+  left: 0;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0));
+}
+.pc-clip-fade.is-out {
+  right: 0;
+  background: linear-gradient(270deg, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0));
+}
+/* 被转场绑成一组:右上角挂个链条角标,提醒这段的时间关系被锁住了 */
+.pc-clip-link {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  pointer-events: auto;
+}
+
+/* 字幕卡内部的一条条字幕(timeline/CaptionLines.tsx)。
+   字幕存在卡片的 lines 参数里,时间轴上本来只剩一个大色块;这里把每条画成一小格,
+   能点、能拖、能改字。用同色的更深一档,和外面的色块区分但不抢色。 */
+.pc-cap-line {
+  top: 3px;
+  bottom: 3px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+  border-radius: 3px;
+  border: 1px solid color-mix(in oklab, var(--clip) 55%, black);
+  background: color-mix(in oklab, var(--clip) 78%, black);
+  color: var(--clip-ink);
+  font-size: 10px;
+  line-height: 1.1;
+  overflow: hidden;
+  cursor: grab;
+  z-index: 15;
+}
+.pc-cap-line:hover {
+  background: color-mix(in oklab, var(--clip) 92%, black);
+  border-color: var(--ui-fg);
+}
+.pc-cap-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+/* 两端的把手:拽它改这条字幕的起止,和片段本身的修边手感一致 */
+.pc-cap-grip {
+  flex: none;
+  width: 4px;
+  align-self: stretch;
+  cursor: col-resize;
+  border-radius: 2px;
+}
+.pc-cap-grip:hover {
+  background: rgba(255, 255, 255, 0.45);
+}
+.pc-cap-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--ui-bg-2);
+  color: var(--ui-fg);
+  border: 1px solid var(--ui-accent);
+  border-radius: 2px;
+  font-size: 10px;
+  padding: 0 3px;
+  outline: none;
+}
+[data-skin] .ring-2, [data-skin] .ring-white, [data-skin] .outline-white { --tw-ring-color: var(--ui-accent); outline-color: var(--ui-accent); }
+
+/* 播放头:竖线和圆形把手(都是 playhead 的直接子 div)统一用主文字色,
+   深色皮肤下近白、浅色皮肤下仍看得见;扁平,不加辉光。时间标签的胶囊样式在 timeline.css */
+[data-skin] [data-pc="playhead"] > div { background-color: var(--ui-fg); box-shadow: none; }
+
+/* 在线浏览器模式里置灰的导入入口(C10 契约第 10 节):看得出点不了 */
+[data-pc-add][disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

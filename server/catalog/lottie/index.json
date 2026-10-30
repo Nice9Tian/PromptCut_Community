@@ -1,0 +1,99 @@
+{
+ "source": "https://github.com/airbnb/lottie-web (demo/)",
+ "license": "MIT",
+ "fetched": "2026-09-07",
+ "usage": "add_clip cardId \"lottie\", params.src = url;clip 时长 ≈ seconds,loop 可循环",
+ "items": [
+  {
+   "name": "adrock",
+   "file": "server/catalog/lottie/adrock.json",
+   "url": "/catalog/lottie/adrock.json",
+   "description": "摇滚小人角色动画,竖版",
+   "fr": 30,
+   "frames": 392,
+   "seconds": 13.07,
+   "w": 690,
+   "h": 913,
+   "note": "青绿底上黄绳垂下，穿白色连体服的小人沿绳滑落站定并眨眼。",
+   "use": "适合作为转场入场、角色亮相或幽默提示动效。",
+   "tags": [
+    "卡通角色",
+    "滑绳入场",
+    "转场动画"
+   ]
+  },
+  {
+   "name": "bodymovin",
+   "file": "server/catalog/lottie/bodymovin.json",
+   "url": "/catalog/lottie/bodymovin.json",
+   "description": "Bodymovin 字标动画,横条状,适合当标题",
+   "fr": 30,
+   "frames": 103,
+   "seconds": 3.43,
+   "w": 1820,
+   "h": 275,
+   "note": "绿条上的黄色英文拆解为彩色几何碎片并变形，随后重新拼回原词。",
+   "use": "适合片头标题展示、LOGO演绎或过渡衔接。",
+   "tags": [
+    "文字动效",
+    "几何变形",
+    "片头标题"
+   ]
+  },
+  {
+   "name": "gatin",
+   "file": "server/catalog/lottie/gatin.json",
+   "url": "/catalog/lottie/gatin.json",
+   "description": "小猫角色动画,方形",
+   "fr": 25,
+   "frames": 80,
+   "seconds": 3.2,
+   "w": 800,
+   "h": 800,
+   "note": "橙色方块内白色小猫端坐，交替进行闭眼张嘴与摇摆尾巴。",
+   "use": "适合宠物生活记录、萌系插画或情绪表达贴纸。",
+   "tags": [
+    "可爱小猫",
+    "萌宠动画",
+    "卡通表情"
+   ]
+  },
+  {
+   "name": "happy2016",
+   "file": "server/catalog/lottie/happy2016.json",
+   "url": "/catalog/lottie/happy2016.json",
+   "description": "新年贺卡式的 2016 数字动画,全屏 16:9",
+   "fr": 30,
+   "frames": 99,
+   "seconds": 3.3,
+   "w": 1920,
+   "h": 1080,
+   "note": "米黄底上彩纹HAPPY字母晃动变形，平滑演变为彩色的2016数字。",
+   "use": "适合新年贺岁、跨年庆典或节日片头倒计时。",
+   "tags": [
+    "新年祝福",
+    "数字变形",
+    "节日庆典"
+   ]
+  },
+  {
+   "name": "navidad",
+   "file": "server/catalog/lottie/navidad.json",
+   "url": "/catalog/lottie/navidad.json",
+   "description": "圣诞主题场景动画,全屏 16:9",
+   "fr": 25,
+   "frames": 125,
+   "seconds": 5,
+   "w": 1920,
+   "h": 1080,
+   "note": "深色底上红色圆形依次变形为圣诞帽、圣诞老人、圣诞树与彩色花环。",
+   "use": "适合圣诞节日宣传、冬季派对片头或贺卡动效。",
+   "tags": [
+    "圣诞元素",
+    "图标形变",
+    "节日动效"
+   ]
+  }
+ ],
+ "notes_by": "模型看 6 帧拼图写的观察(note/use/tags),见 scripts/catalog-notes.mjs;description 是人写的兜底"
+}

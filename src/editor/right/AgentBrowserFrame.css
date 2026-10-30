@@ -1,0 +1,42 @@
+/* 「浏览器」面板:盖在顶栏以下的整块编辑区上,不是弹窗 —— 顶栏照常能点,页签一点就切回去 */
+.abf-panel {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  /* top 由组件按顶栏底边算 */
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--hairline);
+  color: var(--ink);
+}
+
+.abf-head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "title btn" "hint btn";
+  gap: 2px 12px;
+  align-items: center;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+.abf-title { grid-area: title; font-size: 13px; font-weight: 600; }
+.abf-hint { grid-area: hint; font-size: 12px; color: var(--ink-muted); }
+.abf-btns { grid-area: btn; display: flex; gap: 8px; align-items: center; }
+.abf-btn {
+  padding: 6px 12px; font-size: 12px; border-radius: 6px; cursor: pointer;
+  background: var(--accent); border: 1px solid var(--accent); color: var(--bg-canvas, #111); font-weight: 600;
+}
+.abf-btn.is-ghost {
+  background: var(--bg-canvas); border-color: var(--hairline-strong); color: var(--ink); font-weight: 500;
+}
+.abf-btn.is-ghost:hover { border-color: var(--ink-muted); }
+
+/* 子 webview 会盖在这块上面;留白只是占位,颜色给"还没摆上来"那一瞬看 */
+.abf-hole {
+  flex: 1 1 auto;
+  min-height: 200px;
+  background: #fff;
+}

@@ -1,0 +1,7 @@
+# Windows 上 PyPI 的 torch 轮子就是 CPU 版（约 194 MB），不用另外指定 index。
+# 追踪是离线批处理，不追求实时，CPU 够用；将来要 GPU 再单独出一个拓展。
+torch>=2.2,<3
+numpy>=1.24
+# tapnet 的模型代码要这两个：einshape 做张量重排，dm-tree 做嵌套结构映射。
+einshape>=1.0
+dm-tree>=0.1.8

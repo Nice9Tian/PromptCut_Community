@@ -1,0 +1,7 @@
+.pc-cloud-consent-backdrop { position: fixed; inset: 0; z-index: 5000; display: grid; place-items: center; background: rgba(0, 0, 0, .55); padding: 20px; }
+.pc-cloud-consent-dialog { width: min(100%, 440px); padding: 24px; border-radius: 12px; background: var(--panel-bg, #24242a); color: var(--ink, #fff); box-shadow: 0 16px 48px rgba(0, 0, 0, .4); }
+.pc-cloud-consent-dialog h2 { margin: 0 0 12px; font-size: 18px; }
+.pc-cloud-consent-dialog p { margin: 0 0 18px; line-height: 1.6; }
+.pc-cloud-consent-error { color: #ffb3b3; }
+.pc-cloud-consent-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.pc-cloud-consent-actions button { padding: 7px 14px; }

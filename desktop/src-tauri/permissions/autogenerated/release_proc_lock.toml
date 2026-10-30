@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-release-proc-lock"
+description = "Enables the release_proc_lock command without any pre-configured scope."
+commands.allow = ["release_proc_lock"]
+
+[[permission]]
+identifier = "deny-release-proc-lock"
+description = "Denies the release_proc_lock command without any pre-configured scope."
+commands.deny = ["release_proc_lock"]

@@ -1,0 +1,104 @@
+/*
+ * rail 放不下时的「▾ n」和它弹出的子窗口(railOverflow.tsx)。rail 上半截和剪辑组共用。
+ * 子窗口里每项一行:图标 + 全名。rail 项按钮放进来时横过来排,去掉 rail 外侧那条选中竖条。
+ */
+.pc-rail-more {
+  flex: 0 0 auto;
+  width: 56px;
+  height: 24px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: 0;
+  border-radius: var(--ui-radius, 6px);
+  background: transparent;
+  color: var(--ui-fg-muted, #A6A4B2);
+  font-size: 10px;
+  font-family: var(--ui-font-mono, monospace);
+  cursor: pointer;
+  touch-action: none;
+}
+.pc-rail-more:hover,
+.pc-rail-more.is-open {
+  color: var(--ui-fg, #F2F1F6);
+  background: var(--ui-panel-2, #2C2B34);
+}
+/* 收起来的项里有当前选中项:字换强调色,知道它在里面 */
+.pc-rail-more.has-active {
+  color: var(--ui-accent, #00DBDB);
+}
+.pc-rail-more svg {
+  transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.pc-rail-more.is-open svg {
+  transform: rotate(180deg);
+}
+
+.pc-rail-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 150px;
+  max-width: 240px;
+  max-height: min(420px, calc(100vh - 16px));
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border-radius: var(--ui-radius-lg, 8px);
+  border: 1px solid var(--ui-border-strong, #3A3944);
+  background: var(--ui-float, #383742);
+  box-shadow: var(--ui-shadow, 0 6px 18px rgba(0, 0, 0, 0.45));
+}
+.pc-rail-menu .pc-dock-slot,
+.pc-rail-menu .pc-rr-tab {
+  width: 100%;
+}
+.pc-rail-menu .pc-rail-item {
+  width: 100%;
+  height: 34px;
+  flex-direction: row;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 0 26px 0 8px;
+  border-radius: var(--ui-radius, 6px);
+}
+.pc-rail-menu .pc-rail-item:hover {
+  background: var(--ui-panel-2, #2C2B34);
+  color: var(--ui-fg, #F2F1F6);
+}
+.pc-rail-menu .pc-rail-item svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+.pc-rail-menu .pc-rail-item::before,
+.pc-rail-menu .pc-rail-item::after {
+  display: none;
+}
+.pc-rail-menu .pc-rail-item span,
+.pc-rail-menu .pc-rr-label {
+  max-width: none;
+  font-size: 12px;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pc-rail-menu .pc-rr-x {
+  top: 9px;
+  right: 5px;
+}
+/* 角标、状态点在一行里放不下原来的位置,贴到右边 */
+.pc-rail-menu .pc-rr-badge {
+  top: 9px;
+  right: 24px;
+}
+.pc-rail-menu .pc-rr-state,
+.pc-rail-menu .pc-rr-dot {
+  top: 13px;
+  left: auto;
+  right: 10px;
+}

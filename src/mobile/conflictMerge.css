@@ -1,0 +1,9 @@
+/* 手机版冲突合并面板(sheets.tsx 的 ConflictSheet):演示稿 prototypes/mobile-ui-demo/ 第九轮里 mobile.css 还没有的那几条 */
+.pcm .cf-top { display: flex; gap: 8px; margin-bottom: 10px; }
+.pcm .cf-top .btn { flex: 1; height: 32px; font-size: var(--fs-m); }
+.pcm .cf-sub label, .pcm .cf-head label { display: flex; align-items: center; gap: 8px; }
+.pcm .cf-head input, .pcm .cf-sub input { accent-color: var(--accent); width: 16px; height: 16px; flex: none; }
+.pcm .cf-sub label.is-conflict { color: var(--warn); }
+.pcm .cf-head .cf-kind { margin-left: 6px; font-weight: 400; font-size: var(--fs-s, 11px); color: var(--dim); }
+.pcm .cf-warn { color: var(--warn); }
+.pcm button.chip:disabled { opacity: 0.5; }

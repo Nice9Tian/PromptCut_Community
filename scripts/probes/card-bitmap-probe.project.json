@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "id": "card-bitmap-probe",
+  "name": "card-bitmap-probe",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "duration": 30,
+  "themeId": "midnight",
+  "media": [],
+  "tracks": [
+    {
+      "id": "t-blur",
+      "name": "序列 3",
+      "clips": [
+        {
+          "id": "c-blur",
+          "cardId": "blur-text",
+          "start": 0,
+          "end": 4,
+          "params": {
+            "position": "center",
+            "accent": "",
+            "text": "走心的句子|从虚焦里|*慢慢浮现*",
+            "staggerMs": 220
+          }
+        }
+      ]
+    },
+    {
+      "id": "t-pill",
+      "name": "序列 4",
+      "clips": [
+        {
+          "id": "c-pill",
+          "cardId": "punch-pill",
+          "start": 0,
+          "end": 4,
+          "params": {
+            "position": "center",
+            "accent": "",
+            "text": "核心卖点"
+          }
+        }
+      ]
+    },
+    {
+      "id": "t-particles",
+      "name": "序列 5",
+      "clips": [
+        {
+          "id": "c-particles",
+          "cardId": "particles",
+          "start": 0,
+          "end": 4,
+          "params": {
+            "config": "",
+            "color": "#8ab4ff",
+            "quantity": 80,
+            "speed": 1.2,
+            "size": 3,
+            "links": "yes",
+            "seed": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "t-user",
+      "name": "序列 4",
+      "clips": [
+        {
+          "id": "c-user",
+          "cardId": "rs-bar-race",
+          "start": 0,
+          "end": 4,
+          "params": {
+            "count": 14,
+            "seed": 7,
+            "accent": "#ffffff"
+          }
+        }
+      ]
+    }
+  ],
+  "cuts": [
+    {
+      "id": "cut-1",
+      "name": "剪辑1"
+    },
+    {
+      "id": "cut-2",
+      "name": "剪辑2",
+      "tracks": [
+        {
+          "id": "t-mv6eyh43-r",
+          "name": "序列 1",
+          "clips": []
+        },
+        {
+          "id": "t-mv6eyh43-s",
+          "name": "序列 2",
+          "clips": []
+        }
+      ],
+      "duration": 30,
+      "transitions": []
+    },
+    {
+      "id": "cut-3",
+      "name": "剪辑3",
+      "tracks": [
+        {
+          "id": "t-mv6eyh43-t",
+          "name": "序列 1",
+          "clips": []
+        },
+        {
+          "id": "t-mv6eyh43-u",
+          "name": "序列 2",
+          "clips": []
+        }
+      ],
+      "duration": 30,
+      "transitions": []
+    }
+  ],
+  "activeCutId": "cut-1"
+}

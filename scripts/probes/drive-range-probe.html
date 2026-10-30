@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Drive 分段取字节探针</title>
+<!--
+  网盘连接器 D1 探针（任务书 docs/plan/drive-connector-task.md 第 6 节）。
+
+  一次验两件事：
+    1. Google Picker 选中的文件，在只要 drive.file 这个非敏感范围下读不读得到；
+    2. files.get?alt=media 支不支持 Range（官方文档没写明，只能实测）。
+
+  怎么跑（不要用项目的开发服务器，免得碰到用户常驻的那个）：
+      cd <这个文件所在目录>
+      python -m http.server 5321
+    然后浏览器开 http://localhost:5321/drive-range-probe.html
+
+  Google Cloud 那边要先配好（任务书第 8 节）：已获授权的 JavaScript 来源里要有
+  http://localhost:5321，范围只加 .../auth/drive.file。
+-->
+<style>
+  :root { color-scheme: light dark; --bg:#fff; --fg:#1a1a1a; --mut:#666; --line:#ddd; --ok:#0a7d32; --bad:#c0271d; --card:#f7f7f8; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#17181a; --fg:#e8e8ea; --mut:#9a9aa0; --line:#34353a; --ok:#4ec76f; --bad:#ff6b5e; --card:#202126; }
+  }
+  body { background:var(--bg); color:var(--fg); font:14px/1.6 system-ui,"Segoe UI","Microsoft YaHei",sans-serif; margin:0; padding:24px 16px; }
+  main { max-width:760px; margin:0 auto; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  p.sub { color:var(--mut); margin:0 0 20px; }
+  fieldset { border:1px solid var(--line); border-radius:8px; padding:14px 16px; margin:0 0 16px; }
+  legend { padding:0 6px; color:var(--mut); font-size:12px; }
+  label { display:block; margin:10px 0 4px; font-size:12px; color:var(--mut); }
+  input[type=text] { width:100%; box-sizing:border-box; padding:7px 9px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg); font:13px ui-monospace,Consolas,monospace; }
+  button { padding:8px 16px; border:0; border-radius:6px; background:#2d6cdf; color:#fff; font-size:14px; cursor:pointer; margin-right:8px; }
+  button:disabled { opacity:.45; cursor:default; }
+  #log { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px 14px; white-space:pre-wrap; word-break:break-all; font:12px/1.65 ui-monospace,Consolas,monospace; min-height:120px; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .mut { color:var(--mut); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Drive 分段取字节探针</h1>
+  <p class="sub">验两件事：<code>drive.file</code> 够不够用、<code>files.get?alt=media</code> 支不支持 Range。</p>
+
+  <fieldset>
+    <legend>Google Cloud 的三样（都不是秘密，会出现在页面里）</legend>
+    <label for="cid">OAuth 客户端 ID（<code>…apps.googleusercontent.com</code>）</label>
+    <input type="text" id="cid" autocomplete="off" spellcheck="false">
+    <label for="key">API 密钥（Picker 要用）</label>
+    <input type="text" id="key" autocomplete="off" spellcheck="false">
+    <label for="app">Cloud 项目编号（纯数字，Picker 的 appId；<code>drive.file</code> 的按文件授权靠它记账）</label>
+    <input type="text" id="app" autocomplete="off" spellcheck="false">
+  </fieldset>
+
+  <p>
+    <button id="go" disabled>授权并选一个视频</button>
+    <button id="clear">清空日志</button>
+  </p>
+
+  <div id="log">正在载入 Google 的脚本…</div>
+</main>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://apis.google.com/js/api.js" async defer></script>
+<script>
+const SCOPE = "https://www.googleapis.com/auth/drive.file";
+const LS = "pc.drive-probe";
+const logEl = document.getElementById("log");
+const goEl = document.getElementById("go");
+const fields = { cid: document.getElementById("cid"), key: document.getElementById("key"), app: document.getElementById("app") };
+
+let lines = [];
+function log(text, cls) {
+  lines.push(cls ? `<span class="${cls}">${text}</span>` : text);
+  logEl.innerHTML = lines.join("\n");
+}
+function reset() { lines = []; logEl.textContent = ""; }
+document.getElementById("clear").onclick = reset;
+
+// 三个输入框记在本地，省得每次重填；它们不是秘密
+for (const [k, el] of Object.entries(fields)) {
+  try { el.value = localStorage.getItem(`${LS}.${k}`) ?? ""; } catch {}
+  el.addEventListener("input", () => { try { localStorage.setItem(`${LS}.${k}`, el.value.trim()); } catch {} });
+}
+
+// 两个脚本都到齐才放行
+let gisReady = false, pickerReady = false;
+function maybeEnable() {
+  if (!gisReady || !pickerReady) return;
+  goEl.disabled = false;
+  reset();
+  log("脚本到齐。填好上面三样，点「授权并选一个视频」。", "mut");
+}
+const waitFor = (test, done) => {
+  const t = setInterval(() => { if (test()) { clearInterval(t); done(); } }, 120);
+  setTimeout(() => clearInterval(t), 20000);
+};
+waitFor(() => window.google?.accounts?.oauth2, () => { gisReady = true; maybeEnable(); });
+waitFor(() => window.gapi, () => gapi.load("picker", () => { pickerReady = true; maybeEnable(); }));
+
+goEl.onclick = () => {
+  const cid = fields.cid.value.trim(), key = fields.key.value.trim(), app = fields.app.value.trim();
+  if (!cid || !key || !app) { reset(); log("三样都要填。", "bad"); return; }
+  reset();
+  log("① 请求授权，范围只要 " + SCOPE);
+  google.accounts.oauth2.initTokenClient({
+    client_id: cid,
+    scope: SCOPE,
+    callback: (resp) => {
+      if (resp.error) { log(`授权失败：${resp.error} ${resp.error_description ?? ""}`, "bad"); return; }
+      log(`   拿到 access token，约 ${resp.expires_in} 秒后过期（${(resp.expires_in / 60).toFixed(0)} 分钟）`, "ok");
+      log(`   实际给到的范围：${resp.scope}`);
+      openPicker(resp.access_token, key, app);
+    },
+  }).requestAccessToken();
+};
+
+function openPicker(token, key, appId) {
+  log("② 打开 Picker，选一个视频文件");
+  new google.picker.PickerBuilder()
+    .addView(new google.picker.DocsView(google.picker.ViewId.DOCS_VIDEOS).setIncludeFolders(true))
+    .setOAuthToken(token)
+    .setDeveloperKey(key)
+    .setAppId(appId)
+    .setCallback((data) => {
+      if (data.action === google.picker.Action.CANCELLED) { log("   取消了。", "mut"); return; }
+      if (data.action !== google.picker.Action.PICKED) return;
+      const doc = data.docs[0];
+      log(`   选中：${doc.name}（id ${doc.id}）`, "ok");
+      runChecks(token, doc.id);
+    })
+    .build()
+    .setVisible(true);
+}
+
+const api = (id, qs) => `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?${qs}`;
+
+async function runChecks(token, id) {
+  const auth = { Authorization: `Bearer ${token}` };
+  let size = null;
+
+  // 第 1 问：drive.file 这个窄范围下，Picker 选中的文件读不读得到元信息
+  log("③ 用 drive.file 读元信息（验「选中即授权」是否成立）");
+  try {
+    const r = await fetch(api(id, "fields=id,name,size,mimeType&supportsAllDrives=true"), { headers: auth });
+    const body = await r.json();
+    if (!r.ok) { log(`   ✗ ${r.status} ${JSON.stringify(body?.error?.message ?? body)}`, "bad"); return; }
+    size = Number(body.size);
+    log(`   ✓ 读到了：${body.mimeType}，${(size / 1e6).toFixed(1)} MB`, "ok");
+    log("   → drive.file 够用，不需要受限范围 drive.readonly", "ok");
+  } catch (e) { log(`   ✗ ${e}`, "bad"); return; }
+
+  // 第 2 问：alt=media 支不支持 Range。文件头
+  log("④ 取头 1024 字节（Range: bytes=0-1023）");
+  const head = await ranged(api(id, "alt=media&supportsAllDrives=true"), auth, "bytes=0-1023");
+  if (!head) return;
+
+  // 第 3 问：中段也能取吗——只回 206 不够，要确认它真按偏移给字节，而不是从头给
+  let mid = null;
+  if (size && size > 4 * 1024 * 1024) {
+    const from = Math.floor(size / 2), to = from + 1023;
+    log(`⑤ 取中段 1024 字节（Range: bytes=${from}-${to}）`);
+    mid = await ranged(api(id, "alt=media&supportsAllDrives=true"), auth, `bytes=${from}-${to}`);
+  } else {
+    log("⑤ 文件太小，跳过中段检查（换个大于 4 MB 的文件再跑一次更有说服力）", "mut");
+  }
+
+  log("");
+  if (head.status === 206 && head.bytes === 1024) {
+    log("结论：Drive 支持 Range，分段取字节成立。", "ok");
+    if (mid && mid.status === 206 && mid.bytes === 1024) {
+      const same = head.sha === mid.sha;
+      log(same
+        ? "但中段和头部的内容一样 —— 可疑，它可能没按偏移给。请换个文件再验。"
+        : "中段与头部内容不同，确认是按偏移给的字节。", same ? "bad" : "ok");
+    }
+    log("→ 任务书 D1 通过：A3 短命票那条路可以按分段取设计，断点续传能落到片级。", "ok");
+  } else {
+    log(`结论：没拿到 206（实际 ${head.status}，收到 ${head.bytes} 字节）。`, "bad");
+    log("→ 只能整件拉。任务书第 9 节「不支持就整件拉」那条生效，断点续传退化成整件重来。", "bad");
+  }
+}
+
+async function ranged(url, auth, range) {
+  try {
+    const r = await fetch(url, { headers: { ...auth, Range: range } });
+    if (r.status !== 206 && r.status !== 200) {
+      log(`   ✗ ${r.status} ${(await r.text()).slice(0, 300)}`, "bad");
+      return null;
+    }
+    const buf = new Uint8Array(await r.arrayBuffer());
+    // Content-Range 要服务端用 Access-Control-Expose-Headers 放出来才读得到，读不到不算失败
+    const cr = r.headers.get("Content-Range");
+    const digest = await crypto.subtle.digest("SHA-256", buf);
+    const sha = [...new Uint8Array(digest)].slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
+    log(`   状态 ${r.status}${r.status === 206 ? "（Partial Content）" : "（整件，Range 被忽略）"}，收到 ${buf.length} 字节`,
+        r.status === 206 ? "ok" : "bad");
+    log(`   Content-Range: ${cr ?? "（跨源未放出，不影响判断）"}`, "mut");
+    log(`   前 8 字节 sha256: ${sha}`, "mut");
+    return { status: r.status, bytes: buf.length, sha };
+  } catch (e) { log(`   ✗ ${e}`, "bad"); return null; }
+}
+</script>
+</body>
+</html>

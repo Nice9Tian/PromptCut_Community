@@ -1,0 +1,79 @@
+/*
+ * 「⋯」运行选项弹层里的内容:思考强度下拉 + 三个开关。
+ * 弹层本身的定位、底色、描边在 chat/chat.css 的 .ai-pop;工具条上那个模型下拉用的是 .ai-bar-select。
+ */
+.ai-pop.ai-modelbar {
+  width: 236px;
+  gap: 10px;
+  padding: 10px;
+}
+.ai-modelbar-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.ai-modelbar-label {
+  font-size: 12px;
+  color: var(--ui-fg-muted, #A6A4B2);
+  white-space: nowrap;
+}
+.ai-modelbar-select {
+  font-family: inherit;
+  font-size: 12px;
+  height: 28px;
+  min-width: 0;
+  max-width: 140px;
+  padding: 0 4px;
+  border: 1px solid var(--ui-border, #2A2932);
+  border-radius: var(--ui-radius-sm, 4px);
+  background: var(--ui-panel-2, #2C2B34);
+  color: var(--ui-fg, #F2F1F6);
+  cursor: pointer;
+}
+.ai-modelbar-select:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 三个开关一行排不下就换行,开关本身不压缩 */
+.ai-modelbar-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* 开关不是下拉:开着的时候整块点亮,一眼看得出这次是加速跑 / 深度自主 */
+.ai-modelbar-fast {
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 10px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--ui-border-strong, #3A3944);
+  border-radius: 999px;
+  background: var(--ui-panel-2, #2C2B34);
+  color: var(--ui-fg-muted, #A6A4B2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ai-modelbar-fast:hover:not(:disabled) {
+  color: var(--ui-fg, #F2F1F6);
+}
+.ai-modelbar-fast.is-on {
+  background: var(--ui-accent, #00DBDB);
+  border-color: var(--ui-accent, #00DBDB);
+  color: var(--ui-accent-fg, #ffffff);
+}
+.ai-modelbar-fast:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.ai-modelbar-fast:focus-visible,
+.ai-modelbar-select:focus-visible {
+  outline: none;
+  box-shadow: var(--ui-focus-ring, 0 0 0 2px #00DBDB);
+}

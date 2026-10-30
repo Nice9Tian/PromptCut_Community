@@ -1,0 +1,147 @@
+/* 开始页「配音」面板。沿用皮肤变量,和拓展卡同一套边框、底色 */
+.vs {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  font-size: 12px;
+}
+
+.vs-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.vs-head-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.vs-title { font-size: 13px; font-weight: 600; }
+
+/* 默认服务:一排分段按钮 */
+.vs-seg { display: inline-flex; border: 1px solid var(--hairline); border-radius: 7px; overflow: hidden; }
+.vs-seg-btn {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 5px 12px;
+  border: 0;
+  background: var(--fill-subtle);
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+.vs-seg-btn + .vs-seg-btn { border-left: 1px solid var(--hairline); }
+.vs-seg-btn[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+.vs-seg-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.vs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px 16px;
+}
+.vs-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.vs-label { color: var(--ink-muted); }
+.vs-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.vs-grow { flex: 1 1 auto; min-width: 0; }
+.vs-note { grid-column: 1 / -1; }
+
+.vs-input {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 5px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--fill-subtle);
+  color: var(--ink);
+  min-width: 0;
+  box-sizing: border-box;
+}
+.vs-input:focus-visible { outline: none; border-color: var(--accent); }
+.vs-area { resize: vertical; line-height: 1.5; }
+.vs-range { flex: 1 1 auto; min-width: 0; accent-color: var(--accent); }
+.vs-num { width: 38px; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-muted); }
+
+.vs-try { display: flex; align-items: center; gap: 8px; }
+.vs-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.vs-audio { width: 100%; height: 32px; }
+
+.vs-msg { padding: 6px 10px; border-radius: 6px; overflow-wrap: anywhere; }
+.vs-msg.is-ok { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.vs-msg.is-err { color: var(--danger); border: 1px solid var(--danger); }
+
+/* 我的音色 / 新建音色 */
+.vs-sub { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--hairline); }
+.vs-sub-title { font-size: 12px; font-weight: 600; }
+.vs-create > summary { cursor: pointer; list-style-position: inside; }
+.vs-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.vs-item { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.vs-item-name { font-weight: 600; }
+.vs-item-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.vs-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 99px;
+  border: 1px solid var(--hairline-strong);
+  color: var(--ink-muted);
+}
+.vs-id {
+  font-family: var(--font-mono, ui-monospace, "Cascadia Mono", Consolas, monospace);
+  font-size: 11px;
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+.vs-add .vs-input:first-child { flex: 0 0 auto; }
+
+.vs-fee { color: var(--ink-muted); }
+.vs-create-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }
+.vs-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--fill-subtle);
+}
+.vs-card .vs-input { background: var(--bg-panel); }
+.vs-card-title { font-weight: 600; }
+.vs-file { font-family: inherit; font-size: 12px; color: var(--ink-muted); }
+.vs-check { display: flex; align-items: center; gap: 6px; }
+.vs-check input { accent-color: var(--accent); }
+
+/* 住在子窗口里时,边框和标题由窗口给 */
+.vs.is-bare { padding: 0; border: 0; border-radius: 0; background: transparent; }
+
+/* ── 「配音设置」子窗口 ─────────────────────────────── */
+.vsd-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgb(0 0 0 / 0.5);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.vsd-dialog {
+  width: min(760px, 100%);
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.45);
+  color: var(--ink);
+  font-family: var(--font-sans);
+}
+.vsd-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+.vsd-title { font-size: 14px; font-weight: 600; }
+.vsd-x {
+  width: 24px; height: 24px; border-radius: 6px;
+  border: 1px solid transparent; background: transparent; color: var(--ink-muted);
+  font-size: 16px; line-height: 1; cursor: pointer;
+}
+.vsd-x:hover { border-color: var(--hairline); color: var(--ink); }
+.vsd-body { flex: 1 1 auto; overflow-y: auto; padding: 14px 16px 16px; }

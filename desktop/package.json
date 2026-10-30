@@ -1,0 +1,22 @@
+{
+  "name": "promptcut-desktop",
+  "private": true,
+  "version": "0.2.8",
+  "type": "module",
+  "description": "PromptCut 的 Tauri 桌面壳：自带 Node、Chrome for Testing、ffmpeg、Python，双击即用",
+  "scripts": {
+    "prepare-runtime": "node scripts/prepare-runtime.mjs",
+    "prepare-python": "node scripts/prepare-python.mjs",
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "smoke": "node scripts/smoke-all.mjs",
+    "make-patch": "node scripts/make-patch.mjs",
+    "release": "node scripts/build-release.mjs",
+    "make-extension": "node scripts/make-extension.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

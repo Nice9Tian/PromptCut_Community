@@ -1,0 +1,69 @@
+/* 顶栏的「浏览器」页签:平时和别的 .pc-btn 一样,agent 在等人时闪烁并冒气泡 */
+.pc-agent-tab-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.pc-agent-tab.is-open {
+  background: var(--ui-accent-soft);
+  border-color: var(--ui-accent);
+}
+
+/* 等人:边框和字用强调色慢闪。闪动的是颜色不是透明度,按钮本身别消失 */
+.pc-agent-tab.is-pending {
+  animation: pc-agent-blink 1.1s ease-in-out infinite;
+}
+@keyframes pc-agent-blink {
+  0%, 100% { border-color: var(--ui-border-strong); color: inherit; }
+  50% { border-color: var(--ui-accent); color: var(--ui-accent); }
+}
+
+/* 右上角的小红点 */
+.pc-agent-dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e5484d;
+  box-shadow: 0 0 0 2px var(--ui-panel, #111);
+}
+.pc-agent-tab { position: relative; }
+
+/* 气泡:挂在页签下方,弹出来之后轻轻上下浮动引起注意,不挡别的控件 */
+.pc-agent-bubble {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 60;
+  white-space: nowrap;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--bg-canvas, #111);
+  background: var(--ui-accent);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.35);
+  pointer-events: none;
+  animation: pc-agent-bubble-in 220ms ease-out, pc-agent-bubble-float 2.2s ease-in-out 220ms infinite;
+}
+.pc-agent-bubble::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: 14px;
+  width: 10px;
+  height: 10px;
+  background: var(--ui-accent);
+  transform: rotate(45deg);
+}
+@keyframes pc-agent-bubble-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes pc-agent-bubble-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(3px); }
+}

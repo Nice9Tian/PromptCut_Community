@@ -1,0 +1,160 @@
+/*
+ * 侧边 rail 自由布局(src/editor/dock):rail 列表、拖动时的跟手图标和落点指示线、「+」、宿主里的页面节点。
+ * 共享的 .pc-rail / .pc-rail-item 在 skins/studio.css;Agent 项的头像、角标、关闭钮(.pc-rr-*)在 right/chat/chat.css;
+ * 宿主卡片的宽度和收起动画仍是 left.css 的 .pc-left-drawer / chat.css 的 .pc-right-card。
+ * rail 上任何项之间都不画分隔线,只靠 4px 间距;落点指示线只在拖动中出现。
+ */
+
+/* ── rail ─────────────────────────────────────────────────────── */
+.pc-dock-rail {
+  flex: 0 0 var(--ui-rail-w, 64px);
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+  user-select: none;
+  -webkit-user-select: none;
+}
+/*
+ * 项多了要能滚,拖空了也占满整条 rail 当落点。容器拉满 rail 宽度(align-self: stretch)而不是缩到 56px 的项宽:
+ * overflow 一开就会裁掉子项溢出的部分,选中项贴外侧的那条强调色竖条(±4px)正好落在这 4px 缝里,缩窄了竖条就被裁没了。
+ */
+.pc-dock-rail-list {
+  align-self: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+  border-radius: var(--ui-radius-lg, 8px);
+}
+.pc-dock-rail-list::-webkit-scrollbar {
+  display: none;
+}
+/* 拖动经过的那条 rail 淡淡铺一层强调色:空 rail 也看得出能放(铺底色,不画线) */
+[data-pc-drop-target] > .pc-dock-rail-list {
+  background-color: color-mix(in oklab, var(--ui-accent, #00DBDB) 8%, transparent);
+}
+
+.pc-dock-slot {
+  position: relative;
+  flex: 0 0 auto;
+}
+/* 触屏 / 笔拖动时别让浏览器把手势当成滚动(否则一拖就 pointercancel) */
+.pc-dock-slot > .pc-rail-item {
+  touch-action: none;
+}
+/* 被拖着的那一项原位变淡 */
+.pc-dock-slot[data-pc-dragging] > .pc-rail-item {
+  opacity: 0.35;
+}
+.pc-dock-slot[data-pc-dragging] .pc-rr-x,
+.pc-dock-slot[data-pc-dragging] .pc-rr-badge {
+  display: none;
+}
+
+/* 「+」:对话气泡里一个 +,比项矮一截,贴在这一侧最后一个 Agent 下面 */
+.pc-rail-item.pc-dock-add {
+  flex: 0 0 auto;
+  height: 40px;
+}
+
+/* ── 拖动中 ───────────────────────────────────────────────────── */
+body[data-pc-rail-dragging],
+body[data-pc-rail-dragging] * {
+  cursor: grabbing !important;
+}
+body[data-pc-rail-dragging] iframe {
+  pointer-events: none;
+}
+
+/* 跟手的半透明图标:rail 项按钮的克隆,挂在 body 上 */
+.pc-dock-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  margin: 0;
+  z-index: 2147483000;
+  pointer-events: none;
+  opacity: 0.8;
+  background-color: var(--ui-panel-2, #2C2B34);
+  color: var(--ui-fg, #F2F1F6);
+  outline: 1px solid var(--ui-border-strong, #3A3944);
+  will-change: transform;
+  /* 克隆的是按钮:全局给按钮加的悬停提亮 / 按下缩小 / transform 过渡(motion.css)不能带过来,否则图标拖在指针后面慢半拍 */
+  transition: none !important;
+  animation: none !important;
+  filter: none !important;
+}
+
+/* 落点指示线:只在拖动中出现 */
+.pc-dock-drop-line {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 2147483001;
+  height: 2px;
+  border-radius: 2px;
+  background-color: var(--ui-accent, #00DBDB);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .pc-dock-drop-line {
+    transition: transform 120ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .pc-dock-rail-list {
+    transition: background-color 120ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+}
+
+/* ── 宿主里的页面节点(pageNodes)─────────────────────────────── */
+/* 显隐由节点自己的行内 display 管:只显示这一侧选中的那一页,其余 display:none 但保持挂载 */
+.pc-dock-page {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pc-dock-page > .ai-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}
+
+/* ── 收起钮跟着所在一侧走 ───────────────────────────────────────── */
+/* 分区在右侧:收起钮放左上角,标题跟在后面 */
+.pc-left-titlerow.is-right {
+  justify-content: flex-start;
+}
+.pc-left-titlerow.is-right .pc-left-collapse {
+  margin: -4px 0 -4px -6px;
+}
+/* 剧本页 / 助手分页在左侧:收起钮挪到右上角,左边内边距还给标题 */
+.pc-script-head.is-left {
+  padding: 6px 8px 6px 14px;
+}
+.ai-panel-header.is-left {
+  padding-left: 14px;
+}
+
+/* ── rail 在时间轴旁边的那一截(RailBar part="tail",Editor.tsx 的 .pc-rail-tail-slot)──────── */
+.pc-rail-tail-slot {
+  position: absolute;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+}
+/* 顶边和时间轴卡片顶边对齐:不要 .pc-rail 的上内边距 */
+.pc-dock-rail--tail {
+  padding-top: 0;
+}
+/* 那一截顶上的小横线:标出时间轴旁边这一截和上半部分的界限 */
+.pc-dock-tail-sep {
+  flex: none;
+  margin: 0 0 6px;
+}

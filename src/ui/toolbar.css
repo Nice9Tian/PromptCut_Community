@@ -1,0 +1,517 @@
+/*
+ * 工具栏(设计稿「工具栏组件表」第 01/02/05 节)。
+ * 尺寸:条高 48 · 按钮高 28 · 内边距 6/14 · 间距 6 · 圆角 6 · 字号 13。
+ * 层级:条底和画布同色(L0 --ui-bg),不画底边线,和下面的画布融成一片;
+ * 按钮 L3(--ui-panel-2),悬浮 L4(--ui-float);按钮永远比它所在的条亮。
+ * 一条里只有一个强调色实心按钮(主按钮),放最右。数值文字用等宽、主文字色、不加容器、左右各 8px。
+ * 颜色全部走 --ui-*,所以五套主题深浅十份取值都能直接换。
+ */
+
+/*
+ * 菜单栏 → 导航栏的过渡带。壳采样到菜单栏颜色后把它写进 --pc-menubar 并给 <html> 加
+ * pc-has-menubar;没有壳(浏览器里跑)就 0 高,等于不存在。10px 是「拉开一点高度」
+ * 的那一点:再高会像多了一条空栏,再矮渐变看不出来。
+ */
+.pc-bar-fade {
+  flex: 0 0 auto;
+  height: 0;
+  background: transparent;
+}
+html.pc-has-menubar .pc-bar-fade {
+  height: 10px;
+  background: linear-gradient(to bottom, var(--pc-menubar), var(--ui-bg));
+}
+
+.pc-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  gap: 6px;
+  height: 48px;
+  padding: 0 6px;
+  background: var(--ui-bg);
+  font-size: 13px;
+  color: var(--ui-fg);
+}
+
+/* 条内分组:组与组之间一道细分隔,组内保持 6px */
+.pc-bar-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pc-bar-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--ui-border-strong);
+}
+
+/* 次级按钮:条内默认样式 */
+.pc-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 14px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius, 6px);
+  background: var(--ui-panel-2);
+  color: var(--ui-fg);
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 160ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 160ms cubic-bezier(0.16, 1, 0.3, 1), color 160ms cubic-bezier(0.16, 1, 0.3, 1),
+    padding 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+/* 只有图标的按钮:方形,内边距收到 6 */
+.pc-btn--icon {
+  padding: 0 6px;
+  width: 28px;
+  justify-content: center;
+}
+
+/* 顶栏收起态按钮:只缩内边距和间距,不设死宽度,让盒子尺寸随内容平滑过渡 */
+.pc-btn--collapsed {
+  padding: 0 5px;
+  gap: 0;
+  justify-content: center;
+}
+
+/* 按钮文字标签:平滑过渡收缩展开 */
+.pc-btn-label {
+  display: inline-block;
+  overflow: hidden;
+  white-space: nowrap;
+  max-width: 120px;
+  opacity: 1;
+  transition: max-width 160ms cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.pc-btn--collapsed .pc-btn-label {
+  max-width: 0;
+  opacity: 0;
+}
+.pc-btn svg {
+  color: var(--ui-fg-muted);
+  flex: none;
+  transition: color 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.pc-btn:hover {
+  background: var(--ui-float);
+  border-color: color-mix(in oklab, var(--ui-border-strong) 70%, var(--ui-fg));
+}
+.pc-btn:hover svg {
+  color: var(--ui-fg);
+}
+/* 按下:比常态再深一级,描边压深 */
+.pc-btn:active {
+  background: color-mix(in oklab, var(--ui-panel-2) 78%, var(--ui-bg));
+  border-color: color-mix(in oklab, var(--ui-border-strong) 80%, var(--ui-bg));
+}
+.pc-btn:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 1px;
+}
+.pc-btn:disabled,
+.pc-btn[aria-disabled="true"] {
+  opacity: 0.42;
+  cursor: default;
+  background: var(--ui-panel-2);
+  border-color: var(--ui-border);
+}
+.pc-btn:disabled:hover svg {
+  color: var(--ui-fg-muted);
+}
+
+/* 主按钮:一条里唯一的强调色实心,图标跟随按钮前景色 */
+.pc-btn--primary {
+  background: var(--ui-accent-grad);
+  border-color: var(--ui-accent-press);
+  color: var(--ui-accent-fg);
+  font-weight: 600;
+}
+.pc-btn--primary svg {
+  color: var(--ui-accent-fg);
+}
+.pc-btn--primary:hover {
+  background: var(--ui-accent-grad-hover);
+  border-color: var(--ui-accent);
+}
+.pc-btn--primary:hover svg {
+  color: var(--ui-accent-fg);
+}
+.pc-btn--primary:active {
+  background: var(--ui-accent-grad-press);
+}
+
+/* 数值文字:等宽、主文字色、无容器、左右 8px */
+.pc-num {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 8px;
+  font-family: var(--ui-font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ui-fg);
+  font-size: 13px;
+}
+.pc-num svg {
+  color: var(--ui-fg-faint);
+}
+
+/* 条内下拉:和次级按钮同一套表面与描边 */
+.pc-select {
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius, 6px);
+  background: var(--ui-panel-2);
+  color: var(--ui-fg);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  cursor: pointer;
+}
+.pc-select:hover {
+  background: var(--ui-float);
+}
+.pc-select:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 1px;
+}
+.pc-bar-label {
+  color: var(--ui-fg-muted);
+  font-size: 12px;
+}
+
+/* 产品标识 */
+.pc-logo {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+.pc-logo-text {
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: center;
+  line-height: 1.05;
+}
+.pc-logo-word {
+  font-family: "Barlow Condensed", "Oswald", "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ui-fg);
+}
+.pc-logo-sub {
+  font-family: var(--ui-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: var(--ui-fg-faint);
+}
+
+/* 项目名与未保存标记 */
+.pc-projname {
+  color: var(--ui-fg-muted);
+  font-size: 13px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pc-dirty {
+  color: var(--ui-warn);
+}
+
+/* ⋯ 更多操作弹出菜单(浮层) */
+.pc-more-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 190px;
+  padding: 10px;
+  background: var(--ui-float);
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-lg, 8px);
+  box-shadow: var(--ui-shadow, 0 8px 24px rgba(0, 0, 0, 0.35));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pc-more-menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* ── 「项目」按钮与下拉 ────────────────────────────────────────────── */
+.pc-proj-btn { position: relative; gap: 6px; }
+.pc-proj-btn.is-open {
+  background: var(--ui-accent-soft);
+  border-color: var(--ui-accent);
+}
+.pc-proj-caret { opacity: 0.7; transition: transform 160ms; }
+.pc-proj-btn.is-open .pc-proj-caret { transform: rotate(180deg); }
+/* 有没保存的改动:按钮右上角一个小点,菜单里「保存项目」那一行也带一个 */
+.pc-proj-dirty {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ui-accent);
+  box-shadow: 0 0 0 2px var(--ui-bg, #111);
+}
+.pc-proj-item .pc-proj-dirty { position: static; box-shadow: none; margin-left: auto; }
+
+.pc-proj-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 232px;
+  padding: 6px;
+  background: var(--ui-float);
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-lg, 8px);
+  box-shadow: var(--ui-shadow, 0 12px 32px rgba(0, 0, 0, 0.4));
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: pc-proj-in 140ms ease-out;
+}
+@keyframes pc-proj-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.pc-proj-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--ui-radius, 6px);
+  background: transparent;
+  color: var(--ui-text, inherit);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.pc-proj-item:hover, .pc-proj-item:focus-visible {
+  background: var(--ui-accent-soft);
+  border-color: var(--ui-accent);
+  outline: none;
+}
+.pc-proj-item:disabled { opacity: 0.45; cursor: default; }
+.pc-proj-item:disabled:hover { background: transparent; border-color: transparent; }
+.pc-proj-item svg { width: 16px; height: 16px; flex: none; opacity: 0.85; }
+.pc-proj-text { display: flex; flex-direction: column; gap: 1px; line-height: 1.25; }
+.pc-proj-text b { font-size: 12.5px; font-weight: 600; }
+.pc-proj-text small { font-size: 11px; color: var(--ui-fg-muted); }
+.pc-proj-sep { height: 1px; margin: 4px 6px; background: var(--ui-border-strong); opacity: 0.6; }
+
+/* 项目设置对话框 */
+.pc-dialog-mask {
+  position: fixed;
+  inset: 0;
+  background: var(--ui-backdrop, rgba(0, 0, 0, 0.6));
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+}
+.pc-dialog {
+  width: 360px;
+  border-radius: var(--ui-radius, 6px);
+  border: 1px solid var(--ui-border-strong);
+  background: var(--ui-panel);
+  color: var(--ui-fg);
+  box-shadow: var(--ui-shadow, 0 8px 32px rgba(0, 0, 0, 0.45));
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  font-family: var(--ui-font, inherit);
+}
+.pc-dialog-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ui-fg);
+}
+.pc-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.pc-dialog-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+}
+.pc-dialog-label {
+  color: var(--ui-fg-muted);
+  font-size: 13px;
+}
+.pc-dialog-options {
+  display: flex;
+  gap: 6px;
+}
+/* 对话框画幅与方向选项按钮:常态同次级按钮,选中态淡强调色 */
+.pc-dialog-opt {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 14px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius, 6px);
+  background: var(--ui-panel-2);
+  color: var(--ui-fg);
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 160ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 160ms cubic-bezier(0.16, 1, 0.3, 1), color 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.pc-dialog-opt:hover {
+  background: var(--ui-float);
+  border-color: color-mix(in oklab, var(--ui-border-strong) 70%, var(--ui-fg));
+}
+.pc-dialog-opt--on {
+  background: var(--ui-accent-soft);
+  border-color: var(--ui-accent);
+  color: var(--ui-fg);
+}
+.pc-dialog-opt--on:hover {
+  background: var(--ui-accent-soft);
+  border-color: var(--ui-accent);
+}
+.pc-dialog-res {
+  font-family: var(--ui-font-mono);
+  color: var(--ui-fg);
+  font-size: 13px;
+  font-weight: 500;
+}
+.pc-dialog-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pc-btn,
+  .pc-btn svg,
+  .pc-btn-label {
+    transition: none;
+  }
+}
+
+
+/* ── 配色诊断与修正 v2 整屏:顶栏 48 · 按钮 30 · 字号 12 ─────────────────
+ * 组件表那一节定的是 36/28/13;整屏把顶栏放大到 48 高、控件 30 高、字号 12。
+ * 顶栏和画布同色,底下不画 hairline、也不叠强调色内阴影,和画布融为一体。
+ * 预览区和时间线的小条另有各自的类,不跟着这里的 --main 走。 */
+.pc-bar--main {
+  height: 48px;
+  padding: 0 14px;
+  gap: 14px;
+  font-size: 12px;
+}
+.pc-bar--main .pc-bar-group {
+  gap: 7px;
+}
+.pc-bar--main .pc-btn,
+.pc-bar--main .pc-select {
+  height: 30px;
+  font-size: 12px;
+}
+.pc-bar--main .pc-btn {
+  padding: 0 12px;
+}
+.pc-bar--main .pc-btn--icon,
+.pc-bar--main .pc-btn--collapsed {
+  width: 30px;
+  padding: 0;
+}
+.pc-bar--main .pc-btn--primary {
+  padding: 0 13px;
+}
+.pc-bar--main .pc-select {
+  padding: 0 10px;
+}
+.pc-bar--main .pc-bar-sep {
+  height: 22px;
+  margin: 0;
+  background: var(--ui-float);
+}
+.pc-bar--main .pc-bar-label {
+  font-size: 11.5px;
+}
+.pc-bar--main .pc-logo-word {
+  letter-spacing: 0.15em;
+}
+.pc-bar--main .pc-projname {
+  font-size: 11.5px;
+  color: var(--ui-fg-faint);
+  letter-spacing: 0.02em;
+}
+
+/* ── 顶栏项目名:点一下就地改名 ─────────────────────────
+   展示态是个 button(键盘能 Tab 到、能回车触发),但长得和原来的纯文本标签
+   一模一样;编辑态换成同宽同字号的 input,不让顶栏在两态之间跳一下。 */
+.pc-projname--btn {
+  border: 0;
+  background: transparent;
+  padding: 2px 4px;
+  margin: 0 -4px;
+  border-radius: var(--ui-radius-sm, 4px);
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+  cursor: text;
+  text-align: left;
+}
+.pc-projname--btn:hover {
+  background: var(--ui-panel-2);
+  color: var(--ui-fg);
+}
+.pc-projname--btn:focus-visible {
+  outline: 1px solid var(--ui-accent);
+  outline-offset: 0;
+}
+.pc-projname--editing {
+  padding: 2px 4px;
+  margin: 0 -4px;
+  border: 1px solid var(--ui-accent);
+  border-radius: var(--ui-radius-sm, 4px);
+  background: var(--ui-panel-2);
+  color: var(--ui-fg);
+  font: inherit;
+  letter-spacing: inherit;
+  outline: none;
+}
+
+/* 只读查看:这份页面是用带钥匙的只读链接打开的(Skill 任务在跑时给 agent 用的那条)。
+   不做成刺眼的警告条 —— 它是常态而不是故障;但要让人一眼分清「这份改不了」。 */
+.pc-viewonly-badge {
+  flex: none;
+  margin-right: 8px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  color: var(--ui-fg-muted);
+  background: var(--ui-panel-2);
+  border: 1px solid var(--ui-border-strong);
+  cursor: default;
+}

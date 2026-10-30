@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/capability/2",
+  "identifier": "remote-sidecar",
+  "description": "编辑台页面由 sidecar 在 127.0.0.1:5210 上提供,对 Tauri 来说是「远程」来源;default.json 只覆盖本地来源(tauri:// / localhost 开发地址),这里把同一套权限放给 sidecar 的地址,不然前端 invoke 任何应用命令都会被拦。",
+  "remote": {
+    "urls": [
+      "http://127.0.0.1:5210/*",
+      "http://localhost:5210/*"
+    ]
+  },
+  "windows": [
+    "main",
+    "skill-overlay"
+  ],
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "window-state:default",
+    "allow-acquire-proc-lock",
+    "allow-release-proc-lock",
+    "allow-is-proc-locked",
+    "allow-desktop-titlebar-command",
+    "allow-agent-webview-show",
+    "allow-agent-webview-hide",
+    "allow-agent-webview-mute",
+    "allow-agent-webview-info",
+    "allow-menu-bar-color",
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-start-dragging",
+    "core:window:allow-start-resize-dragging",
+    "core:window:allow-internal-toggle-maximize"
+  ]
+}

@@ -1,0 +1,150 @@
+/* 皮肤对话框。壳沿用 .pc-dialog,这里只加内部布局 */
+.pc-skin-dialog {
+  width: min(560px, calc(100vw - 48px));
+}
+.pc-skin-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  /* 预设加上十几个槽位会很长,让内容自己滚,别把对话框顶出屏幕 */
+  max-height: min(62vh, 560px);
+  overflow-y: auto;
+  padding: 4px 2px;
+}
+.pc-skin-h {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ui-fg);
+}
+.pc-skin-custom-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.pc-skin-note {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--ui-fg-muted);
+  line-height: 1.6;
+}
+.pc-skin-group {
+  margin-top: 10px;
+}
+.pc-skin-group-name {
+  font-size: 11.5px;
+  color: var(--ui-fg-faint);
+  margin-bottom: 6px;
+}
+
+/* ── 预设 ─────────────────────────────────────────── */
+.pc-skin-presets {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+}
+.pc-skin-preset {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius, 4px);
+  background: var(--ui-panel-2);
+  color: var(--ui-fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.pc-skin-preset:hover {
+  border-color: var(--ui-border-strong);
+}
+.pc-skin-preset.is-on {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-soft);
+}
+.pc-skin-preset-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 用皮肤自己的变量画的迷你预览:底色 + 面板 / 强调 / 次文字三条 */
+.pc-skin-chip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: 34px;
+  height: 22px;
+  padding: 0 3px;
+  border: 1px solid;
+  border-radius: 3px;
+}
+.pc-skin-chip i {
+  flex: 1 1 0;
+  height: 12px;
+  border-radius: 2px;
+}
+
+/* ── 自定义槽位 ───────────────────────────────────── */
+.pc-skin-slot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+}
+.pc-skin-slot-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--ui-fg);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.pc-skin-slot-hint {
+  font-size: 11px;
+  color: var(--ui-fg-faint);
+  line-height: 1.5;
+}
+/* 原生取色器各家长得都不一样,统一成一个方块 */
+.pc-skin-color {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius, 4px);
+  background: none;
+  cursor: pointer;
+}
+.pc-skin-color::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+.pc-skin-color::-webkit-color-swatch {
+  border: none;
+  border-radius: 2px;
+}
+.pc-skin-reset {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius, 4px);
+  background: transparent;
+  color: var(--ui-fg-muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.pc-skin-reset:hover:not(:disabled) {
+  color: var(--ui-fg);
+  border-color: var(--ui-border-strong);
+}
+.pc-skin-reset:disabled {
+  opacity: 0.35;
+  cursor: default;
+}

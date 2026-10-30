@@ -1,0 +1,39 @@
+{
+ "note": "C10A-API-03 在线构建产物里的 /api/ 路径与本清单逐条一致，scanner不放宽。旧本机API剩19条，只许删、不许扩；server/test/c10-api-ratchet-baseline.json 单独固定这19条。0.7.18账号入口按 docs/plan/account-binding-task.md、docs/plan/account-binding-contract.md、docs/plan/three-versions-018-design.md 登记8条实际产物字面量：src/account/client.ts 的editor/动态session或renew、me/login/logout/projects、cloud-agent-consent，加src/online/apiGuard.ts的精确editor/session与editor/renew。cloud-agent-consent仅供当前账号首次告知的GET/POST，在线用网站Cookie+CSRF。账号许可固定为这8条，不是任意account前缀授权；在线不包含桌面editor/login或recover。官网Cookie+CSRF只在顶层编辑器精确路由使用，旧本机渲染/快照/素材/导出请求与舞台账号请求仍由apiGuard拒绝。2026-10-23 另登记三条第三方登录（Google）：third-party/config 取开着哪几种方式（GET）、third-party/login 与 third-party/register（POST）；它们和上面八条同类，都是官网账号服务的接口，在线用网站 Cookie + CSRF，apiGuard 里逐条精确放行、方法钉死，unlink 不放行。 2026-10-24 曾登记三条网盘导入（connect / disconnect / import），当天即撤销：那三条进产物是源码漏了在线构建守卫（src/editor/io/storageImport.ts 里五个函数只有两个带 storageImportSupported 判断），补齐守卫后字面量被剪掉，按本文件「做掉一个就从清单删一个」的规矩一并删除。/api/media/storage/* 全由本机编辑器进程发，在线页面没有对端，本来就不该进在线产物。",
+ "projectAccountPaths": [
+  "/hosted/shared/account/members"
+ ],
+ "projectAccountNote": "account-binding-task.md/contract.md：精确顶层编辑器 POST、Bearer credentials omit；独立于原 /api scanner，未知后缀、舞台和非fetch均拒绝。",
+ "paths": [
+  "/api/account/cloud-agent-consent",
+  "/api/account/editor/",
+  "/api/account/editor/renew",
+  "/api/account/editor/session",
+  "/api/account/login",
+  "/api/account/logout",
+  "/api/account/me",
+  "/api/account/projects",
+  "/api/account/third-party/config",
+  "/api/account/third-party/login",
+  "/api/account/third-party/register",
+  "/api/asset",
+  "/api/data/costs",
+  "/api/data/diff",
+  "/api/data/playhead",
+  "/api/data/project",
+  "/api/export",
+  "/api/frames/",
+  "/api/frames/snapshot",
+  "/api/frames/snapshot/",
+  "/api/frames/stream/",
+  "/api/media/file",
+  "/api/media/prefetch",
+  "/api/media/remote",
+  "/api/media/upload-queue/target",
+  "/api/prerender/info",
+  "/api/ui-render/bake-batch",
+  "/api/vision/bake-batch",
+  "/api/vision/bake-evict",
+  "/api/vision/bake-status"
+ ]
+}

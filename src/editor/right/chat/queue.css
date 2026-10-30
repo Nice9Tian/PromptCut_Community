@@ -1,0 +1,263 @@
+/*
+ * 输入队列(QueueList)和用户气泡上的「回退到这里」(UserBubble)。
+ * 配色、圆角一律走 --ui-* 变量并带回退值;图标钮、主按钮复用 studio.css 的 .pc-icon-btn / .pc-btn-primary。
+ */
+
+/* ── 输入队列:在思考条带和输入区之间,最多占面板高度的 30%,多了在里面滚 ─────── */
+.ai-queue {
+  flex: 0 0 auto;
+  max-height: 30%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--ui-border, #2A2932);
+  background: var(--ui-bg-2, #1B1A21);
+}
+
+/* 头部一行弱文字;暂停时字色提一档,右边一个「继续」 */
+.ai-queue-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 4px 12px;
+  box-sizing: border-box;
+  font-size: 11px;
+  color: var(--ui-fg-faint, #6E6C7A);
+}
+.ai-queue-head.is-paused {
+  color: var(--ui-fg-muted, #A6A4B2);
+}
+.ai-queue-head-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-queue-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0 8px 6px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 一条一行:序号、单行省略的文字、附件数、插入 / 编辑 / × */
+.ai-queue-item {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  min-height: 30px;
+  /* 四边一样:22px 的行内按钮上下各留 4px,正好 30px 高 */
+  padding: 4px;
+  box-sizing: border-box;
+  border-radius: var(--ui-radius, 6px);
+  background: var(--ui-panel, #23222A);
+  color: var(--ui-fg, #F2F1F6);
+  font-size: 12px;
+}
+.ai-queue-no {
+  flex: 0 0 auto;
+  min-width: 16px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--ui-fg-faint, #6E6C7A);
+  font-variant-numeric: tabular-nums;
+}
+.ai-queue-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-queue-text.is-faint {
+  color: var(--ui-fg-muted, #A6A4B2);
+}
+.ai-queue-files {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  height: 18px;
+  line-height: 18px;
+  border-radius: var(--ui-radius-sm, 4px);
+  background: var(--ui-panel-2, #2C2B34);
+  font-size: 11px;
+  color: var(--ui-fg-muted, #A6A4B2);
+  white-space: nowrap;
+}
+
+/* 行内小按钮:默认透明弱色,「插入」「继续」「替换」是强调色 */
+.ai-queue-btn {
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--ui-radius-sm, 4px);
+  background: transparent;
+  color: var(--ui-fg-muted, #A6A4B2);
+  font: inherit;
+  font-size: 11px;
+  line-height: 22px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ai-queue-btn:hover:not(:disabled) {
+  background: var(--ui-panel-2, #2C2B34);
+  color: var(--ui-fg, #F2F1F6);
+}
+.ai-queue-btn.is-accent {
+  background: var(--ui-accent-grad, #00DBDB);
+  color: var(--ui-accent-fg, #ffffff);
+}
+.ai-queue-btn.is-accent:hover:not(:disabled) {
+  background: var(--ui-accent-grad-hover, #9571FF);
+  color: var(--ui-accent-fg, #ffffff);
+}
+.ai-queue-x {
+  width: 22px;
+  padding: 0;
+  font-size: 13px;
+}
+.ai-queue-x:hover:not(:disabled) {
+  color: var(--ui-danger, #f87171);
+}
+.ai-queue-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--ui-focus-ring, 0 0 0 2px #00DBDB);
+}
+
+/* ── 用户气泡:悬停出现的小工具条 + 行内确认层 ───────────────────────── */
+/*
+ * 确认层放在气泡下面的文档流里,不做绝对定位的浮层:.ai-row 开了 content-visibility:auto,
+ * 自带绘制裁剪,浮出行框的部分会被裁掉。
+ */
+.ai-user-turn {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.ai-user-line {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 4px;
+}
+.ai-user-tools {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.ai-row--user:hover .ai-user-tools,
+.ai-user-tools:focus-within,
+.ai-user-tools.is-open {
+  opacity: 1;
+}
+.ai-user-tools .pc-icon-btn {
+  width: 26px;
+  height: 26px;
+  color: var(--ui-fg-muted, #A6A4B2);
+}
+.ai-user-tools .pc-icon-btn:hover:not(:disabled),
+.ai-user-tools .pc-icon-btn[aria-expanded="true"] {
+  color: var(--ui-fg, #F2F1F6);
+}
+
+.ai-rewind-confirm {
+  max-width: 85%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--ui-border-strong, #3A3944);
+  border-radius: var(--ui-radius-lg, 8px);
+  background: var(--ui-float, #34333D);
+  color: var(--ui-fg, #F2F1F6);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.ai-rewind-confirm p {
+  margin: 0;
+}
+.ai-rewind-confirm strong {
+  font-weight: 600;
+}
+.ai-rewind-note {
+  color: var(--ui-fg-muted, #A6A4B2);
+}
+.ai-rewind-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.ai-rewind-actions .pc-btn-primary {
+  height: 26px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+.ai-rewind-cancel {
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid var(--ui-border-strong, #3A3944);
+  border-radius: var(--ui-radius, 6px);
+  background: var(--ui-panel-2, #2C2B34);
+  color: var(--ui-fg, #F2F1F6);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ai-rewind-cancel:hover {
+  background: var(--ui-float, #34333D);
+}
+.ai-rewind-cancel:focus-visible {
+  outline: none;
+  box-shadow: var(--ui-focus-ring, 0 0 0 2px #00DBDB);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-user-tools { transition: none; }
+}
+
+/*
+ * 队列的进出(QueueList.tsx):新排进来的行 pc-enter-fade、队列从空变有时整块 pc-enter-rise(skins/motion.css);
+ * 发出去 / 删掉 / 拿去编辑的行在原位留一行幽灵行(.is-leaving),淡出并收起高度;
+ * 队列清空时头部也收起。时长和 QueueList 里的 LEAVE_MS(160)一致。
+ */
+.ai-queue-item.is-leaving,
+.ai-queue-head.is-leaving {
+  overflow: hidden;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes ai-queue-row-leave {
+    from { height: 30px; min-height: 30px; opacity: 1; }
+    to { height: 0; min-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; }
+  }
+  @keyframes ai-queue-head-leave {
+    from { height: 28px; min-height: 28px; opacity: 1; }
+    to { height: 0; min-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; }
+  }
+  .ai-queue-item.is-leaving {
+    animation: ai-queue-row-leave 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .ai-queue-head.is-leaving {
+    animation: ai-queue-head-leave 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+}

@@ -1,0 +1,70 @@
+/*
+ * 三选一的分段控件(氛围式 / 传统式 / SKILL)。一个整体:外面一圈边框、里面三格等宽,一块滑块在底下移动。
+ * 高度 28px,和顶栏其它控件(.pc-btn / .pc-select)对齐。
+ */
+.pc-modeswitch {
+  position: relative;
+  display: grid;
+  /* 三格等宽 —— 滑块靠 translateX(index * 100%) 定位,等宽才对得上 */
+  grid-template-columns: repeat(3, 1fr);
+  height: 28px;
+  padding: 2px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius, 6px);
+  background: var(--ui-panel-2);
+  /* 顶栏放不下时整体收缩,但别被压扁到看不清 */
+  min-width: 186px;
+  flex: 0 0 auto;
+}
+
+/* 滑块。宽度 = 一格(减掉两边 padding),位置由行内 transform 给 */
+.pc-modeswitch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc((100% - 4px) / 3);
+  height: calc(100% - 4px);
+  border-radius: calc(var(--ui-radius, 6px) - 1px);
+  background: var(--ui-accent-soft);
+  border: 1px solid var(--ui-accent);
+  transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1), background 180ms, border-color 180ms;
+  pointer-events: none;
+}
+/* SKILL 那一格用实心强调色:它不是「换个布局看看」,是让桌面 APP 的 Agent 动手了 */
+.pc-modeswitch-thumb.is-skill {
+  background: var(--ui-accent);
+  border-color: var(--ui-accent);
+}
+
+.pc-modeswitch-item {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--ui-fg-muted);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  border-radius: calc(var(--ui-radius, 6px) - 1px);
+  transition: color 180ms;
+}
+.pc-modeswitch-item:hover:not(:disabled):not(.is-on) {
+  color: var(--ui-fg);
+}
+.pc-modeswitch-item.is-on {
+  color: var(--ui-fg);
+  font-weight: 600;
+}
+/* 选中的是 SKILL 时滑块是实心强调色,字得换成强调色上的前景色才看得清 */
+.pc-modeswitch-thumb.is-skill ~ .pc-modeswitch-item.is-on {
+  color: var(--ui-accent-fg);
+}
+.pc-modeswitch-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}

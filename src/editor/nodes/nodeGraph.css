@@ -1,0 +1,19 @@
+/* 节点管线页:放在左栏「编辑」分区里,底色交给抽屉卡片,节点卡用面板层级,激活的连线 / 节点用强调色 */
+.pc-node-page { position: relative; flex: 1; min-height: 0; height: 100%; overflow: auto; background: transparent; color: var(--ui-fg, #e5e7eb); }
+.pc-node-help { position: sticky; top: 0; left: 0; z-index: 3; padding: 8px 12px; font-size: 11px; color: var(--ui-fg-muted, #94a3b8); background: var(--ui-bg-2, #0a0d12); border-bottom: 1px solid var(--ui-border, #1f2937); }
+.pc-node-canvas { position: relative; padding: 1px; }
+.pc-node-edges { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.pc-node-edges path { fill: none; stroke: var(--ui-border-strong, #334155); stroke-width: 2; opacity: .9; transition: stroke .15s, filter .15s; }
+.pc-node-edges path.is-hot { stroke: var(--ui-accent, #22d3ee); filter: drop-shadow(0 0 4px var(--ui-accent-soft, rgba(34, 211, 238, .45))); stroke-width: 3; }
+.pc-node-card { position: absolute; box-sizing: border-box; border: 1px solid var(--ui-border, #334155); border-radius: var(--ui-radius-lg, 8px); padding: 12px 16px; background: var(--ui-panel, #111827); transition: border-color .15s, box-shadow .15s; }
+.pc-node-card.is-active { border-color: var(--ui-accent, #22d3ee); box-shadow: 0 0 0 1px var(--ui-accent, #22d3ee); }
+.pc-node-card.pc-node-out { background: var(--ui-panel-2, #172033); border-color: var(--ui-border-strong, #64748b); border-radius: var(--ui-radius, 6px); }
+.pc-node-kind { font-size: 10px; color: var(--ui-fg-muted, #94a3b8); }
+.pc-node-label { margin-top: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; color: var(--ui-fg, #e5e7eb); }
+.pc-node-port { position: absolute; top: 50%; width: 8px; height: 8px; margin-top: -4px; border-radius: 50%; background: var(--ui-border-strong, #64748b); border: 2px solid var(--ui-bg-2, #0a0d12); }
+.pc-node-card.is-active .pc-node-port { background: var(--ui-accent, #22d3ee); }
+.pc-node-port.in { left: -6px; }
+.pc-node-port.out { right: -6px; }
+.pc-node-outbar { position: sticky; bottom: 0; left: 0; display: flex; align-items: center; gap: 12px; padding: 9px 12px; background: var(--ui-panel, #111827); border-top: 1px solid var(--ui-border, #334155); font-size: 11px; }
+.pc-node-outbar span { font-weight: 700; color: var(--ui-accent, #22d3ee); }
+.pc-node-outbar input { flex: 1; accent-color: var(--ui-accent, #22d3ee); }

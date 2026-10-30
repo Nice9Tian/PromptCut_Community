@@ -1,0 +1,320 @@
+{
+  "rev": 1788835631094,
+  "stage": [
+    1920,
+    1080
+  ],
+  "boxes": {
+    "card:blur-text": [
+      375,
+      441,
+      1545,
+      639
+    ],
+    "card:caption-track": null,
+    "card:chapter-bar": [
+      655,
+      19,
+      1265,
+      226
+    ],
+    "card:checklist": [
+      679,
+      227,
+      1241,
+      853
+    ],
+    "card:composite": [
+      744,
+      515,
+      1176,
+      566
+    ],
+    "card:entity-chips": [
+      60,
+      476,
+      545,
+      604
+    ],
+    "card:focus-card": null,
+    "card:growth-curve": [
+      360,
+      214,
+      1560,
+      866
+    ],
+    "card:lottie": null,
+    "card:lottie-adrock": null,
+    "card:lottie-bodymovin": null,
+    "card:lottie-gatin": null,
+    "card:lottie-happy2016": null,
+    "card:lottie-navidad": null,
+    "card:mu-animated-shiny-text": [
+      573,
+      435,
+      1347,
+      645
+    ],
+    "card:mu-blur-fade": [
+      768,
+      487,
+      1152,
+      609
+    ],
+    "card:mu-circular-progress": [
+      750,
+      268,
+      1170,
+      820
+    ],
+    "card:mu-number-ticker": [
+      804,
+      362,
+      1116,
+      694
+    ],
+    "card:mu-typing": null,
+    "card:mu-word-rotate": [
+      752,
+      457,
+      1168,
+      601
+    ],
+    "card:odometer": [
+      714,
+      0,
+      1206,
+      1080
+    ],
+    "card:particles": null,
+    "card:pin-board": [
+      96,
+      522,
+      462,
+      977
+    ],
+    "card:probe": [
+      28,
+      400,
+      1721,
+      680
+    ],
+    "card:punch-pill": [
+      798,
+      474,
+      1122,
+      606
+    ],
+    "card:quote-lockup": [
+      168,
+      364,
+      772,
+      712
+    ],
+    "card:rank-bars": [
+      460,
+      335,
+      1460,
+      745
+    ],
+    "card:ring-metric": [
+      671,
+      211,
+      1249,
+      869
+    ],
+    "card:stat-proof": [
+      710,
+      333,
+      1210,
+      747
+    ],
+    "card:step-timeline": [
+      90,
+      363,
+      1830,
+      717
+    ],
+    "card:term-card": [
+      651,
+      372,
+      1269,
+      709
+    ],
+    "card:terminal-3d": [
+      395,
+      284,
+      1587,
+      796
+    ],
+    "card:type-shift": [
+      856,
+      419,
+      1225,
+      660
+    ],
+    "card:ui-callout": [
+      828,
+      474,
+      1591,
+      661
+    ],
+    "card:versus-card": [
+      334,
+      387,
+      1594,
+      693
+    ],
+    "part:chart-growth": [
+      410,
+      303,
+      1511,
+      750
+    ],
+    "part:chart-rank": [
+      552,
+      400,
+      1378,
+      692
+    ],
+    "part:decor-callout": [
+      828,
+      474,
+      1589,
+      666
+    ],
+    "part:group-versus": [
+      366,
+      264,
+      1562,
+      816
+    ],
+    "part:list-chapters": [
+      676,
+      17,
+      1244,
+      153
+    ],
+    "part:list-check": [
+      460,
+      220,
+      1460,
+      860
+    ],
+    "part:list-chips": [
+      100,
+      422,
+      589,
+      658
+    ],
+    "part:list-pins": [
+      104,
+      353,
+      597,
+      702
+    ],
+    "part:list-steps": [
+      272,
+      432,
+      1648,
+      627
+    ],
+    "part:media-lottie": [
+      660,
+      240,
+      1260,
+      840
+    ],
+    "part:media-particles": [
+      395,
+      118,
+      1587,
+      962
+    ],
+    "part:media-terminal": [
+      395,
+      118,
+      1587,
+      1080
+    ],
+    "part:metric-odometer": [
+      744,
+      0,
+      1176,
+      1080
+    ],
+    "part:metric-ring": [
+      660,
+      310,
+      1260,
+      770
+    ],
+    "part:metric-stat": [
+      660,
+      310,
+      1260,
+      770
+    ],
+    "part:metric-ticker": [
+      232,
+      375,
+      1104,
+      773
+    ],
+    "part:text-author": [
+      232,
+      400,
+      1660,
+      773
+    ],
+    "part:text-blur": [
+      260,
+      400,
+      1660,
+      680
+    ],
+    "part:text-blurfade": [
+      710,
+      468,
+      1210,
+      627
+    ],
+    "part:text-pill": [
+      224,
+      388,
+      1125,
+      669
+    ],
+    "part:text-quote": [
+      224,
+      388,
+      1226,
+      669
+    ],
+    "part:text-rotate": [
+      360,
+      240,
+      1560,
+      800
+    ],
+    "part:text-term": [
+      144,
+      141,
+      1560,
+      800
+    ],
+    "part:text-title": [
+      144,
+      140,
+      639,
+      652
+    ],
+    "part:text-typeshift": [
+      264,
+      407,
+      639,
+      652
+    ],
+    "part:text-typing": null
+  }
+}

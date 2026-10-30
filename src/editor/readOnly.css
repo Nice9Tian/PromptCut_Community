@@ -1,0 +1,54 @@
+/*
+ * 只读项目（游客进别人的项目）里的界面（src/editor/readOnly.ts）。
+ * 置灰靠控件自己的 disabled / aria-disabled；这里只补围栏的排版和统一的「点不了」的样子。
+ */
+
+/* 围栏不占布局：套在 flex / grid 的子树外面，里面的元素照旧是原来那个容器的子项 */
+fieldset.pc-ro-fence {
+  display: contents;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+/* 围栏里被禁用的控件：不再是「看起来能点」的亮度，鼠标指针也说明点不了 */
+fieldset.pc-ro-fence[data-pc-ro] :is(button, input, select, textarea):disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* 带 aria-disabled 的非原生控件（右键菜单项、自绘的格子） */
+[data-pc-ro-off="1"] {
+  opacity: 0.55;
+  cursor: not-allowed !important;
+}
+
+/* 时间轴：字幕条两头的拽边把手在只读项目里不接指针（点一下仍落到字幕条本身，跳过去看） */
+html[data-pc-readonly="member"] .pc-cap-grip {
+  pointer-events: none;
+}
+
+/* 只读项目里禁用的按钮：统一显示「点不了」的指针，不论它原来的样式有没有处理 :disabled */
+html[data-pc-readonly="member"] button:disabled,
+html[data-pc-readonly="member"] [aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
+/* 只读项目里点不了的东西一眼要看得出：被禁用的按钮统一压暗；自绘的格子（卡片、音频条、剪辑格）带 aria-disabled 的同样 */
+html[data-pc-readonly="member"] button:disabled {
+  opacity: 0.5;
+}
+html[data-pc-readonly="member"] :is(.pc-lib-card, .pc-lib-strip, .pc-lib-cut)[aria-disabled="true"],
+html[data-pc-readonly="member"] .pc-lib-card.is-readonly,
+html[data-pc-readonly="member"] .pc-lib-strip.is-readonly {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* 桌面版标题栏菜单里会改项目的命令（撤销、重做、保存项目）：不用 disabled（桌面产物里菜单项恒不置灰，有构建守门测试），
+   用 aria-disabled + 压暗；点了什么也不做（顶栏的命令接收处同样拦） */
+html[data-pc-readonly="member"] .pc-titlebar-menu-item[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

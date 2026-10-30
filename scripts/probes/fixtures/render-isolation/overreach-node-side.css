@@ -1,0 +1,15 @@
+/*
+ * 越权探测卡的配套夹具：Node 一侧处理样式时的读盘尝试（测试夹具，防御性测试，不是攻击代码；
+ * 定义见 docs/plan/sound-online-render-task.md「越权探测卡」一节）。
+ *
+ * 样式文件由工作进程里的 Vite 与 Tailwind 在 Node 一侧处理。这份文件把「让 Node 一侧去读工作目录以外的文件」的几种写法各写一条，
+ * 指向探针放了假凭证（PROBE-FAKE-…）的测试文件（`__OUTSIDE__` 由探针换成那个文件的绝对路径，`__OUTSIDE_DIR__` 换成它所在的目录）。
+ * 只读：没有任何一条会写、会删。预期：托管方渲染服务的同步文件预检拒掉整份文件（不装、不交给 Vite），探针核对它被拒、假凭证没有出现在任何产物与日志里。
+ */
+@import "__OUTSIDE__";
+@reference "__OUTSIDE__";
+@source "__OUTSIDE_DIR__";
+@plugin "./overreach-node-side.ts";
+@config "./overreach-node-side.ts";
+.overreach-node-side { background: url("__OUTSIDE__?inline"); }
+.overreach-node-side-2 { background-image: image-set("__OUTSIDE__?inline" 1x); }

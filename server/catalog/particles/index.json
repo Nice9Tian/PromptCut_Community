@@ -1,0 +1,771 @@
+{
+ "source": "https://github.com/tsparticles/tsparticles (@tsparticles/configs)",
+ "license": "MIT",
+ "fetched": "2026-09-07",
+ "engine": "@tsparticles/slim",
+ "screened": "每个配置在导出管线上实跑 90 帧:canvas 不空白、第 5≠30 帧在动;画面完全相同的只留一个;之后再经 URL 路由做「新鲜 vs 复用」(推荐的再加「vs 静态跳过」)逐字节比对,不一致的剔除,见 excluded",
+ "usage": "add_clip cardId \"particles\", params.config = url(简单参数此时无效),seed 换排布",
+ "items": [
+  {
+   "name": "basic",
+   "file": "server/catalog/particles/basic.json",
+   "url": "/catalog/particles/basic.json",
+   "description": "经典:漂浮圆点带连线",
+   "featured": true,
+   "note": "深色底上大量红橙色微小粒子游走，近距离粒子间交织出灰色连线网络。",
+   "use": "适合数字网络概念、前沿科技展示或动态UI底纹。",
+   "tags": [
+    "红橙粒子",
+    "连线网络",
+    "科技背景"
+   ]
+  },
+  {
+   "name": "big",
+   "file": "server/catalog/particles/big.json",
+   "url": "/catalog/particles/big.json",
+   "description": "大号半透明圆盘铺满",
+   "featured": true,
+   "note": "红绿蓝黄等多色半透明大圆斑相互交叠，在画面中缓慢浮动位移。",
+   "use": "适合活泼明快短片、音乐律动或梦幻唯美背景。",
+   "tags": [
+    "多彩光斑",
+    "大圆粒子",
+    "梦幻背景"
+   ]
+  },
+  {
+   "name": "bigBlend",
+   "file": "server/catalog/particles/bigBlend.json",
+   "url": "/catalog/particles/bigBlend.json",
+   "description": "大圆盘,混合模式叠色",
+   "featured": true,
+   "note": "彩色半透明大圆斑重叠混合呈现亮色，随时间缓慢漂移变换位置与叠加色彩。",
+   "use": "适合梦幻光斑背景、唯美MV或活动开场氛围。",
+   "tags": [
+    "彩色光斑",
+    "混合叠加",
+    "梦幻背景"
+   ]
+  },
+  {
+   "name": "bubble",
+   "file": "server/catalog/particles/bubble.json",
+   "url": "/catalog/particles/bubble.json",
+   "description": "大气泡缓缓漂浮",
+   "featured": true,
+   "note": "暗底上散布微弱的半透明六边形暗斑，随时间缓慢漂移改变位置。",
+   "use": "适合极简暗调片头、低对比度深色背景或底纹。",
+   "tags": [
+    "六边形",
+    "暗调光斑",
+    "极简背景"
+   ]
+  },
+  {
+   "name": "colorAnimation",
+   "file": "server/catalog/particles/colorAnimation.json",
+   "url": "/catalog/particles/colorAnimation.json",
+   "description": "颜色循环变化的粒子",
+   "featured": true,
+   "note": "散布的圆点粒子在漂移过程中，整体颜色由纯蓝逐步渐变为紫红与粉红。",
+   "use": "适合潮流时尚短片、音乐律动或活力转场背景。",
+   "tags": [
+    "色彩渐变",
+    "彩色粒子",
+    "动态光点"
+   ]
+  },
+  {
+   "name": "fallingConfetti",
+   "file": "server/catalog/particles/fallingConfetti.json",
+   "url": "/catalog/particles/fallingConfetti.json",
+   "description": "飘落的彩纸",
+   "featured": true,
+   "note": "彩色圆形与多边形碎纸粒子大小不一，在深色画面中持续旋转飘落。",
+   "use": "盛典庆祝、胜利通关或节日狂欢视频点缀。",
+   "tags": [
+    "彩色纸屑",
+    "彩屑飘落",
+    "庆典特效"
+   ]
+  },
+  {
+   "name": "gradients",
+   "file": "server/catalog/particles/gradients.json",
+   "url": "/catalog/particles/gradients.json",
+   "description": "渐变色粒子",
+   "featured": true,
+   "note": "密集纯白色圆形光斑粒子大小错落，在深底上持续平缓悬浮漂移。",
+   "use": "唯美浪漫、雪花漫天或空灵梦幻氛围点缀。",
+   "tags": [
+    "白色光斑",
+    "圆形粒子",
+    "漫天光点"
+   ]
+  },
+  {
+   "name": "groups",
+   "file": "server/catalog/particles/groups.json",
+   "url": "/catalog/particles/groups.json",
+   "description": "几组不同大小颜色的粒子",
+   "featured": true,
+   "note": "半透明灰白圆形小粒子散布全屏，随着时间推移均匀缓慢平移流动。",
+   "use": "极简低调衬底、微尘悬浮或轻量氛围背景。",
+   "tags": [
+    "灰色微尘",
+    "半透明粒子",
+    "低调背景"
+   ]
+  },
+  {
+   "name": "lch",
+   "file": "server/catalog/particles/lch.json",
+   "url": "/catalog/particles/lch.json",
+   "description": "LCH 色彩空间渐变的粒子",
+   "featured": true,
+   "note": "极淡白色微小节点与三角形网格连线在暗底中缓慢移动与形变。",
+   "use": "抽象几何、网络拓扑或暗色科技界面片头。",
+   "tags": [
+    "网格连线",
+    "三角拓扑",
+    "微光科技"
+   ]
+  },
+  {
+   "name": "life",
+   "file": "server/catalog/particles/life.json",
+   "url": "/catalog/particles/life.json",
+   "description": "不断生灭的粒子",
+   "featured": true,
+   "note": "从首帧全黑开始，暗红粒子逐帧涌现并连出多条浅色长线交错穿行。",
+   "use": "系统启动、数据流生成或网络构建过渡。",
+   "tags": [
+    "粒子生长",
+    "直线穿梭",
+    "网络构建"
+   ]
+  },
+  {
+   "name": "linkTriangles",
+   "file": "server/catalog/particles/linkTriangles.json",
+   "url": "/catalog/particles/linkTriangles.json",
+   "description": "连线并填成三角网",
+   "featured": true,
+   "note": "半透明灰白三角形面片连接红色顶点，在暗底中形变漂移。",
+   "use": "适合科技风网格背景、多边形动画或数据可视化。",
+   "tags": [
+    "三角面片",
+    "多边形网格",
+    "科技背景"
+   ]
+  },
+  {
+   "name": "nasa",
+   "file": "server/catalog/particles/nasa.json",
+   "url": "/catalog/particles/nasa.json",
+   "description": "细小星点的星空",
+   "featured": true,
+   "note": "极微小的暗白色细点在深黑背景中微幅缓慢漂浮移动。",
+   "use": "适合用于深邃星空、宇宙探索或沉浸式慢节奏背景。",
+   "tags": [
+    "深空星尘",
+    "微光漂移",
+    "静谧星空"
+   ]
+  },
+  {
+   "name": "orbit",
+   "file": "server/catalog/particles/orbit.json",
+   "url": "/catalog/particles/orbit.json",
+   "description": "带轨道环的粒子",
+   "featured": true,
+   "note": "黄、蓝、绿、橙色彩色小圆点与方点沿曲线轨道持续公转。",
+   "use": "适合用于创意动画、科技展示或轻快动感的视频底纹。",
+   "tags": [
+    "彩色粒子",
+    "轨道运动",
+    "活力动效"
+   ]
+  },
+  {
+   "name": "parallax",
+   "file": "server/catalog/particles/parallax.json",
+   "url": "/catalog/particles/parallax.json",
+   "description": "分层视差感",
+   "featured": true,
+   "note": "明暗与大小各异的灰白粒子连线网络呈视差多层缓慢漂移。",
+   "use": "适合用于高端商业、AI人工智能或前沿科技宣传片。",
+   "tags": [
+    "视差连线",
+    "网络拓扑",
+    "科技背景"
+   ]
+  },
+  {
+   "name": "plasma",
+   "file": "server/catalog/particles/plasma.json",
+   "url": "/catalog/particles/plasma.json",
+   "description": "等离子色团",
+   "featured": true,
+   "note": "极其幽微的深蓝色细线段在暗底上微弱游移蠕动与折变。",
+   "use": "适合用于神秘暗调、等离子脉冲或隐蔽电信号展示。",
+   "tags": [
+    "等离子体",
+    "幽蓝微光",
+    "暗黑科技"
+   ]
+  },
+  {
+   "name": "poisson",
+   "file": "server/catalog/particles/poisson.json",
+   "url": "/catalog/particles/poisson.json",
+   "description": "均匀铺开的圆点阵",
+   "featured": true,
+   "note": "均匀分布的白色明亮节点与细线网络在画面中游动重组。",
+   "use": "适合用于物联网、大数据传输、区块链或神经网络展示。",
+   "tags": [
+    "节点连线",
+    "拓扑网络",
+    "数据连接"
+   ]
+  },
+  {
+   "name": "random",
+   "file": "server/catalog/particles/random.json",
+   "url": "/catalog/particles/random.json",
+   "description": "随机形状与颜色混合",
+   "featured": true,
+   "note": "彩色圆形粒子密集散布全屏，各粒子持续向不同方向自由平移浮动。",
+   "use": "适合用作活泼欢快或创意类短视频的动态背景氛围。",
+   "tags": [
+    "彩色粒子",
+    "随机漂浮",
+    "动态背景"
+   ]
+  },
+  {
+   "name": "repulse",
+   "file": "server/catalog/particles/repulse.json",
+   "url": "/catalog/particles/repulse.json",
+   "description": "常见的连线网",
+   "featured": true,
+   "note": "大量鲜红色圆点粒子散布全屏，相邻点间有微弱连线并缓慢分散漂移。",
+   "use": "适合用作科技警示、悬疑或热烈动感的视频背景点缀。",
+   "tags": [
+    "红色粒子",
+    "连线网络",
+    "科技背景"
+   ]
+  },
+  {
+   "name": "slow",
+   "file": "server/catalog/particles/slow.json",
+   "url": "/catalog/particles/slow.json",
+   "description": "缓慢漂浮",
+   "featured": true,
+   "note": "稀疏的白色微小粒子由细线相连成网，在暗底上极为缓慢地游弋漂移。",
+   "use": "适合科技感开场、学术演示或沉静叙事视频的衬底。",
+   "tags": [
+    "极简线条",
+    "缓慢漂移",
+    "网状结构"
+   ]
+  },
+  {
+   "name": "snow",
+   "file": "server/catalog/particles/snow.json",
+   "url": "/catalog/particles/snow.json",
+   "description": "雪花飘落",
+   "featured": true,
+   "note": "大小不一的白色圆形光点从画面顶部持续向底部垂直缓缓飘落。",
+   "use": "适合冬日雪景、节日庆典或浪漫舒缓氛围的视频叠加。",
+   "tags": [
+    "雪花飘落",
+    "下落粒子",
+    "唯美氛围"
+   ]
+  },
+  {
+   "name": "spin",
+   "file": "server/catalog/particles/spin.json",
+   "url": "/catalog/particles/spin.json",
+   "description": "自转的粒子",
+   "featured": true,
+   "note": "橙红色点状粒子聚集在中部区域，随时间沿中心缓缓旋转打转扩散。",
+   "use": "适合片头旋转聚光、火星旋涡或能量汇聚场景的特效。",
+   "tags": [
+    "旋转粒子",
+    "橙红微粒",
+    "中心旋涡"
+   ]
+  },
+  {
+   "name": "star",
+   "file": "server/catalog/particles/star.json",
+   "url": "/catalog/particles/star.json",
+   "description": "星形粒子",
+   "featured": true,
+   "note": "数颗明亮的白色光点由直线相连成多边形星座，各顶点缓慢平移变形。",
+   "use": "适合天文科普、星空夜话或极简几何风格的视频转场。",
+   "tags": [
+    "星座连线",
+    "极简几何",
+    "多边形"
+   ]
+  },
+  {
+   "name": "strokeAnimation",
+   "file": "server/catalog/particles/strokeAnimation.json",
+   "url": "/catalog/particles/strokeAnimation.json",
+   "description": "描边色循环",
+   "featured": true,
+   "note": "细网状粒子与连线由蓝紫色逐渐渐变为亮粉色，并在暗底中缓缓游动。",
+   "use": "适合梦幻霓虹、赛博朋克或时尚秀场类视频的动态底色。",
+   "tags": [
+    "颜色渐变",
+    "紫粉色调",
+    "网状粒子"
+   ]
+  },
+  {
+   "name": "triangles",
+   "file": "server/catalog/particles/triangles.json",
+   "url": "/catalog/particles/triangles.json",
+   "description": "三角形连线",
+   "featured": true,
+   "note": "红绿双色的小实心正三角形散布于画面中，各自向不同方向平移漂浮。",
+   "use": "适合股市金融播报、游戏解说或几何设计风格视频背景。",
+   "tags": [
+    "三角粒子",
+    "红绿配色",
+    "几何漂移"
+   ]
+  },
+  {
+   "name": "twinkle",
+   "file": "server/catalog/particles/twinkle.json",
+   "url": "/catalog/particles/twinkle.json",
+   "description": "闪烁的星星",
+   "featured": true,
+   "note": "暗红微粒与微弱连线在画面各处若隐若现，明暗交替闪烁并缓慢移动。",
+   "use": "适合神秘暗黑、微光夜景或冥想催眠类视频的沉浸背景。",
+   "tags": [
+    "暗色闪烁",
+    "微弱微粒",
+    "夜景微光"
+   ]
+  },
+  {
+   "name": "vibrate",
+   "file": "server/catalog/particles/vibrate.json",
+   "url": "/catalog/particles/vibrate.json",
+   "description": "微微抖动的粒子",
+   "featured": true,
+   "note": "灰白微小粒子网络在原地高频微幅抖动震颤，整体位置基本保持不动。",
+   "use": "适合紧张悬疑、电子信号干扰或神经元脉冲的画面氛围。",
+   "tags": [
+    "高频抖动",
+    "震动粒子",
+    "连线网络"
+   ]
+  },
+  {
+   "name": "backgroundCanvas",
+   "file": "server/catalog/particles/backgroundCanvas.json",
+   "url": "/catalog/particles/backgroundCanvas.json",
+   "description": "稀疏小点",
+   "featured": false,
+   "note": "深灰底上稀疏微弱白色粒子缓慢漂移，随间距动态生成与断开纤细连线。",
+   "use": "适合极简科技背景、商业演示或数据可视化底纹。",
+   "tags": [
+    "科技粒子",
+    "点线网络",
+    "极简背景"
+   ]
+  },
+  {
+   "name": "bigBlendCombo",
+   "file": "server/catalog/particles/bigBlendCombo.json",
+   "url": "/catalog/particles/bigBlendCombo.json",
+   "description": "大圆盘,混合模式组合",
+   "featured": false,
+   "note": "红绿蓝彩色大圆盘漂移重叠，相交区域发生暗色融合与明暗变化。",
+   "use": "适合前卫艺术短片、色彩实验或抽象舞台背景。",
+   "tags": [
+    "抽象色块",
+    "暗色混合",
+    "动态光影"
+   ]
+  },
+  {
+   "name": "clickPause",
+   "file": "server/catalog/particles/clickPause.json",
+   "url": "/catalog/particles/clickPause.json",
+   "description": "稀疏漂浮点",
+   "featured": false,
+   "note": "暗底上细小白色粒子与纤细连线缓慢漂移，连线随距离不断重组消长。",
+   "use": "适合科技企业宣传、数据网络与知识科普背景。",
+   "tags": [
+    "点线网络",
+    "科技粒子",
+    "数据连线"
+   ]
+  },
+  {
+   "name": "collisionsAbsorb",
+   "file": "server/catalog/particles/collisionsAbsorb.json",
+   "url": "/catalog/particles/collisionsAbsorb.json",
+   "description": "碰撞吸收",
+   "featured": false,
+   "note": "深灰底上大小不一的白色圆形粒子自由漂移穿梭，位置与间距持续变动。",
+   "use": "适合微观微粒模拟、简约科技底图或点阵装饰。",
+   "tags": [
+    "白色微粒",
+    "自由漂移",
+    "极简点阵"
+   ]
+  },
+  {
+   "name": "collisionsBounce",
+   "file": "server/catalog/particles/collisionsBounce.json",
+   "url": "/catalog/particles/collisionsBounce.json",
+   "description": "碰撞反弹",
+   "featured": false,
+   "note": "深灰底上均匀大小的白色小圆点粒子向各方向匀速直线漂移游走。",
+   "use": "适合星空点缀、物理微粒演示或动态装饰背景。",
+   "tags": [
+    "白色圆点",
+    "粒子漫游",
+    "星空氛围"
+   ]
+  },
+  {
+   "name": "delay",
+   "file": "server/catalog/particles/delay.json",
+   "url": "/catalog/particles/delay.json",
+   "description": "延迟出现",
+   "featured": false,
+   "note": "暗色背景上微弱的橙红微粒与细线缓慢游移，动态构成分散的网络拓扑。",
+   "use": "适合神经网络可视化、幽暗科技感或数据流背景。",
+   "tags": [
+    "橙红粒子",
+    "网络拓扑",
+    "暗光科技"
+   ]
+  },
+  {
+   "name": "delayColor",
+   "file": "server/catalog/particles/delayColor.json",
+   "url": "/catalog/particles/delayColor.json",
+   "description": "延迟变色",
+   "featured": false,
+   "note": "红色微粒与网状细线缓慢漂移，部分微粒随时间逐渐由红转为橙黄色。",
+   "use": "科技感数字网络背景或数据流动转场。",
+   "tags": [
+    "网络微粒",
+    "颜色渐变",
+    "科技背景"
+   ]
+  },
+  {
+   "name": "delayOpacity",
+   "file": "server/catalog/particles/delayOpacity.json",
+   "url": "/catalog/particles/delayOpacity.json",
+   "description": "延迟淡入",
+   "featured": false,
+   "note": "大量白色点状粒子缓慢漂移，部分粒子的透明度随时间渐变降低变淡。",
+   "use": "星空微光点缀、夜景氛围或文字底纹。",
+   "tags": [
+    "星空微粒",
+    "透明渐变",
+    "极简点缀"
+   ]
+  },
+  {
+   "name": "delaySize",
+   "file": "server/catalog/particles/delaySize.json",
+   "url": "/catalog/particles/delaySize.json",
+   "description": "延迟变大",
+   "featured": false,
+   "note": "散布的白色点状粒子微幅漂移，部分粒子尺寸随时间逐渐缩小变细。",
+   "use": "微尘浮游效果、静谧意境或抽象科技背景。",
+   "tags": [
+    "尺寸缩放",
+    "微尘浮动",
+    "科技背景"
+   ]
+  },
+  {
+   "name": "delayStrokeColor",
+   "file": "server/catalog/particles/delayStrokeColor.json",
+   "url": "/catalog/particles/delayStrokeColor.json",
+   "description": "延迟描边变色",
+   "featured": false,
+   "note": "微小暗红几何线框粒子漂移，部分描边颜色随时间渐变转为橙黄色。",
+   "use": "科幻UI界面、HUD动效或极简图形背景。",
+   "tags": [
+    "线框微粒",
+    "描边变色",
+    "HUD界面"
+   ]
+  },
+  {
+   "name": "destroy",
+   "file": "server/catalog/particles/destroy.json",
+   "url": "/catalog/particles/destroy.json",
+   "description": "到边消失",
+   "featured": false,
+   "note": "灰白色微粒与细折线缓慢漂动，微粒与连线随时间逐渐消退减少。",
+   "use": "数据消散特效、记忆褪色或片尾落幕转场。",
+   "tags": [
+    "微粒消散",
+    "连线衰减",
+    "淡出收尾"
+   ]
+  },
+  {
+   "name": "destroyExplode",
+   "file": "server/catalog/particles/destroyExplode.json",
+   "url": "/catalog/particles/destroyExplode.json",
+   "description": "到边爆开",
+   "featured": false,
+   "note": "彩色彩点粒子散布漂移，部分粒子在移动中逐渐分散并消隐减少。",
+   "use": "节日庆典彩屑、欢快卡点或派对氛围背景。",
+   "tags": [
+    "彩色粒子",
+    "彩屑飘散",
+    "庆典派对"
+   ]
+  },
+  {
+   "name": "effectBubble",
+   "file": "server/catalog/particles/effectBubble.json",
+   "url": "/catalog/particles/effectBubble.json",
+   "description": "气泡效果",
+   "featured": false,
+   "note": "暗红与橙色的圆形方块粒子向上浮动，颜色变亮呈半透明重叠状态。",
+   "use": "液体气泡升腾、梦幻虚焦光斑或暖意背景。",
+   "tags": [
+    "气泡浮动",
+    "透明光斑",
+    "升腾粒子"
+   ]
+  },
+  {
+   "name": "effectFilter",
+   "file": "server/catalog/particles/effectFilter.json",
+   "url": "/catalog/particles/effectFilter.json",
+   "description": "滤镜效果",
+   "featured": false,
+   "note": "红色实心圆点向上浮动漂移，粒子颜色随时间整体渐变为明亮橙色。",
+   "use": "活力动感片头、能量上升特效或时尚宣传片。",
+   "tags": [
+    "圆点升腾",
+    "渐变变色",
+    "动感能量"
+   ]
+  },
+  {
+   "name": "effectParticles",
+   "file": "server/catalog/particles/effectParticles.json",
+   "url": "/catalog/particles/effectParticles.json",
+   "description": "粒子内嵌粒子",
+   "featured": false,
+   "note": "黄色五角星粒子整体向上升起漂移，第5、6帧在画面顶部边缘聚集。",
+   "use": "梦想升空、奖励结算或庆典升腾氛围场景。",
+   "tags": [
+    "黄色星光",
+    "向上漂浮",
+    "顶部聚集"
+   ]
+  },
+  {
+   "name": "effectTrailTransform",
+   "file": "server/catalog/particles/effectTrailTransform.json",
+   "url": "/catalog/particles/effectTrailTransform.json",
+   "description": "拖尾变形",
+   "featured": false,
+   "note": "细小粒子点阵在漂移中整体颜色经历红、绿、青、蓝、品红、黄循环渐变。",
+   "use": "动感卡点、炫彩过渡或霓虹舞台氛围背景。",
+   "tags": [
+    "循环变色",
+    "色彩渐变",
+    "微小粒子"
+   ]
+  },
+  {
+   "name": "grabRandomColor",
+   "file": "server/catalog/particles/grabRandomColor.json",
+   "url": "/catalog/particles/grabRandomColor.json",
+   "description": "稀疏漂浮点(随机色)",
+   "featured": false,
+   "note": "稀疏暗红微小粒子缓慢游移，近邻粒子间偶尔生成微弱细线相连。",
+   "use": "极简科技、深空星图或微观生物连线背景。",
+   "tags": [
+    "暗红粒子",
+    "邻近连线",
+    "稀疏星点"
+   ]
+  },
+  {
+   "name": "lightHover",
+   "file": "server/catalog/particles/lightHover.json",
+   "url": "/catalog/particles/lightHover.json",
+   "description": "光照感粒子",
+   "featured": false,
+   "note": "红橙色圆形与方形粒子从四周逐渐向中心汇聚成团。",
+   "use": "适合科技感聚焦特效、核心能量汇聚或片头转场。",
+   "tags": [
+    "粒子汇聚",
+    "方形圆点",
+    "能量聚焦"
+   ]
+  },
+  {
+   "name": "mouseAttract",
+   "file": "server/catalog/particles/mouseAttract.json",
+   "url": "/catalog/particles/mouseAttract.json",
+   "description": "稀疏漂浮点",
+   "featured": false,
+   "note": "暗底上散落极微弱的暗红细小圆点与极淡连线，缓慢漂浮移位。",
+   "use": "适合极简低调的科技片头或暗夜星空氛围衬底。",
+   "tags": [
+    "暗红微粒",
+    "极简微光",
+    "虚幻漂浮"
+   ]
+  },
+  {
+   "name": "mouseDestroy",
+   "file": "server/catalog/particles/mouseDestroy.json",
+   "url": "/catalog/particles/mouseDestroy.json",
+   "description": "稀疏漂浮点",
+   "featured": false,
+   "note": "红、黄、青等多色细小圆点粒子散布在暗底中缓慢平移漂浮。",
+   "use": "适合庆典派对、轻松活泼短视频或梦幻彩屑背景。",
+   "tags": [
+    "彩色粒子",
+    "彩屑漂浮",
+    "欢快氛围"
+   ]
+  },
+  {
+   "name": "mouseDrag",
+   "file": "server/catalog/particles/mouseDrag.json",
+   "url": "/catalog/particles/mouseDrag.json",
+   "description": "密集圆点",
+   "featured": false,
+   "note": "密集的亮橙红色圆形粒子群在黑底上持续向右上方漂移浮动。",
+   "use": "适合能量流动、热烈活动宣传或动感节奏视频背景。",
+   "tags": [
+    "密集粒子",
+    "橙红圆点",
+    "粒子流向"
+   ]
+  },
+  {
+   "name": "mouseParticle2",
+   "file": "server/catalog/particles/mouseParticle2.json",
+   "url": "/catalog/particles/mouseParticle2.json",
+   "description": "中等密度圆点",
+   "featured": false,
+   "note": "微弱红点由极细灰白线条连接成多边形网络，持续形变漂移。",
+   "use": "适合网络拓扑、区块链展示或极简星座科技感背景。",
+   "tags": [
+    "点线网络",
+    "星座连线",
+    "拓扑结构"
+   ]
+  },
+  {
+   "name": "moveAngle",
+   "file": "server/catalog/particles/moveAngle.json",
+   "url": "/catalog/particles/moveAngle.json",
+   "description": "定向漂移",
+   "featured": false,
+   "note": "极稀疏的微弱红点与偶现细线沿固定斜向匀速缓慢滑行。",
+   "use": "适合深空探索、极简沉浸式叙事或暗夜悬疑底纹。",
+   "tags": [
+    "稀疏微粒",
+    "斜向滑行",
+    "极简深空"
+   ]
+  },
+  {
+   "name": "moveDistance",
+   "file": "server/catalog/particles/moveDistance.json",
+   "url": "/catalog/particles/moveDistance.json",
+   "description": "限距漂移",
+   "featured": false,
+   "note": "极暗背景下微小红点缓慢分散漂动，相互间偶有极淡细线相连。",
+   "use": "适合极暗科幻背景、微观粒子展示或低干扰视频底纹。",
+   "tags": [
+    "微弱红点",
+    "微距连线",
+    "暗调底纹"
+   ]
+  },
+  {
+   "name": "moveInside",
+   "file": "server/catalog/particles/moveInside.json",
+   "url": "/catalog/particles/moveInside.json",
+   "description": "向内漂移",
+   "featured": false,
+   "note": "红色小圆点粒子从画面四周边缘向中心区域逐渐聚拢汇聚。",
+   "use": "适合用于注意力聚焦、能量汇集或主体出场特效。",
+   "tags": [
+    "粒子汇聚",
+    "向心运动",
+    "聚集特效"
+   ]
+  },
+  {
+   "name": "moveOutside",
+   "file": "server/catalog/particles/moveOutside.json",
+   "url": "/catalog/particles/moveOutside.json",
+   "description": "向外漂移",
+   "featured": false,
+   "note": "中心密集的红色粒子群向四周外围持续发散扩张漂移。",
+   "use": "适合用于能量爆发、冲击波扩散或片头开场动效。",
+   "tags": [
+    "粒子发散",
+    "向外扩散",
+    "爆发动效"
+   ]
+  },
+  {
+   "name": "noClear",
+   "file": "server/catalog/particles/noClear.json",
+   "url": "/catalog/particles/noClear.json",
+   "description": "不清屏的拖痕",
+   "featured": false,
+   "note": "密密麻麻的五彩星形图案持续重叠叠加，逐渐填满画布。",
+   "use": "适合用于庆典狂欢、儿童趣味或热烈欢快的过场转场。",
+   "tags": [
+    "彩色星星",
+    "图层叠加",
+    "狂欢庆典"
+   ]
+  }
+ ],
+ "excluded": [
+  {
+   "name": "shadow",
+   "reason": "canvas 阴影(shadowBlur)两趟光栅化不一致,60/60 帧不同"
+  },
+  {
+   "name": "nyancat2",
+   "reason": "彩虹尾迹两趟不一致,32 帧不同"
+  },
+  {
+   "name": "textMask",
+   "reason": "canvas 文字遮罩两趟不一致,48 帧不同"
+  },
+  {
+   "name": "textMaskMultiline",
+   "reason": "同 textMask,50 帧不同"
+  }
+ ],
+ "notes_by": "模型看 6 帧拼图写的观察(note/use/tags),见 scripts/catalog-notes.mjs;description 是人写的兜底"
+}

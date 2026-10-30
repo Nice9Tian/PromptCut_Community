@@ -1,0 +1,38 @@
+{
+ "version": 1,
+ "id": "login-art-seam",
+ "name": "登录页左栏极光",
+ "width": 880,
+ "height": 1080,
+ "fps": 24,
+ "duration": 49,
+ "themeId": "midnight",
+ "media": [],
+ "tracks": [
+  {
+   "id": "t-art",
+   "name": "序列 1",
+   "clips": [
+    {
+     "id": "c-art",
+     "cardId": "pc-login-art",
+     "start": 0,
+     "end": 49,
+     "params": {
+      "cool": "#26c6e6",
+      "warm": "#e2731f",
+      "loopSeconds": 48,
+      "bg": "#111016"
+     }
+    }
+   ]
+  }
+ ],
+ "cuts": [
+  {
+   "id": "cut-1",
+   "name": "剪辑1"
+  }
+ ],
+ "activeCutId": "cut-1"
+}
