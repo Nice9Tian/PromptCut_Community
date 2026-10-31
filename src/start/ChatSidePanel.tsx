@@ -154,7 +154,7 @@ export function ChatSidePanel(props: {
               </button>
               <div className="ps-ext-transport">
                 <input type="range" className="ps-ext-scrub" data-pc="start-ext-scrub" min={0} max={Math.max(0.1, duration)} step={0.05}
-                  value={Math.min(t, duration)} aria-label="进度" onChange={(e) => actions.seek(Number(e.target.value))} />
+                  value={Math.min(t, duration)} aria-label="进度" onPointerDown={() => window.getSelection()?.removeAllRanges()} onChange={(e) => actions.seek(Number(e.target.value))} />
                 <span className="ps-ext-time">{mmss(t)} / {mmss(duration)}</span>
               </div>
             </div>

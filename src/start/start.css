@@ -333,7 +333,7 @@
  * 看上去就是「发光被截断、露出半个方框」(用户 2026-10-23 报的就是这个)。画在里面就永远裁不到。
  *
  * 不包括:拖宽窄那条缝(`.ps-grip`)自己用一条竖线表示聚焦;几个文字输入框本身不画圈,
- * 由外面那一圈(`:focus-within` 的强调色边框)表示聚焦,再画一个圈就重复了。
+ * 由外面那一圈(`:focus-within` 的强调色边框)表示聚焦,再画一个圈就重复了;两条进度滑杆(`.ps-ext-scrub`、`.ps-detail-scrub`)也不画矩形圈,改用顺着轨道和圆钮轮廓走的 `drop-shadow`(issue #31)。
  */
 .ps-prompt-send:focus-visible,
 .ps-mode-btn:focus-visible,
@@ -347,9 +347,7 @@
 .ps-ext-seg-btn:focus-visible,
 .ps-ext-undo:focus-visible,
 .ps-ext-row-main:focus-visible,
-.ps-ext-scrub:focus-visible,
 .ps-detail-play:focus-visible,
-.ps-detail-scrub:focus-visible,
 .ps-top-home:focus-visible,
 .ps-top-collapse:focus-visible,
 .ps-chat-vis:focus-visible,
@@ -916,6 +914,52 @@
 }
 .ps-detail-play:hover { filter: brightness(1.08); }
 .ps-detail-scrub { flex: 1 1 auto; min-width: 0; accent-color: var(--accent); }
+
+/*
+ * 进度滑杆(`input[type="range"]`,issue #31):
+ *   1. 全局 `src/skins/motion.css` 给所有 `[data-skin] input:focus` 挂了 `box-shadow: var(--ui-glow)`(特异性 0-2-1)。
+ *      `box-shadow` 沿着 `<input>` 的矩形盒子向外画、并把盒子内部裁空,套在细轨道外圈透明的进度条上
+ *      就会画出一个截断发光的矩形框。这里用更高特异性把 `box-shadow` 与 `outline` 清掉,改用 `drop-shadow`
+ *      顺着轨道和圆钮本身的轮廓发光。
+ *   2. 传输栏与滑杆禁掉文本选中(`user-select: none`)并把 `caret-color` 设为透明:避免拖动进度条或点偏到
+ *      滑杆上下留白时触发整段内容选中、以及浏览器选区落进 `<input type="range">` 内部在圆钮旁画出竖线光标。
+ */
+.ps-detail-head,
+.ps-detail-stage,
+.ps-detail-transport,
+.ps-stage-over,
+.ps-ext-transport,
+.ps-card-head {
+  user-select: none;
+  -webkit-user-select: none;
+}
+.ps-ext-scrub,
+.ps-detail-scrub {
+  user-select: none;
+  -webkit-user-select: none;
+  caret-color: transparent;
+  cursor: pointer;
+}
+.ps-ext-transport input.ps-ext-scrub:focus,
+.ps-detail-transport input.ps-detail-scrub:focus,
+[data-skin] input.ps-ext-scrub:focus,
+[data-skin] input.ps-detail-scrub:focus {
+  box-shadow: none;
+  outline: none;
+}
+.ps-ext-scrub:focus-visible,
+.ps-detail-scrub:focus-visible {
+  outline: none;
+  filter: drop-shadow(0 0 6px color-mix(in oklab, var(--accent) 55%, transparent));
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ps-ext-scrub:hover,
+  .ps-ext-scrub:focus,
+  .ps-detail-scrub:hover,
+  .ps-detail-scrub:focus {
+    filter: drop-shadow(0 0 6px color-mix(in oklab, var(--accent) 55%, transparent));
+  }
+}
 .ps-detail-time {
   flex: 0 0 auto;
   font-size: 12px;

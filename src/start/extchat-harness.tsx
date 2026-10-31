@@ -8,8 +8,10 @@
  * 这样能验的就是 issue #4 定下的那几条:只有最新一条 Agent 回复留全文、其余收成两行、
  * 折起来的「Agent 操作」标一句还有几条、点一下能展开,以及「甲」——上面两段照常摊开、聊天面板吃掉剩下的高度。
  * 输入框在哪(`ChatView.tsx` 的 `inPanel`)不在这支里验,那是真页面上的事。
+ * `showScrub` 打开时一并画出详细编辑与小窗两条进度滑杆(`.ps-detail-scrub`、`.ps-ext-scrub`),供 `vibe-scrub-probe.mjs` 验 issue #31。
  */
 import { useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import "../index.css";
 import "../skins/skins.css";
@@ -25,12 +27,14 @@ export interface ExtChatHarnessState {
   width: number;
   canSend: boolean;
   whyNot: string | null;
+  /** 打开时在左列与拓展栏「画面」段画出两条真实进度滑杆,供 `vibe-scrub-probe.mjs` 验收 issue #31 */
+  showScrub?: boolean;
 }
 
 const root = createRoot(document.getElementById("root")!);
 const noop = () => {};
 
-function FakeSection(props: { title: string; bodyHeight: number }) {
+function FakeSection(props: { title: string; bodyHeight: number; children?: ReactNode }) {
   return (
     <section className="ps-ext-sec" data-pc="harness-ext-sec">
       <div className="ps-card-head">
@@ -40,7 +44,7 @@ function FakeSection(props: { title: string; bodyHeight: number }) {
         </button>
       </div>
       <div className="ps-ext-body">
-        <div style={{ height: props.bodyHeight, borderRadius: 7, background: "var(--fill-subtle)" }} />
+        {props.children ?? <div style={{ height: props.bodyHeight, borderRadius: 7, background: "var(--fill-subtle)" }} />}
       </div>
     </section>
   );
@@ -48,6 +52,8 @@ function FakeSection(props: { title: string; bodyHeight: number }) {
 
 function Page({ s }: { s: ExtChatHarnessState }) {
   const [text, setText] = useState("");
+  const [detailT, setDetailT] = useState(20);
+  const [extT, setExtT] = useState(20);
   const area = useRef<HTMLTextAreaElement>(null);
   const composer = (
     <Composer
@@ -69,9 +75,48 @@ function Page({ s }: { s: ExtChatHarnessState }) {
       <div className="ps-body-row">
         <main className="ps-main ps-chat">
           <div className="ps-chat-row">
-            <div className="ps-chat-col" data-pc="harness-chat-col" />
+            <div className="ps-chat-col" data-pc="harness-chat-col">
+              {s.showScrub && (
+                <div className="ps-detail" data-pc="start-detail">
+                  <header className="ps-detail-head">
+                    <span className="ps-detail-title">详细编辑</span>
+                    <span className="ps-detail-sub">时间轴可调；右键一张卡可以引用进输入框</span>
+                    <span className="ps-rail-spacer" />
+                    <button type="button" className="ps-mode-btn" data-pc="start-enter-traditional">进入传统式</button>
+                    <button type="button" className="ps-ghost-btn" data-pc="start-detail-close">收起</button>
+                  </header>
+                  <div className="ps-detail-stage">
+                    <div className="ps-stage ps-detail-screen" data-pc="start-detail-stage" style={{ background: "linear-gradient(135deg, #111 40%, #2b2a33 100%)" }} />
+                  </div>
+                  <div className="ps-detail-transport">
+                    <button type="button" className="ps-detail-play" data-pc="start-detail-play" aria-label="播放">▶</button>
+                    <button type="button" className="ps-ghost-btn" data-pc="start-detail-rewind">回到开头</button>
+                    <input type="range" className="ps-detail-scrub" data-pc="start-detail-scrub" min={0} max={60} step={0.05}
+                      value={detailT} aria-label="进度"
+                      onPointerDown={() => window.getSelection()?.removeAllRanges()}
+                      onChange={(e) => setDetailT(Number(e.target.value))} />
+                    <span className="ps-detail-time">{detailT.toFixed(2)} s / 60.00 s</span>
+                  </div>
+                </div>
+              )}
+            </div>
             <aside className="ps-ext" data-pc="start-ext" style={{ flexBasis: `${s.width}px` }}>
-              <FakeSection title="画面" bodyHeight={150} />
+              <FakeSection title="画面" bodyHeight={150}>
+                {s.showScrub ? (
+                  <div className="ps-stage ps-ext-frame" data-pc="start-ext-stage" style={{ background: "linear-gradient(135deg, #111 40%, #d8d0c5 60%)" }}>
+                    <div className="ps-stage-over">
+                      <button type="button" className="ps-ext-play" data-pc="start-ext-play" aria-label="播放">▶</button>
+                      <div className="ps-ext-transport">
+                        <input type="range" className="ps-ext-scrub" data-pc="start-ext-scrub" min={0} max={60} step={0.05}
+                          value={extT} aria-label="进度"
+                          onPointerDown={() => window.getSelection()?.removeAllRanges()}
+                          onChange={(e) => setExtT(Number(e.target.value))} />
+                        <span className="ps-ext-time">00:{String(Math.floor(extT)).padStart(2, "0")} / 01:00</span>
+                      </div>
+                    </div>
+                  </div>
+                ) : undefined}
+              </FakeSection>
               <FakeSection title="修改前 / 修改后" bodyHeight={40} />
               <ExtChatPanel messages={s.messages} composer={composer} whyNot={s.whyNot} onBack={noop} />
             </aside>
