@@ -20,7 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PROBE_CHROME_ARGS } from './probe-chrome.mjs';
-import { startMobileEnv } from './lib/mobile-env.mjs';
+import { startMobileEnv, gateClear } from './lib/mobile-env.mjs';
 
 const argv = process.argv.slice(2);
 const arg = (name, dflt) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : dflt; };
@@ -51,6 +51,7 @@ const clipOf = (page, id) => store(page, 'return S.getState().project.tracks.fla
 const textOf = (page, sel) => page.evaluate((s) => document.querySelector(s)?.innerText ?? null, sel);
 const clickSel = (page, sel) => page.evaluate((s) => { const e = document.querySelector(s); if (!e || e.disabled) return false; e.click(); return true; }, sel);
 const tap = async (page, sel) => {
+  await gateClear(page);
   const r = await page.evaluate((s) => { const e = document.querySelector(s); if (!e) return null; e.scrollIntoView({ block: 'nearest' }); const q = e.getBoundingClientRect(); return { x: q.x + q.width / 2, y: q.y + q.height / 2 }; }, sel);
   if (!r) throw new Error(`点不到 ${sel}`);
   await page.touchscreen.tap(r.x, r.y);
@@ -176,6 +177,8 @@ try {
   step('D5-restored', { restored: restored && { label: restored.label }, note: await textOf(M, '[data-pcm="cf-note"]') });
   // 剩下的(c1 透明度、c2 删除)全勾 → 删除选中:云端保持现状
   await M.evaluate(() => { for (const i of document.querySelectorAll('[data-pcm="cf-thing"] .cf-head input')) if (!i.checked) i.click(); });
+  // 勾选之后面板要重画,等「删除选中」可点
+  await M.waitForSelector('[data-pcm="cf-drop"]:not([disabled])', { timeout: 5000 });
   await sleep(300);
   await tap(M, '[data-pcm="cf-drop"]');
   await sleep(1200);

@@ -34,6 +34,18 @@ import { resolveMaxOutput } from '../harness/model-limits.mjs';
 import { createCodeCacheStore } from '../tools/code-cache.mjs';
 import { createRetryingFetch } from '../harness/retry-fetch.mjs';
 import { outputSpeedBookFor, withOutputSpeed } from '../harness/output-speed.mjs';
+import { BUILTIN_SKILLS_DIR, loadSkillCatalog, skillCatalogPrompt } from '../tools/agent-skills.mjs';
+
+/**
+ * 本机用户自己放的技能在哪(server/tools/agent-skills.mjs):ai.json 同目录的 skills/。
+ * `opts.skillsDir` 写 'local' 时用它(本机编辑器那条路这样传);云端宿主给自己的绝对路径;都没给就只有内置技能。
+ */
+export function localSkillsDir() {
+  const dir = process.env.PROMPTCUT_AI_CONFIG
+    ? path.dirname(process.env.PROMPTCUT_AI_CONFIG)
+    : path.join(process.env.LOCALAPPDATA || os.homedir(), 'promptcut');
+  return path.join(dir, 'skills');
+}
 
 /**
  * 本机的速度记录放哪(按速度设单次输出上限,harness/output-speed.mjs):和 ai.json、审查教训同目录。
@@ -349,11 +361,21 @@ export function startRun(opts) {
     } catch (e) {
       safeOnEvent({ type: 'status', text: `代码块空间用不了:${e?.message || e}` });
     }
+    /*
+     * 技能(issue 46):每一轮开头扫一次,外部根排在内置的前面,同名时外部的算数。
+     * 清单拼在系统提示词后面,一个技能都没有时系统提示词不变。
+     */
+    const skillsDir = opts.skillsDir === 'local' ? localSkillsDir()
+      : (typeof opts.skillsDir === 'string' && path.isAbsolute(opts.skillsDir) ? opts.skillsDir : null);
+    const { skills, skipped: skippedSkills } = loadSkillCatalog({ dirs: [...(skillsDir ? [skillsDir] : []), BUILTIN_SKILLS_DIR] });
+    safeOnEvent({ type: 'diagnostic', stage: 'skills', data: { skills: skills.map((s) => s.name), skipped: skippedSkills } });
+    const skillsNote = skillCatalogPrompt(skills);
+    const systemPrompt = skillsNote ? `${opts.systemPrompt ?? ''}${skillsNote}` : opts.systemPrompt;
     // localTools: false 时不给读写本地文件的 text_editor;toolFilter 是只交给模型的工具名单(托管档的开放清单)
-    const tools = await buildTools({ callTool: opts.callTool, workspaceDir: opts.cwd, onEvent: safeOnEvent, localTools: opts.localTools !== false, only: opts.toolFilter ?? null, codeCache });
+    const tools = await buildTools({ callTool: opts.callTool, workspaceDir: opts.cwd, onEvent: safeOnEvent, localTools: opts.localTools !== false, only: opts.toolFilter ?? null, codeCache, skills });
     const agent = new Agent({ 
       provider, 
-      system: opts.systemPrompt, 
+      system: systemPrompt,
       tools, 
       maxIterations,
       deepAuto: !!opts.deepAuto,
@@ -418,7 +440,7 @@ export function startRun(opts) {
     try {
       const result = useLoop
         ? await runReviewLoop({
-            provider, tools, system: opts.systemPrompt, userText: opts.prompt,
+            provider, tools, system: systemPrompt, userText: opts.prompt,
             maxIterations, deepAuto: !!opts.deepAuto, maxInputTokens: agent.maxInputTokens,
             signal: abortController.signal, history, lessonsStore: lessonsStore(), codeCache,
             onEvent: (ev) => { for (const e of presentLoopEvent(ev)) safeOnEvent(e); },

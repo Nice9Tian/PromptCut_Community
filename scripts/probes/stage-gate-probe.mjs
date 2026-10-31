@@ -27,7 +27,7 @@
  *   S13 两个标签页:第一个还开着时开第二个,第二个不把第一个当成崩了
  *   S14 只读查看口:`?gates=1` 显示档位、舞台闸门、崩溃记录,不含凭证
  *   S15 最低一档(`?tier=low`):播放时卡被抑制、不即时渲染;停下后逐层追一帧画好(不设时限)
- *   S16 基准卡跑不动(舞台 CPU 降速 60 倍):进最低一档「低配模式」
+ *   S16 基准卡跑不动(舞台 CPU 降速 30 倍;再慢就超过气泡的等待上限,也容易测不出结论):进最低一档「低配模式」
  *   S17 测某张卡时杀掉页面进程 → 重新载入这张卡在测崩的卡里、不再测,直接当重卡
  *   S18 载入素材原尺寸时(留了记录的那段时间)杀掉 → 重新载入解码上限调低一级
  *   S19 解码上限:浏览器只说解得动 720p(仿弱设备)→ 上限 720p;查看口里看得到
@@ -424,10 +424,10 @@ try {
     const page = await newPage('desktop');
     await enter(page);
     await waitDone(page);
-    // 舞台闸门停在「各一套渲染器就绪」那一步,给两个舞台降速 60 倍,再放行:走完之后测基准卡
+    // 舞台闸门停在「各一套渲染器就绪」那一步,给两个舞台降速 30 倍,再放行:走完之后测基准卡
     await reload(page, 'gateHold=separate-ready');
     await until(async () => { const x = await gates(page); return x?.step?.kind === 'stage' && x.step.what === 'separate-ready' ? x : null; }, 90_000, 100);
-    await throttleAll(page, 60);
+    await throttleAll(page, 30);
     await page.evaluate(() => window.__pcGateRelease?.());
     const g = await until(async () => { const x = await gates(page); return x?.tier?.benchmark && x.tier.benchmark !== 'pending' ? x : null; }, 240_000, 500);
     await throttleAll(page, 1);

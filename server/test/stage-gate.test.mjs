@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
-import { stageRequestAllowed, STAGE_ALLOW } from '../stage-gate.mjs';
+import { registerStageAllow, stageRequestAllowed, STAGE_ALLOW } from '../stage-gate.mjs';
 import { STAGE_CLIENT_HEADER } from '../http-guard.mjs';
 import { freePortRange } from './free-ports.mjs';
 
@@ -319,4 +319,14 @@ test('桌面版舞台锁死：来自舞台的按哈希读素材只放行当前�
   assert.equal(stageRequestAllowed('GET', `/@media/${hashNotInProject}`, { projectMediaHashes: hashes }), false);
   assert.equal(stageRequestAllowed('HEAD', `/@media/${hashNotInProject}.mp4`, { projectMediaHashes: hashes }), false);
   assert.equal(stageRequestAllowed('GET', `/@media/${hashNotInProject}/pcm`, { projectMediaHashes: hashes }), false);
+});
+
+test('registerStageAllow:构建清单多给的规则算数,清掉就回到缺省', () => {
+  const url = '/extra/mod.ts';
+  assert.equal(stageRequestAllowed('GET', url), false);
+  registerStageAllow([{ methods: ['GET'], prefix: '/extra/', who: '测试', why: '测试' }]);
+  assert.equal(stageRequestAllowed('GET', url), true);
+  assert.equal(stageRequestAllowed('POST', url), false, '方法照规则判');
+  registerStageAllow([]);
+  assert.equal(stageRequestAllowed('GET', url), false);
 });

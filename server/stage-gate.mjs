@@ -57,6 +57,17 @@ export const STAGE_ALLOW = [
   { methods: READ, exact: "/api/prerender/info", who: "舞台里取生成快照与轨道流的那一层", why: "问预渲染进程在哪个端口,只读(预渲染进程侧由 prerender-gate 拦死除流与快照字节外的一切请求)" },
 ];
 
+const EXTRA_ALLOW = Symbol.for("promptcut.stage-allow");
+
+/**
+ * 闭源版的页面脚本多引几个目录,放行规则由它的构建清单给(`buildExtensions.stageAllow`),公开侧不写这些路径。
+ * 记在 `globalThis` 上:本模块在 vite 配置的打包结果里和编辑器进程里各有一份,两道闸要看同一张表。
+ * @param {typeof STAGE_ALLOW} rules
+ */
+export function registerStageAllow(rules) {
+  globalThis[EXTRA_ALLOW] = rules;
+}
+
 /** 匹配 /@media/<hash>、/@media/<hash>.<ext>、/@media/<hash>/pcm */
 const MEDIA_HASH_RE = /^\/@media\/([0-9a-fA-F]{64})(?:\.[a-zA-Z0-9]+)?(?:\/pcm)?$/i;
 
@@ -101,7 +112,7 @@ export function stageRequestAllowed(method, url, opts = {}) {
   }
 
   const p = apiPath(raw);
-  for (const rule of STAGE_ALLOW) {
+  for (const rule of [...STAGE_ALLOW, ...(globalThis[EXTRA_ALLOW] ?? [])]) {
     if (!!rule.upgrade !== !!opts.upgrade) continue;
     if (!rule.methods.includes(m)) continue;
     if (rule.exact !== undefined ? p !== rule.exact : !p.startsWith(rule.prefix)) continue;

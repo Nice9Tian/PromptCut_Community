@@ -17,7 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PROBE_CHROME_ARGS } from './probe-chrome.mjs';
-import { startMobileEnv, emptyProject, solidPng } from './lib/mobile-env.mjs';
+import { startMobileEnv, emptyProject, solidPng, gateClear } from './lib/mobile-env.mjs';
 
 const argv = process.argv.slice(2);
 const arg = (name, dflt) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : dflt; };
@@ -45,7 +45,7 @@ async function until(what, fn, ms = 15_000, every = 200) {
 }
 const shot = (page, name) => page.screenshot({ path: path.join(OUT, `${name}.png`) }).catch(() => {});
 const rect = (page, sel) => page.evaluate((s) => { const e = document.querySelector(s); if (!e) return null; e.scrollIntoView({ block: 'nearest', inline: 'nearest' }); const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; }, sel);
-const tap = async (page, sel) => { const r = await rect(page, sel); if (!r) throw new Error(`点不到 ${sel}`); await page.touchscreen.tap(r.x + r.w / 2, r.y + r.h / 2); await sleep(300); };
+const tap = async (page, sel) => { await gateClear(page); const r = await rect(page, sel); if (!r) throw new Error(`点不到 ${sel}`); await page.touchscreen.tap(r.x + r.w / 2, r.y + r.h / 2); await sleep(300); };
 const tapText = async (page, scope, label) => {
   const r = await page.evaluate((s, l) => { const b = [...document.querySelectorAll(`${s} button`)].find((x) => x.textContent.trim() === l); if (!b) return null; const q = b.getBoundingClientRect(); return { x: q.x + q.width / 2, y: q.y + q.height / 2 }; }, scope, label);
   if (!r) throw new Error(`点不到「${label}」`);
@@ -143,6 +143,9 @@ try {
   const undoReorder = await store(A, 'S.actions.undo(); return true;');
   const idsUndo = await until('撤销换序一步到位', async () => { const ids = await mainIds(A); return ids[0] === ids0[0] ? ids : null; }, 5000);
   check(JSON.stringify(idsUndo) === JSON.stringify(ids0), '撤销:换序整次一步撤回', idsUndo);
+  // 撤销之后按钮要等下一次渲染才可点,点早了什么都不发生
+  await A.waitForSelector('[data-pcm="redo"]:not([disabled])', { timeout: 5000 });
+  await sleep(300);
   await tap(A, '[data-pcm="redo"]');
   const idsRedo = await until('重做换序', async () => { const ids = await mainIds(A); return ids[0] === ids0[2] ? ids : null; }, 5000);
   step('reorderUndoRedo', { undo: idsUndo, redo: idsRedo, undoReorder });

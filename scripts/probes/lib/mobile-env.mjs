@@ -112,6 +112,9 @@ export async function startMobileEnv({ dist, basePort, base2Port, docPort, asset
   return { origin, origin2, proxy, proxy2, made, docDirect, seed, newPage, enter, close, creator, combo };
 }
 
+/** 等全屏的「正在测量卡片」遮罩退场:加卡之后它会盖住整页,这时点什么都落在遮罩上 */
+export const gateClear = (page, ms = 60_000) => page.waitForFunction(() => !document.querySelector('.pc-probe-gate'), { timeout: ms }).catch(() => {});
+
 /** 一份空项目(尺寸、时长同「新建项目」的缺省),两条序列、两条剪辑 */
 export function emptyProject(name) {
   return {

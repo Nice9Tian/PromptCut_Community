@@ -21,7 +21,7 @@
  *   - 闸与用量记录(`gate.mjs`、`usage.mjs`);
  *   - 对话存储(`conversations.mjs`)与预渲染重试发布(`render-request.mjs`)。
  * 本文件不引用 `src/`。
- */
+ */
 import { createHeavyRenderGate, createRenderClipPicker, FLAT_KERNEL_MODULE, loadHeavyJudge } from './render-clips.mjs';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import path from 'node:path';
@@ -672,6 +672,8 @@ export function createHostedAgentService({
         ...(dataDir ? { codeCacheDir: path.join(dataDir, 'tenants', identity.projectId, 'code-cache') } : {}),
         // 输出速度记录(按实测速度设单次输出上限,2026-10-22):和用量流水同目录
         ...(dataDir ? { outputSpeedFile: path.join(dataDir, 'usage', 'model-speed.json') } : {}),
+        // 托管方放的技能(issue 46):和模型配置同在 config/ 下
+        ...(dataDir ? { skillsDir: path.join(dataDir, 'config', 'skills') } : {}),
         sessionKey: `cloud-${ownerKeyOf(identity).slice(0, 16)}-${conversationId}`,
         maxProjectBytes: limits.maxProjectBytes,
         toolTimeoutMs: limits.toolMs,
@@ -695,8 +697,8 @@ export function createHostedAgentService({
           if (finished) return;
           let out = ev;
           if (ev.type === 'diagnostic') {
-            // 托管档只发配置与请求、回应的计数,不带模型接口的地址(契约第 2.4 节)
-            if (ev.stage !== 'configuration' && ev.stage !== 'request' && ev.stage !== 'response') return;
+            // 托管档只发配置与请求、回应的计数,不带模型接口的地址(契约第 2.4 节);技能清单只有名字和错误代号,放了不生效时要看得到
+            if (ev.stage !== 'configuration' && ev.stage !== 'request' && ev.stage !== 'response' && ev.stage !== 'skills') return;
           } else if (ev.type === 'error') {
             out = typeof ev.code === 'string' ? ev : { ...ev, code: 'model', message: `模型调用失败:${scrub(ev.message)}` };
             sawError = out;

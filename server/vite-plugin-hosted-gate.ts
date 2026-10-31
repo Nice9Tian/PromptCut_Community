@@ -19,6 +19,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Plugin } from "vite";
+import { registerStageAllow } from "./stage-gate.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = existsSync(path.join(here, "..", "package.json"))
@@ -46,6 +47,8 @@ if (existsSync(manifestFile)) {
 }
 
 export const buildExtensions: Record<string, any> = Object.freeze({ ...loaded });
+
+registerStageAllow(buildExtensions.stageAllow?.rules ?? []);
 
 export function hostedGatePlugin(): Plugin {
   if (typeof buildExtensions.hostedGate?.createPlugin === "function") {
