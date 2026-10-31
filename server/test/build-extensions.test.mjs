@@ -47,14 +47,14 @@ const withEnv = async (value, fn) => {
   }
 };
 
-test('BEXT1 不设环境变量:按仓库根下的 cloud/ 找,本仓库里找得到五项构建扩展', { skip: NO_CLOUD }, async () => {
+test('BEXT1 不设环境变量:按仓库根下的 cloud/ 找,本仓库里找得到六项构建扩展', { skip: NO_CLOUD }, async () => {
   const mod = await withEnv(null, () => loadFresh('default'));
   const table = mod.buildExtensions;
   assert.ok(table && typeof table === 'object' && !Array.isArray(table), '导出的应当是对象');
   assert.deepEqual(
     Object.keys(table).sort(),
-    ['hostedGate', 'hostedRender', 'mediaStorage', 'recoveryHttp', 'sourceGate'],
-    '本仓库 cloud/build/manifest.mjs 应当登记这五项构建扩展',
+    ['hostedGate', 'hostedRender', 'mediaStorage', 'recoveryHttp', 'sourceGate', 'stageAllow'],
+    '本仓库 cloud/build/manifest.mjs 应当登记这六项构建扩展',
   );
   const plugin = mod.hostedGatePlugin();
   assert.equal(plugin.name, 'promptcut-hosted-gate');
@@ -127,7 +127,7 @@ test('BEXT7 加载入口被拷贝到系统临时目录求值时,回落到 proces
     const mod = await withEnv(null, () => import(`${pathToFileURL(tmpEntry).href}?case=tmpcopy`));
     assert.deepEqual(
       Object.keys(mod.buildExtensions).sort(),
-      ['hostedGate', 'hostedRender', 'mediaStorage', 'recoveryHttp', 'sourceGate'],
+      ['hostedGate', 'hostedRender', 'mediaStorage', 'recoveryHttp', 'sourceGate', 'stageAllow'],
     );
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
