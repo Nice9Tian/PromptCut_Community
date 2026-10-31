@@ -19,7 +19,6 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Plugin } from "vite";
-import { registerStageAllow } from "./stage-gate.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = existsSync(path.join(here, "..", "package.json"))
@@ -48,7 +47,8 @@ if (existsSync(manifestFile)) {
 
 export const buildExtensions: Record<string, any> = Object.freeze({ ...loaded });
 
-registerStageAllow(buildExtensions.stageAllow?.rules ?? []);
+// 舞台闸的放行规则，`stage-gate.mjs` 按这个键读。这里不 import 它：这个入口可能被拷到临时目录求值，相对路径找不到
+(globalThis as Record<symbol, unknown>)[Symbol.for("promptcut.stage-allow")] = buildExtensions.stageAllow?.rules ?? [];
 
 export function hostedGatePlugin(): Plugin {
   if (typeof buildExtensions.hostedGate?.createPlugin === "function") {
