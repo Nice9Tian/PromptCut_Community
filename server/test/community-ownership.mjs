@@ -16,7 +16,7 @@ import path from 'node:path';
  * ──────────────────────────────────────────────────────────────────────────────
  * 第三类：局域网（`lan`）。用户 2026-10-28 定的。
  *
- * 后面要出一个 **Lite 版：只有本地，没有局域网**，而且 **Lite 从社区版裁出来、不另开仓库**。
+ * 后面要出一个 **Lite 版：只有本地，没有局域网**，由脚本从社区版生成，放在自己的仓库里。
  * 所以共享树内部还要再分一刀：
  *
  *   核心（core）   本地编辑那一套。Lite、社区版、私有版都有
@@ -149,7 +149,7 @@ const LAN_FILE_SET = new Set(LAN_FILES);
 export const isLan = (rel) => LAN_FILE_SET.has(rel) || LAN_DIRS.some((d) => rel.startsWith(d));
 
 /**
- * 导出社区版时留在私有仓库的路径（总纲第三节分区表、第八节）。`cloud/` 之外还有这些：
+ * 只在私有仓库里的路径（总纲第三节分区表、第八节）。`cloud/` 之外还有这些：
  * 内部计划与报告、历史归档、内部发版验收、本机原型、内部运维工具。
  */
 export const PRIVATE_PREFIXES = Object.freeze([
@@ -162,7 +162,6 @@ export const PRIVATE_PREFIXES = Object.freeze([
 ]);
 
 export const PRIVATE_FILES = Object.freeze([
-  'README.md',                                        // 社区版有自己的 README
   'make-api-share.bat', 'report-inbox.bat', 'tools/make-api-share.py',
   'proto.html', 'pc_vis_test.png',
   // 内部发版验收运行器的单测（测的是 scripts/acceptance/，社区版不带）
@@ -174,10 +173,10 @@ export const PRIVATE_FILES = Object.freeze([
 
 const PRIVATE_FILE_SET = new Set(PRIVATE_FILES);
 
-/** 导出社区版时带不带走这个路径 */
+/** 这个路径归不归社区版。私有仓库只能在这之外加文件 */
 export const isPublicPath = (rel) => !PRIVATE_FILE_SET.has(rel) && !PRIVATE_PREFIXES.some((d) => rel.startsWith(d));
 
-/** 列出会进社区版的全部文件（正斜杠）：git 跟踪的和还没提交的新文件，构建产物与被忽略的本机文件不算 */
+/** 列出属于社区版的全部文件（正斜杠）：git 跟踪的和还没提交的新文件，构建产物与被忽略的本机文件不算 */
 export function listPublicFiles(root) {
   const out = execFileSync('git', ['ls-files', '-co', '--exclude-standard'], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, windowsHide: true });
   return out.split(/\r?\n/).filter((rel) => rel && isPublicPath(rel)).sort();

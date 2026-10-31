@@ -16,7 +16,7 @@ If your change requires the semantics themselves to change, **open an issue and 
 
 ## Which areas accept PRs right now
 
-The community edition and the closed commercial edition are two editions of one codebase, and upstream merges community changes back. In areas where **the file contents are identical on both sides**, your PR merges back cleanly. In areas where the local/cloud seam has not been pulled apart yet, merging back takes manual porting, so for now those take issues but not PRs.
+This repository is upstream: the closed commercial edition and the Lite edition both inherit its code, so changes merged into `main` carry over. All the areas below take PRs.
 
 | Area | Status |
 |---|---|
@@ -51,4 +51,4 @@ If your PR touches anything visual (rendering, cards, preview, export), **includ
 
 ## Licensing
 
-Your contribution is licensed under [MIT](LICENSE). That means upstream may also use it in the closed commercial edition (MIT permits this; your attribution is kept). Opening a PR means you agree to that.
+Your contribution is licensed under [MIT](LICENSE). That means it also goes into the closed commercial edition, which inherits this code (MIT permits this; your attribution is kept). Opening a PR means you agree to that.
