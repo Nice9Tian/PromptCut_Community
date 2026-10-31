@@ -7,6 +7,8 @@ on:
 
 jobs:
   test:
+    # 闭源版继承这份代码，也带着这个文件；私有仓库里不跑。
+    if: ${{ !github.event.repository.private }}
     # 这个项目的脚本按 Windows 写（PowerShell、windowsHide、本机 Chrome 路径），
     # 所以 CI 也在 Windows 上跑。Linux 没有验证过。
     runs-on: windows-latest
