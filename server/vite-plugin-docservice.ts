@@ -221,10 +221,11 @@ export function docservicePlugin(): Plugin {
       // 局域网发现的主机端(契约 `docs/plan/shared-project-contract.md` 第 4 节):项目建成、删掉时由共享端点回调
       const lan = createLanHosting(httpServer);
       try {
-        const [{ createSharedDocService }, { credentialStoreFor }, { localDeviceInfo }] = await Promise.all([
+        const [{ createSharedDocService }, { credentialStoreFor }, { localDeviceInfo }, { recoveryHttp }] = await Promise.all([
           import("./docservice/shared-service.mjs"),
           import("./auth/store.mjs"),
           import("./auth/device.mjs"),
+          import("./recovery/http.mjs"),
         ]);
         const dataDir = prepareLocalDocumentDir(server.config.root);
         // 凭证存储:进程内单例,素材服务按同一个目录取到同一份
@@ -257,7 +258,9 @@ export function docservicePlugin(): Plugin {
         service = built.service;
         handleShared = built.handleHttp;
         const recDir = recoveryDir(server.config.root);
-        if (typeof buildExtensions.recoveryHttp?.createMiddleware === "function") server.middlewares.use(buildExtensions.recoveryHttp.createMiddleware({
+        // 局域网项目的开启、刷新、重开都走它;闭源版的表在此之上多托管登记与搬迁
+        const createRecovery = typeof buildExtensions.recoveryHttp?.createMiddleware === "function" ? buildExtensions.recoveryHttp.createMiddleware : recoveryHttp;
+        server.middlewares.use(createRecovery({
           dir: recDir, dataDir, store, device: localDeviceInfo(),
           assets: { media: { root: mediaDir(server.config.root), shard: false }, snap: { root: artifactStoreDir(server.config.root, "snap"), shard: false }, px: { root: artifactStoreDir(server.config.root, "px"), shard: false } },
           reloadSpace: built.service.reloadSpace,

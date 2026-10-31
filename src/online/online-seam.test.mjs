@@ -13,6 +13,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import {
@@ -114,6 +115,24 @@ test("registerOnlineExtensions 与 cloud/online/manifest.ts（若存在）装配
     // 要验「装上之后」就显式给目录 —— 这是不变量 2 里「Node 侧从调用方拿」的那种形式
     const loaded = await loadOnlineExtensions({ cloudDir: cloudBase, forceReload: true });
     assert.equal(loaded, true);
+  }
+});
+
+test("loadOnlineExtensions 要等清单的 ready：返回了就是能用了", async () => {
+  // 2026-10-31：恢复协调器是清单里异步注册的，原来这里不等，`ensureOnlineExtensionsLoaded().then(start)`
+  // 打在公开侧的空实现上，真实现注册之后没人再叫一次，页面永远停在「正在恢复原协作房间」。
+  resetOnlineExtensionsForTest();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "online-ready-"));
+  try {
+    fs.mkdirSync(path.join(dir, "online"));
+    fs.writeFileSync(path.join(dir, "online", "manifest.ts"),
+      "export const manifest = { ready: new Promise((r) => setTimeout(() => { globalThis.__onlineReady = true; r(); }, 30)) };\n");
+    assert.equal(await loadOnlineExtensions({ cloudDir: dir, forceReload: true }), true);
+    assert.equal(globalThis.__onlineReady, true);
+  } finally {
+    delete globalThis.__onlineReady;
+    fs.rmSync(dir, { recursive: true, force: true });
+    resetOnlineExtensionsForTest();
   }
 });
 

@@ -191,21 +191,23 @@ try {
     out.V4 = { bar, ta, chip, x, ph };
     check(bar && ta && bar.b <= ta.y + 0.5, 'V4 引用标记条在输入框上方', { bar, ta });
     check(ph === '@沙滩奔跑.mp4 想怎么改?', 'V4 带引用时输入框的提示是「@名字 想怎么改?」', ph);
-    // 演示稿
-    const D = await phone();
-    await D.goto(pathToFileURL(DEMO).href, { waitUntil: 'load' });
-    await D.evaluate(() => { openProject('p1'); pageAgent(); });
-    await sleep(500);
-    await D.screenshot({ path: path.join(OUT, 'demo-view-chat.png') });
-    await D.evaluate(() => { setRef('沙滩奔跑.mp4'); });
-    await sleep(300);
-    const dr = await D.evaluate(() => { const r = (s) => { const e = document.querySelector(s); const b = e.getBoundingClientRect(); return { x: b.x, y: b.y, w: b.width, h: b.height, b: b.bottom }; }; return { chip: r('.refbar .ref'), x: r('.refbar .ref b'), bar: r('.refbar'), input: r('.in-row input'), composer: r('.composer') }; });
-    await D.screenshot({ path: path.join(OUT, 'demo-view-quote.png') });
-    out.V4.demo = dr;
-    check(near(chip.h, dr.chip.h) && near(x.w, dr.x.w) && near(x.h, dr.x.h) && near(chip.x, dr.chip.x) && near(chip.y, dr.chip.y), 'V4 引用标记的尺寸与位置同演示稿(高、✕ 18×18、左上角)', { mine: chip, demo: dr.chip });
-    check(near(bar.y, dr.bar.y) && near(ta.h, dr.input.h) && near(ta.y, dr.input.y), 'V4 标记条与输入框的位置同演示稿', { mine: { bar, ta }, demo: dr });
-    for (const [mine, demo] of [['view-chat', 'view-chat'], ['view-quote', 'view-quote']]) sideBySide(path.join(OUT, `${mine}.png`), path.join(OUT, `demo-${demo}.png`), path.join(OUT, `side-${demo}.png`));
-    await D.browserContext().close();
+    // 演示稿在 prototypes/,社区版没有
+    if (fs.existsSync(DEMO)) {
+      const D = await phone();
+      await D.goto(pathToFileURL(DEMO).href, { waitUntil: 'load' });
+      await D.evaluate(() => { openProject('p1'); pageAgent(); });
+      await sleep(500);
+      await D.screenshot({ path: path.join(OUT, 'demo-view-chat.png') });
+      await D.evaluate(() => { setRef('沙滩奔跑.mp4'); });
+      await sleep(300);
+      const dr = await D.evaluate(() => { const r = (s) => { const e = document.querySelector(s); const b = e.getBoundingClientRect(); return { x: b.x, y: b.y, w: b.width, h: b.height, b: b.bottom }; }; return { chip: r('.refbar .ref'), x: r('.refbar .ref b'), bar: r('.refbar'), input: r('.in-row input'), composer: r('.composer') }; });
+      await D.screenshot({ path: path.join(OUT, 'demo-view-quote.png') });
+      out.V4.demo = dr;
+      check(near(chip.h, dr.chip.h) && near(x.w, dr.x.w) && near(x.h, dr.x.h) && near(chip.x, dr.chip.x) && near(chip.y, dr.chip.y), 'V4 引用标记的尺寸与位置同演示稿(高、✕ 18×18、左上角)', { mine: chip, demo: dr.chip });
+      check(near(bar.y, dr.bar.y) && near(ta.h, dr.input.h) && near(ta.y, dr.input.y), 'V4 标记条与输入框的位置同演示稿', { mine: { bar, ta }, demo: dr });
+      for (const [mine, demo] of [['view-chat', 'view-chat'], ['view-quote', 'view-quote']]) sideBySide(path.join(OUT, `${mine}.png`), path.join(OUT, `demo-${demo}.png`), path.join(OUT, `side-${demo}.png`));
+      await D.browserContext().close();
+    }
   }
 
   /* ================================================================ V5 开始页 */

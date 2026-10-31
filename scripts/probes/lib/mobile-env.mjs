@@ -1,6 +1,6 @@
 /**
  * 手机版探针共用的本机环境(`mobile-ui-probe.mjs`、`mobile-business-probe.mjs`):
- * 本机托管组合(文档服务 + 素材服务,数据目录在系统临时目录)+ 仿 nginx 的代理(`hosted-proxy.mjs`,三个同站跨源的源)+ 在线构建当页面,
+ * 本机文档服务 + 素材服务(`probe-services.mjs`,数据目录在系统临时目录)+ 仿 nginx 的代理(`hosted-proxy.mjs`,三个同站跨源的源)+ 在线构建当页面,
  * 不连任何远端。凭口令的共享项目经「刷新后回到项目」那条产品路径进入(`online-resume-entry.mjs`)。
  *
  *   const env = await startMobileEnv({ dist, basePort, docPort, assetPort, name });
@@ -15,7 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import WebSocket from 'ws';
-import { startHostedCombo } from '../../../cloud/server/hosted/combo.mjs';
+import { startProbeServices } from './probe-services.mjs';
 import './localhost-dns.cjs';
 import { startHostedProxy, proxyOrigins } from './hosted-proxy.mjs';
 import { resumeRecord, plantResume } from './online-resume-entry.mjs';
@@ -34,11 +34,11 @@ export const DEVICES = {
   },
 };
 
-export async function startMobileEnv({ dist, basePort, base2Port, docPort, assetPort, name, log = () => {} }) {
+export async function startMobileEnv({ dist, basePort, base2Port, docPort, assetPort, name, log = () => {}, startServices = startProbeServices }) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mobile-probe-hosted-'));
   const origin = proxyOrigins(basePort).editor;
   const docDirect = `http://127.0.0.1:${docPort}`;
-  const combo = await startHostedCombo({
+  const combo = await startServices({
     dataDir, docPort, assetPort, host: '127.0.0.1',
     docPublicUrl: `ws://pc.localhost:${basePort}/hosted/`, assetPublicUrl: `${origin}/media/api/asset`, log,
   });

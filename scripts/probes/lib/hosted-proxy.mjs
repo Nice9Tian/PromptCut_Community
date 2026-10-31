@@ -1,6 +1,6 @@
 /**
- * 本机仿 nginx 的代理:把在线构建与本机托管组合摆成与托管端同样的三个源(编辑器页 + 两个舞台),探针与本机隔离托管组合用。
- * 与 `server/hosted/deploy/nginx-site-promptcut*.conf` 等价;**策略头、`/media-s/` 的判定都取自 `src/online/stagePolicy.mjs`**
+ * 本机仿 nginx 的代理:把在线构建与本机的文档、素材服务摆成线上那样的三个源(编辑器页 + 两个舞台),探针用。
+ * **策略头、`/media-s/` 的判定都取自 `src/online/stagePolicy.mjs`**
  * (nginx 的两个片段由同一个文件生成),不在这里另抄一份。
  *
  *   import { startHostedProxy } from './hosted-proxy.mjs';
@@ -29,7 +29,7 @@
  *   - `"none"`:对照组 —— 路由同 `full`,但舞台源不带内容安全策略,舞台入口也回不带 `<meta>` 的 index.html(验证缺少策略时自检拒绝)。
  *   - `"csp-only"`:兼容旧选项名，当前与 full 相同；无出口白名单也执行。
  *
- * 直接运行(本机隔离托管组合,不连任何远端):
+ * 直接运行(本机服务 + 代理,不连任何远端):
  *   node scripts/probes/lib/hosted-proxy.mjs --dist dist-online [--base-port 5750] [--doc-port 8780] [--asset-port 8781] [--policy full]
  */
 import fs from 'node:fs';
@@ -202,7 +202,7 @@ export async function startHostedProxy({ dist, basePort, docPort, assetPort, pol
   });
 }
 
-/* ------------------------------------------------------------------ 直接运行:本机隔离托管组合 + 代理 */
+/* ------------------------------------------------------------------ 直接运行:本机服务 + 代理 */
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const argv = process.argv.slice(2);
   const arg = (name, dflt) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : dflt; };
@@ -210,11 +210,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const basePort = Number(arg('--base-port', 5750)), docPort = Number(arg('--doc-port', 8780)), assetPort = Number(arg('--asset-port', 8781));
   const os = await import('node:os');
   const { randomBytes } = await import('node:crypto');
-  const { startHostedCombo } = await import('../../../cloud/server/hosted/combo.mjs');
+  const { startProbeServices } = await import('./probe-services.mjs');
   const dataDir = arg('--data-dir', fs.mkdtempSync(path.join(os.tmpdir(), 'pc-hosted-proxy-')));
   const o = proxyOrigins(basePort);
   // 与托管端一样不信回环:经代理进来的请求一律核票据
-  await startHostedCombo({ dataDir, docPort, assetPort, host: '127.0.0.1', trustLoopback: false, clusterToken: randomBytes(32).toString('base64url'),
+  await startProbeServices({ dataDir, docPort, assetPort, host: '127.0.0.1', trustLoopback: false, clusterToken: randomBytes(32).toString('base64url'),
     docPublicUrl: `ws://pc.localhost:${basePort}/hosted/`, assetPublicUrl: `${o.editor}/media/api/asset`, log: () => {} });
   const proxy = await startHostedProxy({ dist: arg('--dist', path.join(ROOT, 'dist-online')), basePort, docPort, assetPort, policy: arg('--policy', 'full') });
   console.log(JSON.stringify({ editor: `${proxy.editorOrigin}/editor`, stages: proxy.stageOrigins, policy: proxy.policy, dataDir }));

@@ -9,6 +9,8 @@
  *      封装 `syncManager.ts` 原先直接引用的 7 个云端模块（托管中继、恢复协调器、墓碑核验、
  *      云端账号客户端、云端 Agent 端点/身份/告知），社区版提供无害缺省实现。
  */
+// @ts-expect-error 纯 JS 模块、没有类型声明（`src/` 一侧引 .mjs 也都是这么标的）
+import { RecoveryCoordinator } from "../../server/recovery/coordinator.mjs";
 
 /* ======================================================================== *
  * 1. 贯穿型接缝：buildInfo / apiGuard / updateCheck / UpdateNotice
@@ -420,19 +422,8 @@ const defaultSyncCloudBackend: SyncCloudBackend = {
   async queryGone() {
     return { gone: false };
   },
-  createRecoveryCoordinator() {
-    let gen = 0;
-    return {
-      get generation() {
-        return gen;
-      },
-      start() {
-        gen++;
-      },
-      cancel() {
-        gen++;
-      },
-    };
+  createRecoveryCoordinator(handlers) {
+    return new RecoveryCoordinator(handlers);
   },
   createAccountFailure(status, code, message, body) {
     return new PublicAccountFailure(status, code, message, body);
@@ -508,6 +499,8 @@ export interface OnlineExtensionManifest {
   startUpdateCheck?: StartUpdateCheckFn;
   updateNotice?: UpdateNoticeExtension;
   syncBackend?: Partial<SyncCloudBackend>;
+  /** 异步注册的子扩展都装完才落定；`loadOnlineExtensions` 等它，所以「加载完」就是能用了 */
+  ready?: Promise<unknown>;
 }
 
 export function registerOnlineExtensions(manifest: OnlineExtensionManifest | null | undefined): void {
@@ -568,6 +561,7 @@ export async function loadOnlineExtensions(options: { cloudDir?: string; forceRe
       const manifest: OnlineExtensionManifest | undefined = mod?.manifest ?? mod?.default;
       if (!manifest || typeof manifest !== "object") return false;
       registerOnlineExtensions(manifest);
+      await manifest.ready;
       return true;
     } catch {
       return false;

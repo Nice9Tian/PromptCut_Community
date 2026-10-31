@@ -91,9 +91,12 @@ try {
   await pc.type('#pc-proj-name', projectName);
   out.steps.S1_projectName = projectName;
   await pc.click('[data-pc="collab-toggle"]');
-  // 「放在」缺省就是本机,确认一下再点确定
+  // 「放在」缺省就是本机,确认一下再点确定;社区版只有局域网一个位置,这一行不画
   const whereLan = await waitFor(
-    () => pc.evaluate(() => document.querySelector('[data-pc="collab-where-lan"]')?.className.includes('--on') ?? false),
+    () => pc.evaluate(() => {
+      const lan = document.querySelector('[data-pc="collab-where-lan"]');
+      return lan ? lan.className.includes('--on') : !document.querySelector('[data-pc="collab-where-hosted"]');
+    }),
     10_000,
     '「放在 · 本机」是选中的',
   ).catch((e) => { fails.push(e.message); return false; });

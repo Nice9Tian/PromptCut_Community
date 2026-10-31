@@ -16,7 +16,7 @@
  * 里面是成员和模型弄进来的文件,不能让它排进搜索路径。包目录、第三方库目录只来自部署配置,经一小段引导代码插进搜索路径。
  * `-I` 之下 PYTHONPATH、PYTHONUTF8、PYTHONIOENCODING、PYTHONUNBUFFERED、PYTHONDONTWRITEBYTECODE 都不生效,换成 `-X utf8 -u -B`。
  *
- * 本文件只用 Node 标准库,不引用仓库里别的文件:`scripts/probes/cloud-tools-spawn-linux-demo.mjs` 单拷这一个文件到节点上就能跑。
+ * 本文件只用 Node 标准库,不引用仓库里别的文件:`cloud/scripts/probes/cloud-tools-spawn-linux-demo.mjs` 单拷这一个文件到节点上就能跑。
  */
 import { spawn as nodeSpawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';

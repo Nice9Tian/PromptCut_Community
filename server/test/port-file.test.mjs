@@ -112,7 +112,7 @@ test('port-file:scripts/ 下起编辑器的脚本都带 PROMPTCUT_NO_PORT_FILE=1
     if (!viaEntry && !explicit) offenders.push(`${rel}:会起编辑器,第一个 import 不是 no-user-dirs.mjs,也没显式设 PROMPTCUT_NO_PORT_FILE: '1'`);
   }
   assert.ok(checked.length >= 25, `扫描到的脚本太少(${checked.length}),识别规则可能坏了:${checked.join(', ')}`);
-  for (const must of ['scripts/lib/dev-server.mjs', 'scripts/probes/ready-index-probe.mjs', 'scripts/probes/cold-start-probe.mjs', 'scripts/probes/m8/procs.mjs']) {
+  for (const must of ['scripts/lib/dev-server.mjs', 'scripts/probes/ready-index-probe.mjs', 'scripts/probes/cold-start-probe.mjs']) {
     assert.ok(checked.includes(must), `${must} 起编辑器,识别规则却没认出来`);
   }
   assert.deepEqual(offenders, [], '这些脚本起的编辑器会覆盖公共的 %TEMP%\\promptcut\\port.json');

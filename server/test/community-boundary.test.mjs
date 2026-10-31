@@ -311,3 +311,19 @@ test('G6 公开树里不许有我们自己的线上地址', () => {
   }
   assert.deepEqual(hits, [], '这些公开文件里有线上地址：' + String.fromCharCode(10) + hits.join(String.fromCharCode(10)));
 });
+
+test('G7 公开探针不许用 cloud/ 下的东西（注释里提到不算）', () => {
+  // 2026-10-31：G1 只管产品文件，探针不在里面；闭源路径写成字符串（spawn、fork、拼路径）G3 的 import 图也看不见。
+  // 只测闭源功能的探针放 cloud/scripts/probes/，手机探针接 scripts/probes/lib/probe-services.mjs。
+  const NEEDLE = /(?:cloud\/(?:server|scripts|src)\/)|(?:['"`]cloud['"`]\s*,\s*['"`](?:server|scripts|src)['"`])/g;
+  const hits = [];
+  for (const rel of listPublicFiles(ROOT)) {
+    if (!rel.startsWith('scripts/probes/') || !/\.(?:mjs|cjs|js|ts)$/.test(rel)) continue;
+    const src = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const comments = commentRanges(src);
+    for (const m of src.matchAll(NEEDLE)) {
+      if (!inComment(comments, m.index)) hits.push(`${rel}: ${m[0]}`);
+    }
+  }
+  assert.deepEqual(hits, [], '这些公开探针用了闭源的东西：' + String.fromCharCode(10) + hits.join(String.fromCharCode(10)));
+});

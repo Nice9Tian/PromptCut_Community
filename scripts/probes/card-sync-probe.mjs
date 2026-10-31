@@ -1,6 +1,6 @@
 /**
  * 卡片源码同步的端到端探针(C6.6 设计稿 `docs/plan/c66-design.md` 第 5 节、验收 T8 前半):
- * 两个编辑器实例加入同一个共享项目(本机托管组合 `server/hosted/main.mjs`,代替阿里云),A 改卡,B 看到新代码生效。
+ * 两个编辑器实例加入同一个共享项目(本机文档与素材服务 `lib/probe-services.mjs`,代替线上),A 改卡,B 看到新代码生效。
  *
  * 用法(在仓库根或 worktree 根):
  *   node scripts/probes/card-sync-probe.mjs [--doc-port 8790] [--asset-port 8791] [--a-port 5580] [--b-port 5583] [--cut-b <代理端口>] [--out <截图目录>] [--keep-temp]
@@ -250,7 +250,7 @@ try {
   // ---------- 1. 托管组合
   const hostedDir = path.join(TMP, 'hosted');
   fs.mkdirSync(hostedDir, { recursive: true });
-  const hosted = start('hosted', [path.join(ROOT, 'cloud', 'server', 'hosted', 'main.mjs')], {
+  const hosted = start('hosted', [path.join(ROOT, 'scripts', 'probes', 'lib', 'probe-services.mjs')], {
     PROMPTCUT_DATA_DIR: hostedDir,
     PROMPTCUT_DOCSERVICE_PORT: String(DOC_PORT),
     PROMPTCUT_ASSET_PORT: String(ASSET_PORT),

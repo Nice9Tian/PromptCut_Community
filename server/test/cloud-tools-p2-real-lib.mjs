@@ -50,7 +50,7 @@ export const ffmpegBin = () => (run('ffmpeg', ['-version']).status === 0 ? 'ffmp
 /** 缺什么就说缺什么;齐了回 null */
 export function realDepsMissing() {
   if (!findPython()) return '没有找到内置 Python(PROMPTCUT_PYTHON 或主工作区 desktop/src-tauri/runtime/python)';
-  if (!fs.existsSync(path.join(PATHS.pylibs, 'faster_whisper'))) return 'out/p2-stt/pylibs 里没有 faster_whisper(先跑 node scripts/probes/cloud-tools-p2-stt-probe.mjs --setup)';
+  if (!fs.existsSync(path.join(PATHS.pylibs, 'faster_whisper'))) return 'out/p2-stt/pylibs 里没有 faster_whisper(先跑 node cloud/scripts/probes/cloud-tools-p2-stt-probe.mjs --setup)';
   if (!fs.existsSync(path.join(PATHS.models, MODEL_DIR))) return 'out/p2-stt/models 里没有 faster-whisper small 的权重(先跑 --setup)';
   if (!ffmpegBin()) return 'PATH 上没有 ffmpeg';
   return null;

@@ -497,7 +497,8 @@ try {
   /* ---------------------------------------------------------------- W 控制台 */
   out.W.pageErrors = A.errors;
   // 本机测试环境没有网站账号服务(项目是凭口令的共享项目):回开始页时查登录的 /api/account/me 回 404,生产上有这个接口,单独列出不算页面报错
-  const accountMissing = (e) => /\/api\/account\//.test(e);
+  // 社区版的在线构建没有接口守卫(闭源),上传队列的目标查询会真发出去,也回 404
+  const accountMissing = (e) => /\/api\/(?:account|media\/upload-queue)\//.test(e);
   out.W.badResponses = A.badResponses;
   out.W.accountApiMissingInLocalEnv = A.badResponses.filter(accountMissing);
   let skip404 = A.badResponses.filter((r) => r.startsWith('404 ') && accountMissing(r)).length;
@@ -506,8 +507,8 @@ try {
   check(A.errors.length === 0, 'W 页面没有未捕获的错误', A.errors);
   check(A.consoleErrors.length === 0, 'W 控制台没有报错', A.consoleErrors);
 
-  /* ---------------------------------------------------------------- 演示稿同尺寸截图,并排 */
-  {
+  /* ---------------------------------------------------------------- 演示稿同尺寸截图,并排(演示稿在 prototypes/,社区版没有) */
+  if (fs.existsSync(DEMO)) {
     const D = await env.newPage(browser, 'phone');
     await D.goto(pathToFileURL(DEMO).href, { waitUntil: 'load' });
     const demoShot = async (name) => { await sleep(300); await D.screenshot({ path: path.join(OUT, `demo-${name}.png`) }); };

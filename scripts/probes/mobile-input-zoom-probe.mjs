@@ -100,6 +100,8 @@ try {
   check(out.Z.zoomed > 1.5, 'Z 双指捏合后页面应放大', out.Z);
   const first = await page.$('.pcm input.text-in');
   await first.tap();
+  // 放大 5 倍时输入框可能在可视区外,点不中就直接给焦点:这里验的是失焦之后,不是点击
+  await first.evaluate((el) => { if (document.activeElement !== el) el.focus(); });
   await page.keyboard.type('probe');
   await sleep(300);
   out.Z.whileTyping = await metaLog();
@@ -119,10 +121,15 @@ try {
   await metaLog();
 
   /* K:焦点从一个输入框挪到下一个 */
+  // 社区版开始页只有一个输入框,补一个:焦点挪动的判断不看是哪个输入框
+  await page.evaluate(() => {
+    const all = document.querySelectorAll('.pcm input.text-in');
+    if (all.length < 2) all[0].after(Object.assign(document.createElement('input'), { className: 'text-in' }));
+  });
   const inputs = await page.$$('.pcm input.text-in');
   if (check(inputs.length >= 2, 'K 开始页应有两个以上输入框', { n: inputs.length })) {
     await pinchTo(page);
-    await inputs[0].tap();
+    await inputs[0].evaluate((el) => el.focus());
     await page.evaluate(() => { const all = [...document.querySelectorAll('.pcm input.text-in')]; all[1].focus(); });
     await sleep(800);
     out.K.afterMove = await metaLog();
