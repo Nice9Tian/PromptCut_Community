@@ -58,15 +58,17 @@ export function getLocale(): Locale {
   return locale;
 }
 
-/** Saves the choice and reloads, which is the only way the language changes (see the file header). */
-export function switchLocale(next: Locale): void {
+/**
+ * Saves the choice and reloads, which is the only way the language changes (see the file header).
+ * `url` is where the page comes back to: callers with a project open point it at that project.
+ */
+export function switchLocale(next: Locale, url: URL = new URL(location.href)): void {
   if (next === locale) return;
   try {
     localStorage.setItem(STORAGE_KEY, next);
   } catch {
     // ignore
   }
-  const url = new URL(location.href);
   url.searchParams.delete("lang");
   location.replace(url);
 }

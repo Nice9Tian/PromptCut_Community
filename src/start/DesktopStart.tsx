@@ -31,6 +31,7 @@ import { ProjectRail } from "./ProjectRail";
 import { ProjectSidebar, scopeKeyOf, type Scope, type TreeOps } from "./ProjectSidebar";
 import { PromptBox } from "./PromptBox";
 import { TopBar } from "./TopBar";
+import { tr } from "../i18n/index.ts";
 import { EXT_WIDTH, SIDE_WIDTH, clampWidth, readSideCollapsed, readWidth, writeSideCollapsed, writeWidth } from "./sideWidth";
 import { removeById, rename, reorder, setArchived, togglePin, visible } from "./treeState";
 import type { OrgEntry, OrgState, SeenMeta } from "./vibeOrg";
@@ -56,6 +57,9 @@ const ORG_REALM = "local" as const;
 const AUTOSAVE_MS = 2500;
 
 /** 同级的键:和 `ProjectSidebar` 里判能不能拖到一起用的是同一套 */
+/** Address parameter that carries the open project across the reload of a language switch */
+const REOPEN_PARAM = "vibeOpen";
+
 const projectSib = (p: VibeProject) => `project:${p.realm}:${p.groupId ?? "loose"}`;
 const chatSib = (c: VibeChat) => `chat:p:${c.projectId}`;
 
@@ -154,6 +158,14 @@ export function DesktopStart(props: {
     setPanel(true);
   }, [openChat?.id]);
 
+  /** Switching language reloads the page: save, and reopen this project's chat afterwards */
+  const prepareLanguageSwitch = async (url: URL): Promise<boolean> => {
+    if (!openId) return true;
+    if (dirty && !(await save(openId)) && !confirm(tr("Your changes could not be saved. Switching language will lose them. Continue?"))) return false;
+    url.searchParams.set(REOPEN_PARAM, openId);
+    return true;
+  };
+
   /* ---------------- 自动保存 ---------------- */
   const dirty = useStore((s) => s.dirty);
   /** 存一次当前项目。存不下去(只读、盘满)如实说,不吞掉 */
@@ -199,6 +211,18 @@ export function DesktopStart(props: {
       .catch((e: unknown) => setNotice(e instanceof Error ? e.message : "这个项目打不开。"))
       .finally(() => setBusy(false));
   };
+
+  // Back from a language switch: reopen the project that was open
+  useEffect(() => {
+    const url = new URL(location.href);
+    const id = url.searchParams.get(REOPEN_PARAM);
+    if (!id) return;
+    url.searchParams.delete(REOPEN_PARAM);
+    history.replaceState(history.state, "", url);
+    openProject(id);
+    // Only on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /** 进传统式之前先存一次:编辑界面那边是手动存,带着没存的改动过去,顶栏会一直标着「*」 */
   const enterEditor = () => {
@@ -346,6 +370,7 @@ export function DesktopStart(props: {
   return (
     <div className="ps" data-pc="start-desktop" data-vibe="desktop">
       <TopBar
+        prepareLanguageSwitch={prepareLanguageSwitch}
         atHome={!openChat}
         onHome={() => {
           setChatPage(false);

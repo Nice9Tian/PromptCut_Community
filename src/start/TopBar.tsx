@@ -21,6 +21,8 @@ export function TopBar(props: {
   onSignOut?: () => void;
   center?: ReactNode;
   right?: ReactNode;
+  /** Saves the open project before a language switch reloads the page */
+  prepareLanguageSwitch?: (url: URL) => Promise<boolean>;
 }): JSX.Element {
   const seed = props.accountName ?? "guest";
   const account = !!props.onSignOut;
@@ -67,7 +69,7 @@ export function TopBar(props: {
 
       <span className="ps-top-spacer" />
 
-      <LanguageMenu className="ps-ghost-btn" />
+      <LanguageMenu className="ps-ghost-btn" prepare={props.prepareLanguageSwitch} />
 
       {/* 账号:摆在右边那几颗的左侧(用户 2026-10-23 定,原来在侧栏底下)。桌面版没有账号,这一块不出现 */}
       {account && <div className="ps-top-account" data-pc="start-top-account">

@@ -36,13 +36,14 @@ import { AgentBrowserTab } from "./AgentBrowserTab";
 import { ProjectSettingsDialog } from "./ProjectSettingsDialog";
 import { SkinDialog } from "./SkinDialog";
 import { LanguageMenu } from "../ui/LanguageMenu";
+import { tr } from "../i18n/index.ts";
 import { SkillDialog } from "./SkillDialog";
 import { isViewOnly, viewOnlyReason, viewOnlyText } from "./io/viewOnly";
 import { useReadOnly } from "./readOnly";
 import { ReadOnlyMarker } from "./ReadOnlyFence";
 import { SyncChips } from "./sync/SyncChips";
 import { BackupsDialog } from "./sync/BackupsDialog";
-import { useSync, whenSaved } from "./sync/syncManager";
+import { hasSharedResume, useSync, whenSaved } from "./sync/syncManager";
 import { unsentAtRisk, UNSENT_LEAVE_TEXT } from "./sync/onlineStatus";
 import { onlineUnsupported } from "../online/pageFlag";
 import "../ui/toolbar.css";
@@ -586,6 +587,21 @@ export function TopBar() {
     });
   };
 
+  /** Switching language reloads the page: save to the local draft and come back to it in the editor */
+  const prepareLanguageSwitch = async (url: URL): Promise<boolean> => {
+    if (ONLINE_BUILD) return okToLeaveOnline();
+    if (hasSharedResume()) return true; // a shared project reopens by itself after a reload
+    const id = ensureActiveDraftId();
+    try {
+      await saveDraft(id);
+    } catch (e) {
+      const why = e instanceof Error ? e.message : String(e);
+      return confirm(tr("Your changes could not be saved to the local project ({0}). Switching language will lose them. Continue?", why));
+    }
+    url.searchParams.set("draft", id);
+    return true;
+  };
+
   // 标题栏菜单和顶栏里的按钮共用同一套动作，避免维护两份文件/导出逻辑。
   // WindowTitleBar 只负责呈现菜单，通过这个事件把选择交回编辑器。
   useEffect(() => {
@@ -719,7 +735,7 @@ export function TopBar() {
             <IconPalette />
             <span className="pc-btn-label">皮肤…</span>
           </button>
-          <LanguageMenu className="pc-btn" />
+          <LanguageMenu className="pc-btn" prepare={prepareLanguageSwitch} />
           {/* 在线构建没有标题栏菜单(2026-10-22 用户定),它「帮助」里的这两项挪到这里;桌面版仍在标题栏菜单里,这里不重复 */}
           {ONLINE_BUILD && (
             <>
