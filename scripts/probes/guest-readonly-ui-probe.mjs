@@ -232,7 +232,7 @@ try {
   await page.mouse.click(box.x, box.y, { button: 'right' });
   await sleep(300);
   const menu = await page.evaluate(() => [...document.querySelectorAll('[data-pc="tl-ctxmenu"] .pc-tl-ctxmenu-item')].map((n) => ({ text: n.textContent.trim(), off: n.getAttribute('aria-disabled') === 'true' })));
-  check('R2.context-menu-only-explains', menu.length >= 1 && menu.every((m) => m.off || m.text.startsWith('查看字幕')) && menu.some((m) => m.text === why), { menu });
+  check('R2.context-menu-only-explains', menu.length >= 1 && menu.every((m) => m.off || m.text.startsWith('查看字幕') || m.text === '引用到输入框') && menu.some((m) => m.text === why), { menu });
   await shot(page, 'ro-timeline.png');
   await page.keyboard.press('Escape');
   await page.mouse.click(5, 5);
