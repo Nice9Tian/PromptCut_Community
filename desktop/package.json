@@ -1,7 +1,7 @@
 {
   "name": "promptcut-desktop",
   "private": true,
-  "version": "0.2.8",
+  "version": "0.2.9",
   "type": "module",
   "description": "PromptCut 的 Tauri 桌面壳：自带 Node、Chrome for Testing、ffmpeg、Python，双击即用",
   "scripts": {

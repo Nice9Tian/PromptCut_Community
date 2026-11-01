@@ -21,8 +21,7 @@
  * 只引 Node 内置模块。
  */
 import fs from 'node:fs/promises';
-import path from 'node:path';
-import crypto from 'node:crypto';
+import { atomic } from './atomic.mjs';
 
 /** 删不成时的重试间隔（毫秒），用完就一直按最后一个 */
 export const REAPER_RETRY_MS = Object.freeze([1_000, 10_000, 60_000, 600_000]);
@@ -49,12 +48,7 @@ export function createProjectReaper({ projectStores, file, log = () => {}, retry
 
   function persist() {
     const snapshot = JSON.stringify({ v: 1, pending: [...pending.keys()] });
-    writing = writing.catch(() => {}).then(async () => {
-      await fs.mkdir(path.dirname(file), { recursive: true });
-      const tmp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
-      await fs.writeFile(tmp, snapshot);
-      try { await fs.rename(tmp, file); } catch (error) { await fs.rm(tmp, { force: true }); throw error; }
-    });
+    writing = writing.catch(() => {}).then(() => atomic(file, snapshot));
     return writing;
   }
 
