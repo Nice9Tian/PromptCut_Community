@@ -23,6 +23,7 @@
 </p>
 
 <p align="center">
+  <a href="#ways-to-work">Ways to work</a> ·
   <a href="#what-it-does">What it does</a> ·
   <a href="#getting-started">Getting started</a> ·
   <a href="#documentation">Documentation</a> ·
@@ -30,7 +31,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/editor.webp" width="900" alt="The PromptCut editor: media library on the left, preview in the middle, agent panel on the right, timeline below">
+  <img src="docs/assets/vibe.webp" width="900" alt="PromptCut in Vibe mode: projects on the left, the chat with the agent in the middle, the rendered picture on the right">
 </p>
 
 PromptCut is an AI video-editing workbench: you direct an agent in plain language, and you can also cut and tune parameters by hand — both at the same time, on the same project.
@@ -40,10 +41,25 @@ PromptCut is an AI video-editing workbench: you direct an agent in plain languag
 > [!NOTE]
 > The app's interface is still Chinese-only today, as the screenshot shows. English and Japanese are in progress, see [issue #6](https://github.com/Nice9Tian/PromptCut_Community/issues/6).
 
+## Ways to work
+
+You can switch between these on the same project at any time, and nothing is lost.
+
+| Mode | How it works |
+|---|---|
+| **Vibe mode** | No editor in the way. Say one sentence on the start page and the agent builds the project. Follow it on the chat page, watch the picture and the before/after changes in the side panel, and open detail editing when you want to adjust the timeline yourself. |
+| **Classic mode** | The full editor: media library, preview, timeline and the AI panel side by side, for you and the agent to work on together. |
+| **SKILL mode** | Desktop app only. An agent running in your desktop connects over MCP while the editor stays closed and PromptCut runs in the background. Open the editor whenever you want to step in. |
+
+<p align="center">
+  <img src="docs/assets/classic.webp" width="900" alt="PromptCut in Classic mode: media library on the left, preview in the middle, AI panel on the right, timeline below">
+</p>
+
 ## What it does
 
 | | |
 |---|---|
+| **Vibe mode** | Describe the video you want and get a first cut, without opening the editor. Keep directing it in chat, and adjust the timeline in detail editing. |
 | **Agent-directed editing** | Talks to a local CLI or API agent that lays out the timeline, adds cards and tunes parameters. It also acts as an MCP server other agents can call. |
 | **Manual editing** | Timeline, multiple tracks, nested cuts, parameter panels and preview. |
 | **Cards** | Motion graphics, charts, captions and more, implemented as React components. A built-in library ships with the app, and you can write your own. |
