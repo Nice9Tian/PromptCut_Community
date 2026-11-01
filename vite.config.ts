@@ -4,6 +4,7 @@ import { costsPlugin } from "./server/vite-plugin-costs";
 import { defineConfig, type Plugin, type Rollup, type UserConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { localePlugin } from "./server/vite-plugin-locale";
 import { apiGuardPlugin } from "./server/vite-plugin-api-guard";
 import { hostedGatePlugin } from "./server/vite-plugin-hosted-gate";
 import { cloudSeamsPlugin } from "./server/vite-plugin-cloud-seams";
@@ -91,7 +92,7 @@ const desktopConfig: UserConfig = {
   // stagePortsPlugin 排在 apiGuard 后面:它自己那条 /api/stage/ports 也该受同一道卡口管。
   // docservicePlugin(本地文档服务)总是注册。
   // hostedGatePlugin 只在托管方渲染服务的工作进程里生效(页面请求闸,`server/hosted-render/vite-gate.mjs`),别处是空的;它要先于一切接口
-  plugins: [cloudSeamsPlugin(), hostedGatePlugin(), lanHostPlugin(), apiGuardPlugin(), stagePortsPlugin(), react({ exclude: REACT_REFRESH_EXCLUDE }), tailwindcss(), exportPlugin(), exportsListPlugin(), mirrorPlugin(), costsPlugin(), framesPlugin(), vitePluginAi(), sttPlugin(), shotsPlugin(), trackPlugin(), subjectPlugin(), mediaPlugin(), chatsPlugin(), vitePluginCards(), rawEolPlugin(), projectsPlugin(), visionPlugin(), skillPlugin(), skillStatePlugin(), collectPlugin(), webPlugin(), prerenderPlugin(), voicePlugin(), audioPlugin(), docservicePlugin(), lanOpenPlugin()],
+  plugins: [localePlugin(), cloudSeamsPlugin(), hostedGatePlugin(), lanHostPlugin(), apiGuardPlugin(), stagePortsPlugin(), react({ exclude: REACT_REFRESH_EXCLUDE }), tailwindcss(), exportPlugin(), exportsListPlugin(), mirrorPlugin(), costsPlugin(), framesPlugin(), vitePluginAi(), sttPlugin(), shotsPlugin(), trackPlugin(), subjectPlugin(), mediaPlugin(), chatsPlugin(), vitePluginCards(), rawEolPlugin(), projectsPlugin(), visionPlugin(), skillPlugin(), skillStatePlugin(), collectPlugin(), webPlugin(), prerenderPlugin(), voicePlugin(), audioPlugin(), docservicePlugin(), lanOpenPlugin()],
   // 依赖扫描入口只找真正的页面:缺省的 `**/*.html` 会把 out/frame-library 下成千上万个快照 .html 当入口读一遍(`server/vite-scan-ignore.mjs`)
   optimizeDeps: { entries: DEP_SCAN_ENTRIES },
   server: {

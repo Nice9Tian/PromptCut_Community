@@ -76,6 +76,19 @@ export function switchLocale(next: Locale, url: URL = new URL(location.href)): v
 type Row = { zh: string; ja: string };
 const rows = table as Record<string, Row>;
 
+/** Tells the server which language to answer in (server/i18n.mjs). Installed once, from main.tsx. */
+export function installLocaleHeader(): void {
+  const send = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const url = new URL(raw, location.href);
+    if (url.origin !== location.origin || !url.pathname.startsWith("/api/")) return send(input, init);
+    const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+    headers.set("x-pc-locale", locale);
+    return send(input, { ...init, headers });
+  };
+}
+
 /** Pure lookup, so tests can cover every language without a page. */
 export function translate(target: Locale, source: string, args: ReadonlyArray<unknown> = []): string {
   const row = Object.hasOwn(rows, source) ? rows[source] : undefined;
