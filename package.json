@@ -1,7 +1,7 @@
 {
   "name": "promptcut",
   "private": true,
-  "version": "0.7.29",
+  "version": "0.7.30",
   "type": "module",
   "_comment_imports": "下面这四个是浏览器侧云端扩展包的别名（docs/plan/community-boundary.md 第二节）。这里一律指向空桩，两个仓库里逐字一致、也不出现任何闭源路径；真正指到闭源加载表的是 server/vite-plugin-cloud-seams.ts 这个插件（resolveId + enforce:pre，压过这里）。为什么还要在这里兜一层：没挂那个插件的地方（探针自己起的 vite、raw Node）原来是**硬失败**——浏览器侧 transform 直接 500，而不是优雅降级成社区版。有了这一层，漏挂插件最多退化成「没装云端扩展」，不会把页面打死。",
   "imports": {
