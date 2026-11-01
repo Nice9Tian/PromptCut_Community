@@ -35,6 +35,7 @@ import { LanOpenDialog } from "./LanOpenDialog";
 import { AgentBrowserTab } from "./AgentBrowserTab";
 import { ProjectSettingsDialog } from "./ProjectSettingsDialog";
 import { SkinDialog } from "./SkinDialog";
+import { LanguageMenu } from "../ui/LanguageMenu";
 import { SkillDialog } from "./SkillDialog";
 import { isViewOnly, viewOnlyReason, viewOnlyText } from "./io/viewOnly";
 import { useReadOnly } from "./readOnly";
@@ -718,6 +719,7 @@ export function TopBar() {
             <IconPalette />
             <span className="pc-btn-label">皮肤…</span>
           </button>
+          <LanguageMenu className="pc-btn" />
           {/* 在线构建没有标题栏菜单(2026-10-22 用户定),它「帮助」里的这两项挪到这里;桌面版仍在标题栏菜单里,这里不重复 */}
           {ONLINE_BUILD && (
             <>

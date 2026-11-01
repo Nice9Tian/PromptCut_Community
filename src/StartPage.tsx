@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import type { JSX, ReactNode } from "react";
 import "./StartPage.css";
 import { Logo } from "./ui/Logo";
+import { LanguageMenu } from "./ui/LanguageMenu";
 import { listDrafts, openDraft, deleteDraft, newDraftId, setActiveDraftId } from "./editor/io/drafts";
 import type { DraftInfo } from "./editor/io/drafts";
 import { newProject, loadProc, PROC_EXT } from "./editor/io/proc";
@@ -146,6 +147,7 @@ function OnlineStartPage(props: { onEnterEditor: () => void }): JSX.Element {
         <header className="sp-bar">
           <Logo size={22} />
           <span className="sp-bar-spacer" />
+        <LanguageMenu className="sp-ghost-btn" />
         </header>
         <main className="sp-main"><AccountProjectsSlot online onEnterEditor={props.onEnterEditor} /></main>
       </div>

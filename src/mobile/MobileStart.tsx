@@ -10,6 +10,7 @@ import { LAN_JOIN_TEXT } from "../editor/sync/lanMemberSource";
 import { parseInviteLink, takeCapturedInvite } from "../online/invite";
 import { GlowLoop } from "../start/GlowLoop";
 import { LogoMark } from "../ui/Logo";
+import { LanguageMenu } from "../ui/LanguageMenu";
 import { MobileJoin } from "./MobileJoin";
 import "./mobileLogin.css";
 
@@ -55,6 +56,7 @@ export function MobileStart({ onEnterEditor }: { onEnterEditor: () => void }) {
       <div className="ps-m-login-bg" aria-hidden="true"><GlowLoop /></div>
       <div className="topbar">
         <div className="logo"><LogoMark size={18} /><span>Prompt<b>Cut</b></span></div>
+        <LanguageMenu />
       </div>
       <div className="home-body">
         {err && <div className="err" role="alert" data-pcm="home-error">{err}</div>}

@@ -7,6 +7,7 @@
  */
 import type { JSX, ReactNode } from "react";
 import { Logo } from "../ui/Logo";
+import { LanguageMenu } from "../ui/LanguageMenu";
 import { hueOf } from "./hue";
 
 export function TopBar(props: {
@@ -65,6 +66,8 @@ export function TopBar(props: {
       {props.center}
 
       <span className="ps-top-spacer" />
+
+      <LanguageMenu className="ps-ghost-btn" />
 
       {/* 账号:摆在右边那几颗的左侧(用户 2026-10-23 定,原来在侧栏底下)。桌面版没有账号,这一块不出现 */}
       {account && <div className="ps-top-account" data-pc="start-top-account">
