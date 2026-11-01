@@ -48,6 +48,8 @@ const arg = (name, fallback) => (argv.includes(`--${name}`) ? argv[argv.indexOf(
 const BEFORE = path.resolve(arg('main', path.join(AFTER, '..', 'sound-verify-main')));
 const OUT = path.resolve(arg('out', path.join(AFTER, '..', '..', 'work', 'four-stage', 'sound', 'typing-compare')));
 const PORT = Number(arg('port', 5714));
+/** 基准树已经带着打字卡的改动(发版验收对的是上一版):这时每个用例都该逐帧相同,原来的 differs 用例也按 same 判 */
+const NO_CHANGE = argv.includes('--no-change');
 const PASSES = Number(arg('passes', 2));
 const REUSE = argv.includes('--reuse');
 const FPS = 30, W = 1280, H = 720;
@@ -337,7 +339,8 @@ async function compareSuite({ label, prefix, windows, frames, run }) {
   for (const w of windows) { if (w.startFrame > prev) gaps.push([prev, w.startFrame]); prev = w.endFrame; }
   if (prev < frames) gaps.push([prev, frames]);
   let ok = nb === frames && na === frames;
-  for (const w of windows) {
+  for (const raw of windows) {
+    const w = NO_CHANGE ? { ...raw, expect: 'same' } : raw;
     const c = compareDirs(works.before[last], works.after[last], w.startFrame, w.endFrame);
     const row = { name: w.name, expect: w.expect, startFrame: w.startFrame, endFrame: w.endFrame, frames: c.frames, diffFrames: c.diffFrames, firstDiffFrame: c.first, maxChannelDiff: c.maxChannel, maxDiffPixels: c.maxPixels };
     if (w.expect === 'same' && c.diffFrames !== 0) ok = false;
