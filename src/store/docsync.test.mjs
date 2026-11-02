@@ -346,7 +346,7 @@ test("V6-20 edits made while disconnected, applied in order after recovery, only
   assert.ok(ops.slice(1).every((m) => m.expectRev === undefined));
   assert.equal(svc.rev, rev0 + 20);
   assert.deepEqual(svc.log.slice(-20).map((e) => e.opId), ops.map((m) => m.opId));
-  assert.equal(textOf(svc.project, "c1"), "Offline 19");
+  assert.equal(textOf(svc.project, "c1"), "离线 19");
   assert.equal(A.ds.status, "online");
   assertSame(svc, A, B);
 });
@@ -373,7 +373,7 @@ test("V6-others also edited during the offline period: the first is rejected, th
   assert.equal(info.since[0].session, "B");
   assert.equal(A.sent.filter((m) => m.type === "project.op").length, 1); // 其余 19 条没发
   assert.equal(svc.log.filter((e) => e.session === "A").length, 0);
-  assert.equal(textOf(A.ds.project, "c1"), "Offline 19"); // 本地仍是离线时的样子
+  assert.equal(textOf(A.ds.project, "c1"), "离线 19"); // 本地仍是离线时的样子
 });
 
 test("V6-choose \"replay\": drop the expected revision and commit in order, all three copies match, others' changes are included too", async () => {
@@ -384,7 +384,7 @@ test("V6-choose \"replay\": drop the expected revision and commit in order, all 
   const sessions = svc.log.slice(-21).map((e) => e.session);
   assert.deepEqual(sessions, ["B", ...Array(20).fill("A")]);
   assert.ok(svc.log.slice(-20).every((e) => e.expectRev === undefined));
-  assert.equal(textOf(svc.project, "c1"), "Offline 19");
+  assert.equal(textOf(svc.project, "c1"), "离线 19");
   assert.equal(textOf(svc.project, "c2"), "Edited by B while A was offline");
   assertSame(svc, A, B);
   const settled = await A.ds.whenSettled({ timeoutMs: 100 });
@@ -400,7 +400,7 @@ test("V6-choose \"discard\": first save this batch as a local backup, local reve
   const b = A.backups[0];
   assert.equal(b.kind, "offline-discard");
   assert.equal(b.batch.length, 20);
-  assert.equal(textOf(b.project, "c1"), "Offline 19");
+  assert.equal(textOf(b.project, "c1"), "离线 19");
   assert.equal(A.ds.canUndo(), false);
   svc.drain();
   assert.equal(svc.rev, revBefore);
@@ -451,7 +451,7 @@ test("V7-save while offline: keep waiting, report an error on timeout", async ()
   const { A } = setupClips();
   A.down();
   A.ds.commit(withText(A.ds.project, "c1", "x"));
-  await assert.rejects(A.ds.whenSettled({ timeoutMs: 30 }), /超时/);
+  await assert.rejects(A.ds.whenSettled({ timeoutMs: 30 }), /Timed out waiting for document service confirmation/);
 });
 
 test("V7-no unconfirmed operations: return the current version immediately", async () => {
