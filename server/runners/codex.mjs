@@ -78,7 +78,7 @@ export async function getCodexProvider() {
 }
 
 import { runTextProtocolLoop } from '../harness/tool-protocol.mjs';
-import { tr } from "../i18n.mjs";
+import { tr } from '../i18n.mjs';
 
 export function startRun(opts) {
   if (opts.toolProtocol) {

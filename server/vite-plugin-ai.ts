@@ -15,7 +15,7 @@ import { createAgentInstance } from './agent/service/instance.mjs';
 import { prerenderPost } from './prerender-client.mjs';
 // 镜像的存储本体在镜像插件里(两个进程都挂);这里只读当前编辑页 session 的最新一版
 import { latestMirror, latestPlayhead } from './vite-plugin-mirror';
-import { tr } from "./i18n.mjs";
+import { tr } from './i18n.mjs';
 
 
 /**

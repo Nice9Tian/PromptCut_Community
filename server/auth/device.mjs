@@ -15,7 +15,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { createHash } from 'node:crypto';
 import { isDeviceId, isDeviceName } from './protocol.mjs';
-import { tr } from "../i18n.mjs";
+import { tr } from '../i18n.mjs';
 
 function firstMac() {
   for (const list of Object.values(os.networkInterfaces() ?? {})) {

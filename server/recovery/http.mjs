@@ -6,7 +6,7 @@ import { parseCollaboration } from './descriptor.mjs';
 import { roomUnavailableReason } from './relocation.mjs';
 import { fileNameOf } from '../docservice/store/index.mjs';
 import { fromLocalClient, guard } from '../http-guard.mjs';
-import { tr } from "../i18n.mjs";
+import { tr } from '../i18n.mjs';
 
 const TASK_ENDPOINTS = ['/cancel-host', '/activate-host', '/restore-host'];
 

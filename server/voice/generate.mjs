@@ -9,7 +9,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { synthesize, VoiceError } from './providers.mjs';
 import { PROVIDERS, SYSTEM_VOICES, EMOTIONS } from './presets.mjs';
-import { tr } from "../i18n.mjs";
+import { tr } from '../i18n.mjs';
 
 /** 这个音色在不在允许列表里 */
 export function voiceAllowed(cfg, provider, voiceId) {

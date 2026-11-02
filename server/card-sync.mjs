@@ -46,7 +46,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { createDocEndpoint } from './render-node/session-link.mjs';
-import { tr } from "./i18n.mjs";
+import { tr } from './i18n.mjs';
 
 export const CARD_SOURCE = 'card-source';
 

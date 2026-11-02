@@ -13,7 +13,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { tr } from "../i18n.mjs";
+import { tr } from '../i18n.mjs';
 
 /** 已知客户端:`clientInfo.name` → 厂商 id 与给人看的名字 */
 const KNOWN_CLIENTS = [

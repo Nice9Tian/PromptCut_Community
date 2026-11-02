@@ -16,7 +16,7 @@
  * 浏览器与 Node 通用：除产品声明外不引任何模块；浏览器里没有 `process`，第 2 级自然跳过。
  */
 import { PRODUCT } from './product.mjs';
-import { tr } from "../i18n.mjs";
+import { tr } from '../i18n.mjs';
 
 /** 托管服务的自有域名（2026-10-22 用户定）：以后换机器只改它的 DNS 记录，不用再发客户端 */
 const HOSTED_HOST = PRODUCT.hosted?.host ?? null;

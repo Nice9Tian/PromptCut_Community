@@ -37,7 +37,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createAssetClient } from './asset-store/client.mjs';
-import { tr } from "./i18n.mjs";
+import { tr } from './i18n.mjs';
 
 export const BAKE_INDEX_DIR = 'bake-index';
 export const BAKE_NS = 'px';

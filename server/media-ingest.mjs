@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { AssetSourceError } from './audio-source.mjs';
-import { tr } from "./i18n.mjs";
+import { tr } from './i18n.mjs';
 
 /** 一份文件入库的时限。上传是本机回环上的流式写入,几百 MB 的视频也就十几秒;慢盘上留足余量 */
 export const INGEST_TIMEOUT_MS = 10 * 60 * 1000;

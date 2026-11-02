@@ -25,7 +25,7 @@
  */
 import { lookupProject, createSharedProject as createOn } from './client.mjs';
 import { resolveHostedUrl } from './hosted-default.mjs';
-import { tr } from "../i18n.mjs";
+import { tr } from '../i18n.mjs';
 
 export const ROUTE_DEFAULTS = Object.freeze({
   /** 局域网发现的时限（契约第 3 节） */

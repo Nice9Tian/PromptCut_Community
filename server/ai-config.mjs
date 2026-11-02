@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { sealKey, openKey, sealedKind, KEY_KINDS, SECRET_KINDS } from './runners/config-crypt.mjs';
-import { tr } from "./i18n.mjs";
+import { tr } from './i18n.mjs';
 
 /**
  * AI 配置(ai.json)+ 两个密钥文件。

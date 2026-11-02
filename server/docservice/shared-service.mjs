@@ -54,7 +54,7 @@ import { docServiceExtensions } from './extensions.mjs';
 import { serviceGate, AGENT_WRITE_TYPES } from './service-gate.mjs';
 import { serviceAdmission } from '../auth/service-identity.mjs';
 import { offeredProtocols } from './auth.mjs';
-import { tr } from "../i18n.mjs";
+import { tr } from '../i18n.mjs';
 
 /**
  * @param {object} options

@@ -45,7 +45,7 @@ import { DELEGATION_AUDIENCES, isConversationId } from '../../auth/protocol.mjs'
 import { admissionOf, isLoopbackAddress } from '../../auth/handshake.mjs';
 import { parseList, isCred } from '../../auth/http.mjs';
 import { parseInviteOptions, issueInvite, inviteStatus } from '../../auth/invite.mjs';
-import { tr } from "../../i18n.mjs";
+import { tr } from '../../i18n.mjs';
 
 export const SHARED_MODULE = 'shared';
 export const ADMIN_OPS = Object.freeze([

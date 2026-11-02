@@ -21,7 +21,7 @@ import {
   b64urlEncode, b64urlDecode, utf8, utf8Text, authPurpose, adminPurpose, isKdf,
 } from './protocol.mjs';
 import { pbkdf2Sha256, hmacSha256 } from './pure.mjs';
-import { tr } from "../i18n.mjs";
+import { tr } from '../i18n.mjs';
 
 export { PROTOCOL, KDF_DEFAULT } from './protocol.mjs';
 

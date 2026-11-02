@@ -14,7 +14,7 @@ import * as readline from 'node:readline';
 import { tools } from './mcp-tools.mjs';
 import { injectCardParams, injectPartParams } from './card-params-schema.mjs';
 import { GUIDE_TOOL, SKILL_INSTRUCTIONS, desktopSessionKey, discoverEditor, newProcessSession, skillGuide, threadOf, vendorOf } from './agent/desktop-mcp.mjs';
-import { tr } from "./i18n.mjs";
+import { tr } from './i18n.mjs';
 
 /** 这个进程是 AI 栏的命令行工具起的(否则就是桌面 APP 的会话) */
 const CLI_CALLER = process.env.PROMPTCUT_CALLER === 'cli' || !!process.env.PROMPTCUT_AGENT;

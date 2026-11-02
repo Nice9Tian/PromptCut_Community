@@ -8,7 +8,7 @@
  * 复刻出来的音色 7 天内没被正式调用会被系统删除。
  */
 import { TEXT_LIMITS, isCloneIdShape } from './presets.mjs';
-import { tr } from "../i18n.mjs";
+import { tr } from '../i18n.mjs';
 
 const TIMEOUT_MS = 45_000;
 

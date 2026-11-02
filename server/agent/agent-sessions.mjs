@@ -20,7 +20,7 @@
  * 登记表只在内存里,进程重启就清空 —— AI 栏下一次发消息会重新登记,没有要持久化的东西。
  */
 import { effectiveCreativity, normalizeCreativity, creativityRank } from './ssr-host.mjs';
-import { tr } from "../i18n.mjs";
+import { tr } from '../i18n.mjs';
 
 // 创造力等级的几个名字从这里转出:server/agent/service/ 不直接引用 src/(契约 cloud-agent-contract.md 第 2.1 节「载入缝」),经 ssr-host.mjs 取
 export { CREATIVITY_HINT, CREATIVITY_LABEL, normalizeCreativity, projectCreativity } from './ssr-host.mjs';

@@ -24,7 +24,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { skillRoot } from './skill-gate.mjs';
-import { tr } from "./i18n.mjs";
+import { tr } from './i18n.mjs';
 
 export const ENTRY_NAME = 'promptcut';
 export const TARGETS = Object.freeze(['claude-code', 'codex']);

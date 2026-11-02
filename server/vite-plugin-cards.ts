@@ -40,7 +40,7 @@ const { checkSyncedSource, rejectedStub, hostedWorkerKind, normalizeBrowserCssIm
 })();
 import { remotionStyleErrors } from './remotion-style-check.mjs';
 import { remotionLockSuffix } from '../src/online/cardRuntime/remotionLock.mjs';
-import { tr } from "./i18n.mjs";
+import { tr } from './i18n.mjs';
 
 /* ────────────────────────────────────────────────────────────────────
  * 0.4 起:Agent 能读、能改**所有**卡片的原始源码(内置卡也算),但改不了 HTML。

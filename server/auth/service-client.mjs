@@ -25,7 +25,7 @@
  */
 import { PROTOCOL, TICKET_PREFIX } from './protocol.mjs';
 import { buildServiceProtocols, readServiceKeyFile } from './service-identity.mjs';
-import { tr } from "../i18n.mjs";
+import { tr } from '../i18n.mjs';
 
 export const SERVICE_CLIENT_DEFAULTS = Object.freeze({
   requestTimeoutMs: 10_000,

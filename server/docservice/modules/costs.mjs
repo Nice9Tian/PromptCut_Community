@@ -45,7 +45,7 @@
 import { createMemoryStore } from '../store/index.mjs';
 import { describeEnvironment } from '../../render-node/fingerprint.mjs';
 import { LOCAL_SPACE } from '../spaces.mjs';
-import { tr } from "../../i18n.mjs";
+import { tr } from '../../i18n.mjs';
 
 export const COSTS_MODULE = 'costs';
 

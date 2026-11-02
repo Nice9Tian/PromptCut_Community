@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { randomBytes, createHash, createCipheriv, createDecipheriv } from 'node:crypto';
 import { identityKey, roomKey } from './descriptor.mjs';
 import { migrateHostedDeep } from '../auth/hosted-default.mjs';
-import { tr } from "../i18n.mjs";
+import { tr } from '../i18n.mjs';
 
 const transientStorageCodes = new Set(['ETIMEDOUT', 'EBUSY', 'EAGAIN', 'EINTR', 'EMFILE', 'ENFILE', 'RECOVERY_LOCK_BUSY']);
 const diagnosticCodes = new Set([...transientStorageCodes, 'INVALID', 'OTHER', 'DPAPI_FAILED', 'ENOSPC', 'EACCES', 'EPERM', 'ENOENT', 'EIO', 'EEXIST', 'ERR_OSSL_BAD_DECRYPT', 'ERR_CRYPTO_INVALID_AUTH_TAG']);

@@ -24,7 +24,7 @@
  * 只在内存里:编辑器进程重启就清空,页签和会话下一次动作时重新出现。
  */
 import { diffScopes, overlappingScopes, splitScopes, scopeOverlaps } from './ssr-host.mjs';
-import { tr } from "../i18n.mjs";
+import { tr } from '../i18n.mjs';
 
 export const BOARD_DEFAULTS = Object.freeze({
   /** 自动投递最多连锁几层;超过就留在信箱里,等用户下一次和它说话时一并带上 */

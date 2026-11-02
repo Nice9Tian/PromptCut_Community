@@ -11,7 +11,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { tr } from "./i18n.mjs";
+import { tr } from './i18n.mjs';
 
 /**
  * 站点定义。加站点就加一项:

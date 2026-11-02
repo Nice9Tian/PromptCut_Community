@@ -1,7 +1,7 @@
 import { cliCommand, cliEnv, resolveCli, setupRoot } from './cli-runtime.mjs';
 import { execFile } from 'node:child_process';
 import { codexAuthState } from './codex-auth-state.mjs';
-import { tr } from "../i18n.mjs";
+import { tr } from '../i18n.mjs';
 const resolveExe = resolveCli;
 
 const cache = new Map();

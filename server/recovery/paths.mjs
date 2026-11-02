@@ -1,7 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import { tr } from "../i18n.mjs";
+import { tr } from '../i18n.mjs';
 
 /** Shared by the document service and its asset ticket verifier. */
 export function localDocumentDir(root, env = process.env) {

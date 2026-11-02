@@ -41,7 +41,7 @@ import { createMemoryStore, fileNameOf } from '../store/index.mjs';
 import { actorOf } from './actor.mjs';
 import { applyOps, entitiesOf, normalizeEntity, parsePath, formatPath, idSegment, OpError } from '../json-ops.mjs';
 import { canonical, digest as historyDigest, historyError } from './operation-history.mjs';
-import { tr } from "../../i18n.mjs";
+import { tr } from '../../i18n.mjs';
 export const ROLLBACK_OP_PREFIX = 'logout-rollback:';
 let customRollbackPolicy = null;
 export function registerProjectRollbackPolicy(policy) {

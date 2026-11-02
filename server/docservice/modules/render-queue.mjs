@@ -34,7 +34,7 @@ import { QUEUE_DEFAULTS } from '../../render-queue/constants.mjs';
 import { parseInbound, makeMessage, prioritySummaryValue, NODE_TYPES, PUBLISHER_TYPES } from '../../render-queue/messages.mjs';
 import { describeEnvironment, describeCardEnvironment, isChromiumUserAgent } from '../../render-node/fingerprint.mjs';
 import { deviceRank } from '../../render-node/session.mjs';
-import { tr } from "../../i18n.mjs";
+import { tr } from '../../i18n.mjs';
 
 export const RENDER_QUEUE_MODULE = 'render-queue';
 

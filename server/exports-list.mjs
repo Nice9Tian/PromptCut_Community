@@ -16,7 +16,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { EXPORT_ID_RE, EXPORT_DELIVERABLES, EXPORT_KEEP, isExportKeepName } from './storage-leftovers.mjs';
-import { tr } from "./i18n.mjs";
+import { tr } from './i18n.mjs';
 
 /*
  * 目录名、交付物、留下的名字只在 `storage-leftovers.mjs` 定义一份(导出完成后的收拾 `pruneExportDir` 用的也是它们),

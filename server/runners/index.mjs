@@ -86,7 +86,7 @@ export async function listProviders(opts = {}) {
 }
 
 import { startCliLoop } from './cli-loop.mjs';
-import { tr } from "../i18n.mjs";
+import { tr } from '../i18n.mjs';
 
 export function startRun(opts) {
   if (opts.provider === 'claude') return startClaude(opts);

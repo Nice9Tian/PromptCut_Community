@@ -3,7 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
 import { setupRoot } from './cli-runtime.mjs';
-import { tr } from "../i18n.mjs";
+import { tr } from '../i18n.mjs';
 
 export const AUTH_RECOVERY = tr("Codex login has expired, please log in again. After logging in, resend or continue the original instruction yourself.");
 const reasons = new Set(['token_revoked', 'refresh_token_invalid', 'openai_unauthorized']);

@@ -64,7 +64,7 @@ export function localOutputSpeedFile() {
  */
 const STREAM_DROPPED = /upstream stream ended|before the response was complete|response stream ended early|terminated|other side closed|socket hang up/i;
 import { withIdleTimeout } from '../harness/idle-timeout.mjs';
-import { tr } from "../i18n.mjs";
+import { tr } from '../i18n.mjs';
 
 /**
  * 把「有 tool_use、没有配对 tool_result」的半截回合补平,再落盘。

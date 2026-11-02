@@ -18,7 +18,7 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { AssetSourceError } from './audio-source.mjs';
-import { tr } from "./i18n.mjs";
+import { tr } from './i18n.mjs';
 
 /** 请求体里的素材标识。只取这几项;`path` 不取(见文件头) */
 const REF_KEYS = ['id', 'name', 'kind', 'url', 'hash'];

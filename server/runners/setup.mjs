@@ -8,7 +8,7 @@ import { installPlanFor, manualHintFor } from './install.mjs';
 import { cliCommand, cliEnv, resolveCli, setupRoot, psLiteral, encodedPowerShell } from './cli-runtime.mjs';
 import { probeAuth, loginCommandFor } from './auth.mjs';
 import { codexAuthState } from './codex-auth-state.mjs';
-import { tr } from "../i18n.mjs";
+import { tr } from '../i18n.mjs';
 
 export function authUrlFrom(text, provider) {
   const hosts = provider === 'codex' ? ['auth.openai.com', 'chatgpt.com'] : provider === 'agy'

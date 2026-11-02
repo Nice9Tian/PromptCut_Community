@@ -17,7 +17,7 @@
 import { runReviewLoop, presentLoopEvent, SUBMIT_DEFS } from '../harness/loop.mjs';
 import { READ_ONLY_TOOLS } from '../harness/loop-prompts.mjs';
 import { lessonsStore } from './api.mjs';
-import { tr } from "../i18n.mjs";
+import { tr } from '../i18n.mjs';
 
 const RETRIES = 2;
 

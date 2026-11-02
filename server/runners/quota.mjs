@@ -24,7 +24,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { cliCommand, cliEnv, resolveCli, setupRoot } from './cli-runtime.mjs';
 import { codexAuthState, AUTH_RECOVERY } from './codex-auth-state.mjs';
-import { tr } from "../i18n.mjs";
+import { tr } from '../i18n.mjs';
 
 export const QUOTA_PROVIDERS = ['claude', 'codex'];
 
