@@ -952,11 +952,13 @@ function VoiceCard(): JSX.Element {
       const { config, presets } = await getVoiceConfig();
       const p = config.provider;
       const id = config[p].voiceId;
+      // System voice names come from the server as English data
+      const systemName = presets.systemVoices[p].find((v) => v.voiceId === id)?.name;
       const voice = config.customVoices.find((v) => v.provider === p && v.voiceId === id)?.name
-        ?? presets.systemVoices[p].find((v) => v.voiceId === id)?.name
+        ?? (systemName === undefined ? undefined : tr(systemName))
         ?? id;
       setStatus(config.apiKey.set
-        ? { headline: tr("Configured"), note: `${presets.labels[p]} · ${voice}`, tone: "ok", offerInstall: false }
+        ? { headline: tr("Configured"), note: `${tr(presets.labels[p])} · ${voice}`, tone: "ok", offerInstall: false }
         : { headline: tr("Not configured"), note: tr("Fill in the API Key so the agent can do voiceover"), tone: "muted", offerInstall: false });
     } catch (e) {
       setStatus(failedView(e));
@@ -980,7 +982,7 @@ function VoiceCard(): JSX.Element {
           <path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2" />
         </svg>
       }
-      name="Voiceover"
+      name={tr("Voiceover")}
       desc={tr("Turn text into speech with cloud synthesis, MiniMax by default.")}
       status={status}
       action={<button className="sp-ghost-btn" onClick={openVoiceSettings}>{tr("Settings")}</button>}
@@ -1020,7 +1022,7 @@ function CollectCard(props: { status: ExtStatusView | null; raw: CollectStatus |
           <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
         </svg>
       }
-      name="Media collection"
+      name={tr("Media collection")}
       desc={tr("Give a web link such as Bilibili and the video is grabbed into the media library.")}
       status={status}
       action={
@@ -1078,7 +1080,7 @@ function SttCard(props: { status: ExtStatusView | null; onReload: () => void | P
           <path d="M12 18v3M8.5 21h7" />
         </svg>
       }
-      name="Speech recognition"
+      name={tr("Speech recognition")}
       desc={tr("Turn speech in the video into captions, runs locally, no upload.")}
       status={status}
       action={
@@ -1137,7 +1139,7 @@ function ShotsCard(props: { status: ExtStatusView | null; onReload: () => void |
           <path d="M10 5v14M14 5v14" />
         </svg>
       }
-      name="Shot detection"
+      name={tr("Shot detection")}
       desc={tr("Find shot change points in the media and split it by shot.")}
       status={status}
       action={
@@ -1202,7 +1204,7 @@ function TrackCard(props: { status: ExtStatusView | null; onReload: () => void |
           <path d="M12 2.5v3.2M12 18.3v3.2M2.5 12h3.2M18.3 12h3.2" />
         </svg>
       }
-      name="Motion tracking"
+      name={tr("Motion tracking")}
       desc={tr("Make text and stickers follow a target in the frame.")}
       status={status}
       action={
@@ -1266,7 +1268,7 @@ function SubjectCard(props: { status: ExtStatusView | null; onReload: () => void
           <path d="M8.2 17c.5-2 1.9-3 3.8-3s3.3 1 3.8 3" />
         </svg>
       }
-      name="Subject detection"
+      name={tr("Subject detection")}
       desc={tr("See which side of the frame a person is on, and cards automatically avoid their face.")}
       status={status}
       action={

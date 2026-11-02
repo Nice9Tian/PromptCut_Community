@@ -79,7 +79,7 @@ export function VoiceSettings(props: { bare?: boolean; onDirtyChange?: (dirty: b
     if (dirty) await persist();
     const r = await generateVoice({ text: previewText }, { preview: true });
     setAudioUrl(`${r.url}?t=${Date.now()}`);
-    setMsg({ tone: "ok", text: tr("{0} · {1} · {2} chars · generated in {3} s", presets.labels[r.provider], r.voiceId, r.chars, (r.ms / 1000).toFixed(1)) });
+    setMsg({ tone: "ok", text: tr("{0} · {1} · {2} chars · generated in {3} s", tr(presets.labels[r.provider]), r.voiceId, r.chars, (r.ms / 1000).toFixed(1)) });
   });
 
   const clearKey = () => {
@@ -97,7 +97,7 @@ export function VoiceSettings(props: { bare?: boolean; onDirtyChange?: (dirty: b
           </optgroup>
         )}
         <optgroup label={tr("System voices")}>
-          {presets.systemVoices[p].map((v) => <option key={v.voiceId} value={v.voiceId}>{v.name} · {v.voiceId}</option>)}
+          {presets.systemVoices[p].map((v) => <option key={v.voiceId} value={v.voiceId}>{tr(v.name)} · {v.voiceId}</option>)}
         </optgroup>
       </>
     );
@@ -105,7 +105,7 @@ export function VoiceSettings(props: { bare?: boolean; onDirtyChange?: (dirty: b
 
   const emotionSelect = (value: string, onChange: (v: string) => void) => (
     <select className="vs-input" value={value} onChange={(e) => onChange(e.target.value)}>
-      {presets.emotions.map((e) => <option key={e} value={e}>{presets.emotionLabels[e] ?? e}</option>)}
+      {presets.emotions.map((e) => <option key={e} value={e}>{tr(presets.emotionLabels[e] ?? e)}</option>)}
     </select>
   );
 
@@ -129,7 +129,7 @@ export function VoiceSettings(props: { bare?: boolean; onDirtyChange?: (dirty: b
         <div className="vs-seg" role="group" aria-label={tr("Default service")}>
           {presets.providers.map((p) => (
             <button key={p} className="vs-seg-btn" aria-pressed={P === p} onClick={() => setDraft({ ...draft, provider: p })}>
-              {presets.labels[p]}
+              {tr(presets.labels[p])}
             </button>
           ))}
         </div>
@@ -296,7 +296,7 @@ function AddVoiceForm(props: { presets: VoicePresets; busy: boolean; onAdd: (e: 
   return (
     <div className="vs-row vs-add">
       <select className="vs-input" value={provider} onChange={(e) => setProvider(e.target.value as Provider)} aria-label={tr("Service")}>
-        {presets.providers.map((p) => <option key={p} value={p}>{presets.labels[p]}</option>)}
+        {presets.providers.map((p) => <option key={p} value={p}>{tr(presets.labels[p])}</option>)}
       </select>
       <input className="vs-input vs-grow" placeholder={tr("Voice id, e.g. pcVideoMale1789119355225")} value={voiceId} onChange={(e) => setVoiceId(e.target.value)} />
       <input className="vs-input" placeholder={tr("Name")} value={name} onChange={(e) => setName(e.target.value)} />

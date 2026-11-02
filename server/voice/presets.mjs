@@ -1,4 +1,3 @@
-import { tr } from "../i18n.mjs";
 /**
  * Static voiceover data: providers, models, system voices, emotions. Pure data, importable by
  * both frontend and server.
@@ -12,7 +11,7 @@ export const PROVIDERS = ['minimax', 'kling', 'vidu'];
 
 export const PROVIDER_LABELS = {
   minimax: 'MiniMax',
-  kling: tr("Kling"),
+  kling: 'Kling',
   vidu: 'Vidu',
 };
 
@@ -22,38 +21,38 @@ export const MINIMAX_MODELS = ['speech-2.8-hd', 'speech-2.8-turbo', 'speech-2.6-
 export const EMOTIONS = ['', 'happy', 'sad', 'angry', 'fearful', 'disgusted', 'surprised', 'calm'];
 
 export const EMOTION_LABELS = {
-  '': 'auto',
-  happy: tr("Happy"),
-  sad: tr("Sad"),
-  angry: tr("Angry"),
-  fearful: tr("Fearful"),
-  disgusted: tr("Disgusted"),
-  surprised: tr("Surprised"),
-  calm: tr("Calm"),
+  '': 'Auto',
+  happy: 'Happy',
+  sad: 'Sad',
+  angry: 'Angry',
+  fearful: 'Fearful',
+  disgusted: 'Disgusted',
+  surprised: 'Surprised',
+  calm: 'Calm',
 };
 
 /** MiniMax system voices. Vidu voice synthesis uses MiniMax underneath; the same IDs work for both */
 const MINIMAX_SYSTEM = [
-  { voiceId: 'female-shaonv', name: tr("Young girl") },
-  { voiceId: 'female-yujie', name: tr("Mature elder sister") },
-  { voiceId: 'female-chengshu', name: tr("Mature woman") },
-  { voiceId: 'female-tianmei', name: tr("Sweet woman") },
-  { voiceId: 'presenter_female', name: tr("Female presenter") },
-  { voiceId: 'male-qn-qingse', name: tr("Naive young man") },
-  { voiceId: 'male-qn-jingying', name: tr("Elite young man") },
-  { voiceId: 'male-qn-badao', name: tr("Domineering young man") },
-  { voiceId: 'male-qn-daxuesheng', name: tr("Young college student") },
-  { voiceId: 'presenter_male', name: tr("Male presenter") },
+  { voiceId: 'female-shaonv', name: 'Young girl' },
+  { voiceId: 'female-yujie', name: 'Mature elder sister' },
+  { voiceId: 'female-chengshu', name: 'Mature woman' },
+  { voiceId: 'female-tianmei', name: 'Sweet woman' },
+  { voiceId: 'presenter_female', name: 'Female presenter' },
+  { voiceId: 'male-qn-qingse', name: 'Naive young man' },
+  { voiceId: 'male-qn-jingying', name: 'Elite young man' },
+  { voiceId: 'male-qn-badao', name: 'Domineering young man' },
+  { voiceId: 'male-qn-daxuesheng', name: 'Young college student' },
+  { voiceId: 'presenter_male', name: 'Male presenter' },
 ];
 
 export const SYSTEM_VOICES = {
   minimax: MINIMAX_SYSTEM,
   vidu: MINIMAX_SYSTEM,
   kling: [
-    { voiceId: 'chat1_female_new-3', name: tr("Gentle big sister") },
-    { voiceId: 'ai_kaiya', name: tr("Sunny guy") },
-    { voiceId: 'genshin_vindi2', name: tr("Sunny youth") },
-    { voiceId: 'yizhipiannan-v1', name: tr("Dubbed-film male voice") },
+    { voiceId: 'chat1_female_new-3', name: 'Gentle big sister' },
+    { voiceId: 'ai_kaiya', name: 'Sunny guy' },
+    { voiceId: 'genshin_vindi2', name: 'Sunny youth' },
+    { voiceId: 'yizhipiannan-v1', name: 'Dubbed-film male voice' },
   ],
 };
 

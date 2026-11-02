@@ -192,7 +192,7 @@ export function trackPlugin(): Plugin {
             // Reporting as template makes callers think tracking is still possible, resulting in every call failing.
             return sendJson(res, 200, {
               ok: true, ready: false, engine: null,
-              reason: "No usable Python",
+              reason: tr("No usable Python"),
             });
           }
           const env = await buildEnv(root, python);
@@ -201,7 +201,7 @@ export function trackPlugin(): Plugin {
           child.stdout?.on("data", (d: Buffer) => { out += d.toString(); });
           child.on("error", () =>
             sendJson(res, 200, { ok: true, ready: false, engine: null,
-                                 reason: "Interpreter failed to start" }));
+                                 reason: tr("Interpreter failed to start") }));
           child.on("close", () => {
             try {
               const line = out.split(/\r?\n/).find((l) => l.includes('"event"'));
@@ -216,7 +216,7 @@ export function trackPlugin(): Plugin {
               });
             } catch {
               sendJson(res, 200, { ok: true, ready: false, engine: null,
-                                   reason: "The interpreter returned no parseable status" });
+                                   reason: tr("The interpreter returned no parseable status") });
             }
           });
           return;

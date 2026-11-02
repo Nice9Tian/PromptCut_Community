@@ -24,7 +24,7 @@ import { tr } from './i18n.mjs';
  */
 export const SITES = {
   bilibili: {
-    name: tr("Bilibili"),
+    name: 'Bilibili',
     loginUrl: 'https://passport.bilibili.com/login',
     domains: /(^|\.)(bilibili\.com|bilibili\.tv|biliapi\.net|bigfun\.cn)$/i,
     required: ['SESSDATA', 'bili_jct', 'DedeUserID'],

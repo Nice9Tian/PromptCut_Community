@@ -25,7 +25,7 @@ function sanitizeName(name: string) {
  * "Not ready, run npm run prepare-python first", a command users do not have at all, which only
  * misleads people.
  */
-export const PYTHON_MISSING =
+export const pythonMissing = (): string =>
   tr("Bundled Python not found. The official installer ships with it; if it is missing, the install is probably corrupted or it was deleted by antivirus software, so reinstall once; ") +
   tr("If you are developing in the repo, run npm run prepare-python to assemble it.");
 
@@ -283,7 +283,7 @@ export function sttPlugin(): Plugin {
           if (!python) {
             res.statusCode = 503;
             res.setHeader("Content-Type", "application/json");
-            res.end(JSON.stringify({ error: PYTHON_MISSING }));
+            res.end(JSON.stringify({ error: pythonMissing() }));
             return;
           }
           try {
@@ -318,7 +318,7 @@ export function sttPlugin(): Plugin {
           if (!python) {
             res.statusCode = 503;
             res.setHeader("Content-Type", "application/json");
-            res.end(JSON.stringify({ error: PYTHON_MISSING }));
+            res.end(JSON.stringify({ error: pythonMissing() }));
             return;
           }
           try {
@@ -375,7 +375,7 @@ export function sttPlugin(): Plugin {
           if (!python) {
             res.statusCode = 503;
             res.setHeader("Content-Type", "application/json");
-            res.end(JSON.stringify({ error: PYTHON_MISSING }));
+            res.end(JSON.stringify({ error: pythonMissing() }));
             return;
           }
           try {

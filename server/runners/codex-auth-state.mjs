@@ -5,7 +5,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { setupRoot } from './cli-runtime.mjs';
 import { tr } from '../i18n.mjs';
 
-export const AUTH_RECOVERY = tr("Codex login has expired, please log in again. After logging in, resend or continue the original instruction yourself.");
+export const authRecovery = () => tr("Codex login has expired, please log in again. After logging in, resend or continue the original instruction yourself.");
 const reasons = new Set(['token_revoked', 'refresh_token_invalid', 'openai_unauthorized']);
 const externalToolError = /\bmcp\b|mcp[_ :.-]|tools\/call|external tool/i;
 
@@ -78,7 +78,7 @@ export function createCodexAuthState(root, { io = fs } = {}) {
     snapshot: () => ({ ...state, ...(persistenceWarning ? { persistenceWarning } : {}) }),
     effective(raw = { loggedIn: null }) {
       const extra = { authGeneration: state.revision, ...(persistenceWarning ? { persistenceWarning } : {}) };
-      if (state.state === 'invalid') return { ...raw, ...extra, loggedIn: false, status: 'invalid', reason: state.reason, detail: AUTH_RECOVERY, fixHint: AUTH_RECOVERY };
+      if (state.state === 'invalid') return { ...raw, ...extra, loggedIn: false, status: 'invalid', reason: state.reason, detail: authRecovery(), fixHint: authRecovery() };
       if (state.state === 'unknown') return { ...raw, ...extra, loggedIn: null, status: 'unknown', fixHint: tr("The Codex login state record cannot be confirmed, please log in again.") };
       return { ...raw, ...extra };
     },
@@ -109,6 +109,6 @@ export function codexAuthState() {
 }
 
 export function authFailureEvent(reason, changed = true) {
-  return { type: 'error', message: AUTH_RECOVERY, retryable: false,
+  return { type: 'error', message: authRecovery(), retryable: false,
     ...(changed ? { authProvider: 'codex', authReason: reason, authGeneration: codexAuthState().snapshot().revision } : {}) };
 }

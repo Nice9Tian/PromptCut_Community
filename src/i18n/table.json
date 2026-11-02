@@ -17694,5 +17694,41 @@
  "Track stream: this browser cannot encode": {
   "zh": "轨道流:这个浏览器压不了",
   "ja": "トラックストリーム: このブラウザではエンコードできません"
+ },
+ "Media collection": {
+  "zh": "素材收集",
+  "ja": "素材収集"
+ },
+ "Shot detection": {
+  "zh": "镜头识别",
+  "ja": "ショット検出"
+ },
+ "Motion tracking": {
+  "zh": "运动追踪",
+  "ja": "モーショントラッキング"
+ },
+ "Subject detection": {
+  "zh": "主体检测",
+  "ja": "被写体検出"
+ },
+ "Interpreter failed to start": {
+  "zh": "解释器启动失败",
+  "ja": "インタプリタの起動に失敗しました"
+ },
+ "Interpreter failed to start: {0}": {
+  "zh": "解释器启动失败：{0}",
+  "ja": "インタプリタの起動に失敗しました: {0}"
+ },
+ "The interpreter returned no parseable status": {
+  "zh": "解释器没有返回可解析的状态",
+  "ja": "インタプリタから解析可能なステータスが返されませんでした"
+ },
+ "Status is not valid JSON": {
+  "zh": "状态不是合法 JSON",
+  "ja": "ステータスは有効なJSONではありません"
+ },
+ "Auto": {
+  "zh": "自动",
+  "ja": "自動"
  }
 }

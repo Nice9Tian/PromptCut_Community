@@ -112,7 +112,7 @@ async function readStatus(root: string): Promise<
   { ok: true; info: Record<string, unknown> } | { ok: false; reason: string }
 > {
   const python = findPython(root);
-  if (!python) return { ok: false, reason: "No usable Python" };
+  if (!python) return { ok: false, reason: tr("No usable Python") };
   const env = await buildEnv(root, python);
   return new Promise((resolve) => {
     const child = spawnPython(python, ["-m", "promptcut_subject", "status"], env);
@@ -120,19 +120,19 @@ async function readStatus(root: string): Promise<
     let err = "";
     child.stdout?.on("data", (d: Buffer) => { out += d.toString(); });
     child.stderr?.on("data", (d: Buffer) => { err += d.toString(); });
-    child.on("error", (e) => resolve({ ok: false, reason: `Interpreter failed to start: ${e.message}` }));
+    child.on("error", (e) => resolve({ ok: false, reason: tr("Interpreter failed to start: {0}", e.message) }));
     child.on("close", () => {
       const line = out.split(/\r?\n/).find((l) => l.includes('"event"'));
       if (!line) {
         // The last line of stderr is usually the traceback line: returning only "no status returned"
         // is equivalent to leaving the user troubleshooting in the dark.
         const tail = err.split(/\r?\n/).filter((l) => l.trim()).slice(-2).join(" ");
-        return resolve({ ok: false, reason: tail || "The interpreter returned no parseable status" });
+        return resolve({ ok: false, reason: tail || tr("The interpreter returned no parseable status") });
       }
       try {
         resolve({ ok: true, info: JSON.parse(line) });
       } catch {
-        resolve({ ok: false, reason: "Status is not valid JSON" });
+        resolve({ ok: false, reason: tr("Status is not valid JSON") });
       }
     });
   });

@@ -308,7 +308,7 @@ export function shotsPlugin(options: { projectStores?: any; projectAccess?: any 
         // GET /api/shots/status: whether the extension is installed
         if (req.method === "GET" && url === "/api/shots/status") {
           const python = findPython(root);
-          if (!python) return sendJson(res, 200, { ok: true, ready: false, engine: "scdet", reason: "No usable Python" });
+          if (!python) return sendJson(res, 200, { ok: true, ready: false, engine: "scdet", reason: tr("No usable Python") });
           const env = await buildEnv(root, python);
           const child = spawnPython(python, ["-m", "promptcut_shots", "status"], env);
           let out = "";

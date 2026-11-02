@@ -33,7 +33,7 @@ import os from "os";
 import fs from "fs";
 import { spawn, type ChildProcess } from "child_process";
 import { randomUUID } from "crypto";
-import { buildEnv, dataDir, findPython, pipeToSse, readBody, spawnPython, PYTHON_MISSING } from "./vite-plugin-stt";
+import { buildEnv, dataDir, findPython, pipeToSse, readBody, spawnPython, pythonMissing } from "./vite-plugin-stt";
 import { assetServiceOrigin } from "./asset-client";
 import { ingestFile } from "./media-ingest.mjs";
 import { findBundledChrome } from "./vite-plugin-web";
@@ -215,7 +215,7 @@ function cookieOverview(root: string): Record<string, unknown> {
   for (const id of siteNames()) {
     const st = savedCookieStatus(dataDir(root), id);
     out[id] = {
-      name: SITES[id as keyof typeof SITES].name,
+      name: tr(SITES[id as keyof typeof SITES].name),
       loggedIn: st.loggedIn, expired: st.expired, userId: st.userId,
       expiresAt: st.expiresAt ? new Date(st.expiresAt).toISOString() : null,
       path: st.exists ? st.path : null,
@@ -226,7 +226,7 @@ function cookieOverview(root: string): Record<string, unknown> {
 
 async function runDownload(root: string, job: CollectJob, body: Record<string, unknown>): Promise<void> {
   const boot = await bootstrap(root);
-  if (!boot) { job.status = "error"; job.message = PYTHON_MISSING; job.finishedAt = Date.now(); return; }
+  if (!boot) { job.status = "error"; job.message = pythonMissing(); job.finishedAt = Date.now(); return; }
   // Temp directory for this job itself: yt-dlp lands here, deleted along with the directory after
   // storing (see file header)
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "pc-collect-"));
@@ -364,7 +364,7 @@ export function collectPlugin(): Plugin {
         // site login states
         if (req.method === "GET" && url === "/api/collect/status") {
           const boot = await bootstrap(root);
-          if (!boot) return sendJson(res, 200, { ok: true, ready: false, python: false, reason: PYTHON_MISSING, cookies: cookieOverview(root) });
+          if (!boot) return sendJson(res, 200, { ok: true, ready: false, python: false, reason: pythonMissing(), cookies: cookieOverview(root) });
           const tail: string[] = [];
           let info: Record<string, unknown> = {};
           const code = await runLines(spawnPython(boot.python, ["-m", "promptcut_collect", "status"], boot.env),
@@ -378,7 +378,7 @@ export function collectPlugin(): Plugin {
         // POST /api/collect/install: pip installs yt-dlp, SSE streams logs back
         if (req.method === "POST" && url === "/api/collect/install") {
           const boot = await bootstrap(root);
-          if (!boot) return sendJson(res, 400, { ok: false, error: PYTHON_MISSING });
+          if (!boot) return sendJson(res, 400, { ok: false, error: pythonMissing() });
           return pipeToSse(spawnPython(boot.python, ["-m", "promptcut_collect", "install"], boot.env), res);
         }
 
@@ -512,7 +512,7 @@ export function collectPlugin(): Plugin {
           const query = typeof body.query === "string" ? body.query.trim() : "";
           if (!query) return sendJson(res, 400, { ok: false, error: "Missing query" });
           const boot = await bootstrap(root);
-          if (!boot) return sendJson(res, 503, { ok: false, error: PYTHON_MISSING });
+          if (!boot) return sendJson(res, 503, { ok: false, error: pythonMissing() });
           const site = typeof body.site === "string" && SITE_PRESETS.has(body.site) && body.site !== "auto" ? body.site : "bilibili";
           const limit = typeof body.limit === "number" && Number.isFinite(body.limit) ? Math.max(1, Math.min(10, Math.round(body.limit))) : 5;
           const args = ["-m", "promptcut_collect", "search", "--query", query, "--site", site, "--limit", String(limit)];
@@ -545,7 +545,7 @@ export function collectPlugin(): Plugin {
           const link = typeof body.url === "string" ? body.url.trim() : "";
           if (!link) return sendJson(res, 400, { ok: false, error: "Missing url" });
           const boot = await bootstrap(root);
-          if (!boot) return sendJson(res, 503, { ok: false, error: PYTHON_MISSING });
+          if (!boot) return sendJson(res, 503, { ok: false, error: pythonMissing() });
           const args = ["-m", "promptcut_collect", "probe", "--url", link];
           if (typeof body.site === "string" && SITE_PRESETS.has(body.site) && body.site !== "auto") args.push("--site", body.site);
           if (typeof body.quality === "number" && QUALITIES.has(body.quality)) args.push("--quality", String(body.quality));

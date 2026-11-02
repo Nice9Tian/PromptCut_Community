@@ -11,7 +11,8 @@ import '../lib/no-user-dirs.mjs';
  *
  * Acceptance, each failure is one line in `fails` of the JSON printed last:
  *   L1 English screens show no Chinese or Japanese, apart from the language menu and project data.
- *   L2 Chinese and Japanese screens show no English sentence that should have been translated.
+ *   L2 Chinese and Japanese screens show no English sentence or label that should have been translated,
+ *      also inside a line that mixes in some Chinese.
  *   L3 No button, tab or menu item has its text cut off, in any language.
  *   L4 Switching language in Vibe mode and in the editor comes back to the same project.
  *   L5 No page errors.
@@ -102,8 +103,12 @@ async function walk(locale) {
       for (const t of texts) if (CJK.test(t) && !ALLOW.test(t)) fails.push(`L1 ${locale}/${name}: ${t.slice(0, 80)}`);
     } else {
       for (const t of texts) {
-        if (CJK.test(t) || ALLOW.test(t) || t === SAMPLE_USER || t === SAMPLE_AGENT) continue;
-        if (/^[A-Z]?[a-z]+( [a-z]+){2,}/.test(t)) fails.push(`L2 ${locale}/${name}: ${t.slice(0, 80)}`);
+        if (ALLOW.test(t) || t === SAMPLE_USER || t === SAMPLE_AGENT) continue;
+        // A label of two words is enough ("Shot detection"), also inside a line that mixes in some
+        // Chinese (a translated prefix with an English reason after it). Commands quoted in a hint
+        // are not interface text.
+        const runs = t.split(/[぀-ヿ㐀-鿿　-〿＀-￯]+/).map((r) => r.replace(/\b(npm run|pip install) [\w-]+/g, ''));
+        if (runs.some((r) => /\b[A-Z]?[a-z]+ [a-z]{3,}\b/.test(r))) fails.push(`L2 ${locale}/${name}: ${t.slice(0, 80)}`);
       }
     }
   };
