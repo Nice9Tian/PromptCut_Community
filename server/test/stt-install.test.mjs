@@ -16,8 +16,11 @@ const OUT = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-stt-test-'));
 
 // 转译产物落在临时目录,解析不到 node_modules,所以把 react 换成绝对 URL
 const reactUrl = pathToFileURL(require_.resolve('react')).href;
+const i18nUrl = pathToFileURL(path.join(ROOT, 'src/i18n/index.ts')).href;
 let src = fs.readFileSync(path.join(ROOT, 'src/ai/sttInstallStore.ts'), 'utf8')
-  .replace('from "react"', `from '${reactUrl}'`);
+  .replace('from "react"', `from '${reactUrl}'`)
+  // tr() 来自 src/i18n:同理换成绝对 URL
+  .replace('from "../i18n/index.ts"', `from '${i18nUrl}'`);
 const js = ts.transpileModule(src, {
   compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext },
 }).outputText;
@@ -79,7 +82,7 @@ test('进度行给出当前文件的真实比例', () => {
   store.feedLine(id, '     ------------------                       20.1/43.2 MB 8.1 MB/s eta 0:00:03');
   const job = store.getJob(id);
   assert.ok(Math.abs(store.fractionOf(job) - 20.1 / 43.2) < 1e-6);
-  assert.match(store.describe(job), /正在下载 ctranslate2/);
+  assert.match(store.describe(job), /Downloading ctranslate2/);
 });
 
 test('kB 单位换算成 MB', () => {
@@ -98,7 +101,7 @@ test('进入安装阶段:知道包数,但**不给**百分比', () => {
   assert.equal(job.phase, 'installing');
   assert.equal(job.packageCount, 5);
   assert.equal(store.fractionOf(job), null, 'pip 在这一段一行不打,给百分比就是假的');
-  assert.match(store.describe(job), /正在安装 5 个包/);
+  assert.match(store.describe(job), /Installing 5 packages/);
 });
 
 test('走完整条真实输出不会崩,阶段推进正确', () => {

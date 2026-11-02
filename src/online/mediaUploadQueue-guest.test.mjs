@@ -100,7 +100,7 @@ test("A guest uploads 3 videos (6 files) through the online upload queue and all
   assert.equal(stats.rejected, 1);
   assert.deepEqual(rejected.map((r) => [r.id, r.code]), [["v-four", "guest-video-limit"]]);
   assert.equal(events.filter((e) => e.event === "upload.retry").length, 0, "Rejected items do not enter backoff retry");
-  assert.equal(uploadRejectedText(rejected[0]), "\"four.mp4\" was not uploaded to the cloud: guests can upload at most 3 videos. To upload more, please register an account.");
+  assert.equal(uploadRejectedText(rejected[0]), "\"four.mp4\" was not uploaded to the cloud: Guests can upload at most 3 videos. To upload more, please sign up for an account.");
   // 每一片都带了档位头，和这一档对得上
   const tierByHash = new Map(items.flatMap((it) => it.tiers.map((t) => [t.hash, t.tier])));
   assert.ok(puts.length >= 7);

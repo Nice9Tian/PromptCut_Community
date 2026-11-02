@@ -70,7 +70,7 @@ test("OCS-H-11 The guard is self-contained: the source can be taken out and stil
   assert.equal(r.errors.length, 0, [...r.errors].join("; ")); // 别的环境里的数组:不用 deepEqual(原型不同)
   for (const k of ["Worker", "indexedDB", "BroadcastChannel", "SharedWorker", "LockManager.request", "CookieStore.set", "IDBFactory.open"]) assert.ok(r.denied.includes(k), k);
   assert.equal(scope.indexedDB, undefined);
-  assert.throws(() => new scope.Worker("blob:fake/1"), /PromptCut stage: cannot start background thread/);
+  assert.throws(() => new scope.Worker("blob:fake/1"), /PromptCut stage: cannot start a background thread/);
   assert.match(newLockPrefix(), /^pc-[0-9a-f]{32}:$/);
 });
 
@@ -93,19 +93,19 @@ test("OCS-H-12 Background threads: any background thread started by a card is re
     ["data:text/javascript,1", undefined],
     ["blob:fake/999", undefined],
   ]) {
-    assert.throws(() => new scope.Worker(u, opts), /PromptCut stage: cannot start background thread/, String(u));
+    assert.throws(() => new scope.Worker(u, opts), /PromptCut stage: cannot start a background thread/, String(u));
   }
-  assert.throws(() => scope.Worker(url), /PromptCut stage: cannot start background thread/);
+  assert.throws(() => scope.Worker(url), /PromptCut stage: cannot start a background thread/);
 
   // 绕路:原构造函数拿不回来、换不掉;经 prototype.constructor、子类、Reflect.construct 同样拒绝
   assert.equal(scope.Worker.prototype.constructor, scope.Worker);
-  assert.throws(() => new scope.Worker.prototype.constructor(url), /PromptCut stage: cannot start background thread/);
-  assert.throws(() => Reflect.construct(scope.Worker, [url]), /PromptCut stage: cannot start background thread/);
+  assert.throws(() => new scope.Worker.prototype.constructor(url), /PromptCut stage: cannot start a background thread/);
+  assert.throws(() => Reflect.construct(scope.Worker, [url]), /PromptCut stage: cannot start a background thread/);
   assert.throws(() => { OrigWorker.prototype.constructor = OrigWorker; }, TypeError);
   assert.equal(Reflect.set(scope, "Worker", OrigWorker), false);
   assert.throws(() => Object.defineProperty(scope, "Worker", { value: OrigWorker }), TypeError);
   class Sub extends scope.Worker {}
-  assert.throws(() => new Sub(url), /PromptCut stage: cannot start background thread/);
+  assert.throws(() => new Sub(url), /PromptCut stage: cannot start a background thread/);
   assert.equal(spawned.length, 0, "none of the card's attempts started a thread");
 
   // 舞台运行时自己的 GL / 声音线程经模块闭包里的原生构造函数起
@@ -154,7 +154,7 @@ test("OCS-H-17 Guard integrity check: top-level declarations shadowing self, JSO
   assert.equal(ok.ran, true);
   assert.equal(ok.scope.indexedDB, undefined);
   assert.equal(ok.scope.BroadcastChannel, undefined);
-  assert.throws(() => new ok.scope.Worker("blob:fake/1"), /PromptCut stage: cannot start background thread/);
+  assert.throws(() => new ok.scope.Worker("blob:fake/1"), /PromptCut stage: cannot start a background thread/);
 
   // ① 遮住 self:守卫不读 self,照样装在真全局上
   const s = runGuardWithPreDecl("function self() {}\nvar probe = typeof indexedDB;");
@@ -206,7 +206,7 @@ test("OCS-H-18 Locking Worker fails: not swallowed, the Worker is withdrawn; thr
   assert.equal(a.scope.Worker, undefined, "Worker was withdrawn");
   const b = fakeScope();
   Object.freeze(b.scope.Worker.prototype);
-  assert.throws(() => guardStageScope(b.scope, { lockPrefix: PREFIX, strict: true }), /critical items not installed\(Worker:/);
+  assert.throws(() => guardStageScope(b.scope, { lockPrefix: PREFIX, strict: true }), /critical items failed to install \(Worker:/);
   // 舞台文档里(不 strict)核对不过:记一条 integrity,什么都不装
   const c = fakeScope();
   Object.defineProperty(c.scope, "Blob", { value: function Blob() {}, enumerable: true, configurable: false, writable: true });

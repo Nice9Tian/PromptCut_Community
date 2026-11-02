@@ -218,9 +218,9 @@ test("在 scope 里出错:项目回到真实形状,之后的调用照常", () =>
 
 test("runInCutScope:嵌套改另一条被拒;包异步函数被拒;激活那条与不存在的剪辑就地照常做", () => {
   fresh();
-  assert.throws(() => actions.editInCut("B", () => actions.editInCut("X", () => 1)), /不能在改一条剪辑的过程中嵌套/);
+  assert.throws(() => actions.editInCut("B", () => actions.editInCut("X", () => 1)), /Cannot edit another cut while editing one cut/);
   assert.equal(actions.editInCut("B", () => actions.editInCut("B", () => 7)), 7, "同一条可以嵌套");
-  assert.throws(() => actions.editInCut("B", () => Promise.resolve(1)), /只能包同步函数/);
+  assert.throws(() => actions.editInCut("B", () => Promise.resolve(1)), /can only wrap synchronous functions/);
   assert.equal(getState().project.activeCutId, "A", "出错后也还原");
   assert.equal(actions.editInCut("A", () => getState().project.activeCutId), "A");
   assert.equal(actions.editInCut("nope", () => getState().project.activeCutId), "A");

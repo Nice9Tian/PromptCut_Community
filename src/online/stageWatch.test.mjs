@@ -86,7 +86,7 @@ test("C10-SW-02 after handshake B disconnects → reload B → handshake returns
   await clock.advance(STAGE_LOST_AFTER_MS + STAGE_PING_INTERVAL_MS);
   assert.equal(calls.reload.length, 1);
   assert.equal(calls.reload[0].id, "B");
-  assert.match(calls.reload[0].reason, /no heartbeat reply/);
+  assert.match(calls.reload[0].reason, /No heartbeat reply/);
   assert.equal(watch.status("B"), "reloading");
   assert.equal(watch.status("A"), "alive");
   assert.equal(layout(), "dual", "iframes stay mounted as dual stage during the reload");
@@ -112,7 +112,7 @@ test("C10-SW-03 reload also fails to get a handshake: 20 seconds after the reloa
   assert.equal(calls.fallback.length, 0, "no fallback within the time limit");
   await clock.advance(1000);
   assert.equal(calls.fallback.length, 1);
-  assert.match(calls.fallback[0], /stage A reloaded after disconnect, no handshake within 20 seconds/);
+  assert.match(calls.fallback[0], /Stage A reloaded after disconnecting and did not reconnect within 20 s/);
   assert.equal(watch.fellBack, true);
   assert.equal(onlineStageState().handshake, "failed");
   assert.equal(layout(), "single");
@@ -152,7 +152,7 @@ test("C10-SW-05 repeated disconnects: reload succeeds then disconnects again; at
   await clock.advance(STAGE_LOST_AFTER_MS + STAGE_PING_INTERVAL_MS);
   assert.equal(calls.reload.length, STAGE_MAX_RELOADS, "the 4th time does not reload");
   assert.equal(calls.fallback.length, 1);
-  assert.match(calls.fallback[0], /repeated disconnects/);
+  assert.match(calls.fallback[0], /keeps disconnecting/);
   assert.equal(layout(), "single");
 });
 

@@ -108,10 +108,10 @@ test("OCE-T-02 transpile one file: TSX → CommonJS; extract specifiers; syntax 
   assert.equal(bad.state.state, "unsupported-syntax");
   assert.equal(bad.state.file, `${U}b.tsx`);
   const ns = T.transpileCardFile(`${U}c.tsx`, "export namespace N { export const x = 1 }");
-  assert.deepEqual(ns.state, { state: "unsupported-syntax", detail: "namespace(line 1)", file: `${U}c.tsx` });
+  assert.deepEqual(ns.state, { state: "unsupported-syntax", detail: "namespace (line 1)", file: `${U}c.tsx` });
   const big = T.transpileCardFile(`${U}d.tsx`, `export const s = "${"x".repeat(T.MAX_SOURCE_CHARS)}";`);
   assert.equal(big.state.state, "unsupported-syntax");
-  assert.match(big.state.detail, /file too large/);
+  assert.match(big.state.detail, /File too large/);
   assert.deepEqual(T.requireSpecifiers(`var a = require('x'); var b = _interop(require("./y")); const t = "not require(here"`), ["x", "./y"]);
 });
 
@@ -176,7 +176,7 @@ test("OCE-T-04 bundle one card: closure, missing files, unsupported modules, gen
   const f3 = lib({ [`${U}n.tsx`]: CARD("n", `import { x } from "./gone";\nexport const z = x;`) });
   assert.deepEqual((await bundle(f3, `${U}n.tsx`)).state, { state: "missing-module", detail: "./gone", file: `${U}n.tsx` });
   const f4 = lib({ [`${U}p.tsx`]: CARD("p", `import { x } from "./p-bad";\nexport const z = x;`), [`${U}p-bad.ts`]: `export namespace X { export const x = 1 }\nexport const x = 1;` });
-  assert.deepEqual((await bundle(f4, `${U}p.tsx`)).state, { state: "unsupported-syntax", detail: "namespace(line 1)", file: `${U}p-bad.ts` });
+  assert.deepEqual((await bundle(f4, `${U}p.tsx`)).state, { state: "unsupported-syntax", detail: "namespace (line 1)", file: `${U}p-bad.ts` });
   assert.equal((await bundle(lib({}), `${U}none.tsx`)).state.state, "missing-module");
   // 缓存:第二次不再转译(换一个会抛错的读法也照出结果是不行的,所以数 set 的次数)
   let sets = 0, gets = 0;
@@ -254,7 +254,7 @@ test("OCE-T-06 loader failure states", async () => {
   // 卡片代码里现拼的 require 不在转译时的表里:抛错,不会摸到别的模块
   const sneaky = await one(`const r = require;\nconst fs = r("node:fs");\nexport const card = { id: "c", name: "c", defaults: {}, controls: [], Component: () => fs };`);
   assert.equal(sneaky.state, "load-error");
-  assert.match(sneaky.detail, /This module is not available on the online page/);
+  assert.match(sneaky.detail, /The online page has no such module/);
 });
 
 test("OCE-T-07 generation change: unchanged is not re-executed; changed is re-executed; failure withdraws the old one; ones not in the group are withdrawn; clear", async () => {
@@ -328,14 +328,14 @@ test("OCE-T-08 run states: spread onto cards; order on the editor page side; pan
   assert.equal(msg({ state: "ready" }), null);
   assert.equal(msg({ state: "loading" }), null);
   assert.equal(msg(undefined), null);
-  assert.equal(msg({ state: "unsupported-syntax", detail: "namespace(line 3)", file: `${U}x.tsx` }), "The online browser cannot run this card: it uses syntax the online page does not support (namespace(line 3), x.tsx). The visuals are provided by the render node.");
-  assert.equal(msg({ state: "missing-module", detail: "lodash" }), "The online browser cannot run this card: it references a module the online page does not have: lodash. The visuals are provided by the render node.");
-  assert.equal(msg({ state: "load-error", detail: "炸了" }), "The online browser cannot run this card: error while loading (blew up).");
+  assert.equal(msg({ state: "unsupported-syntax", detail: "namespace (line 3)", file: `${U}x.tsx` }), "The online browser cannot run this card: it uses syntax the online page does not support(namespace (line 3),x.tsx). The picture is provided by a render node.");
+  assert.equal(msg({ state: "missing-module", detail: "lodash" }), "The online browser cannot run this card: it references a module that is not available on the online page: lodash. The picture is provided by a render node.");
+  assert.equal(msg({ state: "load-error", detail: "炸了" }), "The online browser cannot run this card: error while loading(炸了).");
   assert.equal(msg({ state: "gpu" }), "This device's graphics capability is not enough, so the picture of media effect cards is provided by a render node.");
   assert.equal(msg({ state: "media" }), "This device cannot decode this media clip, so the picture of media effect cards is provided by a render node.");
   assert.equal(msg({ state: "runtime-error" }), "This card failed to run in the online browser, so a render node provides the picture this time.");
   assert.equal(msg({ state: "not-isolated" }), "This page has no isolated runtime environment, so the picture of user cards and media effect cards is provided by a render node.");
-  assert.equal(msg({ state: "not-isolated", detail: "This site does not have online running of user cards and media effect cards enabled" }), "This site does not have online running of user cards and media effect cards enabled, so the visuals of user cards and media effect cards are provided by the render node.");
+  assert.equal(msg({ state: "not-isolated", detail: "This site does not have online running of user cards and media effect cards enabled" }), "This site does not have online running of user cards and media effect cards enabled, so the picture of user cards and media effect cards is provided by a render node.");
   assert.equal(R.CARD_RUN_STATES.length, 9);
   for (const s of R.CARD_RUN_STATES) if (s !== "ready" && s !== "loading") assert.ok(msg({ state: s }), s);
 });
@@ -456,9 +456,9 @@ test("OCE-T-12 registry: cards loaded at runtime and their run state", () => {
   const off = R.onRuntimeCardsChanged(() => { notified++; });
   const a = def("rt-a"), clash = def("built", { name: "Pretends to be a built-in card" });
   assert.equal(R.setRuntimeCards([a, clash]), true);
-  assert.equal(R.getCard("rt-a").name, "name-rt-a");
+  assert.equal(R.getCard("rt-a").name, "名-rt-a");
   assert.equal(typeof R.getCard("rt-a").need_prerendering, "boolean", "Like registering a built-in card, capabilities are overlaid from the review table (entries missing from the table get defaults)");
-  assert.equal(R.getCard("built").name, "name-built", "Id clash with a build-time card: the build-time one wins");
+  assert.equal(R.getCard("built").name, "名-built", "Id clash with a build-time card: the build-time one wins");
   assert.equal(R.isRuntimeCard("rt-a"), true);
   assert.equal(R.isRuntimeCard("built"), false);
   assert.deepEqual(R.allCards().map((c) => c.id), ["built"], "allCards does not include runtime-loaded cards");

@@ -112,7 +112,7 @@ test('在线只复用WAV，从不执行用户audio；缺失持久声音明确失
     globalThis.__pcOnlinePage = true;
     const p = getState().project, c = findClip(p, clip.id).clip, count = evaluations;
     assert.equal(persistentCardAudio(p, c).media.kind, 'audio'); assert.equal(generatedCardAudioClipsAt(p, .1).length, 1);
-    await assert.rejects(() => renderEmbeddedCardWav(p, c, new AbortController().signal), /在线/);
+    await assert.rejects(() => renderEmbeddedCardWav(p, c, new AbortController().signal), /Online browser mode cannot yet run this card/);
     assert.equal(evaluations, count);
     assert.throws(() => persistentCardAudio(p, { ...c, cardAudio: undefined }), /尚未生成/);
   } finally { delete globalThis.__pcOnlinePage; f.restore(); configureCardAudio({ getCard: id => id === def.id ? def : undefined, sourceVersionOf: () => sourceVersion }); }

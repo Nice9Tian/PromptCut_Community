@@ -29,7 +29,7 @@ function project(tracks, activeCutId = "c1") {
 const track = (id, name, clips = []) => ({ id, name, clips });
 
 test("MA-P1 diffScopes:只报 clips 数组换了引用的那几条序列,格式是「剪辑->序列」;切剪辑整条算;删序列标出来;只调顺序记序列顺序", () => {
-  const a = [track("t1", "Track 1", []), track("t2", "Track 2", [])];
+  const a = [track("t1", "序列 1", []), track("t2", "序列 2", [])];
   const before = project(a);
   const after = project([a[0], { ...a[1], clips: [{ id: "x" }] }]);
   assert.deepEqual(bus.diffScopes(before, after), ["剪辑 1->序列 2"]);
@@ -82,7 +82,7 @@ test("MA-P3 agent.spawn:开一页带角色名、对话 ID 是服务端给的、�
 
 test("MA-P4 formatInbound:每条标出是谁发的", () => {
   const text = bus.formatInbound([{ from: "conv-a", text: "序列2 我来", hops: 1 }, { from: null, fromLabel: "Agent x(成员 bob 那边)", text: "好", hops: 1 }]);
-  assert.equal(text, "【来自 Agent conv-a 的消息】\n序列2 我来\n\n【来自 Agent x(成员 bob 那边) 的消息】\n好");
+  assert.equal(text, "[Message from Agent conv-a]\n序列2 我来\n\n[Message from Agent x(成员 bob 那边)]\n好");
 });
 
 test("MA-P5 取走又忙了:stash 放回页面这边,下次先送它们", async () => {
@@ -94,7 +94,7 @@ test("MA-P5 取走又忙了:stash 放回页面这边,下次先送它们", async 
 });
 
 test("MA-P1b diffScopes:不切换剪辑、就地改了停放剪辑里的序列,也记「那条剪辑->序列」", () => {
-  const act = [track("t1", "Track 1", [])];
+  const act = [track("t1", "序列 1", [])];
   const pk = [track("p1", "序列 A", []), track("p2", "序列 B", [])];
   const mk = (parked) => ({ ...project(act), cuts: [{ id: "c1", name: "剪辑 1" }, { id: "c2", name: "剪辑 2", tracks: parked, duration: 5 }], activeCutId: "c1" });
   const before = mk(pk);
