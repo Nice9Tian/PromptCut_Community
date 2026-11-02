@@ -127,7 +127,205 @@ const HOST_PATH = '/__probe-card-costs-host';
 
 // 同源的一张测试页:仓库里不留静态文件,由 puppeteer 请求拦截临时供给。
 // 技法照 scripts/probes/stage-rpc-probe.mjs(那一份已知对 5197 可用)。
-const hostHtml = `<!doctype html><html><head><meta charset=\\"utf-8\\"><title>card cost probe host</title>\\n<!-- Preamble for @vitejs/plugin-react: the plugin injects it into index.html automatically, but this hand-written page has to carry its own,\\n     otherwise any import of /src/**.tsx throws "can't detect preamble". /@react-refresh does not exist in the production bundle,\\n     so the failure is swallowed (it is not needed there anyway). -->\\n<script type=\\"module\\">\\ntry {\\n  const RefreshRuntime = await import('/@react-refresh');\\n  RefreshRuntime.injectIntoGlobalHook(window);\\n  window.$RefreshReg$ = () => {};\\n  window.$RefreshSig$ = () => (type) => type;\\n  window.__vite_plugin_react_preamble_installed__ = true;\\n} catch { /* built bundle: no react-refresh, and not needed */ }\\n</script>\\n</head>\\n<body style=\\"margin:0;background:#111\\">\\n<iframe id=\\"f\\" src=\\"/?stage=1&id=B&prerender=1\\" style=\\"width:1920px;height:1080px;border:0;display:block\\"></iframe>\\n<script type=\\"module\\">\\n// Minimal RPC client (same protocol as src/render/stageRpc.ts), written inline so this page can also run against the built bundle\\nfunction createStageRpc(target) {\\n  let nextId = 1; const pending = new Map(); const listeners = new Set();\\n  window.addEventListener('message', (e) => {\\n    if (e.source !== target) return; const d = e.data;\\n    if (d && d.type === 'pc-rpc-reply') { const p = pending.get(d.id); if (!p) return; pending.delete(d.id); d.ok ? p.resolve(d.result) : p.reject(new Error(d.error)); return; }\\n    if (d && typeof d.type === 'string' && ['mediaReady','frame','ended','settled','probe','demote','probe-frame'].includes(d.type)) for (const l of listeners) l(d);\\n  });\\n  const call = (method) => (...args) => new Promise((resolve, reject) => { const id = nextId++; pending.set(id, { resolve, reject }); target.postMessage({ type: 'pc-rpc', id, method, args }, location.origin); });\\n  const c = { onEvent: (l) => { listeners.add(l); return () => listeners.delete(l); } };\\n  for (const m of ['setProject','setTime','render','hitTest','rectsWithBounds','size','setProxy','setRole','setPlan','play','pause','setSuppressed','setStreamPlanes','setScrubbing','setPlaying','setMediaT','setLocalHashes','setSnapshots']) c[m] = call(m);\\n  return c;\\n}\\n\\nconst f = document.getElementById('f');\\nwindow.__probeFrames = 0;\\nwindow.__ready = new Promise((res, rej) => {\\n  setTimeout(() => rej(new Error('stage ready timeout')), 180000);\\n  window.addEventListener('message', (e) => {\\n    if (e.source !== f.contentWindow || e.data?.type !== 'pc-stage-ready') return;\\n    window.__caps = e.data.hostCapabilities;\\n    window.__rpc = createStageRpc(f.contentWindow);\\n    // probe-frame is only counted: per-frame html is useless on this side, and accumulating it just wastes memory\\n    window.__rpc.onEvent((ev) => { if (ev.type === 'probe-frame') window.__probeFrames++; });\\n    res(true);\\n  });\\n});\\n\\n/* Card registry / graph / identity key. In dev mode /src/* is transformed on the fly by vite, so a direct import works. */\\nwindow.__kit = (async () => {\\n  await import('/src/cards/index.ts');                       // module-level registerCards\\n  const registry = await import('/src/kernel/registry.ts');\\n  const { projectCardGraph } = await import('/src/kernel/cardGraph.mjs');\\n  const { cardCostKey } = await import('/src/render/cardCostKey.mjs');\\n  const { cardSourceVersion } = await import('/src/render/cardSourceVersion.mjs');\\n  const { builtinCardSourceFiles } = await import('/src/render/cardSourceFiles.mjs');\\n  const { cardFrameMode, reviewedCard } = await import('/src/kernel/frameMode.mjs');\\n  const assets = await import('/src/cards/assets/index.ts');\\n  // Source version follows the algorithm in ExportView.tsx:108-118\\n  const sourceVersionOf = (card) => {\\n    const user = registry.userCardSources();\\n    const file = user.fileOf[card.id];\\n    return file && user.files[file] !== undefined\\n      ? 'user:' + cardSourceVersion(card, { ...builtinCardSourceFiles, ...user.dependencies }, '/src/cards/user/' + file + '.tsx')\\n      : 'builtin:' + cardSourceVersion(card, builtinCardSourceFiles);\\n  };\\n  return { ...registry, projectCardGraph, cardCostKey, cardFrameMode, reviewedCard, sourceVersionOf, featuredParticleIds: assets.featuredParticleIds };\\n})();\\n\\n/* Local identity (J4): UA + WebGL renderer + compact (only one stage; the field name in the string is still called lowMemory, see costDevice.mjs) / offscreenGl / glRoute.\\n   The throwaway discarded context is opened in the **host page**, leaving the stage's own shared WebGL context alone.\\n   Both reading and assembling live in src/render/costDevice.mjs, and the resident probe imports the same copy. */\\nwindow.__deviceParts = async () => {\\n  const { readGpuRenderer, resolveGlRoute } = await import('/src/render/costDevice.mjs');\\n  const caps = window.__caps || {};\\n  const compact = !!caps.compact;\\n  return { ua: navigator.userAgent, renderer: readGpuRenderer(document), compact,\\n    offscreenGl: !!caps.offscreenGl, glRoute: resolveGlRoute(caps.glRoute ?? null, compact ? 'shared' : 'perDocument') };\\n};\\n\\n/* Shrunken project: one clip per track (same shape as legacyTimeline in FrameScene.tsx) */\\nwindow.__mkProject = (cardId, fps, lenSec, params) => ({\\n  version: 1, id: 'probe', name: 'probe', width: 1920, height: 1080, fps, duration: lenSec,\\n  themeId: 'midnight', media: [],\\n  tracks: [{ id: 'probe-track', clips: [{ id: 'c0', cardId, start: 0, end: lenSec, params: params || {} }] }],\\n});\\n\\n/* Identity key + declared frame mode. Compute only, no measuring; used to "skip cards that were already measured" */\\nwindow.__identify = async (jobs) => {\\n  const kit = await window.__kit;\\n  return jobs.map((job) => {\\n    const def = kit.getCard(job.cardId);\\n    if (!def) return { ...job, error: 'no such card in the registry' };\\n    try {\\n      const project = window.__mkProject(job.cardId, job.fps, job.lenSec, job.params);\\n      const node = kit.projectCardGraph(project, kit.getCard).nodes.find((n) => n.clipId === 'c0');\\n      if (!node) return { ...job, error: 'no node for this clip in the graph' };\\n      const durationFrames = Math.max(1, Math.round(job.lenSec * job.fps));\\n      return { ...job, durationFrames,\\n        identityKey: kit.cardCostKey(node, kit.sourceVersionOf(def), job.fps, durationFrames),\\n        canvasHeavy: ['canvas2d', 'webgl'].includes(kit.reviewedCard(job.cardId)?.surface),\\n        mode: kit.cardFrameMode(def, def.defaults) };\\n    } catch (err) { return { ...job, error: String(err && err.message || err) }; }\\n  });\\n};\\n\\n/* The 62 cards visible by default in the panel (inventory :19): all non-particle cards + particle cards the catalog marks as featured */\\nwindow.__highFrequencyIds = async () => {\\n  const kit = await window.__kit;\\n  return kit.allCards().map((c) => c.id).filter((id) => !id.startsWith('particles-') || kit.featuredParticleIds.has(id));\\n};\\n\\n/* -------- Measurement of one card. The whole run happens inside the page, to avoid one puppeteer round trip per frame.\\n      **This only measures, it does no statistics** — quantiles, extrapolation and dedup all live on the Node side (see the file header). -------- */\\nconst seedOf = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };\\nconst mulberry32 = (a) => () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };\\n\\nwindow.__probeOne = async (job) => {\\n  const rpc = window.__rpc;\\n  const { cardId, fps, lenSec, params, mode, identityKey, durationFrames } = job;\\n  const out = { cardId, identityKey, fps, mode, durationFrames };\\n  const project = window.__mkProject(cardId, fps, lenSec, params);\\n  await rpc.setRole('back', { job: 'probe' });\\n  await rpc.setProject(project, { reset: true });\\n  // On mount React has to build the tree and Motion has to resolve keyframes: give it a real task boundary before measuring,\\n  // otherwise the first frame of the first card absorbs the whole module's first evaluation. Canvas cards (three.js / tsParticles)\\n  // also have to wait for the canvas to be set up asynchronously, or we would measure an empty shell (measured: particles-basic was off by 30x).\\n  await rpc.setTime(0);\\n  await new Promise((r) => setTimeout(r, 150));\\n  if (job.canvasHeavy) {\\n    const w = document.getElementById('f').contentWindow;\\n    for (let i = 0; i < 100; i++) {\\n      const cv = w.document.querySelector('[data-pc-clip] canvas');\\n      if (cv && cv.width > 1) { await new Promise((r) => setTimeout(r, 150)); break; }\\n      await new Promise((r) => setTimeout(r, 50));\\n    }\\n  }\\n\\n  if (mode === 'direct') {\\n    /*\\n     * Fixed random sampling of local frames (seeded by cardId, so reruns on the same machine are comparable).\\n     * **Sample up to job.minSamples frames** (task spec K1: 8 is not enough for STEP_MIN_SAMPLES, so sample more);\\n     * clips shorter than that are sampled to the full frame count, without repeats.\\n     */\\n    const want = Math.max(8, Math.min(job.minSamples, durationFrames));\\n    const rnd = mulberry32(seedOf(cardId));\\n    const picks = new Set();\\n    for (let i = 0; i < want * 64 && picks.size < Math.min(want, durationFrames); i++) picks.add(Math.floor(rnd() * durationFrames));\\n    const frames = [...picks].sort((a, b) => a - b);\\n    const steps = [], inline = [], raster = [], serialize = [];\\n    for (const n of frames) {\\n      const r = await rpc.setTime(n / fps, { probe: true });\\n      // stepMs is taken by the stage **before** it waits for that one real rAF, so what we get here already excludes vertical sync (last item of 3.8)\\n      steps.push(Number(r?.stepMs) || 0);\\n      inline.push(Number(r?.snapshot?.inlineMs) || 0);\\n      raster.push(Number(r?.snapshot?.rasterMs) || 0);\\n      serialize.push(Number(r?.snapshot?.serializeMs) || 0);\\n    }\\n    out.kind = 'random';\\n    out.steps = steps;\\n    out.inline = inline;\\n    out.raster = raster;\\n    out.serialize = serialize;\\n    out.pushedFrames = steps.length;\\n    out.totalFrames = durationFrames;\\n    out.truncated = false;\\n    return out;\\n  }\\n\\n  /* ---- Timing pass: only advance, no snapshots, capped by PROBE_MAX_*, the reply carries per-frame durations ---- */\\n  const target = Math.max(0, lenSec - 1 / fps);\\n  const totalFrames = Math.max(1, Math.round(target * fps) + 1);\\n  window.__probeFrames = 0;\\n  const timePass = await rpc.render(target, { jump: true, probe: 'time', maxCatchUp: Infinity, maxFrames: job.maxProbeFrames });\\n  out.kind = 'stepped';\\n  out.steps = Array.isArray(timePass?.steps) ? timePass.steps.map(Number) : [];\\n  out.pushedFrames = Number(timePass?.frames) || out.steps.length;\\n  out.totalFrames = totalFrames;\\n  out.runMs = Number(timePass?.elapsedMs) || 0;\\n  out.truncated = !!timePass?.truncated;\\n  // The timing pass should not generate a single snapshot, so this number should always be 0; if it is not, a branch on the stage side has leaked\\n  out.timePassProbeFrames = window.__probeFrames;\\n\\n  /* ---- Snapshot pass: reset using K3's remount positioning recipe, then generate one snapshot per frame ---- */\\n  const n = Math.max(1, Math.min(totalFrames - 1, job.worstFrames));\\n  out.snapN = n;\\n  window.__probeFrames = 0;\\n  await rpc.render(0, { jump: true, maxCatchUp: Infinity });   // remount positioning recipe: reset to the mount frame\\n  const inline = [], raster = [], serialize = [];\\n  for (let k = 1; k <= n; k++) {\\n    const r = await rpc.render(k / fps, { probe: 'snapshot', maxCatchUp: Infinity });\\n    inline.push(Number(r?.snapshot?.inlineMs) || 0);\\n    raster.push(Number(r?.snapshot?.rasterMs) || 0);\\n    serialize.push(Number(r?.snapshot?.serializeMs) || 0);\\n  }\\n  out.inline = inline;\\n  out.raster = raster;\\n  out.serialize = serialize;\\n  out.snapPassProbeFrames = window.__probeFrames;\\n  return out;\\n};\\n</script></body></html>`;
+const hostHtml = `<!doctype html><html><head><meta charset="utf-8"><title>card cost probe host</title>
+<!-- Preamble for @vitejs/plugin-react: the plugin injects it into index.html automatically, but this hand-written page has to carry its own,
+     otherwise any import of /src/**.tsx throws "can't detect preamble". /@react-refresh does not exist in the production bundle,
+     so the failure is swallowed (it is not needed there anyway). -->
+<script type="module">
+try {
+  const RefreshRuntime = await import('/@react-refresh');
+  RefreshRuntime.injectIntoGlobalHook(window);
+  window.$RefreshReg$ = () => {};
+  window.$RefreshSig$ = () => (type) => type;
+  window.__vite_plugin_react_preamble_installed__ = true;
+} catch { /* built bundle: no react-refresh, and not needed */ }
+</script>
+</head>
+<body style="margin:0;background:#111">
+<iframe id="f" src="/?stage=1&id=B&prerender=1" style="width:1920px;height:1080px;border:0;display:block"></iframe>
+<script type="module">
+// Minimal RPC client (same protocol as src/render/stageRpc.ts), written inline so this page can also run against the built bundle
+function createStageRpc(target) {
+  let nextId = 1; const pending = new Map(); const listeners = new Set();
+  window.addEventListener('message', (e) => {
+    if (e.source !== target) return; const d = e.data;
+    if (d && d.type === 'pc-rpc-reply') { const p = pending.get(d.id); if (!p) return; pending.delete(d.id); d.ok ? p.resolve(d.result) : p.reject(new Error(d.error)); return; }
+    if (d && typeof d.type === 'string' && ['mediaReady','frame','ended','settled','probe','demote','probe-frame'].includes(d.type)) for (const l of listeners) l(d);
+  });
+  const call = (method) => (...args) => new Promise((resolve, reject) => { const id = nextId++; pending.set(id, { resolve, reject }); target.postMessage({ type: 'pc-rpc', id, method, args }, location.origin); });
+  const c = { onEvent: (l) => { listeners.add(l); return () => listeners.delete(l); } };
+  for (const m of ['setProject','setTime','render','hitTest','rectsWithBounds','size','setProxy','setRole','setPlan','play','pause','setSuppressed','setStreamPlanes','setScrubbing','setPlaying','setMediaT','setLocalHashes','setSnapshots']) c[m] = call(m);
+  return c;
+}
+
+const f = document.getElementById('f');
+window.__probeFrames = 0;
+window.__ready = new Promise((res, rej) => {
+  setTimeout(() => rej(new Error('stage ready timeout')), 180000);
+  window.addEventListener('message', (e) => {
+    if (e.source !== f.contentWindow || e.data?.type !== 'pc-stage-ready') return;
+    window.__caps = e.data.hostCapabilities;
+    window.__rpc = createStageRpc(f.contentWindow);
+    // probe-frame is only counted: per-frame html is useless on this side, and accumulating it just wastes memory
+    window.__rpc.onEvent((ev) => { if (ev.type === 'probe-frame') window.__probeFrames++; });
+    res(true);
+  });
+});
+
+/* Card registry / graph / identity key. In dev mode /src/* is transformed on the fly by vite, so a direct import works. */
+window.__kit = (async () => {
+  await import('/src/cards/index.ts');                       // module-level registerCards
+  const registry = await import('/src/kernel/registry.ts');
+  const { projectCardGraph } = await import('/src/kernel/cardGraph.mjs');
+  const { cardCostKey } = await import('/src/render/cardCostKey.mjs');
+  const { cardSourceVersion } = await import('/src/render/cardSourceVersion.mjs');
+  const { builtinCardSourceFiles } = await import('/src/render/cardSourceFiles.mjs');
+  const { cardFrameMode, reviewedCard } = await import('/src/kernel/frameMode.mjs');
+  const assets = await import('/src/cards/assets/index.ts');
+  // Source version follows the algorithm in ExportView.tsx:108-118
+  const sourceVersionOf = (card) => {
+    const user = registry.userCardSources();
+    const file = user.fileOf[card.id];
+    return file && user.files[file] !== undefined
+      ? 'user:' + cardSourceVersion(card, { ...builtinCardSourceFiles, ...user.dependencies }, '/src/cards/user/' + file + '.tsx')
+      : 'builtin:' + cardSourceVersion(card, builtinCardSourceFiles);
+  };
+  return { ...registry, projectCardGraph, cardCostKey, cardFrameMode, reviewedCard, sourceVersionOf, featuredParticleIds: assets.featuredParticleIds };
+})();
+
+/* Local identity (J4): UA + WebGL renderer + compact (only one stage; the field name in the string is still called lowMemory, see costDevice.mjs) / offscreenGl / glRoute.
+   The throwaway discarded context is opened in the **host page**, leaving the stage's own shared WebGL context alone.
+   Both reading and assembling live in src/render/costDevice.mjs, and the resident probe imports the same copy. */
+window.__deviceParts = async () => {
+  const { readGpuRenderer, resolveGlRoute } = await import('/src/render/costDevice.mjs');
+  const caps = window.__caps || {};
+  const compact = !!caps.compact;
+  return { ua: navigator.userAgent, renderer: readGpuRenderer(document), compact,
+    offscreenGl: !!caps.offscreenGl, glRoute: resolveGlRoute(caps.glRoute ?? null, compact ? 'shared' : 'perDocument') };
+};
+
+/* Shrunken project: one clip per track (same shape as legacyTimeline in FrameScene.tsx) */
+window.__mkProject = (cardId, fps, lenSec, params) => ({
+  version: 1, id: 'probe', name: 'probe', width: 1920, height: 1080, fps, duration: lenSec,
+  themeId: 'midnight', media: [],
+  tracks: [{ id: 'probe-track', clips: [{ id: 'c0', cardId, start: 0, end: lenSec, params: params || {} }] }],
+});
+
+/* Identity key + declared frame mode. Compute only, no measuring; used to "skip cards that were already measured" */
+window.__identify = async (jobs) => {
+  const kit = await window.__kit;
+  return jobs.map((job) => {
+    const def = kit.getCard(job.cardId);
+    if (!def) return { ...job, error: 'no such card in the registry' };
+    try {
+      const project = window.__mkProject(job.cardId, job.fps, job.lenSec, job.params);
+      const node = kit.projectCardGraph(project, kit.getCard).nodes.find((n) => n.clipId === 'c0');
+      if (!node) return { ...job, error: 'no node for this clip in the graph' };
+      const durationFrames = Math.max(1, Math.round(job.lenSec * job.fps));
+      return { ...job, durationFrames,
+        identityKey: kit.cardCostKey(node, kit.sourceVersionOf(def), job.fps, durationFrames),
+        canvasHeavy: ['canvas2d', 'webgl'].includes(kit.reviewedCard(job.cardId)?.surface),
+        mode: kit.cardFrameMode(def, def.defaults) };
+    } catch (err) { return { ...job, error: String(err && err.message || err) }; }
+  });
+};
+
+/* The 62 cards visible by default in the panel (inventory :19): all non-particle cards + particle cards the catalog marks as featured */
+window.__highFrequencyIds = async () => {
+  const kit = await window.__kit;
+  return kit.allCards().map((c) => c.id).filter((id) => !id.startsWith('particles-') || kit.featuredParticleIds.has(id));
+};
+
+/* -------- Measurement of one card. The whole run happens inside the page, to avoid one puppeteer round trip per frame.
+      **This only measures, it does no statistics** — quantiles, extrapolation and dedup all live on the Node side (see the file header). -------- */
+const seedOf = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
+const mulberry32 = (a) => () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+
+window.__probeOne = async (job) => {
+  const rpc = window.__rpc;
+  const { cardId, fps, lenSec, params, mode, identityKey, durationFrames } = job;
+  const out = { cardId, identityKey, fps, mode, durationFrames };
+  const project = window.__mkProject(cardId, fps, lenSec, params);
+  await rpc.setRole('back', { job: 'probe' });
+  await rpc.setProject(project, { reset: true });
+  // On mount React has to build the tree and Motion has to resolve keyframes: give it a real task boundary before measuring,
+  // otherwise the first frame of the first card absorbs the whole module's first evaluation. Canvas cards (three.js / tsParticles)
+  // also have to wait for the canvas to be set up asynchronously, or we would measure an empty shell (measured: particles-basic was off by 30x).
+  await rpc.setTime(0);
+  await new Promise((r) => setTimeout(r, 150));
+  if (job.canvasHeavy) {
+    const w = document.getElementById('f').contentWindow;
+    for (let i = 0; i < 100; i++) {
+      const cv = w.document.querySelector('[data-pc-clip] canvas');
+      if (cv && cv.width > 1) { await new Promise((r) => setTimeout(r, 150)); break; }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
+
+  if (mode === 'direct') {
+    /*
+     * Fixed random sampling of local frames (seeded by cardId, so reruns on the same machine are comparable).
+     * **Sample up to job.minSamples frames** (task spec K1: 8 is not enough for STEP_MIN_SAMPLES, so sample more);
+     * clips shorter than that are sampled to the full frame count, without repeats.
+     */
+    const want = Math.max(8, Math.min(job.minSamples, durationFrames));
+    const rnd = mulberry32(seedOf(cardId));
+    const picks = new Set();
+    for (let i = 0; i < want * 64 && picks.size < Math.min(want, durationFrames); i++) picks.add(Math.floor(rnd() * durationFrames));
+    const frames = [...picks].sort((a, b) => a - b);
+    const steps = [], inline = [], raster = [], serialize = [];
+    for (const n of frames) {
+      const r = await rpc.setTime(n / fps, { probe: true });
+      // stepMs is taken by the stage **before** it waits for that one real rAF, so what we get here already excludes vertical sync (last item of 3.8)
+      steps.push(Number(r?.stepMs) || 0);
+      inline.push(Number(r?.snapshot?.inlineMs) || 0);
+      raster.push(Number(r?.snapshot?.rasterMs) || 0);
+      serialize.push(Number(r?.snapshot?.serializeMs) || 0);
+    }
+    out.kind = 'random';
+    out.steps = steps;
+    out.inline = inline;
+    out.raster = raster;
+    out.serialize = serialize;
+    out.pushedFrames = steps.length;
+    out.totalFrames = durationFrames;
+    out.truncated = false;
+    return out;
+  }
+
+  /* ---- Timing pass: only advance, no snapshots, capped by PROBE_MAX_*, the reply carries per-frame durations ---- */
+  const target = Math.max(0, lenSec - 1 / fps);
+  const totalFrames = Math.max(1, Math.round(target * fps) + 1);
+  window.__probeFrames = 0;
+  const timePass = await rpc.render(target, { jump: true, probe: 'time', maxCatchUp: Infinity, maxFrames: job.maxProbeFrames });
+  out.kind = 'stepped';
+  out.steps = Array.isArray(timePass?.steps) ? timePass.steps.map(Number) : [];
+  out.pushedFrames = Number(timePass?.frames) || out.steps.length;
+  out.totalFrames = totalFrames;
+  out.runMs = Number(timePass?.elapsedMs) || 0;
+  out.truncated = !!timePass?.truncated;
+  // The timing pass should not generate a single snapshot, so this number should always be 0; if it is not, a branch on the stage side has leaked
+  out.timePassProbeFrames = window.__probeFrames;
+
+  /* ---- Snapshot pass: reset using K3's remount positioning recipe, then generate one snapshot per frame ---- */
+  const n = Math.max(1, Math.min(totalFrames - 1, job.worstFrames));
+  out.snapN = n;
+  window.__probeFrames = 0;
+  await rpc.render(0, { jump: true, maxCatchUp: Infinity });   // remount positioning recipe: reset to the mount frame
+  const inline = [], raster = [], serialize = [];
+  for (let k = 1; k <= n; k++) {
+    const r = await rpc.render(k / fps, { probe: 'snapshot', maxCatchUp: Infinity });
+    inline.push(Number(r?.snapshot?.inlineMs) || 0);
+    raster.push(Number(r?.snapshot?.rasterMs) || 0);
+    serialize.push(Number(r?.snapshot?.serializeMs) || 0);
+  }
+  out.inline = inline;
+  out.raster = raster;
+  out.serialize = serialize;
+  out.snapPassProbeFrames = window.__probeFrames;
+  return out;
+};
+</script></body></html>`;
 
 /* ------------------------------------------------------------------ 要测哪些卡 */
 

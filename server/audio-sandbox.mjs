@@ -158,7 +158,34 @@ const WORKER_SOURCE = String.raw`
 `;
 
 /** 页面:可信的外壳,取 PCM、起 Worker、到点掐断 */
-const HARNESS_HTML = `<!doctype html><meta charset="utf-8"><title>sandbox</title><script>\r\nconst WORKER_SOURCE = ${JSON.stringify(WORKER_SOURCE)};\r\nwindow.__runMeasure = async (o) => {\r\n  const parts = [];\r\n  for (let i = 0; i < o.chunks; i++) {\r\n    const r = await fetch(\"/pcm/\" + o.token + \"/\" + i);\r\n    if (!r.ok) return { ok: false, kind: \"internal\", error: \"Sandbox failed to fetch PCM (chunk \" + i + \")\" };\r\n    parts.push(new Uint8Array(await r.arrayBuffer()));\r\n  }\r\n  const total = parts.reduce((n, p) => n + p.length, 0);\r\n  const all = new Uint8Array(total);\r\n  let at = 0;\r\n  for (const p of parts) { all.set(p, at); at += p.length; }\r\n  const url = URL.createObjectURL(new Blob([WORKER_SOURCE], { type: \"text/javascript\" }));\r\n  const w = new Worker(url);\r\n  URL.revokeObjectURL(url);\r\n  const t0 = performance.now();\r\n  return await new Promise((resolve) => {\r\n    let done = false;\r\n    const finish = (v) => { if (done) return; done = true; clearTimeout(timer); w.terminate(); resolve({ ...v, elapsedMs: Math.round(performance.now() - t0) }); };\r\n    const timer = setTimeout(() => finish({ ok: false, kind: \"timeout\", error: \"Code ran longer than \" + (o.timeoutMs / 1000) + \" s and was terminated (infinite loop, or too slow to compute; narrow the range to measure, lower the sample rate, or raise timeoutMs, up to \" + (o.maxTimeoutMs / 1000) + \" s)\" }), o.timeoutMs);\r\n    w.onmessage = (e) => finish(e.data && typeof e.data === \"object\" ? e.data : { ok: false, kind: \"internal\", error: \"Sandbox sent an unexpected message\" });\r\n    w.onerror = (e) => { e.preventDefault(); finish({ ok: false, kind: e.message ? \"exception\" : \"crashed\", error: e.message ? \"Code failed to run: \" + e.message : \"Code in the sandbox exited abnormally (no error text, most likely memory over the limit of \" + o.heapMb + \" MB)\" }); };\r\n    w.onmessageerror = () => finish({ ok: false, kind: \"unserializable\", error: \"Return value could not be passed out of the sandbox\" });\r\n    w.postMessage({ code: o.code, buf: all.buffer, frames: o.frames, numberOfChannels: o.numberOfChannels, sampleRate: o.sampleRate, duration: o.duration, meta: o.meta, maxResultBytes: o.maxResultBytes }, [all.buffer]);\r\n  });\r\n};\r\n</script>`;
+const HARNESS_HTML = `<!doctype html><meta charset="utf-8"><title>sandbox</title><script>
+const WORKER_SOURCE = ${JSON.stringify(WORKER_SOURCE)};
+window.__runMeasure = async (o) => {
+  const parts = [];
+  for (let i = 0; i < o.chunks; i++) {
+    const r = await fetch("/pcm/" + o.token + "/" + i);
+    if (!r.ok) return { ok: false, kind: "internal", error: "Sandbox failed to fetch PCM (chunk " + i + ")" };
+    parts.push(new Uint8Array(await r.arrayBuffer()));
+  }
+  const total = parts.reduce((n, p) => n + p.length, 0);
+  const all = new Uint8Array(total);
+  let at = 0;
+  for (const p of parts) { all.set(p, at); at += p.length; }
+  const url = URL.createObjectURL(new Blob([WORKER_SOURCE], { type: "text/javascript" }));
+  const w = new Worker(url);
+  URL.revokeObjectURL(url);
+  const t0 = performance.now();
+  return await new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => { if (done) return; done = true; clearTimeout(timer); w.terminate(); resolve({ ...v, elapsedMs: Math.round(performance.now() - t0) }); };
+    const timer = setTimeout(() => finish({ ok: false, kind: "timeout", error: "Code ran longer than " + (o.timeoutMs / 1000) + " s and was terminated (infinite loop, or too slow to compute; narrow the range to measure, lower the sample rate, or raise timeoutMs, up to " + (o.maxTimeoutMs / 1000) + " s)" }), o.timeoutMs);
+    w.onmessage = (e) => finish(e.data && typeof e.data === "object" ? e.data : { ok: false, kind: "internal", error: "Sandbox sent an unexpected message" });
+    w.onerror = (e) => { e.preventDefault(); finish({ ok: false, kind: e.message ? "exception" : "crashed", error: e.message ? "Code failed to run: " + e.message : "Code in the sandbox exited abnormally (no error text, most likely memory over the limit of " + o.heapMb + " MB)" }); };
+    w.onmessageerror = () => finish({ ok: false, kind: "unserializable", error: "Return value could not be passed out of the sandbox" });
+    w.postMessage({ code: o.code, buf: all.buffer, frames: o.frames, numberOfChannels: o.numberOfChannels, sampleRate: o.sampleRate, duration: o.duration, meta: o.meta, maxResultBytes: o.maxResultBytes }, [all.buffer]);
+  });
+};
+</script>`;
 
 /** 不挡进程退出的等待(兜底用的上限,不该让编辑器进程或测试多挂几秒) */
 const sleep = (ms) => new Promise((r) => { const t = setTimeout(r, ms); t.unref?.(); });

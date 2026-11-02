@@ -46,7 +46,7 @@ export const browserTools = [
   },
   {
     name: "web_scroll",
-    description: "Scroll the current page; after scrolling, a new screenshot and manifest are returned automatically. dy is in page pixels (positive scrolls down, default 600 is about three quarters of a screen); you can also use to:\\\"top\\\" / \\\"bottom\\\" to go straight to the top or bottom. On lazy-loading sites it waits half a second after scrolling so the content can fill in. To read long text, web_read is cheaper; scrolling is for **seeing** clickable elements further down.",
+    description: "Scroll the current page; after scrolling, a new screenshot and manifest are returned automatically. dy is in page pixels (positive scrolls down, default 600 is about three quarters of a screen); you can also use to:\"top\" / \"bottom\" to go straight to the top or bottom. On lazy-loading sites it waits half a second after scrolling so the content can fill in. To read long text, web_read is cheaper; scrolling is for **seeing** clickable elements further down.",
     inputSchema: {
       type: "object",
       properties: {

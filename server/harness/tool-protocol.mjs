@@ -142,7 +142,7 @@ export async function executeToolBlocks(blocks, callTool) {
 }
 
 export function formatResultsAsUserMessage(results) {
-  let output = 'Tool results:\\n\\n';
+  let output = 'Tool results:\n\n';
   for (const res of results) {
     if (res.ok) {
       const t = res.text ? res.text.substring(0, 4000) : '';

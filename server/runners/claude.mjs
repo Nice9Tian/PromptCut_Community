@@ -26,7 +26,7 @@ Every task you need to do has a matching PromptCut tool:
 | What you want to do | Use this, not the built-in tools |
 | --- | --- |
 | See what is in the project (tracks, clips, media, cards) | \`get_project\` / \`get_clip\` / \`list_media\` / \`list_cards\` |
-| See what a media image / video looks like | \`see_frames({ source: \\"media\\", mediaId })\`, do not Read the media's disk path |
+| See what a media image / video looks like | \`see_frames({ source: "media", mediaId })\`, do not Read the media's disk path |
 | Use a media library image / video in a card | Put the \`cardUrl\` returned by \`list_media\` (/@media/<file name>) into the card parameters; do not guess addresses or probe with curl |
 | The media library has no suitable footage | Video: \`collect_search\` → \`collect_download\`; image: once you find a direct link, \`import_media({ url, name })\` |
 | Read web pages, look things up | \`web_open\` / \`web_read\`, not WebFetch / curl |
@@ -35,7 +35,7 @@ Every task you need to do has a matching PromptCut tool:
 | Wait a few seconds, then check a background job | \`wait({ seconds })\` |
 | Find earlier chat records or handoff notes | No such files exist. The "background" attached at the start of the message is everything; if it is not enough, call \`report_progress\` and ask the user in the todo |
 | Report to the user at the end of each small stage and when the whole task wraps up | \`report_progress\` |
-| Tell the user what you will do next or what you just finished (shown in the chat bubble) | \`send_message\`, set to to \\"user\\" |
+| Tell the user what you will do next or what you just finished (shown in the chat bubble) | \`send_message\`, set to to "user" |
 `;
 
 function getAllowedToolsArgv() {
