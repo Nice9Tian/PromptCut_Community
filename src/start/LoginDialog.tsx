@@ -150,10 +150,9 @@ export function LoginDialog(props: LoginDialogProps): JSX.Element {
   const busy = props.busy || localBusy;
 
   /* ---------------- Open and close: focus in, focus back ---------------- */
-  useEffect(() => {
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    return () => { if (opener && document.contains(opener)) opener.focus(); };
-  }, []);
+  // Read while rendering: by the time an effect runs, the first field below has already taken the focus
+  const [opener] = useState(() => (document.activeElement instanceof HTMLElement ? document.activeElement : null));
+  useEffect(() => () => { if (opener && document.contains(opener)) opener.focus(); }, [opener]);
 
   // Each page takes the focus on its first field (or its first button)
   useLayoutEffect(() => {
@@ -234,7 +233,8 @@ export function LoginDialog(props: LoginDialogProps): JSX.Element {
       const dark = document.documentElement.dataset.skinMode !== "light";
       api.renderButton(slot.current, {
         theme: dark ? "filled_black" : "outline", size: "large", shape: "pill", text: "continue_with",
-        locale: getLocale(), width: 320, logo_alignment: "left",
+        // Google takes a pixel width (200–400): as wide as the other choices, narrower on a phone
+        locale: getLocale(), width: Math.max(200, Math.min(400, Math.floor(slot.current.parentElement?.clientWidth || 320))), logo_alignment: "left",
       });
       setGoogle({ kind: "ready" });
       window.setTimeout(() => {
