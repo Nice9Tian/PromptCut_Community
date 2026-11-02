@@ -21,11 +21,22 @@
 const state = (globalThis[Symbol.for('promptcut.i18n')] ??= { translate: null, known: new Set(['en']), locale: 'en' });
 const hooks = globalThis.process?.getBuiltinModule?.('node:async_hooks');
 state.current ??= hooks ? new hooks.AsyncLocalStorage() : null;
+state.extra ??= {};
+state.version ??= 0;
 
 /** The editor server installs the table: translate(locale, source, args), and the languages it knows */
 export function useTranslator(translate, locales) {
   state.translate = translate;
   state.known = new Set(['en', ...locales]);
+}
+
+/**
+ * Rows kept outside src/i18n/table.json, for code that ships its own table: looked up after it.
+ * The same as addRows() in src/i18n/index.ts, which reads them through the shared state.
+ */
+export function addRows(rows) {
+  Object.assign(state.extra, rows);
+  state.version++;
 }
 
 /** Connect middleware: the rest of this request runs in the language it asked for */
