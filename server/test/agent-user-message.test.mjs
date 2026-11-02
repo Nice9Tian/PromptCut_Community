@@ -40,12 +40,12 @@ test('Text-only reply, no report submitted: the report is no longer submitted on
 test('With send_message, the execution rules tell the model to use it to say what it is doing; without it, keep "state in one sentence"', async () => {
   const a = scripted([{ text: 'OK' }]);
   await new Agent({ provider: a.provider, system: 's', tools: [REPORT, SAY], onEvent: () => {} }).run('Do it');
-  assert.match(a.systems[0], /send_message \(set "to" to "user"\)/);
-  assert.match(a.systems[0], /to wrap up, still call report_progress with final set to true/);
+  assert.match(a.systems[0], /send_message \(set `to` to "user"\)/);
+  assert.match(a.systems[0], /Still finish by calling report_progress with final set to true/);
   const b = scripted([{ text: 'OK' }]);
   await new Agent({ provider: b.provider, system: 's', tools: [REPORT], onEvent: () => {} }).run('Do it');
   assert.doesNotMatch(b.systems[0], /send_message/);
-  assert.match(b.systems[0], /before each group of operations, state in one short sentence what you are about to do/);
+  assert.match(b.systems[0], /Before each group of operations, say in one short sentence what you will do/);
 });
 
 test('Has spoken to the user via send_message but said nothing on the last turn: do not report "API returned no text"', async () => {
@@ -90,7 +90,7 @@ test('buildTools: send_message to user is answered in place and not handed to ca
   const callTool = async (name, input) => { called.push([name, input?.to]); if (name === 'list_cards' || name === 'list_parts') return []; return { ok: true, delivered: [input?.to] }; };
   const tools = await buildTools({ callTool, workspaceDir: process.cwd(), localTools: false });
   const say = tools.find(t => t.name === 'send_message');
-  assert.match(say.description, /set "to" to "user" to speak to the user/);
+  assert.match(say.description, /With to set to "user" you speak to the user/);
   assert.deepEqual(await say.execute({ to: 'user', text: 'Let me look at the picture first' }), { ok: true, shown: true, note: 'Shown in the user\'s chat bubble' });
   assert.equal((await say.execute({ to: 'user', text: '  ' })).ok, false, 'Empty text is rejected');
   assert.equal(called.filter(([n]) => n === 'send_message').length, 0, 'Messages to the user do not go through the bulletin board');

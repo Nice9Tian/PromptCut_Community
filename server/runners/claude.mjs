@@ -35,7 +35,7 @@ Every task you need to do has a matching PromptCut tool:
 | Wait a few seconds, then check a background job | \`wait({ seconds })\` |
 | Find earlier chat records or handoff notes | No such files exist. The "background" attached at the start of the message is everything; if it is not enough, call \`report_progress\` and ask the user in the todo |
 | Report to the user at the end of each small stage and when the whole task wraps up | \`report_progress\` |
-| Tell the user what you will do next or what you just finished (shown in the chat bubble) | \`send_message\`, set to to "user" |
+| Tell the user what you will do next or what you just finished (shown in the chat bubble) | \`send_message\`, set \`to\` to "user" |
 `;
 
 function getAllowedToolsArgv() {

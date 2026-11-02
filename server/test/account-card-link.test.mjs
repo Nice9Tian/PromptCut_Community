@@ -69,7 +69,7 @@ test('ACL-01 the subprotocol presents the ticket only when creating a new sessio
   assert.equal(h.endpoints[0].o.resumeProtocols, undefined, 'a resume carries no ticket (the document service handshake returns 400 if it does)');
   assert.equal(h.endpoints[0].o.url, 'wss://doc.example/hosted/');
   const bad = harness({ tickets: () => ({ ticket: 'short', expiresAt: 1 }) });
-  await assert.rejects(bad.endpoints[0].open(), /ticket is invalid/);
+  await assert.rejects(bad.endpoints[0].open(), /Invalid account connection ticket/);
   const p = accountCardProtocols(async () => ({ ticket: T(7), expiresAt: 5 }));
   assert.deepEqual(await p(), ['promptcut.v1', `promptcut.account.${T(7)}`]);
 });

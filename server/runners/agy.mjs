@@ -147,7 +147,7 @@ Everything you need to do has a matching PromptCut tool:
 | Wait a few seconds before checking background jobs | \`wait({ seconds })\`, do not sleep via run_command |
 | Look up how to call a tool | Its parameter description is **already in your tool list**, read it directly; do not read schema json on disk |
 | Report to the user at the end of each small phase and when the whole task wraps up | \`report_progress\` |
-| Tell the user what you are about to do or have just finished (shown in the chat bubble) | \`send_message\`, set to to "user" |
+| Tell the user what you are about to do or have just finished (shown in the chat bubble) | \`send_message\`, set \`to\` to "user" |
 `;
 
 /**

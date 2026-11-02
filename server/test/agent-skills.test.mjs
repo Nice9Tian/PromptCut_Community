@@ -121,7 +121,7 @@ test('load_skill: when reading the full text it strips the frontmatter, lists th
     assert.equal(full.text, 'with-files body');
     assert.ok(!full.text.includes('description'));
     assert.deepEqual(full.files, ['references/deep/at-limit.md', 'references/style.md'], 'at most three levels, scripts/ is not listed');
-    assert.match(full.scripts, /cannot run/);
+    assert.match(full.scripts, /cannot be run/);
     const plain = await tool.execute({ name: 'plain', file: null });
     assert.equal(plain.text, 'plain body', 'file given as null is treated as not given');
     assert.equal(plain.files, undefined);
@@ -142,7 +142,7 @@ test('load_skill: reading the full text is safe even if the folder is gone; Scri
     const tool = loadSkillTool(loadSkillCatalog({ dirs: [root] }).skills);
     const cased = await tool.execute({ name: 'cased' });
     assert.equal(cased.files, undefined);
-    assert.match(cased.scripts, /cannot run/);
+    assert.match(cased.scripts, /cannot be run/);
     rm(path.join(root, 'gone'));
     assert.equal((await tool.execute({ name: 'gone' })).text, 'gone body');
   } finally { rm(root); }
@@ -255,7 +255,7 @@ test('runner: when only the tools on the list are enabled, as in the cloud, exte
   assert.match(text, /local-only:skill only in the external directory/);
   assert.match(text, /product-intro-video/, 'built-in skills are there too');
   assert.ok(requests[0].tools.some((x) => x.function.name === 'load_skill'));
-  assert.match(JSON.stringify(requests[1].messages), /External skill body/, 'The full text that was read was handed back to the model');
+  assert.match(JSON.stringify(requests[1].messages), /external skill body/, 'The full text that was read was handed back to the model');
   const diag = events.find((e) => e.type === 'diagnostic' && e.stage === 'skills');
   assert.ok(diag.data.skills.includes('local-only'));
   assert.equal(diag.data.skipped[0].folder, 'broken');
@@ -275,8 +275,8 @@ test('Runner: with no external directory given there are only built-in skills; a
     }).done;
     return JSON.stringify(requests[0].messages[0]);
   };
-  assert.match(await run(null, 'skills-builtin'), /intro video for software or a product/);
+  assert.match(await run(null, 'skills-builtin'), /intro video, feature demo video or promo short for software or a product/);
   const overridden = await run(root, 'skills-external');
   assert.match(overridden, /Purpose changed by the host/);
-  assert.doesNotMatch(overridden, /intro video for software or a product/);
+  assert.doesNotMatch(overridden, /intro video, feature demo video or promo short for software or a product/);
 });

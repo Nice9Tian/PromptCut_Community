@@ -72,7 +72,7 @@ test('Denied but **with** output: wrap up as usual and mention it in just one li
   assert.ok(events.some((e) => e.type === 'done'), 'With output it should end normally');
   assert.equal(events.find((e) => e.type === 'error'), undefined);
   assert.ok(
-    events.some((e) => e.type === 'status' && /Some actions were denied/.test(e.text)),
+    events.some((e) => e.type === 'status' && /Some actions were rejected/.test(e.text)),
     'Should still warn that an action was denied',
   );
 });
@@ -131,7 +131,7 @@ test('The resume prompt gives directions by the type of the denied permission: a
   const err = events.find((e) => e.type === 'error');
   assert.match(err.retryPrompt, /get_project/, 'A denied file read must point to the tool for viewing the project');
   assert.doesNotMatch(err.retryPrompt, /wait\(/, 'Unrelated to waiting, don\'t steer it toward wait');
-  assert.match(err.retryPrompt, /switching to another built-in tool makes no difference/, 'In real runs, once it is denied it switches to another built-in tool and runs into the same wall again');
+  assert.match(err.retryPrompt, /Switching to another built-in tool makes no difference/, 'In real runs, once it is denied it switches to another built-in tool and runs into the same wall again');
   assert.doesNotMatch(err.message, /command permission/);
 });
 
@@ -186,9 +186,9 @@ test('When the error contains both permission and "cannot find the file", treat 
   const tr = events.find((e) => e.type === 'tool_result');
   assert.ok(tr && tr.ok === false, 'Must be handed back as a failed tool call');
   assert.match(tr.summary, /cannot find the file/, 'Give the original text to the model so it can see for itself that the path was wrong');
-  assert.doesNotMatch(tr.summary, /Antigravity itself denied/, 'This is not a denial, don\'t say it that way');
+  assert.doesNotMatch(tr.summary, /Antigravity itself rejected/, 'This is not a denial, don\'t say it that way');
   assert.equal(
-    events.find((e) => e.type === 'status' && /pop-up asking for consent/.test(e.text)), undefined,
+    events.find((e) => e.type === 'status' && /no popup can ask for consent/.test(e.text)), undefined,
     'No permission-related hint should appear: it would mislead the model and the user alike',
   );
 });
@@ -200,5 +200,5 @@ test('A real permission denial still counts as a denial', async () => {
   );
   const tr = events.find((e) => e.type === 'tool_result');
   assert.ok(tr && tr.ok === false);
-  assert.match(tr.summary, /Antigravity itself denied/, 'This one really was denied, and it must say that it was its own tool that was denied');
+  assert.match(tr.summary, /Antigravity itself rejected/, 'This one really was denied, and it must say that it was its own tool that was denied');
 });

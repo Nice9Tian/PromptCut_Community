@@ -69,7 +69,7 @@ test('listApiModels: 401 gives a plain-language message and does not paste the r
 });
 
 test('listApiModels: if the address is empty, say so directly instead of hitting a URL that cannot be built', async () => {
-  await assert.rejects(() => listApiModels({ baseUrl: '', apiKey: 'k' }), /API address is empty/);
+  await assert.rejects(() => listApiModels({ baseUrl: '', apiKey: 'k' }), /The endpoint URL is empty/);
 });
 
 test('listApiModels: the response is not JSON', async () => {

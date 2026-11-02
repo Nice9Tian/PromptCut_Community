@@ -257,11 +257,11 @@ test('AP-5 attach_clip_motion: asks the page once for the trajectory of that med
   const none = env.agent('p-ps-5', { pageState: { track: { mediaId: 'm1', result: null, running: false } } });
   const r2 = await none.call('attach_clip_motion', { clipId: 'c1', mediaId: 'm1' });
   assert.equal(r2.ok, false);
-  assert.match(r2.error.message, /not tracked yet/);
+  assert.match(r2.error.message, /has not been tracked yet/);
   const running = env.agent('p-ps-5', { pageState: { track: { mediaId: 'm1', result: null, running: true } } });
   const r3 = await running.call('attach_clip_motion', { clipId: 'c1', mediaId: 'm1' });
   assert.equal(r3.ok, false);
-  assert.match(r3.error.message, /not finished yet/);
+  assert.match(r3.error.message, /has not finished/);
   const down = env.agent('p-ps-5', { pageDown: true });
   const r4 = await down.call('attach_clip_motion', { clipId: 'c1', mediaId: 'm1' });
   assert.equal(r4.ok, false);

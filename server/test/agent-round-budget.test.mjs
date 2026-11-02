@@ -55,21 +55,21 @@ const count = (text, re) => (text.match(re) ?? []).length;
 test('remind once at the halfway point and once when only a quarter is left, each sent only once', async () => {
   const { text } = await run({ maxIterations: 8 });
   // 8 轮:过半线是剩 4 轮(第 4 轮末),四分之一线是剩 2 轮(第 6 轮末)
-  assert.match(text, /4 model round trips remaining/);
-  assert.match(text, /only 2 model round trips left/);
-  assert.equal(count(text, /\d+ model round trips remaining/g), 1, 'the halfway hint is sent only once');
-  assert.equal(count(text, /only \d+ model round trips left/g), 1, 'the quarter hint is sent only once');
-  assert.match(text, /first actually land the smallest deliverable version in the project/);
-  assert.match(text, /card source code in a code block → create_card → add_clip/);
+  assert.match(text, /4 model round trips left \(/);
+  assert.match(text, /Only 2 model round trips left/);
+  assert.equal(count(text, /\d+ model round trips left \(/g), 1, 'the halfway hint is sent only once');
+  assert.equal(count(text, /Only \d+ model round trips left/g), 1, 'the quarter hint is sent only once');
+  assert.match(text, /first land the smallest deliverable version in the project/);
+  assert.match(text, /card source in a code block → create_card → add_clip/);
 });
 
 test('the budget hint is not written into the last round: that round is meant to wrap up anyway', async () => {
   const { out, text } = await run({ maxIterations: 4 });
   assert.equal(out.outcome, 'round_limit');
   // 4 轮:过半线剩 2 轮(第 2 轮末)、四分之一线剩 1 轮(第 3 轮末);第 4 轮末 left 为 0,不提
-  assert.match(text, /2 model round trips remaining/);
-  assert.match(text, /only 1 model round trips left/);
-  assert.match(text, /reached the limit of 4 model round trips/);
+  assert.match(text, /2 model round trips left \(/);
+  assert.match(text, /Only 1 model round trips left/);
+  assert.match(text, /Reached the limit of 4 model round trips/);
 });
 
 test('deep autonomy: no budget hint is sent at all, and no mention of rounds appears in the context', async () => {
@@ -95,8 +95,8 @@ test('unlimited rounds: there is no denominator to compute with, so no budget hi
 
 test('the same error 2 times in a row: give a hard hint that names the capability as unavailable this time and offers two options', async () => {
   const { text } = await run({ maxIterations: 2 }, [deadTool], neverStops('see_frames'));
-  assert.match(text, /see_frames has failed 2 times in a row with the same error/);
-  assert.match(text, /do not call it a 3rd time with the same parameters/);
+  assert.match(text, /see_frames failed 2 times in a row with the same error/);
+  assert.match(text, /Do not call it a 3rd time with the same arguments/);
   assert.match(text, /hard prerequisite/, 'must point back to the criterion in the decision table in the prompt');
   assert.match(text, /report_progress/);
   assert.match(text, /cannot read the bytes of the project media/, 'the original wording must be included so the model knows which problem it is');
@@ -105,7 +105,7 @@ test('the same error 2 times in a row: give a hard hint that names the capabilit
 test('the same error 3 times in a row: stop right away, and the stop reason names that tool', async () => {
   const { out } = await run({ maxIterations: 20 }, [deadTool], neverStops('see_frames'));
   assert.equal(out.outcome, 'stalled');
-  assert.match(out.text, /see_frames has failed 3 times in a row with the same error/);
+  assert.match(out.text, /see_frames failed 3 times in a row with the same error/);
   assert.equal(out.failed, 3, 'after the 3rd time it stops calling');
 });
 

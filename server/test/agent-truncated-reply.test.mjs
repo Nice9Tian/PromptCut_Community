@@ -24,7 +24,7 @@ for (const reason of ['length', 'max_tokens', 'MAX_TOKENS']) {
     const out = await new Agent({ provider: s.provider, system: 's', tools: [NOOP], onEvent: e => events.push(e) }).run('Make an animation');
     assert.equal(s.calls, 3);
     assert.equal(out.outcome, 'completed'); assert.equal(out.completed, 1);
-    assert.ok(events.some(e => e.type === 'status' && /exceeded the per-response output limit and was truncated/.test(e.text)), 'There must be a status line for people to read');
+    assert.ok(events.some(e => e.type === 'status' && /exceeded the per-output limit and was truncated/.test(e.text)), 'There must be a status line for people to read');
     const second = s.seen[1], last = second.at(-1);
     assert.equal(last.role, 'user'); assert.match(JSON.stringify(last.content), /truncated/, 'The last message of the second request is the one telling the model to continue');
     assert.equal(second.at(-2).role, 'assistant', 'The draft written before the truncation stays in the history, neither duplicated nor lost');
@@ -40,7 +40,7 @@ test('Not a single word, all spent on thinking and then truncated: continue anyw
 test('More than two truncations in a row: say plainly it was not done, end with an error, and make no more requests', async () => {
   const s = scripted([{ text: 'Draft', stop: 'length' }]);
   await assert.rejects(new Agent({ provider: s.provider, system: 's', tools: [NOOP], onEvent: () => {} }).run('Do it'),
-    /exceeded the per-response output limit and was truncated 3 times in a row, so this round could not be completed/);
+    /The model's reply exceeded the single-output limit and was truncated 3 times in a row, so this round could not finish/);
   assert.equal(s.calls, 3);
 });
 
@@ -53,7 +53,7 @@ test('If a tool was called in between, the truncation count restarts', async () 
 test('The last round is truncated: do not go past the round limit, say plainly it was not done', async () => {
   const s = scripted([{ tool: true, stop: 'tool_use' }, { stop: 'length' }]);
   await assert.rejects(new Agent({ provider: s.provider, system: 's', tools: [NOOP], maxIterations: 2, onEvent: () => {} }).run('Do it'),
-    /exceeded the per-response output limit and was truncated, so this round could not be completed/);
+    /exceeded the single-output limit and was truncated, so this round could not finish/);
   assert.equal(s.calls, 2);
 });
 

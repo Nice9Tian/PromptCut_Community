@@ -120,7 +120,7 @@ export class Agent {
     const started = Date.now();
     const progress = (round, phase, text) => this.onEvent({ type: 'progress', round, maxRounds: this.maxIterations, phase, completed, failed, elapsedMs: Date.now() - started, text });
     const speak = this.canSpeak
-      ? 'Before each group of operations, call send_message (set to to "user") with one or two sentences telling the user what you are about to do, and after each group use it again to say what was done. Put it in the same reply as that group\'s tool calls; do not spend a separate turn on it. Still finish by calling report_progress with final set to true'
+      ? 'Before each group of operations, call send_message (set `to` to "user") with one or two sentences telling the user what you are about to do, and after each group use it again to say what was done. Put it in the same reply as that group\'s tool calls; do not spend a separate turn on it. Still finish by calling report_progress with final set to true'
       : 'Before each group of operations, say in one short sentence what you will do';
     const cacheRule = this.codeCache
       ? `A single reply has an output limit: when you need to write very long source code or text (several hundred lines or more), first write it in several parts into code blocks (code_cache_write for the start, code_cache_append to continue), then pass the whole thing to the tool as "${CODE_CACHE_REF}name" in the tool arguments. When a reply is truncated, continue as the system message instructs.`
@@ -263,11 +263,11 @@ export class Agent {
         this.onEvent({ type: 'diagnostic', stage: 'truncated', data: { round, stopReason, cause, partials: partials.map((p) => p.name), saved: s.saved, salvaged, stalled: truncations } });
         if (truncations > MAX_TRUNCATIONS || salvaged > MAX_SALVAGED_TRUNCATIONS || round >= this.maxIterations) {
           const kept = cutBlocks.size ? `The part already written is stored in code block ${[...cutBlocks].join(', ')}; the next message can ask it to continue.` : '';
-          const times = truncTotal > 1 ? `The model's reply was cut off ${truncTotal} times in a row` : 'The model\'s reply';
+          const times = truncTotal > 1 ? ` ${truncTotal} times in a row` : '';
           // 全是被网关掐断的不说「调大单次输出上限」：那不是上限的事，调大只会更容易撞上网关的时长上限
-          if (cutCount === truncTotal) throw new Error(`${times} was cut off midway by the gateway (the gateway has a time limit per request), so this round could not finish. ${kept}Try splitting the request into smaller ones.`);
-          if (cutCount === 0) throw new Error(`${times} exceeded the single-output limit and was truncated, so this round could not finish. ${kept}Try splitting the request into smaller ones, or ask the administrator to raise the single-output limit.`);
-          throw new Error(`${times} was truncated (exceeded the single-output limit or was cut off midway by the gateway), so this round could not finish. ${kept}Try splitting the request into smaller ones.`);
+          if (cutCount === truncTotal) throw new Error(`The model's reply was cut off midway by the gateway${times} (the gateway has a time limit per request), so this round could not finish. ${kept}Try splitting the request into smaller ones.`);
+          if (cutCount === 0) throw new Error(`The model's reply exceeded the single-output limit and was truncated${times}, so this round could not finish. ${kept}Try splitting the request into smaller ones, or ask the administrator to raise the single-output limit.`);
+          throw new Error(`The model's reply was truncated${times} (it exceeded the single-output limit or was cut off midway by the gateway), so this round could not finish. ${kept}Try splitting the request into smaller ones.`);
         }
         this.onEvent({ type: 'status', text: s.status });
         if (!calls.length) {

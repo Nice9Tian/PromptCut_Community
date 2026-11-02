@@ -53,7 +53,7 @@ test("When the round limit is hit, the closing sentence must be merged into the 
   assert.equal(last.role, "assistant");
   const text = last.content.filter((b) => b.type === "text").map((b) => b.text).join("");
   assert.match(text, /I did half of it/, "What the model said must be present");
-  assert.match(text, /This run has been paused/, "The closing sentence must also be in the same message and must not start a separate assistant message");
+  assert.match(text, /This run was paused/, "The closing sentence must also be in the same message and must not start a separate assistant message");
 });
 
 test("When the model says nothing at all in the wrap-up round, that sentence becomes an assistant message of its own, still with no consecutive same-role messages", async () => {
@@ -62,7 +62,7 @@ test("When the model says nothing at all in the wrap-up round, that sentence bec
 
   const msgs = agent.history.get();
   assert.equal(consecutiveSameRole(msgs), -1);
-  assert.match(msgs.at(-1).content.map((b) => b.text || "").join(""), /This run has been paused/);
+  assert.match(msgs.at(-1).content.map((b) => b.text || "").join(""), /This run was paused/);
 });
 
 test("Roles alternate through the whole history from start to end: that is the precondition for a request that will not get a 400", async () => {

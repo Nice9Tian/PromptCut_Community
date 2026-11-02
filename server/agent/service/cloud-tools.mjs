@@ -269,7 +269,7 @@ const LOOK_NOTE_ON_HEAD = '- **Viewing frames works as usual, but slower than on
  * 拿到一串内部错误码,就蒙着眼睛往下做了(docs/plan/agent-blind-stop.md)。
  */
 const LOOK_NOTE_MEDIA_ON = 'The media mode of `see_frames` (`source: "media"`) also works: it does not go through the render service, and reads the asset bytes directly to extract frames on the node.'
-  + 'When the asset service does not allow the read, it says plainly "retrying will not help"; in that case handle it as in "what to do about unavailable capabilities", and do not retry in place.';
+  + 'When the asset service does not allow the read, it says plainly "retrying will not help"; in that case handle it as in "What to do when a capability is unavailable", and do not retry in place.';
 const LOOK_NOTE_MEDIA_OFF = '`see_frames` can only view timeline frames; the cloud does not have the shot contact sheet of media (`source: "media"`) yet.';
 const lookNoteOn = (mediaFrames) => LOOK_NOTE_ON_HEAD + (mediaFrames ? LOOK_NOTE_MEDIA_ON : LOOK_NOTE_MEDIA_OFF);
 const LOOK_NOTE_OFF = '- **Frames cannot be viewed on this cloud node.** `see_frames`, `get_gif`, `bake_card` and `inspect_card_dom` are not handed to you. Skip every step in this prompt that asks you to "take a look at the frames first" or "look again after playing", and ignore the `look` hints in tool results; judge the layout by the prescribed boxes from `get_layout` and the card parameters, and when done, say "did not view the frames" in the report. Other members see frames rendered by the cloud render service.';

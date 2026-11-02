@@ -198,7 +198,7 @@ test('AG-3 (V3 end to end) the page changes the same clip after the Agent reads:
     assert.equal(s.actor.session, 'page-1');
     assert.deepEqual(s.entities, ['/tracks/@t1/clips/@c1']);
     assert.match(err.message, /rev 1.*rev 2/s);
-    assert.match(err.message, /rev 2: the page changed \/tracks\/@t1\/clips\/@c1/);
+    assert.match(err.message, /rev 2: Page changed \/tracks\/@t1\/clips\/@c1/);
     return true;
   });
   const afterStale = await bodyOf(env, 'proj-v3');
@@ -364,10 +364,10 @@ test('AG-9 the error text for stale: who changed which entities, folded when the
   const since = Array.from({ length: 10 }, (_, i) => ({ rev: 11 + i, actor: i % 2 ? { role: 'agent', conversation: 2, session: 'agent:B' } : { role: 'page', userId: 'local', session: 'p' },
     entities: i === 9 ? ['/a', '/b', '/c', '/d', '/e', '/f', '/g'] : ['/tracks/@t1'] }));
   const text = staleMessage({ expectRev: 10, currentRev: 20, since, sinceComplete: true });
-  assert.match(text, /You read rev 10, it is now rev 20/);
-  assert.match(text, /rev 20: Agent chat 2 \(agent:B\) changed \/a, \/b, \/c, \/d, \/e, \/f and others, 7 places in total/);
-  assert.match(text, /rev 13: the page changed \/tracks\/@t1/);
-  assert.match(text, /2 more earlier ones are not listed/);
+  assert.match(text, /you read rev 10, it is now rev 20/);
+  assert.match(text, /rev 20: Agent chat 2\(agent:B\) changed \/a, \/b, \/c, \/d, \/e, \/f and 7 more/);
+  assert.match(text, /rev 13: Page changed \/tracks\/@t1/);
+  assert.match(text, /and 2 earlier ones not listed/);
   assert.doesNotMatch(text, /rev 12:/);
 });
 

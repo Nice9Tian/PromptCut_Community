@@ -160,7 +160,7 @@ test('PK-3 deleting a clip in a parked cut: states which cut it is in and that s
   const probe = await env.seeded('proj-pk3');
   const ag = env.agent('proj-pk3');
   const rev0 = (await ag.call('get_project', {})).rev;
-  await assert.rejects(() => ag.call('remove_clip', { clipId: 'cb1', force: true, reason: 'test' }), /It is in cut "Cut 2" \(cutB\).*switch_cut/);
+  await assert.rejects(() => ag.call('remove_clip', { clipId: 'cb1', force: true, reason: 'test' }), /it is in cut "Cut 2" \(cutB\).*switch_cut/);
   const body = await probe.open('proj-pk3');
   assert.equal(body.rev, rev0, 'no commit');
   assert.equal(cutOf(body.project, 'cutB').tracks[0].clips.length, 1);
@@ -178,7 +178,7 @@ test('PK-4 the model finds and fixes a clip in a parked cut by reading only park
   assert.equal(Object.keys(project)[0], 'parkedCuts', 'the index comes first');
   assert.deepEqual(project.parkedCuts.cuts.map((c) => c.cutId), ['cutB']);
   assert.deepEqual(project.parkedCuts.cuts[0].clips, [{ id: 'cb1', trackId: 'tb', cardId: 'probe', label: 'Particle background', start: 0, end: 4 }]);
-  assert.match(project.parkedCuts.note, /no need to use user_interface_switch_cut/);
+  assert.match(project.parkedCuts.note, /do not use user_interface_switch_cut/);
   assert.deepEqual(project.tracks.map((x) => x.id), ['t1'], 'tracks is still the active cut\'s');
 
   const hit = project.parkedCuts.cuts.find((c) => c.name === 'Cut 2')?.clips.find((c) => c.label === 'Particle background');
@@ -209,8 +209,8 @@ test('PK-5 list_cuts without parameters also lists the clips of parked cuts; the
 
   const sw = await ag.call('switch_cut', { cutId: 'cutB' });
   assert.equal(sw.activeCutId, 'cutB');
-  assert.match(sw.note, /all members' views flip together/);
-  assert.match(sw.note, /do not need it/);
+  assert.match(sw.note, /flips every member's interface together/);
+  assert.match(sw.note, /it is not needed/);
   const body = await probe.open('proj-pk5');
   assert.equal(body.project.activeCutId, 'cutB', 'switching still works when the user explicitly asks to switch');
 });
