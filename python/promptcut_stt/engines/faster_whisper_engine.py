@@ -1,6 +1,6 @@
-"""faster-whisper 引擎（CTranslate2 后端）。
+"""faster-whisper engine (CTranslate2 backend).
 
-默认引擎。CPU 上用 int8 量化，不需要 torch，装机体积比 openai-whisper 小很多。
+Default engine. Uses int8 quantization on CPU, does not need torch, and its installed size is much smaller than openai-whisper.
 """
 
 from __future__ import annotations
@@ -18,14 +18,14 @@ _DIST = "faster-whisper"
 
 
 def probe() -> Dict[str, Any]:
-    """探测安装状态。任何异常都要吞掉——status 子命令必须永远能成功返回。"""
+    """Probe the installation status. Swallow any exception: the status subcommand must always be able to return successfully."""
     result: Dict[str, Any] = {"installed": False, "version": None, "error": None}
     try:
         if importlib.util.find_spec(_MODULE) is None:
-            result["error"] = f"未找到模块 {_MODULE}"
+            result["error"] = f"Module {_MODULE} not found"
             return result
-    except Exception as exc:  # find_spec 也可能因为 sys.path 上有坏包而抛
-        result["error"] = f"探测 {_MODULE} 失败：{exc}"
+    except Exception as exc:  # find_spec may also raise because of a broken package on sys.path
+        result["error"] = f"Probing {_MODULE} failed: {exc}"
         return result
 
     try:
@@ -41,12 +41,12 @@ def probe() -> Dict[str, Any]:
                 version = None
         result["version"] = version
     except Exception as exc:
-        result["error"] = f"导入 {_MODULE} 失败：{exc}"
+        result["error"] = f"Importing {_MODULE} failed: {exc}"
     return result
 
 
 def _snapshot_has_model(models_dir: str, repo_dir: str) -> bool:
-    """huggingface 缓存布局：<models_dir>/<repo_dir>/snapshots/<rev>/model.bin 和 config.json 都在才算权重齐全。"""
+    """huggingface cache layout: weights count as complete only if both <models_dir>/<repo_dir>/snapshots/<rev>/model.bin and config.json are present."""
     snapshots = os.path.join(models_dir, repo_dir, "snapshots")
     try:
         revisions = os.listdir(snapshots)
@@ -60,7 +60,7 @@ def _snapshot_has_model(models_dir: str, repo_dir: str) -> bool:
 
 
 def local_models(models_dir: Optional[str], catalog: List[str]) -> List[str]:
-    """模型目录里已经放齐权重的目录名（只认 catalog 里的名字）。绝不抛异常。"""
+    """Names of the directories in the model directory whose weights are all in place (only names in the catalog are recognized). Never raises an exception."""
     found: List[str] = []
     if not models_dir or not os.path.isdir(models_dir):
         return found
@@ -80,8 +80,8 @@ def _load():
         return WhisperModel
     except ImportError as exc:
         raise EngineNotInstalled(
-            "faster-whisper 未安装。请先运行 install --engine faster-whisper"
-            "（或在界面上点「下载引擎」）。"
+            "faster-whisper is not installed. Please run install --engine faster-whisper first "
+            "(or click \"Download engine\" in the UI)."
         ) from exc
 
 
@@ -101,8 +101,8 @@ def transcribe(
 
     if offline and model not in local_models(models_dir, catalog or []):
         raise ModelNotInstalled(
-            f"这台机器上没有 faster-whisper 的 {model} 模型权重，离线模式不会联网下载。"
-            "请联系部署者把权重放进模型目录。"
+            f"There are no faster-whisper {model} model weights on this machine, and offline mode does not download over the network. "
+            "Please ask the deployer to put the weights into the model directory."
         )
 
     whisper_model = WhisperModel(
@@ -114,7 +114,7 @@ def transcribe(
     )
 
     kwargs: Dict[str, Any] = {"beam_size": 5, "vad_filter": False}
-    # language 为空表示自动检测：不传这个参数，让引擎自己判断。
+    # An empty language means auto-detection: do not pass this argument, and let the engine decide by itself.
     if language:
         kwargs["language"] = language
 
@@ -124,8 +124,8 @@ def transcribe(
     total = float(total) if total else None
 
     collected: List[Dict[str, Any]] = []
-    # segments 是惰性生成器：真正的解码发生在遍历时，所以进度事件必须在这个
-    # 循环里发，不能等它跑完。
+    # segments is a lazy generator: the real decoding happens during iteration, so progress events must be emitted inside this
+    # loop, and cannot wait until it finishes.
     for item in segments_iter:
         seg = {
             "start": float(item.start),

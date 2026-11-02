@@ -1,4 +1,4 @@
-/* 焦点发光基础样式 (即使禁用动效也必须保留) */
+/* Base focus glow style (must be kept even when motion is disabled) */
 [data-skin] *:focus-visible {
   outline: 2px solid var(--ui-accent);
   outline-offset: 1px;
@@ -10,14 +10,14 @@
   outline: none;
 }
 
-/* 左栏卡片库格子 hover 边框色 */
+/* Hover border color of the cells in the left rail card library */
 [data-skin] [data-pc-card]:hover {
   border-color: var(--ui-accent) !important;
 }
 
-/* 动效：悬停、回弹、面板分隔线、时间轴等 */
+/* Motion: hover, bounce-back, panel dividers, timeline, etc. */
 @media (prefers-reduced-motion: no-preference) {
-  /* 按钮动画 */
+  /* Button animation */
   [data-skin] button, 
   [data-skin] [class*="ai-"][class*="-btn"],
   [data-skin] [class*="ais-btn"] {
@@ -36,14 +36,14 @@
     transform: scale(0.97);
   }
 
-  /* 焦点发光阴影 */
+  /* Focus glow shadow */
   [data-skin] select:focus, 
   [data-skin] input:focus, 
   [data-skin] textarea:focus {
     box-shadow: var(--ui-glow);
   }
 
-  /* 对话框淡入/上浮 */
+  /* Dialog fade-in / float-up */
   @keyframes ais-backdrop-fade {
     from { opacity: 0; }
     to { opacity: 1; }
@@ -59,7 +59,7 @@
     animation: ais-dialog-up 160ms cubic-bezier(0.16, 1, 0.3, 1);
   }
 
-  /* 左栏卡片库格子动效 */
+  /* Motion of the cells in the left rail card library */
   [data-skin] [data-pc-card] {
     transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 200ms cubic-bezier(0.16, 1, 0.3, 1), border-color 200ms cubic-bezier(0.16, 1, 0.3, 1);
   }
@@ -70,10 +70,10 @@
 }
 
 /*
- * 入场动效:由 src/editor/enterMotion.ts 的 playEnter 在「真的刚出现」那一刻挂类、演完摘类。
- * 用在左栏切分区、打开组 / 回到总览、右栏切页、新消息、队列行、报告卡。
- * 常驻挂载、靠 display 显隐的面板不能把 animation 写在常驻类上,否则每次重新显示都会重放。
- * 位移用独立的 translate 属性,不占 transform:元素自己的 transform(按下缩小之类)照常叠上去。
+ * Entrance motion: playEnter in src/editor/enterMotion.ts adds the class at the moment something "has really just appeared" and removes it once the animation has played.
+ * Used when switching sections in the left rail, opening a group / going back to the overview, switching tabs in the right rail, new messages, queue rows, and report cards.
+ * Panels that stay mounted and are shown or hidden via display must not put the animation on the persistent class, otherwise it replays every time they are shown again.
+ * Displacement uses the standalone translate property and does not occupy transform: the element's own transform (press-to-shrink and the like) stacks on top as usual.
  */
 @media (prefers-reduced-motion: no-preference) {
   @keyframes pc-enter-rise {

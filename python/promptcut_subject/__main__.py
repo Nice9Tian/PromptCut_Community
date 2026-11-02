@@ -1,8 +1,8 @@
-"""命令行入口：python -m promptcut_subject <子命令>
+"""Command-line entry point: python -m promptcut_subject <subcommand>
 
-子命令：status / install / detect
-输出约定和 promptcut_shots / promptcut_stt 一致：stdout 一行一个 JSON，
-stderr 是给人看的提示。
+Subcommands: status / install / detect
+Output convention matches promptcut_shots / promptcut_stt: stdout is one JSON per line,
+stderr carries hints for humans.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-# 复用听写那套 JSONL：Windows 控制台的 UTF-8 和换行处理有坑，只想维护一份。
+# Reuse the speech-to-text JSONL helpers: UTF-8 and newline handling on the Windows console is tricky, and we want to maintain only one copy.
 from promptcut_stt.jsonl import emit, emit_error, emit_log, warn
 
 from . import __version__, is_media_url
@@ -62,15 +62,15 @@ def _file_entry(path: str) -> Dict[str, Any]:
 
 
 def _dir_entry(path: str) -> Dict[str, Any]:
-    """DINO 是一整个 HF snapshot 目录，光看目录在不在不够，权重文件也得在。
+    """DINO is a whole HF snapshot directory; checking only whether the directory exists is not enough, the weight files must be there too.
 
-    判据直接借 dino.model_ready()（config.json + model.safetensors +
-    preprocessor_config.json + tokenizer_config.json 都在，且 tokenizer.json /
-    vocab.txt 至少有一个，判据的实测依据见 dino.REQUIRED_FILES 上面那段）：
-    拷贝中断留下半个目录时，光看「目录在 + 有个 .safetensors」会报 ready 然后
-    在加载时炸，判据得和真正加载模型的那段代码是同一份。dino.py 顶层只 import numpy，status 拉它
-    进来不会把 torch 带上；万一它自己都 import 不了（包被裁过），退回原来
-    那套宽松判据，保证 status 在任何环境下都能出一行合契约的 JSON。
+    The criterion directly borrows dino.model_ready() (config.json + model.safetensors +
+    preprocessor_config.json + tokenizer_config.json are all present, and of tokenizer.json /
+    vocab.txt at least one is present; the empirical basis of the criterion is described in the passage above dino.REQUIRED_FILES):
+    When an interrupted copy leaves half a directory, looking only at "directory exists + has a .safetensors" would report ready and then
+    blow up at load time, so the criterion must be the same one used by the code that actually loads the model. dino.py only imports numpy at top level, so status pulling it
+    in does not bring torch along; in case even it cannot be imported (the package was trimmed), fall back to the original
+    lenient criterion, which guarantees that status can output a contract-conforming line of JSON in any environment.
     """
     try:
         from .dino import model_ready
@@ -84,7 +84,7 @@ def _dir_entry(path: str) -> Dict[str, Any]:
 
 
 def probe(paths: Dict[str, Optional[str]]) -> Dict[str, Any]:
-    """报告两档各自能不能跑。没装任何东西时也必须给出完整结构，不能抛。"""
+    """Report whether each of the two tiers can run. A complete structure must be returned even when nothing is installed; it must not raise."""
     add_pylibs(paths["pylibs"])
     md = models_dir(paths)
 
@@ -119,8 +119,8 @@ def probe(paths: Dict[str, Optional[str]]) -> Dict[str, Any]:
     full_models = {"dino": _dir_entry(os.path.join(md, DINO_DIR))}
     full_ready = bool(full_runtime["installed"] and full_models["dino"]["exists"])
 
-    # engine 是「现在实际能跑到哪一档」：full 能跑就报 full（它是 light 的超集），
-    # 否则退 light，两档都不行就是 null（界面据此提示去装拓展包）。
+    # engine is "which tier can actually run right now": report full if full can run (it is a superset of light),
+    # otherwise fall back to light, and if neither tier works it is null (the UI uses this to prompt installing the extension package).
     engine = "full" if full_ready else ("light" if light_ready else None)
 
     return {
@@ -140,25 +140,25 @@ def cmd_status(_args: argparse.Namespace) -> int:
 
 
 def cmd_install(args: argparse.Namespace) -> int:
-    """把推理依赖装进 pylibs。模型文件由拓展包提供，这里只检查。"""
+    """Install the inference dependencies into pylibs. The model files are provided by the extension package; here they are only checked."""
     paths = env_paths()
     pylibs = paths["pylibs"]
     if not pylibs:
-        emit_error("没有设置 PROMPTCUT_PYLIBS，不知道该把依赖装到哪。")
+        emit_error("PROMPTCUT_PYLIBS is not set, so there is nowhere to install the dependencies.")
         return 2
     os.makedirs(pylibs, exist_ok=True)
 
     tier = args.tier
-    # 清单放在包内部：这个包会被镜像到 pylibs 下运行，放在包外面就跟丢了。
-    # --requirements 由云端部署者给一份锁定版本的清单,盖掉包内那份(模型不能改它)。
+    # The manifest lives inside the package: this package is mirrored under pylibs and run from there, so one kept outside it would be lost.
+    # --requirements: the cloud deployer supplies a manifest with pinned versions, overriding the one inside the package (the model cannot change it).
     here = os.path.dirname(os.path.abspath(__file__))
     req = args.requirements or os.path.join(here, REQUIREMENTS[tier])
     if not os.path.isfile(req):
-        emit_error(f"找不到依赖清单 {os.path.basename(req)}")
+        emit_error(f"Cannot find dependency manifest {os.path.basename(req)}")
         return 2
 
-    # 必须用 sys.executable：写死 "python" 会装进系统解释器
-    # 本进程是隔离模式(-I)起的(云端 Agent 服务:工作目录是对话工作区),pip 也用隔离模式起,否则 `-m pip` 会把当前目录排进模块搜索路径最前。
+    # Must use sys.executable: hard-coding "python" would install into the system interpreter
+    # This process was started in isolated mode (-I) (Cloud Agent service: the working directory is the chat workspace), and pip is also started in isolated mode, otherwise `-m pip` would put the current directory at the very front of the module search path.
     isolated = ["-I"] if sys.flags.isolated else []
     cmd = [sys.executable, *isolated, "-m", "pip", "install", "--target", pylibs, "-r", req]
     emit({"event": "log", "line": " ".join(cmd)})
@@ -166,39 +166,39 @@ def cmd_install(args: argparse.Namespace) -> int:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, encoding="utf-8", errors="replace")
     except OSError as exc:
-        emit_error(f"无法启动 pip：{exc}")
+        emit_error(f"Cannot start pip: {exc}")
         return 1
     assert proc.stdout is not None
     for line in proc.stdout:
         emit_log(line.rstrip())
     code = proc.wait()
     if code != 0:
-        emit_error(f"pip 安装失败（退出码 {code}）。常见原因：网络不可达，或该平台没有对应的轮子。")
+        emit_error(f"pip install failed (exit code {code}). Common causes: network unreachable, or no matching wheel for this platform.")
         return 1
 
     info = probe(env_paths())
     missing = [k for k, v in info[tier]["models"].items() if not v["exists"]]
     if missing:
-        warn(f"依赖装好了，但还缺模型：{'、'.join(missing)}；它们由拓展库包提供。")
-    # 退出码只反映**这一步**成没成：pip 装完了就是 0。模型是随拓展包发的，pip
-    # 抓不到，用 ready 当退出码的话在线安装这条路注定以 1 收尾（见 shots 那边
-    # 同样的注释）。能不能用由 status 回答。
+        warn(f"Dependencies are installed, but models are still missing: {', '.join(missing)}; they are provided by the extension library package.")
+    # The exit code only reflects whether **this step** succeeded: 0 once pip has finished installing. The models ship with the extension package, and pip
+    # cannot fetch them; if ready were used as the exit code, the online install path would be doomed to end with 1 (see the
+    # same comment in shots). Whether it is usable is answered by status.
     emit({"event": "installed", "tier": tier, "needsModel": bool(missing), **info})
     return 0
 
 
 def parse_times(text: str) -> List[float]:
-    """只要能认的那些秒数。看不懂的片段交给 parse_times_strict 去报错。"""
+    """Only the seconds that can be recognized. Fragments that cannot be understood are left to parse_times_strict to report as errors."""
     return parse_times_strict(text)[0]
 
 
 def parse_times_strict(text: str) -> Tuple[List[float], List[str]]:
-    """返回 (认出来的秒数, 看不懂的片段)。
+    """Return (the recognized seconds, the fragments that could not be understood).
 
-    以前是直接 float(chunk)，写错一个字符就一路冒到 main 的兜底 except，报成
-    「未预期的错误：could not convert string to float: 'abc'」——看着像内部故障，
-    而不是「你的参数写错了」。HTTP 那一侧已经用 Number.isFinite 滤过，所以这条
-    只影响直接敲 CLI 的人（打包脚本、排障），但恰恰是那些人最需要一句人话。
+    It used to be a direct float(chunk), so a single mistyped character bubbled all the way up to main's fallback except and was reported as
+    "Unexpected error: could not convert string to float: 'abc'", which looks like an internal failure,
+    rather than "your argument is wrong". The HTTP side already filters with Number.isFinite, so this
+    only affects people who type the CLI directly (packaging scripts, troubleshooting), but those are exactly the people who most need a plain-language sentence.
     """
     out: List[float] = []
     bad: List[str] = []
@@ -210,7 +210,7 @@ def parse_times_strict(text: str) -> Tuple[List[float], List[str]]:
         except ValueError:
             bad.append(chunk)
             continue
-        # nan / inf 也是「不是秒数」：float("nan") 不抛异常，但拿去 seek 只会更难查
+        # nan / inf are also "not seconds": float("nan") does not raise, but using it for seek only makes it harder to track down
         if value != value or value in (float("inf"), float("-inf")):
             bad.append(chunk)
             continue
@@ -220,11 +220,11 @@ def parse_times_strict(text: str) -> Tuple[List[float], List[str]]:
 
 def pick_engine(info: Dict[str, Any], requested: Optional[str],
                 prompt: Optional[str]) -> Optional[str]:
-    """定这次用哪一档。
+    """Decide which tier to use this time.
 
-    显式指定就按指定的来（不就绪则由调用处报错）。没指定时：给了 prompt 且 full
-    就绪就走 full（只有它认提示词），否则优先 light —— light 在 CPU 上快一个数
-    量级，而「人在哪」这件事两档都能答。
+    If one is specified explicitly, use it (if it is not ready, the call site reports the error). If none is specified: when a prompt is given and full
+    is ready, go with full (only it understands prompts), otherwise prefer light: light is faster on CPU by an order of
+    magnitude, and both tiers can answer "where are the people".
     """
     if requested:
         return requested
@@ -238,10 +238,10 @@ def pick_engine(info: Dict[str, Any], requested: Optional[str],
 
 
 class _FirstInferenceFailed(Exception):
-    """第一帧就推理失败。只在 cmd_detect 内部传递，不会冒到 main 的兜底 except。
+    """Inference fails on the very first frame. Only passed around inside cmd_detect; it never bubbles up to main's fallback except.
 
-    单独一个类型是为了把它和「跑到第 37 帧忽然坏了」区分开：后者留给外面的兜底，
-    前者说明这一档整个就跑不起来，值得换一档从头再来。
+    It is a separate type to distinguish it from "suddenly breaking at frame 37": the latter is left to the outer fallback,
+    while the former means this tier cannot run at all, and it is worth switching tier and starting over.
     """
 
     def __init__(self, cause: BaseException):
@@ -255,26 +255,26 @@ def cmd_detect(args: argparse.Namespace) -> int:
     info = probe(paths)
 
     if not paths["ffmpeg"]:
-        emit_error("找不到 ffmpeg，无法解码视频。")
+        emit_error("ffmpeg not found, cannot decode the video.")
         return 2
     if not (is_media_url(args.video) or os.path.isfile(args.video)):
-        emit_error(f"找不到视频文件：{args.video}")
+        emit_error(f"Video file not found: {args.video}")
         return 2
 
     times, bad_times = parse_times_strict(args.times)
     if bad_times:
-        emit_error(f"--times 里这些不是秒数：{'、'.join(bad_times)}；写成 1.2,5.4,8.8")
+        emit_error(f"These entries in --times are not seconds: {', '.join(bad_times)}; write them as 1.2,5.4,8.8")
         return 2
     if not times:
-        emit_error("--times 里一个时刻都没有。")
+        emit_error("There is not a single time point in --times.")
         return 2
 
     engine = pick_engine(info, args.engine, args.prompt)
     if engine is None:
-        emit_error("主体检测拓展未就绪", detail=info)
+        emit_error("Subject detection extension is not ready", detail=info)
         return 3
     if not info[engine]["ready"]:
-        emit_error(f"{engine} 档未就绪", detail=info)
+        emit_error(f"{engine} tier is not ready", detail=info)
         return 3
 
     from . import frames as F
@@ -287,12 +287,12 @@ def cmd_detect(args: argparse.Namespace) -> int:
         return 1
 
     fw, fh = F.target_size(width, height, args.max_side)
-    factor = width / float(fw) if fw else 1.0  # 抽出来的帧 → 原始像素
+    factor = width / float(fw) if fw else 1.0  # extracted frame → original pixels
 
     prompt = args.prompt or ""
 
     def make_runner(eng: str):
-        """按档位造一个「一帧进、框出」的闭包。engine 会在退档时换掉，所以不能闭包 engine。"""
+        """Build a "one frame in, boxes out" closure for a tier. engine is replaced when falling back to another tier, so engine must not be captured by the closure."""
         models = info[eng]["models"]
 
         def run_one(frame) -> List[Dict[str, Any]]:
@@ -302,7 +302,7 @@ def cmd_detect(args: argparse.Namespace) -> int:
                 boxes = yunet.detect([frame], model_path=models["yunet"]["path"])[0]
                 boxes += rtdetr.detect([frame], model_path=models["rtdetr"]["path"])[0]
                 return boxes
-            # full 档：开放词汇，label 直接来自提示词里的名词
+            # full tier: open vocabulary, the label comes straight from the nouns in the prompt
             from .dino import detect as dino_detect
 
             return dino_detect([frame], model_path=models["dino"]["path"],
@@ -311,12 +311,12 @@ def cmd_detect(args: argparse.Namespace) -> int:
         return run_one
 
     def run_all(eng: str):
-        """按 eng 档跑完所有时刻，返回 (samples, spent, failed_count)。
+        """Run all time points on the eng tier and return (samples, spent, failed_count).
 
-        **第一次真正的推理**失败时抛 _FirstInferenceFailed 而不是自己吞掉：那种失败
-        （模型目录半残、torch 装坏、内存不够）对后面每一帧都会重演，一帧一帧地炸
-        只是把同一句话打印 200 遍。抛出去让调用处决定要不要换一档从头再来。
-        注意「第一次推理」不等于 times[0]：头几个时刻可能连帧都抽不出来。
+        When **the first real inference** fails, raise _FirstInferenceFailed instead of swallowing it: that kind of failure
+        (half-broken model directory, broken torch install, out of memory) would recur on every later frame, failing frame by frame,
+        merely printing the same sentence 200 times. Raise it so the call site can decide whether to switch tier and start over.
+        Note that the "first inference" is not times[0]: for the first few time points even the frame may fail to be extracted.
         """
         run_one = make_runner(eng)
         samples: List[Dict[str, Any]] = []
@@ -327,11 +327,11 @@ def cmd_detect(args: argparse.Namespace) -> int:
             try:
                 frame = F.grab_frame(paths["ffmpeg"], args.video, t, fw, fh)
             except RuntimeError as exc:
-                # 单个时刻抽不出来（超出时长、坏帧）不该让整批失败，但**必须留标记**：
-                # 空框 + 四个 0 的 occupancy 和「这一帧真的没有人」在 JSON 里逐字段相同，
-                # 不标出来读取侧就会把一串 0 平均进去，给出「这段没人、right 侧安全」的
-                # 伪结论 —— 恰好是这个功能最该避免的那种错。safeSide/occupancy 仍然写着
-                # 占位值（保持字段形状不变，老读取侧不会因为 null 崩），failed 才是判据。
+                # A single time point that cannot be extracted (beyond the duration, bad frame) should not fail the whole batch, but **a marker must be left**:
+                # empty boxes + an occupancy of four 0s are identical field by field in the JSON to "this frame really has nobody",
+                # if not marked, the reader side would average a string of 0s in and give the "nobody in this stretch, right side is safe"
+                # false conclusion: exactly the kind of mistake this feature most needs to avoid. safeSide/occupancy are still written with
+                # placeholder values (keeping the field shape unchanged so old readers do not crash on null); failed is the real criterion.
                 warn(str(exc))
                 failed += 1
                 samples.append({"t": round(float(t), 3), "boxes": [],
@@ -364,37 +364,37 @@ def cmd_detect(args: argparse.Namespace) -> int:
         exc = first.cause
         detail = f"{type(exc).__name__}: {str(exc)[:300]}"
         dino_path = info["full"]["models"]["dino"]["path"]
-        # full 档炸了但 light 就绪：退回去重跑**全部**时刻（不是接着跑，两档的框
-        # 对不齐，混在一起的结果没法解释）。「人在哪」这件事 light 也答得了，
-        # 只是答不了提示词——总比整批失败强。
+        # the full tier blew up but light is ready: fall back and re-run **all** time points (not continue from where it stopped, since the boxes of the two tiers
+        # do not line up, and mixed results cannot be interpreted). Light can also answer "where are the people",
+        # it merely cannot answer the prompt, which is still better than failing the whole batch.
         if engine == "full" and info["light"]["ready"]:
-            warn(f"full 档第一帧就推理失败（{detail}），退回 light 重跑全部 {len(times)} 个时刻。"
-                 f"DINO 模型目录：{dino_path}")
+            warn(f"Inference failed on the very first frame of the full tier ({detail}); falling back to light and re-running all {len(times)} time points. "
+                 f"DINO model directory: {dino_path}")
             fell_back_from = "full"
             fallback_reason = detail
             if prompt:
-                fallback_reason += "；light 档只认 person/face，这次的提示词没生效"
+                fallback_reason += "; the light tier only recognizes person/face, so the prompt this time had no effect"
             engine = "light"
             try:
                 samples, spent, failed = run_all(engine)
             except _FirstInferenceFailed as second:
                 emit_error(
-                    f"退回 light 之后第一帧仍然推理失败："
+                    f"Inference still failed on the first frame after falling back to light: "
                     f"{type(second.cause).__name__}: {str(second.cause)[:300]}"
-                    f"（full 档原来的错是 {detail}，DINO 模型目录 {dino_path}）",
+                    f" (the original full-tier error was {detail}, DINO model directory {dino_path})",
                     detail=info)
                 return 3
         elif engine == "full":
             emit_error(
-                f"full 档第一帧推理失败：{detail}；light 档也不可用（"
-                f"{info['light']['runtime']['error'] or '模型文件不全'}），没法退回。"
-                f"DINO 模型目录：{dino_path}",
+                f"Inference failed on the first frame in the full tier: {detail}; the light tier is also unavailable ("
+                f"{info['light']['runtime']['error'] or 'model files incomplete'}), so it cannot fall back. "
+                f"DINO model directory: {dino_path}",
                 detail=info)
             return 3
         else:
             emit_error(
-                f"light 档第一帧推理失败：{detail}。"
-                f"模型目录：{info['modelsDir']}（{YUNET_FILE} / {RTDETR_FILE}）",
+                f"Inference failed on the first frame in the light tier: {detail}. "
+                f"Model directory: {info['modelsDir']} ({YUNET_FILE} / {RTDETR_FILE})",
                 detail=info)
             return 3
 
@@ -405,7 +405,7 @@ def cmd_detect(args: argparse.Namespace) -> int:
         "height": height,
         "prompt": prompt,
         "msPerFrame": round(sum(spent) * 1000 / len(spent), 1) if spent else None,
-        # 抽帧失败的样本数。读取侧据此知道这段结论是几个采样撑起来的
+        # Number of samples whose frame extraction failed. The reading side uses it to know how many samples this conclusion rests on
         "failedCount": failed,
         "samples": samples,
     }
@@ -417,8 +417,8 @@ def cmd_detect(args: argparse.Namespace) -> int:
 
 
 def apply_globals(args: argparse.Namespace) -> None:
-    """云端 Agent 服务起这个包时,环境变量里的 PROMPTCUT_* 一个都不传(工作区的白名单),
-    所以模型目录、依赖目录改走命令行。桌面版不用这几个选项,行为不变。"""
+    """When the Cloud Agent service starts this package, none of the PROMPTCUT_* environment variables are passed (the workspace allowlist),
+    so the model directory and the dependency directory go through the command line instead. The desktop app does not use these options, and its behavior is unchanged."""
     if getattr(args, "models_dir", None):
         os.environ["PROMPTCUT_MODELS"] = args.models_dir
     if getattr(args, "pylibs", None):
@@ -431,26 +431,26 @@ def apply_globals(args: argparse.Namespace) -> None:
 
 def main(argv: Optional[list] = None) -> int:
     parser = argparse.ArgumentParser(prog="promptcut_subject")
-    parser.add_argument("--models-dir", default=None, help="权重目录(盖掉 PROMPTCUT_MODELS)")
-    parser.add_argument("--pylibs", default=None, help="依赖目录(盖掉 PROMPTCUT_PYLIBS)")
+    parser.add_argument("--models-dir", default=None, help="Weights directory (overrides PROMPTCUT_MODELS)")
+    parser.add_argument("--pylibs", default=None, help="Dependency directory (overrides PROMPTCUT_PYLIBS)")
     parser.add_argument("--local-only", action="store_true",
-                        help="ffmpeg / ffprobe 只读本地文件,不连任何网络地址")
+                        help="ffmpeg / ffprobe only read local files and never connect to any network address")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("status", help="报告两档拓展是否就绪").set_defaults(func=cmd_status)
+    sub.add_parser("status", help="Report whether the two-tier extension is ready").set_defaults(func=cmd_status)
 
-    ins = sub.add_parser("install", help="安装推理依赖")
+    ins = sub.add_parser("install", help="Install inference dependencies")
     ins.add_argument("--tier", choices=["light", "full"], default="light")
-    ins.add_argument("--requirements", default=None, help="锁定版本的依赖清单(盖掉包内的)")
+    ins.add_argument("--requirements", default=None, help="Version-pinned dependency manifest (overrides the one inside the package)")
     ins.set_defaults(func=cmd_install)
 
-    d = sub.add_parser("detect", help="在若干时刻上检测主体")
+    d = sub.add_parser("detect", help="Detect the subject at several points in time")
     d.add_argument("video")
-    d.add_argument("--times", required=True, help="逗号分隔的秒数，例如 1.2,5.4,8.8")
-    d.add_argument("--prompt", default=None, help="开放词汇提示词，只有 full 档认")
+    d.add_argument("--times", required=True, help="Comma-separated seconds, e.g. 1.2,5.4,8.8")
+    d.add_argument("--prompt", default=None, help="Open-vocabulary prompt, only the full tier recognizes it")
     d.add_argument("--engine", choices=["light", "full"], default=None)
     d.add_argument("--max-side", type=int, default=DEFAULT_MAX_SIDE,
-                   help="抽帧时缩到的最长边（默认 640）")
+                   help="Longest side to scale down to when extracting frames (default 640)")
     d.set_defaults(func=cmd_detect)
 
     args = parser.parse_args(argv)
@@ -459,8 +459,8 @@ def main(argv: Optional[list] = None) -> int:
         return args.func(args)
     except KeyboardInterrupt:
         return 130
-    except Exception as exc:  # 兜底：绝不让 traceback 直接糊到 stdout 把 JSONL 弄脏
-        emit_error(f"未预期的错误：{exc}")
+    except Exception as exc:  # Fallback: never let a traceback smear onto stdout and dirty the JSONL
+        emit_error(f"Unexpected error: {exc}")
         return 1
 
 

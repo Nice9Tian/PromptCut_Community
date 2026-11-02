@@ -1,16 +1,16 @@
 /*
- * 工具栏(设计稿「工具栏组件表」第 01/02/05 节)。
- * 尺寸:条高 48 · 按钮高 28 · 内边距 6/14 · 间距 6 · 圆角 6 · 字号 13。
- * 层级:条底和画布同色(L0 --ui-bg),不画底边线,和下面的画布融成一片;
- * 按钮 L3(--ui-panel-2),悬浮 L4(--ui-float);按钮永远比它所在的条亮。
- * 一条里只有一个强调色实心按钮(主按钮),放最右。数值文字用等宽、主文字色、不加容器、左右各 8px。
- * 颜色全部走 --ui-*,所以五套主题深浅十份取值都能直接换。
+ * Toolbar (design mockup, "Toolbar component table", sections 01/02/05).
+ * Sizes: bar height 48 · button height 28 · padding 6/14 · gap 6 · corner radius 6 · font size 13.
+ * Layering: the bar background has the same color as the canvas (L0 --ui-bg) and no bottom border line is drawn, so it merges with the canvas below;
+ * Buttons are L3 (--ui-panel-2), hovered buttons L4 (--ui-float); a button is always lighter than the bar it sits in.
+ * Each bar has only one solid accent-color button (the primary button), placed at the far right. Numeric text is monospaced, in the primary text color, with no container, 8px on the left and right.
+ * All colors go through --ui-*, so the ten sets of values (five themes, light and dark) can be swapped in directly.
  */
 
 /*
- * 菜单栏 → 导航栏的过渡带。壳采样到菜单栏颜色后把它写进 --pc-menubar 并给 <html> 加
- * pc-has-menubar;没有壳(浏览器里跑)就 0 高,等于不存在。10px 是「拉开一点高度」
- * 的那一点:再高会像多了一条空栏,再矮渐变看不出来。
+ * Menu bar → navigation bar transition band. Once the shell has sampled the menu bar color, it writes it into --pc-menubar and tags <html> with
+ * pc-has-menubar; with no shell (running in a browser) its height is 0, as if it did not exist. 10px is the "stretch the height a little"
+ * amount: taller would look like an extra empty bar, shorter and the gradient would be invisible.
  */
 .pc-bar-fade {
   flex: 0 0 auto;
@@ -35,7 +35,7 @@ html.pc-has-menubar .pc-bar-fade {
   color: var(--ui-fg);
 }
 
-/* 条内分组:组与组之间一道细分隔,组内保持 6px */
+/* Groups within a bar: a thin divider between groups, 6px kept inside each group */
 .pc-bar-group {
   display: flex;
   align-items: center;
@@ -48,7 +48,7 @@ html.pc-has-menubar .pc-bar-fade {
   background: var(--ui-border-strong);
 }
 
-/* 次级按钮:条内默认样式 */
+/* Secondary button: default style within a bar */
 .pc-btn {
   display: inline-flex;
   align-items: center;
@@ -68,21 +68,21 @@ html.pc-has-menubar .pc-bar-fade {
     border-color 160ms cubic-bezier(0.16, 1, 0.3, 1), color 160ms cubic-bezier(0.16, 1, 0.3, 1),
     padding 160ms cubic-bezier(0.16, 1, 0.3, 1);
 }
-/* 只有图标的按钮:方形,内边距收到 6 */
+/* Icon-only button: square, padding reduced to 6 */
 .pc-btn--icon {
   padding: 0 6px;
   width: 28px;
   justify-content: center;
 }
 
-/* 顶栏收起态按钮:只缩内边距和间距,不设死宽度,让盒子尺寸随内容平滑过渡 */
+/* Collapsed button in the top bar: only the padding and gap shrink, no fixed width, so the box size transitions smoothly with its content */
 .pc-btn--collapsed {
   padding: 0 5px;
   gap: 0;
   justify-content: center;
 }
 
-/* 按钮文字标签:平滑过渡收缩展开 */
+/* Button text label: collapses and expands with a smooth transition */
 .pc-btn-label {
   display: inline-block;
   overflow: hidden;
@@ -109,7 +109,7 @@ html.pc-has-menubar .pc-bar-fade {
 .pc-btn:hover svg {
   color: var(--ui-fg);
 }
-/* 按下:比常态再深一级,描边压深 */
+/* Pressed: one step darker than the normal state, outline darkened */
 .pc-btn:active {
   background: color-mix(in oklab, var(--ui-panel-2) 78%, var(--ui-bg));
   border-color: color-mix(in oklab, var(--ui-border-strong) 80%, var(--ui-bg));
@@ -129,7 +129,7 @@ html.pc-has-menubar .pc-bar-fade {
   color: var(--ui-fg-muted);
 }
 
-/* 主按钮:一条里唯一的强调色实心,图标跟随按钮前景色 */
+/* Primary button: the only solid accent-color button in a bar, the icon follows the button foreground color */
 .pc-btn--primary {
   background: var(--ui-accent-grad);
   border-color: var(--ui-accent-press);
@@ -150,7 +150,7 @@ html.pc-has-menubar .pc-bar-fade {
   background: var(--ui-accent-grad-press);
 }
 
-/* 数值文字:等宽、主文字色、无容器、左右 8px */
+/* Numeric text: monospaced, primary text color, no container, 8px left and right */
 .pc-num {
   display: inline-flex;
   align-items: center;
@@ -165,7 +165,7 @@ html.pc-has-menubar .pc-bar-fade {
   color: var(--ui-fg-faint);
 }
 
-/* 条内下拉:和次级按钮同一套表面与描边 */
+/* Dropdown within a bar: same surface and outline as the secondary button */
 .pc-select {
   height: 28px;
   padding: 0 6px;
@@ -190,7 +190,7 @@ html.pc-has-menubar .pc-bar-fade {
   font-size: 12px;
 }
 
-/* 产品标识 */
+/* Product logo */
 .pc-logo {
   display: inline-flex;
   align-items: center;
@@ -216,7 +216,7 @@ html.pc-has-menubar .pc-bar-fade {
   color: var(--ui-fg-faint);
 }
 
-/* 项目名与未保存标记 */
+/* Project name and unsaved marker */
 .pc-projname {
   color: var(--ui-fg-muted);
   font-size: 13px;
@@ -229,7 +229,7 @@ html.pc-has-menubar .pc-bar-fade {
   color: var(--ui-warn);
 }
 
-/* ⋯ 更多操作弹出菜单(浮层) */
+/* ⋯ More actions popup menu (popover) */
 .pc-more-menu {
   position: fixed;
   z-index: 1000;
@@ -250,7 +250,7 @@ html.pc-has-menubar .pc-bar-fade {
   gap: 8px;
 }
 
-/* ── 「项目」按钮与下拉 ────────────────────────────────────────────── */
+/* ── "Project" button and dropdown ────────────────────────────────────────────── */
 .pc-proj-btn { position: relative; gap: 6px; }
 .pc-proj-btn.is-open {
   background: var(--ui-accent-soft);
@@ -258,7 +258,7 @@ html.pc-has-menubar .pc-bar-fade {
 }
 .pc-proj-caret { opacity: 0.7; transition: transform 160ms; }
 .pc-proj-btn.is-open .pc-proj-caret { transform: rotate(180deg); }
-/* 有没保存的改动:按钮右上角一个小点,菜单里「保存项目」那一行也带一个 */
+/* With unsaved changes: a small dot at the top right of the button, and the "Save project" row in the menu gets one too */
 .pc-proj-dirty {
   position: absolute;
   top: -3px;
@@ -316,7 +316,7 @@ html.pc-has-menubar .pc-bar-fade {
 .pc-proj-text small { font-size: 11px; color: var(--ui-fg-muted); }
 .pc-proj-sep { height: 1px; margin: 4px 6px; background: var(--ui-border-strong); opacity: 0.6; }
 
-/* 项目设置对话框 */
+/* Project settings dialog */
 .pc-dialog-mask {
   position: fixed;
   inset: 0;
@@ -362,7 +362,7 @@ html.pc-has-menubar .pc-bar-fade {
   display: flex;
   gap: 6px;
 }
-/* 对话框画幅与方向选项按钮:常态同次级按钮,选中态淡强调色 */
+/* Dialog aspect ratio and orientation option buttons: normal state same as the secondary button, selected state in a light accent color */
 .pc-dialog-opt {
   display: inline-flex;
   align-items: center;
@@ -416,10 +416,10 @@ html.pc-has-menubar .pc-bar-fade {
 }
 
 
-/* ── 配色诊断与修正 v2 整屏:顶栏 48 · 按钮 30 · 字号 12 ─────────────────
- * 组件表那一节定的是 36/28/13;整屏把顶栏放大到 48 高、控件 30 高、字号 12。
- * 顶栏和画布同色,底下不画 hairline、也不叠强调色内阴影,和画布融为一体。
- * 预览区和时间线的小条另有各自的类,不跟着这里的 --main 走。 */
+/* ── Color scheme diagnosis and correction v2, full screen: top bar 48 · button 30 · font size 12 ─────────────────
+ * The component table section specified 36/28/13; the full-screen version enlarges the top bar to 48 high, controls to 30 high, and the font size to 12.
+ * The top bar has the same color as the canvas, with no hairline drawn underneath and no accent-color inner shadow layered on, so it blends into the canvas.
+ * The small bars of the preview area and the timeline have their own classes and do not follow --main here. */
 .pc-bar--main {
   height: 48px;
   padding: 0 14px;
@@ -465,9 +465,9 @@ html.pc-has-menubar .pc-bar-fade {
   letter-spacing: 0.02em;
 }
 
-/* ── 顶栏项目名:点一下就地改名 ─────────────────────────
-   展示态是个 button(键盘能 Tab 到、能回车触发),但长得和原来的纯文本标签
-   一模一样;编辑态换成同宽同字号的 input,不让顶栏在两态之间跳一下。 */
+/* ── Top bar project name: click once to rename in place ─────────────────────────
+   The display state is a button (reachable with Tab, triggerable with Enter), but it looks like the old plain-text label
+   in every detail; the editing state swaps in an input of the same width and font size, so the top bar doesn't jump between the two states. */
 .pc-projname--btn {
   border: 0;
   background: transparent;
@@ -500,8 +500,8 @@ html.pc-has-menubar .pc-bar-fade {
   outline: none;
 }
 
-/* 只读查看:这份页面是用带钥匙的只读链接打开的(Skill 任务在跑时给 agent 用的那条)。
-   不做成刺眼的警告条 —— 它是常态而不是故障;但要让人一眼分清「这份改不了」。 */
+/* Read-only view: this page was opened with a read-only link that carries a key (the one given to the agent while a Skill task is running).
+   Don't make it a glaring warning bar: it is the normal state, not a fault; but people should see at a glance that "this one can't be edited". */
 .pc-viewonly-badge {
   flex: none;
   margin-right: 8px;

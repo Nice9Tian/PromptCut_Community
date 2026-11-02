@@ -1,11 +1,11 @@
-"""yt-dlp 的薄封装：探测、下载、进度、重试、转码兜底。
+"""Thin wrapper around yt-dlp: probe, download, progress, retry, transcode fallback.
 
-对外只有三个函数：probe / download / status。yt-dlp 只在函数内部按需 import，
-没装时 status 如实报告，probe / download 抛 NotInstalled，不抛 ImportError 堆栈。
+Only three functions are exposed: probe / download / status. yt-dlp is imported only inside the functions, on demand,
+and when it is not installed, status reports that truthfully, while probe / download raise NotInstalled instead of an ImportError traceback.
 
-进度以回调交出去（emit(dict)），由 __main__ 转成 JSONL；本模块不直接写 stdout，
-因为 yt-dlp 自己也会往 stdout 画进度条——那会把 JSONL 搅乱，所以这里一律
-noprogress + 自定义 logger 把它的话全转到 stderr。
+Progress is handed out through a callback (emit(dict)) and turned into JSONL by __main__; this module does not write to stdout directly,
+because yt-dlp itself also draws a progress bar on stdout: that would garble the JSONL, so here we always use
+noprogress + a custom logger to redirect everything it prints to stderr.
 """
 
 from __future__ import annotations
@@ -24,8 +24,8 @@ from . import presets
 Emit = Callable[[Dict[str, Any]], None]
 
 
-# 编辑台里预览靠浏览器 <video>，avc1(H.264) 在 Windows 的 Chrome 上最稳；
-# hvc1 要系统装 HEVC 扩展，av01 解码慢。所以优先 avc1，退而求其次再放开。
+# Preview in the editor relies on the browser <video>, and avc1(H.264) is the most reliable on Chrome for Windows;
+# hvc1 needs the HEVC extension installed on the system, and av01 decodes slowly. So prefer avc1, and only relax the constraint as a second choice.
 def format_selector(quality: int, audio_only: bool = False) -> str:
     if audio_only:
         return "bestaudio[ext=m4a]/bestaudio/best"
@@ -52,13 +52,13 @@ def _import_ytdlp():
     add_pylibs()
     try:
         import yt_dlp  # type: ignore
-    except Exception as exc:  # ModuleNotFoundError 或 yt-dlp 自己的 import 错
-        raise NotInstalled(f"yt-dlp 没装或坏了：{exc}") from exc
+    except Exception as exc:  # ModuleNotFoundError or yt-dlp's own import error
+        raise NotInstalled(f"yt-dlp is not installed or is broken: {exc}") from exc
     return yt_dlp
 
 
 def ffmpeg_dir() -> Optional[str]:
-    """ffmpeg 所在目录。PROMPTCUT_FFMPEG 指向 exe 或目录都行，其次看 PATH。"""
+    """Directory containing ffmpeg. PROMPTCUT_FFMPEG may point to either the exe or the directory; PATH is checked next."""
     env = os.environ.get("PROMPTCUT_FFMPEG")
     if env:
         return env if os.path.isdir(env) else os.path.dirname(env)
@@ -67,7 +67,7 @@ def ffmpeg_dir() -> Optional[str]:
 
 
 def _tool(name: str) -> Optional[str]:
-    """ffmpeg / ffprobe 的可执行文件：先看 ffmpeg_dir，再看 PATH。"""
+    """Executable of ffmpeg / ffprobe: check ffmpeg_dir first, then PATH."""
     fd = ffmpeg_dir()
     if fd:
         cand = os.path.join(fd, name + (".exe" if os.name == "nt" else ""))
@@ -96,7 +96,7 @@ def status() -> Dict[str, Any]:
 
 
 class _Logger:
-    """把 yt-dlp 的输出全导到 stderr，stdout 只留 JSONL。"""
+    """Redirect all yt-dlp output to stderr, leaving only JSONL on stdout."""
 
     def __init__(self) -> None:
         self.warnings: List[str] = []
@@ -132,7 +132,7 @@ def _base_opts(preset, url: str, quality: int, cookies: Optional[str],
     if cookies:
         opts["cookiefile"] = cookies
     if cookies_from_browser:
-        # yt-dlp 的写法是元组 (browser, profile, keyring, container)，这里只给浏览器名
+        # yt-dlp's form is a tuple (browser, profile, keyring, container); here we only give the browser name
         opts["cookiesfrombrowser"] = (cookies_from_browser,)
     fd = ffmpeg_dir()
     if fd:
@@ -141,7 +141,7 @@ def _base_opts(preset, url: str, quality: int, cookies: Optional[str],
 
 
 def _with_retry(fn, preset, attempts: int, emit: Optional[Emit]):
-    """站点预设说「值得重试」的错误才重试，其余原样抛。"""
+    """Only errors that the site preset calls "worth retrying" are retried; the rest are raised as is."""
     last: Optional[Exception] = None
     for i in range(max(1, attempts)):
         try:
@@ -199,7 +199,7 @@ def _entries(info: Dict[str, Any]) -> List[Dict[str, Any]]:
 def probe(url: str, site: Optional[str] = None, quality: int = 1080,
           cookies: Optional[str] = None, cookies_from_browser: Optional[str] = None,
           attempts: int = 3, emit: Optional[Emit] = None) -> Dict[str, Any]:
-    """只探测不下载：标题、时长、可选清晰度、分 P 数。"""
+    """Probe without downloading: title, duration, available qualities, number of parts."""
     yt_dlp = _import_ytdlp()
     preset = presets.resolve(url, site)
     norm = preset.normalize(url)
@@ -238,18 +238,18 @@ def probe(url: str, site: Optional[str] = None, quality: int = 1080,
     return result
 
 
-#: 各站的搜索前缀(yt-dlp 的搜索抽取器):bilisearchN:关键词 / ytsearchN:关键词
+#: Search prefix of each site (yt-dlp's search extractor): bilisearchN:keywords / ytsearchN:keywords
 _SEARCH_PREFIX = {"bilibili": "bilisearch", "generic": "ytsearch"}
 
 
 def search(query: str, site: str = "bilibili", limit: int = 5,
            cookies: Optional[str] = None, cookies_from_browser: Optional[str] = None,
            attempts: int = 3, emit: Optional[Emit] = None) -> Dict[str, Any]:
-    """站内搜索,返回候选视频列表(带标题、时长、UP 主、播放量),供 agent 挑选后再 download。
+    """On-site search, returns a list of candidate videos (with title, duration, uploader, view count) for the agent to pick from before download.
 
-    yt-dlp 的搜索抽取器扁平模式只给链接不给标题(实测 B 站),所以分两步:
-    先扁平拿前 N 条链接,再并发探测每条拿元数据。N 限制在 1~10:每条探测约 1~3 秒,
-    再多就撞 MCP 桥的 60 秒上限。
+    yt-dlp's search extractor in flat mode only gives links, not titles (tested on Bilibili), so there are two steps:
+    first get the top N links in flat mode, then probe each one concurrently to get its metadata. N is limited to 1~10: each probe takes about 1~3 seconds,
+    and any more would hit the MCP bridge's 60-second limit.
     """
     yt_dlp = _import_ytdlp()
     site = site if site in _SEARCH_PREFIX else "bilibili"
@@ -259,7 +259,7 @@ def search(query: str, site: str = "bilibili", limit: int = 5,
     base = _base_opts(preset, "", 1080, cookies, cookies_from_browser, logger)
 
     flat_opts = {**base, "extract_flat": True, "skip_download": True}
-    # B 站搜索结果里混着课程(cheese)和番剧,那些不是视频页,download 不了,过滤掉
+    # Bilibili search results are mixed with courses (cheese) and anime series; those are not video pages and cannot be downloaded, so filter them out
     keep = re.compile(r"bilibili\.com/video/") if site == "bilibili" else re.compile(r".")
 
     def run_flat():
@@ -283,7 +283,7 @@ def search(query: str, site: str = "bilibili", limit: int = 5,
                 return y.extract_info(u, download=False)
         try:
             info = _with_retry(run, preset, attempts, None)
-        except Exception as exc:  # 单条失败不拖累整批
+        except Exception as exc:  # one failure does not drag down the whole batch
             return {"url": u, "error": _first_line(exc)}
         if info.get("entries") is not None:
             info = (_entries(info) or [info])[0]
@@ -311,7 +311,7 @@ _UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f#%&]+')
 
 
 def safe_name(title: str, limit: int = 80) -> str:
-    """文件名只留安全字符。中文原样保留，Windows 保留字符和 URL 里麻烦的 #%& 去掉。"""
+    """Keep only safe characters in file names. Chinese characters are kept as they are; characters reserved by Windows and the troublesome #%& in URLs are removed."""
     s = _UNSAFE.sub(" ", title or "")
     s = re.sub(r"\s+", " ", s).strip(" .")
     if len(s) > limit:
@@ -350,10 +350,10 @@ def _probe_codec(path: str) -> Dict[str, Any]:
 
 
 def _transcode_h264(src: str, emit: Optional[Emit], duration: Optional[float]) -> str:
-    """浏览器播不了的编码（hvc1 / av01）转成 H.264。原文件保留到成功后再删。"""
+    """Convert codecs the browser cannot play (hvc1 / av01) to H.264. The original file is kept and only deleted after success."""
     ffmpeg = _tool("ffmpeg")
     if not ffmpeg:
-        raise RuntimeError("找不到 ffmpeg，无法转码")
+        raise RuntimeError("ffmpeg not found, cannot transcode")
     base, _ = os.path.splitext(src)
     tmp = base + ".h264.mp4"
     cmd = [ffmpeg, "-hide_banner", "-y", "-i", src,
@@ -364,9 +364,9 @@ def _transcode_h264(src: str, emit: Optional[Emit], duration: Optional[float]) -
                             text=True, encoding="utf-8", errors="replace")
     assert proc.stdout is not None and proc.stderr is not None
 
-    # stderr 要有人一直读:ffmpeg 转码期间往 stderr 写的东西一旦塞满管道(64 KB),
-    # 它就卡在写、我们卡在读 stdout,双向死锁,作业永远停在 transcode。开个线程持续吸走,
-    # 只留最后几十行给报错用。
+    # Someone must keep reading stderr: once what ffmpeg writes to stderr during transcoding fills the pipe (64 KB),
+    # it blocks on writing while we block on reading stdout, a two-way deadlock, and the job stays at transcode forever. Start a thread that keeps draining it,
+    # keeping only the last few dozen lines for error reporting.
     import threading
     from collections import deque
     err_tail: deque = deque(maxlen=40)
@@ -393,8 +393,8 @@ def _transcode_h264(src: str, emit: Optional[Emit], duration: Optional[float]) -
     code = proc.wait()
     t.join(timeout=5)
     if code != 0 or not os.path.isfile(tmp):
-        raise RuntimeError(f"ffmpeg 转码失败（退出码 {code}）：{' | '.join(err_tail)[-800:]}")
-    # 先把转好的落到最终名,再删原文件:反过来的话中间出错就两头都没了
+        raise RuntimeError(f"ffmpeg transcode failed (exit code {code}): {' | '.join(err_tail)[-800:]}")
+    # First put the converted file under its final name, then delete the original: the other way round, an error in between leaves neither
     final = base + ".mp4"
     os.replace(tmp, final)
     if os.path.abspath(src) != os.path.abspath(final) and os.path.exists(src):
@@ -403,7 +403,7 @@ def _transcode_h264(src: str, emit: Optional[Emit], duration: Optional[float]) -
 
 
 def _overall(weights: Dict[str, float], fid: str, pct: float) -> Optional[float]:
-    """按流的字节权重把「当前流的百分比」折成整体百分比。下载顺序就是 weights 的插入顺序。"""
+    """Fold the "percentage of the current stream" into an overall percentage using each stream's byte weight. The download order is the insertion order of weights."""
     if fid not in weights:
         return None
     acc = 0.0
@@ -412,7 +412,7 @@ def _overall(weights: Dict[str, float], fid: str, pct: float) -> Optional[float]
             acc += w * pct
             break
         acc += w * 100.0
-    # 合并 / 收尾留 3%
+    # Leave 3% for merging / finalizing
     return round(min(97.0, acc * 0.97), 1)
 
 
@@ -421,7 +421,7 @@ def download(url: str, out_dir: str, site: Optional[str] = None, quality: int = 
              cookies: Optional[str] = None, cookies_from_browser: Optional[str] = None,
              ensure_h264: bool = True, attempts: int = 3,
              emit: Optional[Emit] = None) -> Dict[str, Any]:
-    """下载到 out_dir，返回 {items: [...]}。每个文件落地时 emit 一个 item 事件。"""
+    """Download into out_dir and return {items: [...]}. Emit one item event whenever a file lands."""
     yt_dlp = _import_ytdlp()
     preset = presets.resolve(url, site)
     norm = preset.normalize(url)
@@ -431,17 +431,17 @@ def download(url: str, out_dir: str, site: Optional[str] = None, quality: int = 
     if all_parts:
         opts["noplaylist"] = False
 
-    # 文件名自己算：yt-dlp 的模板会把 ? # 之类留在名字里，进 URL 时麻烦。
-    # 中途一直用 id 当名字，落地后再改成「标题 [id].ext」。
-    # out_dir 里的 % 要翻倍转义：outtmpl 整条都会被 yt-dlp 当模板解析，目录名里
-    # 真出现一个 % 就会被当成字段占位符的开头，抛 ValueError: incomplete format。
-    # 正常路径（%LOCALAPPDATA%\promptcut 展开后）不含 %，但 out_dir 是外面传进来的。
+    # Compute the file name ourselves: yt-dlp's template would leave things like ? # in the name, which is troublesome once it goes into a URL.
+    # Use the id as the name throughout, then rename to "title [id].ext" once it has landed.
+    # A % in out_dir must be escaped by doubling: yt-dlp parses the whole outtmpl as a template, so if a directory name
+    # really contains a single %, it is taken as the start of a field placeholder and raises ValueError: incomplete format.
+    # A normal path (after %LOCALAPPDATA%\promptcut is expanded) contains no %, but out_dir is passed in from outside.
     opts["outtmpl"] = os.path.join(out_dir.replace("%", "%%"), "%(id)s.%(ext)s")
     opts["format"] = format_selector(quality, audio_only)
     if not audio_only:
         opts["merge_output_format"] = "mp4"
 
-    weights: Dict[str, float] = {}  # format_id → 该流占总字节的比例（插入顺序 = 下载顺序）
+    weights: Dict[str, float] = {}  # format_id → share of the total bytes taken by that stream (insertion order = download order)
     last_emit = [0.0]
 
     def stage_of(info: Dict[str, Any]) -> str:
@@ -480,7 +480,7 @@ def download(url: str, out_dir: str, site: Optional[str] = None, quality: int = 
     opts["postprocessor_hooks"] = [pp_hook]
 
     class _BeforeDl(yt_dlp.postprocessor.PostProcessor):
-        """下载前跑一次：记下各流的字节数（进度加权用），并把标题时长先报出去。"""
+        """Runs once before download: record the byte count of each stream (for progress weighting) and report the title and duration first."""
 
         def run(self, info):
             sizes: Dict[str, float] = {}
@@ -504,14 +504,14 @@ def download(url: str, out_dir: str, site: Optional[str] = None, quality: int = 
         rd = e.get("requested_downloads") or []
         src = rd[0].get("filepath") if rd else None
         if not src or not os.path.isfile(src):
-            raise RuntimeError(f"下载完成但找不到文件：{src}")
+            raise RuntimeError(f"Download finished but the file was not found: {src}")
         meta = _probe_codec(src) if not audio_only else {}
         vcodec = meta.get("vcodec")
         transcoded = False
         if ensure_h264 and not audio_only and vcodec and vcodec != "h264":
             if emit:
                 emit({"event": "progress", "stage": "transcode", "percent": 0.0,
-                      "note": f"视频编码是 {vcodec}，浏览器不一定播得了，转成 H.264"})
+                      "note": f"The video codec is {vcodec}, which the browser may not be able to play; converting to H.264"})
             src = _transcode_h264(src, emit, meta.get("duration") or e.get("duration"))
             meta = _probe_codec(src)
             transcoded = True

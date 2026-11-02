@@ -1,10 +1,10 @@
-"""TransNetV2 推理。
+"""TransNetV2 inference.
 
-模型来自官方 TensorFlow 权重，经官方 convert_weights.py 转 PyTorch（官方自测
-10/10 逐帧 100% 一致）后导出为 ONNX，见 tools/build-transnetv2-onnx.md。
+The model comes from the official TensorFlow weights, converted to PyTorch with the official convert_weights.py (official self-test
+10/10 matched 100% frame by frame) and then exported to ONNX; see tools/build-transnetv2-onnx.md.
 
-输入是 uint8 的 [B, 100, 27, 48, 3]，归一化在模型内部做，所以预处理只要把帧
-缩放到 48x27 就行，不要自己除 255。
+The input is uint8 [B, 100, 27, 48, 3]; normalization is done inside the model, so preprocessing only needs to scale the frames
+to 48x27, and do not divide by 255 yourself.
 """
 
 from __future__ import annotations
@@ -14,26 +14,26 @@ from typing import Any, Dict, List, Optional
 
 MODEL_FILENAME = "transnetv2.onnx"
 
-# 官方推理的滑窗：前后各补 25 帧，窗口 100、步长 50，每窗只取中间 [25:75]。
-# 这样每一帧都在某个窗口的中段被预测过一次，上下文是完整的。
+# Sliding window of the official inference: pad 25 frames at both the start and the end, window 100, stride 50, and take only the middle [25:75] of each window.
+# This way every frame is predicted once in the middle of some window, with full context.
 WINDOW = 100
 STRIDE = 50
 MARGIN = 25
 
 FRAME_W, FRAME_H = 48, 27
 
-# 云端 Agent 服务把素材取到对话的工作目录后再递路径来:素材是成员传的,伪装成媒体文件的
-# 播放列表(HLS、concat)不能让 ffmpeg 去连网络地址。置 True 时输入前加 `-protocol_whitelist file`。
-# 桌面版不设(它递的是素材服务上的 http 地址)。
+# The Cloud Agent service fetches the asset into the chat's working directory and then passes the path: assets are uploaded by members, and a playlist disguised as a media file
+# (HLS, concat) must not be allowed to make ffmpeg connect to network addresses. When set to True, `-protocol_whitelist file` is added before the input.
+# The desktop app does not set it (it passes http addresses on the asset service).
 LOCAL_ONLY = False
 
 
 def decode_frames(ffmpeg: str, video: str):
-    """把整段视频解成 48x27 的 RGB 帧。
+    """Decode the whole video into 48x27 RGB frames.
 
-    模型输入只有 48x27，所以哪怕 4K 素材，这里的内存也只是
-    帧数 × 48 × 27 × 3 字节（1 小时 30fps 约 420 MB），可以一次读完。
-    真正的大素材由调用方决定要不要分段。
+    The model input is only 48x27, so even for a 4K asset the memory here is just
+    frame count × 48 × 27 × 3 bytes (about 420 MB for 1 hour at 30fps), which can be read in one go.
+    Truly large assets are left to the caller to decide whether to split them into segments.
     """
     import numpy as np
 
@@ -45,25 +45,25 @@ def decode_frames(ffmpeg: str, video: str):
         capture_output=True,
     )
     if proc.returncode != 0:
-        raise RuntimeError(proc.stderr.decode("utf-8", "replace")[:500] or "ffmpeg 解码失败")
+        raise RuntimeError(proc.stderr.decode("utf-8", "replace")[:500] or "ffmpeg decode failed")
     buf = np.frombuffer(proc.stdout, dtype=np.uint8)
     per_frame = FRAME_H * FRAME_W * 3
     if per_frame == 0 or buf.size < per_frame:
-        raise RuntimeError("没有解出任何视频帧，这个文件可能没有视频轨")
+        raise RuntimeError("No video frames were decoded; this file may have no video track")
     return buf[: buf.size // per_frame * per_frame].reshape(-1, FRAME_H, FRAME_W, 3)
 
 
 def predict(frames, session, on_progress=None):
-    """逐帧概率，返回 (center, extent) 两条曲线。
+    """Per-frame probabilities; returns two curves, (center, extent).
 
-    模型有两个输出，用途不同，两个都要：
-      - cut_prob（one_hot）：转场的**中心**在哪。硬切和溶解都只亮很窄的一小段。
-      - many_hot：属于转场的**每一帧**。硬切下和 one_hot 一样窄，溶解下会铺满
-        整个渐变区间。
+    The model has two outputs with different uses, and both are needed:
+      - cut_prob (one_hot): where the **center** of a transition is. Both hard cuts and dissolves light up only a very narrow stretch.
+      - many_hot: **every frame** that belongs to a transition. For hard cuts it is as narrow as one_hot; for dissolves it spreads over
+        the whole gradual transition.
 
-    实测 1 秒交叉溶解：one_hot 只给 3 帧（2.44~2.56s），many_hot 给 21 帧
-    （2.12~2.96s），后者才是真实跨度。要在时间轴上把溶解画成两张叠画，靠的
-    就是 many_hot。
+    Tested on a 1-second crossfade: one_hot gives only 3 frames (2.44~2.56s), many_hot gives 21 frames
+    (2.12~2.96s), and the latter is the true span. To draw a dissolve on the timeline as two overlapping pictures, what we rely on
+    is many_hot.
     """
     import numpy as np
 
@@ -93,10 +93,10 @@ def predict(frames, session, on_progress=None):
 
 def transitions_from_probs(centers, extents, fps: float,
                            threshold: float = 0.5) -> List[Dict[str, Any]]:
-    """把逐帧概率变成转场。
+    """Turn the per-frame probabilities into transitions.
 
-    先用 centers 定位「这里有一个转场」，再用 extents 把它的真实跨度撑开——
-    硬切撑不开（本来就一两帧），溶解会撑到整个渐变区间。
+    First use centers to locate "there is a transition here", then use extents to stretch out its true span:
+    a hard cut cannot be stretched (it is only one or two frames anyway), while a dissolve stretches to the whole gradual transition.
     """
     result: List[Dict[str, Any]] = []
     run: List[int] = []
@@ -106,14 +106,14 @@ def transitions_from_probs(centers, extents, fps: float,
         if not run:
             return
         peak = max(run, key=lambda i: centers[i])
-        # 从峰值往两边走，直到 many_hot 掉下阈值，得到渐变的真实范围
+        # Walk outward from the peak on both sides until many_hot drops below the threshold, which gives the true extent of the gradual transition
         start = end = peak
         while start - 1 >= 0 and extents[start - 1] >= threshold:
             start -= 1
         while end + 1 < n and extents[end + 1] >= threshold:
             end += 1
         start, end = min(start, run[0]), max(end, run[-1])
-        # 跨度超过 3 帧才算渐变；硬切在两条曲线上都只有一两帧
+        # Only a span of more than 3 frames counts as gradual; a hard cut is only one or two frames on both curves
         kind = "dissolve" if (end - start + 1) > 3 else "cut"
         result.append({
             "kind": kind,
@@ -138,7 +138,7 @@ def transitions_from_probs(centers, extents, fps: float,
 
 
 def shots_from_transitions(transitions: List[Dict[str, Any]], duration: float) -> List[Dict[str, Any]]:
-    """转场之间夹着的就是镜头。给 AI 用的主要是这个列表。"""
+    """What lies between transitions are the shots. This list is mainly what the AI uses."""
     shots: List[Dict[str, Any]] = []
     cursor = 0.0
     for t in transitions:
@@ -157,6 +157,6 @@ def shots_from_transitions(transitions: List[Dict[str, Any]], duration: float) -
 def load_session(model_path: str):
     import onnxruntime as ort
 
-    # 明确只用 CPU：这台机器有没有 CUDA 不该影响结果，而且 GPU provider
-    # 缺 DLL 时 onnxruntime 会打一堆吓人的告警。
+    # Explicitly use CPU only: whether this machine has CUDA should not affect the result, and when the GPU provider
+    # is missing a DLL, onnxruntime prints a pile of scary warnings.
     return ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])

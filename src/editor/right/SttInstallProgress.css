@@ -59,7 +59,7 @@
 }
 @keyframes stt-install-spin { to { transform: rotate(360deg); } }
 
-/* 进度槽。不确定态时高亮块只占三成宽来回扫,一眼能和确定态区分开 */
+/* Progress track. In the indeterminate state the highlight block takes only 30% of the width and sweeps back and forth, so it is easy to tell apart from the determinate state */
 .stt-install-bar {
   position: relative;
   height: 4px;
@@ -98,7 +98,7 @@
   margin: 6px 0 0;
 }
 
-/* 动画偏好:关掉扫动和转圈,静态显示即可 */
+/* Animation preference: turn off the sweep and the spinner, a static display is enough */
 @media (prefers-reduced-motion: reduce) {
   .stt-install-spin { animation: none; }
   .stt-install-fill.is-indeterminate { width: 100%; opacity: 0.4; }

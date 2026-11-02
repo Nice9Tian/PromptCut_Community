@@ -1,8 +1,8 @@
-"""素材收集：从网页链接把视频抓成本地文件，供编辑台导入。
+"""Media collection: fetch videos from web links as local files, for the editor to import.
 
-底层是 yt-dlp（Unlicense），按需 pip 装到 PROMPTCUT_PYLIBS；本包本体只依赖标准库。
-站点差异（请求头、链接归一化、分 P、清晰度上限）收在 presets/ 里，
-bilibili 是第一个预设，也是 agent 最常拿来直接调的那个。
+Underneath is yt-dlp (Unlicense), pip-installed into PROMPTCUT_PYLIBS on demand; the package itself depends only on the standard library.
+Site differences (request headers, link normalization, multi-part handling, quality cap) are kept in presets/,
+bilibili is the first preset, and the one agents most often call directly.
 """
 
 __version__ = "0.1.0"

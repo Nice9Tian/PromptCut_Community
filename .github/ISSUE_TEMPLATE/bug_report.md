@@ -1,29 +1,29 @@
 ---
-name: Bug / 缺陷
-about: 哪里不对 / Something is wrong
+name: Bug
+about: Something is wrong
 labels: bug
 ---
 
-## 现象 / What happens
+## What happens
 
-<!-- 看到了什么。改到画面的问题请附截图或导出帧。 -->
+<!-- What you saw. For problems that affect the picture, attach a screenshot or an exported frame. -->
 
-## 预期 / What you expected
+## What you expected
 
-## 怎么复现 / How to reproduce
+## How to reproduce
 
 1.
 2.
 3.
 
-## 环境 / Environment
+## Environment
 
-- 怎么跑的 / How you run it: 桌面版安装包 / `npm run dev` / 其它
-- 操作系统 / OS:
-- Node 版本 / Node version（`node -v`）:
-- ffmpeg 版本 / ffmpeg version（`ffmpeg -version` 第一行）:
-- PromptCut 版本 / version（`package.json` 里的 `version`）:
+- How you run it: desktop app installer / `npm run dev` / other
+- OS:
+- Node version (`node -v`):
+- ffmpeg version (first line of `ffmpeg -version`):
+- PromptCut version (the `version` in `package.json`):
 
-## 日志 / Logs
+## Logs
 
-<!-- 终端输出、浏览器 Console 的报错。贴文字，不要贴截图。 -->
+<!-- Errors from the terminal output or the browser Console. Paste text, not screenshots. -->

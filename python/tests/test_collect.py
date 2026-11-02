@@ -1,8 +1,8 @@
-"""素材收集包：不联网、不要求装 yt-dlp 也要过的那部分。
+"""Media collection package: the part that must pass without network access and without requiring yt-dlp to be installed.
 
-- 站点预设：链接归一化、匹配、可重试判断；
-- 格式选择串、文件名清洗；
-- status / presets 子命令：yt-dlp 没装时也退出 0、一行 JSON、字段齐全。
+- Site presets: link normalization, matching, retryability checks;
+- Format selection string, file name sanitizing;
+- status / presets subcommands: exit 0 even when yt-dlp is not installed, one line of JSON, all fields present.
 """
 
 import json
@@ -61,10 +61,10 @@ class TestBilibiliPreset(unittest.TestCase):
         self.assertEqual(bilibili.normalize(
             "https://www.bilibili.com/video/BV1BYtB6GEFV/?spm_id_from=333.1007&vd_source=abc"), std)
         self.assertEqual(bilibili.normalize("https://m.bilibili.com/video/BV1BYtB6GEFV?p=3"), std + "?p=3")
-        # p=1 和不带 p 等价，去掉
+        # p=1 is equivalent to no p, so drop it
         self.assertEqual(bilibili.normalize("https://www.bilibili.com/video/BV1BYtB6GEFV?p=1"), std)
         self.assertEqual(bilibili.normalize("av170001"), "https://www.bilibili.com/video/av170001")
-        # 短链留给 yt-dlp 跟重定向
+        # Leave short links to yt-dlp to follow the redirect
         self.assertEqual(bilibili.normalize("https://b23.tv/abc123"), "https://b23.tv/abc123")
 
     def test_retryable(self):
@@ -101,8 +101,8 @@ class TestHelpers(unittest.TestCase):
         self.assertEqual(format_selector(1080, audio_only=True), "bestaudio[ext=m4a]/bestaudio/best")
 
     def test_safe_name(self):
-        self.assertEqual(safe_name('DeepSeek不行了？我实测: "半个月" <告诉你> #答案'),
-                         "DeepSeek不行了？我实测 半个月 告诉你 答案")
+        self.assertEqual(safe_name('DeepSeek is done My real test: "half a month" <the truth> #answer'),
+                         "DeepSeek is done My real test half a month the truth answer")
         self.assertEqual(safe_name("a/b\\c|d*e"), "a b c d e")
         self.assertEqual(safe_name("   "), "video")
         self.assertEqual(safe_name("..."), "video")
@@ -116,7 +116,7 @@ class TestSubcommands(unittest.TestCase):
             proc = run_subcommand(["status"], {"PROMPTCUT_PYLIBS": pylibs})
         self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
         lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
-        self.assertEqual(len(lines), 1, msg=f"stdout 不是恰好一行：{proc.stdout!r}")
+        self.assertEqual(len(lines), 1, msg=f"stdout is not exactly one line: {proc.stdout!r}")
         data = json.loads(lines[0])
         self.assertEqual(data["event"], "status")
         for key in ("ready", "ytdlp", "ffmpeg", "presets", "version"):

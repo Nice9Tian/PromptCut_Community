@@ -1,13 +1,13 @@
-"""full 档后端（Grounding DINO）的单测。
+"""Unit tests for the full-tier backend (Grounding DINO).
 
-分两层：
-  - 纯函数层（提示归一化、尺寸换算、路径解析、标签清洗）：不需要 torch，
-    内置解释器（只有 numpy）里也能全跑，随每次提交跑；
-  - 推理层：torch / transformers / 模型目录任缺其一就 skip。开发机上
-    "C:/Users/admin/anaconda3/envs/cuda_Vit/python.exe" 配 PROMPTCUT_MODELS
-    指向 tools/subject/out 才会真的跑起来。
+Two layers:
+  - Pure-function layer (prompt normalization, size conversion, path resolution, label cleaning): no torch needed,
+    so it can run completely in the built-in interpreter (numpy only), on every commit;
+  - Inference layer: skipped if any one of torch / transformers / the model directory is missing. On the dev machine
+    "C:/Users/admin/anaconda3/envs/cuda_Vit/python.exe" together with PROMPTCUT_MODELS
+    pointing at tools/subject/out does it actually run.
 
-不联网：模型一律 local_files_only，测试也从不下载任何东西。
+No network: models are always local_files_only, and the tests never download anything.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from promptcut_subject import dino
 
 
 class TestPromptNormalize(unittest.TestCase):
-    """Grounding DINO 对提示的格式很挑：小写 + 「 . 」分隔 + 结尾句点。"""
+    """Grounding DINO is picky about the prompt format: lowercase + " . " separators + a trailing period."""
 
     def test_adds_trailing_period(self):
         self.assertTrue(dino._normalize_prompt("person . face").endswith("."))
@@ -40,10 +40,10 @@ class TestPromptNormalize(unittest.TestCase):
 
 
 class TestSizeFor(unittest.TestCase):
-    """绝不放大（放大只烧算力，见 NATIVE_SIZE 那段实测）。"""
+    """Never upscale (upscaling only burns compute, see the measurements at NATIVE_SIZE)."""
 
     def test_native_keeps_frame_size(self):
-        """默认 None：帧多大就多大，一个像素不动。"""
+        """Default None: the frame stays at its own size, not a pixel changed."""
         self.assertEqual(dino._size_for(640, 360, None),
                          {"shortest_edge": 360, "longest_edge": 640})
 
@@ -64,13 +64,13 @@ class TestSizeFor(unittest.TestCase):
         self.assertEqual(size, {"shortest_edge": 360, "longest_edge": 640})
 
     def test_official_preprocessing(self):
-        """max_side <= 0 表示交还给官方预处理（800/1333），这里返回 None 不覆盖。"""
+        """max_side <= 0 means handing control back to the official preprocessing (800/1333); None is returned here so nothing is overridden."""
         self.assertIsNone(dino._size_for(640, 360, 0))
         self.assertIsNone(dino._size_for(640, 360, -1))
 
 
 class TestModelDir(unittest.TestCase):
-    """路径解析要和 promptcut_shots 的 models_dir() 完全一致。"""
+    """Path resolution must be exactly the same as models_dir() of promptcut_shots."""
 
     def test_models_env_wins(self):
         with mock.patch.dict(os.environ, {"PROMPTCUT_MODELS": r"X:\m",
@@ -93,46 +93,46 @@ class TestModelDir(unittest.TestCase):
     def test_model_ready_needs_all_files(self):
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:
-            # 只放 config.json，缺权重 —— 不算就绪
+            # Only config.json is there and the weights are missing: not counted as ready
             with open(os.path.join(tmp, "config.json"), "w") as fh:
                 fh.write("{}")
             self.assertFalse(dino.model_ready(tmp))
             for name in dino.REQUIRED_FILES:
                 with open(os.path.join(tmp, name), "w") as fh:
                     fh.write("{}")
-            # 必需文件齐了，但一个词表都没有 —— 还是不算就绪（真加载会炸 TypeError）
+            # All required files are present, but there is no vocabulary at all: still not counted as ready (a real load would blow up with TypeError)
             self.assertFalse(dino.model_ready(tmp))
             with open(os.path.join(tmp, "tokenizer.json"), "w") as fh:
                 fh.write("{}")
             self.assertTrue(dino.model_ready(tmp))
 
     def test_model_ready_rejects_missing_tokenizer(self):
-        """这是校验员实测出的场景：拷贝中断/杀毒软件拦小文件，只剩三个大件。
+        """This is a scenario found by the validator in real testing: an interrupted copy / antivirus software blocking small files leaves only the three big files.
 
-        以前的判据（config + safetensors + preprocessor_config）会说「就绪」，
-        于是 status 报 engine=full，detect 一路走到 transformers 内部才炸出
-        「TypeError: stat: path should be string, ... not NoneType」——这句话
-        既看不出缺什么、也不会退回 light。
+        The old criterion (config + safetensors + preprocessor_config) would say "ready",
+        so status reported engine=full, and detect went all the way into transformers before blowing up with
+        "TypeError: stat: path should be string, ... not NoneType", a message that
+        neither shows what is missing nor falls back to light.
         """
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             for name in ("config.json", "model.safetensors", "preprocessor_config.json"):
                 with open(os.path.join(tmp, name), "w") as fh:
                     fh.write("{}")
-            self.assertFalse(dino.model_ready(tmp), "只剩三个大件不能算就绪")
+            self.assertFalse(dino.model_ready(tmp), "Only the three big files left must not count as ready")
             lacks = dino.missing_files(tmp)
             self.assertIn("tokenizer_config.json", lacks)
             self.assertTrue(any("vocab.txt" in x for x in lacks), lacks)
 
     def test_tokenizer_json_or_vocab_txt_either_is_enough(self):
-        """实测（transformers 4.57.6）：两个词表删掉任一个还能加载，两个都删才炸。"""
+        """Measured (transformers 4.57.6): deleting either one of the two vocabularies still loads, only deleting both blows up."""
         import tempfile
         for keep in dino.TOKENIZER_FILES:
             with tempfile.TemporaryDirectory() as tmp:
                 for name in dino.REQUIRED_FILES + (keep,):
                     with open(os.path.join(tmp, name), "w") as fh:
                         fh.write("{}")
-                self.assertTrue(dino.model_ready(tmp), f"只留 {keep} 应该也算就绪")
+                self.assertTrue(dino.model_ready(tmp), f"Keeping only {keep} should also count as ready")
 
     def test_missing_files_names_the_whole_dir(self):
         lacks = dino.missing_files(os.path.join(os.path.dirname(__file__), "no-such-dir"))
@@ -140,9 +140,9 @@ class TestModelDir(unittest.TestCase):
         self.assertIn("no-such-dir", lacks[0])
 
     @unittest.skipUnless(os.path.isdir(dino.default_model_dir()),
-                         "没有真权重目录（设 PROMPTCUT_MODELS 指向 tools/subject/out 才跑）")
+                         "No real weights directory (set PROMPTCUT_MODELS to point at tools/subject/out to run)")
     def test_real_snapshot_satisfies_the_criteria(self):
-        """判据不能比真实的 HF snapshot 还严，否则装对了也报没装。"""
+        """The criteria must not be stricter than a real HF snapshot, otherwise a correct install is reported as not installed."""
         self.assertEqual(dino.missing_files(), [], dino.default_model_dir())
 
 
@@ -151,7 +151,7 @@ class TestCleanLabel(unittest.TestCase):
         self.assertEqual(dino._clean_label("person .", "x"), "person")
 
     def test_int_label_falls_back(self):
-        """新版 transformers 的 labels 字段会变成整数 id，这时用提示里的名词兜底。"""
+        """In newer transformers the labels field becomes integer ids, in which case the nouns in the prompt are used as the fallback."""
         self.assertEqual(dino._clean_label(3, "person"), "person")
 
     def test_blank_falls_back(self):
@@ -160,7 +160,7 @@ class TestCleanLabel(unittest.TestCase):
 
 class TestEmptyInput(unittest.TestCase):
     def test_no_frames_no_model_load(self):
-        """空列表要在加载模型**之前**就返回，否则没装引擎的机器上会白炸一次。"""
+        """An empty list must return **before** the model is loaded, otherwise a machine without the engine blows up for nothing."""
         self.assertEqual(dino.detect([]), [])
 
 
@@ -169,51 +169,51 @@ def engine_missing() -> str:
         import torch  # noqa: F401
         import transformers  # noqa: F401
     except Exception as exc:
-        return f"没有 torch/transformers：{exc}"
+        return f"No torch/transformers: {exc}"
     if not dino.model_ready():
-        return f"模型目录不完整：{dino.default_model_dir()}"
+        return f"The model directory is incomplete: {dino.default_model_dir()}"
     return ""
 
 
 @unittest.skipIf(engine_missing(), engine_missing() or "engine ok")
 class TestDetectContract(unittest.TestCase):
-    """真跑一次推理，只验接口契约。
+    """Run real inference once, verifying only the interface contract.
 
-    刻意**不**验「画一个人形能不能检出来」：合成图上的假人不代表真实表现，
-    那种断言只会随机红。真实素材上的效果由 tools/subject/README.md 里的实测记录。
+    It deliberately does **not** verify "whether a drawn human shape gets detected": a fake person on a synthetic image does not represent real performance,
+    and such an assertion would only turn red at random. The results on real media are in the measurement records in tools/subject/README.md.
     """
 
     @classmethod
     def setUpClass(cls):
-        # 360x640 竖屏，和 __main__ 缩到 max-side 640 之后的形状一致
+        # 360x640 portrait, the same shape as after __main__ scales to max-side 640
         rng = np.random.default_rng(0)
         cls.frames = [rng.integers(0, 256, (640, 360, 3), dtype=np.uint8) for _ in range(2)]
 
     def test_shape_of_result(self):
         out = dino.detect(self.frames, prompt="person . face .")
         self.assertIsInstance(out, list)
-        self.assertEqual(len(out), len(self.frames), "返回的帧数必须和传入的一致")
+        self.assertEqual(len(out), len(self.frames), "The number of returned frames must match the number passed in")
         for per_frame in out:
             self.assertIsInstance(per_frame, list)
 
     def test_boxes_are_in_frame_and_well_formed(self):
         h, w = self.frames[0].shape[:2]
-        # 阈值放到很低，逼它出几个框，好把坐标校验真的跑起来
+        # Set the threshold very low to force it to produce a few boxes, so the coordinate validation actually runs
         out = dino.detect(self.frames[:1], prompt="person . face .", box_threshold=0.01,
                           text_threshold=0.01)
-        self.assertGreater(len(out[0]), 0, "阈值 0.01 还一个框都没有，说明推理链路有问题")
+        self.assertGreater(len(out[0]), 0, "Not a single box even at threshold 0.01 means something is wrong in the inference chain")
         for box in out[0]:
             self.assertEqual(set(box), {"label", "x", "y", "w", "h", "conf"})
             self.assertIsInstance(box["label"], str)
             self.assertTrue(box["label"])
             for k in ("x", "y", "w", "h"):
-                self.assertIsInstance(box[k], int, f"{k} 要是整数像素")
+                self.assertIsInstance(box[k], int, f"{k} must be integer pixels")
             self.assertGreaterEqual(box["x"], 0)
             self.assertGreaterEqual(box["y"], 0)
             self.assertGreater(box["w"], 0)
             self.assertGreater(box["h"], 0)
-            self.assertLessEqual(box["x"] + box["w"], w, "框超出帧右边界，说明夹取没生效")
-            self.assertLessEqual(box["y"] + box["h"], h, "框超出帧下边界")
+            self.assertLessEqual(box["x"] + box["w"], w, "The box exceeds the right edge of the frame, so the clamping did not take effect")
+            self.assertLessEqual(box["y"] + box["h"], h, "The box exceeds the bottom edge of the frame")
             self.assertGreater(box["conf"], 0.0)
             self.assertLessEqual(box["conf"], 1.0)
 
@@ -222,10 +222,10 @@ class TestDetectContract(unittest.TestCase):
                           text_threshold=0.01)
         terms = set(dino.prompt_terms("dog . bicycle ."))
         for box in out[0]:
-            # 标签是提示里名词短语的一部分（DINO 会把短语切开来匹配）
+            # The label is part of a noun phrase in the prompt (DINO splits the phrase apart for matching)
             self.assertTrue(
                 any(t in box["label"] or box["label"] in t for t in terms),
-                f"标签 {box['label']!r} 和提示 {terms} 对不上",
+                f"Label {box['label']!r} does not match prompt {terms}",
             )
 
     def test_sorted_by_confidence(self):
@@ -235,7 +235,7 @@ class TestDetectContract(unittest.TestCase):
         self.assertEqual(confs, sorted(confs, reverse=True))
 
     def test_model_path_alias(self):
-        """__main__ 对三个后端统一用 model_path= 传路径，别只认 model_dir。"""
+        """__main__ passes the path to all three backends uniformly as model_path=, so do not recognize only model_dir."""
         out = dino.detect(self.frames[:1], prompt="person .",
                           model_path=dino.default_model_dir())
         self.assertEqual(len(out), 1)

@@ -1,6 +1,6 @@
 /*
- * 「⋯」运行选项弹层里的内容:思考强度下拉 + 三个开关。
- * 弹层本身的定位、底色、描边在 chat/chat.css 的 .ai-pop;工具条上那个模型下拉用的是 .ai-bar-select。
+ * Contents of the "⋯" run options popover: thinking effort dropdown + three switches.
+ * The popover's own positioning, background and outline are in .ai-pop of chat/chat.css; the model dropdown on the toolbar uses .ai-bar-select.
  */
 .ai-pop.ai-modelbar {
   width: 236px;
@@ -37,14 +37,14 @@
   cursor: default;
 }
 
-/* 三个开关一行排不下就换行,开关本身不压缩 */
+/* If the three switches do not fit in one row they wrap, and the switches themselves are not compressed */
 .ai-modelbar-toggles {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
 
-/* 开关不是下拉:开着的时候整块点亮,一眼看得出这次是加速跑 / 深度自主 */
+/* A switch is not a dropdown: when on, the whole block lights up, so you can tell at a glance that this run is in fast mode / deep autonomy */
 .ai-modelbar-fast {
   flex: 0 0 auto;
   height: 26px;

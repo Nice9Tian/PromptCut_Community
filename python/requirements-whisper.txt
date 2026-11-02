@@ -1,8 +1,8 @@
-# openai-whisper：PyTorch 后端。
-# 下面这行让 pip 额外去 PyTorch 官方 CPU 索引取 torch 的 CPU 轮子（体积约 200 MB，
-# 而默认 PyPI 上的 Windows 轮子带 CUDA，约 2.5 GB）。用 --extra-index-url 而不是
-# --index-url，这样 openai-whisper 这些只在 PyPI 上的包还能正常装到。
-# 要 GPU 版就把下面这行换成对应 CUDA 版本的索引，例如：
+# openai-whisper: PyTorch backend.
+# The line below makes pip additionally fetch the CPU wheel of torch from the official PyTorch CPU index (about 200 MB in size,
+# whereas the Windows wheel on default PyPI bundles CUDA and is about 2.5 GB). Use --extra-index-url rather than
+# --index-url, so that packages that exist only on PyPI, such as openai-whisper, can still be installed normally.
+# For a GPU build, replace the line below with the index for the matching CUDA version, for example:
 #   --extra-index-url https://download.pytorch.org/whl/cu121
 --extra-index-url https://download.pytorch.org/whl/cpu
 

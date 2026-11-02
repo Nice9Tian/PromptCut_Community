@@ -1,19 +1,19 @@
-﻿# PromptCut 安装诊断报告
+﻿# PromptCut install diagnostic report
 #
-# 安装/卸载失败之后由安装器调起(见 hooks.nsh 的 .onInstFailed),把「为什么写不进去」
-# 这件事需要的现场一次性抓齐,存成一个文本文件让用户发回来。
+# Invoked by the installer after an install/uninstall failure (see .onInstFailed in hooks.nsh); it gathers the evidence needed to answer "why can't it write"
+# in one go and saves it as a text file for the user to send back.
 #
-# 为什么要有这个:最典型的失败是「抽取: 无法写入文件 runtime\ffmpeg\ffmpeg.exe」,
-# 而这句话本身分不出是哪种原因 —— 可能是上一次运行留下的孤儿进程锁着文件,
-# 可能是杀毒软件把 ffmpeg 拦了(它是常见误报对象),也可能是磁盘满或者权限。
-# 这三种的解法完全不同,靠用户口述问不出来,所以让机器自己去看。
+# Why this exists: the most typical failure is "Extract: error writing to file runtime\ffmpeg\ffmpeg.exe",
+# and that message alone cannot tell which cause it is: an orphan process left over from the last run may be locking the file,
+# antivirus software may have blocked ffmpeg (a common false-positive target), or it may be a full disk or permissions.
+# These three have completely different fixes, and asking the user to describe it will not reveal which, so let the machine look for itself.
 #
-# 报告里不放任何密钥:只列进程路径、文件大小、系统版本这类信息,
-# 日志只取尾部若干行并且提示用户发之前可以自己看一眼。
+# The report contains no keys: it lists only things like process paths, file sizes and system versions,
+# and for logs it takes only the last several lines and reminds the user they can take a look before sending.
 
 param(
-  [string]$Dir,       # 安装目录
-  [string]$Out,       # 报告写到哪
+  [string]$Dir,       # install directory
+  [string]$Out,       # where to write the report
   [string]$Phase = 'install'
 )
 
@@ -22,58 +22,58 @@ $lines = New-Object System.Collections.Generic.List[string]
 function Add-Line { param([string]$s) $lines.Add($s) }
 function Add-Section { param([string]$s) $lines.Add(''); $lines.Add('== ' + $s + ' =='); }
 
-Add-Line 'PromptCut 安装诊断报告'
-Add-Line ('生成时间: ' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'))
-Add-Line ('阶段: ' + $Phase)
-# 装着的是哪一版。安装器自己的版本号在 NSIS 那边取不到 —— hooks.nsh 的 include
-# 排在 `!define VERSION` 前面,那时候它还不存在。而「原地装着的旧版本」对判断问题
-# 其实更有用:能看出是全新安装还是覆盖升级、从哪一版升上来的。
+Add-Line 'PromptCut install diagnostic report'
+Add-Line ('Generated at: ' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'))
+Add-Line ('Phase: ' + $Phase)
+# Which version is installed. The installer's own version number is not available on the NSIS side: the include of hooks.nsh
+# comes before `!define VERSION`, when it does not exist yet. And "the old version installed in place" is, for diagnosing the problem,
+# actually more useful: it shows whether this is a fresh install or an upgrade over an existing one, and which version it upgraded from.
 $installedPkg = Join-Path $Dir 'runtime\app\package.json'
 if (Test-Path $installedPkg) {
-  try { Add-Line ('已装版本: ' + ((Get-Content $installedPkg -Raw | ConvertFrom-Json).version)) }
-  catch { Add-Line '已装版本: package.json 解不开' }
+  try { Add-Line ('Installed version: ' + ((Get-Content $installedPkg -Raw | ConvertFrom-Json).version)) }
+  catch { Add-Line 'Installed version: package.json cannot be parsed' }
 } else {
-  Add-Line '已装版本: 没有(全新安装,或者上一版已经被删干净了)'
+  Add-Line 'Installed version: none (fresh install, or the previous version has been fully deleted)'
 }
 
-# ── 系统 ────────────────────────────────────────────────────────────────
-Add-Section '系统'
+# ── System ────────────────────────────────────────────────────────────────────
+Add-Section 'System'
 try {
   $os = Get-CimInstance Win32_OperatingSystem
   Add-Line ('Windows: ' + $os.Caption + ' (' + $os.Version + ', build ' + $os.BuildNumber + ')')
-} catch { Add-Line 'Windows: 读不到' }
-# 不能用 $env:PROCESSOR_ARCHITECTURE:NSIS 是 32 位的,它起的 PowerShell 也是 32 位,
-# 这个变量会报 x86,把 64 位系统写成 32 位 —— 诊断报告里给错的事实比不给更糟。
-# 真实架构看 OSArchitecture,取不到再退回 ARCHITEW6432(WOW64 下才有)。
-try { Add-Line ('架构: ' + (Get-CimInstance Win32_OperatingSystem).OSArchitecture) }
+} catch { Add-Line 'Windows: unreadable' }
+# Do not use $env:PROCESSOR_ARCHITECTURE: NSIS is 32-bit and the PowerShell it starts is 32-bit too,
+# so that variable reports x86 and records a 64-bit system as 32-bit; a wrong fact in a diagnostic report is worse than none.
+# Take the real architecture from OSArchitecture, and fall back to ARCHITEW6432 (only present under WOW64) if it cannot be read.
+try { Add-Line ('Architecture: ' + (Get-CimInstance Win32_OperatingSystem).OSArchitecture) }
 catch {
   $a = $env:PROCESSOR_ARCHITEW6432
   if (-not $a) { $a = $env:PROCESSOR_ARCHITECTURE }
-  Add-Line ('架构: ' + $a)
+  Add-Line ('Architecture: ' + $a)
 }
 $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-Add-Line ('以管理员身份运行: ' + $admin)
+Add-Line ('Running as administrator: ' + $admin)
 
-# ── 安装目录 ────────────────────────────────────────────────────────────
-Add-Section '安装目录'
-Add-Line ('路径: ' + $Dir)
+# ── Install directory ────────────────────────────────────────────────────────────────
+Add-Section 'Install directory'
+Add-Line ('Path: ' + $Dir)
 $dirExists = Test-Path $Dir
-Add-Line ('存在: ' + $dirExists)
+Add-Line ('Exists: ' + $dirExists)
 if ($Dir) {
   try {
     $qualifier = (Split-Path -Qualifier $Dir)
     $drive = Get-PSDrive -Name $qualifier.TrimEnd(':')
-    Add-Line ('所在盘剩余空间: ' + [math]::Round($drive.Free / 1GB, 2) + ' GB')
-  } catch { Add-Line '剩余空间: 读不到' }
+    Add-Line ('Free space on the drive: ' + [math]::Round($drive.Free / 1GB, 2) + ' GB')
+  } catch { Add-Line 'Free space: unreadable' }
 }
 
-# ── 占着安装目录里文件的进程(最常见的元凶)────────────────────────────
-Add-Section '占用安装目录的进程'
-Add-Line '(上一次运行留下的孤儿会锁住自己的 exe,安装器就写不进去)'
-# 走 WMI 而不是 Get-Process:安装器是 32 位的,它起的 PowerShell 也是,
-# 而 32 位进程读不到 64 位进程的 Process.Path(MainModule 跨位数会失败,返回 $null)。
-# 用 Get-Process 的话这一节会永远报「没有占用进程」—— 一个假阴性,
-# 而且恰好把最常见的原因排除掉了,比不报还糟。
+# ── Processes holding files in the install directory (the most common culprit)───────────────────────────────────
+Add-Section 'Processes locking the install directory'
+Add-Line '(an orphan left over from the last run locks its own exe, so the installer cannot write to it)'
+# Go through WMI rather than Get-Process: the installer is 32-bit, and so is the PowerShell it starts,
+# and a 32-bit process cannot read the Process.Path of a 64-bit process (MainModule fails across bitness and returns $null).
+# With Get-Process this section would always report "no process holding it": a false negative,
+# and one that happens to rule out the most common cause, which is worse than reporting nothing.
 $found = $false
 if ($dirExists) {
   $prefix = $Dir.TrimEnd('\') + '\'
@@ -84,15 +84,15 @@ if ($dirExists) {
     if ($path.StartsWith($prefix, $cmp)) {
       $found = $true
       $started = ''
-      try { $started = ' 启动于 ' + $proc.CreationDate.ToString('HH:mm:ss') } catch {}
+      try { $started = ' started at ' + $proc.CreationDate.ToString('HH:mm:ss') } catch {}
       Add-Line ('  PID ' + $proc.ProcessId + '  ' + $path + $started)
     }
   }
 }
-if (-not $found) { Add-Line '  (没有。说明不是进程占用,往下看杀毒软件那一节)' }
+if (-not $found) { Add-Line '  (None. So it is not a process lock; see the antivirus section below)' }
 
-# ── 关键文件能不能写 ────────────────────────────────────────────────────
-Add-Section '关键文件'
+# ── Whether key files can be written ──────────────────────────────────────────────────
+Add-Section 'Key files'
 $targets = @(
   (Join-Path $Dir 'runtime\ffmpeg\ffmpeg.exe'),
   (Join-Path $Dir 'runtime\ffmpeg\ffprobe.exe'),
@@ -101,26 +101,26 @@ $targets = @(
 )
 $locked = New-Object System.Collections.Generic.List[string]
 foreach ($f in $targets) {
-  if (-not (Test-Path $f)) { Add-Line ('  缺失: ' + $f); continue }
+  if (-not (Test-Path $f)) { Add-Line ('  Missing: ' + $f); continue }
   $size = (Get-Item $f).Length
   $writable = $false
   try {
     $fs = [System.IO.File]::Open($f, 'Open', 'Write', 'None')
     $fs.Close(); $writable = $true
   } catch { $writable = $false }
-  Add-Line ('  ' + $f + '  ' + $size + ' 字节  可独占写入=' + $writable)
+  Add-Line ('  ' + $f + '  ' + $size + ' bytes  exclusively writable=' + $writable)
   if (-not $writable) { $locked.Add($f) }
 }
 
-# ── 到底是谁锁着 ────────────────────────────────────────────────────────
-# 上面那一节只说得出「写不进去」,说不出「被谁占着」。而占用者未必在安装目录里
-# (杀毒软件的扫描线程、索引服务、用户自己开着的播放器都可能),所以按路径找进程那一节
-# 会如实报「没有」—— 对,但不解决问题。
+# ── Who is actually holding the lock ────────────────────────────────────────────────────────
+# The section above can only say "cannot write", not "who is holding it". And the holder is not necessarily inside the install directory
+# (an antivirus scanning thread, the indexing service, a player the user left open: any of them could be), so the section that looks for processes by path
+# will honestly report "none": correct, but it does not solve the problem.
 #
-# Restart Manager 就是干这个的:Windows 安装程序用它来问「要更新这个文件,得先请谁让开」。
-# 它不受路径和位数限制,能直接把持有句柄的进程报出来。
+# Restart Manager exists for exactly this: Windows installers use it to ask "to update this file, who has to be asked to step aside first".
+# It is not limited by path or bitness and can directly report the processes that hold handles.
 if ($locked.Count -gt 0) {
-  Add-Section '锁住这些文件的是谁'
+  Add-Section 'Who is locking these files'
   try {
     if (-not ('PcRm' -as [type])) {
       Add-Type -Namespace '' -Name 'PcRm' -MemberDefinition @'
@@ -158,28 +158,28 @@ if ($locked.Count -gt 0) {
             }
           }
         } else {
-          Add-Line '  Restart Manager 说没有进程持有这些文件 —— 那多半是杀毒软件在内核层拦截,或者权限问题'
+          Add-Line '  Restart Manager says no process holds these files: most likely an antivirus is blocking them at the kernel level, or it is a permissions issue'
         }
       } finally { [void][PcRm]::RmEndSession($session) }
     } else {
-      Add-Line '  Restart Manager 会话开不起来,查不到持有者'
+      Add-Line '  Restart Manager session could not be started, so the holder cannot be determined'
     }
   } catch {
-    Add-Line ('  查持有者失败: ' + $_.Exception.Message)
+    Add-Line ('  Failed to look up the holder: ' + $_.Exception.Message)
   }
 }
 
-# ── 杀毒 ────────────────────────────────────────────────────────────────
-Add-Section '杀毒软件'
-Add-Line '(ffmpeg.exe 是常见误报对象;被隔离时表现和进程占用一样,都是写不进去)'
+# ── Antivirus ────────────────────────────────────────────────────────────────
+Add-Section 'Antivirus software'
+Add-Line '(ffmpeg.exe is a common false-positive target; when quarantined it looks the same as a process lock: the file cannot be written)'
 try {
   $mp = Get-MpComputerStatus
-  Add-Line ('Defender 实时保护: ' + $mp.RealTimeProtectionEnabled)
-} catch { Add-Line 'Defender 状态: 读不到(可能装了第三方杀毒)' }
+  Add-Line ('Defender real-time protection: ' + $mp.RealTimeProtectionEnabled)
+} catch { Add-Line 'Defender status: unreadable (a third-party antivirus may be installed)' }
 try {
   $av = Get-CimInstance -Namespace 'root\SecurityCenter2' -ClassName AntiVirusProduct
-  foreach ($a in $av) { Add-Line ('已注册的杀毒: ' + $a.displayName) }
-} catch { Add-Line '已注册的杀毒: 读不到' }
+  foreach ($a in $av) { Add-Line ('Registered antivirus: ' + $a.displayName) }
+} catch { Add-Line 'Registered antivirus: unreadable' }
 $hits = $false
 try {
   foreach ($d in (Get-MpThreatDetection | Sort-Object InitialDetectionTime -Descending | Select-Object -First 40)) {
@@ -190,22 +190,22 @@ try {
     }
   }
 } catch {}
-if (-not $hits) { Add-Line '  最近的 Defender 检测记录里没有跟 PromptCut / ffmpeg 相关的' }
+if (-not $hits) { Add-Line '  No recent Defender detection records relate to PromptCut / ffmpeg' }
 
-# ── 应用日志尾部 ────────────────────────────────────────────────────────
-Add-Section '上一次运行的日志(尾部 60 行)'
+# ── App log tail ────────────────────────────────────────────────────────
+Add-Section 'Log of the previous run (last 60 lines)'
 $log = Join-Path $env:LOCALAPPDATA 'com.promptcut.desktop\logs\sidecar.log'
 if (Test-Path $log) {
-  Add-Line ('来源: ' + $log)
+  Add-Line ('Source: ' + $log)
   foreach ($l in (Get-Content $log -Tail 60)) { Add-Line ('  ' + $l) }
 } else {
-  Add-Line ('没有日志文件(' + $log + ')')
+  Add-Line ('No log file (' + $log + ')')
 }
 
 Add-Line ''
-Add-Line '— 报告结束。发之前可以自己看一遍,里面不含密钥,但有本机路径和用户名。'
+Add-Line '— End of report. Review it before sending: it contains no keys, but it does include local paths and the user name.'
 
 $dirOut = Split-Path -Parent $Out
 if ($dirOut -and -not (Test-Path $dirOut)) { New-Item -ItemType Directory -Force -Path $dirOut | Out-Null }
 Set-Content -Path $Out -Value $lines -Encoding UTF8
-Write-Output ('报告已保存: ' + $Out)
+Write-Output ('Report saved: ' + $Out)

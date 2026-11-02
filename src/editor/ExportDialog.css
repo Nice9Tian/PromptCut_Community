@@ -39,7 +39,7 @@
   flex: 0 0 auto;
   color: var(--ink-muted);
 }
-/* 路径可能很长，让它自己截断而不是把对话框撑宽 */
+/* The path may be very long: let it truncate itself instead of stretching the dialog wider */
 .pc-export-path {
   flex: 1 1 auto;
   min-width: 0;
@@ -113,7 +113,7 @@
   color: var(--on-accent);
 }
 
-/* 在线浏览器:选导出方式(快速导出 / 完整导出)。两个选项各占一行,名字在上、说明在下 */
+/* Online browser: choose the export method (quick export / full export). Each of the two options takes one row, with the name on top and the description below */
 .pc-export-modes {
   display: flex;
   flex-direction: column;
@@ -144,7 +144,7 @@
   line-height: 1.6;
   color: var(--ink-muted);
 }
-/* 导出前还在等什么(素材原尺寸、渲染节点) */
+/* What export is still waiting for (original-size assets, render nodes) */
 .pc-export-waiting {
   font-size: 12px;
   line-height: 1.6;

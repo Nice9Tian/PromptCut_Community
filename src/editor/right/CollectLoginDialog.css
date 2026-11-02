@@ -58,7 +58,7 @@
 
 .cl-browser { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 6px 0; }
 
-/* 桌面壳模式:站点登录页(子 webview)摆在这块空上;登录页要宽一点才好用,框跟着放大 */
+/* Desktop shell mode: the site login page (a child webview) is placed over this hole; the login page needs to be wider to be usable, so the box is enlarged accordingly */
 .cl-shell-hole { width: 100%; height: 560px; background: #fff; border-radius: 6px; }
 .cl-dialog:has(.cl-shell-hole) { width: min(960px, 100%); }
 

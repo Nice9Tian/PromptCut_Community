@@ -1,7 +1,7 @@
-"""命令行入口：python -m promptcut_shots <子命令>
+"""Command-line entry point: python -m promptcut_shots <subcommand>
 
-子命令：status / install / detect
-输出约定和 promptcut_stt 一致：stdout 一行一个 JSON，stderr 是给人看的提示。
+Subcommands: status / install / detect
+Output convention matches promptcut_stt: stdout is one JSON per line, stderr carries hints for humans.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import subprocess
 import sys
 from typing import Any, Dict, Optional
 
-# 复用听写那套 JSONL：Windows 控制台的 UTF-8 和换行处理有坑，只想维护一份。
+# Reuse the speech-to-text JSONL helpers: UTF-8 and newline handling on the Windows console is tricky, and we want to maintain only one copy.
 from promptcut_stt.jsonl import emit, emit_error, emit_log, warn
 
 from . import __version__, is_media_url
@@ -49,7 +49,7 @@ def model_path(paths: Dict[str, Optional[str]]) -> str:
 
 
 def probe(paths: Dict[str, Optional[str]]) -> Dict[str, Any]:
-    """报告能不能跑。两个条件缺一不可：onnxruntime 装了，模型文件在。"""
+    """Report whether it can run. Both conditions are required: onnxruntime is installed and the model file is present."""
     add_pylibs(paths["pylibs"])
     runtime: Dict[str, Any] = {"installed": False, "version": None}
     try:
@@ -80,59 +80,59 @@ def cmd_status(_args: argparse.Namespace) -> int:
 
 
 def cmd_install(_args: argparse.Namespace) -> int:
-    """把 onnxruntime 装进 pylibs。模型文件由拓展包提供，这里只检查。"""
+    """Install onnxruntime into pylibs. The model file is provided by the extension package; here it is only checked."""
     paths = env_paths()
     pylibs = paths["pylibs"]
     if not pylibs:
-        emit_error("没有设置 PROMPTCUT_PYLIBS，不知道该把依赖装到哪。")
+        emit_error("PROMPTCUT_PYLIBS is not set, so there is nowhere to install the dependencies.")
         return 2
     os.makedirs(pylibs, exist_ok=True)
 
-    # 清单放在包内部：这个包会被镜像到 pylibs 下运行，放在包外面就跟丢了
+    # The manifest lives inside the package: this package is mirrored under pylibs and run from there, so one kept outside it would be lost
     here = os.path.dirname(os.path.abspath(__file__))
     req = os.path.join(here, REQUIREMENTS)
     if not os.path.isfile(req):
-        # 兼容早期把清单放在 python/ 根下的布局
+        # Compatible with the earlier layout that put the manifest under the python/ root
         req = os.path.join(os.path.dirname(here), REQUIREMENTS)
     if not os.path.isfile(req):
-        emit_error(f"找不到依赖清单 {REQUIREMENTS}")
+        emit_error(f"Cannot find dependency manifest {REQUIREMENTS}")
         return 2
 
-    # 必须用 sys.executable：写死 "python" 会装进系统解释器
+    # Must use sys.executable: hard-coding "python" would install into the system interpreter
     cmd = [sys.executable, "-m", "pip", "install", "--target", pylibs, "-r", req]
     emit({"event": "log", "line": " ".join(cmd)})
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, encoding="utf-8", errors="replace")
     except OSError as exc:
-        emit_error(f"无法启动 pip：{exc}")
+        emit_error(f"Cannot start pip: {exc}")
         return 1
     assert proc.stdout is not None
     for line in proc.stdout:
         emit_log(line.rstrip())
     code = proc.wait()
     if code != 0:
-        emit_error(f"pip 安装失败（退出码 {code}）。常见原因：网络不可达，或该平台没有对应的 onnxruntime 轮子。")
+        emit_error(f"pip install failed (exit code {code}). Common causes: network unreachable, or no matching onnxruntime wheel for this platform.")
         return 1
 
     info = probe(env_paths())
     needs_model = not info["model"]["exists"]
     if needs_model:
-        warn(f"依赖装好了，但还缺模型文件 {info['model']['path']}；它由拓展库包提供。")
+        warn(f"Dependencies are installed, but the model file {info['model']['path']} is still missing; it is provided by the extension library package.")
     emit({"event": "installed", "needsModel": needs_model, **info})
-    # 退出码只反映**这一步**成没成:pip 装完了就是 0。
+    # The exit code only reflects whether **this step** succeeded: 0 once pip has finished installing.
     #
-    # 以前是 `0 if ready else 1`,而 ready 还要求模型文件在 —— 可模型是我们自己
-    # 从官方 TF 权重转出来的 ONNX,pip 根本抓不到,只随拓展库包分发。于是在线安装
-    # 这条路**注定**以退出码 1 收尾:依赖明明装好了,界面上却是一句「进程退出码 1」,
-    # 用户既不知道装到哪一步了,也不知道下一步该干什么。
-    # 到底能不能用由 status 回答,不该由 install 的退出码兼职。
+    # It used to be `0 if ready else 1`, and ready also requires the model file to be present, but the model is an ONNX we converted ourselves
+    # from the official TF weights; pip cannot fetch it at all, and it ships only with the extension library package. So the online install
+    # path was **doomed** to end with exit code 1: the dependencies were installed, yet the UI just said "process exit code 1",
+    # and the user knew neither how far the installation got nor what to do next.
+    # Whether it is usable is answered by status; it should not be a side job of the install exit code.
     return 0
 
 
 def apply_globals(args: argparse.Namespace) -> None:
-    """云端 Agent 服务起这个包时,环境变量里的 PROMPTCUT_* 一个都不传(工作区的白名单),
-    所以模型目录、依赖目录改走命令行。桌面版不用这几个选项,行为不变。"""
+    """When the Cloud Agent service starts this package, none of the PROMPTCUT_* environment variables are passed (the workspace allowlist),
+    so the model directory and the dependency directory go through the command line instead. The desktop app does not use these options, and its behavior is unchanged."""
     if getattr(args, "models_dir", None):
         os.environ["PROMPTCUT_MODELS"] = args.models_dir
     if getattr(args, "pylibs", None):
@@ -148,16 +148,16 @@ def cmd_detect(args: argparse.Namespace) -> int:
     add_pylibs(paths["pylibs"])
     info = probe(paths)
     if not info["ready"]:
-        emit_error("镜头识别拓展未就绪", detail=info)
+        emit_error("Shot detection extension is not ready", detail=info)
         return 3
     if not paths["ffmpeg"]:
-        emit_error("找不到 ffmpeg，无法解码视频。")
+        emit_error("ffmpeg not found, cannot decode the video.")
         return 2
     if getattr(args, "local_only", False) and is_media_url(args.video):
-        emit_error("本次只允许读本地文件，不能连网络地址。")
+        emit_error("This run may only read local files and cannot connect to network addresses.")
         return 2
     if not (is_media_url(args.video) or os.path.isfile(args.video)):
-        emit_error(f"找不到视频文件：{args.video}")
+        emit_error(f"Video file not found: {args.video}")
         return 2
 
     from .detector import (decode_frames, load_session, predict,
@@ -179,7 +179,7 @@ def cmd_detect(args: argparse.Namespace) -> int:
 
     def on_progress(done: int, total: int) -> None:
         pct = int(done * 100 / max(1, total))
-        # 每 5% 报一次，别把 stdout 刷爆
+        # Report once every 5%, so stdout is not flooded
         if pct >= last[0] + 5:
             last[0] = pct
             emit({"event": "progress", "phase": "infer", "percent": pct,
@@ -204,19 +204,19 @@ def cmd_detect(args: argparse.Namespace) -> int:
 
 def main(argv: Optional[list] = None) -> int:
     parser = argparse.ArgumentParser(prog="promptcut_shots")
-    parser.add_argument("--models-dir", default=None, help="权重目录(盖掉 PROMPTCUT_MODELS)")
-    parser.add_argument("--pylibs", default=None, help="依赖目录(盖掉 PROMPTCUT_PYLIBS)")
+    parser.add_argument("--models-dir", default=None, help="Weights directory (overrides PROMPTCUT_MODELS)")
+    parser.add_argument("--pylibs", default=None, help="Dependency directory (overrides PROMPTCUT_PYLIBS)")
     parser.add_argument("--local-only", action="store_true",
-                        help="ffmpeg 只读本地文件,不连任何网络地址")
+                        help="ffmpeg reads local files only and connects to no network address")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("status", help="报告拓展是否就绪").set_defaults(func=cmd_status)
-    sub.add_parser("install", help="安装 onnxruntime 依赖").set_defaults(func=cmd_install)
+    sub.add_parser("status", help="Report whether the extension is ready").set_defaults(func=cmd_status)
+    sub.add_parser("install", help="Install the onnxruntime dependency").set_defaults(func=cmd_install)
 
-    d = sub.add_parser("detect", help="检测镜头切换")
+    d = sub.add_parser("detect", help="Detect shot changes")
     d.add_argument("video")
     d.add_argument("--fps", type=float, required=True,
-                   help="视频帧率，由调用方用 ffprobe 拿到后传进来")
+                   help="Video frame rate, obtained by the caller with ffprobe and passed in")
     d.add_argument("--threshold", type=float, default=0.5)
     d.set_defaults(func=cmd_detect)
 
@@ -226,8 +226,8 @@ def main(argv: Optional[list] = None) -> int:
         return args.func(args)
     except KeyboardInterrupt:
         return 130
-    except Exception as exc:  # 兜底：绝不让 traceback 直接糊到 stdout 把 JSONL 弄脏
-        emit_error(f"未预期的错误：{exc}")
+    except Exception as exc:  # Fallback: never let a traceback smear onto stdout and dirty the JSONL
+        emit_error(f"Unexpected error: {exc}")
         return 1
 
 

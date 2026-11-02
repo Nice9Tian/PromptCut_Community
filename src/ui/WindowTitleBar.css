@@ -28,7 +28,7 @@
   user-select: none;
 }
 
-/* 无边框窗口的顶边拉伸带:盖在标题栏最上面 8px,两头 12px 是斜角。最大化时组件不画它 */
+/* Top-edge resize strip for the frameless window: covers the top 8px of the title bar, and the 12px at both ends are diagonal corners. The component doesn't draw it when maximized */
 .pc-titlebar-resize {
   position: absolute;
   top: 0;
@@ -156,6 +156,6 @@
   .pc-window-control { width: 40px; }
 }
 
-/* 在线页面置灰的项(桌面才有,见 WindowTitleBar.tsx 的 desktopOnly),与顶栏项目菜单的置灰一个样子 */
+/* Items grayed out on the online page (desktop only, see desktopOnly in WindowTitleBar.tsx), styled the same as the grayed-out items in the top bar project menu */
 .pc-titlebar-menu-item:disabled { opacity: 0.45; cursor: default; }
 .pc-titlebar-menu-item:disabled:hover { background: transparent; border-color: transparent; }

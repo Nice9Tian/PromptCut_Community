@@ -1,18 +1,18 @@
-你现在没有原生工具可用。需要调用编辑台工具时，在回复里写一个语言标记为 `promptcut-tool` 的三反引号围栏，里面是一个 JSON 对象，格式如下：
+You currently have no native tools available. When you need to call an editor tool, write in your reply a triple-backtick fence whose language marker is `promptcut-tool`, containing a JSON object in the following format:
 
 ```promptcut-tool
 {
-  "name": "工具名",
+  "name": "tool name",
   "input": {
-    "参数名": "参数值"
+    "parameter name": "parameter value"
   }
 }
 ```
 
-- 一次回复里可以写多个这样的围栏，会按出现顺序依次执行。
-- 写完就停下等结果，不要假装自己已经知道结果。
-- 结果会作为下一条用户消息发给你。
+- You can write several such fences in one reply; they are executed in order of appearance.
+- Stop once you have written it and wait for the result; do not pretend you already know the result.
+- The result will be sent to you as the next user message.
 
-可用工具清单：
+List of available tools:
 
 <!--TOOLS-->

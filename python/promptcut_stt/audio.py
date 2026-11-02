@@ -1,8 +1,8 @@
-"""音频准备：把任意媒体文件转成 16 kHz 单声道 16-bit PCM wav。
+"""Audio preparation: convert any media file to a 16 kHz mono 16-bit PCM wav.
 
-Whisper 系列模型的输入采样率固定 16 kHz 单声道，先统一抽出来，引擎那边就不用
-各自再依赖一套解码库。ffmpeg 只从 PATH 找（桌面版由安装包把 ffmpeg 目录塞进
-PATH，开发期由使用者自己装），找不到时给一句人话，不打印堆栈。
+The input sample rate of the Whisper family of models is fixed at 16 kHz mono, so extracting it uniformly first means the engines do not have to
+each depend on another set of decoding libraries. ffmpeg is only looked up on PATH (for the desktop app the installer puts the ffmpeg directory into
+PATH, and during development the user installs it); when it is not found, a plain-language sentence is given and no traceback is printed.
 """
 
 from __future__ import annotations
@@ -13,20 +13,20 @@ import subprocess
 import wave
 from typing import Optional, Tuple
 
-# 目标格式：Whisper 系列的输入规格
+# Target format: input spec of the Whisper family
 TARGET_RATE = 16000
 TARGET_CHANNELS = 1
 TARGET_SAMPLE_WIDTH = 2  # 16-bit
 
 
 class FfmpegNotFound(Exception):
-    """PATH 上没有 ffmpeg。"""
+    """There is no ffmpeg on PATH."""
 
 
 class AudioExtractError(Exception):
-    """ffmpeg 跑起来了但抽取失败（文件损坏、没有音轨等）。
+    """ffmpeg ran but the extraction failed (corrupted file, no audio track, etc.).
 
-    kind：'no-audio'（没有音轨）或 'audio-extract'（其它原因）；node 侧据此给模型一句准话。
+    kind: 'no-audio' (no audio track) or 'audio-extract' (any other reason); the node side uses it to give the model an accurate sentence.
     """
 
     def __init__(self, message: str, kind: str = "audio-extract"):
@@ -35,7 +35,7 @@ class AudioExtractError(Exception):
 
 
 def _no_window() -> dict:
-    """Windows 上别弹黑框：子进程是从窗口程序里起的，默认会闪一个控制台。"""
+    """Do not pop up a black window on Windows: the subprocess is started from a windowed program, which by default would flash a console."""
     if os.name != "nt":
         return {}
     startupinfo = subprocess.STARTUPINFO()
@@ -44,20 +44,20 @@ def _no_window() -> dict:
 
 
 def find_ffmpeg() -> str:
-    """返回 ffmpeg 可执行文件的绝对路径，找不到抛 FfmpegNotFound。"""
+    """Return the absolute path of the ffmpeg executable; raise FfmpegNotFound if it cannot be found."""
     path = shutil.which("ffmpeg")
     if not path:
         raise FfmpegNotFound(
-            "未找到 ffmpeg。请确认 ffmpeg.exe 在 PATH 中"
-            "（桌面版由安装包自带，开发期请自行安装 ffmpeg 并加入 PATH）。"
+            "ffmpeg not found. Please make sure ffmpeg.exe is on PATH "
+            "(the desktop app ships it in the installer; during development, install ffmpeg yourself and add it to PATH)."
         )
     return path
 
 
 def probe_duration(path: str) -> Optional[float]:
-    """用 ffprobe 读总时长（秒）。拿不到就返回 None，绝不抛异常。
+    """Read the total duration (seconds) with ffprobe. Return None if it cannot be obtained; never raise an exception.
 
-    时长只用来算进度百分比，缺了不影响转写，所以这里所有失败都吞掉。
+    The duration is only used to compute the progress percentage, and missing it does not affect transcription, so every failure here is swallowed.
     """
     ffprobe = shutil.which("ffprobe")
     if not ffprobe:
@@ -88,7 +88,7 @@ def probe_duration(path: str) -> Optional[float]:
 
 
 def is_wav_16k_mono(path: str) -> bool:
-    """判断文件是否已经就是目标格式的 wav；不是 wav 或读不动都返回 False。"""
+    """Check whether the file is already a wav in the target format; return False if it is not a wav or cannot be read."""
     try:
         with wave.open(path, "rb") as wav:
             return (
@@ -101,10 +101,10 @@ def is_wav_16k_mono(path: str) -> bool:
 
 
 def extract_wav(src: str, dst: str, local_only: bool = False) -> str:
-    """用 ffmpeg 把 src 抽成目标格式的 wav 写到 dst，返回 dst。
+    """Use ffmpeg to extract src into a wav in the target format, write it to dst and return dst.
 
-    local_only（离线模式）：输入前加 -protocol_whitelist file，ffmpeg 只读本地文件。
-    素材是别人传来的，伪装成媒体的播放列表不能借此让 ffmpeg 去连网络地址。
+    local_only (offline mode): add -protocol_whitelist file before the input, so ffmpeg reads local files only.
+    The asset is uploaded by someone else, and a playlist disguised as media must not be able to use that to make ffmpeg connect to network addresses.
     """
     ffmpeg = find_ffmpeg()
     cmd = [
@@ -113,7 +113,7 @@ def extract_wav(src: str, dst: str, local_only: bool = False) -> str:
         *(["-protocol_whitelist", "file"] if local_only else []),
         "-i",
         src,
-        "-vn",                      # 丢掉视频轨
+        "-vn",                      # drop the video track
         "-ac", str(TARGET_CHANNELS),
         "-ar", str(TARGET_RATE),
         "-acodec", "pcm_s16le",
@@ -134,19 +134,19 @@ def extract_wav(src: str, dst: str, local_only: bool = False) -> str:
             "Stream map" in tail and "matches no streams" in tail
         )
         raise AudioExtractError(
-            f"ffmpeg 抽取音频失败（退出码 {proc.returncode}）：{src}\n{tail}",
+            f"ffmpeg audio extraction failed (exit code {proc.returncode}): {src}\n{tail}",
             kind="no-audio" if no_audio else "audio-extract",
         )
     if not os.path.isfile(dst):
-        raise AudioExtractError(f"ffmpeg 没有报错，但没有产出文件：{dst}")
+        raise AudioExtractError(f"ffmpeg reported no error, but produced no file: {dst}")
     return dst
 
 
 def ensure_wav(src: str, tmpdir: str, local_only: bool = False) -> Tuple[str, bool]:
-    """保证拿到一个目标格式的 wav。
+    """Guarantee getting a wav in the target format.
 
-    返回 (路径, 是否是新抽出来的临时文件)。第二个值为 True 时文件在 tmpdir 里，
-    由调用方（通常是一个 TemporaryDirectory 上下文）负责清理。
+    Returns (path, whether it is a newly extracted temporary file). When the second value is True the file is in tmpdir,
+    and the caller (usually a TemporaryDirectory context) is responsible for cleaning it up.
     """
     if is_wav_16k_mono(src):
         return src, False

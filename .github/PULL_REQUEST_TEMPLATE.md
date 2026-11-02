@@ -1,25 +1,25 @@
-<!-- 中文英文都行 / Chinese or English is fine -->
+<!-- Chinese or English is fine -->
 
-## 改了什么 / What changed
+## What changed
 
-<!-- 一两句说清：改了什么、为什么。 -->
+<!-- Say in a sentence or two what changed and why. -->
 
-## 影响范围 / Area
+## Area
 
-<!-- 哪个目录。如果落在 CONTRIBUTING 里标「暂缓」的区域，请先开 issue。 -->
+<!-- Which directory. If it falls in an area marked "deferred" in CONTRIBUTING, please open an issue first. -->
 
-## 验证 / Verification
+## Verification
 
-- [ ] `npx tsc -b` 零报错 / clean
-- [ ] `npm test` 零失败 / green
-- [ ] 改到画面的话：附了改前改后的截图或导出帧 / visual change: before/after images attached
-- [ ] 相关探针（`scripts/probes/`）跑过，输出贴在下面 / relevant probe run, output pasted below
+- [ ] `npx tsc -b` clean
+- [ ] `npm test` green
+- [ ] visual change: before/after images attached
+- [ ] relevant probe (`scripts/probes/`) run, output pasted below
 
-## 语义 / Semantics
+## Semantics
 
-<!-- 读了 docs/semantics/ 里哪几份？这个改动和它们一致吗？
-     如果需要改语义本身，请先开 issue，不要在这个 PR 里改。 -->
+<!-- Which ones in docs/semantics/ did you read? Is this change consistent with them?
+     If the semantics themselves need to change, please open an issue first rather than changing them in this PR. -->
 
 ---
 
-- [ ] 每个提交都带 `Signed-off-by`（`git commit -s`）/ every commit is signed off
+- [ ] every commit is signed off with `Signed-off-by` (`git commit -s`)

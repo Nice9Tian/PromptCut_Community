@@ -1,8 +1,8 @@
-"""命令行入口：python -m promptcut_stt <子命令>
+"""Command-line entry point: python -m promptcut_stt <subcommand>
 
-子命令：status / models / install / transcribe
-所有正常输出都是一行一个 JSON（见 jsonl.py），给 node 侧逐行解析。
-人话提示走 stderr。
+Subcommands: status / models / install / transcribe
+All normal output is one JSON per line (see jsonl.py), for the node side to parse line by line.
+Human-readable hints go to stderr.
 """
 
 from __future__ import annotations
@@ -32,31 +32,31 @@ DEFAULT_ENGINE = "faster-whisper"
 DEFAULT_MODEL = "small"
 DEFAULT_LANGUAGE = "zh"
 
-# 各模型的大致体积，只用于 models 子命令的展示
+# Approximate size of each model, used only for display in the models subcommand
 MODEL_CATALOG: Dict[str, List[Dict[str, str]]] = {
     "faster-whisper": [
-        {"name": "tiny", "size": "约 75 MB", "note": "最快，准确率最低，适合快速预览"},
-        {"name": "base", "size": "约 145 MB", "note": "比 tiny 稳一些，中文仍然吃力"},
-        {"name": "small", "size": "约 480 MB", "note": "默认；CPU int8 下接近实时，中文可用"},
-        {"name": "medium", "size": "约 1.5 GB", "note": "明显更准；CPU 上约 3-5 倍实时耗时"},
-        {"name": "large-v3", "size": "约 3.1 GB", "note": "最准；建议配 CUDA，显存约 5 GB"},
+        {"name": "tiny", "size": "about 75 MB", "note": "Fastest, lowest accuracy, suitable for quick preview"},
+        {"name": "base", "size": "about 145 MB", "note": "A bit steadier than tiny, still struggles with Chinese"},
+        {"name": "small", "size": "about 480 MB", "note": "Default; close to real time on CPU int8, usable for Chinese"},
+        {"name": "medium", "size": "about 1.5 GB", "note": "Clearly more accurate; takes about 3-5x real time on CPU"},
+        {"name": "large-v3", "size": "about 3.1 GB", "note": "Most accurate; CUDA recommended, about 5 GB of VRAM"},
     ],
     "whisper": [
-        {"name": "tiny", "size": "约 75 MB", "note": "最快，准确率最低"},
-        {"name": "base", "size": "约 145 MB", "note": "轻量"},
-        {"name": "small", "size": "约 480 MB", "note": "默认；CPU 上可跑但比 faster-whisper 慢"},
-        {"name": "medium", "size": "约 1.5 GB", "note": "较准，CPU 上很慢"},
-        {"name": "large", "size": "约 2.9 GB", "note": "最准；需要 CUDA 才实用"},
+        {"name": "tiny", "size": "about 75 MB", "note": "Fastest, lowest accuracy"},
+        {"name": "base", "size": "about 145 MB", "note": "Lightweight"},
+        {"name": "small", "size": "about 480 MB", "note": "Default; runs on CPU but slower than faster-whisper"},
+        {"name": "medium", "size": "about 1.5 GB", "note": "Fairly accurate, very slow on CPU"},
+        {"name": "large", "size": "about 2.9 GB", "note": "Most accurate; needs CUDA to be practical"},
     ],
 }
 
 
 # --------------------------------------------------------------------------
-# 环境
+# Environment
 # --------------------------------------------------------------------------
 
 def env_paths() -> Dict[str, Optional[str]]:
-    """集中读取环境变量，避免散落各处。"""
+    """Read the environment variables in one place, to avoid scattering them around."""
     pylibs = os.environ.get("PROMPTCUT_PYLIBS") or None
     models = os.environ.get("PROMPTCUT_MODELS") or None
     data_dir = os.environ.get("PROMPTCUT_DATA_DIR") or None
@@ -64,7 +64,7 @@ def env_paths() -> Dict[str, Optional[str]]:
 
 
 def resolve_models_dir(paths: Dict[str, Optional[str]], quiet: bool = False) -> str:
-    """模型下载目录：PROMPTCUT_MODELS → PROMPTCUT_DATA_DIR/models → 临时目录。"""
+    """Model download directory: PROMPTCUT_MODELS → PROMPTCUT_DATA_DIR/models → temporary directory."""
     if paths["models"]:
         return paths["models"]
     if paths["data_dir"]:
@@ -72,24 +72,24 @@ def resolve_models_dir(paths: Dict[str, Optional[str]], quiet: bool = False) -> 
     fallback = os.path.join(tempfile.gettempdir(), "promptcut-models")
     if not quiet:
         warn(
-            f"未设置 PROMPTCUT_MODELS 和 PROMPTCUT_DATA_DIR，模型将下载到临时目录 {fallback}，"
-            "系统清理临时文件后需要重新下载。"
+            f"Neither PROMPTCUT_MODELS nor PROMPTCUT_DATA_DIR is set; models will be downloaded to the temporary directory {fallback}, "
+            "and will have to be downloaded again after the system clears temporary files."
         )
     return fallback
 
 
 def add_pylibs_to_path(pylibs: Optional[str]) -> None:
-    """把 PROMPTCUT_PYLIBS 挂到 sys.path 最前面。
+    """Put PROMPTCUT_PYLIBS at the very front of sys.path.
 
-    -I 隔离模式下 PYTHONPATH 仍然生效，但调用方可能忘了设；这里自己插一遍，
-    保证只要环境变量在就一定能 import 到装好的引擎。
+    In -I isolated mode PYTHONPATH still takes effect, but the caller may have forgotten to set it; here we insert it ourselves,
+    which guarantees that as long as the environment variable is present, the installed engine can always be imported.
     """
     if pylibs and os.path.isdir(pylibs) and pylibs not in sys.path:
         sys.path.insert(0, pylibs)
 
 
 def _writable(path: str) -> bool:
-    """目录能不能写。不存在就先试着建；建不出来算不可写，不抛异常。"""
+    """Whether the directory is writable. If it does not exist, try to create it first; if it cannot be created, it counts as not writable, and no exception is raised."""
     try:
         os.makedirs(path, exist_ok=True)
     except Exception:
@@ -116,7 +116,7 @@ def _dir_size(path: str) -> int:
 
 
 def list_models(models_dir: str) -> List[Dict[str, Any]]:
-    """扫模型目录，列出一级子目录和 .pt 文件。"""
+    """Scan the model directory and list first-level subdirectories and .pt files."""
     items: List[Dict[str, Any]] = []
     if not models_dir or not os.path.isdir(models_dir):
         return items
@@ -125,7 +125,7 @@ def list_models(models_dir: str) -> List[Dict[str, Any]]:
     except OSError:
         return items
     for name in entries:
-        # huggingface-hub 会在缓存根下放 .locks / .no_exist 这类内部目录，不是模型
+        # huggingface-hub puts internal directories such as .locks / .no_exist under the cache root; they are not models
         if name.startswith("."):
             continue
         full = os.path.join(models_dir, name)
@@ -154,17 +154,17 @@ def cmd_status(_args: argparse.Namespace) -> int:
     if pylibs:
         pylibs_info["exists"] = os.path.isdir(pylibs)
         pylibs_info["writable"] = _writable(pylibs)
-        # _writable 可能刚刚把目录建出来
+        # _writable may have just created the directory
         pylibs_info["exists"] = os.path.isdir(pylibs)
 
     engines: Dict[str, Any] = {}
     for name, module in ENGINES.items():
         try:
             engines[name] = module.probe()
-        except Exception as exc:  # 引擎探测绝不能让 status 崩
+        except Exception as exc:  # engine probing must never crash status
             engines[name] = {"installed": False, "version": None, "error": str(exc)}
 
-    # 每个引擎在模型目录里已经放齐权重的模型名。离线转写（--offline）只用这些。
+    # For each engine, the names of the models whose weights are fully in place in the model directory. Offline transcription (--offline) uses only these.
     available_models: Dict[str, List[str]] = {}
     for name, module in ENGINES.items():
         catalog = [m["name"] for m in MODEL_CATALOG.get(name, [])]
@@ -202,13 +202,13 @@ def cmd_models(_args: argparse.Namespace) -> int:
                 "faster-whisper": {
                     "default": DEFAULT_MODEL,
                     "models": MODEL_CATALOG["faster-whisper"],
-                    "note": "CPU 上默认用 int8 量化，显存/内存占用约为体积的一半；"
-                            "有 CUDA 时自动切 float16。",
+                    "note": "On CPU, int8 quantization is used by default, and VRAM/memory usage is about half of the model size; "
+                            "it switches to float16 automatically when CUDA is available.",
                 },
                 "whisper": {
                     "default": DEFAULT_MODEL,
                     "models": MODEL_CATALOG["whisper"],
-                    "note": "依赖 PyTorch；CPU 上只建议用到 small，再大需要 CUDA。",
+                    "note": "Depends on PyTorch; on CPU only up to small is recommended, anything larger needs CUDA.",
                 },
             },
         }
@@ -221,24 +221,24 @@ def cmd_models(_args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------------
 
 def find_requirements(engine: str) -> Optional[str]:
-    """定位 requirements-<engine>.txt。
+    """Locate requirements-<engine>.txt.
 
-    开发期包在 <repo>/python/promptcut_stt/，上一级就是 python/；
-    装进 site-packages 后包在 <prefix>/Lib/site-packages/promptcut_stt/，
-    上一级不是 python/，所以还要试 sys.prefix。两条都试，失败时把找过的路径报出来。
+    During development the package is in <repo>/python/promptcut_stt/, and the level above is python/;
+    once installed into site-packages the package is in <prefix>/Lib/site-packages/promptcut_stt/,
+    and the level above is not python/, so sys.prefix must also be tried. Both are tried, and on failure the paths that were searched are reported.
     """
     filename = f"requirements-{engine}.txt"
     package_dir = os.path.dirname(os.path.abspath(__file__))
     candidates = [
-        os.path.join(os.path.dirname(package_dir), filename),   # 开发期：python/
-        os.path.join(sys.prefix, filename),                     # 打包后：runtime/python/
+        os.path.join(os.path.dirname(package_dir), filename),   # during development: python/
+        os.path.join(sys.prefix, filename),                     # after packaging: runtime/python/
         os.path.join(sys.prefix, "python", filename),
-        os.path.join(package_dir, filename),                    # 兜底：跟包放一起
+        os.path.join(package_dir, filename),                    # fallback: next to the package
     ]
     for candidate in candidates:
         if os.path.isfile(candidate):
             return candidate
-    warn("未找到 requirements 文件，已尝试：\n  " + "\n  ".join(candidates))
+    warn("No requirements file found, tried:\n  " + "\n  ".join(candidates))
     return None
 
 
@@ -246,32 +246,32 @@ def cmd_install(args: argparse.Namespace) -> int:
     paths = env_paths()
     target = paths["pylibs"]
     if not target:
-        emit_error("环境变量 PROMPTCUT_PYLIBS 未设置，无法确定第三方库的安装目录。")
+        emit_error("The environment variable PROMPTCUT_PYLIBS is not set, so the install directory for third-party libraries cannot be determined.")
         return 1
 
-    # --requirements：调用方（云节点的受控安装作业）指定一份锁定版本的依赖文件，
-    # 不走 find_requirements 的默认查找。只认文件，不认别的东西。
+    # --requirements: the caller (the controlled install job of a cloud node) specifies a dependency file with pinned versions,
+    # instead of the default lookup in find_requirements. Only files are accepted, nothing else.
     if getattr(args, "requirements", None):
         req = os.path.abspath(args.requirements)
         if not os.path.isfile(req):
-            emit_error(f"指定的依赖文件不存在：{req}", kind="requirements-missing")
+            emit_error(f"The specified dependency file does not exist: {req}", kind="requirements-missing")
             return 1
     else:
         req = find_requirements(args.engine)
     if not req:
         emit_error(
-            f"未找到 requirements-{args.engine}.txt（已在包目录上一级、"
-            f"{sys.prefix} 等位置查找），无法安装。"
+            f"requirements-{args.engine}.txt not found (searched the level above the package directory, "
+            f"{sys.prefix} and other locations), cannot install."
         )
         return 1
 
     if not _writable(target):
-        emit_error(f"安装目录不可写：{target}")
+        emit_error(f"The install directory is not writable: {target}")
         return 1
 
-    # 必须用 sys.executable —— 内置解释器自己的 pip。写死 "python" 会打到系统里
-    # 那个解释器上，库就装错地方了。
-    # 本进程是隔离模式(-I)起的(云端 Agent 服务:工作目录是对话工作区),pip 也用隔离模式起,否则 `-m pip` 会把当前目录排进模块搜索路径最前。
+    # Must use sys.executable: the built-in interpreter's own pip. Hard-coding "python" would end up using the system's
+    # interpreter, and the libraries would be installed in the wrong place.
+    # This process was started in isolated mode (-I) (Cloud Agent service: the working directory is the chat workspace), and pip is also started in isolated mode, otherwise `-m pip` would put the current directory at the very front of the module search path.
     isolated = ["-I"] if sys.flags.isolated else []
     cmd = [sys.executable, *isolated, "-m", "pip", "install", "--target", target, "-r", req]
     if args.upgrade:
@@ -303,7 +303,7 @@ def cmd_install(args: argparse.Namespace) -> int:
             bufsize=1,
         )
     except FileNotFoundError as exc:
-        emit_error(f"无法启动 pip：{exc}")
+        emit_error(f"Cannot start pip: {exc}")
         return 1
 
     assert proc.stdout is not None
@@ -329,13 +329,13 @@ def cmd_install(args: argparse.Namespace) -> int:
 
     if saw_missing_pip:
         emit_error(
-            "内置解释器缺少 pip，无法安装引擎。请重新运行 prepare-python 脚本以装回 pip。",
+            "The built-in interpreter lacks pip, so the engine cannot be installed. Please rerun the prepare-python script to put pip back.",
             code=code,
         )
     else:
         emit_error(
-            f"pip 安装失败（退出码 {code}）。常见原因：网络不可达、"
-            f"索引地址不对、磁盘空间不足。完整日志见上面的 log 事件。",
+            f"pip install failed (exit code {code}). Common causes: network unreachable, "
+            f"wrong index URL, insufficient disk space. See the log events above for the full log.",
             code=code,
         )
     return 1
@@ -356,29 +356,29 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
     module = ENGINES.get(engine_name)
     if module is None:
         emit_error(
-            f"未知引擎 {engine_name}，可选：{', '.join(sorted(ENGINES))}。"
+            f"Unknown engine {engine_name}, available: {', '.join(sorted(ENGINES))}."
         )
         return 1
 
     offline = bool(getattr(args, "offline", False))
     if offline:
-        # 离线模式：模型权重只用本地已有的，一个字节也不联网下载（huggingface 的开关要在 import 之前设）
+        # Offline mode: only the model weights already present locally are used, not a single byte is downloaded over the network (the huggingface switch must be set before import)
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
         known = [m["name"] for m in MODEL_CATALOG.get(engine_name, [])]
         if args.model not in known:
             emit_error(
-                f"离线模式只认固定的模型名（{', '.join(known)}），收到：{args.model}",
+                f"Offline mode only accepts the fixed model names ({', '.join(known)}), got: {args.model}",
                 kind="model-missing",
             )
             return 1
 
     src = args.input
     if not os.path.isfile(src):
-        emit_error(f"输入文件不存在：{src}", kind="input-missing")
+        emit_error(f"The input file does not exist: {src}", kind="input-missing")
         return 1
 
-    # --language auto 或空串 → 自动检测
+    # --language auto or empty string → auto-detect
     language: Optional[str] = args.language
     if language is not None and language.strip().lower() in ("", "auto"):
         language = None
@@ -399,7 +399,7 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
     try:
         os.makedirs(models_dir, exist_ok=True)
     except Exception as exc:
-        emit_error(f"无法创建模型目录 {models_dir}：{exc}")
+        emit_error(f"Cannot create the model directory {models_dir}: {exc}")
         return 1
 
     with tempfile.TemporaryDirectory(prefix="promptcut-stt-") as tmpdir:
@@ -458,7 +458,7 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
             emit_error(str(exc), kind="model-missing")
             return 1
         except Exception as exc:
-            emit_error(f"转写失败（{engine_name} / {args.model}）：{exc}", kind="transcribe-failed")
+            emit_error(f"Transcription failed ({engine_name} / {args.model}): {exc}", kind="transcribe-failed")
             return 1
 
     segments = result.get("segments") or []
@@ -487,21 +487,21 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------
-# 入口
+# Entry point
 # --------------------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="promptcut_stt",
-        description="PromptCut 语音转文字：输出逐行 JSON。",
+        description="PromptCut speech-to-text: outputs line-by-line JSON.",
     )
     parser.add_argument("--version", action="version", version=__version__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("status", help="报告解释器、引擎安装情况、CUDA 和已下载模型")
-    sub.add_parser("models", help="列出可选模型和大致体积")
+    sub.add_parser("status", help="Report the interpreter, engine installation status, CUDA and downloaded models")
+    sub.add_parser("models", help="List the available models and their approximate sizes")
 
-    install = sub.add_parser("install", help="把引擎依赖装到 PROMPTCUT_PYLIBS")
+    install = sub.add_parser("install", help="Install the engine dependencies into PROMPTCUT_PYLIBS")
     install.add_argument("--engine", choices=sorted(ENGINES), default=DEFAULT_ENGINE)
     install.add_argument("--index-url", dest="index_url", default=None)
     install.add_argument("--extra-index-url", dest="extra_index_url", default=None)
@@ -510,26 +510,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--requirements",
         dest="requirements",
         default=None,
-        help="用这份依赖文件（锁定版本）代替默认的 requirements-<engine>.txt",
+        help="Use this dependency file (pinned versions) instead of the default requirements-<engine>.txt",
     )
 
-    transcribe = sub.add_parser("transcribe", help="转写一个媒体文件")
-    transcribe.add_argument("--input", required=True, help="任意音视频文件或 wav")
+    transcribe = sub.add_parser("transcribe", help="Transcribe a media file")
+    transcribe.add_argument("--input", required=True, help="Any audio or video file, or wav")
     transcribe.add_argument("--engine", choices=sorted(ENGINES), default=DEFAULT_ENGINE)
     transcribe.add_argument("--model", default=DEFAULT_MODEL)
     transcribe.add_argument(
         "--language",
         default=DEFAULT_LANGUAGE,
-        help="语言代码，默认 zh；填 auto 表示自动检测",
+        help="Language code, default zh; use auto for auto-detection",
     )
     transcribe.add_argument(
         "--device", choices=["auto", "cpu", "cuda"], default="auto"
     )
-    transcribe.add_argument("--out", default=None, help="把 done 事件另存为 JSON 文件")
+    transcribe.add_argument("--out", default=None, help="Also save the done event as a JSON file")
     transcribe.add_argument(
         "--offline",
         action="store_true",
-        help="离线模式（云节点用）：只用本地已有权重、不联网下载；ffmpeg 只读本地文件",
+        help="Offline mode (for cloud nodes): use only the weights already present locally and do not download over the network; ffmpeg reads local files only",
     )
 
     return parser
@@ -550,10 +550,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         return handler(args)
     except KeyboardInterrupt:
-        emit_error("已中断。")
+        emit_error("Interrupted.")
         return 130
-    except Exception as exc:  # 兜底：绝不把 traceback 当成输出扔给 node
-        emit_error(f"{args.command} 执行失败：{exc}")
+    except Exception as exc:  # Fallback: never throw a traceback at node as output
+        emit_error(f"{args.command} failed: {exc}")
         return 1
 
 

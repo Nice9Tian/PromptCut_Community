@@ -1,13 +1,13 @@
-"""BootsTAPIR 任意点追踪：解码视频 → 跑模型 → 出轨迹。
+"""BootsTAPIR any-point tracking: decode the video → run the model → output trajectories.
 
-模型是 google-deepmind 的 BootsTAPIR（Apache 2.0，权重同许可），代码在
-vendor/tapnet_torch 下。选它而不是 CoTracker：CoTracker 全仓库是 CC-BY-NC，
-不能随安装包分发，用户拿它接商单也违约。
+The model is google-deepmind's BootsTAPIR (Apache 2.0, weights under the same license), and the code is under
+vendor/tapnet_torch. It was chosen over CoTracker because the entire CoTracker repo is CC-BY-NC,
+so it cannot be distributed with the installer, and users taking commercial jobs with it would also be in breach.
 
-为什么带 PyTorch 而不是转 ONNX：TAPIR 里有 4 处 5 维 grid_sample，
-torch 2.5 的四条导出路径（torch.export / strict=False / TorchScript /
-内部 Dynamo）全都导不出来。改上游模型代码能绕开，但那等于长期维护一份分叉，
-先不做——拓展包是可选下载，多 190 MB 换零模型改动，这笔账划算。
+Why PyTorch is bundled instead of converting to ONNX: TAPIR has 4 five-dimensional grid_sample ops,
+and none of the four export paths in torch 2.5 (torch.export / strict=False / TorchScript /
+internal Dynamo) can export them. Modifying the upstream model code could work around that, but it would mean maintaining a fork long-term,
+so not for now: the extension pack is an optional download, and trading 190 MB extra for zero model changes is a good deal.
 """
 
 from __future__ import annotations
@@ -21,21 +21,21 @@ from . import ffmpeg_input
 
 MODEL_FILENAME = "bootstapir_v2.pt"
 
-# 模型是按 256×256 训练的，喂别的尺寸精度会掉。查询点和输出轨迹都在这个
-# 坐标系里，调用方给的原始像素坐标由 scale_points 来回换算。
+# The model was trained at 256×256, and feeding other sizes lowers the accuracy. Query points and output trajectories are both in this
+# coordinate system, and the original pixel coordinates given by the caller are converted back and forth by scale_points.
 INPUT_SIZE = 256
 
-# 一次喂给模型的帧数上限。TAPIR 是全序列一次算完的，帧数越多显存/内存越吃紧，
-# 超过这个数就分块跑，块之间重叠 OVERLAP 帧好把轨迹接起来。
+# Upper limit on the number of frames fed to the model at once. TAPIR computes the whole sequence in one go, so the more frames, the tighter the VRAM/memory,
+# and beyond this number it runs in chunks, with OVERLAP frames overlapping between chunks so the trajectories can be joined.
 CHUNK_FRAMES = 48
 OVERLAP = 8
 
 
 def decode_frames(ffmpeg: str, video: str, size: int = INPUT_SIZE) -> Tuple[np.ndarray, Tuple[int, int]]:
-    """把整段视频解成 (T, size, size, 3) 的 uint8，同时回报原始分辨率。
+    """Decode the whole video into a (T, size, size, 3) uint8 array and also report the original resolution.
 
-    直接拉伸到正方形，不保持宽高比——模型就是这么训练的，保比例加黑边反而
-    让有效像素变少。坐标换算在 scale_points 里按同样的拉伸做逆变换。
+    Stretch directly to a square without keeping the aspect ratio: that is how the model was trained, and keeping the ratio with black bars would instead
+    reduce the number of effective pixels. Coordinate conversion applies the inverse of the same stretch inside scale_points.
     """
     probe = subprocess.run(
         [ffmpeg, "-hide_banner", *ffmpeg_input(video)],
@@ -50,18 +50,18 @@ def decode_frames(ffmpeg: str, video: str, size: int = INPUT_SIZE) -> Tuple[np.n
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     if proc.returncode != 0:
-        raise RuntimeError(proc.stderr.decode("utf-8", "replace")[:500] or "ffmpeg 解码失败")
+        raise RuntimeError(proc.stderr.decode("utf-8", "replace")[:500] or "ffmpeg decode failed")
 
     buf = np.frombuffer(proc.stdout, dtype=np.uint8)
     per = size * size * 3
     if buf.size < per:
-        raise RuntimeError("视频没有解出任何一帧")
+        raise RuntimeError("No frame was decoded from the video")
     frames = buf[: buf.size - buf.size % per].reshape(-1, size, size, 3)
     return frames, (src_w, src_h)
 
 
 def _parse_size(stderr: str) -> Tuple[int, int]:
-    """从 ffmpeg 的日志里抠出原始分辨率。抠不到就退回 0，交给调用方处理。"""
+    """Dig the original resolution out of ffmpeg's log. If it cannot be found, return 0 and leave it to the caller."""
     import re
 
     m = re.search(r"Stream #.*Video:.*?(\d{2,5})x(\d{2,5})", stderr)
@@ -69,7 +69,7 @@ def _parse_size(stderr: str) -> Tuple[int, int]:
 
 
 def estimate_frames(ffmpeg: str, video: str) -> Optional[int]:
-    """从 ffmpeg 的探测日志里估视频总帧数(时长 × 帧率)。估不出来回 None,不阻止追踪。"""
+    """Estimate the total frame count of the video (duration × frame rate) from ffmpeg's probe log. If it cannot be estimated, return None, which does not block tracking."""
     import re
 
     probe = subprocess.run(
@@ -87,7 +87,7 @@ def estimate_frames(ffmpeg: str, video: str) -> Optional[int]:
 
 def scale_points(points: Sequence[Sequence[float]], src: Tuple[int, int],
                  to_model: bool) -> np.ndarray:
-    """原始像素坐标 ↔ 模型的 256×256 坐标。src 是 (宽, 高)。"""
+    """Original pixel coordinates ↔ the model's 256×256 coordinates. src is (width, height)."""
     w, h = src
     if not w or not h:
         return np.asarray(points, dtype=np.float32)
@@ -103,7 +103,7 @@ def scale_points(points: Sequence[Sequence[float]], src: Tuple[int, int],
 
 
 def load_model(model_path: str):
-    """加载 BootsTAPIR。torch 和模型文件都就位才调得到这里。"""
+    """Load BootsTAPIR. This is only reached once torch and the model files are both in place."""
     import torch
 
     from .vendor.tapnet_torch import tapir_model
@@ -121,13 +121,13 @@ def track(
     queries: Sequence[Tuple[float, float, float]],
     on_progress: Optional[Callable[[int, int], None]] = None,
 ) -> Dict[str, np.ndarray]:
-    """追踪一批点。
+    """Track a batch of points.
 
-    queries 每项是 (帧号, x, y)，坐标已经在模型的 256 空间里。
-    返回 tracks (N, T, 2)、visible (N, T) 布尔。
+    Each item of queries is (frame number, x, y), with coordinates already in the model's 256 space.
+    Returns tracks (N, T, 2) and visible (N, T) booleans.
 
-    长视频分块跑：块与块之间重叠 OVERLAP 帧，后一块用重叠段的位移把自己
-    对齐到前一块的末尾，避免接缝处轨迹跳变。
+    Long videos run in chunks: adjacent chunks overlap by OVERLAP frames, and each later chunk uses the displacement of the overlapping part to align itself
+    to the end of the previous chunk, avoiding trajectory jumps at the seam.
     """
     import torch
 
@@ -136,7 +136,7 @@ def track(
     tracks = np.zeros((n, total, 2), dtype=np.float32)
     visible = np.zeros((n, total), dtype=bool)
 
-    # 每个点「最后一次确信的位置」，分块时用它接力。初值是调用方给的查询点。
+    # The "last confidently known position" of every point, used to hand off between chunks. The initial value is the query point given by the caller.
     seed = [(float(qt), float(qx), float(qy)) for (qt, qx, qy) in queries]
 
     starts = list(range(0, total, CHUNK_FRAMES - OVERLAP)) or [0]
@@ -146,24 +146,24 @@ def track(
             break
         chunk = frames[start:end]
 
-        # 查询点要落在本块内。
+        # The query point has to fall inside this chunk.
         #
-        # 第一块直接用调用方给的点。后续块**必须用上一块追到的位置重新播种**——
-        # 一直拿原始坐标去查，物体早就移走了，那个位置只剩背景，整块输出都是垃圾
-        # （最初就是这个 bug 让最后两帧跳了 480 px）。
+        # The first chunk uses the caller's points directly. Later chunks **must be re-seeded with the positions tracked in the previous chunk**:
+        # querying with the original coordinates all the way finds the object long gone, only background left at that position, and the whole chunk's output is garbage
+        # (this very bug originally made the last two frames jump by 480 px).
         q = []
         for k, (qt, qx, qy) in enumerate(seed):
             local = min(max(int(qt) - start, 0), len(chunk) - 1)
-            q.append((local, qy, qx))          # 模型吃 (t, y, x)
+            q.append((local, qy, qx))          # the model takes (t, y, x)
         qt_arr = torch.tensor([q], dtype=torch.float32)
 
         video = torch.from_numpy(chunk.astype(np.float32) / 127.5 - 1.0)[None]
         with torch.no_grad():
             out = model(video=video, query_points=qt_arr)
 
-        # 模型输出 (1, N, T, 2)，坐标是 (x, y)
+        # The model outputs (1, N, T, 2), with coordinates being (x, y)
         ct = out["tracks"][0].cpu().numpy()
-        # occlusion / expected_dist 越小越可信，官方推荐用这个组合判可见性
+        # The smaller occlusion / expected_dist are, the more trustworthy; the official recommendation is to use this combination to judge visibility
         occ = torch.sigmoid(out["occlusion"][0]).cpu().numpy()
         dist = torch.sigmoid(out["expected_dist"][0]).cpu().numpy()
         vis = (1 - occ) * (1 - dist) > 0.5
@@ -173,12 +173,12 @@ def track(
         tracks[:, write_from:end] = ct[:, off:]
         visible[:, write_from:end] = vis[:, off:]
 
-        # 给下一块播种。两条约束缺一不可：
-        #   1. 位置和帧号必须是**同一帧**的。拿第 47 帧的位置说成第 40 帧，
-        #      模型会去第 40 帧的那个坐标找东西，那里还是背景。
-        #   2. 播种帧必须落在两块的**重叠区** [next_start, end) 里，
-        #      否则它不在下一块的范围内，帧号会被夹回 0，又回到问题 1。
-        # 所以从块尾往回找，只在重叠区里挑最后一个可见帧。
+        # Seed the next chunk. Neither of the two constraints can be dropped:
+        #   1. The position and the frame number must belong to the **same frame**. If the position from frame 47 is presented as frame 40,
+        #      the model will look for something at that coordinate in frame 40, where there is still only background.
+        #   2. The seed frame must fall inside the **overlap region** [next_start, end) of the two chunks,
+        #      otherwise it is outside the next chunk's range, the frame number gets clamped back to 0, and we are back at problem 1.
+        # So search backward from the end of the chunk and pick the last visible frame only within the overlap region.
         if end < total:
             next_start = start + (CHUNK_FRAMES - OVERLAP)
             lo = max(next_start - start, 0)

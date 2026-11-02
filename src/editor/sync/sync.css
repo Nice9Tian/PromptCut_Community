@@ -1,6 +1,6 @@
 /*
- * C6.5 页面一侧的界面:共享项目对话框、成员列表、创建者操作、撤销提示条、离线对话框、本地备份、阻断弹窗、气泡。
- * 对话框沿用 ui/toolbar.css 的 .pc-dialog-*,这里只加它们没有的部分。颜色一律取 --ui-* 变量,换皮肤跟着变。
+ * C6.5 page-side UI: shared project dialog, member list, creator actions, undo bar, offline dialog, local backup, blocking dialog, bubble.
+ * Dialogs reuse .pc-dialog-* from ui/toolbar.css; only what they lack is added here. Colors always come from --ui-* variables, so they follow when the skin changes.
  */
 
 .pc-sync-dialog {
@@ -78,7 +78,7 @@
   margin-top: 1px;
 }
 
-/* 单选卡片(部署位置、进入方式、并列候选) */
+/* Single-choice cards (deployment location, entry mode, parallel candidates) */
 .pc-sync-choice {
   display: flex;
   gap: 10px;
@@ -130,7 +130,7 @@
   line-height: 1.45;
 }
 
-/* 名单表 */
+/* List table */
 .pc-sync-list {
   display: flex;
   flex-direction: column;
@@ -236,7 +236,7 @@
   opacity: 0.45;
 }
 
-/* 顶栏:成员按钮、同步状态 */
+/* Top bar: member button, sync status */
 .pc-sync-chip {
   display: inline-flex;
   align-items: center;
@@ -270,7 +270,7 @@
   background: currentColor;
 }
 
-/* 成员浮层 */
+/* Member popover */
 .pc-members-pop {
   position: fixed;
   z-index: 900;
@@ -368,7 +368,7 @@
   color: var(--ui-danger);
 }
 
-/* 撤销提示条(Snackbar) */
+/* Undo bar (Snackbar) */
 .pc-undo-bar {
   position: fixed;
   left: 50%;
@@ -441,7 +441,7 @@
   color: var(--ui-fg-muted);
 }
 
-/* 气泡 */
+/* Bubble */
 .pc-toasts {
   position: fixed;
   top: 58px;
@@ -472,7 +472,7 @@
   flex: 1 1 auto;
 }
 
-/* 离线对话框 */
+/* Offline dialog */
 .pc-offline-list {
   margin: 0;
   padding: 8px 10px 8px 26px;
@@ -504,7 +504,7 @@
   gap: 8px;
 }
 
-/* 本地备份列表 */
+/* Local backup list */
 .pc-backups {
   display: flex;
   flex-direction: column;
@@ -533,7 +533,7 @@
   height: 26px;
 }
 
-/* 别人的改动:时间轴上被改的片段描边 1.5 s(c65-design.md 第 8 节裁定) */
+/* Others' changes: the clip changed on the timeline gets an outline for 1.5 s (ruling in section 8 of c65-design.md) */
 [data-remote-flash] {
   outline: 2px solid var(--ui-accent) !important;
   outline-offset: 1px;
@@ -541,7 +541,7 @@
   transition: outline-color 200ms ease;
 }
 
-/* AI 栏的 Agent 操作记录(AgentEventLog.tsx):行高固定、虚拟化,只渲染看得见的几行 */
+/* Agent action log in the AI panel (AgentEventLog.tsx): fixed row height, virtualized, only the visible rows are rendered */
 .pc-evlog {
   margin: 0 10px 6px;
   border: 1px solid var(--ui-border);
@@ -610,7 +610,7 @@
   font-size: 12px;
 }
 
-/* ── C10a:开始页「加入别人的项目」(JoinForm.tsx) ───────────────── */
+/* ── C10a: start page "Join someone else's project" (JoinForm.tsx) ───────────────── */
 .pc-join {
   display: flex;
   flex-direction: column;
@@ -647,7 +647,7 @@
   border-top: 1px solid var(--ui-border, var(--hairline));
 }
 
-/* ── C10a:项目设置「多用户协作」(CollabSection.tsx) ─────────────── */
+/* ── C10a: project settings "Multi-user collaboration" (CollabSection.tsx) ─────────────── */
 .pc-collab {
   display: flex;
   flex-direction: column;
@@ -670,7 +670,7 @@
   flex-wrap: wrap;
   font-size: 12.5px;
 }
-/* 托管方的服务(渲染节点)的勾选行:比总开关轻一级 */
+/* Checkbox row for the host's service (render node): one level lighter than the master switch */
 .pc-collab-hosted {
   display: flex;
   flex-direction: column;
@@ -680,7 +680,7 @@
   font-weight: 500;
   font-size: 12.5px;
 }
-/* 服务那一行下面缩进挂的子选项(渲染节点的「生成轨道流」)；服务那一行关着时整行置灰 */
+/* Sub-option indented under the service row (the render node's "Generate track streams"); the whole row is grayed out while the service row is off */
 .pc-collab-hosted-sub {
   margin: 6px 0 0 24px;
   display: flex;
@@ -711,7 +711,7 @@
   align-items: flex-start;
   flex-wrap: wrap;
 }
-/* 二维码:黑白、不小于 240 CSS 像素(契约第 7 节);深色皮肤下也保持白底,扫得出来 */
+/* QR code: black and white, no smaller than 240 CSS pixels (contract section 7); keeps a white background under dark skins too, so it can be scanned */
 .pc-collab-qr-img {
   width: 240px;
   height: 240px;
@@ -729,7 +729,7 @@
   gap: 8px;
   flex-wrap: wrap;
 }
-/* 项目设置对话框放下「多用户协作」一段后变高:加宽、限高、可滚动(类名加在 ProjectSettingsDialog.tsx) */
+/* The project settings dialog gets taller once the "Multi-user collaboration" section is added: widen it, cap the height, make it scrollable (the class name is added in ProjectSettingsDialog.tsx) */
 .pc-dialog.pc-dialog--collab {
   width: 460px;
   max-width: calc(100vw - 24px);
@@ -737,7 +737,7 @@
   overflow: auto;
 }
 
-/* 在线页面(C10 契约第 10 节):顶栏的状态措辞较长,限宽省略,悬停看全文 */
+/* Online page (C10 contract section 10): the status wording in the top bar is long; limit the width, ellipsize, hover to see the full text */
 .pc-sync-chip--online {
   max-width: min(460px, 38vw);
 }
@@ -752,7 +752,7 @@
 .pc-sync-chip--backups {
   color: var(--ui-fg);
 }
-/* 气泡上的按钮(在线页面的「下载备份」) */
+/* Button on a bubble (the online page's "Download backup") */
 .pc-toast-action {
   flex: 0 0 auto;
   align-self: center;
@@ -770,7 +770,7 @@
 .pc-toast-action:hover {
   background: var(--ui-float);
 }
-/* 离线且有未提交的改动:常驻提示,底部状态栏上方居中(顶栏高度随壳变,放顶上会盖住顶栏的状态措辞),不挡操作 */
+/* Offline with uncommitted changes: persistent notice, centered above the bottom status bar (the top bar's height varies with the shell, and placing the notice at the top would cover the top bar's status wording); does not block operations */
 .pc-offline-unsent {
   position: fixed;
   bottom: 36px;
@@ -796,7 +796,7 @@
 .pc-account-member-confirm button { margin: 6px 6px 0 0; }
 .pc-account-member-clear { display: block; margin: 6px 0 2px; font-size: 12px; cursor: pointer; }
 
-/* ---------------- 冲突合并(ConflictMerge.tsx) ---------------- */
+/* ---------------- Conflict merge (ConflictMerge.tsx) ---------------- */
 
 .pc-sync-chip--merge {
   border-color: var(--ui-accent);

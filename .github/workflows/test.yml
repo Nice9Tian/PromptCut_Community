@@ -7,10 +7,10 @@ on:
 
 jobs:
   test:
-    # 闭源版继承这份代码，也带着这个文件；私有仓库里不跑。
+    # The commercial edition inherits this code and carries this file along too; it does not run in private repositories.
     if: ${{ !github.event.repository.private }}
-    # 这个项目的脚本按 Windows 写（PowerShell、windowsHide、本机 Chrome 路径），
-    # 所以 CI 也在 Windows 上跑。Linux 没有验证过。
+    # This project's scripts are written for Windows (PowerShell, windowsHide, local Chrome path),
+    # So CI also runs on Windows. Linux has not been verified.
     runs-on: windows-latest
     timeout-minutes: 30
 
@@ -22,7 +22,7 @@ jobs:
           node-version: '24'
           cache: npm
 
-      # 导出成片的测试要 ffmpeg 在 PATH 上
+      # Tests that export the final video need ffmpeg on PATH
       - name: Install ffmpeg
         run: choco install ffmpeg -y --no-progress
 

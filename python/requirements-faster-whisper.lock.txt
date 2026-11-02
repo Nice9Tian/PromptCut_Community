@@ -1,9 +1,9 @@
-# faster-whisper 的锁定依赖（云端 Agent 的 stt_install 受控安装作业只认这类文件，不认模型给的任何包名或参数）。
+# Pinned dependencies for faster-whisper (the Cloud Agent's controlled stt_install installation job accepts only this kind of file and ignores any package name or parameter supplied by the model).
 #
-# 版本取自 2026-10-13 在开发机上装好并转写通过的那一组（requirements-faster-whisper.txt 解出来的整棵树），
-# 不含 yt_dlp（素材采集用，转写不需要）。
-# 这份没有哈希：部署者在目标节点（Linux）上用 `pip-compile --generate-hashes` 重新解一份、
-# 通过节点配置里的 runtime.requirements[引擎名] 指过去，pip 看到哈希会自动开启 --require-hashes。
+# The versions are taken from the set that was installed and passed transcription on the dev machine on 2026-10-13 (the whole tree resolved from requirements-faster-whisper.txt),
+# excluding yt_dlp (used for media collection, not needed for transcription).
+# This file has no hashes: the deployer re-resolves one on the target node (Linux) with `pip-compile --generate-hashes` and
+# points to it through runtime.requirements[engine name] in the node configuration; when pip sees hashes it automatically enables --require-hashes.
 anyio==4.15.1
 av==18.1.0
 certifi==2026.7.22

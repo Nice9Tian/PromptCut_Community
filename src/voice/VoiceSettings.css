@@ -1,4 +1,4 @@
-/* 开始页「配音」面板。沿用皮肤变量,和拓展卡同一套边框、底色 */
+/* Start page "Voiceover" panel. Reuses the skin variables, with the same border and background color as the extension card */
 .vs {
   display: flex;
   flex-direction: column;
@@ -14,7 +14,7 @@
 .vs-head-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .vs-title { font-size: 13px; font-weight: 600; }
 
-/* 默认服务:一排分段按钮 */
+/* Default service: a row of segmented buttons */
 .vs-seg { display: inline-flex; border: 1px solid var(--hairline); border-radius: 7px; overflow: hidden; }
 .vs-seg-btn {
   font-family: inherit;
@@ -64,7 +64,7 @@
 .vs-msg.is-ok { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .vs-msg.is-err { color: var(--danger); border: 1px solid var(--danger); }
 
-/* 我的音色 / 新建音色 */
+/* My voices / New voice */
 .vs-sub { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--hairline); }
 .vs-sub-title { font-size: 12px; font-weight: 600; }
 .vs-create > summary { cursor: pointer; list-style-position: inside; }
@@ -104,10 +104,10 @@
 .vs-check { display: flex; align-items: center; gap: 6px; }
 .vs-check input { accent-color: var(--accent); }
 
-/* 住在子窗口里时,边框和标题由窗口给 */
+/* When embedded in a sub-window, the window supplies the border and title */
 .vs.is-bare { padding: 0; border: 0; border-radius: 0; background: transparent; }
 
-/* ── 「配音设置」子窗口 ─────────────────────────────── */
+/* ── "Voiceover settings" sub-window ─────────────────────────────── */
 .vsd-backdrop {
   position: fixed;
   inset: 0;

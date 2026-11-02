@@ -1,13 +1,13 @@
-"""站点预设。
+"""Site presets.
 
-一个预设就是一个模块，暴露：
-  NAME        预设名（命令行 --site 用的）
-  match(url)  这个链接归不归它管
-  normalize(url)  把各种写法（短链、移动端、裸 BV 号）归成标准链接
-  ydl_opts(...)   这个站点要的 yt-dlp 选项（请求头、清晰度上限、分 P 策略）
-  notes           给 agent 看的一段提示（登录才有的清晰度、反爬之类）
+A preset is a module that exposes:
+  NAME        preset name (used by the command-line --site)
+  match(url)  whether this link belongs to this preset
+  normalize(url)  turn the various forms (short link, mobile link, bare BV id) into a standard link
+  ydl_opts(...)   the yt-dlp options this site needs (request headers, quality cap, multi-part strategy)
+  notes           a hint for the agent to read (qualities only available when logged in, anti-scraping and the like)
 
-找不到匹配的就用 generic：yt-dlp 自己认得一千多个站，generic 只是不加站点特化。
+If nothing matches, use generic: yt-dlp itself knows more than a thousand sites, and generic just adds no site-specific handling.
 """
 
 from __future__ import annotations
@@ -29,11 +29,11 @@ def by_name(name: Optional[str]) -> Any:
     for p in PRESETS:
         if p.NAME == name:
             return p
-    raise KeyError(f"没有叫 {name} 的预设，可选：{', '.join(names())}")
+    raise KeyError(f"No preset named {name}, available: {', '.join(names())}")
 
 
 def resolve(url: str, site: Optional[str] = None) -> Any:
-    """按 --site 指定，没指定就按链接猜；都猜不出来用 generic。"""
+    """Use the one given by --site; if none is given, guess from the link; if neither works, use generic."""
     forced = by_name(site)
     if forced is not None:
         return forced

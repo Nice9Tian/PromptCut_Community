@@ -1,6 +1,6 @@
-"""safezone：合成框验 occupancy 的算法和 safeSide 的并列规则。
+"""safezone: synthetic boxes verify the occupancy algorithm and the tie-breaking rule of safeSide.
 
-纯 numpy，不需要装任何推理引擎，内置解释器里也能跑。
+Pure numpy, no inference engine needs to be installed, and it runs in the built-in interpreter too.
 """
 
 import os
@@ -12,8 +12,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from promptcut_subject.safezone import (analyze, coverage_mask,  # noqa: E402
                                         merge_occupancy, occupancy, safe_side)
 
-# 故意选一个宽高都能被 2 和 3 整除、且格子数不到降采样阈值的尺寸，
-# 这样期望值是精确的 0 / 1 / 1/3，不用为量化留余量。
+# Deliberately pick a size whose width and height are both divisible by 2 and 3 and whose cell count is below the downsampling threshold,
+# so the expected values are exactly 0 / 1 / 1/3 and no margin is needed for quantization.
 W, H = 1200, 600
 
 
@@ -30,7 +30,7 @@ class TestOccupancy(unittest.TestCase):
         occ = occupancy(W, H, [box(W / 2, 0, W / 2, H)])
         self.assertEqual(occ["right"], 1.0)
         self.assertEqual(occ["left"], 0.0)
-        # 上下带子各被右半边盖掉一半
+        # The top and bottom bands are each half covered by the right half
         self.assertEqual(occ["top"], 0.5)
         self.assertEqual(occ["bottom"], 0.5)
 
@@ -42,18 +42,18 @@ class TestOccupancy(unittest.TestCase):
         self.assertAlmostEqual(occ["right"], 1 / 3, places=2)
 
     def test_overlapping_boxes_count_once(self):
-        """两个完全重合的框不能把 occupancy 算成 2。"""
+        """Two completely overlapping boxes must not make occupancy 2."""
         one = occupancy(W, H, [box(0, 0, W / 2, H)])
         two = occupancy(W, H, [box(0, 0, W / 2, H), box(0, 0, W / 2, H)])
         self.assertEqual(one, two)
         self.assertEqual(two["left"], 1.0)
 
     def test_tiny_box_is_not_lost_from_the_mask(self):
-        """小到不足一格的脸在掩膜上也要留一格。
+        """A face smaller than one cell must still leave one cell on the mask.
 
-        注意 occupancy 本身仍会是 0.000 —— 一格占 4000×4000 的百万分之二，
-        千分位就是 0，这是对的：一张小脸确实几乎不占地方。这里守的是掩膜别把
-        它整个丢掉（面积再小也是「这儿有东西」），别的判断可以基于框本身。
+        Note that occupancy itself is still 0.000: one cell is two millionths of 4000×4000,
+        the thousandths place is 0, which is right: a small face really takes up almost no room. What is guarded here is that the mask must not drop
+        it entirely (however small the area, it still means "there is something here"), while other judgments can be based on the box itself.
         """
         mask = coverage_mask(4000, 4000, [box(10, 10, 0.5, 0.5, "face")])
         self.assertEqual(int(mask.sum()), 1)
@@ -71,12 +71,12 @@ class TestSafeSide(unittest.TestCase):
         self.assertEqual(analyze(W, H, [box(W / 2, 0, W / 2, H)])["safeSide"], "left")
 
     def test_all_tied_prefers_right(self):
-        """满屏都是人（四边都 1.0）时按优先顺序挑 right。"""
+        """When the whole screen is people (all four sides 1.0), pick right according to the priority order."""
         self.assertEqual(analyze(W, H, [box(0, 0, W, H)])["safeSide"], "right")
         self.assertEqual(analyze(W, H, [])["safeSide"], "right")
 
     def test_bottom_beats_top_when_tied(self):
-        """中间带被占满：左右都是 1/3，上下都是 0，并列时 bottom 排在 top 前面。"""
+        """The middle band is fully occupied: left and right are both 1/3, top and bottom are both 0, and on a tie bottom ranks ahead of top."""
         occ = occupancy(W, H, [box(0, H / 3, W, H / 3)])
         self.assertEqual(occ["top"], 0.0)
         self.assertEqual(occ["bottom"], 0.0)
@@ -89,7 +89,7 @@ class TestSafeSide(unittest.TestCase):
         self.assertEqual(safe_side(occ), "top")
 
     def test_compares_rounded_values(self):
-        """比较用的是报出去的千分位数字，不能出现「两边都写 0.12 却挑了另一个」。"""
+        """The comparison uses the thousandths-rounded numbers that are reported, so "both sides say 0.12 yet the other one was picked" must not happen."""
         occ = {"left": 0.1234, "right": 0.1236, "top": 0.9, "bottom": 0.9}
         self.assertEqual(safe_side({k: round(v, 3) for k, v in occ.items()}), "left")
 

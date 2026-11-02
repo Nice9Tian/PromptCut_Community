@@ -1,16 +1,16 @@
 /**
- * 来源: Magic UI 的全局样式 apps/www/styles/globals.css
+ * Source: Magic UI's global styles apps/www/styles/globals.css
  *       (https://github.com/magicuidesign/magicui) — MIT License
  *
- * MagicUI 组件的动画靠 Tailwind 主题里的 --animate-* 变量生成 animate-* 工具类;那些变量在它们
- * 自己的 globals.css 里,我们这边没有,直接搬过来的组件会「有 class 没动画」。
+ * The animations of MagicUI components rely on --animate-* variables in the Tailwind theme to generate animate-* utility classes; those variables are in their
+ * own globals.css, which we don't have on our side, so components moved over as is will have "a class but no animation".
  *
- * 本地改动:
- * - 不用 @theme(它只对 src/index.css 那一次编译生效,从这里 import 进来的 CSS 里写了也没用),
- *   改成同名的普通 class:.animate-shiny-text { animation: ... }。类名和 MagicUI 一模一样,
- *   组件源码一个字不用改。
- * - 只搬 --animate-* 声明和它们引用的 @keyframes,别的主题变量不要。
- * - 由 src/cards/magicui/index.ts 引入一次,全站可用。
+ * Local changes:
+ * - Do not use @theme (it only takes effect in the one compilation of src/index.css, and anything written in CSS imported from here has no effect),
+ *   switch to a plain class of the same name: .animate-shiny-text { animation: ... }. The class names are exactly the same as MagicUI's,
+ *   and the component source needs not a single character changed.
+ * - Bring over only the --animate-* declarations and the @keyframes they reference, not the other theme variables.
+ * - Imported once by src/cards/magicui/index.ts, available site-wide.
  */
 
 .animate-accordion-down { animation: accordion-down 0.2s ease-out; }

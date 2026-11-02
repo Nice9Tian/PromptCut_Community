@@ -36,5 +36,5 @@
   box-shadow: var(--pc-shadow, 0 24px 48px rgba(0, 0, 0, 0.4));
 }
 
-/* 文字卡批次追加:舞台四角定位(pin-board 用) */
+/* Added in the text card batch: stage corner positioning (used by pin-board) */
 .hud-corner-bl { align-items: flex-end; justify-content: flex-start; padding: 0 0 100px 120px; }

@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><title>在线卡片运行时的画面台</title>
+<html lang="en"><head><meta charset="utf-8"><title>Render harness for the online card runtime</title>
 <!--
-  探针 scripts/probes/online-remotion-card-probe.mjs 用的画面台：在真 Chrome 里跑在线页面的卡片运行时
-  （`src/online/cardRuntime/` 的转译 `bundleCards`、加载器 `createCardLoader`、页面自带的模块表 `stageHostModules`），
-  把探针给的卡片源码（同步来的用户卡的样子：键 → 文本）转译、载入，再把载入出来的卡的 Component 挂在 1920×1080 的框里按 t 渲。
-  不带账号、不带文档服务、不带舞台 iframe：要看的是「用框架写的卡，经在线页面自己的转译与加载器，在真浏览器里能不能载入、画得对」。
+  The render harness used by the probe scripts/probes/online-remotion-card-probe.mjs: runs the online page's card runtime in real Chrome
+  (the transpiler `bundleCards` of `src/online/cardRuntime/`, the loader `createCardLoader`, and the page's own module table `stageHostModules`),
+  It transpiles and loads the card source given by the probe (in the shape of a synced user card: key → text), then mounts the Component of the loaded card in a 1920×1080 frame and renders it at t.
+  No account, no document service, no stage iframe: what we want to see is "whether a card written with the framework, through the online page's own transpiler and loader, can be loaded and drawn correctly in a real browser".
 -->
 <style>
   html, body { margin: 0; background: #101418; overflow: hidden; }
@@ -37,7 +37,7 @@ const render = (t) => flushSync(() => root.render(React.createElement(Boundary, 
 
 window.__ors = {
   runtime: CARD_RUNTIME_VERSION,
-  /** sources：{ 键: 文本 }，键形如 src/cards/user/<名>.tsx；entries 是要载入的入口 */
+  /** sources: { key: text }, keys look like src/cards/user/<name>.tsx; entries are the entry points to load */
   async setSources(sources, entries) {
     const read = (key) => (Object.hasOwn(sources, key) ? { body: sources[key], hash: String(key.length) + ":" + sources[key].length } : null);
     const bundled = await bundleCards({ entries, read });
@@ -52,7 +52,7 @@ window.__ors = {
   mount(id, t, overrides = {}) {
     window.__orsError = null;
     def = loader.cards().find((d) => d.id === id);
-    if (!def) throw new Error("没载入这张卡：" + id);
+    if (!def) throw new Error("This card was not loaded: " + id);
     params = { ...def.defaults, ...overrides };
     root = createRoot(document.getElementById("stage"));
     render(t);

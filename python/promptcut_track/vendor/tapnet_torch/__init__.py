@@ -1,11 +1,11 @@
-"""google-deepmind/tapnet 的 PyTorch 推理代码（原样搬运，仅改了包内 import 路径）。
+"""PyTorch inference code of google-deepmind/tapnet (carried over as is, with only the in-package import paths changed).
 
-来源：https://github.com/google-deepmind/tapnet  (tapnet/torch/)
-许可：Apache License 2.0，见同目录 LICENSE。官方明确说明预训练权重同样是 Apache 2.0。
+Source: https://github.com/google-deepmind/tapnet  (tapnet/torch/)
+License: Apache License 2.0, see LICENSE in the same directory. The official statement is explicit that the pretrained weights are also Apache 2.0.
 
-搬进来而不是运行时 pip 安装 tapnet：tapnet 不是一个以 PyTorch 推理为目标的
-发布包，装它会连训练侧的 JAX 依赖一起拖进来。这里只要三个文件。
+Copied in rather than installed with pip at runtime: tapnet is not a release package that targets PyTorch
+inference, and installing it would drag in the training-side JAX dependencies as well. Only three files are needed here.
 
-**改动仅限于**：把 `from tapnet.torch import X` 改成 `from . import X`，
-好让它作为本包的子模块工作。模型结构和数值一行没动。
+**Changes are limited to**: rewriting `from tapnet.torch import X` as `from . import X`,
+so that it works as a submodule of this package. Not a single line of the model structure or numerics was touched.
 """

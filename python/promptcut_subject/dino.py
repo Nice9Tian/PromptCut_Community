@@ -1,14 +1,14 @@
-"""full 档后端：Grounding DINO tiny（开放词汇检测）。
+"""Full tier backend: Grounding DINO tiny (open-vocabulary detection).
 
-IDEA-Research/grounding-dino-tiny（Apache-2.0，172M 参数，fp32 权重约 690 MB），
-走 HF transformers + PyTorch CPU。它认的是**任意英文名词短语**——"person . face ."
-和 "red cup . laptop ." 是同一套代码，这是 light 档（YuNet + RT-DETR 只认固定
-类别）换不来的能力，也是 full 包多背 658 MB 权重 + 164 MB 依赖的唯一理由。
-（中文提示不行，词表里没有，见 _normalize_prompt。）
+IDEA-Research/grounding-dino-tiny (Apache-2.0, 172M parameters, fp32 weights about 690 MB),
+Runs on HF transformers + PyTorch CPU. It accepts **any English noun phrase**: "person . face ."
+and "red cup . laptop ." are the same code. This is something the light tier (YuNet + RT-DETR only recognize fixed
+classes) cannot offer, and the only reason the full package carries an extra 658 MB of weights + 164 MB of dependencies.
+(Chinese prompts do not work, the vocabulary has none; see _normalize_prompt.)
 
-对外只有一个 detect()，签名和 yunet.py / rtdetr.py 对齐（多一个 prompt）：
-帧进（BGR uint8 HxWx3）、框出（坐标是**传入帧**的像素，不是原视频像素——
-换算回原尺寸是 __main__ 的活）。
+The only public function is detect(), its signature aligned with yunet.py / rtdetr.py (plus one extra prompt):
+Frames in (BGR uint8 HxWx3), boxes out (coordinates are in pixels of the **passed-in frame**, not of the original video;
+converting back to the original size is __main__'s job).
 """
 
 from __future__ import annotations
@@ -20,59 +20,59 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-# 模型是一个**目录**（HF snapshot），不是单文件：config.json + model.safetensors
-# + preprocessor_config.json + 分词器那几个。拓展包按目录整个拷进 models/。
+# The model is a **directory** (HF snapshot), not a single file: config.json + model.safetensors
+# + preprocessor_config.json + the tokenizer files. The extension pack copies the whole directory into models/.
 MODEL_DIRNAME = "grounding-dino-tiny"
 
-# 判断「模型在不在」的判据必须和 from_pretrained **真正读的文件**对齐，宁可严一点：
-# 判据松了的后果是 status 报 engine="full"、detect 却在 transformers 内部炸出一句
-# 无法定位的话（拷贝中断、杀毒软件拦掉小文件、rsync 只搬完大文件都会留下这种半个目录）。
+# The criterion for "is the model present" must match the **files from_pretrained actually reads**; err on the strict side:
+# A loose criterion means status reports engine="full" while detect blows up inside transformers with an error
+# that pinpoints nothing (an interrupted copy, antivirus blocking small files, or rsync moving only the large files all leave such a half directory).
 #
-# 实测（cuda_Vit / transformers 4.57.6，把真权重目录硬链接成临时目录后逐个删文件，
-# 跑 AutoProcessor.from_pretrained(local_files_only=True)）：
-#   删 tokenizer.json 或 vocab.txt 任一个   → 还能加载（另一个能顶上）
-#   两个一起删                              → TypeError: stat: path should be string,
+# Measured (cuda_Vit / transformers 4.57.6, hard-linking the real weights directory into a temporary directory and deleting files one by one,
+# then running AutoProcessor.from_pretrained(local_files_only=True)):
+#   delete tokenizer.json or vocab.txt      → still loads (the other one covers for it)
+#   delete both                             → TypeError: stat: path should be string,
 #                                             bytes, os.PathLike or integer, not NoneType
-#                                             （就是这句「完全看不出缺什么」的报错）
-#   删 tokenizer_config.json                → 能加载，但 tokenizer.model_max_length 从 512
-#                                             变成 1000000000000000019884624838656 这个哨兵值，
-#                                             长提示词不再被截到 512，会一路捅进模型的位置嵌入
-#   删 special_tokens_map.json              → 能加载，行为不变，所以不列为必需
+#                                             (this is the error that gives "no clue at all what is missing")
+#   delete tokenizer_config.json            → still loads, but tokenizer.model_max_length goes from 512
+#                                             to the sentinel value 1000000000000000019884624838656,
+#                                             so long prompts are no longer truncated to 512 and run all the way into the model's position embeddings
+#   delete special_tokens_map.json          → still loads, behavior unchanged, so it is not listed as required
 REQUIRED_FILES = ("config.json", "model.safetensors", "preprocessor_config.json",
                   "tokenizer_config.json")
 
-# 分词器的词表：这两个至少要有一个（tokenizer.json 是 fast 版的整包，vocab.txt 是
-# 慢版词表，transformers 能从任一个建出 BertTokenizerFast）。两个都没有才是真缺。
+# Tokenizer vocabulary: at least one of these two must exist (tokenizer.json is the all-in-one package of the fast version, vocab.txt is
+# the slow version's vocabulary; transformers can build BertTokenizerFast from either one). Only when both are missing is something truly missing.
 TOKENIZER_FILES = ("tokenizer.json", "vocab.txt")
 
 DEFAULT_PROMPT = "person . face ."
 
-# max_side 的三种取值（默认 None）：
-#   None → 帧多大就按多大喂，既不放大也不缩小；
-#   >0   → 最长边再压到这个值（帧本来就更小时不动）；
-#   0    → 交还给官方预处理（shortest_edge=800 / longest_edge=1333）。
+# The three values of max_side (default None):
+#   None → feed the frame at whatever size it has, neither enlarging nor shrinking;
+#   >0   → shrink the longest side down to this value (leave it alone if the frame is already smaller);
+#   0    → hand it back to the official preprocessing (shortest_edge=800 / longest_edge=1333).
 #
-# 默认不动帧尺寸，是因为官方预处理会把 __main__ 已经缩到 640 的帧**再放大回去**
-# （360x640 → 750x1333），纯亏算力。实测（20 线程 CPU，360x640 竖屏真实素材，
-# 提示 "person . face . cat ."）：
-#   官方 800/1333 → 3.38 s/帧，峰值工作集 2790 MB，person conf 0.806
-#   原样 360x640  → 0.94 s/帧，峰值工作集 1671 MB，person conf 0.820（坐标差 1~2 px）
-# 快 3.6 倍、省 1.1 GB、分数还略高，所以默认不放大。
-# 帧尺寸归 __main__ 的 --max-side 管，这里只负责别把它的决定推翻。
+# The default leaves the frame size alone because the official preprocessing would **scale back up** frames that __main__ has already shrunk to 640
+# (360x640 → 750x1333), which is a pure waste of compute. Measured (20-thread CPU, real portrait 360x640 media,
+# prompt "person . face . cat ."):
+#   official 800/1333 → 3.38 s/frame, peak working set 2790 MB, person conf 0.806
+#   as-is 360x640     → 0.94 s/frame, peak working set 1671 MB, person conf 0.820 (coordinates differ by 1~2 px)
+# 3.6x faster, 1.1 GB saved, and the score is even slightly higher, so by default it does not enlarge.
+# Frame size is governed by __main__'s --max-side; this module only makes sure not to override its decision.
 NATIVE_SIZE = None
 
-# 模型加载一次要好几秒（读 690 MB safetensors + 建图），一个进程里可能连着跑
-# 几十帧，所以按目录缓存。加锁是因为将来若有人从线程池里调，别把模型加载两遍
-# 把内存顶到 2 倍。
+# Loading the model takes several seconds (reading 690 MB of safetensors + building the graph), and one process may run
+# dozens of frames in a row, so it is cached per directory. The lock is there in case someone calls this from a thread pool later, so the model is not loaded twice and
+# memory is not pushed up to 2x.
 _CACHE: Dict[str, Any] = {}
 _LOCK = threading.Lock()
 
 
 def models_dir() -> str:
-    """和 promptcut_shots.__main__.models_dir() 同一套规则，逐字对齐。
+    """Same rules as promptcut_shots.__main__.models_dir(), aligned verbatim.
 
-    这里重写一遍而不是 import：dino.py 要能被单独 import 做单测，不该拖上
-    命令行入口那一坨（argparse / subprocess / jsonl）。
+    Rewritten here instead of imported: dino.py must be importable on its own for unit tests and should not drag in
+    the whole command-line entry blob (argparse / subprocess / jsonl).
     """
     models = os.environ.get("PROMPTCUT_MODELS")
     if models:
@@ -88,36 +88,36 @@ def default_model_dir() -> str:
 
 
 def missing_files(path: Optional[str] = None) -> List[str]:
-    """列出这个目录缺哪些必需文件。空列表 = 就绪。
+    """List which required files this directory is missing. Empty list = ready.
 
-    单独抽出来是为了让报错能说清「缺的是哪个」——status 只需要一个布尔值，但
-    用户拿到「目录不完整」四个字是修不了的。
+    It is split out so that error messages can say "which one is missing": status only needs a boolean, but
+    a user who only gets "directory incomplete" cannot fix anything.
     """
     path = path or default_model_dir()
     if not os.path.isdir(path):
-        return [f"整个目录不存在：{path}"]
+        return [f"The whole directory does not exist: {path}"]
     missing = [n for n in REQUIRED_FILES if not os.path.isfile(os.path.join(path, n))]
     if not any(os.path.isfile(os.path.join(path, n)) for n in TOKENIZER_FILES):
-        missing.append(" 或 ".join(TOKENIZER_FILES))
+        missing.append(" or ".join(TOKENIZER_FILES))
     return missing
 
 
 def model_ready(path: Optional[str] = None) -> bool:
-    """必需文件一个不缺、且词表至少有一个，才算模型就绪。"""
+    """The model counts as ready only if no required file is missing and at least one vocabulary file exists."""
     return not missing_files(path)
 
 
 def _normalize_prompt(prompt: Optional[str]) -> str:
-    """Grounding DINO 的提示要求：小写、名词短语之间用「 . 」分隔、结尾带句点。
+    """Grounding DINO prompt requirements: lowercase, noun phrases separated by " . ", ending with a period.
 
-    官方 demo 就是这么喂的，大写或缺结尾句点会让 BERT 那一半的分段对不齐，
-    实测表现为分数整体偏低甚至一个框都不出。
+    The official demo feeds it exactly like this; uppercase or a missing final period misaligns the segmentation on the BERT half,
+    which in practice shows up as uniformly low scores or no box at all.
 
-    **提示必须是英文**：文本那一半是 bert-base-uncased，词表里没有中文。实测
-    喂 "显示器 . 椅子 ." 会被切成 "[UNK] 示 [UNK] 子"，然后随便框住画面主体
-    交差（conf 0.44），看着像成功其实全是噪声。同一张图喂
-    "monitor . chair . glasses ." 则是 glasses 0.91 / monitor 0.43 / chair 0.37，
-    位置都对。上层（MCP 工具、系统提示）必须把提示词翻成英文再传进来。
+    **The prompt must be English**: the text half is bert-base-uncased, whose vocabulary has no Chinese. In practice,
+    feeding the Chinese for "monitor . chair ." gets it split into "[UNK] <char> [UNK] <char>" (two stray single characters), and then it boxes the main subject of the frame at random to
+    hand in something (conf 0.44), which looks like success but is all noise. Feeding the same image
+    "monitor . chair . glasses ." gives glasses 0.91 / monitor 0.43 / chair 0.37,
+    with all positions correct. The upper layer (MCP tool, system prompt) must translate the prompt into English before passing it in.
     """
     text = (prompt or DEFAULT_PROMPT).strip().lower()
     if not text:
@@ -128,12 +128,12 @@ def _normalize_prompt(prompt: Optional[str]) -> str:
 
 
 def prompt_terms(prompt: Optional[str]) -> List[str]:
-    """把提示拆成名词短语列表，给标签兜底用。"""
+    """Split the prompt into a list of noun phrases, used as a fallback for labels."""
     return [t.strip() for t in _normalize_prompt(prompt).split(".") if t.strip()]
 
 
 def _load(model_dir: str):
-    """加载 processor + model（只本地，绝不联网）。"""
+    """Load processor + model (local only, never touches the network)."""
     key = os.path.abspath(model_dir)
     hit = _CACHE.get(key)
     if hit is not None:
@@ -146,23 +146,23 @@ def _load(model_dir: str):
 
         lacks = missing_files(key)
         if lacks:
-            # 把缺的那几个逐个点名：用户要么重装拓展包、要么补文件，含糊的报错两条都指不出来
+            # Name each missing file: the user either reinstalls the extension pack or adds the files, and a vague error points to neither
             raise RuntimeError(
-                f"Grounding DINO 模型目录不完整：{key}，缺 {'、'.join(lacks)}"
+                f"Grounding DINO model directory is incomplete: {key}, missing {', '.join(lacks)}"
             )
 
         import torch
         from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
 
-        # local_files_only=True：用户机器上可能根本没网，也不该在检测时偷偷联网。
+        # local_files_only=True: the user's machine may have no network at all, and detection should not quietly go online either.
         processor = AutoProcessor.from_pretrained(key, local_files_only=True)
         model = AutoModelForZeroShotObjectDetection.from_pretrained(key, local_files_only=True)
         model.eval()
         model.to("cpu")
 
-        # post_process 的阈值参数名在 transformers 里改过：4.51 之前叫
-        # box_threshold，之后统一成 threshold。清单允许 >=4.40,<5，两种都可能装上，
-        # 所以按签名探一次，别在用户机器上炸 TypeError。
+        # The threshold parameter name of post_process was changed in transformers: before 4.51 it was called
+        # box_threshold, afterwards unified as threshold. The manifest allows >=4.40,<5, so either may get installed,
+        # so probe the signature once instead of blowing up with a TypeError on the user's machine.
         params = inspect.signature(processor.post_process_grounded_object_detection).parameters
         score_kw = "threshold" if "threshold" in params else "box_threshold"
 
@@ -172,7 +172,7 @@ def _load(model_dir: str):
 
 
 def _clean_label(raw: Any, fallback: str) -> str:
-    """post_process 给回来的标签可能带句点/空白，也可能（新版本里）是整数 id。"""
+    """The labels returned by post_process may carry a period/whitespace, or (in newer versions) be an integer id."""
     if isinstance(raw, str):
         text = raw.replace(".", " ").strip()
         if text:
@@ -181,7 +181,7 @@ def _clean_label(raw: Any, fallback: str) -> str:
 
 
 def _size_for(h: int, w: int, max_side: Optional[int]) -> Optional[Dict[str, int]]:
-    """算预处理尺寸。返回 None 表示「不覆盖，用官方那套」。取值含义见 NATIVE_SIZE。"""
+    """Compute the preprocessing size. Returns None to mean "do not override, use the official one". See NATIVE_SIZE for the meaning of the values."""
     if max_side is not None and max_side <= 0:
         return None
     long_side, short_side = max(h, w), min(h, w)
@@ -195,11 +195,11 @@ def _size_for(h: int, w: int, max_side: Optional[int]) -> Optional[Dict[str, int
 
 
 def _preprocess(processor, rgb, text: str, h: int, w: int, max_side: Optional[int]):
-    """跑图文预处理。size 走**单次调用**的参数，不改 processor 的全局状态——
-    同一个 processor 实例是跨调用缓存的，改它等于给别人埋雷。
+    """Run the image-text preprocessing. size is passed as a **per-call** argument and never changes the processor's global state:
+    the same processor instance is cached across calls, and modifying it would set a trap for everyone else.
 
-    老版本 transformers 的 __call__ 不一定认 size 这个 kwarg，认不出就退回默认
-    尺寸（慢，但结果一样对）。
+    The __call__ of older transformers versions may not accept the size kwarg; if it is not recognized, fall back to the default
+    size (slower, but the result is just as correct).
     """
     size = _size_for(h, w, max_side)
     if size is not None:
@@ -219,17 +219,17 @@ def detect(
     model_dir: Optional[str] = None,
     max_side: Optional[int] = NATIVE_SIZE,
 ) -> List[List[Dict[str, Any]]]:
-    """对每一帧跑一次开放词汇检测。
+    """Run open-vocabulary detection once on every frame.
 
-    frames：BGR uint8 HxWx3 的列表（ffmpeg 抽出来的原始顺序就是 BGR）。
-    prompt：**英文**名词短语，用「 . 」分隔，见 _normalize_prompt。
-    model_path / model_dir：模型目录（两个名字是一回事）。DINO 的「模型」是一整个
-              HF snapshot 目录，但 __main__ 对三个后端统一用 model_path= 传，
-              所以这里两个都认，谁给了用谁。
-    max_side：喂给模型的最长边，取值含义见 NATIVE_SIZE。
-    返回：和 frames 等长，每项是该帧的框列表
-          {"label": str, "x": int, "y": int, "w": int, "h": int, "conf": float}，
-          坐标单位是**传入帧**的像素。
+    frames: a list of BGR uint8 HxWx3 arrays (the raw order ffmpeg extracts is BGR).
+    prompt: **English** noun phrases separated by " . ", see _normalize_prompt.
+    model_path / model_dir: the model directory (the two names mean the same thing). DINO's "model" is a whole
+              HF snapshot directory, but __main__ passes model_path= uniformly to all three backends,
+              so both are accepted here, and whichever is given is used.
+    max_side: the longest side fed to the model, see NATIVE_SIZE for the meaning of the values.
+    Returns: a list as long as frames, each item being that frame's list of boxes
+          {"label": str, "x": int, "y": int, "w": int, "h": int, "conf": float},
+          Coordinates are in pixels of the **passed-in frame**.
     """
     if not frames:
         return []
@@ -239,17 +239,17 @@ def detect(
     processor, model, torch, score_kw = _load(model_path or model_dir or default_model_dir())
 
     results: List[List[Dict[str, Any]]] = []
-    # 一帧一跑，不做批处理：CPU 上批处理省不下多少时间（算力已经吃满），
-    # 却会让激活值峰值按批大小翻倍——这台机器上单帧峰值已经 2 GB 出头。
+    # One frame per run, no batching: batching saves little time on CPU (compute is already saturated),
+    # yet it would multiply the activation peak by the batch size; on this machine the single-frame peak is already a bit over 2 GB.
     for frame in frames:
         arr = np.asarray(frame)
         if arr.ndim != 3 or arr.shape[2] != 3:
-            raise ValueError(f"帧的形状必须是 HxWx3，收到 {arr.shape}")
+            raise ValueError(f"Frame shape must be HxWx3, got {arr.shape}")
         if arr.dtype != np.uint8:
             arr = np.clip(arr, 0, 255).astype(np.uint8)
         h, w = int(arr.shape[0]), int(arr.shape[1])
 
-        # BGR → RGB：processor 按 PIL 的约定认 RGB，喂反了人脸/人体都会掉分。
+        # BGR → RGB: the processor expects RGB following the PIL convention, and feeding the wrong order lowers scores for both faces and bodies.
         rgb = arr[:, :, ::-1]
 
         inputs = _preprocess(processor, rgb, text, h, w, max_side)
@@ -271,7 +271,7 @@ def detect(
         boxes: List[Dict[str, Any]] = []
         for box, score, label in zip(post["boxes"], post["scores"], labels):
             x0, y0, x1, y1 = [float(v) for v in box.tolist()]
-            # 夹回帧内：DETR 系的框允许越界一点点，越界的框传给上层算占位面积会失真
+            # Clamp back into the frame: DETR-family boxes may overshoot slightly, and passing an overshooting box up would distort the occupied-area computation
             x0 = max(0.0, min(x0, w))
             y0 = max(0.0, min(y0, h))
             x1 = max(0.0, min(x1, w))
@@ -288,7 +288,7 @@ def detect(
                 "conf": round(float(score), 4),
             })
 
-        # 分数从高到低，上层要「最主要的那个主体」时直接取第一个
+        # Sorted by score from high to low, so when the upper layer wants "the most important subject" it simply takes the first one
         boxes.sort(key=lambda b: b["conf"], reverse=True)
         results.append(boxes)
 

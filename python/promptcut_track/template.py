@@ -1,21 +1,21 @@
-"""未装拓展时的兜底追踪：归一化互相关（ZNCC）模板匹配。
+"""Fallback tracking when the extension is not installed: normalized cross-correlation (ZNCC) template matching.
 
-和 BootsTAPIR 的关系是「能用」和「好用」的关系，不是同一个东西的两种实现：
+Its relationship to BootsTAPIR is that of "usable" versus "good", not two implementations of the same thing:
 
-- 神经网络那档理解画面内容，目标转个身、被挡住再出来都还认得，遮挡与否
-  由模型自己判断；
-- 这一档只会拿一小块像素去别处找最像的地方。目标一旦转向、缩放、进出阴影，
-  相似度就塌了。所以它只适合纹理清晰、无遮挡、位移平缓的场景。
+- The neural-network tier understands the picture content: it still recognizes a target that turns around or comes back after being blocked, and whether it is occluded
+  is judged by the model itself;
+- This tier only takes a small patch of pixels and looks elsewhere for the most similar spot. Once the target turns, scales, or moves in and out of shadow,
+  the similarity collapses. So it only suits scenes with clear texture, no occlusion, and gentle movement.
 
-之所以还是值得做：拓展包是 190 MB torch + 208 MB 权重，多数用户一开始不会装，
-而「追不了」和「追得糙」对用户是完全不同的两件事。这一档只依赖 numpy——
-numpy 在基础运行时里就有，装不装拓展都能跑。
+Why it is still worth building: the extension pack is 190 MB of torch + 208 MB of weights, and most users will not install it at first,
+and "cannot track" versus "tracks roughly" are two completely different things to the user. This tier depends only on numpy:
+numpy is already in the base runtime, so it runs whether or not the extension is installed.
 
-刻意保留的局限，不要「顺手修好」：
-- 不做多尺度搜索。目标明显缩放时本档就该失败，硬撑着给出结果只会让用户
-  拿着一份错的轨迹去绑卡片，比明说追不住更糟。
-- 遮挡判定就是「相似度掉到阈值以下」，没有别的依据。它会把「被挡住」和
-  「转了个身」判成同一件事——这正是这一档的能力边界。
+Limitations kept on purpose; do not "fix them while you are at it":
+- No multi-scale search. When the target visibly scales, this tier should fail; forcing out a result would only leave the user
+  binding cards to a wrong trajectory, which is worse than saying plainly that it cannot track.
+- Occlusion is decided purely by "similarity falls below the threshold", with no other basis. It treats "blocked" and
+  "turned around" as the same thing; this is exactly the capability boundary of this tier.
 """
 
 from __future__ import annotations
@@ -28,42 +28,42 @@ import numpy as np
 from . import ffmpeg_input
 from .tracker import _parse_size
 
-# 解码时长边缩到这个尺寸。模板匹配是在解码后的像素上做的，太小则模板里
-# 没有足够纹理，太大则每帧的搜索开销和内存都上去（整段视频要留在内存里，
-# 因为要从查询帧向前**和**向后各跑一遍）。
+# Decoding scales the long side to this size. Template matching works on decoded pixels: if it is too small, the template
+# lacks enough texture; if it is too large, the per-frame search cost and memory both go up (the whole video has to stay in memory,
+# since it must run both forward **and** backward from the query frame).
 MAX_SIDE = 720
 
-# 模板边长（奇数，保证有正中心）。21 px 在 720p 上大约是一个指节、一颗纽扣
-# 那么大——小到能贴着目标走，大到还带着足够纹理。
+# Template side length (odd, to guarantee a true center). 21 px at 720p is about the size of a knuckle or a button,
+# small enough to stick to the target, large enough to still carry enough texture.
 TEMPLATE = 21
 
-# 每帧的搜索半径。目标每帧位移超过这个值就会跟丢；调大则每帧开销按平方增长。
+# Per-frame search radius. A target that moves more than this per frame is lost; raising it grows the per-frame cost quadratically.
 SEARCH = 16
 
-# 跟丢之后把搜索半径放大到这个值去重新咬住。只在丢失期间用，所以放大不影响
-# 正常帧的开销。实测这一条很要紧：目标被挡十来帧，等它出来时已经离开了
-# 16 px 的常规搜索窗，不放大就再也找不回来，整条轨迹从此报废。
+# After losing the target, the search radius is widened to this value to lock on again. It is used only during loss, so widening does not affect
+# the cost of normal frames. This one matters a lot in practice: when the target is blocked for a dozen or so frames, by the time it comes out it has already left
+# the regular 16 px search window, and without widening it can never be found again, ruining the whole trajectory from then on.
 REACQUIRE = 48
 
-# 相似度低于此值判为不可见。ZNCC 的取值是 [-1, 1]，同一块纹理正常在 0.8 以上。
+# Similarity below this value is judged invisible. ZNCC ranges over [-1, 1], and the same texture is normally above 0.8.
 OCCLUDED_BELOW = 0.55
 
-# 相似度高于此值时把当前样子掺进模板，慢慢跟上光照和形变。
-# 掺得太快会「跟着噪声跑」，几十帧后模板就漂成了背景。
+# When similarity is above this value, the current appearance is blended into the template so it slowly keeps up with lighting and deformation.
+# Blending too fast makes it "chase the noise", and after a few dozen frames the template drifts into the background.
 ADAPT_ABOVE = 0.85
 ADAPT_RATE = 0.10
 
-# 模板本身的对比度下限。低于这个值说明用户点在了纯色区域，匹配无从谈起，
-# 与其给一条乱跑的轨迹，不如直接说这个点追不了。
+# Lower limit on the template's own contrast. Below this value the user clicked on a solid-color area, where matching is out of the question,
+# so rather than return a wandering trajectory, just say this point cannot be tracked.
 MIN_TEXTURE = 6.0
 
 
 def decode_gray(ffmpeg: str, video: str, max_side: int = MAX_SIDE
                 ) -> Tuple[np.ndarray, Tuple[int, int], Tuple[int, int]]:
-    """解成灰度 (T, H, W) uint8，保持宽高比。返回 (帧, 原始尺寸, 解码尺寸)。
+    """Decode to grayscale (T, H, W) uint8, keeping the aspect ratio. Returns (frames, original size, decoded size).
 
-    和神经网络那档不同，这里**保持宽高比**：模板匹配没有「模型就是这么训练的」
-    这层约束，拉伸只会让模板在一个方向上被挤扁，白白降低匹配质量。
+    Unlike the neural-network tier, the aspect ratio is **kept** here: template matching has no "that is how the model was trained"
+    constraint, and stretching would only squash the template in one direction and lower the matching quality for nothing.
     """
     probe = subprocess.run(
         [ffmpeg, "-hide_banner", *ffmpeg_input(video)],
@@ -71,11 +71,11 @@ def decode_gray(ffmpeg: str, video: str, max_side: int = MAX_SIDE
     )
     src_w, src_h = _parse_size(probe.stderr.decode("utf-8", "replace"))
     if not src_w or not src_h:
-        raise RuntimeError("读不出视频分辨率，无法追踪")
+        raise RuntimeError("Cannot read the video resolution, tracking is impossible")
 
     scale = min(1.0, max_side / max(src_w, src_h))
-    # 宽高都取偶数：奇数尺寸在部分 ffmpeg 缩放器上会被悄悄调整，那样解出来的
-    # 每帧字节数和我们算的对不上，reshape 会错位。
+    # Use even values for both width and height: odd sizes are silently adjusted by some ffmpeg scalers, and then the
+    # bytes per decoded frame no longer match our calculation and reshape would misalign.
     dst_w = max(2, int(round(src_w * scale)) // 2 * 2)
     dst_h = max(2, int(round(src_h * scale)) // 2 * 2)
 
@@ -86,21 +86,21 @@ def decode_gray(ffmpeg: str, video: str, max_side: int = MAX_SIDE
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     if proc.returncode != 0:
-        raise RuntimeError(proc.stderr.decode("utf-8", "replace")[:500] or "ffmpeg 解码失败")
+        raise RuntimeError(proc.stderr.decode("utf-8", "replace")[:500] or "ffmpeg decode failed")
 
     buf = np.frombuffer(proc.stdout, dtype=np.uint8)
     per = dst_w * dst_h
     if buf.size < per:
-        raise RuntimeError("视频没有解出任何一帧")
+        raise RuntimeError("No frame was decoded from the video")
     frames = buf[: buf.size - buf.size % per].reshape(-1, dst_h, dst_w)
     return frames, (src_w, src_h), (dst_w, dst_h)
 
 
 def _zncc_map(window: np.ndarray, templ: np.ndarray) -> np.ndarray:
-    """在 window 里滑动 templ，返回每个位置的 ZNCC 得分图。
+    """Slide templ over window and return the ZNCC score map for every position.
 
-    ZNCC 而不是差值平方和：前者对整体明暗变化免疫（云飘过、自动曝光跳一下
-    都不至于让匹配崩掉），后者会。
+    ZNCC rather than the sum of squared differences: the former is immune to overall brightness changes (a cloud drifting past, an auto-exposure jump
+    will not make the matching collapse), whereas the latter would.
     """
     n = templ.size
     t = templ.astype(np.float32).ravel()
@@ -117,16 +117,16 @@ def _zncc_map(window: np.ndarray, templ: np.ndarray) -> np.ndarray:
     flat = views.reshape(views.shape[0], views.shape[1], n)
     mean = flat.mean(axis=2, keepdims=True)
     centered = flat - mean
-    # 逐候选块的模长。加 eps 防止纯色块（模长 0）除出 inf
+    # Norm of every candidate block. Add eps to keep a solid-color block (norm 0) from dividing out to inf
     norms = np.sqrt((centered * centered).sum(axis=2)) + 1e-6
     return (centered @ t) / (norms * t_norm)
 
 
 def _subpixel(score: np.ndarray, iy: int, ix: int) -> Tuple[float, float]:
-    """在得分图的峰值附近做抛物线拟合，把整数峰值细化到亚像素。
+    """Fit a parabola near the peak of the score map to refine the integer peak to sub-pixel precision.
 
-    只用峰值和左右各一个点。偏移量夹在 ±0.5 内——超出这个范围说明峰不是峰
-    （平顶或者双峰），这时候硬拟合出来的值不可信，宁可退回整数位置。
+    Uses only the peak and one point on each side. The offset is clamped to ±0.5: beyond that range the peak is not a real peak
+    (flat-topped or double-peaked), so a forced fit cannot be trusted and it is better to fall back to the integer position.
     """
     def refine(a: float, b: float, c: float) -> float:
         denom = a - 2.0 * b + c
@@ -144,7 +144,7 @@ def _subpixel(score: np.ndarray, iy: int, ix: int) -> Tuple[float, float]:
 
 
 def _grab(frame: np.ndarray, cx: float, cy: float, half: int) -> Optional[np.ndarray]:
-    """取以 (cx, cy) 为中心、边长 2*half+1 的方块。越界返回 None。"""
+    """Take the square centered at (cx, cy) with side 2*half+1. Returns None if it is out of bounds."""
     x, y = int(round(cx)), int(round(cy))
     if x - half < 0 or y - half < 0:
         return None
@@ -156,26 +156,26 @@ def _grab(frame: np.ndarray, cx: float, cy: float, half: int) -> Optional[np.nda
 def _walk(frames: np.ndarray, start: int, order: Sequence[int],
           templ0: np.ndarray, x0: float, y0: float,
           ) -> Dict[int, Tuple[float, float, bool]]:
-    """从查询帧沿 order 走一遍，逐帧定位。返回 {帧号: (x, y, 可见)}。
+    """Walk along order from the query frame, locating frame by frame. Returns {frame number: (x, y, visible)}.
 
-    跟丢之后不放弃：位置按最后一段速度外推着往前带，模板**不再更新**。
-    目标被挡住几帧又露出来是常事，把外推的位置作为下一次搜索的中心，
-    比停在原地更可能重新咬住。外推期间一律标成不可见。
+    After losing the target, do not give up: the position is extrapolated forward at the last velocity and the template is **no longer updated**.
+    A target blocked for a few frames and then reappearing is common, and using the extrapolated position as the center of the next search
+    is more likely to lock on again than staying put. During extrapolation everything is marked invisible.
     """
     half = templ0.shape[0] // 2
     templ = templ0.astype(np.float32).copy()
     x, y = x0, y0
     vx = vy = 0.0
-    gap = 0  # 已经连续丢了多少帧，重新咬住时用它把速度摊平
+    gap = 0  # how many frames in a row have been lost, used to spread the velocity out when the target is locked on again
     out: Dict[int, Tuple[float, float, bool]] = {start: (x0, y0, True)}
 
     lost = False
     for f in order:
         frame = frames[f]
-        px, py = x + vx, y + vy  # 先按上一段速度预测，再在预测点附近搜
+        px, py = x + vx, y + vy  # predict from the previous velocity first, then search around the predicted point
         radius = REACQUIRE if lost else SEARCH
         pad = half + radius
-        # 画面比搜索窗还小的话没法搜，直接算不可见
+        # If the frame is smaller than the search window there is nothing to search, so count it as invisible directly
         if frame.shape[0] < 2 * pad + 1 or frame.shape[1] < 2 * pad + 1:
             out[f] = (px, py, False)
             x, y, lost = px, py, True
@@ -193,15 +193,15 @@ def _walk(frames: np.ndarray, start: int, order: Sequence[int],
         best = float(score[iy, ix])
         dx, dy = _subpixel(score, int(iy), int(ix))
 
-        # 得分图左上角对应的中心坐标是 (cx - radius, cy - radius)
+        # The center coordinate corresponding to the top-left corner of the score map is (cx - radius, cy - radius)
         nx = cx - radius + float(ix) + dx
         ny = cy - radius + float(iy) + dy
 
         visible = best >= OCCLUDED_BELOW
         if visible:
-            # 重新咬住之后速度要按**实际走过的帧数**摊，不能拿一帧的位移当速度：
-            # 挡了 30 帧再出来时 nx - x 是三十帧的总位移，直接当速度会让下一帧
-            # 的预测冲出去一大截，刚咬住又丢。
+            # After locking on again, the velocity must be spread over the **number of frames actually traversed**; the displacement of one frame cannot be used as the velocity:
+            # when it comes out after being blocked for 30 frames, nx - x is the total displacement of thirty frames, and using it directly as the velocity makes the next frame's
+            # prediction overshoot by a large distance, so it is lost again right after locking on.
             span = max(1, gap + 1)
             vx, vy = (nx - x) / span, (ny - y) / span
             x, y = nx, ny
@@ -212,10 +212,10 @@ def _walk(frames: np.ndarray, start: int, order: Sequence[int],
                 if patch is not None:
                     templ = (1.0 - ADAPT_RATE) * templ + ADAPT_RATE * patch.astype(np.float32)
         else:
-            # 跟丢：按**匀速**继续外推，不衰减。
-            # 衰减等于假设目标停下了，而挡住它的东西通常是别的物体从前面划过，
-            # 目标自己还在按原速走——实测衰减会让预测点原地不动，目标出来时
-            # 已经离开搜索窗，整条轨迹从此再也接不上。
+            # Lost: keep extrapolating at **constant velocity**, with no decay.
+            # Decay amounts to assuming the target has stopped, whereas what blocks it is usually another object sweeping past in front,
+            # and the target itself is still moving at its original speed; in practice decay makes the predicted point stand still, so when the target comes out
+            # it has already left the search window, and the whole trajectory can never be reconnected.
             x, y = px, py
             lost = True
             gap += 1
@@ -229,10 +229,10 @@ def track_template(
     queries: Sequence[Sequence[float]],
     on_progress: Optional[Callable[[int, int], None]] = None,
 ) -> Dict[str, Any]:
-    """在解码分辨率上追一组点。queries 是 [(帧号, x, y), ...]，坐标同解码分辨率。
+    """Track a group of points at the decode resolution. queries is [(frame number, x, y), ...], with coordinates at the decode resolution as well.
 
-    每个点从自己的查询帧出发，向后走到片尾、向前走到片头——用户在中间某帧
-    指的目标，前后都该有轨迹，只往后走会让前半段凭空缺失。
+    Each point starts from its own query frame and walks to the end of the clip and back to the start of the clip: a target the user
+    picked at some middle frame should have a trajectory both before and after it, and walking only toward the end would leave the first half missing out of thin air.
     """
     total = int(frames.shape[0])
     half = TEMPLATE // 2
@@ -245,7 +245,7 @@ def track_template(
         templ = _grab(frames[f0], qx, qy, half)
 
         if templ is None:
-            notes.append("查询点太靠近画面边缘，取不出完整模板")
+            notes.append("The query point is too close to the edge of the frame to extract a complete template")
             tracks.append([[float(qx), float(qy)]] * total)
             visible.append([False] * total)
             if on_progress:
@@ -254,9 +254,9 @@ def track_template(
 
         texture = float(templ.astype(np.float32).std())
         if texture < MIN_TEXTURE:
-            # 纯色区域内部没有可对应的局部特征，匹配结果纯属噪声。
-            # 与其给一条乱跑的轨迹，不如整条标成不可见并说明原因。
-            notes.append(f"查询点周围几乎没有纹理（对比度 {texture:.1f}），这一档追不住")
+            # A solid-color area has no local features to match against, so the match result is pure noise.
+            # Rather than return a wandering trajectory, mark the whole trajectory invisible and explain why.
+            notes.append(f"There is almost no texture around the query point (contrast {texture:.1f}), so this tier cannot track it")
             tracks.append([[float(qx), float(qy)]] * total)
             visible.append([False] * total)
             if on_progress:

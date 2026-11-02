@@ -1,16 +1,16 @@
-"""取 light 档主体检测的两个权重，产物落在 tools/subject/out/。
+"""Fetch the two weights for light-tier subject detection; the output lands in tools/subject/out/.
 
-**只在构建机上跑一次**，产物随「拓展库包」发给用户；用户那边只要 onnxruntime，
-不需要 torch，也不需要 transformers。产物不进 git（out/ 被忽略）。
+**Run only once on the build machine**; the output ships to users with the "extension library package"; on the user's side only onnxruntime is needed,
+neither torch nor transformers. The output does not go into git (out/ is ignored).
 
-    python tools/subject/fetch_light_models.py [--out <目录>] [--skip-yunet] [--skip-rtdetr]
+    python tools/subject/fetch_light_models.py [--out <dir>] [--skip-yunet] [--skip-rtdetr]
 
-需要的环境：torch + transformers（只在导 RT-DETR 时用到）、onnx（torch.onnx.export
-序列化 proto 要它）、onnxruntime（导完立刻回灌一次随机输入验形状）。
-开发机上用 C:/Users/admin/anaconda3/envs/cuda_Vit/python.exe，它缺 onnx，
-临时 `pip install --target <临时目录> onnx` 再挂 PYTHONPATH，别改那个环境本身。
+Required environment: torch + transformers (only used when exporting RT-DETR), onnx (torch.onnx.export
+needs it to serialize the proto), onnxruntime (right after export, feed a random input back to verify the shapes).
+On the dev machine use C:/Users/admin/anaconda3/envs/cuda_Vit/python.exe, which lacks onnx,
+so temporarily `pip install --target <temp dir> onnx` and then put it on PYTHONPATH; do not change that environment itself.
 
-网络：HF 走 huggingface.co，不通就设 HF_ENDPOINT=https://hf-mirror.com。
+Network: HF goes through huggingface.co; if that is unreachable, set HF_ENDPOINT=https://hf-mirror.com.
 """
 
 from __future__ import annotations
@@ -23,67 +23,67 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_OUT = os.path.join(HERE, "out")
 
-# YuNet 2023mar：OpenCV Zoo 的官方产物，约 0.3 MB。
-# 许可证是 **MIT**，不是 Apache-2.0：opencv_zoo 根仓库确实是 Apache-2.0，但它的
-# README 明写「Please refer to licenses of different models」，而
-# models/face_detection_yunet/ 目录下自带一份 MIT LICENSE
-# （Copyright (c) 2020 Shiqi Yu <shiqi.yu@gmail.com>），以目录内的为准。
-# 权重的训练上游 https://github.com/ShiqiYu/libfacedetection.train 是 BSD-3-Clause。
-# 两份全文都随拓展包分发，见 desktop/scripts/licenses/ 和 THIRD-PARTY-LICENSES.md 第 9 节。
-# 直接拿 raw 链接，不经第三方镜像 —— 这份权重是要跟着安装包发给用户的。
+# YuNet 2023mar: an official artifact of OpenCV Zoo, about 0.3 MB.
+# The license is **MIT**, not Apache-2.0: the opencv_zoo root repo is indeed Apache-2.0, but its
+# README explicitly says "Please refer to licenses of different models", and
+# models/face_detection_yunet/ ships with its own MIT LICENSE
+# (Copyright (c) 2020 Shiqi Yu <shiqi.yu@gmail.com>); the one inside the directory prevails.
+# The training upstream of the weights, https://github.com/ShiqiYu/libfacedetection.train, is BSD-3-Clause.
+# The full text of both ships with the extension package, see desktop/scripts/licenses/ and section 9 of THIRD-PARTY-LICENSES.md.
+# Fetch the raw link directly, not through a third-party mirror: these weights ship to users with the installer.
 YUNET_URL = (
     "https://github.com/opencv/opencv_zoo/raw/main/"
     "models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
 )
 YUNET_NAME = "yunet.onnx"
-# 这份 ONNX 的输入维度是**写死**的 1x3x640x640（OpenCV 自己的 dnn 会重塑图，
-# onnxruntime 不会），所以 yunet.py 必须 letterbox 到 640 再喂。
+# The input dimensions of this ONNX are **hard-coded** as 1x3x640x640 (OpenCV's own dnn reshapes the graph,
+# onnxruntime does not), so yunet.py must letterbox to 640 before feeding it.
 YUNET_SIZE = 640
 
 RTDETR_REPO = "PekingU/rtdetr_r18vd"
 RTDETR_NAME = "rtdetr_r18vd.onnx"
-RTDETR_SIZE = 640  # HF 的 RTDetrImageProcessor 默认直接 resize 到 640x640，不保比例
+RTDETR_SIZE = 640  # HF's RTDetrImageProcessor by default resizes straight to 640x640, without keeping the aspect ratio
 
 
 def fetch_yunet(out_dir: str) -> str:
     dst = os.path.join(out_dir, YUNET_NAME)
     if os.path.isfile(dst):
-        print(f"[yunet] 已存在，跳过：{dst}（{os.path.getsize(dst)} 字节）")
+        print(f"[yunet] already exists, skipping: {dst} ({os.path.getsize(dst)} bytes)")
         return dst
-    print(f"[yunet] 下载 {YUNET_URL}")
+    print(f"[yunet] downloading {YUNET_URL}")
     tmp = dst + ".part"
     with urllib.request.urlopen(YUNET_URL, timeout=120) as resp, open(tmp, "wb") as fh:
         fh.write(resp.read())
     os.replace(tmp, dst)
-    print(f"[yunet] 写入 {dst}（{os.path.getsize(dst)} 字节）")
+    print(f"[yunet] wrote {dst} ({os.path.getsize(dst)} bytes)")
     return dst
 
 
 def export_rtdetr(out_dir: str) -> str:
     dst = os.path.join(out_dir, RTDETR_NAME)
     if os.path.isfile(dst):
-        print(f"[rtdetr] 已存在，跳过：{dst}（{os.path.getsize(dst)} 字节）")
+        print(f"[rtdetr] already exists, skipping: {dst} ({os.path.getsize(dst)} bytes)")
         return dst
 
     import torch
     from transformers import RTDetrForObjectDetection
 
-    print(f"[rtdetr] 拉 {RTDETR_REPO}（HF_ENDPOINT={os.environ.get('HF_ENDPOINT', '默认')}）")
+    print(f"[rtdetr] pulling {RTDETR_REPO} (HF_ENDPOINT={os.environ.get('HF_ENDPOINT', 'default')})")
     model = RTDetrForObjectDetection.from_pretrained(RTDETR_REPO)
     model.eval()
 
     id2label = model.config.id2label
-    # 核对 person 是 COCO 类 0：解码那边写死了 0，配置对不上就必须停下来
+    # Verify that person is COCO class 0: the decoding side hard-codes 0, so if the config does not match we must stop
     person_id = [int(k) for k, v in id2label.items() if str(v).lower() == "person"]
-    print(f"[rtdetr] id2label 里 person 的 id = {person_id}，类别数 = {len(id2label)}")
+    print(f"[rtdetr] id of person in id2label = {person_id}, number of classes = {len(id2label)}")
     if person_id != [0]:
-        raise SystemExit(f"person 不是 0 号类（拿到 {person_id}），rtdetr.py 的解码要跟着改")
+        raise SystemExit(f"person is not class 0 (got {person_id}), the decoding in rtdetr.py has to change accordingly")
 
     class Wrap(torch.nn.Module):
-        """只留 (logits, pred_boxes) 两个输出。
+        """Keep only the two outputs (logits, pred_boxes).
 
-        原 forward 返回的是 dataclass，里面还挂着 encoder/decoder 的中间层，
-        直接导会把一堆用不上的张量写进图里。
+        The original forward returns a dataclass that also carries the encoder/decoder intermediate layers,
+        and exporting it directly would write a pile of unused tensors into the graph.
         """
 
         def __init__(self, m):
@@ -96,7 +96,7 @@ def export_rtdetr(out_dir: str) -> str:
 
     dummy = torch.zeros(1, 3, RTDETR_SIZE, RTDETR_SIZE, dtype=torch.float32)
     tmp = dst + ".part"
-    print("[rtdetr] torch.onnx.export（opset 17）……")
+    print("[rtdetr] torch.onnx.export (opset 17)…")
     with torch.no_grad():
         torch.onnx.export(
             Wrap(model),
@@ -109,12 +109,12 @@ def export_rtdetr(out_dir: str) -> str:
             dynamo=False,
         )
     os.replace(tmp, dst)
-    print(f"[rtdetr] 写入 {dst}（{os.path.getsize(dst)} 字节）")
+    print(f"[rtdetr] wrote {dst} ({os.path.getsize(dst)} bytes)")
     return dst
 
 
 def verify(path: str, feed_name: str, shape) -> None:
-    """载进 onnxruntime 跑一次随机输入，把输出形状打出来。"""
+    """Load it into onnxruntime, run it once on a random input, and print the output shapes."""
     import numpy as np
     import onnxruntime as ort
 
@@ -122,7 +122,7 @@ def verify(path: str, feed_name: str, shape) -> None:
     x = np.random.rand(*shape).astype("float32")
     outs = sess.run(None, {feed_name: x})
     names = [o.name for o in sess.get_outputs()]
-    print(f"[verify] {os.path.basename(path)} 输入 {shape} → " +
+    print(f"[verify] {os.path.basename(path)} input {shape} → " +
           ", ".join(f"{n}{list(o.shape)}" for n, o in zip(names, outs)))
 
 
@@ -142,7 +142,7 @@ def main(argv=None) -> int:
         p = export_rtdetr(args.out)
         verify(p, "pixel_values", (1, 3, RTDETR_SIZE, RTDETR_SIZE))
 
-    print("\n产物：")
+    print("\nOutputs:")
     for name in (YUNET_NAME, RTDETR_NAME):
         f = os.path.join(args.out, name)
         if os.path.isfile(f):

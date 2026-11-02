@@ -1,5 +1,5 @@
-# faster-whisper：CTranslate2 后端，CPU 上用 int8 量化即可跑，不需要 torch。
-# 依赖显式列出只是为了离线排查方便，pip 自己也会解出同样的树。
+# faster-whisper: CTranslate2 backend, runs on CPU with int8 quantization and does not need torch.
+# The dependencies are listed explicitly only to ease offline troubleshooting; pip would resolve the same tree by itself anyway.
 faster-whisper>=1.0.3
 ctranslate2>=4.4.0
 onnxruntime>=1.17.0

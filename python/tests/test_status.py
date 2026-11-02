@@ -1,4 +1,4 @@
-"""status 子命令：引擎没装时也必须成功返回一行合契约的 JSON。"""
+"""status subcommand: even when the engine is not installed it must still return one line of contract-conformant JSON."""
 
 import json
 import os
@@ -10,9 +10,9 @@ import unittest
 PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-# -I 隔离模式同时打开 -E，会连 PYTHONPATH 一起忽略；包已经装进 site-packages 时
-# 直接 -m promptcut_stt 就行，但源码树里跑测试时得自己把源码目录塞进 sys.path。
-# 用 runpy 起模块，既保住隔离又能定位到源码。
+# -I isolated mode also turns on -E, which ignores PYTHONPATH as well; when the package is already installed into site-packages
+# a plain -m promptcut_stt is enough, but when running tests in the source tree you have to put the source directory on sys.path yourself.
+# Launching the module via runpy keeps the isolation and still locates the source.
 BOOTSTRAP = (
     "import sys, runpy; sys.path.insert(0, r'{root}'); "
     "runpy.run_module('promptcut_stt', run_name='__main__', alter_sys=True)"
@@ -20,7 +20,7 @@ BOOTSTRAP = (
 
 
 def run_subcommand(args, extra_env=None):
-    """用当前解释器以 -I 隔离模式跑一个子命令，返回 CompletedProcess。"""
+    """Run a subcommand with the current interpreter in -I isolated mode and return the CompletedProcess."""
     env = {
         "SystemRoot": os.environ.get("SystemRoot", ""),
         "PATH": os.environ.get("PATH", ""),
@@ -51,7 +51,7 @@ class TestStatus(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
 
         lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
-        self.assertEqual(len(lines), 1, msg=f"stdout 不是恰好一行：{proc.stdout!r}")
+        self.assertEqual(len(lines), 1, msg=f"stdout is not exactly one line: {proc.stdout!r}")
         data = json.loads(lines[0])
 
         for key in ("python", "executable", "pylibs", "models_dir", "engines", "cuda", "models", "ffmpeg"):
@@ -61,11 +61,11 @@ class TestStatus(unittest.TestCase):
         self.assertIsInstance(data["cuda"], bool)
         self.assertIsInstance(data["models"], list)
 
-        # 干净环境下 pylibs 目录由 status 建出来，且可写
+        # In a clean environment the pylibs directory is created by status, and is writable
         self.assertEqual(data["pylibs"]["path"], pylibs)
         self.assertTrue(data["pylibs"]["writable"])
 
-        # 两个引擎都要报告，installed 必须是布尔（装没装都不断言值）
+        # Both engines must be reported, and installed must be a boolean (its value is not asserted, installed or not)
         self.assertEqual(set(data["engines"]), {"faster-whisper", "whisper"})
         for name, info in data["engines"].items():
             self.assertIsInstance(info["installed"], bool, msg=name)
@@ -73,7 +73,7 @@ class TestStatus(unittest.TestCase):
             self.assertIn("error", info)
 
     def test_status_without_pylibs_env(self):
-        """没设 PROMPTCUT_PYLIBS 也不能崩，只是 path 为 null。"""
+        """It must not crash when PROMPTCUT_PYLIBS is unset; path is just null."""
         proc = run_subcommand(["status"])
         self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
         data = json.loads(proc.stdout.splitlines()[0])
@@ -105,7 +105,7 @@ class TestStatus(unittest.TestCase):
         self.assertEqual(proc.returncode, 1)
         data = json.loads(proc.stdout.splitlines()[0])
         self.assertEqual(data["event"], "error")
-        self.assertIn("不存在", data["message"])
+        self.assertIn("does not exist", data["message"])
 
 
 if __name__ == "__main__":

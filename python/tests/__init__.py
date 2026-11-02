@@ -1,1 +1,1 @@
-"""promptcut_stt 的最小单元测试。用内置解释器的标准库 unittest 运行。"""
+"""Minimal unit tests for promptcut_stt. Run with the standard-library unittest of the bundled interpreter."""

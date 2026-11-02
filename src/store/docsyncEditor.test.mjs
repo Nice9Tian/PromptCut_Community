@@ -162,7 +162,7 @@ async function serverCopy(env) {
 
 function bigProject(n = 900) {
   const p = clipsProject();
-  p.tracks[0].clips = Array.from({ length: n }, (_, i) => ({ id: `c${i}`, cardId: "title", start: i * 2, end: i * 2 + 1, params: { text: `clip ${i} ${"x".repeat(120)}` } }));
+  p.tracks[0].clips = Array.from({ length: n }, (_, i) => ({ id: `c${i}`, cardId: "title", start: i * 2, end: i * 2 + 1, params: { text: `clip ${i} ${"x".repeat(360)}` } }));
   return p;
 }
 

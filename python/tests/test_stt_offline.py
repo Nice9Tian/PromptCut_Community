@@ -1,6 +1,6 @@
-"""云节点用的离线转写：status 报已放齐的权重、--offline 不联网、--requirements 指定锁定依赖、错误带 kind。
+"""Offline transcription for cloud nodes: status reports the weights that are in place, --offline does not touch the network, --requirements pins the locked dependencies, errors carry a kind.
 
-这些都是 P2（云端语音转写）新增的开关；不带开关时的行为由 test_status.py 等原有用例守着。
+These are all switches added by P2 (cloud speech-to-text); behavior without the switches is guarded by existing cases such as test_status.py.
 """
 
 import json
@@ -43,7 +43,7 @@ class TestStatusAvailableModels(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             models = os.path.join(tmp, "models")
             make_snapshot(models, "small", complete=True)
-            make_snapshot(models, "tiny", complete=False)  # 缺 model.bin，不算
+            make_snapshot(models, "tiny", complete=False)  # model.bin is missing, so it doesn't count
             proc = run_subcommand(["status"], {"PROMPTCUT_PYLIBS": os.path.join(tmp, "pylibs"), "PROMPTCUT_MODELS": models})
             self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
             data = json.loads(proc.stdout.splitlines()[0])
@@ -77,12 +77,12 @@ class TestOfflineTranscribe(unittest.TestCase):
         self.assertEqual(events[-1]["kind"], "model-missing")
 
     def test_missing_weights_report_instead_of_downloading(self):
-        # 没装引擎时先报 engine-missing；装了而没权重时报 model-missing。两者都不许联网
+        # With no engine installed it reports engine-missing first; with the engine installed but no weights it reports model-missing. Neither may touch the network
         proc, events = self.run_offline("--model", "small")
         self.assertEqual(proc.returncode, 1)
         self.assertEqual(events[-1]["event"], "error")
         self.assertIn(events[-1]["kind"], ("engine-missing", "model-missing"))
-        self.assertNotIn("下载", events[-1]["message"].replace("不会联网下载", "").replace("不联网下载", ""))
+        self.assertNotIn("download", events[-1]["message"].replace("will not download over the network", "").replace("no network download", ""))
 
     def test_missing_input_has_kind(self):
         proc = run_subcommand(["transcribe", "--input", "no-such-file.mp4", "--offline"])

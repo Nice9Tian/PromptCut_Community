@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><title>remotion 式的框架探针的画面台</title>
+<html lang="en"><head><meta charset="utf-8"><title>Render harness for the remotion-style framework probe</title>
 <!--
-  探针 scripts/probes/remotion-style-probe.mjs 用的画面台：一个 1920×1080 的框，往里挂一张卡的组件，按探针给的 t 重渲。
-  只做「把卡的 Component 挂上、换 t、卸掉」这三件事，不带舞台、时钟、预渲染——要比的就是卡片自己在不同的 t 上画出什么。
-  卡片模块经本工作区的开发服务器载入（用户卡走改动层与卡片插件的转换钩子，和编辑器载入它的路相同）。
+  The render harness used by the probe scripts/probes/remotion-style-probe.mjs: a 1920×1080 frame into which a card's component is mounted and re-rendered at the t given by the probe.
+  It does only these three things, "mount the card's Component, change t, unmount", with no stage, clock or prerender: what is being compared is what the card itself draws at different values of t.
+  The card module is loaded through this workspace's dev server (a user card goes through the overlay layer and the transform hook of the card plugin, the same route the editor uses to load it).
 -->
 <style>
   html, body { margin: 0; background: #101418; overflow: hidden; }
@@ -14,7 +14,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 
-/** 组件抛错时接住，记下来给探针读（不让整页白掉） */
+/** Catch errors thrown by the component and record them for the probe to read (so the whole page does not go blank) */
 class Boundary extends React.Component {
   constructor(props) { super(props); this.state = { error: null }; }
   static getDerivedStateFromError(error) { return { error }; }
@@ -27,26 +27,26 @@ let root = null, def = null, params = null, mod = null;
 const render = (t) => flushSync(() => root.render(React.createElement(Boundary, null, React.createElement(def.Component, { params, playToken: 0, t, duration: 10 }))));
 
 window.__rs = {
-  /** 载入一个卡片模块，回它导出的卡片定义的概况 */
+  /** Load a card module and return a summary of the card definition it exports */
   async load(url) {
     mod = await import(/* @vite-ignore */ url);
     def = Object.values(mod).find(isCardDef) ?? null;
-    if (!def) throw new Error(`${url} 里没有卡片定义`);
+    if (!def) throw new Error(`${url} contains no card definition`);
     return { id: def.id, frameMode: def.frameMode, frozen: Object.isFrozen(def), defaultsFrozen: Object.isFrozen(def.defaults), componentFrozen: Object.isFrozen(def.Component), exports: Object.keys(mod) };
   },
-  /** 挂上：从这一刻的 t 开始 */
+  /** Mount: start from the t of this moment */
   mount(t, overrides = {}) {
     window.__rsError = null;
     params = { ...def.defaults, ...overrides };
     root = createRoot(document.getElementById("stage"));
     render(t);
   },
-  /** 同一个挂着的组件换一个 t（顺着播、来回跳都走它） */
+  /** Change t on the same mounted component (both sequential playback and jumping back and forth go through it) */
   set(t) { render(t); },
   unmount() { if (root) flushSync(() => root.unmount()); root = null; },
   error() { return window.__rsError ?? null; },
 };
-// ?css=1：带上编辑器自己的样式（Tailwind 等），用 Tailwind 类写的卡才排得对（指南的盲写验收脚本用；remotion-style-probe 不带，它的卡都用行内样式）
+// ?css=1: bring in the editor's own styles (Tailwind etc.), so that cards written with Tailwind classes lay out correctly (used by the guide's blind-write acceptance script; remotion-style-probe does not pass it, as its cards all use inline styles)
 if (new URLSearchParams(location.search).get("css") === "1") await import(/* @vite-ignore */ "/src/index.css");
 window.__rsReady = true;
 </script></body></html>

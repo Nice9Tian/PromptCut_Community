@@ -1,11 +1,11 @@
-"""抽帧 + 缩放。
+"""Frame extraction + scaling.
 
-只在指定的几个时刻各抽一帧（样本数是几十个量级），所以每帧起一次 ffmpeg 是
-划算的 —— 比把整段视频解出来再挑帧省几个数量级的 I/O。
+Only one frame is extracted at each of a few given times (the sample count is in the tens), so launching ffmpeg once per frame is
+worth it: it saves several orders of magnitude of I/O compared with decoding the whole video and then picking frames.
 
-缩放有两处：ffmpeg 那次是「把 4K 降到 max-side，别让后面的 numpy 搬 8 MB 的
-数组」；模型输入那次（resize_bilinear / letterbox）是纯 numpy，因为用户机器上
-**没有 cv2**，也不打算为了 resize 塞一个 opencv 进拓展包。
+There are two places that scale: the ffmpeg one is "bring 4K down to max-side, so the numpy code afterwards does not move an 8 MB
+array"; the model-input one (resize_bilinear / letterbox) is pure numpy, because the user's machine
+**has no cv2**, and there is no plan to stuff opencv into the extension pack just for resize.
 """
 
 from __future__ import annotations
@@ -17,9 +17,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-# 云端 Agent 服务把素材取到对话的工作目录后再递路径来:素材是成员传的,伪装成媒体文件的
-# 播放列表(HLS、concat)不能让 ffmpeg / ffprobe 去连网络地址。置 True 时每个输入前加
-# `-protocol_whitelist file`。桌面版不设(它递的是素材服务上的 http 地址)。
+# The Cloud Agent service fetches the asset into the chat's working directory and then passes the path: assets are uploaded by members, and a playlist disguised as a media file
+# Playlists (HLS, concat) must not let ffmpeg / ffprobe connect to network addresses. When set to True, each input is preceded by
+# `-protocol_whitelist file`. The desktop app does not set it (it passes http addresses on the asset service).
 LOCAL_ONLY = False
 
 
@@ -28,7 +28,7 @@ def _protocol_args() -> List[str]:
 
 
 def _no_window() -> dict:
-    """Windows 上别弹黑框：子进程是从窗口程序里起的，默认会闪一个控制台。"""
+    """Do not pop up a black window on Windows: the subprocess is started from a windowed program, which by default would flash a console."""
     if os.name != "nt":
         return {}
     startupinfo = subprocess.STARTUPINFO()
@@ -37,7 +37,7 @@ def _no_window() -> dict:
 
 
 def ffprobe_path(ffmpeg: Optional[str]) -> Optional[str]:
-    """ffprobe 就在 ffmpeg 旁边（安装包里是同一个目录），先按同目录找。"""
+    """ffprobe sits next to ffmpeg (the same directory in the installer package), so look in the same directory first."""
     if ffmpeg:
         d = os.path.dirname(os.path.abspath(ffmpeg))
         for name in ("ffprobe.exe", "ffprobe"):
@@ -48,14 +48,14 @@ def ffprobe_path(ffmpeg: Optional[str]) -> Optional[str]:
 
 
 def probe_size(ffmpeg: Optional[str], video: str) -> Tuple[int, int]:
-    """读原始视频的宽高（像素）。读不出来就抛 RuntimeError。
+    """Read the width and height (pixels) of the original video. Raise RuntimeError if it cannot be read.
 
-    结果里的坐标必须是**原始视频像素**，所以这一步不能省：抽帧时缩过的比例
-    要靠它换算回去。
+    The coordinates in the result must be in **original video pixels**, so this step cannot be skipped: the scale applied during frame extraction
+    has to be converted back with it.
     """
     probe = ffprobe_path(ffmpeg)
     if not probe:
-        raise RuntimeError("找不到 ffprobe，读不出视频分辨率。")
+        raise RuntimeError("ffprobe not found, cannot read the video resolution.")
     proc = subprocess.run(
         [probe, "-v", "error", "-select_streams", "v:0",
          "-show_entries", "stream=width,height",
@@ -64,19 +64,19 @@ def probe_size(ffmpeg: Optional[str], video: str) -> Tuple[int, int]:
         **_no_window(),
     )
     if proc.returncode != 0:
-        raise RuntimeError((proc.stderr or "").strip()[:400] or "ffprobe 读不出这个文件的视频信息")
+        raise RuntimeError((proc.stderr or "").strip()[:400] or "ffprobe cannot read the video information of this file")
     txt = (proc.stdout or "").strip().splitlines()
     if not txt:
-        raise RuntimeError("这个文件里没有视频轨")
+        raise RuntimeError("This file has no video track")
     try:
         w, h = txt[0].strip().split("x")[:2]
         return int(w), int(h)
     except Exception:
-        raise RuntimeError(f"ffprobe 的输出看不懂：{txt[0]!r}")
+        raise RuntimeError(f"Cannot parse the ffprobe output: {txt[0]!r}")
 
 
 def target_size(width: int, height: int, max_side: int) -> Tuple[int, int]:
-    """按最长边缩到 max_side（只缩不放）。"""
+    """Scale down to max_side by the longest side (shrink only, never enlarge)."""
     longest = max(width, height)
     if longest <= max_side or longest <= 0:
         return width, height
@@ -85,10 +85,10 @@ def target_size(width: int, height: int, max_side: int) -> Tuple[int, int]:
 
 
 def grab_frame(ffmpeg: str, video: str, t: float, width: int, height: int) -> np.ndarray:
-    """抽 t 秒那一帧，返回 HxWx3 的 BGR uint8。
+    """Extract the frame at t seconds and return an HxWx3 BGR uint8 array.
 
-    -ss 放在 -i **前面**：ffmpeg 会先跳到最近的关键帧再解码到目标时刻，比放在
-    后面（从头解）快几十倍，且现代 ffmpeg 这条路依然是帧精确的。
+    -ss goes **before** -i: ffmpeg first jumps to the nearest keyframe and then decodes up to the target time, which compared with putting it
+    after -i (decoding from the start) is dozens of times faster, and on modern ffmpeg this path is still frame-accurate.
     """
     cmd = [
         ffmpeg, "-hide_banner", "-loglevel", "error",
@@ -101,16 +101,16 @@ def grab_frame(ffmpeg: str, video: str, t: float, width: int, height: int) -> np
     per_frame = width * height * 3
     if proc.returncode != 0 or len(proc.stdout) < per_frame:
         detail = proc.stderr.decode("utf-8", "replace").strip()[:300]
-        raise RuntimeError(f"抽 {t:.3f}s 那一帧失败：{detail or '没有解出数据（时刻超出时长？）'}")
+        raise RuntimeError(f"Failed to extract the frame at {t:.3f}s: {detail or 'no data decoded (time beyond the duration?)'}")
     buf = np.frombuffer(proc.stdout[:per_frame], dtype=np.uint8)
     return buf.reshape(height, width, 3)
 
 
 def resize_bilinear(img: np.ndarray, out_w: int, out_h: int) -> np.ndarray:
-    """双线性缩放，返回 float32。
+    """Bilinear scaling, returns float32.
 
-    采样点按 (dst + 0.5) * scale - 0.5 取，和 OpenCV / PIL 的 align_corners=False
-    一致 —— 差半个像素的话，小脸的框会整体偏，NMS 之后偏得更明显。
+    Sample points are taken at (dst + 0.5) * scale - 0.5, the same as align_corners=False in OpenCV / PIL;
+    if it is off by half a pixel, the boxes of small faces shift as a whole, and more visibly after NMS.
     """
     ih, iw = img.shape[:2]
     src = img.astype(np.float32)
@@ -141,11 +141,11 @@ def resize_bilinear(img: np.ndarray, out_w: int, out_h: int) -> np.ndarray:
 
 
 def letterbox(img: np.ndarray, size: int) -> Tuple[np.ndarray, float]:
-    """保比例缩到 size×size 的画布里，右/下补黑，返回 (画布 float32, 缩放系数)。
+    """Scale proportionally into a size×size canvas, pad right/bottom with black, return (canvas float32, scale factor).
 
-    YuNet 那份 ONNX 的输入维度是写死的 640×640（OpenCV 自己的 dnn 会重塑图，
-    onnxruntime 不会），直接拉伸会把脸压扁，所以要 letterbox。只往右下补，
-    左上角对齐原点，框换算回去除以缩放系数就行，不用再减边距。
+    The input dimensions of that YuNet ONNX are hard-coded to 640×640 (OpenCV's own dnn reshapes the graph,
+    onnxruntime does not), and stretching directly would squash faces flat, hence the letterbox. Pad only to the right and bottom,
+    so the top-left corner stays aligned with the origin; converting boxes back is just dividing by the scale factor, with no margin to subtract.
     """
     ih, iw = img.shape[:2]
     if iw <= 0 or ih <= 0:
@@ -155,13 +155,13 @@ def letterbox(img: np.ndarray, size: int) -> Tuple[np.ndarray, float]:
     nh = max(1, min(size, int(round(ih * scale))))
     canvas = np.zeros((size, size, img.shape[2]), dtype=np.float32)
     canvas[:nh, :nw] = resize_bilinear(img, nw, nh)
-    # 实际用到的缩放系数按取整后的尺寸重算，否则框换算回去会差一两个像素
+    # Recompute the scale factor actually used from the rounded size, otherwise converted boxes are off by a pixel or two
     return canvas, nw / float(iw)
 
 
 def scale_boxes(boxes: List[Dict[str, Any]], factor: float,
                 width: int, height: int) -> List[Dict[str, Any]]:
-    """把框从「抽出来的帧」的像素换算回原始视频像素，并夹进画面内。"""
+    """Convert boxes from the pixels of the "extracted frame" back to original video pixels and clamp them into the picture."""
     out: List[Dict[str, Any]] = []
     for b in boxes:
         x = float(b["x"]) * factor

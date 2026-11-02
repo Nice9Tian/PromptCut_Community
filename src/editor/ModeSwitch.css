@@ -1,12 +1,12 @@
 /*
- * 三选一的分段控件(氛围式 / 传统式 / SKILL)。一个整体:外面一圈边框、里面三格等宽,一块滑块在底下移动。
- * 高度 28px,和顶栏其它控件(.pc-btn / .pc-select)对齐。
+ * A three-way segmented control (Vibe mode / Classic mode / SKILL). One unit: a border around the outside, three equal-width cells inside, and a slider moving underneath.
+ * Height is 28px, aligned with the other top bar controls (.pc-btn / .pc-select).
  */
 .pc-modeswitch {
   position: relative;
   display: grid;
-  /* 三格等宽 —— 滑块靠 translateX(index * 100%) 定位,等宽才对得上。
-     宽度按内容取(max-content),每格就都等于最宽那一格:英文、日文的标签比中文长,不能让某一格单独被撑宽 */
+  /* Three cells of equal width: the slider is positioned via translateX(index * 100%), and only equal widths make it line up.
+     Widths are taken from the content (max-content), so every cell equals the widest one: English and Japanese labels are longer than Chinese ones, and no single cell may be stretched wider on its own. */
   grid-template-columns: repeat(3, 1fr);
   width: max-content;
   height: 28px;
@@ -14,12 +14,12 @@
   border: 1px solid var(--ui-border-strong);
   border-radius: var(--ui-radius, 6px);
   background: var(--ui-panel-2);
-  /* 顶栏放不下时整体收缩,但别被压扁到看不清 */
+  /* Shrinks as a whole when the top bar runs out of room, but must not be squashed until illegible */
   min-width: 186px;
   flex: 0 0 auto;
 }
 
-/* 滑块。宽度 = 一格(减掉两边 padding),位置由行内 transform 给 */
+/* Slider. Width = one cell (minus the padding on both sides), position given by the inline transform */
 .pc-modeswitch-thumb {
   position: absolute;
   top: 2px;
@@ -32,7 +32,7 @@
   transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1), background 180ms, border-color 180ms;
   pointer-events: none;
 }
-/* SKILL 那一格用实心强调色:它不是「换个布局看看」,是让桌面 APP 的 Agent 动手了 */
+/* The SKILL cell uses a solid accent color: it is not "try a different layout", it lets the desktop app's Agent take action */
 .pc-modeswitch-thumb.is-skill {
   background: var(--ui-accent);
   border-color: var(--ui-accent);
@@ -63,7 +63,7 @@
   color: var(--ui-fg);
   font-weight: 600;
 }
-/* 选中的是 SKILL 时滑块是实心强调色,字得换成强调色上的前景色才看得清 */
+/* When SKILL is selected the slider is a solid accent color, so the text must switch to the foreground color used on the accent color to stay legible */
 .pc-modeswitch-thumb.is-skill ~ .pc-modeswitch-item.is-on {
   color: var(--ui-accent-fg);
 }

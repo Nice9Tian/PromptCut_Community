@@ -1,17 +1,17 @@
-"""下载 Grounding DINO tiny 权重（full 档开放词汇检测用）。
+"""Download the Grounding DINO tiny weights (used for full-tier open-vocabulary detection).
 
-**只在构建机上跑一次**，产物随「拓展库包（_full）」发给用户。
-产物落在 tools/subject/out/grounding-dino-tiny/，不进 git（out 被 .gitignore 挡掉）。
+**Run only once on the build machine**; the output ships to users with the "extension library package (_full)".
+The output lands in tools/subject/out/grounding-dino-tiny/ and does not go into git (out is blocked by .gitignore).
 
-用法（要 huggingface_hub，日常开发环境里有）：
+Usage (requires huggingface_hub, which the everyday dev environment has):
 
     "C:/Users/admin/anaconda3/envs/cuda_Vit/python.exe" tools/subject/fetch_dino.py
-    # 直连 huggingface.co 不通时换镜像：
+    # Switch to a mirror when huggingface.co cannot be reached directly:
     HF_ENDPOINT=https://hf-mirror.com "…/python.exe" tools/subject/fetch_dino.py
 
-为什么要挑文件下：仓库里同一份权重存了两份（pytorch_model.bin 和
-model.safetensors），全量 snapshot 会把 690 MB 下成 1.3 GB，而 transformers
-默认就读 safetensors，.bin 那份纯属浪费带宽和安装包体积。
+Why pick files to download: the repo stores the same weights twice (pytorch_model.bin and
+model.safetensors), a full snapshot would turn 690 MB into 1.3 GB, while transformers
+reads safetensors by default, so the .bin copy is pure waste of bandwidth and installer size.
 """
 
 from __future__ import annotations
@@ -23,8 +23,8 @@ import sys
 
 REPO_ID = "IDEA-Research/grounding-dino-tiny"
 
-# 只要推理真正用得到的：权重（safetensors）、模型/预处理配置、分词器（BERT 那一半）。
-# 明确排除 *.bin / *.msgpack / *.h5 —— 同一份权重的其他框架副本。
+# Only what inference really uses: the weights (safetensors), the model/preprocessing config, the tokenizer (the BERT half).
+# Explicitly exclude *.bin / *.msgpack / *.h5: copies of the same weights for other frameworks.
 ALLOW = [
     "config.json",
     "model.safetensors",
@@ -50,10 +50,10 @@ def dir_size(path: str) -> int:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="下载 grounding-dino-tiny 到本地目录")
-    ap.add_argument("--out", default=DEFAULT_OUT, help=f"落地目录（默认 {DEFAULT_OUT}）")
+    ap = argparse.ArgumentParser(description="Download grounding-dino-tiny to a local directory")
+    ap.add_argument("--out", default=DEFAULT_OUT, help=f"target directory (default {DEFAULT_OUT})")
     ap.add_argument("--mirror", action="store_true",
-                    help="强制走 https://hf-mirror.com（等价于设 HF_ENDPOINT）")
+                    help="force https://hf-mirror.com (equivalent to setting HF_ENDPOINT)")
     args = ap.parse_args(argv)
 
     if args.mirror:
@@ -62,15 +62,15 @@ def main(argv=None) -> int:
     try:
         from huggingface_hub import snapshot_download
     except ImportError:
-        print("需要 huggingface_hub：pip install huggingface_hub", file=sys.stderr)
+        print("huggingface_hub is required: pip install huggingface_hub", file=sys.stderr)
         return 2
 
     os.makedirs(args.out, exist_ok=True)
     print(f"endpoint = {os.environ.get('HF_ENDPOINT', 'https://huggingface.co')}")
-    print(f"下载 {REPO_ID} → {args.out}")
+    print(f"Downloading {REPO_ID} → {args.out}")
 
-    # local_dir 直接落成普通目录（不是 blobs+symlink 的缓存布局）：
-    # 这份目录要原样拷进拓展包，Windows 上的符号链接会在打包/解压时散架。
+    # local_dir lands directly as a plain directory (not the blobs+symlink cache layout):
+    # This directory has to be copied into the extension package as is, and symlinks on Windows fall apart during packaging/extraction.
     snapshot_download(
         repo_id=REPO_ID,
         local_dir=args.out,
@@ -78,15 +78,15 @@ def main(argv=None) -> int:
         ignore_patterns=IGNORE,
     )
 
-    # snapshot_download 会在目录里留一个 .cache/huggingface（下载元数据 + 断点信息）。
-    # 这份目录要整个拷进拓展包，把它带上既占体积又会让「模型目录」多出无关文件。
+    # snapshot_download leaves a .cache/huggingface in the directory (download metadata + resume information).
+    # This directory is copied into the extension package whole, and carrying it along both takes up space and adds unrelated files to the "model directory".
     cache = os.path.join(args.out, ".cache")
     if os.path.isdir(cache):
         shutil.rmtree(cache, ignore_errors=True)
-        print("已删除 .cache/（下载元数据，不需要随包分发）")
+        print("Deleted .cache/ (download metadata, no need to ship it with the package)")
 
     total = dir_size(args.out)
-    print(f"\n目录大小：{total / 1024 / 1024:.1f} MB")
+    print(f"\nDirectory size: {total / 1024 / 1024:.1f} MB")
     for name in sorted(os.listdir(args.out)):
         fp = os.path.join(args.out, name)
         if os.path.isfile(fp):
@@ -95,7 +95,7 @@ def main(argv=None) -> int:
     missing = [n for n in ("config.json", "model.safetensors", "preprocessor_config.json")
                if not os.path.isfile(os.path.join(args.out, n))]
     if missing:
-        print(f"缺文件：{missing}", file=sys.stderr)
+        print(f"Missing files: {missing}", file=sys.stderr)
         return 1
     return 0
 

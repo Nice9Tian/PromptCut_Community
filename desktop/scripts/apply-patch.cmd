@@ -1,5 +1,5 @@
 @echo off
-rem PromptCut 更新补丁 — 双击运行
-rem 直接调 PowerShell 脚本，绕开「未签名脚本禁止运行」的默认策略。
+rem PromptCut update patch: double-click to run
+rem Call the PowerShell script directly to get around the default policy "unsigned scripts are not allowed to run".
 chcp 65001 >nul
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0apply-patch.ps1" %*
