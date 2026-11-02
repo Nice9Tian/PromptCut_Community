@@ -99,8 +99,8 @@ test("H3 no handshake 20 seconds after load finishes → fall back to single sta
   assert.equal(calls.fail.length, 0);
   clock.advance(1);
   assert.equal(calls.fail.length, 1);
-  assert.match(calls.fail[0], /Stage B did not complete the handshake 20 seconds after load/);
-  assert.match(calls.fail[0], /Stage that completed the handshake: A/);
+  assert.match(calls.fail[0], /Stage B did not complete the handshake 20 s after loading/);
+  assert.match(calls.fail[0], /Stages handshaken: A/);
   assert.equal(onlineStageState().handshake, "failed");
   assert.equal(layout(), "single");
   assert.equal(clock.pending(), 0);
@@ -116,7 +116,7 @@ test("H4 stage source returns an error page: the iframe still loads, fall back a
   hs.loaded("A"); // 503 错误页也是一次 load,永远不会握手
   clock.advance(STAGE_HANDSHAKE_TIMEOUT_MS);
   assert.equal(calls.fail.length, 1);
-  assert.match(calls.fail[0], /Stage A finished loading/);
+  assert.match(calls.fail[0], /Stage A did not complete the handshake 20 s after loading/);
   assert.equal(layout(), "single");
 });
 
@@ -126,7 +126,7 @@ test("H5 total limit: never loads (or loads too late), fall back 2 minutes after
   assert.equal(calls.fail.length, 0);
   clock.advance(1);
   assert.equal(calls.fail.length, 1);
-  assert.match(calls.fail[0], /Both stages did not complete the handshake within 120 seconds of opening/);
+  assert.match(calls.fail[0], /Both stages did not complete the handshake within 120 s of opening/);
   assert.equal(layout(), "single");
   assert.equal(clock.pending(), 0);
 });
@@ -137,7 +137,7 @@ test("H6 total limit overrides the per-stage limit: A loads at 110 seconds, does
   hs.loaded("A");
   clock.advance(10_000);
   assert.equal(calls.fail.length, 1);
-  assert.match(calls.fail[0], /120 seconds of opening/);
+  assert.match(calls.fail[0], /120 s of opening/);
 });
 
 test("H7 the same stage loading again (reload) restarts the timing", () => {
@@ -196,7 +196,7 @@ test("H10 visible stage has no handshake after 20 seconds → first show the sam
   assert.equal(layout(), "dual");
   clock.advance(1);
   assert.equal(calls.interim.length, 1);
-  assert.match(calls.interim[0], /Visible stage A mounted 20 seconds without a handshake/);
+  assert.match(calls.interim[0], /Visible stage A did not complete the handshake 20 s after attaching/);
   assert.equal(hs.phase, "interim");
   assert.equal(onlineStageState().handshake, "interim");
   assert.equal(onlineStageState().interimAt !== null, true);
@@ -251,7 +251,7 @@ test("H13 total limit reached with warm-up still not ready → stop warm-up, sta
   assert.equal(calls.fail.length, 0);
   clock.advance(1);
   assert.equal(calls.fail.length, 1);
-  assert.match(calls.fail[0], /Both stages did not complete the handshake within 120 seconds of opening/);
+  assert.match(calls.fail[0], /Both stages did not complete the handshake within 120 s of opening/);
   assert.equal(hs.phase, "failed");
   assert.equal(onlineStageState().handshake, "failed");
   assert.equal(layout(), "single");
@@ -277,6 +277,6 @@ test("H15 stage prewarmed during the interim period finishes loading but fails t
   assert.equal(hs.phase, "interim", "Show the picture first at 20 seconds");
   clock.advance(STAGE_HANDSHAKE_TIMEOUT_MS - 10_000);
   assert.equal(calls.fail.length, 1);
-  assert.match(calls.fail[0], /stage A finished loading but failed to handshake within 20 seconds/);
+  assert.match(calls.fail[0], /Stage A did not complete the handshake 20 s after loading/);
   assert.equal(layout(), "single");
 });

@@ -158,7 +158,7 @@ test("OCS-S-09 after approval no stage receives a ticket again: any stage that l
   assert.equal(iso.state().reason, "no-stage");
   await assert.rejects(
     () => iso.plan("A", { active: false, stageOrigin: null, ticket: TICKET }),
-    /cross-origin isolated stage is not configured or unavailable/
+    /Cross-origin isolated stage is not configured or unavailable/
   );
 });
 

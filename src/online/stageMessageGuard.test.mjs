@@ -125,12 +125,12 @@ test("OCS-M-05 RPC reply: only plain objects, arrays, strings, booleans, null, f
   // 不认得的东西:抛(调用方把这次调用按失败回绝)
   class Evil { constructor() { this.x = 1; } }
   for (const bad of [{ f: () => 1 }, { s: Symbol("x") }, { d: new Date() }, { m: new Map() }, { e: new Evil() }, { big: 10n }]) assert.throws(() => sanitizeRpcResult("render", bad), /stage rpc/, Object.keys(bad)[0]);
-  assert.throws(() => sanitizeRpcResult("render", { s: "x".repeat(L.maxHtmlLength + 1) }), /太长/);
-  assert.throws(() => sanitizeRpcResult("render", { b: new ArrayBuffer(L.maxBufferBytes + 1) }), /太大/);
+  assert.throws(() => sanitizeRpcResult("render", { s: "x".repeat(L.maxHtmlLength + 1) }), /too long/);
+  assert.throws(() => sanitizeRpcResult("render", { b: new ArrayBuffer(L.maxBufferBytes + 1) }), /too large/);
   let deep = {};
   for (let i = 0; i < L.maxDepth + 2; i++) deep = { deep };
   assert.throws(() => sanitizeRpcResult("render", deep), /too deep/);
-  assert.throws(() => sanitizeRpcResult("render", new Array(L.maxNodes + 1).fill(0)), /太大/);
+  assert.throws(() => sanitizeRpcResult("render", new Array(L.maxNodes + 1).fill(0)), /too large/);
   // 出错信息只留一段不长的字符串
   assert.equal(sanitizeRpcError("boom"), "boom");
   assert.equal(sanitizeRpcError("x".repeat(5000)).length, 2001);
