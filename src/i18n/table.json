@@ -11017,1187 +11017,1187 @@
  },
  "Align": {
   "zh": "对齐",
-  "ja": ""
+  "ja": "揃え"
  },
  "synthesis": {
   "zh": "合成",
-  "ja": ""
+  "ja": "合成"
  },
  "Speed multiplier": {
   "zh": "速度倍率",
-  "ja": ""
+  "ja": "速度倍率"
  },
  "At the end": {
   "zh": "到头后",
-  "ja": ""
+  "ja": "再生終了後"
  },
  "Hold last frame": {
   "zh": "停在最后一帧",
-  "ja": ""
+  "ja": "最終フレームで停止"
  },
  "Loop": {
   "zh": "循环",
-  "ja": ""
+  "ja": "ループ"
  },
  "Fit": {
   "zh": "适配",
-  "ja": ""
+  "ja": "フィット"
  },
  "Show in full": {
   "zh": "完整显示",
-  "ja": ""
+  "ja": "全体を表示"
  },
  "Fill and crop": {
   "zh": "铺满裁切",
-  "ja": ""
+  "ja": "全面に拡大してトリミング"
  },
  "particles": {
   "zh": "粒子",
-  "ja": ""
+  "ja": "パーティクル"
  },
  "A different number gives a different layout; the same number gives the same result on every export": {
   "zh": "换一个数就换一种排布;同一个数每次导出都一样",
-  "ja": ""
+  "ja": "数値を変えると配置が変わります。同じ数値なら、書き出しのたびに同じ結果になります。"
  },
  "Count": {
   "zh": "数量",
-  "ja": ""
+  "ja": "数量"
  },
  "Original config ": {
   "zh": "原配置 ",
-  "ja": ""
+  "ja": "元の設定 "
  },
  "Size (px)": {
   "zh": "大小(px)",
-  "ja": ""
+  "ja": "サイズ(px)"
  },
  "(with multiple colors, only the first is replaced)": {
   "zh": "(多色时只替换第一种)",
-  "ja": ""
+  "ja": "（複数色の場合、最初の色だけが置き換えられます）"
  },
  "Links": {
   "zh": "连线",
-  "ja": ""
+  "ja": "接続線"
  },
  "Circular progress": {
   "zh": "环形进度",
-  "ja": ""
+  "ja": "円形プログレス"
  },
  "Circular progress bar animation": {
   "zh": "环形进度条动画",
-  "ja": ""
+  "ja": "円形プログレスバーのアニメーション"
  },
  "percentage": {
   "zh": "百分比",
-  "ja": ""
+  "ja": "パーセント"
  },
  "circular": {
   "zh": "环形",
-  "ja": ""
+  "ja": "円形"
  },
  "Target value": {
   "zh": "目标值",
-  "ja": ""
+  "ja": "目標値"
  },
  "Caption": {
   "zh": "说明文字",
-  "ja": ""
+  "ja": "説明テキスト"
  },
  "Main color (leave empty to use theme color)": {
   "zh": "主色(留空用主题色)",
-  "ja": ""
+  "ja": "メインカラー（空欄でテーマカラーを使用）"
  },
  "Progress ring": {
   "zh": "进度环",
-  "ja": ""
+  "ja": "プログレスリング"
  },
  "Blur fade": {
   "zh": "模糊浮现",
-  "ja": ""
+  "ja": "ぼかしフェードイン"
  },
  "Text fades in from blur": {
   "zh": "文字从模糊中浮现",
-  "ja": ""
+  "ja": "文字がぼかしの中から浮かび上がります。"
  },
  "fade-in": {
   "zh": "浮现",
-  "ja": ""
+  "ja": "フェードイン"
  },
  "blur": {
   "zh": "模糊",
-  "ja": ""
+  "ja": "ぼかし"
  },
  "Center": {
   "zh": "居中",
-  "ja": ""
+  "ja": "中央"
  },
  "Bottom": {
   "zh": "底部",
-  "ja": ""
+  "ja": "下部"
  },
  "Number counts up from 0 to the target value": {
   "zh": "数字从0滚动到目标值",
-  "ja": ""
+  "ja": "数字が0から目標値までカウントアップします。"
  },
  "Typewriter": {
   "zh": "打字机",
-  "ja": ""
+  "ja": "タイプライター"
  },
  "Character-by-character typing animation": {
   "zh": "逐字打印动画",
-  "ja": ""
+  "ja": "1文字ずつ打ち出すタイピングアニメーション"
  },
  "Milliseconds per character": {
   "zh": "每字毫秒",
-  "ja": ""
+  "ja": "1文字あたりのミリ秒"
  },
  "Start delay (ms)": {
   "zh": "开始延迟毫秒",
-  "ja": ""
+  "ja": "開始遅延(ms)"
  },
  "Pause after punctuation (ms)": {
   "zh": "标点后停顿毫秒",
-  "ja": ""
+  "ja": "句読点後の停止時間(ms)"
  },
  "Pause after line break (ms)": {
   "zh": "换行后停顿毫秒",
-  "ja": ""
+  "ja": "改行後の停止時間(ms)"
  },
  "Rhythm jitter (ms)": {
   "zh": "节奏抖动毫秒",
-  "ja": ""
+  "ja": "リズムのゆらぎ(ms)"
  },
  "Must not exceed milliseconds per character; the same seed keeps the same rhythm.": {
   "zh": "不能超过每字毫秒；相同种子保持相同节奏。",
-  "ja": ""
+  "ja": "「1文字あたりのミリ秒」を超えない値にしてください。同じシードなら同じリズムが保たれます。"
  },
  "Word rotate": {
   "zh": "文字轮换",
-  "ja": ""
+  "ja": "ワード切り替え"
  },
  "Cycles through multiple words": {
   "zh": "多个词语循环轮换",
-  "ja": ""
+  "ja": "複数の単語を順番に切り替えます。"
  },
  "Rotating words (separate with |)": {
   "zh": "轮换词(用|分隔)",
-  "ja": ""
+  "ja": "切り替える単語（|で区切る）"
  },
  "Prefix": {
   "zh": "前缀",
-  "ja": ""
+  "ja": "接頭辞"
  },
  "Rotating words": {
   "zh": "轮换词",
-  "ja": ""
+  "ja": "切り替える単語"
  },
  "Audio-visual cue pulse": {
   "zh": "声画提示脉冲",
-  "ja": ""
+  "ja": "音と映像の通知パルス"
  },
  "A ring expands with a short notification sound; the visual and the sound belong to the same clip and can be muted independently.": {
   "zh": "圆环随短提示音扩散；画面与声音属于同一片段，可独立静音。",
-  "ja": ""
+  "ja": "短い通知音とともにリングが広がります。映像とサウンドは同じクリップに属しており、それぞれ個別にミュートできます。"
  },
  "Sound level": {
   "zh": "声音强度",
-  "ja": ""
+  "ja": "音量"
  },
  "Pulse duration": {
   "zh": "脉冲时长",
-  "ja": ""
+  "ja": "パルスの長さ"
  },
  "Word chunks fade in from blur one by one": {
   "zh": "词块逐个模糊浮现",
-  "ja": ""
+  "ja": "単語のまとまりが1つずつぼかしから浮かび上がります。"
  },
  "Stagger (ms)": {
   "zh": "字间距(ms)",
-  "ja": ""
+  "ja": "時間差(ms)"
  },
  "Persistent bilingual captions": {
   "zh": "常驻双语字幕",
-  "ja": ""
+  "ja": "常時表示のバイリンガル字幕"
  },
  "Shows bilingual captions based on time": {
   "zh": "根据时间显示双语字幕",
-  "ja": ""
+  "ja": "時間に応じてバイリンガル字幕を表示します。"
  },
  "Horizontal position": {
   "zh": "水平位置",
-  "ja": ""
+  "ja": "水平位置"
  },
  "Bottom center": {
   "zh": "底部居中",
-  "ja": ""
+  "ja": "下部中央"
  },
  "Bottom left": {
   "zh": "底部靠左",
-  "ja": ""
+  "ja": "下部左寄せ"
  },
  "Bottom right": {
   "zh": "底部靠右",
-  "ja": ""
+  "ja": "下部右寄せ"
  },
  "Captions (start|end|Chinese|English)": {
   "zh": "字幕(起|止|中|英)",
-  "ja": ""
+  "ja": "字幕（開始|終了|中国語|英語）"
  },
  "One caption per line, in the format `start|end|Chinese|English` (English may be left empty); seconds are relative to this clip's start. In the Chinese text, words wrapped in *asterisks* are highlighted in the main color. You can use fill_captions to fill them automatically from the media transcript.": {
   "zh": "一行一条字幕,格式 `起|止|中文|英文`(英文可留空),秒数相对本 clip 起点。中文里用 *星号* 包住的词会用主色高亮。可以用 fill_captions 从素材文字稿自动灌入。",
-  "ja": ""
+  "ja": "1行に1つずつ、`開始|終了|中国語|英語`の形式で字幕を入力します（英語は空欄でも構いません）。秒数はこのクリップの開始位置からの相対値です。中国語のテキストでは、*アスタリスク*で囲んだ語がメインカラーでハイライトされます。fill_captions を使うと、素材の文字起こしから自動で入力できます。"
  },
  "Enable stroke": {
   "zh": "开启描边",
-  "ja": ""
+  "ja": "縁取りを有効にする"
  },
  "Stroke color": {
   "zh": "描边颜色",
-  "ja": ""
+  "ja": "縁取りの色"
  },
  "Caption lines": {
   "zh": "字幕行",
-  "ja": ""
+  "ja": "字幕の行"
  },
  "Chapter navigation": {
   "zh": "章节导航",
-  "ja": ""
+  "ja": "チャプターナビゲーション"
  },
  "Chapter progress pinned to the top": {
   "zh": "常驻顶部的章节进度",
-  "ja": ""
+  "ja": "上部に固定表示するチャプターの進捗"
  },
  "Chapters (name, seconds)": {
   "zh": "章节(名称 秒)",
-  "ja": ""
+  "ja": "チャプター（名前、秒数）"
  },
  "Show progress": {
   "zh": "显示进度",
-  "ja": ""
+  "ja": "進捗を表示"
  },
  "Progress mode": {
   "zh": "进度模式",
-  "ja": ""
+  "ja": "進捗モード"
  },
  "Underline": {
   "zh": "底线",
-  "ja": ""
+  "ja": "下線"
  },
  "Progress color": {
   "zh": "进度颜色",
-  "ja": ""
+  "ja": "進捗の色"
  },
  "Progress opacity": {
   "zh": "进度透明度",
-  "ja": ""
+  "ja": "進捗の不透明度"
  },
  "Checklist ticks": {
   "zh": "清单打勾",
-  "ja": ""
+  "ja": "チェック付きリスト"
  },
  "Slide in items one by one and tick them off": {
   "zh": "逐条划入并打勾",
-  "ja": ""
+  "ja": "項目が1つずつスライドインして、チェックが付きます。"
  },
  "Items (separated by vertical bars)": {
   "zh": "条目(竖线分隔)",
-  "ja": ""
+  "ja": "項目（縦棒で区切る）"
  },
  "Row interval (ms)": {
   "zh": "行间隔(ms)",
-  "ja": ""
+  "ja": "行の間隔(ms)"
  },
  "Composite card": {
   "zh": "组合卡",
-  "ja": ""
+  "ja": "コンポジットカード"
  },
  "A card freely assembled from parts in the parts library: each part has its own position, parameters and entrance timing": {
   "zh": "由部件库里的部件自由搭出来的卡:每个部件有自己的位置、参数和进场时机",
-  "ja": ""
+  "ja": "パーツライブラリのパーツを自由に組み合わせて作るカードです。各パーツが独自の位置、パラメーター、入場タイミングを持ちます。"
  },
  "Entity name tags": {
   "zh": "实体名牌",
-  "ja": ""
+  "ja": "人物・組織ネームタグ"
  },
  "Name tags showing people or organizations": {
   "zh": "展示人物或机构的名牌",
-  "ja": ""
+  "ja": "人物や組織を表示するネームタグ"
  },
  "Name tags (style|name|title, newline-separated)": {
   "zh": "名牌(牌面|名|身份,换行)",
-  "ja": ""
+  "ja": "ネームタグ（スタイル|名前|肩書き、改行区切り）"
  },
  "Side note (top line|bottom line)": {
   "zh": "旁注(上行|下行)",
-  "ja": ""
+  "ja": "サイドノート（上の行|下の行）"
  },
  "Interval (ms)": {
   "zh": "间隔(ms)",
-  "ja": ""
+  "ja": "間隔(ms)"
  },
  "Side note": {
   "zh": "旁注",
-  "ja": ""
+  "ja": "サイドノート"
  },
  "Person focus": {
   "zh": "人物聚焦",
-  "ja": ""
+  "ja": "人物フォーカス"
  },
  "Half-screen narration, half-screen key points": {
   "zh": "半屏口播半屏要点",
-  "ja": ""
+  "ja": "画面の半分にナレーション、残り半分に要点を配置"
  },
  "Cream": {
   "zh": "米色",
-  "ja": ""
+  "ja": "クリーム"
  },
  "Mist white": {
   "zh": "雾白",
-  "ja": ""
+  "ja": "ミストホワイト"
  },
  "Dark": {
   "zh": "暗色",
-  "ja": ""
+  "ja": "ダーク"
  },
  "Narration position": {
   "zh": "口播位置",
-  "ja": ""
+  "ja": "ナレーションの位置"
  },
  "Left": {
   "zh": "左",
-  "ja": ""
+  "ja": "左"
  },
  "Right": {
   "zh": "右",
-  "ja": ""
+  "ja": "右"
  },
  "Key points (| separated)": {
   "zh": "要点(|分隔)",
-  "ja": ""
+  "ja": "要点（|で区切る）"
  },
  "Pop-in interval ms": {
   "zh": "弹入间隔ms",
-  "ja": ""
+  "ja": "ポップイン間隔(ms)"
  },
  "Video URL": {
   "zh": "视频URL",
-  "ja": ""
+  "ja": "動画URL"
  },
  "Show outer ring": {
   "zh": "显示外环",
-  "ja": ""
+  "ja": "外側のリングを表示"
  },
  "Video X offset": {
   "zh": "视频X偏移",
-  "ja": ""
+  "ja": "動画のXオフセット"
  },
  "Video Y offset": {
   "zh": "视频Y偏移",
-  "ja": ""
+  "ja": "動画のYオフセット"
  },
  "Video width": {
   "zh": "视频宽",
-  "ja": ""
+  "ja": "動画の幅"
  },
  "Video height": {
   "zh": "视频高",
-  "ja": ""
+  "ja": "動画の高さ"
  },
  "Narration video": {
   "zh": "口播视频",
-  "ja": ""
+  "ja": "ナレーション動画"
  },
  "Growth curve": {
   "zh": "增长曲线",
-  "ja": ""
+  "ja": "成長曲線"
  },
  "Smooth animated line chart": {
   "zh": "带有动画的平滑折线图",
-  "ja": ""
+  "ja": "アニメーション付きの滑らかな折れ線グラフ"
  },
  "Small English text": {
   "zh": "英文小字",
-  "ja": ""
+  "ja": "英語の小さな文字"
  },
  "Small Chinese text": {
   "zh": "中文小字",
-  "ja": ""
+  "ja": "中国語の小さな文字"
  },
  "Data points (label value|...)": {
   "zh": "数据点(标签 数值|...)",
-  "ja": ""
+  "ja": "データポイント（ラベル 数値|...）"
  },
  "Draw duration (ms)": {
   "zh": "绘制时长(ms)",
-  "ja": ""
+  "ja": "描画時間(ms)"
  },
  "Bottom-right note": {
   "zh": "右下角小注",
-  "ja": ""
+  "ja": "右下の注記"
  },
  "Curve": {
   "zh": "曲线",
-  "ja": ""
+  "ja": "曲線"
  },
  "Peak value": {
   "zh": "最高值",
-  "ja": ""
+  "ja": "最高値"
  },
  "Note": {
   "zh": "小注",
-  "ja": ""
+  "ja": "注記"
  },
  "Align left": {
   "zh": "靠左",
-  "ja": ""
+  "ja": "左揃え"
  },
  "Align right": {
   "zh": "靠右",
-  "ja": ""
+  "ja": "右揃え"
  },
  "X offset": {
   "zh": "X 偏移",
-  "ja": ""
+  "ja": "X オフセット"
  },
  "Y offset": {
   "zh": "Y 偏移",
-  "ja": ""
+  "ja": "Y オフセット"
  },
  "Lottie animation": {
   "zh": "Lottie 动画",
-  "ja": ""
+  "ja": "Lottie アニメーション"
  },
  "Plays a Lottie animation (JSON exported from AE), stepping frame by frame with the timeline": {
   "zh": "播放一段 Lottie(AE 导出的 JSON)动画,跟着时间轴逐帧走",
-  "ja": ""
+  "ja": "Lottie アニメーション（AEから書き出したJSON）を再生し、タイムラインに合わせて1フレームずつ進めます。"
  },
  "Lottie JSON text (preferred)": {
   "zh": "Lottie JSON 文本(优先)",
-  "ja": ""
+  "ja": "Lottie JSON テキスト（優先）"
  },
  "Contents of the whole .json file; leave empty to use src": {
   "zh": "整个 .json 文件的内容;留空则用 src",
-  "ja": ""
+  "ja": ".json ファイル全体の内容です。空欄の場合は src を使います。"
  },
  "Or media / URL": {
   "zh": "或素材 / URL",
-  "ja": ""
+  "ja": "または素材 / URL"
  },
  "Pick one from the media catalog (a URL in options), or enter another JSON URL; only used when the json parameter is empty": {
   "zh": "从素材目录里挑一个(options 里的 URL),或填别的 JSON URL;json 参数留空时才用它",
-  "ja": ""
+  "ja": "素材カタログ（options 内の URL）から選ぶか、別の JSON URL を入力します。json パラメーターが空の場合にのみ使われます。"
  },
  "Flip counter": {
   "zh": "翻牌计数器",
-  "ja": ""
+  "ja": "フリップカウンター"
  },
  "Big-number flip effect": {
   "zh": "大数字翻牌效果",
-  "ja": ""
+  "ja": "大きな数字のフリップ演出"
  },
  "Small text": {
   "zh": "小字",
-  "ja": ""
+  "ja": "小さな文字"
  },
  "Floating particles, optionally linked by lines, filling the whole frame": {
   "zh": "漂浮的粒子,可带连线,铺满整个画面",
-  "ja": ""
+  "ja": "画面全体に広がる、線でつなぐこともできる浮遊パーティクル"
  },
  "Preset config": {
   "zh": "现成配置",
-  "ja": ""
+  "ja": "プリセット設定"
  },
  "Pick one from the media catalog (a URL in options), or enter another URL / inline JSON; when set, it is used and the color/count/speed below have no effect": {
   "zh": "从素材目录里挑一个(options 里的 URL),或填别的 URL / 内联 JSON;填了就用它,下面的颜色/数量/速度不起作用",
-  "ja": ""
+  "ja": "素材カタログ（options 内の URL）から選ぶか、別の URL / インライン JSON を入力します。入力した場合はそれが使われ、下の色・数量・速度は無効になります。"
  },
  "Key points pin board": {
   "zh": "要点钉板",
-  "ja": ""
+  "ja": "要点ピンボード"
  },
  "Key points board that appears one by one": {
   "zh": "逐条打出的要点板",
-  "ja": ""
+  "ja": "1項目ずつ表示される要点ボード"
  },
  "Heading": {
   "zh": "小标题",
-  "ja": ""
+  "ja": "見出し"
  },
  "Subtitle": {
   "zh": "副标题",
-  "ja": ""
+  "ja": "サブタイトル"
  },
  "Key points (separated by |)": {
   "zh": "要点(用|分隔)",
-  "ja": ""
+  "ja": "要点（|で区切る）"
  },
  "Punchline pill": {
   "zh": "金句药丸",
-  "ja": ""
+  "ja": "決めフレーズカプセル"
  },
  "Capsule design that emphasizes key messages": {
   "zh": "强调核心信息的胶囊设计",
-  "ja": ""
+  "ja": "重要なメッセージを際立たせるカプセルデザイン"
  },
  "Quote lockup": {
   "zh": "金句定格",
-  "ja": ""
+  "ja": "決めフレーズ・ロックアップ"
  },
  "Punchline quote revealed line by line": {
   "zh": "逐行揭示的金句引言",
-  "ja": ""
+  "ja": "1行ずつ現れる決めフレーズの引用"
  },
  "Quote (separate lines with |)": {
   "zh": "金句(用|分行)",
-  "ja": ""
+  "ja": "決めフレーズ（|で行を区切る）"
  },
  "Attribution": {
   "zh": "署名",
-  "ja": ""
+  "ja": "署名"
  },
  "Side": {
   "zh": "靠侧",
-  "ja": ""
+  "ja": "寄せる側"
  },
  "Rank bars": {
   "zh": "排名条",
-  "ja": ""
+  "ja": "ランキングバー"
  },
  "Bar chart ranking with rolling values": {
   "zh": "柱状条形排名及滚动数值",
-  "ja": ""
+  "ja": "数値がカウントされる棒グラフのランキング"
  },
  "Data rows (name,value|name,value)": {
   "zh": "数据行 (名称,数值|名称,数值)",
-  "ja": ""
+  "ja": "データ行（名前,数値|名前,数値）"
  },
  "Value suffix": {
   "zh": "数值后缀",
-  "ja": ""
+  "ja": "数値の接尾辞"
  },
  "Data rows": {
   "zh": "数据行",
-  "ja": ""
+  "ja": "データ行"
  },
  "Ring metric": {
   "zh": "环形指标",
-  "ja": ""
+  "ja": "リング指標"
  },
  "Ring progress and number increase in sync": {
   "zh": "环形进度与数字同步增加",
-  "ja": ""
+  "ja": "リングの進捗と数字が同期して増加します。"
  },
  "Value (0-100)": {
   "zh": "数值(0-100)",
-  "ja": ""
+  "ja": "数値(0-100)"
  },
  "3D object": {
   "zh": "三维物件",
-  "ja": ""
+  "ja": "3Dオブジェクト"
  },
  "A spinning 3D object (cube / sphere / torus / knot / cone / cylinder / crystal) on a transparent background, can be overlaid on other cards": {
   "zh": "一个会转的立体物件(方块 / 球 / 圆环 / 纽结 / 锥 / 柱 / 晶体),透明底,可以叠在别的卡上",
-  "ja": ""
+  "ja": "透明な背景で回転する3Dオブジェクト（立方体 / 球 / トーラス / 結び目 / 円錐 / 円柱 / クリスタル）です。ほかのカードに重ねて使えます。"
  },
  "Shape": {
   "zh": "形状",
-  "ja": ""
+  "ja": "形状"
  },
  "Knot": {
   "zh": "纽结",
-  "ja": ""
+  "ja": "結び目"
  },
  "Cube": {
   "zh": "方块",
-  "ja": ""
+  "ja": "立方体"
  },
  "Sphere": {
   "zh": "球",
-  "ja": ""
+  "ja": "球"
  },
  "Torus": {
   "zh": "圆环",
-  "ja": ""
+  "ja": "トーラス"
  },
  "Cone": {
   "zh": "锥",
-  "ja": ""
+  "ja": "円錐"
  },
  "Cylinder": {
   "zh": "柱",
-  "ja": ""
+  "ja": "円柱"
  },
  "Crystal": {
   "zh": "晶体",
-  "ja": ""
+  "ja": "クリスタル"
  },
  "Metalness": {
   "zh": "金属感",
-  "ja": ""
+  "ja": "メタリック感"
  },
  "0 = plastic/ceramic, 1 = metal. At high metalness the color comes mainly from reflections; looks best with studio lighting": {
   "zh": "0 = 塑料/陶瓷,1 = 金属。金属感高时颜色主要来自反光,配 studio 打光最好看",
-  "ja": ""
+  "ja": "0 = プラスチック/陶器、1 = 金属。メタリック感が高いと色は主に反射から生まれるため、ライティングは「スタジオ」との相性が最も良くなります。"
  },
  "Roughness": {
   "zh": "粗糙度",
-  "ja": ""
+  "ja": "粗さ"
  },
  "0 = mirror, 1 = fully matte": {
   "zh": "0 = 镜面,1 = 全哑光",
-  "ja": ""
+  "ja": "0 = 鏡面、1 = 完全なマット"
  },
  "Size": {
   "zh": "大小",
-  "ja": ""
+  "ja": "サイズ"
  },
  "Fraction of the canvas height. 0.55 is about half the screen height": {
   "zh": "占画布高度的比例。0.55 大约是半屏高",
-  "ja": ""
+  "ja": "キャンバスの高さに対する割合です。0.55 で画面の高さのおよそ半分になります。"
  },
  "Horizontal spin speed": {
   "zh": "水平转速",
-  "ja": ""
+  "ja": "水平方向の回転速度"
  },
  "Turns/second, around the vertical axis. 0.15 is a calm slow spin; negative reverses it": {
   "zh": "圈/秒,绕竖轴。0.15 是从容的慢转;负数反向",
-  "ja": ""
+  "ja": "縦軸まわりの回転数/秒です。0.15 はゆったりとした低速回転で、負の値を指定すると逆回転になります。"
  },
  "Tumble speed": {
   "zh": "翻滚转速",
-  "ja": ""
+  "ja": "転がり速度"
  },
  "Turns/second, around the horizontal axis. Set both to roll diagonally": {
   "zh": "圈/秒,绕横轴。两个都给就是斜着滚",
-  "ja": ""
+  "ja": "横軸まわりの回転数/秒です。両方を指定すると斜めに転がります。"
  },
  "Initial tilt": {
   "zh": "初始倾斜",
-  "ja": ""
+  "ja": "初期の傾き"
  },
  "Degrees, around the horizontal axis. When spin speed is 0, this decides the angle it rests at": {
   "zh": "度,绕横轴。转速为 0 时就靠它决定停在什么角度",
-  "ja": ""
+  "ja": "横軸まわりの角度（度）です。回転速度が 0 のときは、静止する角度がこの値で決まります。"
  },
  "Lighting": {
   "zh": "打光",
-  "ja": ""
+  "ja": "ライティング"
  },
  "Studio (strong depth)": {
   "zh": "棚拍(立体感强)",
-  "ja": ""
+  "ja": "スタジオ（立体感が強い）"
  },
  "Soft light (flat)": {
   "zh": "柔光(平)",
-  "ja": ""
+  "ja": "ソフトライト（フラット）"
  },
  "Backlight (silhouette)": {
   "zh": "逆光(剪影)",
-  "ja": ""
+  "ja": "逆光（シルエット）"
  },
  "Field of view (deg)": {
   "zh": "视角(度)",
-  "ja": ""
+  "ja": "視野角（度）"
  },
  "0 = follow the project camera (default, recommended); a positive value = this card uses its own field of view, so it no longer shares a space with other cards": {
   "zh": "0 = 跟着项目的相机走(默认,推荐);填正数 = 这张卡单独用一个视角,和别的卡就不在同一个空间里了",
-  "ja": ""
+  "ja": "0 = プロジェクトのカメラに合わせます（デフォルト、推奨）。正の値を指定すると、このカードだけが独自の視野角を使い、ほかのカードと同じ空間を共有しなくなります。"
  },
  "Wireframe": {
   "zh": "线框",
-  "ja": ""
+  "ja": "ワイヤーフレーム"
  },
  "Texture": {
   "zh": "贴图",
-  "ja": ""
+  "ja": "テクスチャ"
  },
  "Image URL. The most direct way is to render a card to a transparent PNG with bake_card and apply it here; images from the media library also work. Leave empty = solid color": {
   "zh": "图片 URL。用 bake_card 把一张卡渲染成透明底 PNG 再贴上来最直接;素材库里的图片也行。留空 = 纯色",
-  "ja": ""
+  "ja": "画像 URL。最も手軽なのは、bake_card でカードを透過 PNG にレンダリングして貼り付ける方法です。素材ライブラリの画像も使えます。空欄にすると単色になります。"
  },
  "Object": {
   "zh": "物件",
-  "ja": ""
+  "ja": "オブジェクト"
  },
  "Synthesized notification sound": {
   "zh": "合成提示音",
-  "ja": ""
+  "ja": "合成通知音"
  },
  "A short, natively synthesized notification sound with soft bell, sine and triangle voices and short note sequences; no recorded media needed.": {
   "zh": "原生合成的短提示音，支持柔和叮声、正弦、三角音色与短音列；无需录音素材。",
-  "ja": ""
+  "ja": "やわらかなベル、サイン波、三角波の音色と短い音列に対応した、ネイティブ合成の短い通知音です。録音素材は不要です。"
  },
  "Base frequency Hz": {
   "zh": "基频 Hz",
-  "ja": ""
+  "ja": "基本周波数 Hz"
  },
  "Soft bell": {
   "zh": "柔和叮声",
-  "ja": ""
+  "ja": "やわらかなベル"
  },
  "Sine": {
   "zh": "正弦",
-  "ja": ""
+  "ja": "サイン波"
  },
  "Triangle": {
   "zh": "三角",
-  "ja": ""
+  "ja": "三角波"
  },
  "Seconds per note": {
   "zh": "每音秒数",
-  "ja": ""
+  "ja": "1音あたりの秒数"
  },
  "Attack seconds": {
   "zh": "起音秒数",
-  "ja": ""
+  "ja": "アタック秒数"
  },
  "Release seconds": {
   "zh": "收尾秒数",
-  "ja": ""
+  "ja": "リリース秒数"
  },
  "Dense notes automatically reserve linear mixing headroom, without clipping.": {
   "zh": "密集音符自动预留线性混音余量，不削波。",
-  "ja": ""
+  "ja": "音符が密集していても、リニアミックスの余裕（ヘッドルーム）が自動で確保され、クリッピングは起こりません。"
  },
  "Note semitones": {
   "zh": "音列半音",
-  "ja": ""
+  "ja": "音列の半音"
  },
  "1-8 comma-separated semitone offsets, range -24 to 24; for example 0,7,12.": {
   "zh": "1–8 个逗号分隔的半音偏移，范围 -24 到 24；例如 0,7,12。",
-  "ja": ""
+  "ja": "カンマ区切りで1～8個の半音オフセットを指定します（範囲は-24～24）。例：0,7,12。"
  },
  "Note interval seconds": {
   "zh": "音符间隔秒",
-  "ja": ""
+  "ja": "音符の間隔（秒）"
  },
  "Notification sound note sequence cannot be empty": {
   "zh": "提示音音列不能为空",
-  "ja": ""
+  "ja": "通知音の音列は空にできません。"
  },
  "Note sequence contains an empty note": {
   "zh": "音列包含空音符",
-  "ja": ""
+  "ja": "音列に空の音符が含まれています。"
  },
  "Keystroke sounds synthesized from short transients, band-limited noise and decaying resonance; shares grapheme events with the typewriter, not a recording of a physical keyboard.": {
   "zh": "短瞬态、带限噪声与衰减共振合成的敲击声；与打字机共享字素事件，不是实体键盘录音。",
-  "ja": ""
+  "ja": "短い過渡音、帯域制限ノイズ、減衰する共鳴から合成した打鍵音です。タイプライターと書記素イベントを共有しており、実際のキーボードの録音ではありません。"
  },
  "Cannot exceed milliseconds per character. The same seed keeps the same rhythm.": {
   "zh": "不能超过每字毫秒。相同种子保持相同节奏。",
-  "ja": ""
+  "ja": "1文字あたりのミリ秒を超えることはできません。同じシードなら同じリズムが保たれます。"
  },
  "Punctuation sound": {
   "zh": "标点发声",
-  "ja": ""
+  "ja": "句読点の音"
  },
  "Spaces and newlines": {
   "zh": "空格和换行",
-  "ja": ""
+  "ja": "スペースと改行"
  },
  "Keystroke voice": {
   "zh": "敲击音色",
-  "ja": ""
+  "ja": "打鍵の音色"
  },
  "Soft": {
   "zh": "柔和",
-  "ja": ""
+  "ja": "ソフト"
  },
  "Bright mechanical": {
   "zh": "明亮机械感",
-  "ja": ""
+  "ja": "明るいメカニカル"
  },
  "Single-key tail (s)": {
   "zh": "单次尾音秒",
-  "ja": ""
+  "ja": "1打鍵の余韻（秒）"
  },
  "Resonance base frequency (Hz)": {
   "zh": "共振基频 Hz",
-  "ja": ""
+  "ja": "共鳴の基本周波数(Hz)"
  },
  "Keystroke variation": {
   "zh": "敲击变化",
-  "ja": ""
+  "ja": "打鍵のばらつき"
  },
  "Giant number roll-up with bilingual footnotes": {
   "zh": "巨型数字滚动及中英注脚",
-  "ja": ""
+  "ja": "バイリンガル注釈付きの巨大数字ロールアップ"
  },
  "English lead-in text": {
   "zh": "英文引导字",
-  "ja": ""
+  "ja": "英語の導入テキスト"
  },
  "Chinese lead-in text": {
   "zh": "中文引导字",
-  "ja": ""
+  "ja": "中国語の導入テキスト"
  },
  "Suffix": {
   "zh": "后缀",
-  "ja": ""
+  "ja": "接尾辞"
  },
  "English footnote": {
   "zh": "英文注脚",
-  "ja": ""
+  "ja": "英語の注釈"
  },
  "Chinese footnote": {
   "zh": "中文注脚",
-  "ja": ""
+  "ja": "中国語の注釈"
  },
  "Animation duration (ms)": {
   "zh": "动画时长(ms)",
-  "ja": ""
+  "ja": "アニメーション時間(ms)"
  },
  "Lead-in text": {
   "zh": "引导字",
-  "ja": ""
+  "ja": "導入テキスト"
  },
  "Step timeline": {
   "zh": "步骤时间线",
-  "ja": ""
+  "ja": "ステップタイムライン"
  },
  "Horizontal timeline that lights up step by step": {
   "zh": "横向时间线依次点亮",
-  "ja": ""
+  "ja": "ステップごとに順に点灯する横向きのタイムライン"
  },
  "Steps (separated by |)": {
   "zh": "步骤(竖线分隔)",
-  "ja": ""
+  "ja": "ステップ（|で区切る）"
  },
  "Step interval (ms)": {
   "zh": "步进时间(ms)",
-  "ja": ""
+  "ja": "ステップの間隔(ms)"
  },
  "Term explainer card": {
   "zh": "术语解释卡",
-  "ja": ""
+  "ja": "用語解説カード"
  },
  "Term explanation with a small pinyin or English note": {
   "zh": "带拼音或英文小注的名词解释",
-  "ja": ""
+  "ja": "ピンインまたは英語の小さな注釈付きの用語解説"
  },
  "English/pinyin": {
   "zh": "英文/拼音",
-  "ja": ""
+  "ja": "英語/ピンイン"
  },
  "Terminal 3D": {
   "zh": "终端3D",
-  "ja": ""
+  "ja": "ターミナル3D"
  },
  "3D terminal typewriter": {
   "zh": "3D终端打字机",
-  "ja": ""
+  "ja": "3Dターミナルのタイプライター"
  },
  "File name": {
   "zh": "文件名",
-  "ja": ""
+  "ja": "ファイル名"
  },
  "Lines (separated by |)": {
   "zh": "行(|分隔)",
-  "ja": ""
+  "ja": "行（|で区切る）"
  },
  "Characters per second": {
   "zh": "每秒字符",
-  "ja": ""
+  "ja": "1秒あたりの文字数"
  },
  "Typography flow": {
   "zh": "排版流",
-  "ja": ""
+  "ja": "タイポグラフィフロー"
  },
  "Draft-style automatic re-typesetting": {
   "zh": "草稿感自动重排版",
-  "ja": ""
+  "ja": "下書き風の自動再レイアウト"
  },
  "Multi-line content (| splits lines, * secondary, — credit)": {
   "zh": "多行内容(|分行,*次重,—署名)",
-  "ja": ""
+  "ja": "複数行の内容（|で改行、*で副次、—で署名）"
  },
  "Reflow time (ms)": {
   "zh": "重排时间(ms)",
-  "ja": ""
+  "ja": "再レイアウト時間(ms)"
  },
  "Multi-line content": {
   "zh": "多行内容",
-  "ja": ""
+  "ja": "複数行の内容"
  },
  "UI callout": {
   "zh": "界面标注",
-  "ja": ""
+  "ja": "UIコールアウト"
  },
  "Circle a screen region and draw out a label": {
   "zh": "圈出屏幕区域并引出标签",
-  "ja": ""
+  "ja": "画面上の領域を丸で囲み、ラベルを引き出します。"
  },
  "Label text": {
   "zh": "标签文字",
-  "ja": ""
+  "ja": "ラベルテキスト"
  },
  "Ring width (px)": {
   "zh": "圈宽(px)",
-  "ja": ""
+  "ja": "囲み枠の幅(px)"
  },
  "Ring height (px)": {
   "zh": "圈高(px)",
-  "ja": ""
+  "ja": "囲み枠の高さ(px)"
  },
  "Leader line direction": {
   "zh": "引线方向",
-  "ja": ""
+  "ja": "引き出し線の方向"
  },
  "Ring": {
   "zh": "圈选框",
-  "ja": ""
+  "ja": "囲み枠"
  },
  "Leader line": {
   "zh": "引线",
-  "ja": ""
+  "ja": "引き出し線"
  },
  "Label": {
   "zh": "标签",
-  "ja": ""
+  "ja": "ラベル"
  },
  "Versus card": {
   "zh": "对比卡",
-  "ja": ""
+  "ja": "比較カード"
  },
  "Side-by-side comparison panel, can highlight the winner": {
   "zh": "左右对比面板，可高亮胜出者",
-  "ja": ""
+  "ja": "左右に並べて比較するパネル。勝者をハイライトすることもできます。"
  },
  "Side A kicker": {
   "zh": "A侧小字",
-  "ja": ""
+  "ja": "A側の小見出し"
  },
  "Side A title": {
   "zh": "A侧大字",
-  "ja": ""
+  "ja": "A側のタイトル"
  },
  "Side A description": {
   "zh": "A侧说明",
-  "ja": ""
+  "ja": "A側の説明"
  },
  "Side A accent color": {
   "zh": "A侧独立主色",
-  "ja": ""
+  "ja": "A側のアクセントカラー"
  },
  "Side B kicker": {
   "zh": "B侧小字",
-  "ja": ""
+  "ja": "B側の小見出し"
  },
  "Side B title": {
   "zh": "B侧大字",
-  "ja": ""
+  "ja": "B側のタイトル"
  },
  "Side B description": {
   "zh": "B侧说明",
-  "ja": ""
+  "ja": "B側の説明"
  },
  "Winner": {
   "zh": "胜出方",
-  "ja": ""
+  "ja": "勝者"
  },
  "A wins": {
   "zh": "A胜出",
-  "ja": ""
+  "ja": "Aの勝ち"
  },
  "B wins": {
   "zh": "B胜出",
-  "ja": ""
+  "ja": "Bの勝ち"
  },
  "Side A": {
   "zh": "A侧",
-  "ja": ""
+  "ja": "A側"
  },
  "Side B": {
   "zh": "B侧",
-  "ja": ""
+  "ja": "B側"
  },
  "VS badge": {
   "zh": "VS标识",
-  "ja": ""
+  "ja": "VSバッジ"
  },
  "Loop seconds": {
   "zh": "循环秒数",
-  "ja": ""
+  "ja": "ループの秒数"
  },
  "Shiny text": {
   "zh": "闪光文字",
-  "ja": ""
+  "ja": "光沢テキスト"
  },
  "A highlight sweeps across the text, looping": {
   "zh": "一道高光从文字上扫过,循环",
-  "ja": ""
+  "ja": "ハイライトが文字の上を横切り、ループします。"
  },
  "Use when a word or short phrase needs a \"glowing\" emphasis; the highlight loops every 8 seconds and never stops, suited to light backgrounds. No number rolling, no rotating through multiple words.": {
   "zh": "一个词或短句要「发光」地强调时用;高光 8 秒一循环、不会停,适合浅色底。不做数字滚动,不做多词轮换。",
-  "ja": ""
+  "ja": "単語や短いフレーズを「光らせて」強調したいときに使います。ハイライトは8秒周期でループし、止まることはありません。明るい背景に向いています。数字のロールアップや複数語の切り替えは行いません。"
  },
  "highlight": {
   "zh": "高光",
-  "ja": ""
+  "ja": "ハイライト"
  },
  "shine": {
   "zh": "闪光",
-  "ja": ""
+  "ja": "きらめき"
  },
  "Highlight width (px)": {
   "zh": "高光宽度(px)",
-  "ja": ""
+  "ja": "ハイライトの幅(px)"
  },
  "Smooth growth line chart that labels only the highest value": {
   "zh": "平滑增长折线图,仅标出最高值",
-  "ja": ""
+  "ja": "最高値だけにラベルを付ける、滑らかな成長折れ線グラフ"
  },
  "Font size (0 = auto-fit to box)": {
   "zh": "字号(0 = 按框自适应)",
-  "ja": ""
+  "ja": "フォントサイズ（0 = 枠に合わせて自動調整）"
  },
  "0 means auto-computed from the part's box; enter a pixel value to fix it": {
   "zh": "0 表示按部件的框自动算;想固定就填具体像素",
-  "ja": ""
+  "ja": "0 を指定すると、パーツの枠に合わせて自動で計算されます。固定したい場合はピクセル値を入力してください。"
  },
  "Theme color": {
   "zh": "主题色",
-  "ja": ""
+  "ja": "テーマカラー"
  },
  "Main color / side B color": {
   "zh": "主色/B侧颜色",
-  "ja": ""
+  "ja": "メインカラー / B側の色"
  },
  "Chapter progress bar pinned to the top": {
   "zh": "常驻顶部的章节进度条",
-  "ja": ""
+  "ja": "上部に固定表示するチャプターの進捗バー"
  },
  "Checklist items that wipe in one by one and get ticked": {
   "zh": "逐条划入并打勾的清单项",
-  "ja": ""
+  "ja": "1項目ずつワイプインしてチェックが付くチェックリスト項目"
  },
  "List of name-tag pills for people or organizations, sliding in one by one": {
   "zh": "人物或机构的名牌胶囊列表，逐条滑入",
-  "ja": ""
+  "ja": "人物や組織のネームタグ（カプセル型）が1つずつスライドインするリスト"
  },
  "A column of black rounded bars that pop in and pin one by one": {
   "zh": "一列黑底圆角条,逐条弹入钉上",
-  "ja": ""
+  "ja": "黒い角丸のバーが縦に並び、1本ずつ弾んで現れて固定されます。"
  },
  "0 means the font size is computed automatically from the box and the number of items; enter a specific pixel value to fix it": {
   "zh": "0 表示按框和条数自动算字号;想固定就填具体像素",
-  "ja": ""
+  "ja": "0 を指定すると、枠と項目数に合わせてフォントサイズが自動で計算されます。固定したい場合はピクセル値を入力してください。"
  },
  "Play a Lottie animation, advancing frame by frame with the timeline": {
   "zh": "播放一段 Lottie 动画,跟着时间轴逐帧走",
-  "ja": ""
+  "ja": "Lottie アニメーションを再生し、タイムラインに合わせて1フレームずつ進めます。"
  },
  "Asset / URL": {
   "zh": "素材 / URL",
-  "ja": ""
+  "ja": "アセット / URL"
  },
  "Pick one from the asset catalog (a URL in options), or enter another JSON URL; it is only used when json is empty": {
   "zh": "从素材目录里挑一个(options 里的 URL),或填别的 JSON URL;json 留空时才用它",
-  "ja": ""
+  "ja": "アセットカタログ（options 内の URL）から選ぶか、別の JSON URL を入力します。json が空の場合にのみ使われます。"
  },
  "Change the number to get a different layout": {
   "zh": "换一个数就换一种排布",
-  "ja": ""
+  "ja": "数値を変えると、別の配置になります"
  },
  "Odometer number": {
   "zh": "翻牌数字",
-  "ja": ""
+  "ja": "フリップ数字"
  },
  "Ring progress and center number increase in sync": {
   "zh": "环形进度与中心数字同步增加",
-  "ja": ""
+  "ja": "リングの進捗と中央の数字が同期して増加します。"
  },
  "Ring size (0 = fit to box)": {
   "zh": "环形尺寸(0 = 按框自适应)",
-  "ja": ""
+  "ja": "リングのサイズ（0 = 枠に合わせて自動調整）"
  },
  "0 means the size is computed automatically from the part's box; enter a specific pixel value to fix it": {
   "zh": "0 表示按部件的框自动算尺寸;想固定就填具体像素",
-  "ja": ""
+  "ja": "0 を指定すると、パーツの枠に合わせてサイズが自動で計算されます。固定したい場合はピクセル値を入力してください。"
  },
  "Quote attribution": {
   "zh": "引文署名",
-  "ja": ""
+  "ja": "引用の署名"
  },
  "Attribution and source below a pull quote": {
   "zh": "金句引语下方的署名出处",
-  "ja": ""
+  "ja": "決めフレーズの下に表示する署名と出典"
  },
  "Author": {
   "zh": "作者",
-  "ja": ""
+  "ja": "著者"
  },
  "Source": {
   "zh": "出处",
-  "ja": ""
+  "ja": "出典"
  },
  "Text emerges from a blurred focus chunk by chunk, and key words can be highlighted in the main color": {
   "zh": "文字按词块逐个从虚焦中模糊浮现，重点词可用主色高亮",
-  "ja": ""
+  "ja": "文字がぼやけた状態から語のまとまりごとに浮かび上がり、重要な語はメインカラーでハイライトできます。"
  },
  "Blur fade-in (whole)": {
   "zh": "模糊浮现(整体)",
-  "ja": ""
+  "ja": "ぼかしフェードイン（全体）"
  },
  "Text emerges from a blur as a whole": {
   "zh": "文字整体从模糊中浮现",
-  "ja": ""
+  "ja": "文字全体がぼかしの中から浮かび上がります。"
  },
  "Glowing pill that emphasizes key information": {
   "zh": "强调核心信息的发光胶囊",
-  "ja": ""
+  "ja": "重要な情報を強調する発光カプセル"
  },
  "Multi-line punchy quote revealed line by line": {
   "zh": "逐行揭示的多行金句引言",
-  "ja": ""
+  "ja": "1行ずつ現れる複数行の決めフレーズ"
  },
  "Rule color (leave empty to use theme color)": {
   "zh": "竖线颜色(留空用主题色)",
-  "ja": ""
+  "ja": "縦線の色（空欄でテーマカラーを使用）"
  },
  "Several words rotate in a loop": {
   "zh": "多个词语循环轮换播放",
-  "ja": ""
+  "ja": "複数の単語がループして切り替わります。"
  },
  "Hold per word (ms)": {
   "zh": "每词停留(ms)",
-  "ja": ""
+  "ja": "各語の表示時間(ms)"
  },
  "Large term with a small English note and character-by-character explanation": {
   "zh": "带英文小注的大术语与逐字释义",
-  "ja": ""
+  "ja": "英語の小さな注釈が付いた大きな用語と、1文字ずつ表示される解説"
  },
  "English note": {
   "zh": "英文小注",
-  "ja": ""
+  "ja": "英語の補足"
  },
  "A single-line large title, optionally with a line of small text above it; fades in and rises into place": {
   "zh": "一行大标题,上面可带一行小字眼;淡入上浮进场",
-  "ja": ""
+  "ja": "1行の大きなタイトル。上に小さな文字を1行添えることもできます。フェードインしながら上へ浮かび上がって配置されます。"
  },
  "Leave empty to hide": {
   "zh": "留空不显示",
-  "ja": ""
+  "ja": "空欄にすると表示されません"
  },
  "0 means the font size is computed automatically from the part's box, and the text scales with the box; to fix it, enter a specific pixel value": {
   "zh": "0 表示按部件的框自动算字号,框缩放字随着变;想固定就填具体像素",
-  "ja": ""
+  "ja": "0 を指定すると、パーツの枠に合わせてフォントサイズが自動で計算され、枠の拡大縮小に合わせて文字も変化します。固定したい場合はピクセル値を入力してください。"
  },
  "Color (leave empty to use theme color)": {
   "zh": "颜色(留空用主题色)",
-  "ja": ""
+  "ja": "色（空欄でテーマカラーを使用）"
  },
  "Multi-line draft-style text that automatically reflows and settles after a given delay": {
   "zh": "多行草稿感文字在指定延时后自动重排定型",
-  "ja": ""
+  "ja": "指定した遅延の後に自動で再レイアウトされて確定する、下書き風の複数行テキスト"
  },
  "First-line highlight color (leave empty to use theme color)": {
   "zh": "首行高亮色(留空用主题色)",
-  "ja": ""
+  "ja": "1行目のハイライト色（空欄でテーマカラーを使用）"
  },
  "Single-line or multi-line text with a character-by-character typing animation": {
   "zh": "逐字打印动画的单行或多行文字",
-  "ja": ""
+  "ja": "1文字ずつ入力されるタイピングアニメーション付きの、1行または複数行のテキスト"
  },
  "Chinese": {
   "zh": "中文",
@@ -12217,1847 +12217,1847 @@
  },
  "\"{0}\" will be deleted. This cannot be undone.": {
   "zh": "「{0}」会被删除，删除后不能恢复。",
-  "ja": ""
+  "ja": "「{0}」は削除されます。この操作は元に戻せません。"
  },
  ", please use it in PromptCut on your computer.": {
   "zh": "，请在电脑上的 PromptCut 里使用。",
-  "ja": ""
+  "ja": "、パソコンの PromptCut でご利用ください。"
  },
  "/api/collect/install returned {0}": {
   "zh": "/api/collect/install 返回 {0}",
-  "ja": ""
+  "ja": "/api/collect/install が {0} を返しました"
  },
  "/api/collect/login returned {0}": {
   "zh": "/api/collect/login 返回 {0}",
-  "ja": ""
+  "ja": "/api/collect/login が {0} を返しました"
  },
  "/api/collect/login/check returned {0}": {
   "zh": "/api/collect/login/check 返回 {0}",
-  "ja": ""
+  "ja": "/api/collect/login/check が {0} を返しました"
  },
  "/api/collect/probe returned {0}": {
   "zh": "/api/collect/probe 返回 {0}",
-  "ja": ""
+  "ja": "/api/collect/probe が {0} を返しました"
  },
  "/api/collect/qr/poll returned {0}": {
   "zh": "/api/collect/qr/poll 返回 {0}",
-  "ja": ""
+  "ja": "/api/collect/qr/poll が {0} を返しました"
  },
  "/api/collect/qr/start returned {0}": {
   "zh": "/api/collect/qr/start 返回 {0}",
-  "ja": ""
+  "ja": "/api/collect/qr/start が {0} を返しました"
  },
  "/api/collect/search returned {0}": {
   "zh": "/api/collect/search 返回 {0}",
-  "ja": ""
+  "ja": "/api/collect/search が {0} を返しました"
  },
  "/api/shots/install returned {0}": {
   "zh": "/api/shots/install 返回 {0}",
-  "ja": ""
+  "ja": "/api/shots/install が {0} を返しました"
  },
  "/api/subject/install returned {0}": {
   "zh": "/api/subject/install 返回 {0}",
-  "ja": ""
+  "ja": "/api/subject/install が {0} を返しました"
  },
  "/api/track/install returned {0}": {
   "zh": "/api/track/install 返回 {0}",
-  "ja": ""
+  "ja": "/api/track/install が {0} を返しました"
  },
  "A base with a blue-violet lean and a cyan accent. A consumer-oriented creative feel, with more saturated, livelier track colors.": {
   "zh": "底色带蓝紫倾向,强调色是青。偏消费端的创作气质,轨道色更饱和、更活跃。",
-  "ja": ""
+  "ja": "ベースは青紫寄りで、アクセントはシアンです。コンシューマー向けのクリエイティブな雰囲気で、トラックの色はより彩度が高く、活発です。"
  },
  "A crossfade needs two clips: clipId and otherClipId": {
   "zh": "交叉溶解要两段:clipId 和 otherClipId",
-  "ja": ""
+  "ja": "クロスフェードには2つのクリップ（clipId と otherClipId）が必要です"
  },
  "A newer generation request exists; the old result was not applied": {
   "zh": "已有新的生成请求,旧结果未应用",
-  "ja": ""
+  "ja": "より新しい生成リクエストがあるため、古い結果は適用されませんでした"
  },
  "A record of the previous failed render is still there; clicking export again will render it again": {
   "zh": "上一次没渲成的记录还在，再点一次导出会重新渲染",
-  "ja": ""
+  "ja": "前回レンダリングに失敗した記録が残っています。もう一度書き出しをクリックすると、再レンダリングされます"
  },
  "A render node has taken over and is preparing to render {0} clips.": {
   "zh": "渲染节点已接手，正在准备渲染 {0} 个片段。",
-  "ja": ""
+  "ja": "レンダーノードが処理を引き継ぎ、{0} 個のクリップのレンダリングを準備しています。"
  },
  "A render node is rendering frame by frame for this export: {0} / {1} frames done. Export starts once all of them arrive.": {
   "zh": "渲染节点正在为这次导出逐帧渲染：已完成 {0} / {1} 帧，全部到齐后开始导出。",
-  "ja": ""
+  "ja": "レンダーノードがこの書き出し用に1フレームずつレンダリングしています。{0} / {1} フレームが完了しました。すべて届いた時点で書き出しを開始します。"
  },
  "A task is running in this chat. It will be stopped before deletion, and changes already applied will be kept.": {
   "zh": "这个对话里有任务正在运行。删除时会先停止它，已经落地的修改会保留。",
-  "ja": ""
+  "ja": "このチャットではタスクが実行中です。削除する際はまず停止しますが、すでに反映された変更は残ります。"
  },
  "API key not set yet": {
   "zh": "还没填 API Key",
-  "ja": ""
+  "ja": "API キーが未入力です"
  },
  "Add attachment: upload files to this cloud chat's working directory so the Cloud Agent can use them (max 512 MB each)": {
   "zh": "添加附件:文件传到云端这个对话的工作目录,让云端 Agent 用得上(单个不超过 512 MB)",
-  "ja": ""
+  "ja": "添付ファイルを追加：ファイルをこのクラウドチャットの作業ディレクトリにアップロードして、クラウドエージェントが使えるようにします（1ファイルあたり最大512 MB）"
  },
  "After changing to {0} this clip is only {1} seconds, which can't even fit the shortest transition ({2} seconds); delete the transition first": {
   "zh": "改成 {0} 后这一段只有 {1} 秒，连最短的转场（{2} 秒）都装不下；先删掉转场",
-  "ja": ""
+  "ja": "{0} に変更すると、このクリップは {1} 秒しかなくなり、最短のトランジション（{2} 秒）さえ収まらないため、先にトランジションを削除してください"
  },
  "After the move, clips on track \"{0}\" would overlap; speed unchanged": {
   "zh": "挪动后序列「{0}」上的段会重叠，没有改速度",
-  "ja": ""
+  "ja": "移動するとトラック「{0}」上のクリップが重なるため、速度は変更していません"
  },
  "Also clear their private chats (their shared chats are kept)": {
   "zh": "同时清除他的私有对话（他的共有对话会保留）",
-  "ja": ""
+  "ja": "このメンバーのプライベートチャットも消去する（共有チャットは残ります）"
  },
  "Amber": {
   "zh": "琥珀 (Amber)",
-  "ja": ""
+  "ja": "アンバー"
  },
  "An alias is enough (opus / sonnet / haiku), or enter a full model name": {
   "zh": "填别名就行（opus / sonnet / haiku），也可以填完整模型名",
-  "ja": ""
+  "ja": "エイリアス（opus / sonnet / haiku）で十分ですが、正式なモデル名を入力することもできます"
  },
  "An error occurred: ": {
   "zh": "发生错误: ",
-  "ja": ""
+  "ja": "エラーが発生しました: "
  },
  "Another editor page took over the AI connection": {
   "zh": "另一个编辑台页面接管了 AI 连接",
-  "ja": ""
+  "ja": "別のエディタページが AI 接続を引き継ぎました"
  },
  "Audio chained across synced cards and built-in cards cannot be synthesized online. It uses the already generated audio (or the render node provides it if there is none)": {
   "zh": "同步来的卡与内置卡串在一起的声音在线合成不了,用已经生成的声音(没有就由渲染节点提供)",
-  "ja": ""
+  "ja": "同期されたカードと内蔵カードにまたがって連結されたオーディオは、オンラインで合成できません。生成済みのオーディオを使用します（ない場合はレンダーノードが提供します）"
  },
  "Audio code of synced cards does not run in the editor": {
   "zh": "同步来的卡的声音代码不在编辑页面里执行",
-  "ja": ""
+  "ja": "同期されたカードのオーディオコードは、エディタ内では実行されません"
  },
  "Audio of {0} could not be decoded: {1}": {
   "zh": "{0} 的声音解不出来:{1}",
-  "ja": ""
+  "ja": "{0} のオーディオをデコードできませんでした: {1}"
  },
  "Audio track": {
   "zh": "音频轨",
-  "ja": ""
+  "ja": "オーディオトラック"
  },
  "Aurora": {
   "zh": "极光 (Aurora)",
-  "ja": ""
+  "ja": "オーロラ"
  },
  "Authorization for this chat has expired. Please send again.": {
   "zh": "这次对话的授权已失效,请重新发送。",
-  "ja": ""
+  "ja": "このチャットの認可の有効期限が切れました。もう一度送信してください。"
  },
  "Automatic copy failed, please select the text and copy it manually": {
   "zh": "自动复制失败,请手动选中文本复制",
-  "ja": ""
+  "ja": "自動コピーに失敗しました。テキストを選択して手動でコピーしてください"
  },
  "Bundle has no entry file": {
   "zh": "包里没有入口文件",
-  "ja": ""
+  "ja": "バンドルにエントリファイルがありません"
  },
  "Bundle is missing {0}": {
   "zh": "包里缺 {0}",
-  "ja": ""
+  "ja": "バンドルに {0} がありません"
  },
  "Buttons, selected state, playhead; hover/pressed/faint background are derived from it": {
   "zh": "按钮、选中态、播放头;悬停/按下/淡底会跟着一起算",
-  "ja": ""
+  "ja": "ボタン、選択状態、再生ヘッドに使われ、ホバー・押下・淡い背景の色もこれを基に自動で決まります"
  },
  "Can't decrypt: the passphrase (machine ID) doesn't match, or the string was modified": {
   "zh": "解不开:口令(本机识别码)对不上,或者密文被改过",
-  "ja": ""
+  "ja": "復号できません：パスフレーズ（マシン ID）が一致しないか、文字列が改変されています"
  },
  "Can't find this download job": {
   "zh": "查不到这个下载作业",
-  "ja": ""
+  "ja": "このダウンロードジョブが見つかりません"
  },
  "Can't get the login state": {
   "zh": "查不到登录态",
-  "ja": ""
+  "ja": "ログイン状態を取得できません"
  },
  "Can't get the status of the media collection extension": {
   "zh": "查不到素材收集拓展的状态",
-  "ja": ""
+  "ja": "素材収集拡張機能の状態を取得できません"
  },
  "Can't reach the Cloud Agent service. Check your network.": {
   "zh": "连不上云端 Agent 服务,请检查网络。",
-  "ja": ""
+  "ja": "クラウドエージェントのサービスに接続できません。ネットワークを確認してください。"
  },
  "Cancel failed": {
   "zh": "取消失败",
-  "ja": ""
+  "ja": "キャンセルに失敗しました"
  },
  "Cancel failed, please retry": {
   "zh": "取消失败，请重试",
-  "ja": ""
+  "ja": "キャンセルに失敗しました。もう一度お試しください"
  },
  "Cancelled; the original sound effect is unchanged": {
   "zh": "已取消,原音效保持不变",
-  "ja": ""
+  "ja": "キャンセルしました。元の効果音は変更されていません"
  },
  "Cannot fetch the bytes of the track stream {0}: {1}": {
   "zh": "取不到轨道流的字节 {0}:{1}",
-  "ja": ""
+  "ja": "トラックストリーム {0} のバイト列を取得できません: {1}"
  },
  "Cannot fetch the frame rendered by the render node {0}: {1}": {
   "zh": "取不到渲染节点渲好的画面 {0}:{1}",
-  "ja": ""
+  "ja": "レンダーノードがレンダリングしたフレーム {0} を取得できません: {1}"
  },
  "Cannot fetch the prerender original size {0}: {1}": {
   "zh": "取不到预渲染原尺寸 {0}:{1}",
-  "ja": ""
+  "ja": "プリレンダリングの元サイズ {0} を取得できません: {1}"
  },
  "Cannot find the status of the motion tracking extension": {
   "zh": "查不到运动追踪拓展的状态",
-  "ja": ""
+  "ja": "モーショントラッキング拡張機能の状態を取得できません"
  },
  "Cannot find the status of the shot detection extension": {
   "zh": "查不到镜头识别拓展的状态",
-  "ja": ""
+  "ja": "ショット検出拡張機能の状態を取得できません"
  },
  "Cannot find the status of the subject detection extension": {
   "zh": "查不到主体检测拓展的状态",
-  "ja": ""
+  "ja": "被写体検出拡張機能の状態を取得できません"
  },
  "Cannot find this detection job": {
   "zh": "查不到这个检测作业",
-  "ja": ""
+  "ja": "この検出ジョブが見つかりません"
  },
  "Cannot find this subject detection job": {
   "zh": "查不到这个主体检测作业",
-  "ja": ""
+  "ja": "この被写体検出ジョブが見つかりません"
  },
  "Cannot find this tracking job": {
   "zh": "查不到这个追踪作业",
-  "ja": ""
+  "ja": "このトラッキングジョブが見つかりません"
  },
  "Cannot get project revision {0}": {
   "zh": "取不到第 {0} 版项目",
-  "ja": ""
+  "ja": "プロジェクトのリビジョン {0} を取得できません"
  },
  "Cannot get the audio of {0}: HTTP {1}": {
   "zh": "{0} 的声音取不到:HTTP {1}",
-  "ja": ""
+  "ja": "{0} のオーディオを取得できません: HTTP {1}"
  },
  "Cannot read the built-in missing-media voice: HTTP {0}": {
   "zh": "内置缺失素材人声无法读取:HTTP {0}",
-  "ja": ""
+  "ja": "内蔵の素材欠落ボイスを読み込めません: HTTP {0}"
  },
  "Canvas background": {
   "zh": "画布底色",
-  "ja": ""
+  "ja": "キャンバス背景"
  },
  "Card audio generation range must be between 1 sample and 60 seconds": {
   "zh": "卡片声音生成范围必须在 1 个采样至 60 秒内",
-  "ja": ""
+  "ja": "カードのオーディオ生成範囲は 1 サンプルから 60 秒の間で指定してください"
  },
  "Choose export method": {
   "zh": "选择导出方式",
-  "ja": ""
+  "ja": "書き出し方法を選択"
  },
  "Cleared {0} of their private chats.": {
   "zh": "已清除他的 {0} 个私有对话。",
-  "ja": ""
+  "ja": "このメンバーのプライベートチャットを {0} 件消去しました。"
  },
  "Clearing their private chats…": {
   "zh": "正在清除他的私有对话…",
-  "ja": ""
+  "ja": "このメンバーのプライベートチャットを消去しています…"
  },
  "Clip not found": {
   "zh": "找不到片段",
-  "ja": ""
+  "ja": "クリップが見つかりません"
  },
  "Clip {0} not found": {
   "zh": "找不到片段 {0}",
-  "ja": ""
+  "ja": "クリップ {0} が見つかりません"
  },
  "Cloud Agent can't connect right now: authentication failed. Refresh the page or re-enter the project.": {
   "zh": "云端 Agent 暂时连不上:身份验证没有通过。请刷新页面或重新进入项目。",
-  "ja": ""
+  "ja": "クラウドエージェントに現在接続できません。認証に失敗しました。ページを更新するか、プロジェクトに入り直してください。"
  },
  "Cloud Agent can't reach the document service right now. Try again later.": {
   "zh": "云端 Agent 暂时连不上文档服务,请稍后再试。",
-  "ja": ""
+  "ja": "クラウドエージェントは現在ドキュメントサービスに接続できません。しばらくしてからもう一度お試しください。"
  },
  "Cloud Agent error ({0}).": {
   "zh": "云端 Agent 出错了({0})。",
-  "ja": ""
+  "ja": "クラウドエージェントでエラーが発生しました（{0}）。"
  },
  "Cloud Agent has no model configured yet. Contact the host.": {
   "zh": "云端 Agent 还没有配置模型,请联系托管方。",
-  "ja": ""
+  "ja": "クラウドエージェントにモデルがまだ設定されていません。ホストにお問い合わせください。"
  },
  "Cloud Agent is unavailable right now: no identity credentials have been obtained yet.": {
   "zh": "云端 Agent 暂时用不了:还没有取得身份证明。",
-  "ja": ""
+  "ja": "クラウドエージェントは現在利用できません。認証情報がまだ取得されていません。"
  },
  "Cloud chats have reached the limit of {0}; sending the first message will be rejected. Delete unused chats in \"Chat history\" first.": {
   "zh": "云端对话已满 {0} 个，发出第一条消息会被拒绝。请先在「对话历史」里删除不用的对话。",
-  "ja": ""
+  "ja": "クラウドチャットが上限の {0} 件に達しているため、最初のメッセージを送信しても拒否されます。先に「チャット履歴」で使っていないチャットを削除してください。"
  },
  "Completely neutral gray with no color cast, and amber as the accent. Suited to color grading; the interface carries no hue at all.": {
   "zh": "完全无色偏的中性灰,强调色换成琥珀。适合调色场景,界面不带任何色相。",
-  "ja": ""
+  "ja": "色味のない完全なニュートラルグレーで、アクセントカラーはアンバーです。カラーグレーディングに向いており、インターフェースにはまったく色相がありません。"
  },
  "Connection interrupted, re-fetching progress…": {
   "zh": "连接中断，正在重新获取进度…",
-  "ja": ""
+  "ja": "接続が中断されました。進捗を再取得しています…"
  },
  "Continue deleting": {
   "zh": "继续删除",
-  "ja": ""
+  "ja": "削除を続ける"
  },
  "Cream base, orange primary color, large rounded corners": {
   "zh": "奶油底、橙主色、大圆角",
-  "ja": ""
+  "ja": "クリームのベース、オレンジのメインカラー、大きな角丸"
  },
  "Danger": {
   "zh": "危险",
-  "ja": ""
+  "ja": "危険"
  },
  "Dark glass base, cool blue primary color": {
   "zh": "深色玻璃底、冷蓝主色",
-  "ja": ""
+  "ja": "ダークなガラス調のベース、クールブルーのメインカラー"
  },
  "Dark green": {
   "zh": "墨绿",
-  "ja": ""
+  "ja": "ダークグリーン"
  },
  "Deep green glass, gold primary color, serif headings": {
   "zh": "深绿玻璃、金色主色、衬线标题字",
-  "ja": ""
+  "ja": "深緑のガラス調、ゴールドのメインカラー、セリフ体の見出し"
  },
  "Deep modern productivity-tool base colors with a cyan-blue brand accent and clear layering.": {
   "zh": "深邃的现代生产力工具底色,青蓝品牌色强调,分层清晰。",
-  "ja": ""
+  "ja": "モダンな生産性ツールらしい深みのあるベースカラーに、シアンブルーのブランドカラーを強調色として合わせ、階層をはっきり見せます。"
  },
  "Deep navy base, teal-green primary": {
   "zh": "深海军蓝底,青绿主色",
-  "ja": ""
+  "ja": "ディープネイビーのベース、ティールグリーンのメインカラー"
  },
  "Delete this chat?": {
   "zh": "删除这个对话？",
-  "ja": ""
+  "ja": "このチャットを削除しますか？"
  },
  "Deleted. The slot has been freed.": {
   "zh": "已删除，名额已经让出。",
-  "ja": ""
+  "ja": "削除しました。枠が空きました。"
  },
  "Direct API": {
   "zh": "API 直连",
-  "ja": ""
+  "ja": "API直接接続"
  },
  "Done: {0}": {
   "zh": "已完成:{0}",
-  "ja": ""
+  "ja": "完了: {0}"
  },
  "Download failed": {
   "zh": "下载失败",
-  "ja": ""
+  "ja": "ダウンロードに失敗しました"
  },
  "Downloaded: {0}": {
   "zh": "已下载:{0}",
-  "ja": ""
+  "ja": "ダウンロードしました: {0}"
  },
  "Downloading {0}{1}": {
   "zh": "正在下载 {0}{1}",
-  "ja": ""
+  "ja": "{0}{1} をダウンロード中"
  },
  "Downloading…": {
   "zh": "正在下载…",
-  "ja": ""
+  "ja": "ダウンロード中…"
  },
  "Effects track": {
   "zh": "特效轨",
-  "ja": ""
+  "ja": "エフェクトトラック"
  },
  "Emphasis can only be shadow or outline": {
   "zh": "强调只有 shadow(阴影)和 outline(描边)两种",
-  "ja": ""
+  "ja": "強調には shadow（影）と outline（縁取り）のみ指定できます"
  },
  "Enter model names supported by codex, separate multiple with |": {
   "zh": "填 codex 支持的模型名，多个用 | 分开",
-  "ja": ""
+  "ja": "codex が対応しているモデル名を入力してください（複数の場合は | で区切る）"
  },
  "Enter the API key": {
   "zh": "请填 API Key",
-  "ja": ""
+  "ja": "API キーを入力してください"
  },
  "Enter the encryption passphrase (the other side's machine ID, or a passphrase you agreed on)": {
   "zh": "请填加密口令(对方的本机识别码,或你们约定的口令)",
-  "ja": ""
+  "ja": "暗号化パスフレーズを入力してください（相手のマシン ID、または取り決めたパスフレーズ）"
  },
  "Error while loading": {
   "zh": "载入时出错",
-  "ja": ""
+  "ja": "読み込み中にエラーが発生しました"
  },
  "Error while loading ({0})": {
   "zh": "载入时出错({0})",
-  "ja": ""
+  "ja": "読み込み中にエラーが発生しました（{0}）"
  },
  "Every frame is rendered again. Same quality as the desktop app, slow.": {
   "zh": "每一帧都重新渲染，画质和桌面版一样，速度慢。",
-  "ja": ""
+  "ja": "すべてのフレームをレンダリングし直します。画質はデスクトップアプリと同じですが、速度は遅くなります。"
  },
  "Export cancelled": {
   "zh": "导出已取消",
-  "ja": ""
+  "ja": "書き出しをキャンセルしました"
  },
  "Exported {0}/{1} frames": {
   "zh": "已导出 {0}/{1} 帧",
-  "ja": ""
+  "ja": "{0}/{1} フレームを書き出しました"
  },
  "Failed to clear keys": {
   "zh": "清理密钥失败",
-  "ja": ""
+  "ja": "キーの消去に失敗しました"
  },
  "Failed to get AI providers": {
   "zh": "获取 AI 供应商失败",
-  "ja": ""
+  "ja": "AI プロバイダーの取得に失敗しました"
  },
  "Failed to get AI providers: ": {
   "zh": "获取 AI 供应商失败：",
-  "ja": ""
+  "ja": "AI プロバイダーの取得に失敗しました: "
  },
  "Failed to save settings": {
   "zh": "保存配置失败",
-  "ja": ""
+  "ja": "設定の保存に失敗しました"
  },
  "Failed to upload source file (HTTP {0})": {
   "zh": "上传源文件失败(HTTP {0})",
-  "ja": ""
+  "ja": "元のファイルのアップロードに失敗しました（HTTP {0}）"
  },
  "Fast export": {
   "zh": "快速导出",
-  "ja": ""
+  "ja": "高速書き出し"
  },
  "File too large (over {0} KB)": {
   "zh": "文件太大(超过 {0} KB)",
-  "ja": ""
+  "ja": "ファイルが大きすぎます（{0} KB を超えています）"
  },
  "File too large, the cloud can't accept it (each file must be 512 MB or less, and this chat's working directory also has a total size limit).": {
   "zh": "文件太大了,云端收不下(单个文件不超过 512 MB,这个对话的工作目录也有总量上限)。",
-  "ja": ""
+  "ja": "ファイルが大きすぎて、クラウドで受け付けられません（1ファイルあたり512 MB以下で、このチャットの作業ディレクトリにも合計サイズの上限があります）。"
  },
  "Floating layer background": {
   "zh": "浮层底色",
-  "ja": ""
+  "ja": "フローティングレイヤーの背景"
  },
  "Flow": {
   "zh": "流光",
-  "ja": ""
+  "ja": "フロー"
  },
  "For audio media effect cards, use apply_card": {
   "zh": "音频素材效果卡请用 apply_card",
-  "ja": ""
+  "ja": "オーディオ素材のエフェクトカードには apply_card を使ってください"
  },
  "Full export": {
   "zh": "完整导出",
-  "ja": ""
+  "ja": "フル書き出し"
  },
  "Graphics context was lost while running": {
   "zh": "运行中丢过图形上下文",
-  "ja": ""
+  "ja": "実行中にグラフィックスコンテキストが失われました"
  },
  "Graphite": {
   "zh": "石墨",
-  "ja": ""
+  "ja": "グラファイト"
  },
  "Guests can open only 1 Agent chat per project, and you have already opened it: click it in \"Chat history\" to continue. To open more, please register an account.": {
   "zh": "游客在每个项目里只能开 1 个 Agent 对话，你已经开过了：在「对话历史」里点它就能接着聊。要多开，请注册一个账号。",
-  "ja": ""
+  "ja": "ゲストはプロジェクトごとにエージェントチャットを1つしか開けません。すでに開いているため、「チャット履歴」から選んで続けてください。複数開くには、アカウントを登録してください。"
  },
  "Heavy cards use the prerendered track stream frames directly. Fast, slightly lower quality.": {
   "zh": "重卡直接用预渲染好的轨道流画面，速度快，画质略低。",
-  "ja": ""
+  "ja": "重いカードは、プリレンダリング済みのトラックストリームのフレームをそのまま使います。高速ですが、画質はやや下がります。"
  },
  "Image track": {
   "zh": "图片轨",
-  "ja": ""
+  "ja": "画像トラック"
  },
  "Import failed: HTTP {0}": {
   "zh": "导入失败: HTTP {0}",
-  "ja": ""
+  "ja": "インポートに失敗しました: HTTP {0}"
  },
  "Import task timed out": {
   "zh": "导入任务超时",
-  "ja": ""
+  "ja": "インポートタスクがタイムアウトしました"
  },
  "Import task timed out (over 10 minutes)": {
   "zh": "导入任务超时（超过 10 分钟）",
-  "ja": ""
+  "ja": "インポートタスクがタイムアウトしました（10分超）"
  },
  "Indigo night": {
   "zh": "靛夜",
-  "ja": ""
+  "ja": "インディゴナイト"
  },
  "Installation complete": {
   "zh": "安装完成",
-  "ja": ""
+  "ja": "インストールが完了しました"
  },
  "Installing {0} packages…": {
   "zh": "正在安装 {0} 个包…",
-  "ja": ""
+  "ja": "{0} 個のパッケージをインストールしています…"
  },
  "Invalid chat ID": {
   "zh": "对话 ID 不合法",
-  "ja": ""
+  "ja": "チャット ID が正しくありません"
  },
  "Invalid sound effect time range": {
   "zh": "音效时间范围无效",
-  "ja": ""
+  "ja": "効果音の時間範囲が無効です"
  },
  "Issues: {0}": {
   "zh": "问题:{0}",
-  "ja": ""
+  "ja": "問題: {0}"
  },
  "Ivory": {
   "zh": "象牙",
-  "ja": ""
+  "ja": "アイボリー"
  },
  "Keep the page in the foreground and do not lock the screen during export.": {
   "zh": "导出期间请保持页面在前台、不要锁屏。",
-  "ja": ""
+  "ja": "書き出し中は、ページを前面に表示したまま、画面をロックしないでください。"
  },
  "Light paper feel, warm gray text, amber primary color": {
   "zh": "浅色纸感、暖灰字、琥珀主色",
-  "ja": ""
+  "ja": "明るい紙の質感、暖かみのあるグレーの文字、アンバーのメインカラー"
  },
  "Lite mode": {
   "zh": "精简模式",
-  "ja": ""
+  "ja": "ライトモード"
  },
  "Logout failed": {
   "zh": "退出登录失败",
-  "ja": ""
+  "ja": "ログアウトに失敗しました"
  },
  "Low": {
   "zh": "低",
-  "ja": ""
+  "ja": "低"
  },
  "Low mode": {
   "zh": "低配模式",
-  "ja": ""
+  "ja": "低スペックモード"
  },
  "Max": {
   "zh": "最高",
-  "ja": ""
+  "ja": "最高"
  },
  "Max texture size is smaller than the aspect ratio": {
   "zh": "最大纹理尺寸小于画幅",
-  "ja": ""
+  "ja": "最大テクスチャサイズがアスペクト比より小さいです"
  },
  "Menus, dialogs": {
   "zh": "菜单、对话框",
-  "ja": ""
+  "ja": "メニュー、ダイアログ"
  },
  "Midnight": {
   "zh": "午夜",
-  "ja": ""
+  "ja": "ミッドナイト"
  },
  "Mine {0}/{1}": {
   "zh": "我的 {0}/{1}",
-  "ja": ""
+  "ja": "自分の {0}/{1}"
  },
  "Minimal": {
   "zh": "极简",
-  "ja": ""
+  "ja": "ミニマル"
  },
  "Motion tracking failed": {
   "zh": "运动追踪失败",
-  "ja": ""
+  "ja": "モーショントラッキングに失敗しました"
  },
  "Motion tracking failed to start": {
   "zh": "运动追踪没能启动",
-  "ja": ""
+  "ja": "モーショントラッキングを開始できませんでした"
  },
  "Near-black base, high contrast, strong glow": {
   "zh": "近黑底,高对比强辉光",
-  "ja": ""
+  "ja": "黒に近いベース、高コントラスト、強いグロー"
  },
  "Neon": {
   "zh": "霓虹 (Neon)",
-  "ja": ""
+  "ja": "ネオン"
  },
  "Neutral, cool-leaning grays with a steel-blue accent. Restrained and easy on the eyes over long sessions, leaving all the color to your media.": {
   "zh": "中性偏冷的灰阶 + 钢蓝强调。克制、可长时间注视,颜色全部留给素材。",
-  "ja": ""
+  "ja": "ややクールなニュートラルグレーに、スチールブルーのアクセントを合わせています。控えめで、長時間見続けても目に優しく、色はすべて素材に任せます。"
  },
  "No address is configured for receiving reports (VITE_DIAG_SUBMIT_URL). Please use \"Save as file\" and send the report to us": {
   "zh": "还没配收报告的地址(VITE_DIAG_SUBMIT_URL)。请用「保存为文件」把报告发给我们",
-  "ja": ""
+  "ja": "レポートの受信先アドレスが設定されていません（VITE_DIAG_SUBMIT_URL）。「ファイルとして保存」を使って、レポートをこちらに送ってください"
  },
  "No regenerable sound effect clip found": {
   "zh": "找不到可重生成的音效片段",
-  "ja": ""
+  "ja": "再生成できる効果音クリップが見つかりません"
  },
  "No retained card audio": {
   "zh": "没有留着的卡片声音",
-  "ja": ""
+  "ja": "保持されているカードのオーディオがありません"
  },
  "Node {0} not found": {
   "zh": "找不到节点 {0}",
-  "ja": ""
+  "ja": "ノード {0} が見つかりません"
  },
  "Off by default": {
   "zh": "默认关",
-  "ja": ""
+  "ja": "デフォルトではオフ"
  },
  "Offline changes made during recovery cannot be continued; please keep a separate backup first": {
   "zh": "恢复期间的离线修改无法接续；请先保留独立备份",
-  "ja": ""
+  "ja": "復旧中に行ったオフラインでの変更は引き継げません。先に別途バックアップを保存してください"
  },
  "Offset {0} s exceeds the total duration of the referenced cut, {1} s": {
   "zh": "偏移 {0} 秒超出了被引用剪辑的总时长 {1} 秒",
-  "ja": ""
+  "ja": "オフセット {0} 秒が、参照先のカットの全体の長さ {1} 秒を超えています"
  },
  "On by default per the vendor field": {
   "zh": "按厂商字段默认开",
-  "ja": ""
+  "ja": "ベンダーのフィールドに従い、デフォルトでオン"
  },
  "Online browser mode cannot yet run this card's sound code (sound from user cards and media effect cards must be generated on the local PC and then synced)": {
   "zh": "在线浏览器模式暂不能执行这张卡的声音代码(用户卡、素材效果卡的声音要在本地 PC 生成后同步)",
-  "ja": ""
+  "ja": "オンラインブラウザモードでは、このカードのサウンドコードをまだ実行できません（ユーザーカードや素材エフェクトカードのサウンドは、ローカル PC で生成してから同期する必要があります）"
  },
  "Online synthesis of this sound timed out": {
   "zh": "这段声音在线合成超时",
-  "ja": ""
+  "ja": "このサウンドのオンライン合成がタイムアウトしました"
  },
  "Only existing WAV sound effect clips can be regenerated": {
   "zh": "只能重生成已有的 WAV 音效片段",
-  "ja": ""
+  "ja": "再生成できるのは、既存の WAV 効果音クリップだけです"
  },
  "Only software rendering is available": {
   "zh": "只有软件渲染",
-  "ja": ""
+  "ja": "ソフトウェアレンダリングのみ利用できます"
  },
  "Only the audio of regular video media can be separated. No clips were modified.": {
   "zh": "只能分离普通视频素材的音频。未修改任何片段。",
-  "ja": ""
+  "ja": "分離できるのは、通常の動画素材のオーディオだけです。クリップは変更されていません。"
  },
  "Only the person who opened this chat or the project creator can delete it.": {
   "zh": "只有开这个对话的人或项目创建者能删除它。",
-  "ja": ""
+  "ja": "このチャットを削除できるのは、チャットを開いた人かプロジェクトの作成者だけです。"
  },
  "Only the project creator can clear a member's private chats.": {
   "zh": "只有项目创建者能清除成员的私有对话。",
-  "ja": ""
+  "ja": "メンバーのプライベートチャットを消去できるのは、プロジェクトの作成者だけです。"
  },
  "Only video clips and audio clips can change speed": {
   "zh": "只有视频段和声音段能改速度",
-  "ja": ""
+  "ja": "速度を変更できるのは、動画クリップとオーディオクリップだけです"
  },
  "Outline": {
   "zh": "描边",
-  "ja": ""
+  "ja": "縁取り"
  },
  "PUT part {0}": {
   "zh": "PUT 第 {0} 片",
-  "ja": ""
+  "ja": "PUT パート {0}"
  },
  "Panel background": {
   "zh": "面板底色",
-  "ja": ""
+  "ja": "パネルの背景"
  },
  "Primary text": {
   "zh": "主文字",
-  "ja": ""
+  "ja": "プライマリテキスト"
  },
  "Project creator \"{0}\"": {
   "zh": "项目创建者「{0}」",
-  "ja": ""
+  "ja": "プロジェクト作成者「{0}」"
  },
  "Proof of identity for the Cloud Agent has not been obtained yet": {
   "zh": "还没有取得云端 Agent 的身份证明",
-  "ja": ""
+  "ja": "クラウドエージェントの認証情報がまだ取得されていません"
  },
  "Pure black base, fluorescent cyan/magenta primary colors, glowing shadows": {
   "zh": "纯黑底、荧光青/品红主色、发光投影",
-  "ja": ""
+  "ja": "純黒のベース、蛍光シアン/マゼンタのメインカラー、発光する影"
  },
  "Report is {0}KB, over the {1}MB upload limit. Please use \"Save as file\" and send it to us": {
   "zh": "报告 {0}KB,超过 {1}MB 上传上限。请用「保存为文件」发给我们",
-  "ja": ""
+  "ja": "レポートは {0}KB で、アップロード上限の {1}MB を超えています。「ファイルとして保存」を使って、こちらに送ってください"
  },
  "Request failed": {
   "zh": "请求失败",
-  "ja": ""
+  "ja": "リクエストに失敗しました"
  },
  "Resend": {
   "zh": "重新发送",
-  "ja": ""
+  "ja": "再送信"
  },
  "Resolving dependencies: {0}": {
   "zh": "正在解析依赖:{0}",
-  "ja": ""
+  "ja": "依存関係を解決しています: {0}"
  },
  "Resolving dependencies…": {
   "zh": "正在解析依赖…",
-  "ja": ""
+  "ja": "依存関係を解決しています…"
  },
  "Retry clear": {
   "zh": "重试清除",
-  "ja": ""
+  "ja": "消去を再試行"
  },
  "Retry delete": {
   "zh": "重试删除",
-  "ja": ""
+  "ja": "削除を再試行"
  },
  "Runtime version mismatch (page {0}, this environment {1})": {
   "zh": "运行时版本不一致(页面 {0},本环境 {1})",
-  "ja": ""
+  "ja": "ランタイムのバージョンが一致しません（ページ {0}、この環境 {1}）"
  },
  "Save failed, HTTP {0}": {
   "zh": "保存失败 HTTP {0}",
-  "ja": ""
+  "ja": "保存に失敗しました（HTTP {0}）"
  },
  "Secondary panel": {
   "zh": "次级面板",
-  "ja": ""
+  "ja": "セカンダリパネル"
  },
  "Secondary text": {
   "zh": "次要文字",
-  "ja": ""
+  "ja": "セカンダリテキスト"
  },
  "Select 1 to 100 clips": {
   "zh": "请选择 1 到 100 个片段",
-  "ja": ""
+  "ja": "1～100個のクリップを選択してください"
  },
  "Semantic colors": {
   "zh": "语义色",
-  "ja": ""
+  "ja": "セマンティックカラー"
  },
  "Send failed: new messages arrived in this chat while offline, so this one was not sent.": {
   "zh": "发送失败：断网期间这个对话里有了新消息，这条没有发出。",
-  "ja": ""
+  "ja": "送信に失敗しました。オフライン中にこのチャットへ新しいメッセージが届いたため、このメッセージは送信されませんでした。"
  },
  "Send failed: {0}": {
   "zh": "发送失败：{0}",
-  "ja": ""
+  "ja": "送信に失敗しました: {0}"
  },
  "Separate multiple models with |, then you can switch between them in the panel": {
   "zh": "多个模型用 | 分开，面板上就能切",
-  "ja": ""
+  "ja": "複数のモデルは | で区切ります。パネル上で切り替えられるようになります"
  },
  "Shot detection failed": {
   "zh": "镜头识别失败",
-  "ja": ""
+  "ja": "ショット検出に失敗しました"
  },
  "Shot detection failed to start": {
   "zh": "镜头识别没能启动",
-  "ja": ""
+  "ja": "ショット検出を開始できませんでした"
  },
  "Sound code cannot use ": {
   "zh": "声音代码里不能用 ",
-  "ja": ""
+  "ja": "サウンドコードでは使用できません: "
  },
  "Sound effect job not found": {
   "zh": "找不到音效任务",
-  "ja": ""
+  "ja": "効果音ジョブが見つかりません"
  },
  "Sound effect recipe exceeds the 96 KiB shared project safety limit, please split the typed content into multiple generations": {
   "zh": "音效配方超过 96 KiB 的共享项目安全上限,请把打字内容拆成多段生成",
-  "ja": ""
+  "ja": "効果音のレシピが共有プロジェクトの安全上限である 96 KiB を超えています。入力した内容を複数回の生成に分けてください"
  },
  "Sound effect samples exceed the safe range, please lower the volume": {
   "zh": "音效采样超出安全范围,请降低音量",
-  "ja": ""
+  "ja": "効果音のサンプルが安全な範囲を超えています。音量を下げてください"
  },
  "Sound effect synthesis process failed to start": {
   "zh": "音效合成进程启动失败",
-  "ja": ""
+  "ja": "効果音の合成プロセスを起動できませんでした"
  },
  "Sound thread error: {0}": {
   "zh": "声音线程出错:{0}",
-  "ja": ""
+  "ja": "サウンドスレッドのエラー: {0}"
  },
  "Source unavailable": {
   "zh": "源码取不到",
-  "ja": ""
+  "ja": "ソースを取得できません"
  },
  "Speed must be a positive number": {
   "zh": "速度要是正数",
-  "ja": ""
+  "ja": "速度は正の数にしてください"
  },
  "Speed must be between {0} and {1}x": {
   "zh": "速度要在 {0}～{1} 倍之间",
-  "ja": ""
+  "ja": "速度は {0}～{1} 倍の間で指定してください"
  },
  "Standard mode": {
   "zh": "标准模式",
-  "ja": ""
+  "ja": "標準モード"
  },
  "Starting installation…": {
   "zh": "正在启动安装…",
-  "ja": ""
+  "ja": "インストールを開始しています…"
  },
  "Steel blue": {
   "zh": "钢蓝",
-  "ja": ""
+  "ja": "スチールブルー"
  },
  "Stopping a cloud chat requires the current run id and request id.": {
   "zh": "停止云端对话需要当前运行编号和请求编号。",
-  "ja": ""
+  "ja": "クラウドチャットを停止するには、現在の実行 ID とリクエスト ID が必要です。"
  },
  "Strong stroke": {
   "zh": "强描边",
-  "ja": ""
+  "ja": "太い縁取り"
  },
  "Sub-Agent": {
   "zh": "子 Agent",
-  "ja": ""
+  "ja": "サブエージェント"
  },
  "Subject detection did not finish within {0} minutes and was canceled.": {
   "zh": "主体检测超过 {0} 分钟还没跑完，已取消。",
-  "ja": ""
+  "ja": "被写体検出が {0} 分以内に完了しなかったため、キャンセルされました。"
  },
  "Subject detection failed": {
   "zh": "主体检测失败",
-  "ja": ""
+  "ja": "被写体検出に失敗しました"
  },
  "Subject detection failed to start": {
   "zh": "主体检测没能启动",
-  "ja": ""
+  "ja": "被写体検出を開始できませんでした"
  },
  "Submit failed: HTTP {0}": {
   "zh": "提交失败 HTTP {0}",
-  "ja": ""
+  "ja": "送信に失敗しました: HTTP {0}"
  },
  "Submitted": {
   "zh": "已提交",
-  "ja": ""
+  "ja": "送信しました"
  },
  "Submitted, receipt number {0}": {
   "zh": "已提交，回执编号 {0}",
-  "ja": ""
+  "ja": "送信しました（受付番号 {0}）"
  },
  "Success": {
   "zh": "成功",
-  "ja": ""
+  "ja": "成功"
  },
  "Surfaces": {
   "zh": "表面",
-  "ja": ""
+  "ja": "サーフェス"
  },
  "Tasks in {0} chats have not fully stopped, so they have not been cleared yet. Click \"Retry clear\" to continue.": {
   "zh": "还有 {0} 个对话里的任务没停稳，暂时没有清除。点「重试清除」会接着办。",
-  "ja": ""
+  "ja": "{0} 件のチャットでタスクが完全に停止していないため、まだ消去されていません。「消去を再試行」をクリックすると続行します。"
  },
  "Terracotta": {
   "zh": "陶土",
-  "ja": ""
+  "ja": "テラコッタ"
  },
  "Text and strokes": {
   "zh": "文字与描边",
-  "ja": ""
+  "ja": "文字と縁取り"
  },
  "Text track": {
   "zh": "文字轨",
-  "ja": ""
+  "ja": "テキストトラック"
  },
  "The Cloud Agent is busy. Please try again later.": {
   "zh": "云端 Agent 正忙,请稍后再试。",
-  "ja": ""
+  "ja": "クラウドエージェントは混み合っています。しばらくしてからもう一度お試しください。"
  },
  "The account, project or chat has changed. Reload the current chat before continuing.": {
   "zh": "账号、项目或对话已切换，请重新读取当前对话后再操作。",
-  "ja": ""
+  "ja": "アカウント、プロジェクト、またはチャットが切り替わりました。続行する前に、現在のチャットを再読み込みしてください。"
  },
  "The card's sound record exceeds the safe commit limit of a shared project; shorten the card or simplify its parameters": {
   "zh": "卡片声音记录超过共享项目安全提交上限，请缩短卡片或精简参数",
-  "ja": ""
+  "ja": "カードのサウンド記録が共有プロジェクトの安全なコミット上限を超えています。カードを短くするか、パラメーターを簡略化してください"
  },
  "The chat you are viewing has been deleted.": {
   "zh": "你正在看的对话已被删除。",
-  "ja": ""
+  "ja": "表示中のチャットは削除されました。"
  },
  "The clip to move is on the locked track \"{0}\"; unlock that track first": {
   "zh": "要挪的段在锁着的序列「{0}」上；先解锁那条序列",
-  "ja": ""
+  "ja": "移動するクリップはロックされたトラック「{0}」上にあります。先にそのトラックのロックを解除してください"
  },
  "The community edition does not enable the cloud room relay service": {
   "zh": "社区版未启用云端房间中继服务",
-  "ja": ""
+  "ja": "コミュニティ版ではクラウドルームのリレーサービスは有効になっていません"
  },
  "The companion audio clip of the clip to move can't be moved; speed was not changed": {
   "zh": "要挪的段的声音伴随段挪不开，没有改速度",
-  "ja": ""
+  "ja": "移動するクリップに付随するオーディオクリップを移動できないため、速度は変更していません"
  },
  "The companion audio clip of this clip doesn't fit; speed was not changed": {
   "zh": "这一段的声音伴随段放不下，没有改速度",
-  "ja": ""
+  "ja": "このクリップに付随するオーディオクリップが収まらないため、速度は変更していません"
  },
  "The connection to the document service is down, so Cloud Agent is unavailable for now. Try again once connected.": {
   "zh": "和文档服务的连接断着,云端 Agent 暂时用不了。连上后再试。",
-  "ja": ""
+  "ja": "ドキュメントサービスとの接続が切れているため、クラウドエージェントは現在利用できません。接続が回復してからもう一度お試しください。"
  },
  "The document service did not issue a delegation for the Cloud Agent ({0})": {
   "zh": "文档服务没有签发云端 Agent 的委托({0})",
-  "ja": ""
+  "ja": "ドキュメントサービスがクラウドエージェントへの委任を発行しませんでした（{0}）"
  },
  "The download could not start": {
   "zh": "下载没能启动",
-  "ja": ""
+  "ja": "ダウンロードを開始できませんでした"
  },
  "The embedded sound of a motion graphics card cannot be separated or converted to a sound; you can mute the card on its own": {
   "zh": "动效卡片的内嵌声音不能分离或转换为声音；可以单独静音该卡片",
-  "ja": ""
+  "ja": "モーショングラフィックスカードに埋め込まれたサウンドは、分離したりサウンドに変換したりできません。カードを個別にミュートすることはできます"
  },
  "The encoder produced no frames": {
   "zh": "编码器一帧都没给出",
-  "ja": ""
+  "ja": "エンコーダーがフレームを1つも出力しませんでした"
  },
  "The following clips share the same transition group as this clip and can't be pushed apart; delete the transition first": {
   "zh": "后面的段和这一段绑在同一组转场里，推不开；先删掉转场",
-  "ja": ""
+  "ja": "後続のクリップがこのクリップと同じトランジショングループに属しているため、押し広げられません。先にトランジションを削除してください"
  },
  "The highest-contrast set: near-black base, mint-green accent, and strokes one step heavier than other themes. Made for keyboard-driven and node-based workflows.": {
   "zh": "对比度最高的一套:近黑的底、荷绿强调,描边比其他主题重一档。给键盘流与节点式工作流。",
-  "ja": ""
+  "ja": "コントラストが最も高いセットです。黒に近いベースにミントグリーンのアクセント、線は他のテーマより一段太くなっています。キーボード操作中心やノードベースのワークフロー向けです。"
  },
  "The message is too long for Cloud Agent to accept. Shorten it and send again.": {
   "zh": "消息太长了,云端 Agent 收不下。请缩短后再发。",
-  "ja": ""
+  "ja": "メッセージが長すぎて、クラウドエージェントで受け付けられません。短くしてから再送信してください。"
  },
  "The model_reasoning_effort value on line 5 of the codex config file ~/.codex/config.toml is not recognized by this version of codex. Change it to high or xhigh and try again": {
   "zh": "codex 配置文件 ~/.codex/config.toml 第 5 行的 model_reasoning_effort 值本版 codex 不认,改成 high 或 xhigh 后再试",
-  "ja": ""
+  "ja": "codex の設定ファイル ~/.codex/config.toml の 5 行目にある model_reasoning_effort の値は、このバージョンの codex では認識されません。high または xhigh に変更してからもう一度お試しください"
  },
  "The new recipe is silent after this media offset, please adjust the clip range first": {
   "zh": "新配方在此素材偏移后没有声音,请先调整片段范围",
-  "ja": ""
+  "ja": "新しいレシピは、この素材オフセット以降が無音です。先にクリップの範囲を調整してください"
  },
  "The online page has no such module: {0}": {
   "zh": "在线页面里没有这个模块:{0}",
-  "ja": ""
+  "ja": "オンラインページにそのようなモジュールはありません: {0}"
  },
  "The online page has no such stylesheet: {0}": {
   "zh": "在线页面里没有这份样式:{0}",
-  "ja": ""
+  "ja": "オンラインページにそのようなスタイルシートはありません: {0}"
  },
  "The only warm-base theme: grays with a touch of brown and an ochre accent. More relaxed for long editing sessions, and the light tier is close to paper.": {
   "zh": "唯一的暖底主题:灰阶带一点褐,强调色是赭。长时间剪辑更松弛,浅色一档接近纸张。",
-  "ja": ""
+  "ja": "唯一の暖色ベースのテーマです。ほんのり褐色がかったグレーに、オーカーのアクセントを合わせています。長時間の編集でも落ち着いて使え、ライト版は紙に近い質感です。"
  },
  "The original position of the later clip is occupied, so it stays at its current position (the two clips still overlap; you can move them apart yourself)": {
   "zh": "后一段原来的位置被占了,留在当前位置(两段现在还重叠着,可以自己挪开)",
-  "ja": ""
+  "ja": "後ろのクリップの元の位置が埋まっているため、現在の位置に残ります（2つのクリップはまだ重なっていますが、自分で動かして離せます）"
  },
  "The original typing clip has changed, please regenerate": {
   "zh": "原打字片段已改变,请重新生成",
-  "ja": ""
+  "ja": "元のタイピングクリップが変更されました。再生成してください"
  },
  "The project creator has turned off the Cloud Agent.": {
   "zh": "项目创建者已关闭云端 Agent。",
-  "ja": ""
+  "ja": "プロジェクトの作成者がクラウドエージェントをオフにしました。"
  },
  "The project or clip has changed, the old generation result was not applied": {
   "zh": "项目或片段已改变,旧生成结果未应用",
-  "ja": ""
+  "ja": "プロジェクトまたはクリップが変更されたため、古い生成結果は適用されませんでした"
  },
  "The project or cut has changed; sound effect not applied": {
   "zh": "项目或剪辑已切换,未应用音效",
-  "ja": ""
+  "ja": "プロジェクトまたはカットが切り替わったため、効果音は適用されませんでした"
  },
  "The project was changed during export. Please export again.": {
   "zh": "导出期间项目被改动了，请重新导出。",
-  "ja": ""
+  "ja": "書き出し中にプロジェクトが変更されました。もう一度書き出してください。"
  },
  "The render node cannot render {0} clips ({1}), so this export is not possible.": {
   "zh": "有 {0} 个片段渲染节点渲染不了（{1}），这次导不出来。",
-  "ja": ""
+  "ja": "レンダーノードでは {0} 個のクリップ（{1}）をレンダリングできないため、今回の書き出しはできません。"
  },
  "The render node could not finish rendering the frames this export needs ({0}). Please export again.": {
   "zh": "渲染节点没能渲完这次导出要的画面（{0}），请重新导出。",
-  "ja": ""
+  "ja": "レンダーノードが、今回の書き出しに必要なフレーム（{0}）のレンダリングを完了できませんでした。もう一度書き出してください。"
  },
  "The render node does not have the code for this card": {
   "zh": "渲染节点上没有这张卡片的代码",
-  "ja": ""
+  "ja": "レンダーノードにこのカードのコードがありません"
  },
  "The render node has made no progress for {0} (it may be offline), so this export did not complete. Make sure the render node is online, then export again.": {
   "zh": "渲染节点已经 {0}没有进展（可能已经离线），这次没导出来。请确认渲染节点在线后重新导出。",
-  "ja": ""
+  "ja": "レンダーノードの進捗が {0}間ありません（オフラインの可能性があります）。そのため、今回の書き出しは完了しませんでした。レンダーノードがオンラインであることを確認してから、もう一度書き出してください。"
  },
  "The render node is temporarily unavailable": {
   "zh": "渲染节点暂时不可用",
-  "ja": ""
+  "ja": "レンダーノードは一時的に利用できません"
  },
  "The sound effect change exceeds the safe commit limit for shared projects, please split it into several generations": {
   "zh": "音效变更超过共享项目安全提交上限,请拆成多段生成",
-  "ja": ""
+  "ja": "効果音の変更が共有プロジェクトの安全なコミット上限を超えています。複数回の生成に分けてください"
  },
  "The sound effect clip has changed, please regenerate": {
   "zh": "音效片段已改变,请重新生成",
-  "ja": ""
+  "ja": "効果音クリップが変更されました。再生成してください"
  },
  "The sound effect queue is full (max {0}); wait or cancel": {
   "zh": "音效任务队列已满(最多 {0} 个),请等待或取消",
-  "ja": ""
+  "ja": "効果音のキューがいっぱいです（最大 {0} 件）。待つか、キャンセルしてください"
  },
  "The sound effect start is beyond the project out point, please adjust the start": {
   "zh": "音效起点在项目出点之外,请调整起点",
-  "ja": ""
+  "ja": "効果音の開始位置がプロジェクトのアウト点を超えています。開始位置を調整してください"
  },
  "The sound of a motion graphics card is written in the card code, so the audio track cannot be separated. You can mute the card on its own. No clips were modified.": {
   "zh": "动效卡片的声音写在卡片代码里，不能分离音轨。可以单独静音该卡片。未修改任何片段。",
-  "ja": ""
+  "ja": "モーショングラフィックスカードのサウンドはカードのコードに書かれているため、オーディオトラックを分離できません。カードを個別にミュートできます。クリップは変更されていません。"
  },
  "The sound of the clip to move is on the locked track \"{0}\"; unlock that track first": {
   "zh": "要挪的段的声音在锁着的序列「{0}」上；先解锁那条序列",
-  "ja": ""
+  "ja": "移動するクリップのサウンドがロックされたトラック「{0}」にあります。先にそのトラックのロックを解除してください"
  },
  "The sound thread has no module {0}": {
   "zh": "声音线程里没有模块 {0}",
-  "ja": ""
+  "ja": "サウンドスレッドにモジュール {0} がありません"
  },
  "The sound thread has no sound code for {0}": {
   "zh": "声音线程里没有 {0} 的声音代码",
-  "ja": ""
+  "ja": "サウンドスレッドに {0} のサウンドコードがありません"
  },
  "The sound thread timed out loading the card": {
   "zh": "声音线程载入卡片超时",
-  "ja": ""
+  "ja": "サウンドスレッドがカードの読み込み中にタイムアウトしました"
  },
  "The specified track does not exist, is locked, or the sound effect range overlaps existing clips": {
   "zh": "指定序列不存在、已锁定或音效范围与已有片段重叠",
-  "ja": ""
+  "ja": "指定したトラックが存在しない、ロックされている、または効果音の範囲が既存のクリップと重なっています"
  },
  "The string format is wrong, it may not have been copied in full": {
   "zh": "密文格式不对,可能没复制全",
-  "ja": ""
+  "ja": "配布文字列の形式が正しくありません。全体をコピーできていない可能性があります"
  },
  "The string header is abnormal, refusing to parse": {
   "zh": "密文头部异常,拒绝解析",
-  "ja": ""
+  "ja": "配布文字列のヘッダーが異常なため、解析を拒否しました"
  },
  "The string was decrypted, but it contains no API key": {
   "zh": "密文解开了,但里面没有 API Key",
-  "ja": ""
+  "ja": "配布文字列は復号できましたが、API キーが含まれていません"
  },
  "The string was decrypted, but the content is not a valid config": {
   "zh": "密文解开了,但内容不是有效的配置",
-  "ja": ""
+  "ja": "配布文字列は復号できましたが、内容が有効な設定ではありません"
  },
  "The string was truncated, ask the other side to resend the full content": {
   "zh": "密文被截断了,请让对方重发完整内容",
-  "ja": ""
+  "ja": "配布文字列が途中で切れています。相手に全文を再送してもらってください"
  },
  "The tail of the regenerated sound overlaps clips on the same track, please make room first": {
   "zh": "重生成后的尾音与同序列片段重叠,请先腾出空间",
-  "ja": ""
+  "ja": "再生成したサウンドの末尾が同じトラックのクリップと重なっています。先に空きを作ってください"
  },
  "The task in this chat has not fully stopped, so it has not been deleted yet. Wait a moment, then click \"Retry delete\" to continue.": {
   "zh": "对话里的任务还没完全停下，暂时没有删除。稍等一下，点「重试删除」会接着办。",
-  "ja": ""
+  "ja": "このチャットのタスクが完全に停止していないため、まだ削除されていません。少し待ってから「削除を再試行」をクリックすると、続きが実行されます。"
  },
  "Theme library": {
   "zh": "主题库",
-  "ja": ""
+  "ja": "テーマライブラリ"
  },
  "There is no remote asset service yet": {
   "zh": "还没有远程素材服务",
-  "ja": ""
+  "ja": "リモートのアセットサービスがまだありません"
  },
  "They have no private chats.": {
   "zh": "他没有私有对话。",
-  "ja": ""
+  "ja": "プライベートチャットはありません。"
  },
  "This browser cannot export video at this size. Please export in the desktop app on a computer, or in a browser.": {
   "zh": "这个浏览器不能导出这个尺寸的视频，请在电脑上的桌面版或浏览器里导出。",
-  "ja": ""
+  "ja": "このブラウザではこのサイズの動画を書き出せません。パソコンのデスクトップアプリ、またはブラウザで書き出してください。"
  },
  "This card audio is too large for the cloud to generate in one pass. Shorten the clip": {
   "zh": "这段卡片声音太大了，云端一次生成不了，请缩短片段",
-  "ja": ""
+  "ja": "このカードのオーディオはサイズが大きすぎて、クラウドで一度に生成できません。クリップを短くしてください"
  },
  "This card cannot be rendered on its own for now": {
   "zh": "这张卡片暂时不能单独渲染",
-  "ja": ""
+  "ja": "このカードは現在、単独でレンダリングできません"
  },
  "This card has no embedded audio": {
   "zh": "这张卡没有内嵌声音",
-  "ja": ""
+  "ja": "このカードには埋め込みオーディオがありません"
  },
  "This card imports too many files (over {0})": {
   "zh": "这张卡引的文件太多(超过 {0} 个)",
-  "ja": ""
+  "ja": "このカードがインポートしているファイルが多すぎます（{0} 個を超えています）"
  },
  "This card needs to read the media's audio samples, which the online page cannot get": {
   "zh": "这张卡要读素材的声音采样,在线页面取不到",
-  "ja": ""
+  "ja": "このカードは素材のオーディオサンプルを読み取る必要がありますが、オンラインページでは取得できません"
  },
  "This card reads audio samples from media, which the online page cannot access. It uses the already generated audio (or the render node provides it if there is none)": {
   "zh": "这张卡要读素材的声音采样,在线页面取不到,用已经生成的声音(没有就由渲染节点提供)",
-  "ja": ""
+  "ja": "このカードは素材からオーディオサンプルを読み取りますが、オンラインページからはアクセスできません。生成済みのオーディオを使用します（ない場合はレンダーノードが提供します）"
  },
  "This chat has been deleted, but the cloud has not finished clearing its contents. Please try again.": {
   "zh": "这个对话已经删除，但云端还没有清理完它的内容。请再试一次。",
-  "ja": ""
+  "ja": "このチャットは削除されましたが、クラウド側で内容の消去がまだ完了していません。もう一度お試しください。"
  },
  "This chat is being deleted.": {
   "zh": "这个对话正在被删除。",
-  "ja": ""
+  "ja": "このチャットは削除中です。"
  },
  "This chat still has a round in progress. Wait for it to finish or stop it first.": {
   "zh": "这个对话还有一轮在进行,等它结束或先停止。",
-  "ja": ""
+  "ja": "このチャットにはまだ進行中のラウンドがあります。終了を待つか、先に停止してください。"
  },
  "This chat was not found. It may have been deleted.": {
   "zh": "没有找到这个对话，它可能已经被删除。",
-  "ja": ""
+  "ja": "このチャットが見つかりません。削除された可能性があります。"
  },
  "This chat was opened by another member. They will be notified when it is deleted.": {
   "zh": "这是其他成员开的对话，删除后他会收到通知。",
-  "ja": ""
+  "ja": "このチャットは他のメンバーが開始したものです。削除すると、そのメンバーに通知されます。"
  },
  "This clip has no audio": {
   "zh": "这个片段没有音频",
-  "ja": ""
+  "ja": "このクリップにはオーディオがありません"
  },
  "This clip is a card, not media, so there is no sound to convert": {
   "zh": "这段是卡片,不是素材,没有声音可转",
-  "ja": ""
+  "ja": "このクリップは素材ではなくカードのため、変換できるサウンドがありません"
  },
  "This clip is too short; at this speed it would be under 0.1 seconds": {
   "zh": "这一段太短，改成这个速度后不到 0.1 秒",
-  "ja": ""
+  "ja": "このクリップは短すぎます。この速度にすると 0.1 秒未満になります"
  },
  "This config expired on {0}, ask the distributor for a new one": {
   "zh": "这份配置已于 {0} 过期,请向分发方索要新的",
-  "ja": ""
+  "ja": "この設定は {0} に有効期限が切れました。配布元に新しい設定を依頼してください"
  },
  "This device cannot encode audio, so the exported video will have no sound. Continue exporting?": {
   "zh": "这台设备不能编码声音，导出的视频将没有声音。继续导出？",
-  "ja": ""
+  "ja": "このデバイスはオーディオをエンコードできないため、書き出した動画にはサウンドが含まれません。書き出しを続行しますか？"
  },
  "This device cannot run the cards of {0} clips, so they must be rendered frame by frame by a render node before export. No render node is online now: open the desktop app on a computer and enter this project, or wait for the host's render service to take over.": {
   "zh": "有 {0} 个片段的卡片这台设备运行不了，要由渲染节点逐帧渲染好才能导出。现在没有渲染节点在线：请在电脑上打开桌面版并进入这个项目，或等托管方的渲染服务接手。",
-  "ja": ""
+  "ja": "{0} 個のクリップのカードをこのデバイスでは実行できないため、書き出す前にレンダーノードでフレームごとにレンダリングする必要があります。現在オンラインのレンダーノードはありません。パソコンでデスクトップアプリを開いてこのプロジェクトに入るか、ホストのレンダリングサービスが引き継ぐまでお待ちください。"
  },
  "This device is running in lite mode: complex effects are handed off to cloud rendering": {
   "zh": "这台设备运行在精简模式：复杂的效果交给云端渲染",
-  "ja": ""
+  "ja": "このデバイスは軽量モードで動作しています。複雑なエフェクトはクラウドレンダリングに引き渡されます"
  },
  "This device is running in low-spec mode: playback only shows frames that are already rendered": {
   "zh": "这台设备运行在低配模式：播放时只显示已渲染好的画面",
-  "ja": ""
+  "ja": "このデバイスは低スペックモードで動作しています。再生時はレンダリング済みのフレームのみ表示されます"
  },
  "This device is running in standard mode": {
   "zh": "这台设备运行在标准模式",
-  "ja": ""
+  "ja": "このデバイスは標準モードで動作しています"
  },
  "This device is running in top-spec mode": {
   "zh": "这台设备运行在顶配模式",
-  "ja": ""
+  "ja": "このデバイスは最高スペックモードで動作しています"
  },
  "This file does not export a card definition": {
   "zh": "这个文件没有导出卡片定义",
-  "ja": ""
+  "ja": "このファイルはカード定義をエクスポートしていません"
  },
  "This is a shared chat. Other members who have posted in it will be notified.": {
   "zh": "这是共有对话，在里面发过消息的其他成员会收到通知。",
-  "ja": ""
+  "ja": "これは共有チャットです。このチャットに投稿した他のメンバーに通知されます。"
  },
  "This page has no isolated audio thread. Audio for user cards and media effect cards uses the already generated audio (or the render node provides it if there is none)": {
   "zh": "这个页面没有隔离的声音线程,用户卡与素材效果卡的声音用已经生成的(没有就由渲染节点提供)",
-  "ja": ""
+  "ja": "このページには分離されたオーディオスレッドがありません。ユーザーカードと素材エフェクトカードのオーディオは、生成済みのものを使用します（ない場合はレンダーノードが提供します）"
  },
  "This page is not linked to a project, so it cannot reach a render node and cannot export.": {
   "zh": "这个页面没有连着项目，请不到渲染节点，导不出来。",
-  "ja": ""
+  "ja": "このページはプロジェクトに接続されていないため、レンダーノードに依頼できず、書き出せません。"
  },
  "This project already has an export plan waiting or running, do not start it again": {
   "zh": "同一项目正在等待或执行导出计划，请勿重复发起",
-  "ja": ""
+  "ja": "このプロジェクトでは、書き出しプランがすでに待機中または実行中です。重複して開始しないでください"
  },
  "This project's Cloud Agent quota has been used up.": {
   "zh": "这个项目的云端 Agent 额度已用完。",
-  "ja": ""
+  "ja": "このプロジェクトのクラウドエージェントの利用枠を使い切りました。"
  },
  "This site does not have online running of user cards and media effect cards enabled": {
   "zh": "这个站点没有开启在线运行用户卡与素材效果卡",
-  "ja": ""
+  "ja": "このサイトでは、ユーザーカードと素材エフェクトカードのオンライン実行が有効になっていません"
  },
  "This text is not a PromptCut config string (it should start with PCAI1.)": {
   "zh": "这段文本不是 PromptCut 的配置密文(应以 PCAI1. 开头)",
-  "ja": ""
+  "ja": "このテキストは PromptCut の配布文字列ではありません（PCAI1. で始まる必要があります）"
  },
  "This typing range has no audio left, please check the media offset": {
   "zh": "这段打字范围没有剩余声音,请检查素材偏移",
-  "ja": ""
+  "ja": "このタイピング範囲にはオーディオが残っていません。素材のオフセットを確認してください"
  },
  "This video is already muted or its audio is already separated. No clips were modified.": {
   "zh": "此视频已静音或已分离音频。未修改任何片段。",
-  "ja": ""
+  "ja": "この動画はすでにミュートされているか、オーディオがすでに分離されています。クリップは変更されていません。"
  },
  "To do: {0}": {
   "zh": "待办:{0}",
-  "ja": ""
+  "ja": "ToDo：{0}"
  },
  "Top mode": {
   "zh": "顶配模式",
-  "ja": ""
+  "ja": "最高スペックモード"
  },
  "Track \"{0}\" is locked": {
   "zh": "序列「{0}」锁着",
-  "ja": ""
+  "ja": "トラック「{0}」はロックされています"
  },
  "Track stream decode error: {0}": {
   "zh": "轨道流解码出错:{0}",
-  "ja": ""
+  "ja": "トラックストリームのデコードエラー：{0}"
  },
  "Track stream frame {0} cannot be decoded": {
   "zh": "轨道流第 {0} 帧解不出来",
-  "ja": ""
+  "ja": "トラックストリームのフレーム {0} をデコードできません"
  },
  "Track stream frame {0} was not decoded within {1} s": {
   "zh": "轨道流第 {0} 帧 {1} 秒没解出来",
-  "ja": ""
+  "ja": "トラックストリームのフレーム {0} が {1} 秒以内にデコードされませんでした"
  },
  "Transition {0} not found": {
   "zh": "找不到转场 {0}",
-  "ja": ""
+  "ja": "トランジション {0} が見つかりません"
  },
  "Transpile error: {0}": {
   "zh": "转译出错:{0}",
-  "ja": ""
+  "ja": "トランスパイルエラー：{0}"
  },
  "Unable to get AI service status": {
   "zh": "无法获取 AI 服务状态",
-  "ja": ""
+  "ja": "AI サービスの状態を取得できません"
  },
  "Unable to get install and login progress": {
   "zh": "无法获取安装和登录进度",
-  "ja": ""
+  "ja": "インストールとログインの進行状況を取得できません"
  },
  "Unknown OS": {
   "zh": "未知系统",
-  "ja": ""
+  "ja": "不明な OS"
  },
  "Unlock the sound effect track first": {
   "zh": "请先解锁音效序列",
-  "ja": ""
+  "ja": "先に効果音トラックのロックを解除してください"
  },
  "Unlock the track first": {
   "zh": "请先解锁序列",
-  "ja": ""
+  "ja": "先にトラックのロックを解除してください"
  },
  "Upload failed: HTTP {0}": {
   "zh": "上传失败: HTTP {0}",
-  "ja": ""
+  "ja": "アップロードに失敗しました：HTTP {0}"
  },
  "Very high": {
   "zh": "很高",
-  "ja": ""
+  "ja": "非常に高い"
  },
  "Video track": {
   "zh": "视频轨",
-  "ja": ""
+  "ja": "ビデオトラック"
  },
  "Volume can only be adjusted for media or cards that have sound": {
   "zh": "只能调整带声音的素材或卡片音量",
-  "ja": ""
+  "ja": "音量を調整できるのは、サウンドのある素材またはカードだけです"
  },
  "Volume must be a number between 0 and 1": {
   "zh": "音量必须是 0 到 1 之间的数字",
-  "ja": ""
+  "ja": "音量は 0 から 1 までの数値である必要があります"
  },
  "Waiting for your reply": {
   "zh": "等你回话",
-  "ja": ""
+  "ja": "返信待ち"
  },
  "Warm black base, orange-gold primary": {
   "zh": "暖黑底,橙金主色",
-  "ja": ""
+  "ja": "ウォームブラックの背景、オレンジゴールドのメインカラー"
  },
  "Warm sun": {
   "zh": "暖阳",
-  "ja": ""
+  "ja": "暖かな陽射し"
  },
  "Warning": {
   "zh": "警告",
-  "ja": ""
+  "ja": "警告"
  },
  "WeChat": {
   "zh": "微信",
-  "ja": ""
+  "ja": "WeChat"
  },
  "WebGL2 is unavailable": {
   "zh": "拿不到 WebGL2",
-  "ja": ""
+  "ja": "WebGL2 を利用できません"
  },
  "Will be sent when the network is back": {
   "zh": "等网络恢复后发出",
-  "ja": ""
+  "ja": "ネットワークが回復したら送信されます"
  },
  "Write one sentence explaining how you want the Cloud Agent to use these files.": {
   "zh": "请写一句话,说明想让云端 Agent 怎么用这些文件。",
-  "ja": ""
+  "ja": "これらのファイルをクラウドエージェントにどう使ってほしいか、一文で書いてください。"
  },
  "You already have {0} cloud chats in this project, which is the limit. Delete unused ones before creating a new one.": {
   "zh": "你在这个项目里已有 {0} 个云端对话，已满。新建前请先删除不用的。",
-  "ja": ""
+  "ja": "このプロジェクトには、すでにクラウドチャットが {0} 件あり、上限に達しています。新しく作成する前に、使っていないチャットを削除してください。"
  },
  "You can click \"Read from CLI\" to pull the agy models list directly": {
   "zh": "可以点「从 CLI 读取」直接拉 agy models 的清单",
-  "ja": ""
+  "ja": "「CLI から読み取り」をクリックすると、agy models の一覧を直接取得できます"
  },
  "You can reduce the sampling points (pass times yourself), or first confirm the tier with subject_status: the full tier is an order of magnitude slower than light.": {
   "zh": "可以减少采样点（自己传 times），或先用 subject_status 确认档位——full 档比 light 慢一个数量级。",
-  "ja": ""
+  "ja": "サンプリング点を減らす（times を自分で渡す）か、先に subject_status で段階を確認してください。フル版はライト版より一桁遅くなります。"
  },
  "You don't have permission to use Cloud Agent for this project.": {
   "zh": "你没有权限使用这个项目的云端 Agent。",
-  "ja": ""
+  "ja": "このプロジェクトでクラウドエージェントを使用する権限がありません。"
  },
  "Your cloud chats in this project have reached the limit of {0}. Delete unused chats before creating a new one.": {
   "zh": "你在这个项目里的云端对话已满 {0} 个。请先删除不用的对话，再新建。",
-  "ja": ""
+  "ja": "このプロジェクトのクラウドチャットが上限の {0} 件に達しました。新しく作成する前に、使っていないチャットを削除してください。"
  },
  "cannot push an empty chunk": {
   "zh": "不能推空块",
-  "ja": ""
+  "ja": "空のチャンクはプッシュできません"
  },
  "complete returned {0}{1}": {
   "zh": "complete 回 {0}{1}",
-  "ja": ""
+  "ja": "complete が {0}{1} を返しました"
  },
  "diagnostic reports": {
   "zh": "诊断报告",
-  "ja": ""
+  "ja": "診断レポート"
  },
  "finalize {0} returned {1}{2}": {
   "zh": "收尾 {0} 回 {1}{2}",
-  "ja": ""
+  "ja": "finalize {0} が {1}{2} を返しました"
  },
  "invalid hash: {0}": {
   "zh": "哈希不对:{0}",
-  "ja": ""
+  "ja": "無効なハッシュ：{0}"
  },
  "is not supported in online browser mode yet": {
   "zh": "在线浏览器模式暂不支持",
-  "ja": ""
+  "ja": "オンラインブラウザモードではまだサポートされていません"
  },
  "metadata probe timed out": {
   "zh": "探测元数据超时",
-  "ja": ""
+  "ja": "メタデータの取得がタイムアウトしました"
  },
  "muted must be a boolean": {
   "zh": "muted 必须是布尔值",
-  "ja": ""
+  "ja": "muted は真偽値である必要があります"
  },
  "no canvas available": {
   "zh": "没有可用画布",
-  "ja": ""
+  "ja": "使用可能なキャンバスがありません"
  },
  "no video element available": {
   "zh": "没有可用视频元素",
-  "ja": ""
+  "ja": "使用可能な video 要素がありません"
  },
  "push {0} part {1} returned {2}": {
   "zh": "推 {0} 第 {1} 片回 {2}",
-  "ja": ""
+  "ja": "push {0} のパート {1} が {2} を返しました"
  },
  "reconcile {0} returned {1}": {
   "zh": "对账 {0} 回 {1}",
-  "ja": ""
+  "ja": "reconcile {0} が {1} を返しました"
  },
  "requestId was already used for a different sound effect": {
   "zh": "requestId 已用于不同音效",
-  "ja": ""
+  "ja": "requestId はすでに別の効果音で使用されています"
  },
  "seek error": {
   "zh": "seek 出错",
-  "ja": ""
+  "ja": "シークエラー"
  },
  "video failed to load": {
   "zh": "视频加载失败",
-  "ja": ""
+  "ja": "動画の読み込みに失敗しました"
  },
  "{0} (line {1})": {
   "zh": "{0}(第 {1} 行)",
-  "ja": ""
+  "ja": "{0}（{1} 行目）"
  },
  "{0} (stopped, waiting for the user to reply)": {
   "zh": "{0}(停下等用户回话)",
-  "ja": ""
+  "ja": "{0}（停止中・ユーザーの返信待ち）"
  },
  "{0} ({1} frames, {2} MB)": {
   "zh": "{0}({1} 帧,{2} MB)",
-  "ja": ""
+  "ja": "{0}（{1} フレーム、{2} MB）"
  },
  "{0} deleted the shared cloud chat \"{1}\", in which you posted messages.": {
   "zh": "{0}删除了共有云端对话「{1}」，你在里面发过消息。",
-  "ja": ""
+  "ja": "{0} が、あなたがメッセージを投稿した共有クラウドチャット「{1}」を削除しました。"
  },
  "{0} deleted your cloud chat \"{1}\".": {
   "zh": "{0}删除了你的云端对话「{1}」。",
-  "ja": ""
+  "ja": "{0} があなたのクラウドチャット「{1}」を削除しました。"
  },
  "{0} did not respond": {
   "zh": "{0} 没有回应",
-  "ja": ""
+  "ja": "{0} が応答しませんでした"
  },
  "{0} heavy card clips have no prerender original size yet. Wait for the render node to finish, then export.": {
   "zh": "还有 {0} 个重卡片段没有预渲染原尺寸，等渲染节点做完再导出。",
-  "ja": ""
+  "ja": "重いカードのクリップ {0} 個に、プリレンダリングの原寸版がまだありません。レンダーノードの処理が終わってから書き出してください。"
  },
  "{0} is not a cut segment": {
   "zh": "{0} 不是剪辑段",
-  "ja": ""
+  "ja": "{0} はカットセグメントではありません"
  },
  "{0} min": {
   "zh": "{0} 分钟",
-  "ja": ""
+  "ja": "{0} 分"
  },
  "{0} returned {1}": {
   "zh": "{0} 返回 {1}",
-  "ja": ""
+  "ja": "{0} が {1} を返しました"
  },
  "{0} returned {1}{2}": {
   "zh": "{0} 回 {1}{2}",
-  "ja": ""
+  "ja": "{0} が {1}{2} を返しました"
  },
  "{0} {1} is not complete yet on the asset service": {
   "zh": "素材服务上 {0} {1} 尚未 complete",
-  "ja": ""
+  "ja": "アセットサービス上で {0} {1} はまだ complete になっていません"
  },
  "{0} · Dark ({1})": {
   "zh": "{0} · 深 ({1})",
-  "ja": ""
+  "ja": "{0} · ダーク ({1})"
  },
  "{0} · Light ({1})": {
   "zh": "{0} · 浅 ({1})",
-  "ja": ""
+  "ja": "{0} · ライト ({1})"
  },
  "\"{0}\" is an image and has no sound": {
   "zh": "「{0}」是图片,没有声音",
-  "ja": ""
+  "ja": "「{0}」は画像のため、サウンドがありません"
  },
  "(has a value, {0} characters in total; not in the allowlist, original text omitted)": {
   "zh": "(有值,共 {0} 字;不在白名单,不带原文)",
-  "ja": ""
+  "ja": "（値あり、全 {0} 文字。許可リストにないため原文は省略）"
  },
  "(no directory)": {
   "zh": "(没有目录)",
-  "ja": ""
+  "ja": "（ディレクトリなし）"
  },
  "(no disk path, possibly a blob that hasn't been uploaded yet)": {
   "zh": "(没有磁盘路径,可能是还没上传的 blob)",
-  "ja": ""
+  "ja": "（ディスク上のパスなし。まだアップロードされていない blob の可能性があります）"
  },
  "({0} earlier items omitted)": {
   "zh": "(更早的 {0} 条略)",
-  "ja": ""
+  "ja": "（これより前の {0} 件は省略）"
  },
  ",": {
   "zh": "，",
-  "ja": ""
+  "ja": "、"
  },
  "Acknowledgement out of order or inconsistent with local: {0} rev {1}": {
   "zh": "确认乱序或与本地不一致:{0} rev {1}",
-  "ja": ""
+  "ja": "確認応答の順序が不正、またはローカルと一致しません：{0} rev {1}"
  },
  "Already finalized": {
   "zh": "已经 finalize 过了",
-  "ja": ""
+  "ja": "すでに finalize 済みです"
  },
  "Asset {0} not found": {
   "zh": "找不到素材 {0}",
-  "ja": ""
+  "ja": "アセット {0} が見つかりません"
  },
  "Assistant": {
   "zh": "助手",
-  "ja": ""
+  "ja": "アシスタント"
  },
  "Assistant ({0}{1}): {2}": {
   "zh": "助手({0}{1}):{2}",
-  "ja": ""
+  "ja": "アシスタント（{0}{1}）：{2}"
  },
  "Can't get server info: the local service may not be running, which may itself be the problem": {
   "zh": "取不到服务端信息 —— 本地服务可能没在跑,这本身可能就是问题所在",
-  "ja": ""
+  "ja": "サーバー情報を取得できません。ローカルサービスが起動していない可能性があり、それ自体が問題の原因かもしれません"
  },
  "Can't read localStorage": {
   "zh": "读不到 localStorage",
-  "ja": ""
+  "ja": "localStorage を読み取れません"
  },
  "Cannot edit another cut while editing one cut": {
   "zh": "不能在改一条剪辑的过程中嵌套改另一条",
-  "ja": ""
+  "ja": "1 つのカットを編集している間に、別のカットを編集することはできません"
  },
  "Collage 4×2: cell k corresponds to the k-th time in times (row by row, left to right). The user can open this step in the chat panel to see the animated image.": {
   "zh": "拼图 4×2,第 k 格对应 times 的第 k 个时刻(按行从左到右)。用户在聊天栏点开这一步能看到动图。",
-  "ja": ""
+  "ja": "4×2 のコラージュ：k 番目のセルは times の k 番目の時刻に対応します（行ごとに左から右へ）。チャットパネルでこのステップを開くと、ユーザーはアニメーション画像を確認できます。"
  },
  "Contains the visible chat, execution events and a snapshot of the environment at the time; does not contain keys or the model's private thinking. Large outputs and overlong events are marked as truncated.": {
   "zh": "包含可见对话、执行事件和当时的环境快照；不包含密钥或模型私有思考。大输出和过长事件会标明截断。",
-  "ja": ""
+  "ja": "表示されているチャット、実行イベント、その時点の環境のスナップショットが含まれます。キーやモデルの非公開の思考は含まれません。大きな出力や長すぎるイベントは、切り詰めたことを明記します。"
  },
  "Duration of each card \\(d = t_1 - t_0\\), total exported frames:": {
   "zh": "每张卡的时长 \\(d = t_1 - t_0\\),整段导出帧数:",
-  "ja": ""
+  "ja": "各カードの長さ \\(d = t_1 - t_0\\)、書き出しの総フレーム数："
  },
  "Error while reading localStorage, the items below may be incomplete": {
   "zh": "读 localStorage 时出错,下面这些可能不全",
-  "ja": ""
+  "ja": "localStorage の読み取り中にエラーが発生しました。以下の項目は不完全な可能性があります"
  },
  "Export compositor is closed": {
   "zh": "导出合成器已关闭",
-  "ja": ""
+  "ja": "書き出しコンポジターは閉じられています"
  },
  "Export page did not finish loading the project after 60 s": {
   "zh": "导出页 60 秒没装好项目",
-  "ja": ""
+  "ja": "書き出しページが 60 秒経ってもプロジェクトの読み込みを完了しませんでした"
  },
  "Export page was not ready after 60 s": {
   "zh": "导出页 60 秒没就绪",
-  "ja": ""
+  "ja": "書き出しページが 60 秒経っても準備完了になりませんでした"
  },
  "Export stage did not respond for {0} s ({1})": {
   "zh": "导出舞台 {0} 秒没有回应({1})",
-  "ja": ""
+  "ja": "書き出しステージが {0} 秒間応答しませんでした（{1}）"
  },
  "Export stage iframe has been detached": {
   "zh": "导出舞台 iframe 已脱落",
-  "ja": ""
+  "ja": "書き出しステージの iframe が切り離されました"
  },
  "Export stage was not ready after 60 s": {
   "zh": "导出舞台 60 秒没就绪",
-  "ja": ""
+  "ja": "書き出しステージが 60 秒経っても準備完了になりませんでした"
  },
  "Failed to make the animated image (HTTP {0})": {
   "zh": "做动图失败(HTTP {0})",
-  "ja": ""
+  "ja": "アニメーション画像の作成に失敗しました（HTTP {0}）"
  },
  "Fetched successfully": {
   "zh": "获取成功",
-  "ja": ""
+  "ja": "取得に成功しました"
  },
  "Frame-by-frame export": {
   "zh": "逐帧导出",
-  "ja": ""
+  "ja": "フレームごとの書き出し"
  },
  "Incomplete chunks": {
   "zh": "分片不全",
-  "ja": ""
+  "ja": "チャンクが揃っていません"
  },
  "Invalid range for audio measurement": {
   "zh": "声音测量的范围无效",
-  "ja": ""
+  "ja": "オーディオ測定の範囲が無効です"
  },
  "Keyboard sound requires sourceClipId, or typing.text with a rhythm": {
   "zh": "键盘声需要 sourceClipId 或 typing.text 与节奏",
-  "ja": ""
+  "ja": "キーボードサウンドには sourceClipId、またはリズム付きの typing.text が必要です"
  },
  "Missing required parameters: {0}. Add them and try again.": {
   "zh": "缺少必填参数：{0}。请补齐后重试。",
-  "ja": ""
+  "ja": "必須パラメーターが不足しています：{0}。補ってからもう一度お試しください。"
  },
  "Multi-Agent ({0} tabs)": {
   "zh": "多 Agent({0} 个页签)",
-  "ja": ""
+  "ja": "マルチエージェント（{0} タブ）"
  },
  "No clip with id {0} on the timeline.": {
   "zh": "时间轴上没有 id 为 {0} 的片段。",
-  "ja": ""
+  "ja": "タイムラインに id が {0} のクリップはありません。"
  },
  "No leftover backend session ids: this round starts from scratch": {
   "zh": "没有残留的后端会话 id:这一轮是从零开始的",
-  "ja": ""
+  "ja": "残っているバックエンドのセッション ID はありません。このラウンドは最初から始まります"
  },
  "No message in this chat recorded its runtime config (old history from before 0.2.9)": {
   "zh": "这段对话里没有一条记了运行配置（0.2.9 之前的旧历史）",
-  "ja": ""
+  "ja": "このチャットには、実行時の設定を記録したメッセージがありません（0.2.9 より前の古い履歴です）"
  },
  "Offline changes cannot be applied: {0}": {
   "zh": "离线修改落不下去:{0}",
-  "ja": ""
+  "ja": "オフラインの変更を適用できません：{0}"
  },
  "Offline operation recovery data is corrupted": {
   "zh": "离线操作恢复数据损坏",
-  "ja": ""
+  "ja": "オフライン操作の復旧データが破損しています"
  },
  "One config throughout: {0}": {
   "zh": "全程一套配置：{0}",
-  "ja": ""
+  "ja": "全体を通して同一の設定：{0}"
  },
  "Only AAC can be muxed: {0}": {
   "zh": "只封装 AAC:{0}",
-  "ja": ""
+  "ja": "多重化できるのは AAC のみです：{0}"
  },
  "Only H.264 can be muxed: {0}": {
   "zh": "只封装 H.264:{0}",
-  "ja": ""
+  "ja": "多重化できるのは H.264 のみです：{0}"
  },
  "Operations produced by diffProject cannot be applied: {0}": {
   "zh": "diffProject 产出的操作落不下去:{0}",
-  "ja": ""
+  "ja": "diffProject が生成した操作を適用できません：{0}"
  },
  "Primary color": {
   "zh": "主色",
-  "ja": ""
+  "ja": "メインカラー"
  },
  "Project shards cannot be assembled: {0}": {
   "zh": "项目分片拼不起来:{0}",
-  "ja": ""
+  "ja": "プロジェクトのシャードを組み立てられません：{0}"
  },
  "Remote operation cannot be applied to the confirmed copy: {0}": {
   "zh": "远端操作在已确认副本上落不下去:{0}",
-  "ja": ""
+  "ja": "リモートの操作を確認済みのコピーに適用できません：{0}"
  },
  "SKILL mode (the desktop app's Agent edits this project via MCP, the AI panel still works as usual)": {
   "zh": "SKILL 模式(桌面 APP 的 Agent 经 MCP 改这个项目,AI 栏照常可用)",
-  "ja": ""
+  "ja": "SKILL モード（デスクトップアプリのエージェントが MCP 経由でこのプロジェクトを編集します。AI パネルも通常どおり使えます）"
  },
  "Sample chunk returned by the audio thread contains invalid values": {
   "zh": "声音线程回的采样块里有无效的值",
-  "ja": ""
+  "ja": "オーディオスレッドが返したサンプルチャンクに無効な値が含まれています"
  },
  "Sample chunk returned by the audio thread has the wrong shape": {
   "zh": "声音线程回的采样块形状不对",
-  "ja": ""
+  "ja": "オーディオスレッドが返したサンプルチャンクの形状が正しくありません"
  },
  "Shot {0}": {
   "zh": "镜头 {0}",
-  "ja": ""
+  "ja": "ショット {0}"
  },
  "Sound effect synthesis returned the wrong sample length": {
   "zh": "音效合成返回了错误的采样长度",
-  "ja": ""
+  "ja": "効果音の合成が誤ったサンプル長を返しました"
  },
  "The AAC encoder did not provide an AudioSpecificConfig": {
   "zh": "AAC 编码器没给出 AudioSpecificConfig",
-  "ja": ""
+  "ja": "AAC エンコーダーが AudioSpecificConfig を提供しませんでした"
  },
  "The asset service did not return a valid content hash": {
   "zh": "素材服务未返回有效内容哈希",
-  "ja": ""
+  "ja": "アセットサービスが有効なコンテンツハッシュを返しませんでした"
  },
  "The channel count of card audio cannot change during generation": {
   "zh": "卡片声音的声道数不能在生成途中改变",
-  "ja": ""
+  "ja": "カードのオーディオのチャンネル数は、生成中に変更できません"
  },
  "The confirmed commit cannot be applied to the confirmed copy: {0}": {
   "zh": "已确认的提交在已确认副本上落不下去:{0}",
-  "ja": ""
+  "ja": "確認済みのコミットを確認済みのコピーに適用できません：{0}"
  },
  "The document connection is not ready yet; offline changes cannot be merged": {
   "zh": "文档连接还没就绪，不能合并离线修改",
-  "ja": ""
+  "ja": "ドキュメント接続の準備がまだできていないため、オフラインの変更をマージできません"
  },
  "The history sequence number of the offline changes is wrong": {
   "zh": "离线修改的历史序号不对",
-  "ja": ""
+  "ja": "オフラインの変更の履歴番号が正しくありません"
  },
  "The media library has {0} files": {
   "zh": "素材库有 {0} 个文件",
-  "ja": ""
+  "ja": "素材ライブラリには {0} 個のファイルがあります"
  },
  "The media library is empty: if the model can name any media, that was not read from this project": {
   "zh": "素材库是空的:模型如果说得出任何素材名字,那不是从这个项目里读到的",
-  "ja": ""
+  "ja": "素材ライブラリは空です。モデルが素材の名前を挙げたとしても、それはこのプロジェクトから読み取ったものではありません"
  },
  "The remote large-root replacement carried no operations, reopening": {
   "zh": "远端的大根替换没带操作,重新打开",
-  "ja": ""
+  "ja": "リモートの大規模なルート置換に操作が含まれていないため、開き直します"
  },
  "The root replacement that creates the project cannot be applied": {
   "zh": "建项目的根替换落不下去",
-  "ja": ""
+  "ja": "プロジェクトを作成するルート置換を適用できません"
  },
  "The snapshot on the UI side could not be collected": {
   "zh": "界面这边的现场没采集成功",
-  "ja": ""
+  "ja": "UI 側のスナップショットを収集できませんでした"
  },
  "The state of this machine at the moment the problem occurred. Used to tell \"a product bug\" apart from \"an environment problem on this machine\": with the chat alone, neither can be ruled out.": {
   "zh": "出问题那一刻这台机器的现场。用来分清「产品的 bug」和「这台机器的环境问题」——只有对话本身的话,两者一条都排除不掉。",
-  "ja": ""
+  "ja": "問題が発生した時点のこのマシンの状態です。「製品のバグ」と「このマシンの環境の問題」を切り分けるために使います。チャットだけでは、どちらの可能性も排除できません。"
  },
  "The stream frame is {0} high, which cannot fit two halves of {1} rows each": {
   "zh": "流的这一帧高 {0},放不下两半各 {1} 行",
-  "ja": ""
+  "ja": "ストリームのフレームは高さが {0} しかなく、{1} 行ずつの 2 つの半分が収まりません"
  },
  "The tool returned, and the timeline is empty now. Suggested arrangement:": {
   "zh": "工具返回了,时间轴现在是空的。建议这样排:",
-  "ja": ""
+  "ja": "ツールの結果が返り、タイムラインは現在空です。配置の提案："
  },
  "The track stream has no segment {0}": {
   "zh": "轨道流没有第 {0} 段",
-  "ja": ""
+  "ja": "トラックストリームにセグメント {0} がありません"
  },
  "The video track has an invalid width, height or frame rate": {
   "zh": "视频轨的宽高帧率不对",
-  "ja": ""
+  "ja": "ビデオトラックの幅、高さ、またはフレームレートが無効です"
  },
  "This is the built-in fake stream reply. I will call a tool to see how it works.": {
   "zh": "这是内置假流回复内容。我将调用一个工具看看效果。",
-  "ja": ""
+  "ja": "これは内蔵のダミーストリーム応答です。ツールを呼び出して動作を確認してみます。"
  },
  "This muxer has no audio track": {
   "zh": "这个封装器没有音频轨",
-  "ja": ""
+  "ja": "このマルチプレクサーにはオーディオトラックがありません"
  },
  "This project has not been saved yet, its media and working directory are under the temp directory": {
   "zh": "这个项目还没保存过,素材和工作目录都在临时目录下",
-  "ja": ""
+  "ja": "このプロジェクトはまだ保存されていません。素材と作業ディレクトリは一時ディレクトリにあります"
  },
  "This report is generated in the page. It contains the course of this cloud chat, the cause of errors and client information; it does not contain tickets, delegations, model keys or any credentials. Fields that are too long are truncated and marked.": {
   "zh": "这份报告在页面里生成,含这段云端对话的过程、出错原因和客户端信息;不含票据、委托、模型 Key 或任何凭证。过长的字段已截断并写明。",
-  "ja": ""
+  "ja": "このレポートはページ内で生成されます。このクラウドチャットの経過、エラーの原因、クライアント情報が含まれます。チケット、委任、モデルのキー、その他の認証情報は含まれません。長すぎるフィールドは切り詰めて、その旨を明記しています。"
  },
  "Timed out waiting for document service confirmation ({0} still unconfirmed, status {1})": {
   "zh": "等文档服务确认超时(还有 {0} 条没确认,状态 {1})",
-  "ja": ""
+  "ja": "ドキュメントサービスの確認待ちがタイムアウトしました（未確認 {0} 件、状態 {1}）"
  },
  "Track stream frame {0} decoded to width {1}, which does not match the segment's rect width {2} in the manifest": {
   "zh": "轨道流第 {0} 帧解出来宽 {1},和清单里这一段的矩形宽 {2} 对不上",
-  "ja": ""
+  "ja": "トラックストリームのフレーム {0} をデコードした幅は {1} で、マニフェストにあるこのセグメントの矩形の幅 {2} と一致しません"
  },
  "Track stream segment {0} has no sample {1}": {
   "zh": "轨道流第 {0} 段没有第 {1} 个样本",
-  "ja": ""
+  "ja": "トラックストリームのセグメント {0} にサンプル {1} がありません"
  },
  "Unknown audio effect kind {0}": {
   "zh": "不认识的音频效果种类 {0}",
-  "ja": ""
+  "ja": "不明なオーディオエフェクトの種類 {0}"
  },
  "Unknown tool: {0}": {
   "zh": "未知工具: {0}",
-  "ja": ""
+  "ja": "不明なツール：{0}"
  },
  "Unknown voice {0}": {
   "zh": "不认识的声音 {0}",
-  "ja": ""
+  "ja": "不明なボイス {0}"
  },
  "Unknown web tool: {0}": {
   "zh": "未知的网页工具: {0}",
-  "ja": ""
+  "ja": "不明な Web ツール：{0}"
  },
  "User: {0}": {
   "zh": "用户:{0}",
-  "ja": ""
+  "ja": "ユーザー：{0}"
  },
  "Version gap: local {0}, received {1}": {
   "zh": "版本跳号:本地 {0},收到 {1}",
-  "ja": ""
+  "ja": "バージョンの欠落：ローカル {0}、受信 {1}"
  },
  "When source is \"media\", mediaId is required (the media id from list_media)": {
   "zh": "source 为 \"media\" 时要给 mediaId(list_media 里的素材 id)",
-  "ja": ""
+  "ja": "source が \"media\" の場合は mediaId が必要です（list_media の素材 ID）"
  },
  "[/Background]": {
   "zh": "[/前情]",
-  "ja": ""
+  "ja": "[/経緯]"
  },
  "[Background: attached automatically by the system, not something the user said this round. Before this conversation you were not the one handling it (or your session record is gone),": {
   "zh": "[前情 —— 系统自动附上,不是用户这一轮说的话。这段对话之前不是你在接待(或者你的会话记录已经没了),",
-  "ja": ""
+  "ja": "[経緯：システムが自動で添付したもので、ユーザーが今回のラウンドで発言した内容ではありません。この会話の前はあなたが担当していなかった（またはセッション記録が失われている）ため、"
  },
  "[Message from {0}]\n{1}": {
   "zh": "【来自 {0} 的消息】\n{1}",
-  "ja": ""
+  "ja": "[{0} からのメッセージ]\n{1}"
  },
  "[nesting too deep, omitted]": {
   "zh": "[层级过深,已省略]",
-  "ja": ""
+  "ja": "[階層が深すぎるため省略]"
  },
  "default": {
   "zh": "默认",
-  "ja": ""
+  "ja": "デフォルト"
  },
  "fast": {
   "zh": "加速",
-  "ja": ""
+  "ja": "高速"
  },
  "from must be a number of seconds": {
   "zh": "from 要是秒数",
-  "ja": ""
+  "ja": "from は秒数である必要があります"
  },
  "from must not be greater than to": {
   "zh": "from 不能大于 to",
-  "ja": ""
+  "ja": "from を to より大きくすることはできません"
  },
  "model {0}": {
   "zh": "模型 {0}",
-  "ja": ""
+  "ja": "モデル {0}"
  },
  "requestId must be 1 to 200 characters": {
   "zh": "requestId 必须是 1 到 200 个字符",
-  "ja": ""
+  "ja": "requestId は 1 文字以上 200 文字以下である必要があります"
  },
  "requestId was already used for a different recipe; use a new requestId after changing it": {
   "zh": "requestId 已用于不同配方,修改后请使用新的 requestId",
-  "ja": ""
+  "ja": "requestId はすでに別のレシピで使用されています。変更した場合は新しい requestId を使用してください"
  },
  "runInCutScope can only wrap synchronous functions (the async second half is no longer in this cut's view)": {
   "zh": "runInCutScope 只能包同步函数(异步的后半段已经不在这条剪辑的视图里了)",
-  "ja": ""
+  "ja": "runInCutScope でラップできるのは同期関数のみです（非同期の後半部分は、すでにこのカットのビューの外にあります）"
  },
  "scene must be between 1 and {0}, got {1}": {
   "zh": "scene 要在 1~{0} 之间,收到 {1}",
-  "ja": ""
+  "ja": "scene は 1 から {0} の間である必要があります（受け取った値：{1}）"
  },
  "so you can't see that history. Below is an excerpt in chronological order. Requests the user made in it still count; for the current state of the timeline and media library, trust what the tools read.]": {
   "zh": "你看不到那段历史,下面是按时间顺序的摘录。用户在里面提过的要求照样算数;时间轴和素材库的现状以工具读到的为准。]",
-  "ja": ""
+  "ja": "その履歴は見えません。以下は時系列の抜粋です。その中でユーザーが出した要望は引き続き有効です。タイムラインと素材ライブラリの現状は、ツールが読み取った内容を信頼してください。]"
  },
  "source can only be \"timeline\" (final video frames) or \"media\" (shot mosaic of the media), received {0}": {
   "zh": "source 只能是 \"timeline\"(成片画面)或 \"media\"(素材镜头拼图),收到的是 {0}",
-  "ja": ""
+  "ja": "source には \"timeline\"（完成動画のフレーム）または \"media\"（素材のショットモザイク）のみ指定できます（受け取った値：{0}）"
  },
  "sourceClipId must point to a typing card in the current cut": {
   "zh": "sourceClipId 必须指向当前剪辑中的打字机卡片",
-  "ja": ""
+  "ja": "sourceClipId は現在のカット内のタイピングカードを指している必要があります"
  },
  "start must be within the project time range": {
   "zh": "start 必须在项目时间范围内",
-  "ja": ""
+  "ja": "start はプロジェクトの時間範囲内である必要があります"
  },
  "text protocol mode": {
   "zh": "文本协议模式",
-  "ja": ""
+  "ja": "テキストプロトコルモード"
  },
  "to must be a number of seconds": {
   "zh": "to 要是秒数",
-  "ja": ""
+  "ja": "to は秒数である必要があります"
  },
  "{0} backend session ids are still left: check them against the server sessions section to see how much history each one carries": {
   "zh": "还留着 {0} 把后端会话 id —— 对上服务端 sessions 那一段,看它们各自背着多少条历史",
-  "ja": ""
+  "ja": "バックエンドのセッション ID が {0} 件残っています。サーバーの sessions セクションと照らし合わせて、それぞれがどれだけの履歴を抱えているか確認してください"
  },
  "{0}… (truncated, original {1} characters)": {
   "zh": "{0}…(已截断,原 {1} 字)",
-  "ja": ""
+  "ja": "{0}…（切り詰め済み、元は {1} 文字）"
  },
  "{0}… ({1} characters in total)": {
   "zh": "{0}…(共 {1} 字)",
-  "ja": ""
+  "ja": "{0}…（全 {1} 文字）"
  },
  "{0}…(rest omitted)": {
   "zh": "{0}…(后面略)",
-  "ja": ""
+  "ja": "{0}…（以下省略）"
  },
  "| Card | Start | End |": {
   "zh": "| 卡片 | 起 | 止 |",
-  "ja": ""
+  "ja": "| カード | 開始 | 終了 |"
  },
  "| Number counter | 8.0 | 10.5 |": {
   "zh": "| 数字滚动 | 8.0 | 10.5 |",
-  "ja": ""
+  "ja": "| 数字カウンター | 8.0 | 10.5 |"
  },
  "| Quote card | 3.0 | 8.0 |": {
   "zh": "| 金句卡 | 3.0 | 8.0 |",
-  "ja": ""
+  "ja": "| 名言カード | 3.0 | 8.0 |"
  },
  "⚠ Config changed midway, {0} in total, see messages[].runtime for each message": {
   "zh": "⚠ 中途换过配置，共 {0} 套，逐条见 messages[].runtime",
-  "ja": ""
+  "ja": "⚠ 途中で設定が切り替わりました（全 {0} 種）。各メッセージの詳細は messages[].runtime を参照してください"
  },
  "{0} is not supported in online browser mode yet. Please use it in PromptCut on your computer.": {
   "zh": "在线浏览器模式暂不支持{0}，请在电脑上的 PromptCut 里使用。",
@@ -14085,7 +14085,7 @@
  },
  "Terminal": {
   "zh": "终端",
-  "ja": ""
+  "ja": "ターミナル"
  },
  "Crossfade": {
   "zh": "交叉溶解",
