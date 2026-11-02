@@ -27,6 +27,8 @@ const guardUrl = pathToFileURL(path.join(ROOT, 'server', 'http-guard.mjs')).href
 function compile(srcRel, outName, replaces = []) {
   let src = fs.readFileSync(path.join(ROOT, srcRel), 'utf8');
   for (const [a, b] of replaces) src = src.split(a).join(b);
+  // server/i18n.mjs is not copied into the scratch folder: point the import back at the real file
+  src = src.replace(/from (['"])(?:\.\.?\/)+i18n\.mjs\1/g, (_m, q) => `from ${q}${pathToFileURL(path.join(ROOT, 'server', 'i18n.mjs')).href}${q}`);
   const js = ts.transpileModule(src, {
     compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext },
   }).outputText;

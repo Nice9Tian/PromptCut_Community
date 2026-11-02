@@ -15838,5 +15838,1301 @@
  "{0}.model must be a string": {
   "zh": "{0}.model 必须是字符串",
   "ja": "{0}.modelは文字列である必要があります"
+ },
+ "Classic: floating dots with connecting lines": {
+  "zh": "经典:漂浮圆点带连线",
+  "ja": ""
+ },
+ "Many tiny red-orange particles wander over a dark background, and nearby particles weave a network of gray connecting lines.": {
+  "zh": "深色底上大量红橙色微小粒子游走，近距离粒子间交织出灰色连线网络。",
+  "ja": ""
+ },
+ "Suited to digital-network concepts, cutting-edge tech showcases or dynamic UI background patterns.": {
+  "zh": "适合数字网络概念、前沿科技展示或动态UI底纹。",
+  "ja": ""
+ },
+ "red-orange particles": {
+  "zh": "红橙粒子",
+  "ja": ""
+ },
+ "linked network": {
+  "zh": "连线网络",
+  "ja": ""
+ },
+ "tech background": {
+  "zh": "科技背景",
+  "ja": ""
+ },
+ "Large translucent discs covering the whole frame": {
+  "zh": "大号半透明圆盘铺满",
+  "ja": ""
+ },
+ "Large translucent blobs in red, green, blue, yellow and other colors overlap one another and drift slowly across the frame.": {
+  "zh": "红绿蓝黄等多色半透明大圆斑相互交叠，在画面中缓慢浮动位移。",
+  "ja": ""
+ },
+ "Suited to lively, bright short films, music rhythm or dreamy aesthetic backgrounds.": {
+  "zh": "适合活泼明快短片、音乐律动或梦幻唯美背景。",
+  "ja": ""
+ },
+ "colorful light spots": {
+  "zh": "多彩光斑",
+  "ja": ""
+ },
+ "large round particles": {
+  "zh": "大圆粒子",
+  "ja": ""
+ },
+ "dreamy background": {
+  "zh": "梦幻背景",
+  "ja": ""
+ },
+ "Large discs, blend-mode color stacking": {
+  "zh": "大圆盘,混合模式叠色",
+  "ja": ""
+ },
+ "Large translucent colored blobs overlap and blend into bright colors, slowly drifting over time and changing position and stacked colors.": {
+  "zh": "彩色半透明大圆斑重叠混合呈现亮色，随时间缓慢漂移变换位置与叠加色彩。",
+  "ja": ""
+ },
+ "Suited to dreamy light-spot backgrounds, aesthetic MVs or event opening atmospheres.": {
+  "zh": "适合梦幻光斑背景、唯美MV或活动开场氛围。",
+  "ja": ""
+ },
+ "colored light spots": {
+  "zh": "彩色光斑",
+  "ja": ""
+ },
+ "blend overlay": {
+  "zh": "混合叠加",
+  "ja": ""
+ },
+ "Large bubbles drifting slowly": {
+  "zh": "大气泡缓缓漂浮",
+  "ja": ""
+ },
+ "Faint translucent hexagonal dark patches are scattered on a dark background and slowly drift to new positions over time.": {
+  "zh": "暗底上散布微弱的半透明六边形暗斑，随时间缓慢漂移改变位置。",
+  "ja": ""
+ },
+ "Suited to minimalist dark-toned intros, low-contrast dark backgrounds or background patterns.": {
+  "zh": "适合极简暗调片头、低对比度深色背景或底纹。",
+  "ja": ""
+ },
+ "hexagon": {
+  "zh": "六边形",
+  "ja": ""
+ },
+ "dark-toned light spots": {
+  "zh": "暗调光斑",
+  "ja": ""
+ },
+ "minimalist background": {
+  "zh": "极简背景",
+  "ja": ""
+ },
+ "Particles whose color cycles through changes": {
+  "zh": "颜色循环变化的粒子",
+  "ja": ""
+ },
+ "Scattered dot particles drift while their overall color gradually shifts from pure blue to magenta and pink.": {
+  "zh": "散布的圆点粒子在漂移过程中，整体颜色由纯蓝逐步渐变为紫红与粉红。",
+  "ja": ""
+ },
+ "Suited to trendy fashion shorts, music rhythm or energetic transition backgrounds.": {
+  "zh": "适合潮流时尚短片、音乐律动或活力转场背景。",
+  "ja": ""
+ },
+ "color gradient": {
+  "zh": "色彩渐变",
+  "ja": ""
+ },
+ "colored particles": {
+  "zh": "彩色粒子",
+  "ja": ""
+ },
+ "dynamic light dots": {
+  "zh": "动态光点",
+  "ja": ""
+ },
+ "Falling confetti": {
+  "zh": "飘落的彩纸",
+  "ja": ""
+ },
+ "Colored round and polygonal paper-scrap particles of varying sizes keep rotating and falling across a dark frame.": {
+  "zh": "彩色圆形与多边形碎纸粒子大小不一，在深色画面中持续旋转飘落。",
+  "ja": ""
+ },
+ "Accent for gala celebrations, game-clear victories or holiday carnival videos.": {
+  "zh": "盛典庆祝、胜利通关或节日狂欢视频点缀。",
+  "ja": ""
+ },
+ "colored confetti": {
+  "zh": "彩色纸屑",
+  "ja": ""
+ },
+ "falling confetti": {
+  "zh": "彩屑飘落",
+  "ja": ""
+ },
+ "celebration effects": {
+  "zh": "庆典特效",
+  "ja": ""
+ },
+ "Gradient-colored particles": {
+  "zh": "渐变色粒子",
+  "ja": ""
+ },
+ "Dense pure-white round light-spot particles of varying sizes keep floating and drifting gently on a dark background.": {
+  "zh": "密集纯白色圆形光斑粒子大小错落，在深底上持续平缓悬浮漂移。",
+  "ja": ""
+ },
+ "Accent for aesthetic romance, a sky full of snowflakes or an ethereal dreamy atmosphere.": {
+  "zh": "唯美浪漫、雪花漫天或空灵梦幻氛围点缀。",
+  "ja": ""
+ },
+ "white light spots": {
+  "zh": "白色光斑",
+  "ja": ""
+ },
+ "round particles": {
+  "zh": "圆形粒子",
+  "ja": ""
+ },
+ "sky full of light dots": {
+  "zh": "漫天光点",
+  "ja": ""
+ },
+ "Several groups of particles in different sizes and colors": {
+  "zh": "几组不同大小颜色的粒子",
+  "ja": ""
+ },
+ "Small translucent gray-white round particles are scattered across the whole screen and flow by translating evenly and slowly over time.": {
+  "zh": "半透明灰白圆形小粒子散布全屏，随着时间推移均匀缓慢平移流动。",
+  "ja": ""
+ },
+ "Minimalist understated underlay, floating dust or light atmospheric backgrounds.": {
+  "zh": "极简低调衬底、微尘悬浮或轻量氛围背景。",
+  "ja": ""
+ },
+ "gray dust": {
+  "zh": "灰色微尘",
+  "ja": ""
+ },
+ "translucent particles": {
+  "zh": "半透明粒子",
+  "ja": ""
+ },
+ "understated background": {
+  "zh": "低调背景",
+  "ja": ""
+ },
+ "Particles with a gradient in the LCH color space": {
+  "zh": "LCH 色彩空间渐变的粒子",
+  "ja": ""
+ },
+ "Very faint tiny white nodes and triangular mesh links move and deform slowly on a dark background.": {
+  "zh": "极淡白色微小节点与三角形网格连线在暗底中缓慢移动与形变。",
+  "ja": ""
+ },
+ "Abstract geometry, network topology or dark tech-UI intros.": {
+  "zh": "抽象几何、网络拓扑或暗色科技界面片头。",
+  "ja": ""
+ },
+ "mesh links": {
+  "zh": "网格连线",
+  "ja": ""
+ },
+ "triangle topology": {
+  "zh": "三角拓扑",
+  "ja": ""
+ },
+ "glimmer tech": {
+  "zh": "微光科技",
+  "ja": ""
+ },
+ "Particles that are constantly born and die": {
+  "zh": "不断生灭的粒子",
+  "ja": ""
+ },
+ "Starting from a fully black first frame, dark-red particles emerge frame by frame and link into many long light-colored lines that criss-cross.": {
+  "zh": "从首帧全黑开始，暗红粒子逐帧涌现并连出多条浅色长线交错穿行。",
+  "ja": ""
+ },
+ "System boot, data-stream generation or network-building transitions.": {
+  "zh": "系统启动、数据流生成或网络构建过渡。",
+  "ja": ""
+ },
+ "particle growth": {
+  "zh": "粒子生长",
+  "ja": ""
+ },
+ "straight-line shuttling": {
+  "zh": "直线穿梭",
+  "ja": ""
+ },
+ "network building": {
+  "zh": "网络构建",
+  "ja": ""
+ },
+ "Links filled in as a triangle mesh": {
+  "zh": "连线并填成三角网",
+  "ja": ""
+ },
+ "Translucent gray-white triangular facets connect red vertices, deforming and drifting on a dark background.": {
+  "zh": "半透明灰白三角形面片连接红色顶点，在暗底中形变漂移。",
+  "ja": ""
+ },
+ "Suited to tech-style mesh backgrounds, polygon animations or data visualization.": {
+  "zh": "适合科技风网格背景、多边形动画或数据可视化。",
+  "ja": ""
+ },
+ "triangle facets": {
+  "zh": "三角面片",
+  "ja": ""
+ },
+ "polygon mesh": {
+  "zh": "多边形网格",
+  "ja": ""
+ },
+ "Starry sky of fine star dots": {
+  "zh": "细小星点的星空",
+  "ja": ""
+ },
+ "Extremely tiny dim-white fine dots float and move slowly with slight amplitude on a deep black background.": {
+  "zh": "极微小的暗白色细点在深黑背景中微幅缓慢漂浮移动。",
+  "ja": ""
+ },
+ "Suited to deep starry skies, space exploration or immersive slow-paced backgrounds.": {
+  "zh": "适合用于深邃星空、宇宙探索或沉浸式慢节奏背景。",
+  "ja": ""
+ },
+ "deep-space stardust": {
+  "zh": "深空星尘",
+  "ja": ""
+ },
+ "glimmer drift": {
+  "zh": "微光漂移",
+  "ja": ""
+ },
+ "serene starry sky": {
+  "zh": "静谧星空",
+  "ja": ""
+ },
+ "Particles with orbit rings": {
+  "zh": "带轨道环的粒子",
+  "ja": ""
+ },
+ "Small colored round and square dots in yellow, blue, green and orange keep revolving along curved orbits.": {
+  "zh": "黄、蓝、绿、橙色彩色小圆点与方点沿曲线轨道持续公转。",
+  "ja": ""
+ },
+ "Suited to creative animation, tech showcases or light, dynamic video background patterns.": {
+  "zh": "适合用于创意动画、科技展示或轻快动感的视频底纹。",
+  "ja": ""
+ },
+ "orbital motion": {
+  "zh": "轨道运动",
+  "ja": ""
+ },
+ "lively motion graphics": {
+  "zh": "活力动效",
+  "ja": ""
+ },
+ "Layered parallax feel": {
+  "zh": "分层视差感",
+  "ja": ""
+ },
+ "A linked network of gray-white particles of varying brightness and size drifts slowly in multiple parallax layers.": {
+  "zh": "明暗与大小各异的灰白粒子连线网络呈视差多层缓慢漂移。",
+  "ja": ""
+ },
+ "Suited to high-end business, AI or cutting-edge tech promo videos.": {
+  "zh": "适合用于高端商业、AI人工智能或前沿科技宣传片。",
+  "ja": ""
+ },
+ "parallax links": {
+  "zh": "视差连线",
+  "ja": ""
+ },
+ "network topology": {
+  "zh": "网络拓扑",
+  "ja": ""
+ },
+ "Plasma color clusters": {
+  "zh": "等离子色团",
+  "ja": ""
+ },
+ "Extremely faint deep-blue thin line segments wander, wriggle and bend weakly on a dark background.": {
+  "zh": "极其幽微的深蓝色细线段在暗底上微弱游移蠕动与折变。",
+  "ja": ""
+ },
+ "Suited to mysterious dark tones, plasma pulses or hidden electrical-signal displays.": {
+  "zh": "适合用于神秘暗调、等离子脉冲或隐蔽电信号展示。",
+  "ja": ""
+ },
+ "plasma": {
+  "zh": "等离子体",
+  "ja": ""
+ },
+ "dim blue glow": {
+  "zh": "幽蓝微光",
+  "ja": ""
+ },
+ "dark tech": {
+  "zh": "暗黑科技",
+  "ja": ""
+ },
+ "Evenly spread dot array": {
+  "zh": "均匀铺开的圆点阵",
+  "ja": ""
+ },
+ "Evenly distributed bright white nodes and a network of thin lines roam and regroup across the frame.": {
+  "zh": "均匀分布的白色明亮节点与细线网络在画面中游动重组。",
+  "ja": ""
+ },
+ "Suited to IoT, big-data transmission, blockchain or neural-network displays.": {
+  "zh": "适合用于物联网、大数据传输、区块链或神经网络展示。",
+  "ja": ""
+ },
+ "node links": {
+  "zh": "节点连线",
+  "ja": ""
+ },
+ "topology network": {
+  "zh": "拓扑网络",
+  "ja": ""
+ },
+ "data connections": {
+  "zh": "数据连接",
+  "ja": ""
+ },
+ "Random shapes and colors mixed": {
+  "zh": "随机形状与颜色混合",
+  "ja": ""
+ },
+ "Colored round particles are densely scattered across the whole screen, each one continuously translating and floating freely in a different direction.": {
+  "zh": "彩色圆形粒子密集散布全屏，各粒子持续向不同方向自由平移浮动。",
+  "ja": ""
+ },
+ "Suited as a dynamic background atmosphere for lively, cheerful or creative short videos.": {
+  "zh": "适合用作活泼欢快或创意类短视频的动态背景氛围。",
+  "ja": ""
+ },
+ "random floating": {
+  "zh": "随机漂浮",
+  "ja": ""
+ },
+ "dynamic background": {
+  "zh": "动态背景",
+  "ja": ""
+ },
+ "The familiar linked network": {
+  "zh": "常见的连线网",
+  "ja": ""
+ },
+ "Many bright-red dot particles are scattered across the whole screen, with faint links between neighboring dots, and they slowly disperse and drift.": {
+  "zh": "大量鲜红色圆点粒子散布全屏，相邻点间有微弱连线并缓慢分散漂移。",
+  "ja": ""
+ },
+ "Suited as a background accent for tech warnings, suspense or fiery dynamic videos.": {
+  "zh": "适合用作科技警示、悬疑或热烈动感的视频背景点缀。",
+  "ja": ""
+ },
+ "red particles": {
+  "zh": "红色粒子",
+  "ja": ""
+ },
+ "Slow floating": {
+  "zh": "缓慢漂浮",
+  "ja": ""
+ },
+ "Sparse tiny white particles are joined by thin lines into a net, drifting extremely slowly on a dark background.": {
+  "zh": "稀疏的白色微小粒子由细线相连成网，在暗底上极为缓慢地游弋漂移。",
+  "ja": ""
+ },
+ "Suited as the underlay for tech-feel openings, academic presentations or calm narrative videos.": {
+  "zh": "适合科技感开场、学术演示或沉静叙事视频的衬底。",
+  "ja": ""
+ },
+ "minimalist lines": {
+  "zh": "极简线条",
+  "ja": ""
+ },
+ "slow drift": {
+  "zh": "缓慢漂移",
+  "ja": ""
+ },
+ "mesh structure": {
+  "zh": "网状结构",
+  "ja": ""
+ },
+ "Falling snowflakes": {
+  "zh": "雪花飘落",
+  "ja": ""
+ },
+ "White round light dots of varying sizes keep falling slowly and vertically from the top of the frame to the bottom.": {
+  "zh": "大小不一的白色圆形光点从画面顶部持续向底部垂直缓缓飘落。",
+  "ja": ""
+ },
+ "Suited as a video overlay for winter snow scenes, holiday celebrations or a romantic, soothing atmosphere.": {
+  "zh": "适合冬日雪景、节日庆典或浪漫舒缓氛围的视频叠加。",
+  "ja": ""
+ },
+ "falling snowflakes": {
+  "zh": "雪花飘落",
+  "ja": ""
+ },
+ "falling particles": {
+  "zh": "下落粒子",
+  "ja": ""
+ },
+ "aesthetic atmosphere": {
+  "zh": "唯美氛围",
+  "ja": ""
+ },
+ "Self-rotating particles": {
+  "zh": "自转的粒子",
+  "ja": ""
+ },
+ "Orange-red dot particles gather in the middle area, slowly rotating, swirling and spreading out around the center over time.": {
+  "zh": "橙红色点状粒子聚集在中部区域，随时间沿中心缓缓旋转打转扩散。",
+  "ja": ""
+ },
+ "Suited to effects for intro spotlight spins, spark vortexes or energy-gathering scenes.": {
+  "zh": "适合片头旋转聚光、火星旋涡或能量汇聚场景的特效。",
+  "ja": ""
+ },
+ "rotating particles": {
+  "zh": "旋转粒子",
+  "ja": ""
+ },
+ "orange-red specks": {
+  "zh": "橙红微粒",
+  "ja": ""
+ },
+ "central vortex": {
+  "zh": "中心旋涡",
+  "ja": ""
+ },
+ "Star-shaped particles": {
+  "zh": "星形粒子",
+  "ja": ""
+ },
+ "A few bright white light dots are joined by straight lines into polygonal constellations, with each vertex slowly translating and deforming.": {
+  "zh": "数颗明亮的白色光点由直线相连成多边形星座，各顶点缓慢平移变形。",
+  "ja": ""
+ },
+ "Suited to astronomy explainers, stargazing night talks or video transitions in a minimalist geometric style.": {
+  "zh": "适合天文科普、星空夜话或极简几何风格的视频转场。",
+  "ja": ""
+ },
+ "constellation links": {
+  "zh": "星座连线",
+  "ja": ""
+ },
+ "minimalist geometry": {
+  "zh": "极简几何",
+  "ja": ""
+ },
+ "polygon": {
+  "zh": "多边形",
+  "ja": ""
+ },
+ "Stroke color cycling": {
+  "zh": "描边色循环",
+  "ja": ""
+ },
+ "Fine mesh-like particles and links gradually shift from blue-purple to bright pink and wander slowly on a dark background.": {
+  "zh": "细网状粒子与连线由蓝紫色逐渐渐变为亮粉色，并在暗底中缓缓游动。",
+  "ja": ""
+ },
+ "Suited as a dynamic base color for dreamy neon, cyberpunk or fashion-show videos.": {
+  "zh": "适合梦幻霓虹、赛博朋克或时尚秀场类视频的动态底色。",
+  "ja": ""
+ },
+ "purple-pink tones": {
+  "zh": "紫粉色调",
+  "ja": ""
+ },
+ "mesh particles": {
+  "zh": "网状粒子",
+  "ja": ""
+ },
+ "Triangle links": {
+  "zh": "三角形连线",
+  "ja": ""
+ },
+ "Small solid equilateral triangles in red and green are scattered across the frame, each translating and floating in a different direction.": {
+  "zh": "红绿双色的小实心正三角形散布于画面中，各自向不同方向平移漂浮。",
+  "ja": ""
+ },
+ "Suited to stock-market and financial broadcasts, game commentary or geometric-design-style video backgrounds.": {
+  "zh": "适合股市金融播报、游戏解说或几何设计风格视频背景。",
+  "ja": ""
+ },
+ "triangle particles": {
+  "zh": "三角粒子",
+  "ja": ""
+ },
+ "red-green palette": {
+  "zh": "红绿配色",
+  "ja": ""
+ },
+ "geometric drift": {
+  "zh": "几何漂移",
+  "ja": ""
+ },
+ "Twinkling stars": {
+  "zh": "闪烁的星星",
+  "ja": ""
+ },
+ "Dark-red specks and faint links flicker in and out of view all over the frame, alternately brightening and dimming while moving slowly.": {
+  "zh": "暗红微粒与微弱连线在画面各处若隐若现，明暗交替闪烁并缓慢移动。",
+  "ja": ""
+ },
+ "Suited as an immersive background for videos with a mysterious dark mood, faint-glow night scenes or meditation and hypnosis.": {
+  "zh": "适合神秘暗黑、微光夜景或冥想催眠类视频的沉浸背景。",
+  "ja": ""
+ },
+ "dark flicker": {
+  "zh": "暗色闪烁",
+  "ja": ""
+ },
+ "faint specks": {
+  "zh": "微弱微粒",
+  "ja": ""
+ },
+ "night-scene glimmer": {
+  "zh": "夜景微光",
+  "ja": ""
+ },
+ "Slightly jittering particles": {
+  "zh": "微微抖动的粒子",
+  "ja": ""
+ },
+ "A network of tiny gray-white particles jitters and trembles in place at high frequency with small amplitude, while the overall position stays basically fixed.": {
+  "zh": "灰白微小粒子网络在原地高频微幅抖动震颤，整体位置基本保持不动。",
+  "ja": ""
+ },
+ "Suited to the visual atmosphere of tense suspense, electronic signal interference or neuron pulses.": {
+  "zh": "适合紧张悬疑、电子信号干扰或神经元脉冲的画面氛围。",
+  "ja": ""
+ },
+ "high-frequency jitter": {
+  "zh": "高频抖动",
+  "ja": ""
+ },
+ "vibrating particles": {
+  "zh": "震动粒子",
+  "ja": ""
+ },
+ "Sparse small dots": {
+  "zh": "稀疏小点",
+  "ja": ""
+ },
+ "Sparse faint white particles drift slowly on a dark-gray background, dynamically forming and breaking thin links according to the distance between them.": {
+  "zh": "深灰底上稀疏微弱白色粒子缓慢漂移，随间距动态生成与断开纤细连线。",
+  "ja": ""
+ },
+ "Suited to minimalist tech backgrounds, business presentations or data-visualization background patterns.": {
+  "zh": "适合极简科技背景、商业演示或数据可视化底纹。",
+  "ja": ""
+ },
+ "tech particles": {
+  "zh": "科技粒子",
+  "ja": ""
+ },
+ "dot-and-line network": {
+  "zh": "点线网络",
+  "ja": ""
+ },
+ "Large discs, blend-mode combination": {
+  "zh": "大圆盘,混合模式组合",
+  "ja": ""
+ },
+ "Large red, green and blue discs drift and overlap, and where they intersect there is dark-toned fusion and light-dark variation.": {
+  "zh": "红绿蓝彩色大圆盘漂移重叠，相交区域发生暗色融合与明暗变化。",
+  "ja": ""
+ },
+ "Suited to avant-garde art shorts, color experiments or abstract stage backgrounds.": {
+  "zh": "适合前卫艺术短片、色彩实验或抽象舞台背景。",
+  "ja": ""
+ },
+ "abstract color blocks": {
+  "zh": "抽象色块",
+  "ja": ""
+ },
+ "dark blending": {
+  "zh": "暗色混合",
+  "ja": ""
+ },
+ "dynamic light and shadow": {
+  "zh": "动态光影",
+  "ja": ""
+ },
+ "Sparse floating dots": {
+  "zh": "稀疏漂浮点",
+  "ja": ""
+ },
+ "Fine white particles and slender links drift slowly on a dark background, and the links keep regrouping and waxing and waning with distance.": {
+  "zh": "暗底上细小白色粒子与纤细连线缓慢漂移，连线随距离不断重组消长。",
+  "ja": ""
+ },
+ "Suited to tech-company promotion, data networks and science-explainer backgrounds.": {
+  "zh": "适合科技企业宣传、数据网络与知识科普背景。",
+  "ja": ""
+ },
+ "data links": {
+  "zh": "数据连线",
+  "ja": ""
+ },
+ "Collision absorption": {
+  "zh": "碰撞吸收",
+  "ja": ""
+ },
+ "White round particles of varying sizes drift and shuttle freely on a dark-gray background, with positions and spacing changing constantly.": {
+  "zh": "深灰底上大小不一的白色圆形粒子自由漂移穿梭，位置与间距持续变动。",
+  "ja": ""
+ },
+ "Suited to microscopic particle simulation, simple tech base images or dot-matrix decoration.": {
+  "zh": "适合微观微粒模拟、简约科技底图或点阵装饰。",
+  "ja": ""
+ },
+ "white specks": {
+  "zh": "白色微粒",
+  "ja": ""
+ },
+ "free drift": {
+  "zh": "自由漂移",
+  "ja": ""
+ },
+ "minimalist dot matrix": {
+  "zh": "极简点阵",
+  "ja": ""
+ },
+ "Collision bounce": {
+  "zh": "碰撞反弹",
+  "ja": ""
+ },
+ "Small white dot particles of uniform size drift and roam in straight lines at constant speed in all directions on a dark-gray background.": {
+  "zh": "深灰底上均匀大小的白色小圆点粒子向各方向匀速直线漂移游走。",
+  "ja": ""
+ },
+ "Suited to starry-sky accents, physics particle demos or dynamic decorative backgrounds.": {
+  "zh": "适合星空点缀、物理微粒演示或动态装饰背景。",
+  "ja": ""
+ },
+ "white dots": {
+  "zh": "白色圆点",
+  "ja": ""
+ },
+ "particle roaming": {
+  "zh": "粒子漫游",
+  "ja": ""
+ },
+ "starry-sky atmosphere": {
+  "zh": "星空氛围",
+  "ja": ""
+ },
+ "Delayed appearance": {
+  "zh": "延迟出现",
+  "ja": ""
+ },
+ "Faint orange-red specks and thin lines wander slowly on a dark background, dynamically forming a scattered network topology.": {
+  "zh": "暗色背景上微弱的橙红微粒与细线缓慢游移，动态构成分散的网络拓扑。",
+  "ja": ""
+ },
+ "Suited to neural-network visualization, a gloomy tech feel or data-stream backgrounds.": {
+  "zh": "适合神经网络可视化、幽暗科技感或数据流背景。",
+  "ja": ""
+ },
+ "orange-red particles": {
+  "zh": "橙红粒子",
+  "ja": ""
+ },
+ "dim-light tech": {
+  "zh": "暗光科技",
+  "ja": ""
+ },
+ "Delayed color change": {
+  "zh": "延迟变色",
+  "ja": ""
+ },
+ "Red specks and mesh-like thin lines drift slowly, and some specks gradually turn from red to orange-yellow over time.": {
+  "zh": "红色微粒与网状细线缓慢漂移，部分微粒随时间逐渐由红转为橙黄色。",
+  "ja": ""
+ },
+ "Tech-feel digital network backgrounds or data-flow transitions.": {
+  "zh": "科技感数字网络背景或数据流动转场。",
+  "ja": ""
+ },
+ "network specks": {
+  "zh": "网络微粒",
+  "ja": ""
+ },
+ "Delayed fade-in": {
+  "zh": "延迟淡入",
+  "ja": ""
+ },
+ "Many white dot particles drift slowly, and the opacity of some gradually decreases and fades over time.": {
+  "zh": "大量白色点状粒子缓慢漂移，部分粒子的透明度随时间渐变降低变淡。",
+  "ja": ""
+ },
+ "Starry-sky glimmer accents, night-scene atmosphere or text background patterns.": {
+  "zh": "星空微光点缀、夜景氛围或文字底纹。",
+  "ja": ""
+ },
+ "starry specks": {
+  "zh": "星空微粒",
+  "ja": ""
+ },
+ "opacity gradient": {
+  "zh": "透明渐变",
+  "ja": ""
+ },
+ "minimalist accent": {
+  "zh": "极简点缀",
+  "ja": ""
+ },
+ "Delayed enlargement": {
+  "zh": "延迟变大",
+  "ja": ""
+ },
+ "Scattered white dot particles drift slightly, and the size of some gradually shrinks and thins over time.": {
+  "zh": "散布的白色点状粒子微幅漂移，部分粒子尺寸随时间逐渐缩小变细。",
+  "ja": ""
+ },
+ "Floating-dust effects, serene moods or abstract tech backgrounds.": {
+  "zh": "微尘浮游效果、静谧意境或抽象科技背景。",
+  "ja": ""
+ },
+ "size scaling": {
+  "zh": "尺寸缩放",
+  "ja": ""
+ },
+ "floating dust": {
+  "zh": "微尘浮动",
+  "ja": ""
+ },
+ "Delayed stroke color change": {
+  "zh": "延迟描边变色",
+  "ja": ""
+ },
+ "Tiny dark-red geometric wireframe particles drift, and the stroke color of some gradually turns orange-yellow over time.": {
+  "zh": "微小暗红几何线框粒子漂移，部分描边颜色随时间渐变转为橙黄色。",
+  "ja": ""
+ },
+ "Sci-fi UI screens, HUD motion graphics or minimalist graphic backgrounds.": {
+  "zh": "科幻UI界面、HUD动效或极简图形背景。",
+  "ja": ""
+ },
+ "wireframe specks": {
+  "zh": "线框微粒",
+  "ja": ""
+ },
+ "stroke color change": {
+  "zh": "描边变色",
+  "ja": ""
+ },
+ "HUD interface": {
+  "zh": "HUD界面",
+  "ja": ""
+ },
+ "Disappear at the edge": {
+  "zh": "到边消失",
+  "ja": ""
+ },
+ "Gray-white specks and thin polylines drift slowly, and the specks and links gradually fade away and thin out over time.": {
+  "zh": "灰白色微粒与细折线缓慢漂动，微粒与连线随时间逐渐消退减少。",
+  "ja": ""
+ },
+ "Data-dissipation effects, fading memories or end-of-film curtain-fall transitions.": {
+  "zh": "数据消散特效、记忆褪色或片尾落幕转场。",
+  "ja": ""
+ },
+ "specks dissipating": {
+  "zh": "微粒消散",
+  "ja": ""
+ },
+ "link decay": {
+  "zh": "连线衰减",
+  "ja": ""
+ },
+ "fade-out ending": {
+  "zh": "淡出收尾",
+  "ja": ""
+ },
+ "Burst at the edge": {
+  "zh": "到边爆开",
+  "ja": ""
+ },
+ "Colored dot particles are scattered and drifting, and some gradually disperse while moving, then vanish and thin out.": {
+  "zh": "彩色彩点粒子散布漂移，部分粒子在移动中逐渐分散并消隐减少。",
+  "ja": ""
+ },
+ "Holiday celebration confetti, cheerful beat-synced edits or party-atmosphere backgrounds.": {
+  "zh": "节日庆典彩屑、欢快卡点或派对氛围背景。",
+  "ja": ""
+ },
+ "scattering confetti": {
+  "zh": "彩屑飘散",
+  "ja": ""
+ },
+ "celebration party": {
+  "zh": "庆典派对",
+  "ja": ""
+ },
+ "Bubble effect": {
+  "zh": "气泡效果",
+  "ja": ""
+ },
+ "Dark-red and orange round and square particles float upward, brightening in color and overlapping translucently.": {
+  "zh": "暗红与橙色的圆形方块粒子向上浮动，颜色变亮呈半透明重叠状态。",
+  "ja": ""
+ },
+ "Rising liquid bubbles, dreamy out-of-focus light spots or warm backgrounds.": {
+  "zh": "液体气泡升腾、梦幻虚焦光斑或暖意背景。",
+  "ja": ""
+ },
+ "floating bubbles": {
+  "zh": "气泡浮动",
+  "ja": ""
+ },
+ "translucent light spots": {
+  "zh": "透明光斑",
+  "ja": ""
+ },
+ "rising particles": {
+  "zh": "升腾粒子",
+  "ja": ""
+ },
+ "Filter effect": {
+  "zh": "滤镜效果",
+  "ja": ""
+ },
+ "Solid red dots float and drift upward, and the particle color gradually shifts as a whole to bright orange over time.": {
+  "zh": "红色实心圆点向上浮动漂移，粒子颜色随时间整体渐变为明亮橙色。",
+  "ja": ""
+ },
+ "Energetic dynamic intros, energy-rise effects or fashion promo videos.": {
+  "zh": "活力动感片头、能量上升特效或时尚宣传片。",
+  "ja": ""
+ },
+ "rising dots": {
+  "zh": "圆点升腾",
+  "ja": ""
+ },
+ "gradual color change": {
+  "zh": "渐变变色",
+  "ja": ""
+ },
+ "dynamic energy": {
+  "zh": "动感能量",
+  "ja": ""
+ },
+ "Particles nested inside particles": {
+  "zh": "粒子内嵌粒子",
+  "ja": ""
+ },
+ "Yellow five-pointed-star particles rise and drift upward as a whole, gathering at the top edge of the frame at frames 5 and 6.": {
+  "zh": "黄色五角星粒子整体向上升起漂移，第5、6帧在画面顶部边缘聚集。",
+  "ja": ""
+ },
+ "Dreams taking off, reward settlement or celebratory rising-atmosphere scenes.": {
+  "zh": "梦想升空、奖励结算或庆典升腾氛围场景。",
+  "ja": ""
+ },
+ "yellow starlight": {
+  "zh": "黄色星光",
+  "ja": ""
+ },
+ "floating upward": {
+  "zh": "向上漂浮",
+  "ja": ""
+ },
+ "gathering at the top": {
+  "zh": "顶部聚集",
+  "ja": ""
+ },
+ "Trailing transform": {
+  "zh": "拖尾变形",
+  "ja": ""
+ },
+ "A dot matrix of fine particles drifts while its overall color cycles gradually through red, green, cyan, blue, magenta and yellow.": {
+  "zh": "细小粒子点阵在漂移中整体颜色经历红、绿、青、蓝、品红、黄循环渐变。",
+  "ja": ""
+ },
+ "Dynamic beat-synced edits, dazzling-color transitions or neon-stage atmosphere backgrounds.": {
+  "zh": "动感卡点、炫彩过渡或霓虹舞台氛围背景。",
+  "ja": ""
+ },
+ "color cycling": {
+  "zh": "循环变色",
+  "ja": ""
+ },
+ "tiny particles": {
+  "zh": "微小粒子",
+  "ja": ""
+ },
+ "Sparse floating dots (random color)": {
+  "zh": "稀疏漂浮点(随机色)",
+  "ja": ""
+ },
+ "Sparse tiny dark-red particles wander slowly, and nearby particles occasionally form faint thin lines connecting them.": {
+  "zh": "稀疏暗红微小粒子缓慢游移，近邻粒子间偶尔生成微弱细线相连。",
+  "ja": ""
+ },
+ "Minimalist tech, deep-space star charts or microscopic biological link backgrounds.": {
+  "zh": "极简科技、深空星图或微观生物连线背景。",
+  "ja": ""
+ },
+ "dark-red particles": {
+  "zh": "暗红粒子",
+  "ja": ""
+ },
+ "nearby links": {
+  "zh": "邻近连线",
+  "ja": ""
+ },
+ "sparse star dots": {
+  "zh": "稀疏星点",
+  "ja": ""
+ },
+ "Particles with a lighting feel": {
+  "zh": "光照感粒子",
+  "ja": ""
+ },
+ "Red-orange round and square particles gradually converge from all sides toward the center into a cluster.": {
+  "zh": "红橙色圆形与方形粒子从四周逐渐向中心汇聚成团。",
+  "ja": ""
+ },
+ "Suited to tech-feel focus effects, core energy convergence or intro transitions.": {
+  "zh": "适合科技感聚焦特效、核心能量汇聚或片头转场。",
+  "ja": ""
+ },
+ "particle convergence": {
+  "zh": "粒子汇聚",
+  "ja": ""
+ },
+ "square and round dots": {
+  "zh": "方形圆点",
+  "ja": ""
+ },
+ "energy focus": {
+  "zh": "能量聚焦",
+  "ja": ""
+ },
+ "Very faint tiny dark-red dots and extremely light links are scattered on a dark background, floating and shifting slowly.": {
+  "zh": "暗底上散落极微弱的暗红细小圆点与极淡连线，缓慢漂浮移位。",
+  "ja": ""
+ },
+ "Suited to minimalist, understated tech intros or a dark-night starry-sky atmosphere underlay.": {
+  "zh": "适合极简低调的科技片头或暗夜星空氛围衬底。",
+  "ja": ""
+ },
+ "dark-red specks": {
+  "zh": "暗红微粒",
+  "ja": ""
+ },
+ "minimalist glimmer": {
+  "zh": "极简微光",
+  "ja": ""
+ },
+ "ethereal floating": {
+  "zh": "虚幻漂浮",
+  "ja": ""
+ },
+ "Fine round dot particles in red, yellow, cyan and other colors are scattered on a dark background, translating and floating slowly.": {
+  "zh": "红、黄、青等多色细小圆点粒子散布在暗底中缓慢平移漂浮。",
+  "ja": ""
+ },
+ "Suited to celebration parties, relaxed lively short videos or dreamy confetti backgrounds.": {
+  "zh": "适合庆典派对、轻松活泼短视频或梦幻彩屑背景。",
+  "ja": ""
+ },
+ "floating confetti": {
+  "zh": "彩屑漂浮",
+  "ja": ""
+ },
+ "cheerful atmosphere": {
+  "zh": "欢快氛围",
+  "ja": ""
+ },
+ "Dense round dots": {
+  "zh": "密集圆点",
+  "ja": ""
+ },
+ "A dense swarm of bright orange-red round particles keeps drifting and floating toward the upper right on a black background.": {
+  "zh": "密集的亮橙红色圆形粒子群在黑底上持续向右上方漂移浮动。",
+  "ja": ""
+ },
+ "Suited to energy flow, fiery event promotion or dynamic rhythmic video backgrounds.": {
+  "zh": "适合能量流动、热烈活动宣传或动感节奏视频背景。",
+  "ja": ""
+ },
+ "dense particles": {
+  "zh": "密集粒子",
+  "ja": ""
+ },
+ "orange-red dots": {
+  "zh": "橙红圆点",
+  "ja": ""
+ },
+ "particle flow direction": {
+  "zh": "粒子流向",
+  "ja": ""
+ },
+ "Medium-density round dots": {
+  "zh": "中等密度圆点",
+  "ja": ""
+ },
+ "Faint red dots are connected by extremely thin gray-white lines into a polygonal network that keeps deforming and drifting.": {
+  "zh": "微弱红点由极细灰白线条连接成多边形网络，持续形变漂移。",
+  "ja": ""
+ },
+ "Suited to network topology, blockchain displays or minimalist constellation tech-feel backgrounds.": {
+  "zh": "适合网络拓扑、区块链展示或极简星座科技感背景。",
+  "ja": ""
+ },
+ "topology structure": {
+  "zh": "拓扑结构",
+  "ja": ""
+ },
+ "Directional drift": {
+  "zh": "定向漂移",
+  "ja": ""
+ },
+ "Extremely sparse faint red dots and occasional thin lines glide slowly at constant speed along a fixed diagonal direction.": {
+  "zh": "极稀疏的微弱红点与偶现细线沿固定斜向匀速缓慢滑行。",
+  "ja": ""
+ },
+ "Suited to deep-space exploration, minimalist immersive storytelling or dark-night suspense background patterns.": {
+  "zh": "适合深空探索、极简沉浸式叙事或暗夜悬疑底纹。",
+  "ja": ""
+ },
+ "sparse specks": {
+  "zh": "稀疏微粒",
+  "ja": ""
+ },
+ "diagonal glide": {
+  "zh": "斜向滑行",
+  "ja": ""
+ },
+ "minimalist deep space": {
+  "zh": "极简深空",
+  "ja": ""
+ },
+ "Distance-limited drift": {
+  "zh": "限距漂移",
+  "ja": ""
+ },
+ "Tiny red dots disperse and drift slowly against an extremely dark background, occasionally joined by extremely light thin lines.": {
+  "zh": "极暗背景下微小红点缓慢分散漂动，相互间偶有极淡细线相连。",
+  "ja": ""
+ },
+ "Suited to extremely dark sci-fi backgrounds, microscopic particle displays or low-distraction video background patterns.": {
+  "zh": "适合极暗科幻背景、微观粒子展示或低干扰视频底纹。",
+  "ja": ""
+ },
+ "faint red dots": {
+  "zh": "微弱红点",
+  "ja": ""
+ },
+ "close-range links": {
+  "zh": "微距连线",
+  "ja": ""
+ },
+ "dark-toned background pattern": {
+  "zh": "暗调底纹",
+  "ja": ""
+ },
+ "Inward drift": {
+  "zh": "向内漂移",
+  "ja": ""
+ },
+ "Small red dot particles gradually gather and converge from the edges all around the frame toward the center area.": {
+  "zh": "红色小圆点粒子从画面四周边缘向中心区域逐渐聚拢汇聚。",
+  "ja": ""
+ },
+ "Suited to attention-focusing, energy-gathering or subject-entrance effects.": {
+  "zh": "适合用于注意力聚焦、能量汇集或主体出场特效。",
+  "ja": ""
+ },
+ "centripetal motion": {
+  "zh": "向心运动",
+  "ja": ""
+ },
+ "gathering effects": {
+  "zh": "聚集特效",
+  "ja": ""
+ },
+ "Outward drift": {
+  "zh": "向外漂移",
+  "ja": ""
+ },
+ "A dense swarm of red particles at the center keeps diverging, expanding and drifting outward in all directions.": {
+  "zh": "中心密集的红色粒子群向四周外围持续发散扩张漂移。",
+  "ja": ""
+ },
+ "Suited to energy bursts, shockwave spreading or intro-opening motion graphics.": {
+  "zh": "适合用于能量爆发、冲击波扩散或片头开场动效。",
+  "ja": ""
+ },
+ "particle divergence": {
+  "zh": "粒子发散",
+  "ja": ""
+ },
+ "spreading outward": {
+  "zh": "向外扩散",
+  "ja": ""
+ },
+ "burst motion graphics": {
+  "zh": "爆发动效",
+  "ja": ""
+ },
+ "Smear trails without clearing the screen": {
+  "zh": "不清屏的拖痕",
+  "ja": ""
+ },
+ "Densely packed multicolored star shapes keep overlapping and stacking, gradually filling the canvas.": {
+  "zh": "密密麻麻的五彩星形图案持续重叠叠加，逐渐填满画布。",
+  "ja": ""
+ },
+ "Suited to festive carnivals, children's fun or lively, cheerful scene transitions.": {
+  "zh": "适合用于庆典狂欢、儿童趣味或热烈欢快的过场转场。",
+  "ja": ""
+ },
+ "colored stars": {
+  "zh": "彩色星星",
+  "ja": ""
+ },
+ "layer stacking": {
+  "zh": "图层叠加",
+  "ja": ""
+ },
+ "carnival celebration": {
+  "zh": "狂欢庆典",
+  "ja": ""
+ },
+ "Rock-and-roll mini character animation, portrait": {
+  "zh": "摇滚小人角色动画,竖版",
+  "ja": ""
+ },
+ "A yellow rope hangs down on a teal-green background; a little figure in a white jumpsuit slides down the rope, comes to a stop and blinks.": {
+  "zh": "青绿底上黄绳垂下，穿白色连体服的小人沿绳滑落站定并眨眼。",
+  "ja": ""
+ },
+ "Suited to transition entrances, character reveals or humorous notification motion graphics.": {
+  "zh": "适合作为转场入场、角色亮相或幽默提示动效。",
+  "ja": ""
+ },
+ "cartoon character": {
+  "zh": "卡通角色",
+  "ja": ""
+ },
+ "rope-slide entrance": {
+  "zh": "滑绳入场",
+  "ja": ""
+ },
+ "transition animation": {
+  "zh": "转场动画",
+  "ja": ""
+ },
+ "Bodymovin wordmark animation, horizontal bar shape, suitable as a title": {
+  "zh": "Bodymovin 字标动画,横条状,适合当标题",
+  "ja": ""
+ },
+ "Yellow English letters on a green bar break apart into colored geometric fragments and morph, then reassemble into the original word.": {
+  "zh": "绿条上的黄色英文拆解为彩色几何碎片并变形，随后重新拼回原词。",
+  "ja": ""
+ },
+ "Suited to intro title displays, LOGO reveals or transitional bridges.": {
+  "zh": "适合片头标题展示、LOGO演绎或过渡衔接。",
+  "ja": ""
+ },
+ "text motion graphics": {
+  "zh": "文字动效",
+  "ja": ""
+ },
+ "geometric morph": {
+  "zh": "几何变形",
+  "ja": ""
+ },
+ "intro title": {
+  "zh": "片头标题",
+  "ja": ""
+ },
+ "Kitten character animation, square": {
+  "zh": "小猫角色动画,方形",
+  "ja": ""
+ },
+ "A white kitten sits upright inside an orange square, alternately closing its eyes, opening its mouth and swishing its tail.": {
+  "zh": "橙色方块内白色小猫端坐，交替进行闭眼张嘴与摇摆尾巴。",
+  "ja": ""
+ },
+ "Suited to pet life logs, cute-style illustrations or emotion-expression stickers.": {
+  "zh": "适合宠物生活记录、萌系插画或情绪表达贴纸。",
+  "ja": ""
+ },
+ "cute kitten": {
+  "zh": "可爱小猫",
+  "ja": ""
+ },
+ "cute pet animation": {
+  "zh": "萌宠动画",
+  "ja": ""
+ },
+ "cartoon expression": {
+  "zh": "卡通表情",
+  "ja": ""
+ },
+ "New Year greeting-card style 2016 number animation, full screen 16:9": {
+  "zh": "新年贺卡式的 2016 数字动画,全屏 16:9",
+  "ja": ""
+ },
+ "Multicolor-striped HAPPY letters wobble and morph on a cream-yellow background, smoothly turning into the colorful number 2016.": {
+  "zh": "米黄底上彩纹HAPPY字母晃动变形，平滑演变为彩色的2016数字。",
+  "ja": ""
+ },
+ "Suited to New Year greetings, New Year's Eve celebrations or holiday intro countdowns.": {
+  "zh": "适合新年贺岁、跨年庆典或节日片头倒计时。",
+  "ja": ""
+ },
+ "New Year wishes": {
+  "zh": "新年祝福",
+  "ja": ""
+ },
+ "number morph": {
+  "zh": "数字变形",
+  "ja": ""
+ },
+ "holiday celebration": {
+  "zh": "节日庆典",
+  "ja": ""
+ },
+ "Christmas-themed scene animation, full screen 16:9": {
+  "zh": "圣诞主题场景动画,全屏 16:9",
+  "ja": ""
+ },
+ "A red circle on a dark background morphs in turn into a Christmas hat, Santa Claus, a Christmas tree and a colorful wreath.": {
+  "zh": "深色底上红色圆形依次变形为圣诞帽、圣诞老人、圣诞树与彩色花环。",
+  "ja": ""
+ },
+ "Suited to Christmas promotions, winter party intros or greeting-card motion graphics.": {
+  "zh": "适合圣诞节日宣传、冬季派对片头或贺卡动效。",
+  "ja": ""
+ },
+ "Christmas elements": {
+  "zh": "圣诞元素",
+  "ja": ""
+ },
+ "icon morph": {
+  "zh": "图标形变",
+  "ja": ""
+ },
+ "holiday motion graphics": {
+  "zh": "节日动效",
+  "ja": ""
  }
 }

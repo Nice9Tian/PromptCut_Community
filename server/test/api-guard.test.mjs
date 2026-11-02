@@ -18,8 +18,10 @@ const ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
 const OUT = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-api-guard-test-'));
 
 const guardUrl = pathToFileURL(path.join(ROOT, 'server', 'http-guard.mjs')).href;
-const src = fs.readFileSync(path.join(ROOT, 'server', 'vite-plugin-api-guard.ts'), 'utf8')
+let src = fs.readFileSync(path.join(ROOT, 'server', 'vite-plugin-api-guard.ts'), 'utf8')
   .split('from "./http-guard.mjs"').join(`from "${guardUrl}"`);
+// server/i18n.mjs is not copied into the scratch folder: point the import back at the real file
+src = src.replace(/from (['"])(?:\.\.?\/)+i18n\.mjs\1/g, (_m, q) => `from ${q}${pathToFileURL(path.join(ROOT, 'server', 'i18n.mjs')).href}${q}`);
 const js = ts.transpileModule(src, {
   compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext },
 }).outputText;

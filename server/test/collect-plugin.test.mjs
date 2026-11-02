@@ -23,6 +23,8 @@ const OUT = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-collect-test-'));
 function compile(srcRel, outName, rewrites = []) {
   let src = fs.readFileSync(path.join(ROOT, srcRel), 'utf8');
   for (const [from, to] of rewrites) src = src.split(from).join(to);
+  // server/i18n.mjs is not copied into the scratch folder: point the import back at the real file
+  src = src.replace(/from (['"])(?:\.\.?\/)+i18n\.mjs\1/g, (_m, q) => `from ${q}${pathToFileURL(path.join(ROOT, 'server', 'i18n.mjs')).href}${q}`);
   const js = ts.transpileModule(src, {
     compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext },
   }).outputText;

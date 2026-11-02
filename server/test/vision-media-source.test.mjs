@@ -23,6 +23,8 @@ function compile(srcRel, outName, replaces = []) {
     assert.ok(src.includes(a), `Could not find ${a} in ${srcRel}`);
     src = src.split(a).join(b);
   }
+  // server/i18n.mjs is not copied into the scratch folder: point the import back at the real file
+  src = src.replace(/from (['"])(?:\.\.?\/)+i18n\.mjs\1/g, (_m, q) => `from ${q}${pathToFileURL(path.join(ROOT, 'server', 'i18n.mjs')).href}${q}`);
   const js = ts.transpileModule(src, { compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext } }).outputText;
   const file = path.join(OUT, outName);
   fs.writeFileSync(file, js);

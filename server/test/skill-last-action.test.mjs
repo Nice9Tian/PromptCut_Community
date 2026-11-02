@@ -23,6 +23,8 @@ const projectsUrl = pathToFileURL(path.join(ROOT, 'server', 'vite-plugin-project
 let src = fs.readFileSync(path.join(ROOT, 'server', 'vite-plugin-skill-state.ts'), 'utf8');
 src = src.split('new URL("./skill-gate.mjs", import.meta.url).href').join(JSON.stringify(gateUrl));
 src = src.split('new URL("./vite-plugin-projects.ts", import.meta.url).href').join(JSON.stringify(projectsUrl));
+// server/i18n.mjs is not copied into the scratch folder: point the import back at the real file
+src = src.replace(/from (['"])(?:\.\.?\/)+i18n\.mjs\1/g, (_m, q) => `from ${q}${pathToFileURL(path.join(ROOT, 'server', 'i18n.mjs')).href}${q}`);
 const js = ts.transpileModule(src, { compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext } }).outputText;
 const file = path.join(OUT, 'skill-state.mjs');
 fs.writeFileSync(file, js);
