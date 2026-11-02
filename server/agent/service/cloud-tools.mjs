@@ -396,7 +396,7 @@ export function cloudSystemNote({ look = false, provided = null, collectDelegate
   for (const line of CLOUD_SYSTEM_NOTE_LINES) {
     if (line === LOOK_LINE) lines.push(look ? lookNoteOn(mediaFrames) : LOOK_NOTE_OFF);
     else if (line === INITIATOR_LINE) lines.push(initiatorNote({ handoff: family('handoff'), login: family('collect') }));
-    else if (line === PENDING_LINE) lines.push(...pendingNotes({ stt: family('stt'), shots: family('shots'), subject: family('subject'), track: family('track') && family('motion'), audioJs: family('audioJs'), workflow: family('workflow'), web: family('web'), handoff: family('handoff') }));
+    else if (line === PENDING_LINE) lines.push(...pendingNotes({ stt: family('stt'), shots: family('shots'), subject: family('subject'), track: family('track') && family('motion'), workflow: family('workflow'), web: family('web'), handoff: family('handoff') }));
     else if (line === COLLECT_LINE) lines.push(!family('collect') ? COLLECT_NOTE_ANONYMOUS : collectDelegate === true ? COLLECT_NOTE_DELEGATE : `${COLLECT_NOTE_ANONYMOUS} ${COLLECT_NOTE_LOGIN_ONLY}`);
     else lines.push(line);
   }
@@ -428,7 +428,7 @@ function pendingNotes(on) {
   if (!on.stt || !on.workflow) missing.push(!on.stt && !on.workflow ? 'speech-to-text and one-click workflow' : !on.stt ? 'speech recognition' : 'one-click workflow');
   if (!on.shots || !on.subject) missing.push(!on.shots && !on.subject ? 'shot and subject detection' : !on.shots ? 'shot detection' : 'subject detection');
   if (!on.track) missing.push('motion tracking');
-  if (!on.audioJs) missing.push('custom measurement (measure_audio_js)');
+  missing.push('custom measurement (measure_audio_js)');
   if (!on.web) missing.push('web actions (web_*)');
   const lines = missing.length ? [`- **Not yet available in the cloud in this version:** ${missing.join(', ')}. When the user asks for these, say "this step can't be done in the cloud in this version", and switch to another approach if possible (for example, write captions directly from the text the user gives); do not stop the whole task.`] : [];
   const perception = [on.stt ? 'speech recognition' : null, on.shots ? 'shot detection' : null, on.subject ? 'subject detection' : null, on.track ? 'motion tracking' : null].filter(Boolean);
