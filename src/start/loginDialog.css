@@ -1,0 +1,196 @@
+/*
+ * The login dialog of the online browser (`LoginDialog.tsx`, issue #2). Skin variables only, the same as
+ * `start.css`, so light, dark and every skin follow along. Fields, the primary button and links reuse
+ * `.ps-field`, `.ps-check`, `.ps-primary-btn`, `.ps-link` from `start.css`.
+ * Class prefix `ps-ld-` (login dialog).
+ */
+
+.ps-ld-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  overflow-y: auto;
+  background: color-mix(in srgb, var(--bg-canvas) 45%, rgb(0 0 0 / 0.55));
+  backdrop-filter: blur(6px) saturate(1.05);
+  -webkit-backdrop-filter: blur(6px) saturate(1.05);
+  animation: ps-ld-fade 0.2s ease-out;
+}
+
+.ps-ld {
+  position: relative;
+  width: min(400px, 100%);
+  padding: 28px 28px 22px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 18px;
+  background: var(--bg-panel);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  box-shadow: 0 24px 60px rgb(0 0 0 / 0.32), 0 2px 8px rgb(0 0 0 / 0.16);
+  animation: ps-ld-rise 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.ps-ld[data-busy] .ps-ld-form,
+.ps-ld[data-busy] .ps-ld-choices { opacity: 0.7; }
+
+.ps-ld-close {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+.ps-ld-close:hover { background: var(--fill-hover); color: var(--ink); }
+
+/* Pages are stacked in one grid cell, so the outgoing and incoming page overlap while turning */
+.ps-ld-stage {
+  display: grid;
+  perspective: 1100px;
+}
+.ps-ld-page {
+  grid-area: 1 / 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  backface-visibility: hidden;
+}
+.ps-ld-page[hidden] { display: none; }
+.ps-ld-page:not(.is-current) { pointer-events: none; }
+
+/* Page turn: forward swings in from the right edge, back from the left; the old page swings away the other way */
+.ps-ld-page.is-in-fwd { transform-origin: right center; animation: ps-ld-in-fwd 0.34s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.ps-ld-page.is-out-fwd { transform-origin: left center; animation: ps-ld-out-fwd 0.34s cubic-bezier(0.4, 0, 0.6, 1) both; }
+.ps-ld-page.is-in-back { transform-origin: left center; animation: ps-ld-in-back 0.34s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.ps-ld-page.is-out-back { transform-origin: right center; animation: ps-ld-out-back 0.34s cubic-bezier(0.4, 0, 0.6, 1) both; }
+
+@keyframes ps-ld-in-fwd { from { opacity: 0; transform: rotateY(-38deg); } to { opacity: 1; transform: none; } }
+@keyframes ps-ld-out-fwd { from { opacity: 1; transform: none; } to { opacity: 0; transform: rotateY(38deg); } }
+@keyframes ps-ld-in-back { from { opacity: 0; transform: rotateY(38deg); } to { opacity: 1; transform: none; } }
+@keyframes ps-ld-out-back { from { opacity: 1; transform: none; } to { opacity: 0; transform: rotateY(-38deg); } }
+@keyframes ps-ld-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ps-ld-rise { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .ps-ld-mask,
+  .ps-ld,
+  .ps-ld-page { animation: none !important; }
+  .ps-ld-page:not(.is-current) { display: none; }
+}
+
+/* ── choose ── */
+.ps-ld-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding-top: 6px;
+  text-align: center;
+}
+.ps-ld-brand .ps-ld-title { margin-top: 6px; }
+.ps-ld-title { margin: 0; font-size: 20px; font-weight: 650; line-height: 1.3; }
+.ps-ld-lead { margin: 0; font-size: 13px; line-height: 1.6; color: var(--ink-muted); overflow-wrap: anywhere; }
+
+.ps-ld-choices { display: flex; flex-direction: column; align-items: stretch; gap: 10px; margin-top: 8px; }
+.ps-ld-choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  background: var(--fill-subtle);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 550;
+  text-align: left;
+  cursor: pointer;
+}
+.ps-ld-choice:hover { background: var(--fill-hover); }
+.ps-ld-choice:focus-visible,
+.ps-ld-quiet:focus-visible,
+.ps-ld-back:focus-visible,
+.ps-ld-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ps-ld-choice > span { flex: 1 1 auto; min-width: 0; }
+.ps-ld-icon { flex: 0 0 auto; color: var(--ink-muted); }
+.ps-ld-chev { flex: 0 0 auto; color: var(--ink-faint); }
+
+/* Google's own button: centered at its own width; when the service has it off the slot is empty and takes no room */
+.ps-ld-google { display: flex; justify-content: center; min-height: 0; }
+.ps-ld-google:empty { display: none; }
+.ps-ld-google[data-state="unavailable"] { display: none; }
+.ps-ld-note { margin: 0; font-size: 12px; line-height: 1.6; color: var(--ink-muted); text-align: center; }
+
+.ps-ld-terms { margin: 4px 0 0; font-size: 11px; line-height: 1.7; color: var(--ink-faint); text-align: center; }
+.ps-ld-terms .ps-link { font-size: inherit; }
+
+.ps-ld-alt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--hairline);
+}
+.ps-ld-quiet {
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-muted);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ps-ld-quiet:hover:not(:disabled) { color: var(--ink); text-decoration: underline; }
+.ps-ld-quiet:disabled { opacity: 0.55; cursor: default; }
+.ps-ld-link { align-self: stretch; }
+
+/* ── form pages ── */
+.ps-ld-head { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.ps-ld-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: -6px;
+  padding: 3px 8px 3px 2px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-muted);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ps-ld-back:hover { color: var(--ink); background: var(--fill-hover); }
+.ps-ld-form { display: flex; flex-direction: column; gap: 12px; }
+.ps-ld-hint { font-size: 11px; line-height: 1.6; color: var(--ink-faint); }
+.ps-ld-submit { min-height: 40px; border-radius: 999px; }
+.ps-ld-error { margin: 0; font-size: 12px; line-height: 1.6; color: var(--danger); overflow-wrap: anywhere; }
+.ps-ld-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+  font-size: 12px;
+}
+.ps-ld-foot-center { justify-content: center; }
+
+/* Phone width: the card fills the width with the 16px gutter from the mask */
+@media (max-width: 480px) {
+  .ps-ld { padding: 24px 18px 18px; border-radius: 16px; }
+  .ps-ld-title { font-size: 18px; }
+}
+

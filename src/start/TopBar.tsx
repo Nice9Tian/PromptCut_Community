@@ -23,6 +23,11 @@ export function TopBar(props: {
   /** The account section: only in the online browser. The desktop app has no account, so neither is passed and this section does not appear at all */
   accountName?: string | null;
   onSignOut?: () => void;
+  /**
+   * Logged out (online browser only): the account slot shows "Sign in", which opens the login dialog
+   * (issue #2, 2026-11-03). Passed instead of `onSignOut`.
+   */
+  onSignIn?: () => void;
   center?: ReactNode;
   right?: ReactNode;
   /** Saves the open project before a language switch reloads the page */
@@ -92,6 +97,14 @@ export function TopBar(props: {
           {tr("Exit")}
         </button>
       </div>}
+
+      {!account && props.onSignIn && (
+        <div className="ps-top-account" data-pc="start-top-signed-out">
+          <button type="button" className="ps-top-sign-in" data-pc="start-sign-in" aria-haspopup="dialog" onClick={props.onSignIn}>
+            {tr("Sign in")}
+          </button>
+        </div>
+      )}
 
       {props.right}
     </header>
