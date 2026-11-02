@@ -25,13 +25,30 @@ export function confirmedMissingAudio(media: MediaAsset | undefined, project?: P
   return confirmedMissing(source) && source!.kind === "video" && source!.missingMaterial!.audio === true;
 }
 
-/** 素材库里给缺失素材名字加的标记(`src/editor/io/mediaUpload.ts`);占位上只显示原来的名字 */
-const MISSING_NAME_MARK = "(缺失) ";
+/**
+ * Marker in front of a missing media item's name in the media library (src/editor/io/mediaUpload.ts).
+ * It is project data, so it never follows the interface language: new names get the English one,
+ * names in older projects still carry the Chinese one, and both are recognised. Placeholders drawn
+ * in the picture show only the original name.
+ */
+export const MISSING_NAME_MARK = "(missing) ";
+// i18n-allow: the marker older projects carry
+const LEGACY_MISSING_NAME_MARK = "(缺失) ";
+
+export function hasMissingMark(name: string): boolean {
+  return name.startsWith(MISSING_NAME_MARK) || name.startsWith(LEGACY_MISSING_NAME_MARK);
+}
+
+/** The name without its marker */
+export function withoutMissingMark(name: string): string {
+  for (const mark of [MISSING_NAME_MARK, LEGACY_MISSING_NAME_MARK]) if (name.startsWith(mark)) return name.slice(mark.length);
+  return name;
+}
 
 export function missingMaterialLabel(media: MediaAsset): string {
   const original = media.missingMaterial?.original;
   const name = original?.name || original?.hash || media.name || media.id;
-  return name.startsWith(MISSING_NAME_MARK) && name.length > MISSING_NAME_MARK.length ? name.slice(MISSING_NAME_MARK.length) : name;
+  return withoutMissingMark(name) || name;
 }
 
 /**

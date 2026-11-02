@@ -5,6 +5,7 @@ import { DropGhost } from "./DropGhost";
 import { xOfTime } from "./utils";
 import { useDropTarget } from "./useDropTarget";
 import { useReadOnly } from "../readOnly";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 最下面那条常驻的「新建序列落区」(配色诊断与修正 v2 整屏):26 高,虚线控件描边,
@@ -32,7 +33,7 @@ export function NewTrackZone() {
       >
         {!plan && (
           <span className="pointer-events-none" style={{ marginLeft: Math.max(0, xOfTime(0, pxPerSec) - 10) }}>
-            {payload ? "松手 = 新建一条序列,片段落在这个时间点" : "把卡片 / 素材拖到这里 = 新建一条序列"}
+            {payload ? tr("Release = create a new track, the clip lands at this time point") : tr("Drag a card / media here = create a new track")}
           </span>
         )}
         {plan && <DropGhost plan={plan} />}

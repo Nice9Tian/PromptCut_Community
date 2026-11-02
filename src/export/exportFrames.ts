@@ -37,6 +37,7 @@ import { STREAM_SEGMENT_FRAMES } from "../render/streamSegments.mjs";
 import { CLIPS_KEY_MARK, clipsSig } from "../online/planPublisher";
 import type { FrameCoverage, LayerRect } from "./cardLayers";
 import { ONLINE_EXPORT_TEXT } from "./text";
+import { tr } from "../i18n/index.ts";
 
 /** 只为导出的清单计划在签名里多的那一段 */
 export const EXPORT_ONLY_SIG = "export=1";
@@ -251,7 +252,7 @@ export async function requestExportFrames({ projectId, projectRev, project, clip
   const tStart = now();
   const existingThrottle = planThrottles.get(throttleKey);
   if (existingThrottle?.inFlight) {
-    throw Object.assign(new Error("同一项目正在等待或执行导出计划，请勿重复发起"), { throttled: true, retryable: false });
+    throw Object.assign(new Error(tr("This project already has an export plan waiting or running, do not start it again")), { throttled: true, retryable: false });
   }
   if (!retrySalt && existingThrottle && tStart - existingThrottle.lastTime < EXPORT_PLAN_THROTTLE_MS) {
     const waitMs = EXPORT_PLAN_THROTTLE_MS - (tStart - existingThrottle.lastTime);
@@ -403,10 +404,10 @@ export async function requestExportFrames({ projectId, projectRev, project, clip
         const hash = frames.get(clipId)?.get(frame);
         if (!hash) throw new Error(ONLINE_EXPORT_TEXT.nodeFailed("frame-missing"));
         const base = deps.assetBase();
-        if (!base) throw new Error("还没有远程素材服务");
+        if (!base) throw new Error(tr("There is no remote asset service yet"));
         const f = deps.fetch ?? fetch;
         const res = await f(`${base.replace(/\/+$/, "")}/px/${hash}`, { headers: await deps.authHeaders(), signal: sig });
-        if (!res.ok) throw new Error(`取不到渲染节点渲好的画面 ${hash.slice(0, 12)}:${res.status}`);
+        if (!res.ok) throw new Error(tr("Cannot fetch the frame rendered by the render node {0}: {1}", hash.slice(0, 12), res.status));
         const bytes = new Uint8Array(await res.arrayBuffer());
         stats.fetched++;
         stats.bytes += bytes.length;

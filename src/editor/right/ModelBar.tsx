@@ -21,6 +21,7 @@ import { useStore } from "../../store/project";
 import { CREATIVITY_HINT, CREATIVITY_LABEL, CREATIVITY_LEVELS, normalizeCreativity, projectCreativity, type CreativityLevel } from "../../kernel/creativity.mjs";
 import { usePopover } from "./chat/usePopover";
 import "./ModelBar.css";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 输入区底部工具条上的一组:模型下拉 + 「⋯」运行选项(推理强度 / 加速 / 深度自主 / 参数兼容)。
@@ -102,7 +103,7 @@ export function ModelBar(props: {
   const compat = compatPolicy(provider, model, config?.api?.vendor, choice.schemaCompat);
   const compatHint = compat.locked
     ? compat.reason
-    : `参数兼容模式(${compat.on ? "开" : "关"}):把工具参数的 schema 按 Gemini 那套最窄子集清洗。${compat.reason}`;
+    : tr("Parameter compatibility mode ({0}): sanitizes tool parameter schemas down to the narrowest Gemini-compatible subset. {1}", compat.on ? tr("on") : tr("off"), compat.reason);
 
   /*
    * 深度自主:轮次上限换成设置里的「自主轮次」(默认 300,填 0 就是不限),
@@ -114,26 +115,26 @@ export function ModelBar(props: {
   const rounds = config?.deepAutoRounds;
   const deepHint = choice.deepAuto
     ? (rounds === 0
-        ? "深度自主：不限轮次，会一直跑到它自己认为做完或你点停止。想改成有限轮次去「AI 设置 → 更多 → 自主轮次」"
-        : `深度自主：轮次上限放宽到 ${rounds ?? 300} 轮，且不给模型任何轮次提示。在「AI 设置 → 更多 → 自主轮次」里改`)
-    : `深度自主：把轮次上限放宽到 ${rounds === 0 ? "不限" : `${rounds ?? 300} 轮`}，并且不给模型任何轮次提示。常规上限是用来拦住跑偏的运行的，长任务再开`;
+        ? tr("Deep autonomy: no round limit; it keeps running until it decides it is done or you click stop. To switch to a limited number of rounds, go to \"AI settings → More → Autonomy rounds\"")
+        : tr("Deep autonomy: the round limit is raised to {0} rounds, and the model gets no round hints. Change it in \"AI settings → More → Autonomy rounds\"", rounds ?? 300))
+    : tr("Deep autonomy: raises the round limit to {0} and gives the model no round hints. The normal limit exists to stop runaway runs; turn this on only for long tasks", rounds === 0 ? tr("unlimited") : tr("{0} rounds", rounds ?? 300));
 
   const fastHint = cap.fast
-    ? "加速：出字更快，不换模型"
-    : provider === "codex" ? "Codex 没有加速档"
-      : provider === "agy" ? "Antigravity 没有加速档"
-      : "API 直连没有加速档";
+    ? tr("Speed-up: faster output, same model")
+    : provider === "codex" ? tr("Codex has no speed-up tier")
+      : provider === "agy" ? tr("Antigravity has no speed-up tier")
+      : tr("Direct API has no speed-up tier");
 
   // 「⋯」收起来之后看不见里面开了什么:思考档、加速、深度自主有一样不是默认,按钮上就挂个点
   const tuned = effort !== "" || (cap.fast && choice.fast) || choice.deepAuto || tabCreativity !== null;
   const creativityNow: CreativityLevel = tabCreativity ?? projectLevel;
   const optionsTitle = [
-    "运行选项",
-    `思考 ${EFFORT_LABEL[effort] ?? effort}`,
-    `创造力 ${CREATIVITY_LABEL[creativityNow]}${tabCreativity ? "" : "(跟项目)"}`,
+    tr("Run options"),
+    tr("thinking {0}", EFFORT_LABEL[effort] ?? effort),
+    tr("Creativity {0}{1}", tr(CREATIVITY_LABEL[creativityNow]), tabCreativity ? "" : tr(" (follows project)")),
     cap.fast && choice.fast ? "Fast" : "",
-    choice.deepAuto ? "深度自主" : "",
-    compat.applies && compat.on ? "参数兼容" : "",
+    choice.deepAuto ? tr("deep autonomy") : "",
+    compat.applies && compat.on ? tr("Param compat") : "",
   ].filter(Boolean).join(" · ");
 
   return (
@@ -141,13 +142,13 @@ export function ModelBar(props: {
       <select
         className="ai-bar-select ai-model-select"
         data-pc="ai-model"
-        aria-label="模型"
+        aria-label={tr("Model")}
         value={model}
         disabled={disabled || models.length === 0}
-        title={models.length === 0 ? `还没配可选模型：${cap.modelsHint}` : `这次用哪个模型${model ? `:${model}` : ""}`}
+        title={models.length === 0 ? tr("No selectable models configured: {0}", cap.modelsHint) : tr("Model for this run{0}", model ? `:${model}` : "")}
         onChange={(e) => update({ model: e.target.value })}
       >
-        <option value="">默认</option>
+        <option value="">{tr("Default")}</option>
         {models.map((m) => (
           <option key={m} value={m}>{m}</option>
         ))}
@@ -160,31 +161,31 @@ export function ModelBar(props: {
           data-pc="ai-run-options"
           aria-haspopup="true"
           aria-expanded={pop.open}
-          aria-label="运行选项"
+          aria-label={tr("Run options")}
           title={optionsTitle}
           onClick={pop.toggle}
         >
           <IconMore size={16} />
           {tuned && <i className="ai-bar-dot" aria-hidden="true" />}
         </button>
-        <div className="ai-pop ai-modelbar" role="group" aria-label="运行选项" data-pop style={{ display: pop.open ? undefined : "none" }}>
+        <div className="ai-pop ai-modelbar" role="group" aria-label={tr("Run options")} data-pop style={{ display: pop.open ? undefined : "none" }}>
           <label className="ai-modelbar-item">
-            <span className="ai-modelbar-label">思考强度</span>
+            <span className="ai-modelbar-label">{tr("Thinking effort")}</span>
             <select
               className="ai-modelbar-select"
               value={effort}
               disabled={disabled || efforts.length === 0}
               title={
                 efforts.length === 0
-                  ? (provider === "agy" ? `${model} 不支持调思考档` : "API 直连这边还没接推理强度")
+                  ? (provider === "agy" ? tr("{0} does not support thinking tiers", model) : tr("Direct API does not support reasoning effort yet"))
                   : provider === "agy" && model
-                    ? `推理强度：越高想得越久。agy 把档位编在模型名里，这里选好就会发 --model ${model} --effort <档>`
-                    : "推理强度：越高想得越久"
+                    ? tr("Reasoning effort: higher thinks longer. agy encodes the tier in the model name; once you pick one here, it sends --model {0} --effort <tier>", model)
+                    : tr("Reasoning effort: higher thinks longer")
               }
               onChange={(e) => update({ effort: e.target.value as EffortLevel })}
             >
               {efforts.length === 0
-                ? <option value="">不支持</option>
+                ? <option value="">{tr("Not supported")}</option>
                 : efforts.map((lv) => (
                     <option key={lv} value={lv}>{EFFORT_LABEL[lv]}</option>
                   ))}
@@ -192,18 +193,18 @@ export function ModelBar(props: {
           </label>
 
           <label className="ai-modelbar-item">
-            <span className="ai-modelbar-label">创造力</span>
+            <span className="ai-modelbar-label">{tr("Creativity")}</span>
             <select
               className="ai-modelbar-select"
               data-pc="ai-creativity"
               value={tabCreativity ?? ""}
               disabled={disabled}
-              title={`创造力等级「${CREATIVITY_LABEL[creativityNow]}」:${CREATIVITY_HINT[creativityNow]}。只管这个对话;项目的默认等级在项目设置里改`}
+              title={tr("Creativity level \"{0}\": {1}. Applies to this chat only; change the project's default level in project settings", tr(CREATIVITY_LABEL[creativityNow]), tr(CREATIVITY_HINT[creativityNow]))}
               onChange={(e) => setTabCreativity(tabId, normalizeCreativity(e.target.value))}
             >
-              <option value="">跟项目({CREATIVITY_LABEL[projectLevel]})</option>
+              <option value="">{tr("Follow project ({0})", tr(CREATIVITY_LABEL[projectLevel]))}</option>
               {CREATIVITY_LEVELS.map((lv) => (
-                <option key={lv} value={lv}>{CREATIVITY_LABEL[lv]}</option>
+                <option key={lv} value={lv}>{tr(CREATIVITY_LABEL[lv])}</option>
               ))}
             </select>
           </label>
@@ -229,7 +230,7 @@ export function ModelBar(props: {
               aria-pressed={choice.deepAuto}
               onClick={() => update({ deepAuto: !choice.deepAuto })}
             >
-              深度自主
+              {tr("Deep autonomy")}
             </button>
 
             {/* 这条路上这个开关不经手(比如 agy 走 MCP,压根不过 sanitizeSchema)就别显示 ——
@@ -244,7 +245,7 @@ export function ModelBar(props: {
                 aria-pressed={compat.on}
                 onClick={() => update({ schemaCompat: compat.on ? "off" : "on" })}
               >
-                参数兼容
+                {tr("Param compat")}
               </button>
             )}
           </div>

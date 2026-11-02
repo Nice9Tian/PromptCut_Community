@@ -23,9 +23,9 @@ function page(svc, session, initial) {
 
 const base = () => ({
   version: 1, id: "p", name: "p", width: 1920, height: 1080, fps: 30, duration: 10, themeId: "midnight", media: [],
-  tracks: [{ id: "ta", name: "序列 1", clips: [{ id: "ca", cardId: "title", start: 0, end: 4, params: { size: 1 } }] }],
+  tracks: [{ id: "ta", name: "Track 1", clips: [{ id: "ca", cardId: "title", start: 0, end: 4, params: { size: 1 } }] }],
   cuts: [
-    { id: "cut1", name: "剪辑1" },
+    { id: "cut1", name: "Cut 1" },
     { id: "cut2", name: "剪辑2", duration: 6, transitions: [], tracks: [{ id: "tb", name: "序列 B", clips: [{ id: "cb", cardId: "title", start: 0, end: 6, params: { size: 3, color: "#fff" } }] }] },
   ],
   activeCutId: "cut1",
@@ -55,7 +55,7 @@ function agentSwitchEditSwitch(svc, G) {
   return ops;
 }
 
-test("复现:switch_cut→改→switch_cut 之后撤销那次改动,应当撤成功、不切换激活剪辑", () => {
+test("repro: after switch_cut→edit→switch_cut, undoing that edit should succeed and not switch the active cut", () => {
   const { svc, A, G } = setup();
   const [, editOp] = agentSwitchEditSwitch(svc, G);
   assert.equal(A.ds.project.activeCutId, "cut1");
@@ -63,9 +63,9 @@ test("复现:switch_cut→改→switch_cut 之后撤销那次改动,应当撤成
   const r = A.ds.revertRemote({ opId: editOp });
   assert.deepEqual([r.done, r.failed, r.skipped], [true, [], []], JSON.stringify(r));
   svc.drain();
-  assert.equal(sizeIn(svc.project, "cut2", "cb"), 3, "撤回到 3");
-  assert.equal(svc.project.activeCutId, "cut1", "没有切换激活剪辑");
-  assert.equal(sizeIn(svc.project, "cut1", "ca"), 1, "激活剪辑没动");
+  assert.equal(sizeIn(svc.project, "cut2", "cb"), 3, "undone back to 3");
+  assert.equal(svc.project.activeCutId, "cut1", "the active cut was not switched");
+  assert.equal(sizeIn(svc.project, "cut1", "ca"), 1, "the active cut was untouched");
 });
 
 /** 不切换、直接改停放剪辑里的片段(另一条分支的做法:路径在 /cuts/@cut2/tracks 下) */
@@ -74,7 +74,7 @@ const setSizeParked = (p, cutId, id, size) => ({
   cuts: p.cuts.map((c) => (c.id !== cutId ? c : { ...c, tracks: c.tracks.map((t) => ({ ...t, clips: t.clips.map((cl) => (cl.id === id ? { ...cl, params: { ...cl.params, size } } : cl)) })) })),
 });
 
-test("撤销之后 Ctrl+Z(重做那次改动)也不受剪辑切换影响", () => {
+test("after undo, Ctrl+Z (redoing that edit) is also unaffected by cut switching", () => {
   const { svc, A, G } = setup();
   const [, editOp] = agentSwitchEditSwitch(svc, G);
   assert.equal(A.ds.revertRemote({ opId: editOp }).done, true);
@@ -87,7 +87,7 @@ test("撤销之后 Ctrl+Z(重做那次改动)也不受剪辑切换影响", () =>
   assert.equal(svc.project.activeCutId, "cut1");
 });
 
-test("反方向:Agent 在停放剪辑里就地改了(路径在 /cuts/@cut2 下),之后 cut2 被激活,再撤也撤得掉", () => {
+test("Reverse direction: the Agent edited in place inside a parked cut (path under /cuts/@cut2), then cut2 was activated, and undo still works", () => {
   const { svc, A, G } = setup();
   G.ds.commit(setSizeParked(G.ds.project, "cut2", "cb", 5));
   svc.drain();
@@ -100,10 +100,10 @@ test("反方向:Agent 在停放剪辑里就地改了(路径在 /cuts/@cut2 下),
   assert.deepEqual([r.done, r.failed, r.skipped], [true, [], []], JSON.stringify(r));
   svc.drain();
   assert.equal(sizeIn(svc.project, "cut2", "cb"), 3);
-  assert.equal(svc.project.activeCutId, "cut2", "没有切换激活剪辑");
+  assert.equal(svc.project.activeCutId, "cut2", "the active cut was not switched");
 });
 
-test("自己的撤销也一样:在 cut2 激活时改了片段,别人把激活剪辑切走之后,Ctrl+Z 仍撤得掉", () => {
+test("own undo works the same way: after editing a clip while cut2 was active and someone else switched the active cut away, Ctrl+Z can still undo it", () => {
   const { svc, A, G } = setup();
   A.ds.commit(switchCut(A.ds.project, "cut2", 0).project);
   svc.drain();
@@ -115,11 +115,11 @@ test("自己的撤销也一样:在 cut2 激活时改了片段,别人把激活剪
   assert.equal(A.ds.canUndo(), true);
   A.ds.undo();
   svc.drain();
-  assert.equal(sizeIn(svc.project, "cut2", "cb"), 3, "撤回到 3");
+  assert.equal(sizeIn(svc.project, "cut2", "cb"), 3, "undone back to 3");
   assert.equal(svc.project.activeCutId, "cut1");
 });
 
-test("真冲突仍按撤销的规矩处理:之后别人改过同一个片段(不论当时那条剪辑是不是激活的),不撤并告诉改的是谁", () => {
+test("a real conflict is still handled by the undo rules: if someone else later edited the same clip (whether or not that cut was active at the time), do not undo and report who made the edit", () => {
   const { svc, A, G } = setup();
   const [, editOp] = agentSwitchEditSwitch(svc, G);
   // 用户 A 在 cut2 停放时直接改了同一个片段(路径在 /cuts/@cut2 下)
@@ -127,12 +127,12 @@ test("真冲突仍按撤销的规矩处理:之后别人改过同一个片段(不
   svc.drain();
   const r = A.ds.revertRemote({ opId: editOp });
   assert.equal(r.done, false);
-  assert.deepEqual(r.skipped.map((s) => s.entity), ["/tracks/@tb/clips/@cb"], "实体不分它当时住在哪");
+  assert.deepEqual(r.skipped.map((s) => s.entity), ["/tracks/@tb/clips/@cb"], "the entity does not depend on where it lived at the time");
   assert.equal(sizeIn(svc.project, "cut2", "cb"), 8, "保留了现在的样子");
-  assert.ok(A.notices.some((n) => n.kind === "revert-remote" && n.result.skipped.length === 1), "有通知(撤销提示条)");
+  assert.ok(A.notices.some((n) => n.kind === "revert-remote" && n.result.skipped.length === 1), "there is a notice (undo notice bar)");
 });
 
-test("真冲突:之后别人切到 cut2 把同一个片段改了、又切回去", () => {
+test("real conflict: someone else later switched to cut2, edited the same clip, and switched back", () => {
   const { svc, A, G } = setup();
   const [, editOp] = agentSwitchEditSwitch(svc, G);
   A.ds.commit(switchCut(A.ds.project, "cut2", 0).project);
@@ -147,7 +147,7 @@ test("真冲突:之后别人切到 cut2 把同一个片段改了、又切回去"
   assert.equal(sizeIn(svc.project, "cut2", "cb"), 8);
 });
 
-test("别的片段后来被改过,不挡这一步的撤销", () => {
+test("other clips edited later do not block undoing this step", () => {
   const { svc, A, G } = setup();
   const [, editOp] = agentSwitchEditSwitch(svc, G);
   A.ds.commit(setSize(A.ds.project, "ca", 2)); // 激活剪辑 cut1 里另一个片段
@@ -156,10 +156,10 @@ test("别的片段后来被改过,不挡这一步的撤销", () => {
   assert.deepEqual([r.done, r.skipped, r.failed], [true, [], []]);
   svc.drain();
   assert.equal(sizeIn(svc.project, "cut2", "cb"), 3);
-  assert.equal(sizeIn(svc.project, "cut1", "ca"), 2, "别处的改动保留");
+  assert.equal(sizeIn(svc.project, "cut1", "ca"), 2, "edits elsewhere are kept");
 });
 
-test("序列真的被删了:撤不成,走 failed(提示条里说没法退回),不是静默", () => {
+test("the track was really deleted: undo fails and goes to failed (the notice bar says it cannot be reverted), not silent", () => {
   const { svc, A, G } = setup();
   const [, editOp] = agentSwitchEditSwitch(svc, G);
   const gone = { ...A.ds.project, cuts: A.ds.project.cuts.map((c) => (c.id === "cut2" ? { ...c, tracks: [] } : c)) };

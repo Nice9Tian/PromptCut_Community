@@ -15,6 +15,7 @@
 import { syncedUserCards } from "../../kernel/registry.ts";
 import type { CardBundle } from "./protocol.ts";
 import { createSoundHost, type SoundHostOptions } from "./soundHost.ts";
+import { tr } from "../../i18n/index.ts";
 
 export interface StageSoundState {
   /** 声音能在线合成的卡片 id → 这一代声音代码的签名(换代就变) */
@@ -47,7 +48,7 @@ export interface StageSoundOptions extends SoundHostOptions {
 }
 
 export const STAGE_SOUND_PROJECTS_KEPT = 4;
-export const STAGE_SOUND_NO_PROJECT = "声音线程里没有这一版项目";
+export const STAGE_SOUND_NO_PROJECT = "The sound thread does not have this project revision";
 
 /** 一代的短签名(只为判「换没换」,不必抗碰撞) */
 function shortSig(text: string): string {
@@ -72,7 +73,7 @@ export function createStageSound(opts: StageSoundOptions): StageSound {
           for (const id of r.cardIds) if (audio.has(id)) ready[id] = shortSig(generationOf.get(r.entry) ?? r.generation);
           continue;
         }
-        const reason = outcome.blocked[r.entry] ?? "载入时出错";
+        const reason = outcome.blocked[r.entry] ?? tr("Error while loading");
         for (const id of entryCards(r.entry)) if (!(id in ready)) blocked[id] = reason;
       }
       current = { ready, blocked };

@@ -22,6 +22,7 @@ import type { Project, TrackClip } from "../../kernel/project";
 import { describeFilter } from "../../kernel/filters.mjs";
 import { describeAudioFx } from "../../kernel/audioFx.mjs";
 import type { RowSize } from "./utils";
+import { tr } from "../../i18n/index.ts";
 
 export type OverlayKind = "pixelMap" | "filter" | "card" | "audioFx";
 
@@ -55,10 +56,10 @@ export interface OverlayItem {
 }
 
 export const OVERLAY_KIND_NAME: Record<OverlayKind, string> = {
-  pixelMap: "像素映射",
-  filter: "滤镜",
-  card: "素材效果卡",
-  audioFx: "音频效果",
+  pixelMap: tr("Pixel map"),
+  filter: tr("Filters"),
+  card: tr("Media effect card"),
+  audioFx: tr("Audio effects"),
 };
 
 /** 下游型 ▾ 吃宿主的输出;上游型 ▴ 往宿主渲染之前注入状态 */
@@ -98,7 +99,7 @@ export function overlaysOfClip(project: Project, clip: TrackClip, libs: Libs): O
       out.push({
         kind: "card",
         refId: node.id,
-        name: (cardId && libs.cardName(cardId)) || cardId || "素材效果卡",
+        name: (cardId && libs.cardName(cardId)) || cardId || tr("Media effect card"),
         value: typeof node.kind === "string" ? node.kind : "",
         upstream: false,
         // 节点连着输入输出,绕过它不是把一个字段置空

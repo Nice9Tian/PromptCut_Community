@@ -6,6 +6,7 @@ import { createContext, useContext, useRef, useSyncExternalStore } from "react";
 import { createEmptyProject, type Project, type Track, type TrackClip } from "../kernel/project";
 import { type Transition } from "../kernel/transitions";
 import { cutEditView, foldCutEdit } from "../kernel/cuts";
+import { tr } from "../i18n/index.ts";
 
 /**
  * 编辑器状态存储(单例)。所有面板、时间轴、MCP 工具都通过这里读写,不直接改 Project 对象。
@@ -113,7 +114,7 @@ function outsideCutScope<T>(fn: () => T): T {
 
 export function runInCutScope<T>(cutId: string, fn: () => T): T {
   if (cutScope) {
-    if (cutScope.cutId !== cutId) throw new Error("不能在改一条剪辑的过程中嵌套改另一条");
+    if (cutScope.cutId !== cutId) throw new Error(tr("Cannot edit another cut while editing one cut"));
     return fn();
   }
   const real = state.project;
@@ -130,7 +131,7 @@ export function runInCutScope<T>(cutId: string, fn: () => T): T {
     if (sc) state = { ...state, project: sc.real };
   }
   if (out && typeof (out as { then?: unknown }).then === "function") {
-    throw new Error("runInCutScope 只能包同步函数(异步的后半段已经不在这条剪辑的视图里了)");
+    throw new Error(tr("runInCutScope can only wrap synchronous functions (the async second half is no longer in this cut's view)"));
   }
   return out;
 }

@@ -271,7 +271,7 @@ test('store.setClipSpeed 推开:变短尾部留空;后面整体顺移(相对关�
   const before = getState().project;
   r = actions.setClipSpeed('v', 0.5);
   assert.equal(r.ok, false);
-  assert.match(r.error, /锁着的序列/);
+  assert.match(r.error, /locked track/);
   assert.equal(getState().project, before, '拒绝时项目原样');
   assert.equal(clip('v').speed, undefined);
 });
@@ -285,7 +285,7 @@ test('store.setClipSpeed 手动输入:0.25～4 之外拒绝并提示(不夹),小
   for (const bad of [0.2, 4.5, -1, 0]) {
     const r = actions.setClipSpeed('v', bad);
     assert.equal(r.ok, false, String(bad));
-    assert.match(r.error, /0\.25～4/);
+    assert.match(r.error, /between 0\.25 and 4x/);
   }
   assert.equal(clip().speed, undefined, '拒绝时什么都不改');
   assert.equal(actions.setClipSpeed('v', 1.333).ok, true);

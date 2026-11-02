@@ -20,12 +20,13 @@ import { CARD_AUDIO_SAMPLE_RATE, cardAudioBlockRenderer, cardAudioIdentityHooks,
 import { createMemorySoundCostStore, createSoundJudge, soundCostStoreKey, soundDeviceString, type SoundCostRecord, type SoundCostStore, type SoundJudge, type SoundJudgeTarget, type SoundVerdict } from "../../audio/soundCost";
 import { onlinePage } from "../../online/pageFlag";
 import { ONLINE_CARD_AUDIO_BLOCKED } from "../../online/soundPolicy";
+import { tr } from "../../i18n/index.ts";
 
 export type SoundDecision =
   | { synth: true; verdict?: SoundVerdict }
   | { synth: false; reason: "not-runnable" | "heavy"; message: string; verdict?: SoundVerdict };
 
-export const ONLINE_SOUND_HEAVY = "这段声音在这台设备上合成太慢(判重),要用已经生成的声音;请在电脑上的 PromptCut 里生成后同步";
+export const ONLINE_SOUND_HEAVY = tr("This sound is too slow to synthesize on this device (duplicate check), so an already generated sound is required. Generate it in PromptCut on a computer, then sync");
 
 interface Env {
   online: () => boolean;

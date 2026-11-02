@@ -5,6 +5,7 @@ import "./queue.css";
 import type { ChatMessage } from "../../../ai/types";
 import type { CloudQueueSnapshot, CloudSender } from "../../../ai/chatTypes";
 import { accountMessageId, isIdleHead } from "../../../ai/chatTypes";
+import { tr } from "../../../i18n/index.ts";
 
 /** Server FIFO is already accepted; local insert/edit/remove controls do not apply. */
 export function CloudQueueList(props: { queue?: CloudQueueSnapshot | null; messages: ChatMessage[]; senders?: Record<string, CloudSender>;
@@ -17,25 +18,25 @@ export function CloudQueueList(props: { queue?: CloudQueueSnapshot | null; messa
   const queuedLook = props.messages.find(m => m.role === 'assistant' && m.pending && ((m.progress as Record<string, any>)?.renderQueuePosition || m.progress?.phase === 'render_queued'));
   const renderQueuePos = (queuedLook?.progress as Record<string, any>)?.renderQueuePosition ?? 1;
   if (!items.length && !waitingJobs && !queuedLook) return null;
-  return <section className="ai-queue" data-pc="cloud-queue" data-queue-revision={props.queue?.queueRevision} aria-label="云端持久队列">
+  return <section className="ai-queue" data-pc="cloud-queue" data-queue-revision={props.queue?.queueRevision} aria-label={tr("Persistent cloud queue")}>
     {queuedLook ? (
       <div className="ai-queue-head pc-cloud-render-queued" data-pc="cloud-queue-render-queued">
-        云端渲染正在给别的项目用，排在第 {renderQueuePos} 位，轮到了会接着做。
+        {tr("The cloud render is busy with another project. You are No. {0} in the queue and it will continue when your turn comes.", renderQueuePos)}
       </div>
     ) : waitingJobs ? (
       <div className="ai-queue-head pc-cloud-waiting-jobs" data-pc="cloud-queue-waiting-jobs">
-        上一条消息发起的后台作业（转写、镜头识别等）还在做，做完就处理你这条消息。
+        {tr("The background job started by the previous message (transcription, shot detection, etc.) is still running. Your message will be handled once it finishes.")}
       </div>
     ) : (
-      <div className="ai-queue-head">已排队 {items.length} 条 · 等待执行服务</div>
+      <div className="ai-queue-head">{tr("{0} queued · waiting for the execution service", items.length)}</div>
     )}
     {items.length > 0 && (
       <ol className="ai-queue-list">{items.map(item => {
         const id = accountMessageId(item.messageId), message = props.messages.find(row => row.id === id);
         return <li className="ai-queue-item" key={item.messageId} data-message-id={item.messageId} data-queue-position={item.position}>
-          <span className="ai-queue-no">第 {item.position} 条</span>
-          <span className="pc-cloud-sender">{props.senders?.[id]?.name ?? '发送者正在读取'}</span>
-          <span className="ai-queue-text">{message?.text ?? '消息正在读取'}</span>
+          <span className="ai-queue-no">{tr("No. {0}", item.position)}</span>
+          <span className="pc-cloud-sender">{props.senders?.[id]?.name ?? tr("Loading sender")}</span>
+          <span className="ai-queue-text">{message?.text ?? tr("Loading message")}</span>
         </li>;
       })}</ol>
     )}
@@ -115,7 +116,7 @@ export function QueueList(props: QueueListProps) {
   // 用户停掉了,或者这会儿根本没在跑(没有谁会来发队首):都按暂停显示,给一个「继续」
   const halted = paused || !running;
   if (!leaving) {
-    lastHead.current = halted ? `已暂停 · 排队中 ${items.length} 条` : `排队中 ${items.length} 条 · Agent 完成后自动发送`;
+    lastHead.current = halted ? tr("Paused · {0} queued", items.length) : tr("{0} queued · will send automatically when the Agent finishes", items.length);
   }
 
   // 幽灵行按原来的位置插回去(按原下标从小到大插,前面插进去的正好把后面的位置补齐)
@@ -124,7 +125,7 @@ export function QueueList(props: QueueListProps) {
   for (const g of [...ghosts].sort((a, b) => a.at - b.at)) rows.splice(Math.min(g.at, rows.length), 0, { ghost: true, g });
 
   return (
-    <section className="ai-queue" data-pc={leaving ? undefined : "ai-queue"} aria-label="输入队列" ref={sectionRef}>
+    <section className="ai-queue" data-pc={leaving ? undefined : "ai-queue"} aria-label={tr("Input queue")} ref={sectionRef}>
       <div className={`ai-queue-head${halted && !leaving ? " is-paused" : ""}${leaving ? " is-leaving" : ""}`}>
         {leaving ? (
           <span className="ai-queue-head-text">{lastHead.current}</span>
@@ -135,10 +136,10 @@ export function QueueList(props: QueueListProps) {
               type="button"
               className="ai-queue-btn is-accent"
               data-pc="queue-resume"
-              title="发出队首这一条,之后照常按顺序自动发送"
+              title={tr("Send the first message in the queue now; the rest then send automatically in order as usual")}
               onClick={onResume}
             >
-              继续
+              {tr("Resume")}
             </button>
           </>
         ) : (
@@ -152,7 +153,7 @@ export function QueueList(props: QueueListProps) {
             return (
               <li key={`ghost:${it.id}`} className="ai-queue-item is-leaving" aria-hidden="true">
                 <span className="ai-queue-no" />
-                <span className={`ai-queue-text${it.text ? "" : " is-faint"}`}>{it.text || "(只有附件)"}</span>
+                <span className={`ai-queue-text${it.text ? "" : " is-faint"}`}>{it.text || tr("(attachments only)")}</span>
               </li>
             );
           }
@@ -163,53 +164,53 @@ export function QueueList(props: QueueListProps) {
               <span className="ai-queue-no">{no}</span>
               {confirmEdit === it.id ? (
                 <>
-                  <span className="ai-queue-text is-faint">输入框里有内容,替换成这一条?</span>
+                  <span className="ai-queue-text is-faint">{tr("The input box has content. Replace it with this one?")}</span>
                   <button
                     type="button"
                     className="ai-queue-btn is-accent"
                     data-pc="queue-edit-confirm"
                     onClick={() => { setConfirmEdit(null); onEdit(it); }}
                   >
-                    替换
+                    {tr("Replace")}
                   </button>
                   <button type="button" className="ai-queue-btn" onClick={() => setConfirmEdit(null)}>
-                    取消
+                    {tr("Cancel")}
                   </button>
                 </>
               ) : (
                 <>
                   <span className={`ai-queue-text${it.text ? "" : " is-faint"}`} title={it.text || undefined}>
-                    {it.text || "(只有附件)"}
+                    {it.text || tr("(attachments only)")}
                   </span>
                   {files.length > 0 && (
                     <span className="ai-queue-files" title={files.map((f) => f.name).join("\n")}>
-                      附件 {files.length}
+                      {tr("Attachments {0}", files.length)}
                     </span>
                   )}
                   <button
                     type="button"
                     className="ai-queue-btn is-accent"
                     data-pc="queue-insert"
-                    title={running ? "现在就发这一条:会打断当前运行" : "现在就发这一条"}
+                    title={running ? tr("Send this one now: interrupts the current run") : tr("Send this one now")}
                     onClick={() => onInsert(it)}
                   >
-                    插入
+                    {tr("Insert")}
                   </button>
                   <button
                     type="button"
                     className="ai-queue-btn"
                     data-pc="queue-edit"
-                    title="放回输入框修改,并移出队列"
+                    title={tr("Move back to the input box to edit, and remove from the queue")}
                     onClick={() => (hasDraft() ? setConfirmEdit(it.id) : onEdit(it))}
                   >
-                    编辑
+                    {tr("Edit")}
                   </button>
                   <button
                     type="button"
                     className="ai-queue-btn ai-queue-x"
                     data-pc="queue-remove"
-                    title="从队列里删掉"
-                    aria-label={`删除第 ${no} 条`}
+                    title={tr("Remove from the queue")}
+                    aria-label={tr("Delete item {0}", no)}
                     onClick={() => remove(tabId, it.id)}
                   >
                     ×

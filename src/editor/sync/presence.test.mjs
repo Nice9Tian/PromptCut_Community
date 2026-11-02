@@ -54,8 +54,8 @@ test("MA-P8 收别的成员那边 Agent 的范围:列出来;自己的(同一个 
   await tick();
   await tick();
   assert.deepEqual(pres.remoteAgents().map((a) => [a.id, a.member, a.vendor, a.scope]), [["conv-a", "alice", "claude", "剪辑1->序列2"]]);
-  pres.receivePresence({ type: "presence.update", projectId: "p1", key: "agent:conv-mine", from: { userId: "bob@devB", role: "agent" }, data: { kind: "agent", scope: "剪辑1" }, expiresAt: Date.now() + 60_000 });
-  pres.receivePresence({ type: "presence.update", projectId: "p1", key: "agent:conv-local", from: { userId: "local", role: "agent" }, data: { kind: "agent", scope: "剪辑1" }, expiresAt: Date.now() + 60_000 });
+  pres.receivePresence({ type: "presence.update", projectId: "p1", key: "agent:conv-mine", from: { userId: "bob@devB", role: "agent" }, data: { kind: "agent", scope: "Cut 1" }, expiresAt: Date.now() + 60_000 });
+  pres.receivePresence({ type: "presence.update", projectId: "p1", key: "agent:conv-local", from: { userId: "local", role: "agent" }, data: { kind: "agent", scope: "Cut 1" }, expiresAt: Date.now() + 60_000 });
   pres.receivePresence({ type: "presence.update", projectId: "p2", key: "agent:conv-p2", from: { userId: "carol@devC" }, data: { kind: "agent", scope: "x" }, expiresAt: Date.now() + 60_000 });
   assert.deepEqual(pres.remoteAgents().map((a) => a.id), ["conv-a"], "自己的、本机空间的、别的项目的都不算");
   pres.receivePresence({ type: "presence.update", projectId: "p1", key: "agent:conv-old", from: { userId: "dan@devD" }, data: { kind: "agent", scope: "y" }, expiresAt: Date.now() - 1 });

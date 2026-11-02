@@ -382,7 +382,7 @@ export function createStageIsolation(deps: StageIsolationDeps): StageIsolationSe
     async plan(id, ctx) {
       const slot = slots[id];
       if (!ctx.stageOrigin) {
-        throw new Error(`[stageIsolation] 跨源隔离舞台未配置或不可用，禁止同源退回: stage ${id}`);
+        throw new Error(`[stageIsolation] Cross-origin isolated stage is not configured or unavailable, same-origin fallback forbidden: stage ${id}`);
       }
       const reloadPlan = (): StageMediaPlan => {
         update();

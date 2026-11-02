@@ -12,6 +12,7 @@
  */
 import { useLayoutEffect } from "react";
 import type { JSX, RefObject } from "react";
+import { tr } from "../i18n/index.ts";
 
 /** 自增高的上限，和 CSS 里 `.ps-chat-input` / 窄栏那一条的 max-height 对齐 */
 const MAX_H = 200;
@@ -54,7 +55,7 @@ export function Composer(props: {
           value={props.text}
           disabled={!props.canSend}
           placeholder={props.placeholder}
-          aria-label="写一条消息"
+          aria-label={tr("Write a message")}
           onChange={(e) => props.onText(e.target.value)}
           onKeyDown={(e) => {
             // 回车发送、Shift+回车换行;输入法组合中的回车不算(中文输入按回车是在选字)
@@ -70,8 +71,8 @@ export function Composer(props: {
             className="ps-prompt-send"
             data-pc="start-chat-stop"
             disabled={!props.canStop}
-            aria-label="停止这一轮"
-            title={props.canStop ? "停止这一轮" : "只能停止自己发起的任务"}
+            aria-label={tr("Stop this turn")}
+            title={props.canStop ? tr("Stop this turn") : tr("You can only stop tasks you started")}
             onClick={props.onStop}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
@@ -82,7 +83,7 @@ export function Composer(props: {
             className="ps-prompt-send"
             data-pc="start-chat-send"
             disabled={!props.text.trim() || !props.canSend}
-            aria-label="发送"
+            aria-label={tr("Send")}
             onClick={props.onSend}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">

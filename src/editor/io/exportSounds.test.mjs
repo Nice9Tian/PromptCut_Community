@@ -73,7 +73,7 @@ test('A2 清单认得出未生成、过期、缺失三种,带片段名;静音的
     assert.equal(needs.length, 3);
     assert.equal(by[a.id].kind, 'card'); assert.equal(by[a.id].reason, 'ungenerated'); assert.match(by[a.id].detail, /尚未生成/);
     assert.equal(by[b.id].reason, 'stale'); assert.match(by[b.id].detail, /已过期/);
-    assert.equal(by[effectId].kind, 'effect'); assert.equal(by[effectId].reason, 'missing'); assert.match(by[effectId].detail, /素材服务里没有/);
+    assert.equal(by[effectId].kind, 'effect'); assert.equal(by[effectId].reason, 'missing'); assert.match(by[effectId].detail, /The asset service has no file/);
     assert.ok(needs.every(n => typeof n.label === 'string' && n.label.length > 0));
     actions.setClipMuted(a.id, true);
     assert.equal((await listExportSoundNeeds(signal())).some(n => n.clipId === a.id), false, '静音的片段不出声,不用生成');
@@ -157,7 +157,7 @@ test('A7 生成中取消:导出与生成都停,正在做的那一段不提交、
   const f = service({ holdComplete: () => new Promise(r => { release = r; }) });
   try {
     sourceVersion = 'v1'; failAudio = null;
-    actions.newProject('取消');
+    actions.newProject('Cancel');
     const a = actions.addCardClip(def.id, 0, { duration: .2, params: { value: .25 } });
     const b = actions.addCardClip(def.id, 1, { duration: .2, params: { value: .5 } });
     const abort = new AbortController(), progress = [];
@@ -168,7 +168,7 @@ test('A7 生成中取消:导出与生成都停,正在做的那一段不提交、
     const evaluated = evaluations;
     abort.abort(); release();
     const { error } = await settled;
-    assert.equal(error.cancelled, true); assert.match(error.message, /已取消/);
+    assert.equal(error.cancelled, true); assert.match(error.message, /Export canceled/);
     const p = getState().project;
     assert.ok(findClip(p, a.id).clip.cardAudio, '取消之前做完的那一段是完整的声音');
     assert.equal(findClip(p, b.id).clip.cardAudio, undefined, '正在做的那一段没提交');
@@ -196,7 +196,7 @@ test('A9 某一段生成不出来:导出失败并指出是哪个片段;它之后
   const f = service();
   try {
     sourceVersion = 'v1';
-    actions.newProject('失败');
+    actions.newProject('failed');
     const a = actions.addCardClip(def.id, 0, { duration: .2, params: { value: .25 } });
     const bad = actions.addCardClip(def.id, 1, { duration: .2, params: { value: .5 } });
     const c = actions.addCardClip(def.id, 2, { duration: .2, params: { value: .6 } });
@@ -204,7 +204,7 @@ test('A9 某一段生成不出来:导出失败并指出是哪个片段;它之后
     const error = await prepareExportSounds({ signal: signal() }).then(() => null, (e) => e);
     assert.ok(error instanceof ExportSoundError);
     assert.equal(error.code, 'export-sound-failed'); assert.equal(error.clipId, bad.id); assert.equal(error.cancelled, undefined);
-    assert.match(error.message, new RegExp(`片段「.+」\\(${bad.id}\\)的声音生成不出来`)); assert.match(error.message, /合成器炸了/);
+    assert.match(error.message, new RegExp(`Cannot generate sound for clip ".+" \\(${bad.id}\\)`)); assert.match(error.message, /合成器炸了/);
     const p = getState().project;
     assert.ok(findClip(p, a.id).clip.cardAudio); assert.equal(findClip(p, bad.id).clip.cardAudio, undefined); assert.equal(findClip(p, c.id).clip.cardAudio, undefined);
     assert.equal(p.media.length, 1);
@@ -225,7 +225,7 @@ test('A10 音效合成失败同样指出片段;锁住的序列上的有声卡生
     const clip = actions.addCardClip(def.id, 0, { duration: .2 });
     actions.updateTrack(getState().project.tracks.find(t => t.clips.some(c => c.id === clip.id)).id, { locked: true });
     const locked = await prepareExportSounds({ signal: signal() }).then(() => null, (e) => e);
-    assert.ok(locked instanceof ExportSoundError); assert.equal(locked.clipId, clip.id); assert.match(locked.message, /解锁/);
+    assert.ok(locked instanceof ExportSoundError); assert.equal(locked.clipId, clip.id); assert.match(locked.message, /Unlock the track/);
   } finally { setSoundEffectRenderer(null); f.restore(); }
 });
 
@@ -244,7 +244,7 @@ test('A11 在线页面:判轻的在浏览器里生成;判重、又没有产物�
     await store.putCost(soundCostStoreKey(key, 'test-device'), { soundKey: key, kind: 'card', device: 'test-device', blockMs: 300, blockMaxMs: 300, blockFrames: 4096, sampleRate: 48000, samples: 16, measuredAt: 1 });
     const before = evaluations, handed = [];
     const error = await prepareExportSounds({ signal: signal(), deps: { backfill: async (request) => { handed.push([request.clip.id, request.reason]); return false; } } }).then(() => null, (e) => e);
-    assert.ok(error instanceof ExportSoundError); assert.equal(error.clipId, heavy.id); assert.match(error.message, /判重/);
+    assert.ok(error instanceof ExportSoundError); assert.equal(error.clipId, heavy.id); assert.match(error.message, /too slow to synthesize on this device/);
     assert.equal(evaluations, before, '判重:一块都不在浏览器里合成');
     assert.deepEqual(handed, [[heavy.id, 'heavy']], '没有产物:交给渲染节点的接口被调到');
     assert.equal(findClip(getState().project, heavy.id).clip.cardAudio, undefined);
@@ -284,7 +284,7 @@ test('C1 剪辑段:清单走进被引用剪辑,窗口外和重复引用的不重
     assert.throws(() => assertProjectCardAudio(getState().project), new RegExp(`${inner.id} 的卡片声音尚未生成`), '改动前:导出直接失败并点名原片段');
     const needs = await listExportSoundNeeds(signal());
     assert.deepEqual(needs.map(n => [n.clipId, n.cutId, n.kind, n.reason]), [[inner.id, child.id, 'card', 'ungenerated']]);
-    assert.match(needs[0].label, /剪辑「剪辑2」里的/);
+    assert.match(needs[0].label, /in cut "剪辑2"/);
     assert.ok(!needs.some(n => n.clipId === outside.id), '落在剪辑段窗口外的不出声,不用生成');
     const activeBefore = getState().project.tracks;
     const result = await prepareExportSounds({ signal: signal() });

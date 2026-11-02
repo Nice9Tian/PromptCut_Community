@@ -48,8 +48,8 @@ test("planSequences:from / to 先筛再分页,跨边界的镜头也算;scene 单
   assert.deepEqual(one.scenes.map((s) => s.index), [9]);
   assert.equal(one.grid, 9);
   assert.equal(one.pages, 1);
-  assert.throws(() => planSequences(all, { scene: 28 }), /1~27/);
-  assert.throws(() => planSequences(all, { from: 50, to: 10 }), /from 不能大于 to/);
+  assert.throws(() => planSequences(all, { scene: 28 }), /between 1 and 27/);
+  assert.throws(() => planSequences(all, { from: 50, to: 10 }), /from must not be greater than to/);
 });
 
 test("frameTimes:等间隔,起点略后挪;4 格和 9 格", () => {

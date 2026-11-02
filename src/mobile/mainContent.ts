@@ -15,6 +15,7 @@
  */
 import { isImageMedia, type MediaAsset, type Project, type Track, type TrackClip } from "../kernel/project.ts";
 import { transitionsOf, timingLock, type Transition } from "../kernel/transitions.ts";
+import { tr as trText } from "../i18n/index.ts";
 
 export type ClipKind = "video" | "image" | "audio" | "cut" | "card";
 
@@ -134,8 +135,8 @@ export function clipName(p: Project, clip: TrackClip, cardName?: (cardId: string
   if (clip.label) return clip.label;
   const m = mediaOf(p, clip);
   if (m) return m.name;
-  if (clip.cutId) return p.cuts?.find((c) => c.id === clip.cutId)?.name ?? "剪辑段";
-  return cardName?.(clip.cardId) ?? clip.cardId ?? "片段";
+  if (clip.cutId) return p.cuts?.find((c) => c.id === clip.cutId)?.name ?? trText("Cut segment");
+  return cardName?.(clip.cardId) ?? clip.cardId ?? trText("Clips");
 }
 
 export interface ReorderPlan {
@@ -150,7 +151,7 @@ export interface ReorderPlan {
 export function planReorder(p: Project, order: string[]): ReorderPlan | { error: string } {
   const main = mainClipsOf(p);
   const byId = new Map(main.map((c) => [c.id, c]));
-  if (order.length !== main.length || order.some((id) => !byId.has(id))) return { error: "主要内容变了，请重试。" };
+  if (order.length !== main.length || order.some((id) => !byId.has(id))) return { error: trText("The main content changed, please try again.") };
   const moves: { id: string; start: number }[] = [];
   let shift = 0;
   order.forEach((id, k) => {
@@ -161,12 +162,12 @@ export function planReorder(p: Project, order: string[]): ReorderPlan | { error:
     if (Math.abs(start - c.start) > 1e-6) moves.push({ id, start });
   });
   if (!moves.length) return { moves };
-  if (moves.some((m) => timingLock(p, m.id))) return { error: "有转场的段要先删掉转场，才能换顺序。" };
+  if (moves.some((m) => timingLock(p, m.id))) return { error: trText("Segments with transitions need the transition removed before reordering.") };
   const track = mainTrackOf(p)!;
   // 补空档补进来的段(不在主轨上,或只取了一截)不参与换顺序:它们的位置是别的序列定的
   const real = new Map(track.clips.map((c) => [c.id, c] as const));
   if (moves.some(({ id }) => { const c = byId.get(id)!, r = real.get(id); return !r || Math.abs(r.start - c.start) > EPS || Math.abs(r.end - c.end) > EPS; }))
-    return { error: "这几段不都在主轨上，在时间轴分页里调整位置。" };
+    return { error: trText("These segments are not all on the main track. Adjust positions in the timeline tab.") };
   const moved = new Set(moves.map((m) => m.id));
   const companions = new Set(track.clips.filter((c) => c.soundEffect?.sourceClipId && moved.has(c.soundEffect.sourceClipId)).map((c) => c.id));
   const placed = track.clips
@@ -176,7 +177,7 @@ export function planReorder(p: Project, order: string[]): ReorderPlan | { error:
       return m ? { start: m.start, end: m.start + (c.end - c.start) } : { start: c.start, end: c.end };
     })
     .sort((a, b) => a.start - b.start);
-  if (placed.some((c, i) => c.start < -1e-6 || (i > 0 && c.start < placed[i - 1].end - 1e-6))) return { error: "主轨上放不下新的顺序。" };
+  if (placed.some((c, i) => c.start < -1e-6 || (i > 0 && c.start < placed[i - 1].end - 1e-6))) return { error: trText("The new order does not fit on the main track.") };
   return { moves };
 }
 

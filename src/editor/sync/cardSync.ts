@@ -17,6 +17,7 @@
  */
 import type { Project } from "../../kernel/project";
 import { usedCardIds, peekScopes } from "../cardScope";
+import { tr } from "../../i18n/index.ts";
 
 const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.VITE_PC_ONLINE === "1";
 
@@ -96,7 +97,7 @@ async function send(b: Binding, cardIds: string[]) {
   const j = await pending;
   if (!j?.ok) {
     if (lastSent === key) lastSent = "";
-    console.warn("[cards] 卡片源码同步没绑上:", j?.error ?? "无回包");
+    console.warn("[cards] Card source sync did not bind:", j?.error ?? "no response");
   }
 }
 
@@ -154,26 +155,26 @@ function onNotice(d: Record<string, unknown>) {
   switch (d.type) {
     case "installed":
       afterSyncedInstall();
-      if (!d.backup) h?.toast(`卡片 ${file} 已同步为 ${h.who(d.actor as Record<string, unknown>)} 的版本。`, "info", 5000);
+      if (!d.backup) h?.toast(tr("Card {0} synced to the version by {1}.", file, h.who(d.actor as Record<string, unknown>)), "info", 5000);
       return;
     case "overwritten":
       h?.toast(
-        `你对卡片 ${file} 的改动已被 ${h.who(d.actor as Record<string, unknown>)} 覆盖。你的版本已备份到 ${String(d.backup ?? "(没有备份)")}。`,
+        tr("Your changes to card {0} were overwritten by {1}. Your version was backed up to {2}.", file, h.who(d.actor as Record<string, unknown>), String(d.backup ?? tr("(no backup)"))),
         "warn",
         10_000,
       );
       return;
     case "overwrote":
-      h?.toast(`你覆盖了 ${h.who(d.previousActor as Record<string, unknown>)} 对卡片 ${file} 的改动。`, "info", 8000);
+      h?.toast(tr("You overwrote {0}'s changes to card {1}.", h.who(d.previousActor as Record<string, unknown>), file), "info", 8000);
       return;
     case "rejected":
-      h?.toast(`卡片 ${file} 没同步上:${String(d.error ?? "")}`, "warn", 10_000);
+      h?.toast(tr("Card {0} was not synced: {1}", file, String(d.error ?? "")), "warn", 10_000);
       return;
     case "conflict": {
       afterSyncedInstall();
       const ok = typeof d.key === "string" && typeof d.mine === "string" && typeof d.cloud === "string"
         && !!h?.conflict?.({ key: d.key, mine: d.mine, cloud: d.cloud, rev: Number(d.rev) || 0, ...(typeof d.backup === "string" ? { backup: d.backup } : {}) });
-      if (!ok) h?.toast(`你断网时对卡片 ${file} 的改动和 ${h?.who(d.actor as Record<string, unknown>) ?? "别人"} 的改动冲突。已换成云端的版本，你的版本已备份到 ${String(d.backup ?? "(没有备份)")}。`, "warn", 10_000);
+      if (!ok) h?.toast(tr("Your changes to card {0} while offline conflict with the changes by {1}. It was replaced with the cloud version, and your version was backed up to {2}.", file, h?.who(d.actor as Record<string, unknown>) ?? tr("Someone else"), String(d.backup ?? tr("(no backup)"))), "warn", 10_000);
       return;
     }
     default:
@@ -186,9 +187,9 @@ function onNotice(d: Record<string, unknown>) {
  * 在线构建里没有编辑器进程,回不支持(在线页面里不会出现卡片的冲突项:卡片源码同步只在桌面版跑)。
  */
 export async function takeMineCard(key: string, source: string): Promise<{ ok: boolean; error?: string }> {
-  if (ONLINE_BUILD) return { ok: false, error: "在线页面不能改卡片源码" };
+  if (ONLINE_BUILD) return { ok: false, error: tr("The online page cannot edit card source") };
   const j = await post("/api/cards/sync/take-mine", { key, source });
-  return j?.ok ? { ok: true } : { ok: false, error: typeof j?.error === "string" ? j.error : "编辑器进程没有回应" };
+  return j?.ok ? { ok: true } : { ok: false, error: typeof j?.error === "string" ? j.error : tr("The editor process did not respond") };
 }
 
 async function onTicket(d: Record<string, unknown>) {

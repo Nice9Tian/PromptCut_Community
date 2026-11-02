@@ -2,6 +2,7 @@ import { buildEnvReport, type EnvInput } from "./envReport";
 import { getSkillSnapshot } from "../skill/skillMode";
 import { getRealTabs } from "./agentTabs";
 import { getState } from "../store/project";
+import { tr } from "../i18n/index.ts";
 
 /**
  * 把散在各个 store 里的「当时的现场」凑齐,再问服务端要它那一半。
@@ -57,7 +58,7 @@ async function serverPart(): Promise<unknown> {
     return data;
   } catch (e) {
     // 服务没起来本身就是一条线索,别把它咽掉
-    return { error: e instanceof Error ? e.message : String(e), 说明: "取不到服务端信息 —— 本地服务可能没在跑,这本身可能就是问题所在" };
+    return { error: e instanceof Error ? e.message : String(e), note: tr("Can't get server info: the local service may not be running, which may itself be the problem") };
   }
 }
 
@@ -66,7 +67,7 @@ export async function collectEnvironment(visibleMessages: number): Promise<Recor
   try {
     client = buildEnvReport({ ...clientInput(), visibleMessages });
   } catch (e) {
-    client = { error: e instanceof Error ? e.message : String(e), 说明: "界面这边的现场没采集成功" };
+    client = { error: e instanceof Error ? e.message : String(e), note: tr("The snapshot on the UI side could not be collected") };
   }
   return { ...client, server: await serverPart() };
 }

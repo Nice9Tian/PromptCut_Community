@@ -3,6 +3,7 @@ import "./render/stageClockEntry";
 // 在线浏览器模式的 /api 守卫与读邀请码:必须在别的模块求值之前(C10a,见 online/pageBoot.ts)
 import "./online/pageBoot";
 import { createRoot } from "react-dom/client";
+import { installLocaleHeader } from "./i18n/index.ts";
 import "./index.css";
 import "./skins/skins.css";
 import App from "./App";
@@ -27,6 +28,7 @@ const view = q.has("audioMix") ? <AudioMixView /> : q.has("export") ? <ExportVie
 // 在线浏览器模式里没有局域网：成员与加入由云端那张表注册的真实现负责
 if (!ONLINE) registerLanDefaults();
 installFocusZoomReset();
+installLocaleHeader();
 createRoot(document.getElementById("root")!).render(view);
 // 在线浏览器的新版本提示条:只在在线构建的编辑器页挂载(见 editor/sync/UpdateNotice.tsx);
 // 本文件是入口,它的 import.meta.url 就是入口脚本,拿去和服务端 version.json 的 entry 比

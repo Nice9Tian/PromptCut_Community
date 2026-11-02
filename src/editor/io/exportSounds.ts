@@ -25,6 +25,7 @@ import { hasGeneratedAudio } from "./generatedAudioUpload";
 import { generateCardAudio } from "./cardAudioGeneration";
 import { restoreSoundEffectAsset } from "./soundGeneration";
 import { decideClipSound, requestSoundBackfill, type SoundDecision } from "./onlineSoundJudge";
+import { tr } from "../../i18n/index.ts";
 
 export type ExportSoundKind = "effect" | "card";
 export type ExportSoundReason = "ungenerated" | "missing" | "stale";
@@ -72,13 +73,13 @@ export class ExportSoundError extends Error {
   readonly clipId: string;
   readonly label: string;
   constructor(need: Pick<ExportSoundNeed, "clipId" | "label">, reason: string) {
-    super(`片段「${need.label}」(${need.clipId})的声音生成不出来:${reason}`);
+    super(tr("Cannot generate sound for clip \"{0}\" ({1}): {2}", need.label, need.clipId, reason));
     this.clipId = need.clipId;
     this.label = need.label;
   }
 }
 
-const cancelled = () => Object.assign(new Error("已取消导出"), { cancelled: true });
+const cancelled = () => Object.assign(new Error(tr("Export canceled")), { cancelled: true });
 const labelOf = (clip: TrackClip) => String(clip.label || getCard(clip.cardId)?.name || syncedUserCards().get(clip.cardId)?.name || clip.cardId || clip.id);
 
 /**
@@ -113,19 +114,19 @@ export async function listExportSoundNeeds(signal: AbortSignal, overrides: Parti
       if (seen.has(key)) continue;
       seen.add(key);
       const at = origin ? { cutId: origin.cutId } : {};
-      const label = origin ? `剪辑「${cutName(origin.cutId)}」里的「${labelOf(clip)}」` : labelOf(clip);
+      const label = origin ? tr("\"{1}\" in cut \"{0}\"", cutName(origin.cutId), labelOf(clip)) : labelOf(clip);
       if (clip.soundEffect && !clip.nodeId) {
         const media = project.media.find((m) => m.id === clip.mediaId);
         const base = { clipId: clip.id, ...at, label, kind: "effect" as const, reason: "missing" as const };
-        if (!media || media.kind !== "audio" || !media.hash || !media.url || media.pending) needs.push({ ...base, detail: "项目里没有这段音效的素材记录" });
-        else if (!(await bytes(media.hash))) needs.push({ ...base, detail: "素材服务里没有这段音效的文件" });
+        if (!media || media.kind !== "audio" || !media.hash || !media.url || media.pending) needs.push({ ...base, detail: tr("The project has no media record for this sound effect") });
+        else if (!(await bytes(media.hash))) needs.push({ ...base, detail: tr("The asset service has no file for this sound effect") });
         continue;
       }
       if (!deps.embedded(ctx, clip)) continue;
       const base = { clipId: clip.id, ...at, label, kind: "card" as const };
       try {
         const hash = deps.resolveCard(ctx, clip).media.hash;
-        if (!hash || !(await bytes(hash))) needs.push({ ...base, reason: "missing", detail: "素材服务里没有这段卡片声音的文件" });
+        if (!hash || !(await bytes(hash))) needs.push({ ...base, reason: "missing", detail: tr("The asset service has no file for this card audio") });
       } catch (error) {
         const code = error instanceof CardAudioRenditionError ? error.code : "missing";
         const message = error instanceof Error ? error.message : String(error);
@@ -162,16 +163,16 @@ export async function prepareExportSounds(options: PrepareExportSoundsOptions): 
     const part = (fraction: number) => options.onProgress?.(i + Math.max(0, Math.min(0.99, fraction)), total);
     try {
       const hit = findClipInCut(deps.project(), need.cutId, need.clipId);
-      if (!hit) throw new Error("片段已经不在项目里");
+      if (!hit) throw new Error(tr("The clip is no longer in the project"));
       const decision = await deps.decide(hit.view, hit.clip, signal);
       if (!decision.synth) {
         // 渲染节点补生成按激活剪辑里的片段认;被引用剪辑里的交过去也认不出,直接说明
         const handed = need.cutId ? false : await deps.backfill({ project: hit.view, clip: hit.clip, reason: decision.reason });
-        throw new Error(handed ? `${decision.message}(已交给渲染节点生成,生成好之后再导出)` : decision.message);
+        throw new Error(handed ? tr("{0} (handed to a render node for generation; export again once it is generated)", decision.message) : decision.message);
       }
       if (need.kind === "effect") {
         // 独立音效的恢复要按激活剪辑的片段提交(`actions.commitSoundEffect`):被引用剪辑里的只能切过去生成
-        if (need.cutId) throw new Error("这段音效在被引用的剪辑里,请打开那条剪辑重新生成后再导出");
+        if (need.cutId) throw new Error(tr("This sound effect is in a referenced cut; open that cut and regenerate it, then export"));
         await deps.restoreEffect(need.clipId, { signal, onProgress: part });
       } else await deps.generateCard(need.clipId, { signal, ...(need.cutId ? { cutId: need.cutId } : {}), onProgress: (done, all) => part(all ? done / all : 0) });
     } catch (error) {

@@ -17,7 +17,7 @@ const dev = (accountId, deviceId, conns) => ({ accountId, deviceId, conns });
 test("ACC-MEM-01 创建者离线、他的云端 Agent 在跑:不计人数、计 Agent,行标「离线，Agent 在跑」", () => {
   const devices = [dev(bob, "b-page", [{ role: "page" }]), dev(alice, "run:run_1", [{ role: "agent", service: "agent" }])];
   const snap = { members, devices };
-  assert.equal(H.accountMemberCountLabel(snap), "成员：1 人 · Agent：1 个");
+  assert.equal(H.accountMemberCountLabel(snap), "Members: 1 · Agents: 1");
   const a = H.accountMemberState(alice, devices);
   assert.deepEqual({ online: a.online, cloudRunning: a.cloudRunning, offlineAgent: a.offlineAgent, local: a.localAgents.length },
     { online: false, cloudRunning: true, offlineAgent: true, local: 0 });
@@ -44,5 +44,5 @@ test("ACC-MEM-02 本机 Agent 逐条算;云端 Agent 每位成员最多算一个
 test("ACC-MEM-03 不在成员名单里的账号的连接不计", () => {
   const stranger = "acc_" + "d".repeat(24);
   const devices = [dev(bob, "b", [{ role: "page" }]), dev(stranger, "run:x", [{ role: "agent", service: "agent" }])];
-  assert.equal(H.accountMemberCountLabel({ members, devices }), "成员：1 人 · Agent：0 个");
+  assert.equal(H.accountMemberCountLabel({ members, devices }), "Members: 1 · Agents: 0");
 });

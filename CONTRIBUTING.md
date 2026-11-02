@@ -30,6 +30,15 @@ English: [CONTRIBUTING.en.md](CONTRIBUTING.en.md)。
 | `src/online/`、`src/mobile/`、`server/auth/`、`server/lan/`（局域网共享与手机界面） | 欢迎 PR |
 | `desktop/` | 欢迎 PR，但只有 Windows x64 验证过 |
 
+## 界面文字
+
+界面有英文、简体中文、日语三种，源语言是英文。
+
+- 界面文字用英文写，经 `src/i18n/index.ts` 的 `tr()` 显示。`{0}`、`{1}` 是要填进去的值。
+- 每条新文字的中文和日语写进 `src/i18n/table.json`。
+- 界面代码里出现中文或日文，`src/i18n/interface-text.test.mjs` 会拦。中文字面量如果是数据而不是给人看的文字（协议标记、老项目里带的标记、在用户内容里匹配的词），保留它，并在上一行写 `i18n-allow:` 注释说明原因。
+- 画进成片画面的文字永远不经 `tr()`：同一个项目不管界面是什么语言，画面都要一模一样。
+
 ## 提交前自己跑什么
 
 ```bash

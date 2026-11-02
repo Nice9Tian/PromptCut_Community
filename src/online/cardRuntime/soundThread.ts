@@ -64,7 +64,7 @@ export function createSoundThread(opts: SoundThreadOptions): { handle(message: S
         for (const r of results) {
           if (r.ok) continue;
           const detail = r.state.detail ?? r.state.state;
-          blocked[r.entry] = r.state.state === "missing-module" ? `声音线程里没有模块 ${detail}` : isSoundStubError(detail) ? detail : `载入时出错(${detail})`;
+          blocked[r.entry] = r.state.state === "missing-module" ? `The sound thread has no module ${detail}` : isSoundStubError(detail) ? detail : `Error while loading (${detail})`;
         }
         const audioCards = [...cards.values()].filter((d) => typeof d.audio === "function").map((d) => d.id).sort();
         opts.post({ t: "loaded", seq: message.seq, results, audioCards, blocked });
@@ -80,7 +80,7 @@ export function createSoundThread(opts: SoundThreadOptions): { handle(message: S
       if (message.t === "render") {
         const { id } = message;
         try {
-          if (!projects.has(message.key)) throw new Error("声音线程里没有这一版项目");
+          if (!projects.has(message.key)) throw new Error("The sound thread does not have this project revision");
           const samples = await engine.render({ project: projects.get(message.key), nodeId: message.nodeId, start: message.start, count: message.count, sampleRate: message.sampleRate });
           // 复制一份再转移:卡片代码可能回的是它自己留着的缓冲区的视图
           const out = new Float32Array(samples);

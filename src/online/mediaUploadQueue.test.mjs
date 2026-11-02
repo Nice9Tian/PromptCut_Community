@@ -14,7 +14,7 @@ const { recordingFetch } = await import("../../server/test/c66-kit.mjs");
 const sha256Buf = (buf) => crypto.createHash("sha256").update(buf).digest("hex");
 const dummyHash = (seed) => sha256Buf(Buffer.from(seed, "utf8"));
 
-test("mediaUploadQueue: 基础校验与非法项处理", async () => {
+test("mediaUploadQueue: basic validation and invalid item handling", async () => {
   const q = createMediaUploadQueue({
     target: () => ({ base: "http://127.0.0.1:20035/api/asset" }),
   });
@@ -59,7 +59,7 @@ test("mediaUploadQueue: 基础校验与非法项处理", async () => {
   await q.stop();
 });
 
-test("mediaUploadQueue: 派发顺序铁律：所有小尺寸先传、再传原尺寸", async () => {
+test("mediaUploadQueue: dispatch order rule: all small sizes upload first, then original sizes", async () => {
   const dispatched = [];
   const fakeStore = new Map();
 
@@ -142,12 +142,12 @@ test("mediaUploadQueue: 派发顺序铁律：所有小尺寸先传、再传原�
     { id: "item-C", tier: "original", hash: hC_orig },
   ];
 
-  assert.deepEqual(dispatched, expected, "派发顺序必须为：所有素材的小尺寸先传完，再按进队先后传原尺寸");
+  assert.deepEqual(dispatched, expected, "Dispatch order must be: the small sizes of all media finish first, then original sizes in queue order");
   assert.equal(q.stats().done, 3);
   await q.stop();
 });
 
-test("mediaUploadQueue: 原尺寸派发期间新素材进队插队（小尺寸抢占）", async () => {
+test("mediaUploadQueue: new media joins the queue and jumps ahead during original-size dispatch (small sizes preempt)", async () => {
   const dispatched = [];
   const fakeStore = new Map();
 
@@ -244,11 +244,11 @@ test("mediaUploadQueue: 原尺寸派发期间新素材进队插队（小尺寸�
     { id: "item-C", tier: "original" },
   ];
 
-  assert.deepEqual(dispatched, expected, "A 的 original 传完后，新进队 C 的 small 必须插在剩下的原尺寸前面");
+  assert.deepEqual(dispatched, expected, "After A's original finishes, the small of newly queued C must be inserted before the remaining original sizes");
   await q.stop();
 });
 
-test("mediaUploadQueue: 退避机制（小尺寸在退避期间，任何原尺寸都不传）", async () => {
+test("mediaUploadQueue: backoff mechanism (while small sizes are in backoff, no original size is uploaded)", async () => {
   let virtualTime = 1000;
   let smallAAttempts = 0;
   const dispatched = [];
@@ -330,7 +330,7 @@ test("mediaUploadQueue: 退避机制（小尺寸在退避期间，任何原尺�
   await new Promise((r) => setTimeout(r, 20));
 
   // 关键断言：小尺寸在退避时，后面的任何原尺寸都绝不提前传！
-  assert.deepEqual(dispatched, [{ id: "item-A", tier: "small" }], "退避期间不得偷传任何原尺寸");
+  assert.deepEqual(dispatched, [{ id: "item-A", tier: "small" }], "No original size may be uploaded sneakily during backoff");
 
   // 快进走过退避时间（+5000ms）
   virtualTime += 5000;
@@ -349,7 +349,7 @@ test("mediaUploadQueue: 退避机制（小尺寸在退避期间，任何原尺�
   await q.stop();
 });
 
-test("mediaUploadQueue: holdOriginals() 挂起原尺寸派发，释放后恢复", async () => {
+test("mediaUploadQueue: holdOriginals() suspends original-size dispatch, resumes after release", async () => {
   const dispatched = [];
   const fakeStore = new Map();
 
@@ -415,7 +415,7 @@ test("mediaUploadQueue: holdOriginals() 挂起原尺寸派发，释放后恢复"
   // 此时没有剩余 small，但 hold 激活，原尺寸不应该派发
   q.poke();
   await new Promise((r) => setTimeout(r, 20));
-  assert.deepEqual(dispatched, [{ id: "item-A", tier: "small" }], "hold 期间绝不派发原尺寸");
+  assert.deepEqual(dispatched, [{ id: "item-A", tier: "small" }], "Original sizes must never be dispatched during hold");
 
   // 4. 随后同一批次中的素材 B 进队 (带 small)
   await q.enqueue({
@@ -448,7 +448,7 @@ test("mediaUploadQueue: holdOriginals() 挂起原尺寸派发，释放后恢复"
   await q.stop();
 });
 
-test("mediaUploadQueue: 401 票据过期自动换票重试", async () => {
+test("mediaUploadQueue: 401 ticket expiry automatically swaps the ticket and retries", async () => {
   let ticket = "ticket-v1";
   let firstPut = true;
   const authHeaders = [];
@@ -494,13 +494,13 @@ test("mediaUploadQueue: 401 票据过期自动换票重试", async () => {
   q.start();
   await q.drain();
 
-  assert.ok(authHeaders.includes("Bearer ticket-v1"), "初始带 v1 票据");
-  assert.ok(authHeaders.includes("Bearer ticket-v2"), "401 后换用 v2 票据重试");
+  assert.ok(authHeaders.includes("Bearer ticket-v1"), "Initially carries the v1 ticket");
+  assert.ok(authHeaders.includes("Bearer ticket-v2"), "After the 401, retries with the v2 ticket");
   assert.equal(q.stats().done, 1);
   await q.stop();
 });
 
-test("mediaUploadQueue [Integration]: 真 HTTP 素材服务（端口 20035）全链路验收", async () => {
+test("mediaUploadQueue [Integration]: real HTTP asset service (port 20035) full-pipeline acceptance check", async () => {
   const PORT = 20035; // 严格在分配的 20030-20039 范围内
   const CHUNK = 16 * 1024; // 16 KiB 分片
 
@@ -601,12 +601,12 @@ test("mediaUploadQueue [Integration]: 真 HTTP 素材服务（端口 20035）全
     assert.deepEqual(
       runs.map((r) => r.hash),
       expectedOrder,
-      `真实 HTTP 写入请求必须按「所有视频小尺寸 -> 再到各视频与图片原尺寸」出现，实际段序：${runs.map((r) => r.hash.slice(0, 6)).join(" -> ")}`
+      `Real HTTP write requests must appear in the order "all video small sizes -> then each video and image original size", actual segment order: ${runs.map((r) => r.hash.slice(0, 6)).join(" -> ")}`
     );
 
     // 验证每一段均包含完整分片且以 complete 结尾
     for (const r of runs) {
-      assert.equal(r.completed, true, `${r.hash.slice(0, 6)} 必须以 complete 收尾`);
+      assert.equal(r.completed, true, `${r.hash.slice(0, 6)} must end with complete`);
     }
 
     // 3. 验证素材服务上各哈希的状态均已 complete: true
@@ -614,7 +614,7 @@ test("mediaUploadQueue [Integration]: 真 HTTP 素材服务（端口 20035）全
       const cRes = await fetch(`http://127.0.0.1:${PORT}/api/asset/media/${hash}/chunks`);
       assert.equal(cRes.status, 200);
       const cData = await cRes.json();
-      assert.equal(cData.complete, true, `${hash.slice(0, 6)} 在素材服务上必须已 complete`);
+      assert.equal(cData.complete, true, `${hash.slice(0, 6)} must already be complete on the asset service`);
     }
 
     // 4. 验证素材服务上存储的内容与原始 Blob 逐字节一致
@@ -623,8 +623,8 @@ test("mediaUploadQueue [Integration]: 真 HTTP 素材服务（端口 20035）全
       assert.equal(res.status, 200);
       const arr = new Uint8Array(await res.arrayBuffer());
       const actualBuf = Buffer.from(arr);
-      assert.equal(actualBuf.length, expectedBuf.length, `长度一致: ${hash.slice(0, 6)}`);
-      assert.equal(sha256Buf(actualBuf), sha256Buf(expectedBuf), `内容一致: ${hash.slice(0, 6)}`);
+      assert.equal(actualBuf.length, expectedBuf.length, `Length matches: ${hash.slice(0, 6)}`);
+      assert.equal(sha256Buf(actualBuf), sha256Buf(expectedBuf), `Content matches: ${hash.slice(0, 6)}`);
     };
 
     await verifyContent(hashA_small, bytesA_small);

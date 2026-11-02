@@ -20,6 +20,7 @@ import { useEffect, useRef, useState } from "react";
 import type { JSX } from "react";
 import { BrandAurora } from "./BrandAurora";
 import "./brandCanvas.css";
+import { tr } from "../i18n/index.ts";
 
 /** 画面参数。每一条都对应着色器里的一个 uniform,改数就换花样,不用动 GLSL */
 export const LOOK = {
@@ -131,7 +132,7 @@ export const LOOK = {
  */
 export const VERT = `#version 300 es
 void main() {
-  // 一个盖住整屏的三角形:不用顶点缓冲,靠顶点号算坐标
+  // A triangle covering the whole screen: no vertex buffer, coordinates are computed from the vertex ID
   vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
   gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
 }`;
@@ -141,18 +142,18 @@ precision highp float;
 out vec4 fragColor;
 
 uniform vec2  uRes;
-/* 噪声域里那个圆的半径(噪声单位)。0 = 完全不动 */
+/* Radius of the circle in the noise domain (noise units). 0 = no motion at all */
 uniform float uSwirl;
-/* 循环相位,0→1 走满一圈。走满正好回到起点,所以第 0 帧和第 N 帧逐字节相同 */
+/* Loop phase, 0→1 is one full turn. A full turn lands exactly on the start, so frame 0 and frame N are byte-identical */
 uniform float uLoop;
 uniform vec3  uCool;
 uniform vec3  uWarm;
 uniform float uScale, uYStretch, uSplit, uFalloff, uBlend, uMixWarp, uStreak, uGrain;
 uniform float uAxis, uSeeThrough, uFadeEdge;
 uniform float uRefPx, uPxScale;
-/* 压平:预渲染成视频时置 1。视频带不了 alpha,要把底色先合进来、输出不透明;屏幕上那一版置 0,照旧出预乘的半透明 */
+/* Flatten: set to 1 when prerendering to video. Video cannot carry alpha, so the background color is composited in first and the output is opaque; the on-screen version sets 0 and still outputs premultiplied semi-transparent color */
 uniform float uFlatten;
-/* 压平时垫在底下的颜色(登录页的 --bg-canvas) */
+/* Color laid underneath when flattening (--bg-canvas of the login page) */
 uniform vec3  uBg;
 uniform float uWarpA, uWarpB, uGamma, uGain, uFloor, uRoll, uSat;
 uniform float uStripeN, uStripeSkew, uFrostBlur, uFrost, uMilky, uEdge;
@@ -175,12 +176,13 @@ float vnoise(vec2 x) {
 }
 
 /**
- * 颗粒用的噪声:**插值**过的,不是 floor 出来的方格。
+ * Noise for the grain: **interpolated**, not floor-ed squares.
  *
- * floor + hash 每一格是一个常数、边界上直接跳变,看着就是马赛克(用户 2026-10-23 指出)。
- * vnoise 里四角哈希按 smoothstep 插值,所以格子之间是连成一片的。
- * uGrainSoft > 0 时再做一次 5 点平均(上下左右加中心),相当于一道很轻的高斯,
- * 把颗粒进一步揉软;等于 0 就只有插值那一层。
+ * With floor + hash each cell is a constant and jumps at the borders, which looks like a mosaic (pointed out by the user, 2026-10-23).
+ * In vnoise the four corner hashes are interpolated with smoothstep, so cells blend into one continuous surface.
+ * When uGrainSoft > 0, a 5-point average (up, down, left, right plus center) is applied once more,
+ * which acts like a very light Gaussian and softens the grain further;
+ * at 0 only the interpolation layer remains.
  */
 float grainNoise(vec2 c, float soft) {
   float n = vnoise(c);
@@ -206,135 +208,135 @@ void main() {
   vec2 uv = gl_FragCoord.xy / uRes;
 
   /*
-   * 纹理锚在**屏幕像素**上,不随这一块的大小缩放(用户 2026-10-23 定):
-   * 窗口拉宽拉高只是「露出更多」,不是把同一张图拉长。
+   * The texture is anchored to **screen pixels** and does not scale with the size of this block (user decision, 2026-10-23):
+   * widening or heightening the window only "reveals more"; it does not stretch the same picture.
    *
-   * 原点取 split 那条线(构图的骨架)和纵向中线 —— 所以不管这一块多宽,冷暖交界附近的纹理
-   * 永远是同一副样子,变化只发生在两头。
+   * The origin is the split line (the skeleton of the composition) and the vertical midline, so however wide this block is,
+   * the texture near the cool/warm boundary always looks the same, and changes only happen at the two ends.
    *
-   * 先把 gl_FragCoord 换算回 CSS 像素(内部渲染按 uPxScale 打了折),这样纹理的粗细
-   * 在高分屏和普通屏上一致;uRefPx 是参考尺寸,改它等于整体放大缩小。
+   * First convert gl_FragCoord back to CSS pixels (internal rendering is scaled down by uPxScale), so the texture
+   * thickness is the same on high-DPI and regular screens; uRefPx is the reference size, and changing it scales the whole thing up or down.
    */
   vec2 cssPx = gl_FragCoord.xy / max(0.0001, uPxScale);
   vec2 anchor = vec2(uSplit * uRes.x, 0.5 * uRes.y) / max(0.0001, uPxScale);
   vec2 p = (cssPx - anchor) / max(1.0, uRefPx) * uScale;
   p.y *= uYStretch;
   /*
-   * 时间在噪声域里**走一个闭合的圈**,不是一直往前漂。
+   * Time **walks a closed loop** in the noise domain; it does not drift forward forever.
    *
-   * 为什么改(2026-10-24 用户定「左侧为渲染器经过预渲染的动画」):预渲染出来的是一段有限长的视频,
-   * 要能无缝循环播。原来四项都是 p + t * k 这种一直往前的平移,时间轴上不闭合,
-   * 截一段来循环会在接缝处跳一下。现在每一项的偏移都是 uLoop 的周期函数,
-   * uLoop 从 0 走到 1 正好回到出发点 —— 第 0 帧和第 N 帧算出来逐字节相同,接缝看不出来。
+   * Why it changed (2026-10-24, user decision: "the left side is the renderer's prerendered animation"): the prerender produces a finite-length video
+   * that must loop seamlessly. The old four terms were all forward-only translations like p + t * k, which do not close on the timeline,
+   * so cutting a segment to loop would jump at the seam. Now each term's offset is a periodic function of uLoop,
+   * and uLoop going from 0 to 1 returns exactly to the starting point: frame 0 and frame N are computed byte-identical, and the seam is invisible.
    *
-   * 路径不是正圆,是一圈套一圈(基频 + 二次谐波):正圆走起来像在原地打转,一眼能看出是循环;
-   * 叠一个二次谐波之后轨迹是条卷曲的闭合曲线,走的路更长、更不像在转圈,而周期还是 1。
-   * 四项各给不同的相位与转向,免得四层一起动。
-   * 每一项都减去 loopAng = 0 时的值,所以 uLoop = 0 这一帧和改之前那一帧完全一样 —— 调参台上的那组数照旧能用。
-   * (变量叫 loopAng 不叫 a:这段着色器里已经有两个 a 了 —— 166 行噪声的四角之一、323 行的透明度。叫 a 会 ERROR: a : redefinition,整段编不过、当场退回 CSS 那一版。)
+   * The path is not a perfect circle but loops within loops (fundamental + second harmonic): a perfect circle looks like spinning in place and the loop is obvious at a glance;
+   * with a second harmonic added, the trajectory is a curled closed curve that travels farther and looks less like circling, while the period is still 1.
+   * The four terms each get a different phase and direction so the four layers do not move together.
+   * Each term subtracts its value at loopAng = 0, so the frame at uLoop = 0 is exactly the same as before this change: the numbers from the tuning bench still work.
+   * (The variable is called loopAng, not a: this shader already has two a's, one of the four corners in the noise at line 166 and the opacity at line 323. Naming it a gives ERROR: a : redefinition, the whole shader fails to compile, and it falls back to the CSS version on the spot.)
    */
   float loopAng = 6.2831853 * uLoop;
   #define LOOPV(ph, dir, amp) (uSwirl * (amp) * (       vec2(sin(loopAng * (dir) + (ph)) - sin(ph), cos(loopAng * (dir) + (ph)) - cos(ph))     + vec2(sin(loopAng * 2.0 * (dir) + (ph)) - sin(ph), cos(loopAng * 2.0 * (dir) + (ph)) - cos(ph)) * 0.45))
 
-  // 域扭曲两道:第一道把坐标推开,第二道拿推开的结果再推一次。
-  // 参考图里那种「被搅过」的层次就是这么来的,一层噪声出不来
+  // Two domain warps: the first pushes the coordinates apart, the second pushes the result of the first again.
+  // This is how the "stirred" layering in the reference image comes about; a single noise layer cannot produce it
   vec2 q = vec2(fbm(p + LOOPV(0.0, 1.0, 1.0)), fbm(p + vec2(5.2, 1.3) + LOOPV(2.1, -1.0, 0.7)));
   vec2 r = vec2(fbm(p + uWarpA * q + vec2(1.7, 9.2) + LOOPV(4.0, 1.0, 0.5)),
                 fbm(p + uWarpA * q + vec2(8.3, 2.8) + LOOPV(5.6, -1.0, 0.4)));
-  // 条纹毛玻璃:一道道斜条里,底下的纹理被「磨」过 —— 少一层细节、还被横向推开一点,
-  // 就像隔着磨砂玻璃看;条与条之间是清的。这是上一版那层 backdrop-filter 条纹磨砂在着色器里的等价做法
-  // (用户点名要的就是「流动的极光 + 条纹毛玻璃 + 噪点」这三样,不能只剩前后两样)
-  // 条纹的轮廓用 sin,不用 fract:fract 到头会跳回 0,每条接缝处断一下,看着就是百叶窗
+  // Striped frosted glass: within each diagonal stripe the texture underneath is "ground down": one less layer of detail and pushed sideways a bit,
+  // as if seen through frosted glass; between stripes it is clear. This is the shader equivalent of the previous version's backdrop-filter striped frost
+  // (what the user asked for by name was the three things "flowing aurora + striped frosted glass + grain", so we cannot keep just two of them)
+  // The stripe profile uses sin, not fract: fract jumps back to 0 at the end, breaking at every stripe seam and looking like window blinds
   float phase = (uv.x * uStripeN + uv.y * uStripeSkew) * 6.2831853;
   float frost = smoothstep(-0.85, 0.85, sin(phase));
   vec2 pw = p + uWarpB * r;
 
   /*
-   * 磨砂条:把背后的像**横向抹开**(取四个横向邻样平均) —— 玻璃干的就是这件事。
+   * Frosted stripes: **smear the pixels behind sideways** (average four horizontal neighbor samples), which is exactly what glass does.
    *
-   * 前两版都想岔了:一版拿另一个尺度的噪声去混(那是重影),一版把细节层抽掉(那是降采样)。
-   * 底图在 scale≈0.9 下本来就很平滑,没多少细节可抽,抽完只剩一条条平板,看着就是百叶窗。
-   * 清条的半径是 0,四个样本落在同一点、结果等于原图,所以条与条之间是连续的,不会有接缝。
+   * The previous two versions both got it wrong: one blended in noise at another scale (that is ghosting), the other pulled out the detail layer (that is downsampling).
+   * The base image at scale≈0.9 is already smooth with little detail to pull out, so after pulling it out only flat slabs remain, which looks like window blinds.
+   * The radius of a clear stripe is 0, so the four samples land on the same point and the result equals the original image; stripes are therefore continuous with no seams.
    */
   /*
-   * 颗粒:**不随时间变**。玻璃是一块不动的东西,它表面的颗粒当然也不动 ——
-   * 原来那套每帧重算(hash 里带了时间),看着就是满屏闪(用户 2026-10-23 指出)。
-   * 粗粒靠把屏幕坐标按 uGrainSize 量化:一格一个随机数,格子越大颗粒越粗。
+   * Grain: **does not change over time**. Glass is a motionless thing, so of course the grain on its surface does not move either ---
+   * the old version recomputed it every frame (time was in the hash), which looked like the whole screen flickering (pointed out by the user, 2026-10-23).
+   * Coarse grain works by quantizing screen coordinates by uGrainSize: one random number per cell, and the larger the cell the coarser the grain.
    */
-  // 颗粒同样按 CSS 像素算,不然高分屏上会变细
+  // Grain is also computed in CSS pixels, otherwise it would get finer on high-DPI screens
   vec2 gco = cssPx / max(1.0, uGrainSize);
   float gn1 = grainNoise(gco, uGrainSoft);
   float gn2 = grainNoise(gco + 71.3, uGrainSoft);
 
   float br = frost * uFrost * uFrostBlur;
   /*
-   * 磨砂的「扰动」:每一粒按自己的随机方向再偏一点去取样 —— 磨砂玻璃就是靠表面微小的凹凸
-   * 把光打散的,所以颗粒要**参与折射**,而不是事后往画面上撒一层。
-   * 偏移乘 br:清条上 br=0,颗粒不起作用,清的地方依旧清楚。
+   * Frost "perturbation": each grain samples with an extra offset in its own random direction. Frosted glass scatters light
+   * through tiny bumps on its surface, so the grain has to **take part in the refraction**, rather than being sprinkled over the picture afterwards.
+   * The offset is multiplied by br: on clear stripes br=0, the grain has no effect, and clear areas stay clear.
    */
   vec2 jit = vec2(gn1 - 0.5, gn2 - 0.5) * br * uGrainJitter;
   float f = (fbm(pw + jit + vec2(-1.5 * br, 0.0)) + fbm(pw + jit + vec2(-0.5 * br, 0.0))
            + fbm(pw + jit + vec2(0.5 * br, 0.0)) + fbm(pw + jit + vec2(1.5 * br, 0.0))) * 0.25;
 
-  // 冷暖的分界大体是一条竖线,只让噪声轻轻推一下 —— 推多了两边就互相咬进去,
-  // 参考图是「左冷右暖、中间一道暗」,不是搅在一起
-  // 分色沿哪个方向:uAxis=0 横着分(左冷右暖),=1 竖着分(上冷下暖)。
-  // 竖着分时用 1-uv.y,让「上面」是冷色
+  // The cool/warm boundary is roughly a vertical line, and noise only nudges it lightly: push too much and the two sides bite into each other.
+  // The reference image is "cool on the left, warm on the right, a dark band in the middle", not mixed together
+  // Direction of the color split: uAxis=0 splits horizontally (cool left, warm right), =1 splits vertically (cool top, warm bottom).
+  // When splitting vertically use 1-uv.y so that "top" is the cool color
   float axisC = mix(uv.x, 1.0 - uv.y, clamp(uAxis, 0.0, 1.0));
-  // 分界被噪声推着走:uMixWarp 越大,两色互相咬合得越深
+  // The boundary is pushed around by noise: the larger uMixWarp, the deeper the two colors bite into each other
   float split = uSplit + (r.x - 0.5) * uMixWarp;
-  // 过渡带的半宽:uBlend 从「一条硬边」一路开到「整块都在过渡」
+  // Half-width of the transition band: uBlend opens from "a hard edge" all the way to "the whole block is transition"
   float halfW = mix(0.02, 0.85, clamp(uBlend, 0.0, 1.0));
   float m = smoothstep(split - halfW, split + halfW, axisC);
 
-  // 中间那片深色**不是画上去的**:两种光各自从自己那一侧往外衰减,中间谁都不强,
-  // 加起来就暗、而且去饱和 —— 参考图里蓝和橘黄混成深色就是这么来的(用户 2026-10-23 指出)。
-  // uFalloff 越大中间掉得越狠;等于 1 就退化成普通插值,中间不会暗
+  // The dark region in the middle is **not painted on**: each light falls off outward from its own side, and in the middle neither is strong,
+  // so the sum is dark and desaturated. This is how blue and orange mix into a dark color in the reference image (pointed out by the user, 2026-10-23).
+  // The larger uFalloff, the harder the middle drops; at 1 it degrades to plain interpolation and the middle does not darken
   float wc = pow(clamp(1.0 - m, 0.0, 1.0), uFalloff);
   float ww = pow(clamp(m, 0.0, 1.0), uFalloff);
   vec3 base = uCool * wc + uWarm * ww;
 
-  // 明暗:暗部压得很狠,所以大部分地方接近黑,颜色只在几处亮起来 —— 这是参考图的分量感
+  // Light and dark: the dark parts are pushed down hard, so most places are close to black and color lights up only in a few spots. This is the weight of the reference image
   float lum = pow(clamp(f * 1.18, 0.0, 1.0), uGamma);
   vec3 col = base * (uFloor + uGain * lum);
-  // 高光滚落:直接乘出来的亮部会冲成霓虹,这一步把它压回去
+  // Highlight roll-off: bright parts obtained by direct multiplication would blow out into neon, and this step pushes them back down
   col = col / (1.0 + col * uRoll);
-  // 饱和度微调
+  // Fine-tune saturation
   col = mix(vec3(dot(col, vec3(0.299, 0.587, 0.114))), col, uSat);
 
-  // 玻璃的两样:磨砂面本身是乳白的(散射抬一点亮),清条与磨砂条交界处有一道细高光(玻璃的棱)
+  // Two things about glass: the frosted face itself is milky (scattering lifts the brightness a little), and where clear stripes meet frosted stripes there is a thin highlight (the glass edge)
   col *= 1.0 + frost * uMilky;
   float edge = 1.0 - abs(frost * 2.0 - 1.0);
   col += pow(edge, 3.0) * uEdge;
 
-  // 细竖条纹:按列取一个固定的随机数,越往右越明显(参考海报右半边那些细线)
+  // Fine vertical stripes: one fixed random number per column, more visible toward the right (the fine lines on the right half of the reference poster)
   float band = hash12(vec2(floor(uv.x * 240.0), 7.0));
   col *= 1.0 + (band - 0.5) * uStreak * smoothstep(0.18, 0.9, uv.x);
 
-  // 暗角
+  // Vignette
   vec2 d = (uv - 0.5) * vec2(1.08, 1.0);
   col *= 0.30 + 0.70 * smoothstep(1.15, 0.18, length(d));
 
-  // 叠加的那一层颗粒同样不动,而且磨砂条上更明显 —— 它是玻璃的一部分,不是蒙在画面上的胶片颗粒
+  // The overlaid grain layer is likewise motionless, and more visible on frosted stripes: it is part of the glass, not film grain laid over the picture
   col += (gn1 - 0.5) * uGrain * (0.3 + 0.7 * frost);
 
   /*
-   * 背景以 alpha 的形式进来(用户 2026-10-23 定):暗的地方把画布放透明,透出页面真实的底色,
-   * 而不是在这里画一层假的背景色。好处是换皮肤、改底色都不用动着色器 —— 透出来的永远是真的那个。
-   * 亮的地方不透,所以颜色该浓的地方照样浓。
+   * The background comes in as alpha (user decision, 2026-10-23): dark areas leave the canvas transparent, letting the page's real background color show through,
+   * instead of painting a fake background color here. The benefit is that changing skins or the background color never requires touching the shader: what shows through is always the real one.
+   * Bright areas are opaque, so colors that should be rich stay rich.
    */
-  // uSeeThrough 当门槛用:亮度低于它就一路透到底,高于它完全不透。
-  // 原来写成插值,最暗处仍留着 (1-uSeeThrough) 的不透明度,于是暗处是「背景上蒙了一层」而不是背景本身
+  // uSeeThrough acts as a threshold: luminance below it is fully see-through, above it fully opaque.
+  // It used to be written as interpolation, and the darkest spots kept an opacity of (1-uSeeThrough), so dark areas were "a layer laid over the background" rather than the background itself
   float a = uSeeThrough < 0.001 ? 1.0 : smoothstep(0.0, uSeeThrough, lum);
-  // 再沿右边缘淡出(uFadeEdge=0 时基本不起作用):配合上面那条做「右侧是背景色」的格局
+  // Then fade out along the right edge (basically has no effect when uFadeEdge=0): works with the line above to make the "right side is the background color" layout
   if (uFadeEdge > 0.001) a *= 1.0 - smoothstep(1.0 - uFadeEdge, 1.0, uv.x);
 
-  // 预乘输出:颜色先乘上 alpha(上下文开的是预乘模式)。
-  // 直通 alpha 在 GPU 合成那条路上会被当成不透明画出来(2026-10-24 用户报的那个毛病)
+  // Premultiplied output: color is multiplied by alpha first (the context is opened in premultiplied mode).
+  // Straight alpha gets drawn as opaque on the GPU compositing path (the bug the user reported on 2026-10-24)
   float aOut = clamp(a, 0.0, 1.0);
   vec3 rgbOut = max(col, 0.0);
-  // 压平那条路:把底色合进来、alpha 给 1。预渲染成视频要走这条 —— 视频带不了 alpha,
-  // 而且导出写的是直通 alpha 的 PNG,预乘的值直接当直通存会在淡出边缘出一圈红绿杂边。
+  // The flatten path: composite the background color in and set alpha to 1. Prerendering to video must take this path: video cannot carry alpha,
+  // and the export writes straight-alpha PNGs, so storing premultiplied values directly as straight would leave a ring of red-green fringes on the fade-out edge.
   fragColor = uFlatten > 0.5
     ? vec4(mix(uBg, rgbOut, aOut), 1.0)
     : vec4(rgbOut * aOut, aOut);
@@ -377,10 +379,10 @@ function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLSh
     // 用满浏览器的上限(Chrome 约 16 个)之后新上下文一建就是坏的 —— 这时日志会是 null。
     // 整页刷新一下就好,不是着色器写错了。
     console.warn(
-      "[BrandCanvas] 着色器编译失败：",
+      "[BrandCanvas] shader compile failed:",
       gl.getShaderInfoLog(sh),
       "gl.getError=", gl.getError(),
-      "（开发期若日志为 null，多半是热更新累积的 WebGL 上下文超了上限，整页刷新即可）",
+      "(in development, if the log is null, the WebGL context limit was most likely exceeded by accumulated hot reloads; refresh the whole page)",
     );
     gl.deleteShader(sh);
     return null;
@@ -433,7 +435,7 @@ export function BrandCanvas(): JSX.Element {
     gl.attachShader(prog, fs);
     gl.linkProgram(prog);
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
-      console.warn("[BrandCanvas] 着色器链接失败：", gl.getProgramInfoLog(prog));
+      console.warn("[BrandCanvas] shader link failed:", gl.getProgramInfoLog(prog));
       setDead(true);
       return;
     }

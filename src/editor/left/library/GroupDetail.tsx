@@ -1,5 +1,6 @@
 import { Masonry } from "./Masonry";
 import type { GroupCategory, GroupData, GroupDef } from "./groups";
+import { tr } from "../../../i18n/index.ts";
 
 /**
  * 打开一个组时顶部的胶囊行:`所有`(回总览)、这个组的分类(回总览并只看这一类)、
@@ -20,16 +21,16 @@ export function DetailChips({
   onClose: () => void;
 }) {
   return (
-    <div className="pc-lib-chips" role="toolbar" aria-label="分类">
+    <div className="pc-lib-chips" role="toolbar" aria-label={tr("Category")}>
       <button type="button" className="pc-chip" data-pc-chip="all" onClick={onAll}>
-        所有
+        {tr("All")}
       </button>
       {showCategory && (
         <button
           type="button"
           className="pc-chip"
           data-pc-chip="category"
-          title={`回到总览,只看「${def.category}」类的组`}
+          title={tr("Back to the overview, showing only \"{0}\" groups", def.category)}
           onClick={() => onCategory(def.category)}
         >
           {def.category}
@@ -41,8 +42,8 @@ export function DetailChips({
           type="button"
           className="pc-chip-x pc-lib-chip-x"
           data-pc="group-close"
-          title="关闭这个组,回到总览"
-          aria-label={`关闭「${def.title}」`}
+          title={tr("Close this group and go back to the overview")}
+          aria-label={tr("Close \"{0}\"", def.title)}
           onClick={onClose}
         >
           <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
@@ -60,13 +61,13 @@ export function GroupDetail({ def, data, searching }: { def: GroupDef; data: Gro
   return (
     <div className="pc-lib-detail" data-pc={def.hook} data-pc-open-group={def.id}>
       <div className="pc-lib-count" title={def.hint}>
-        {n} 个项目
+        {tr("{0} projects", n)}
       </div>
       {data.detailTop}
       {n > 0 ? (
         <Masonry layout={def.layout} items={data.items} />
       ) : (
-        data.emptyDetail ?? <div className="pc-left-note">{searching ? "没有匹配的项目" : "这个组还是空的"}</div>
+        data.emptyDetail ?? <div className="pc-left-note">{searching ? tr("No matching items") : tr("This group is still empty")}</div>
       )}
       {data.detailBottom}
     </div>

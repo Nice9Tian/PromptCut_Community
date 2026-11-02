@@ -1,7 +1,8 @@
 import type { Transcript, TranscriptSegment } from "../../kernel/project";
 import { getMediaFile } from "./index";
 import { actions } from "../../store/project";
-import { onlineUnsupported } from "../../online/pageFlag";
+import { onlineUnsupported } from "../../online/onlineUnsupported";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 在线构建的编译期常量(写法与用意见 `src/online/pageFlag.ts` 的「在线构建剪枝」)。在线浏览器模式没有本机语音识别
@@ -53,14 +54,14 @@ export interface SttStatus {
 /** 查询 STT 服务状态(Python 版本、引擎是否安装、可用模型等) */
 export async function sttStatus(): Promise<SttStatus> {
   // 在线浏览器模式没有本机语音识别(那要编辑器进程与内置 Python)
-  if (ONLINE_BUILD) throw new Error(onlineUnsupported("语音识别"));
+  if (ONLINE_BUILD) throw new Error(onlineUnsupported(tr("Speech recognition")));
   const res = await fetch("/api/stt/status");
   if (res.status === 503) {
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.error ?? "STT 服务不可用(503):找不到内置 Python,重装一次安装包即可。");
+    throw new Error(data.error ?? tr("STT service unavailable (503): the bundled Python was not found, reinstall the installer once."));
   }
   if (!res.ok) {
-    throw new Error(`/api/stt/status 返回 ${res.status}`);
+    throw new Error(tr("/api/stt/status returned {0}", res.status));
   }
   return res.json();
 }
@@ -70,7 +71,7 @@ export async function sttInstall(
   engine: string,
   onLog?: (line: string) => void
 ): Promise<{ ok: boolean; log: string[] }> {
-  if (ONLINE_BUILD) throw new Error(onlineUnsupported("语音识别"));
+  if (ONLINE_BUILD) throw new Error(onlineUnsupported(tr("Speech recognition")));
   const res = await fetch("/api/stt/install", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -79,10 +80,10 @@ export async function sttInstall(
 
   if (res.status === 503) {
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.error ?? "STT 服务不可用(503)");
+    throw new Error(data.error ?? tr("STT service unavailable (503)"));
   }
   if (!res.ok || !res.body) {
-    throw new Error(`/api/stt/install 返回 ${res.status}`);
+    throw new Error(tr("/api/stt/install returned {0}", res.status));
   }
 
   const log: string[] = [];
@@ -94,7 +95,7 @@ export async function sttInstall(
       onLog?.(line);
     } else if (ev.event === "error") {
       ok = false;
-      const msg = ev.message ?? "安装失败";
+      const msg = ev.message ?? tr("Install failed");
       log.push("[error] " + msg);
       onLog?.("[error] " + msg);
     }
@@ -110,10 +111,10 @@ export async function transcribeMedia(
     p: { done: number; total: number } | { log: string } | { segment: TranscriptSegment }
   ) => void
 ): Promise<Transcript> {
-  if (ONLINE_BUILD) throw new Error(onlineUnsupported("语音识别"));
+  if (ONLINE_BUILD) throw new Error(onlineUnsupported(tr("Speech recognition")));
   const file = getMediaFile(mediaId);
   if (!file) {
-    throw new Error("素材文件不在内存里(可能是打开的项目),请重新导入");
+    throw new Error(tr("The media file is not in memory (it may be from an opened project), please import it again"));
   }
 
   const engine = opts?.engine ?? "faster-whisper";
@@ -129,7 +130,7 @@ export async function transcribeMedia(
     { method: "POST", body: file }
   );
   if (!uploadRes.ok) {
-    throw new Error(`文件上传失败: ${uploadRes.status} ${await uploadRes.text()}`);
+    throw new Error(tr("File upload failed: {0} {1}", uploadRes.status, await uploadRes.text()));
   }
 
   // 启动转写(SSE 流)
@@ -141,10 +142,10 @@ export async function transcribeMedia(
 
   if (transcribeRes.status === 503) {
     const data = await transcribeRes.json().catch(() => ({}));
-    throw new Error(data.error ?? "STT 服务不可用(503)");
+    throw new Error(data.error ?? tr("STT service unavailable (503)"));
   }
   if (!transcribeRes.ok || !transcribeRes.body) {
-    throw new Error(`/api/stt/transcribe 返回 ${transcribeRes.status}`);
+    throw new Error(tr("/api/stt/transcribe returned {0}", transcribeRes.status));
   }
 
   let finalTranscript: Transcript | null = null;
@@ -166,12 +167,12 @@ export async function transcribeMedia(
         segments: ev.segments ?? [],
       };
     } else if (ev.event === "error") {
-      throw new Error(ev.message ?? "转写失败");
+      throw new Error(ev.message ?? tr("Transcription failed"));
     }
   });
 
   if (!finalTranscript) {
-    throw new Error("转写未收到 done 事件");
+    throw new Error(tr("Transcription did not receive a done event"));
   }
 
   // 写入 store

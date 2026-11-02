@@ -1,7 +1,8 @@
 import { actions, getState } from "../../store/project";
 import type { MediaAsset } from "../../kernel/project";
 import { applyUploadedMedia, type UploadedMedia } from "./mediaUpload";
-import { onlineUnsupported } from "../../online/pageFlag";
+import { onlineUnsupported } from "../../online/onlineUnsupported";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 从用户的网盘导入素材(任务书 `docs/plan/drive-connector-task.md` 第 5 节)。
@@ -102,7 +103,7 @@ async function postJson(url: string, body: unknown): Promise<any> {
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => null);
-  if (!res.ok || !data?.ok) throw new Error(String(data?.message || `请求失败(HTTP ${res.status})`));
+  if (!res.ok || !data?.ok) throw new Error(String(data?.message || tr("Request failed (HTTP {0})", res.status)));
   return data;
 }
 
@@ -121,13 +122,13 @@ export async function loadConnections(): Promise<StorageConnection[]> {
 
 /** A2:把授权码交给编辑器进程换 refresh token。页面不碰 refresh token */
 export async function connectStorage(provider: string, code: string, codeVerifier: string): Promise<void> {
-  if (!storageImportSupported) throw new Error(onlineUnsupported("从网盘导入"));
+  if (!storageImportSupported) throw new Error(onlineUnsupported(tr("Import from cloud drive")));
   await postJson("/api/media/storage/connect", { kind: provider, code, codeVerifier });
 }
 
 /** A2:断开。回包里说明网盘那边撤没撤成 */
 export async function disconnectStorage(provider: string): Promise<{ revoked: boolean; why?: string }> {
-  if (!storageImportSupported) throw new Error(onlineUnsupported("从网盘导入"));
+  if (!storageImportSupported) throw new Error(onlineUnsupported(tr("Import from cloud drive")));
   const data = await postJson("/api/media/storage/disconnect", { kind: provider });
   return { revoked: !!data.revoked, ...(data.why ? { why: String(data.why) } : {}) };
 }
@@ -160,7 +161,7 @@ function probe(url: string, kind: MediaAsset["kind"], name: string): Promise<{ d
     if (kind === "image") {
       const img = new Image();
       img.onload = () => settle({ width: img.naturalWidth || undefined, height: img.naturalHeight || undefined });
-      img.onerror = () => { console.warn(`[storage] 探测图片失败: ${name}`); settle({}); };
+      img.onerror = () => { console.warn(`[storage] Failed to probe image: ${name}`); settle({}); };
       img.src = url;
       return;
     }
@@ -172,7 +173,7 @@ function probe(url: string, kind: MediaAsset["kind"], name: string): Promise<{ d
       width: el.videoWidth || undefined,
       height: el.videoHeight || undefined,
     });
-    el.onerror = () => { console.warn(`[storage] 探测素材失败: ${name}`); settle({}); };
+    el.onerror = () => { console.warn(`[storage] Failed to probe media: ${name}`); settle({}); };
     el.src = url;
   });
 }
@@ -190,7 +191,7 @@ export async function importFromStorage(
   file: PickedFile,
   { place = true }: { place?: boolean } = {},
 ): Promise<string> {
-  if (!storageImportSupported) throw new Error(onlineUnsupported("从网盘导入"));
+  if (!storageImportSupported) throw new Error(onlineUnsupported(tr("Import from cloud drive")));
   const kind = kindOf(file.mimeType, file.name);
 
   // 先占位:用户立刻看得见这条在传
@@ -206,7 +207,7 @@ export async function importFromStorage(
     });
     const data = await res.json().catch(() => null);
     if (!res.ok || !data?.ok) {
-      throw new Error(String(data?.message || `导入失败(HTTP ${res.status})`));
+      throw new Error(String(data?.message || tr("Import failed (HTTP {0})", res.status)));
     }
     uploaded = data as StorageImportResult;
   } catch (err) {

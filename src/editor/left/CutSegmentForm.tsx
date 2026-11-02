@@ -8,6 +8,7 @@ import { fadeOwner } from "../../kernel/transitions";
 import { openCutInTimeline } from "../timeline/CutTabs";
 import { NumberField } from "../fields/NumberField";
 import { RangeField } from "../fields/RangeField";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 编辑分区里剪辑段的属性(`product/project-model.md`「片段」的剪辑段一条):从被引用剪辑的第几秒开始,
@@ -38,8 +39,8 @@ export function CutSegmentForm({ clip }: { clip: TrackClip }) {
   const run = (fn: () => unknown) => {
     try {
       const r = fn() as { ok?: boolean; error?: string; blocked?: string[] } | undefined;
-      if (r && typeof r === "object" && r.ok === false) setErr(r.error ?? (r.blocked?.length ? "这一侧的淡化由转场管着,要改先删掉转场" : "没改成"));
-      else if (r && typeof r === "object" && r.blocked?.length) setErr("这一侧的淡化由转场管着,要改先删掉转场");
+      if (r && typeof r === "object" && r.ok === false) setErr(r.error ?? (r.blocked?.length ? tr("The fade on this side is controlled by a transition; delete the transition first to change it") : tr("Not changed")));
+      else if (r && typeof r === "object" && r.blocked?.length) setErr(tr("The fade on this side is controlled by a transition; delete the transition first to change it"));
       else setErr(null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -71,68 +72,68 @@ export function CutSegmentForm({ clip }: { clip: TrackClip }) {
   return (
     <div data-pc="cut-segment-form" className="flex-1 min-h-0 overflow-y-auto pc-left-scroll flex flex-col gap-2 p-3 text-xs">
       <div className="flex items-center justify-between gap-2">
-        <div className="font-semibold pc-left-strong truncate">剪辑段 · {target?.name ?? "(引用的剪辑已删除)"}</div>
+        <div className="font-semibold pc-left-strong truncate">{tr("Cut segment · {0}", target?.name ?? tr("(referenced cut was deleted)"))}</div>
         <button
           type="button"
           data-pc="cut-segment-open"
           className="pc-left-btn is-sm shrink-0"
           disabled={!target}
-          title="在时间轴上方的标签栏里打开并激活被引用的剪辑(和双击剪辑段一样)"
+          title={tr("Open and activate the referenced cut in the tab bar above the timeline (same as double-clicking the cut segment)")}
           onClick={() => openCutInTimeline(cutId)}
         >
-          打开被引用剪辑
+          {tr("Open referenced cut")}
         </button>
       </div>
 
-      {locked && <div className="pc-left-faint">所在序列锁着,先解锁才能改</div>}
+      {locked && <div className="pc-left-faint">{tr("The track it is on is locked; unlock it first to edit")}</div>}
 
-      {row("起点偏移", (
+      {row(tr("Start offset"), (
         <>
           {numberBox("cut-segment-offset", offset, 0.1, (n) => run(() => actions.setCutSegment(clip.id, { cutOffset: Math.max(0, n) })), { min: 0 })}
-          <span className="pc-left-faint whitespace-nowrap">秒,共 {total.toFixed(2)} 秒</span>
+          <span className="pc-left-faint whitespace-nowrap">{tr("s, {0} s total", total.toFixed(2))}</span>
         </>
-      ), "从被引用剪辑的第几秒开始放")}
+      ), tr("At which second of the referenced cut playback starts"))}
 
-      <div className="flex items-center gap-2" title={`段长 ${len.toFixed(2)} 秒`}>
-        {sub("开始")}
+      <div className="flex items-center gap-2" title={tr("Segment length {0} s", len.toFixed(2))}>
+        {sub(tr("Start"))}
         {numberBox("clip-start", clip.start, 0.1, (n) => run(() => actions.moveClip(clip.id, { start: n })), { min: 0 })}
-        {sub("结束")}
+        {sub(tr("End"))}
         {numberBox("clip-end", clip.end, 0.1, (n) => run(() => actions.moveClip(clip.id, { end: n })), { min: 0 })}
       </div>
       {beyond > 0.0005 && (
         <div data-pc="cut-segment-beyond" className="pc-left-faint">
-          被引用剪辑变短了:最后 {beyond.toFixed(2)} 秒超出它的总时长,那一截画面透明、无声
+          {tr("The referenced cut got shorter: the last {0} s go beyond its total duration, and that part is transparent and silent", beyond.toFixed(2))}
         </div>
       )}
 
       <div className="mt-1 pt-2 pc-left-divider flex items-center justify-between">
-        <span className="font-semibold pc-left-strong">框</span>
+        <span className="font-semibold pc-left-strong">{tr("Box")}</span>
         <button
           type="button"
           data-pc="cut-segment-frame-reset"
           className="pc-left-btn is-sm"
           disabled={!clip.frame || locked}
-          title="清掉框,铺满整个画面"
+          title={tr("Clear the box and fill the whole frame")}
           onClick={() => run(() => actions.setClipFrame(clip.id, undefined))}
         >
-          铺满
+          {tr("Fill")}
         </button>
       </div>
-      {row("位置", (
+      {row(tr("Position"), (
         <>
           <span className="shrink-0 pc-left-faint">X</span>
           {numberBox("cut-segment-x", frame.x, 1, (n) => patchFrame({ x: n }))}
           <span className="shrink-0 pc-left-faint">Y</span>
           {numberBox("cut-segment-y", frame.y, 1, (n) => patchFrame({ y: n }))}
         </>
-      ), "锚点所在位置(像素)")}
-      {row("缩放", (
+      ), tr("Anchor position (pixels)"))}
+      {row(tr("Scale"), (
         <>
           {slider("cut-segment-scale", frame.scale, 0.05, 2, 0.01, (n) => patchFrame({ scale: n }))}
           {numberBox("cut-segment-scale-num", frame.scale, 0.01, (n) => patchFrame({ scale: Math.max(0.01, n) }), { min: 0.01 })}
         </>
       ))}
-      {row("旋转", (
+      {row(tr("Rotate"), (
         <>
           {slider("cut-segment-rotate", frame.rotate, -180, 180, 1, (n) => patchFrame({ rotate: n }))}
           {numberBox("cut-segment-rotate-num", frame.rotate, 1, (n) => patchFrame({ rotate: n }))}
@@ -140,28 +141,28 @@ export function CutSegmentForm({ clip }: { clip: TrackClip }) {
         </>
       ))}
 
-      <div className="mt-1 pt-2 pc-left-divider font-semibold pc-left-strong">画面</div>
-      {row("不透明度", (
+      <div className="mt-1 pt-2 pc-left-divider font-semibold pc-left-strong">{tr("Frame")}</div>
+      {row(tr("Opacity"), (
         <>
           {slider("cut-segment-opacity", clip.opacity ?? 1, 0, 1, 0.01, (n) => run(() => actions.updateClip(clip.id, { opacity: n })))}
           {numberBox("cut-segment-opacity-num", clip.opacity ?? 1, 0.05, (n) => run(() => actions.updateClip(clip.id, { opacity: Math.max(0, Math.min(1, n)) })), { min: 0, max: 1 })}
         </>
       ))}
-      <div className="flex items-center gap-2" title={fadeInLocked || fadeOutLocked ? "由转场管着的那一侧要先删掉转场才能改" : "画面与声音一起淡(秒)"}>
-        {sub("淡入")}
+      <div className="flex items-center gap-2" title={fadeInLocked || fadeOutLocked ? tr("For a side controlled by a transition, delete the transition first to change it") : tr("Fade picture and sound together (seconds)")}>
+        {sub(tr("Fade in"))}
         {numberBox("cut-segment-fadein", clip.fadeIn ?? 0, 0.1, (n) => run(() => actions.updateClip(clip.id, { fadeIn: Math.max(0, Math.min(len, n)) })), { min: 0, disabled: fadeInLocked })}
-        {sub("淡出")}
+        {sub(tr("Fade out"))}
         {numberBox("cut-segment-fadeout", clip.fadeOut ?? 0, 0.1, (n) => run(() => actions.updateClip(clip.id, { fadeOut: Math.max(0, Math.min(len, n)) })), { min: 0, disabled: fadeOutLocked })}
-        <span className="shrink-0 pc-left-faint">秒</span>
+        <span className="shrink-0 pc-left-faint">{tr("s")}</span>
       </div>
 
-      <div className="mt-1 pt-2 pc-left-divider font-semibold pc-left-strong">声音</div>
-      {row("音量", (
+      <div className="mt-1 pt-2 pc-left-divider font-semibold pc-left-strong">{tr("Sound")}</div>
+      {row(tr("Volume"), (
         <>
           {slider("cut-segment-volume", volume, 0, 1, 0.01, (n) => run(() => actions.setClipVolume(clip.id, n)))}
           {numberBox("cut-segment-volume-num", volume, 0.05, (n) => run(() => actions.setClipVolume(clip.id, Math.max(0, Math.min(1, n)))), { min: 0, max: 1 })}
         </>
-      ), "乘在被引用剪辑整份混音上")}
+      ), tr("Multiplies the whole mix of the referenced cut"))}
       <label className="flex items-center gap-2 pc-left-muted">
         <input
           data-pc="cut-segment-muted"
@@ -170,7 +171,7 @@ export function CutSegmentForm({ clip }: { clip: TrackClip }) {
           disabled={locked}
           onChange={(e) => run(() => actions.setClipMuted(clip.id, e.target.checked))}
         />
-        静音(只关这一段的声音,画面照常)
+        {tr("Mute (silences only this segment, picture unchanged)")}
       </label>
 
       {err && <div data-pc="cut-segment-error" className="text-red-400 mt-1" role="alert">{err}</div>}

@@ -186,16 +186,16 @@ test('C65B-U-06 提示条文案：部分没撤 / 全部没撤 / 重做两种；�
   assert.equal(notice({ done: true, skipped: [], failed: [] }, opts(false)) ?? null, null, '全撤成了不弹提示');
 
   const partial = notice({ done: true, skipped: skipped(1), failed: [] }, opts(false));
-  assert.equal(partial.title, '撤销了，但这几处被后续的新修改覆盖，未做退回：');
+  assert.equal(partial.title, 'Undone, but these were overwritten by later changes and not reverted:');
   assert.equal(partial.lines.length, 1);
-  assert.ok(partial.lines[0].includes('片段「c1」') && partial.lines[0].includes('成员u0') && partial.lines[0].includes('修改'), partial.lines[0]);
+  assert.ok(partial.lines[0].includes('片段「c1」') && partial.lines[0].includes('成员u0') && partial.lines[0].includes('changed by'), partial.lines[0]);
 
   const all = notice({ done: false, skipped: skipped(2), failed: [] }, opts(false));
-  assert.equal(all.title, '没撤成。这几处后来都被改过了，保留了现在的样子：');
+  assert.equal(all.title, "Couldn't undo. These were all changed afterwards, so they keep their current state:");
   assert.equal(all.lines.length, 2);
 
-  assert.equal(notice({ done: true, skipped: skipped(1), failed: [] }, opts(true)).title, '重做了，但这几处被后续的新修改覆盖，未做恢复：');
-  assert.equal(notice({ done: false, skipped: skipped(1), failed: [] }, opts(true)).title, '没重做成。这几处后来都被改过了，保留了现在的样子：');
+  assert.equal(notice({ done: true, skipped: skipped(1), failed: [] }, opts(true)).title, 'Redone, but these were overwritten by later changes and not restored:');
+  assert.equal(notice({ done: false, skipped: skipped(1), failed: [] }, opts(true)).title, "Couldn't redo. These items were changed afterwards, so they keep their current state:");
 
   const agentLine = notice({ done: true, skipped: [{ entity: clip('c9'), by: { actor: { userId: 'a@d', role: 'agent', conversation: 3 }, session: 'conv-3' } }], failed: [] }, opts(false));
   assert.ok(agentLine.lines[0].includes('Agent「对话3」'), `修改者身份照 whoOf 显示：${agentLine.lines[0]}`);
@@ -204,8 +204,8 @@ test('C65B-U-06 提示条文案：部分没撤 / 全部没撤 / 重做两种；�
   assert.equal(three.lines.length, 3, '恰好 3 处全列');
   const five = notice({ done: true, skipped: skipped(5), failed: [] }, opts(false));
   assert.equal(five.lines.length, 3, '多于 3 处：前 2 处 + 折叠行');
-  assert.match(five.lines[2], /^等 ?(3|5) ?处/, `折叠行：${five.lines[2]}`);
-  assert.ok(five.lines[2].includes('点击展开'), five.lines[2]);
+  assert.match(five.lines[2], /^and (3|5) more/, `折叠行：${five.lines[2]}`);
+  assert.ok(five.lines[2].includes('click to expand'), five.lines[2]);
 });
 
 // ------------------------------------------------------------------ V7 页面侧：.proc 等确认后才写（B7）

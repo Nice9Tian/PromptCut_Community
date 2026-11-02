@@ -1,3 +1,4 @@
+import { tr } from "../i18n/index.ts";
 export type AttachmentKind =
   | "image"
   | "video"
@@ -108,14 +109,14 @@ export async function importByPath(
       id: newAttachmentId(),
       conversationId,
       status: "error",
-      error: data?.error || `导入失败: HTTP ${res.status}`,
+      error: data?.error || tr("Import failed: HTTP {0}", res.status),
       attachment: {
         id: newAttachmentId(),
         name,
         kind: kindOfName(name),
         srcPath,
         status: "error",
-        error: data?.error || `导入失败: HTTP ${res.status}`,
+        error: data?.error || tr("Import failed: HTTP {0}", res.status),
       },
     };
   } catch (err: unknown) {
@@ -161,7 +162,7 @@ export async function uploadFile(
       id: newAttachmentId(),
       conversationId,
       status: "error",
-      error: data?.error || `上传失败: HTTP ${res.status}`,
+      error: data?.error || tr("Upload failed: HTTP {0}", res.status),
       attachment: {
         id: newAttachmentId(),
         name: file.name,
@@ -169,7 +170,7 @@ export async function uploadFile(
         bytes: file.size,
         srcPath: null,
         status: "error",
-        error: data?.error || `上传失败: HTTP ${res.status}`,
+        error: data?.error || tr("Upload failed: HTTP {0}", res.status),
       },
     };
   } catch (err: unknown) {
@@ -228,14 +229,14 @@ export async function waitForJob(
     id: jobId,
     conversationId: "",
     status: "error",
-    error: "导入任务超时（超过 10 分钟）",
+    error: tr("Import task timed out (over 10 minutes)"),
     attachment: {
       id: jobId,
       name: "",
       kind: "other",
       srcPath: null,
       status: "error",
-      error: "导入任务超时",
+      error: tr("Import task timed out"),
     },
   };
 }

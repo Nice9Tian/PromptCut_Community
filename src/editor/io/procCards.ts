@@ -1,6 +1,7 @@
 import type { Project } from "../../kernel/project";
 import { allCards, userCardSources } from "../../kernel/registry";
 import { invalidateScopes, localCardImports, peekScopes, usedCardIds } from "../cardScope";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 定制卡跟着 .proc 走。
@@ -91,12 +92,12 @@ export async function restoreProjectCards(cards: BundledCard[], projectId: strin
     if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
     lastRestore = data.results as CardRestoreResult[];
   } catch (e) {
-    lastRestore = cards.map((c) => ({ id: c.id, status: "rejected" as const, error: `装卡请求失败:${e instanceof Error ? e.message : String(e)}` }));
+    lastRestore = cards.map((c) => ({ id: c.id, status: "rejected" as const, error: tr("Card install request failed: {0}", e instanceof Error ? e.message : String(e)) }));
   }
   invalidateScopes();
   for (const r of lastRestore) {
-    if (r.status === "rejected") console.warn(`[proc] 项目里带的卡「${r.id}」没装上:${r.error}`);
-    else if (r.status === "updated") console.info(`[proc] 卡「${r.id}」按项目里存的版本更新了,本机旧版备份在 ${r.backup ?? "(未备份)"}`);
+    if (r.status === "rejected") console.warn(`[proc] Card "${r.id}" bundled in the project was not installed: ${r.error}`);
+    else if (r.status === "updated") console.info(`[proc] Card "${r.id}" was updated to the version stored in the project, the old local version is backed up at ${r.backup ?? "(not backed up)"}`);
   }
   (window as unknown as { __pcCardRestore?: CardRestoreResult[] }).__pcCardRestore = lastRestore;
   return lastRestore;

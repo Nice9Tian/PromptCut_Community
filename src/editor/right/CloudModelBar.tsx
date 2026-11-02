@@ -8,9 +8,10 @@ import { IconMore } from "../../ui/icons";
 import { EFFORT_LABEL, type EffortLevel } from "../../ai/modelOptions";
 import { usePopover } from "./chat/usePopover";
 import "./ModelBar.css";
+import { tr } from "../../i18n/index.ts";
 
 /** 「云端」下深度自主与审查环路为什么不可选(契约 9.3,2026-10-06 主会话裁定) */
-export const CLOUD_NO_DEEP_AUTO = "云端 Agent 暂不支持深度自主与审查环路:云端用的是托管方的模型额度,目前没有上限";
+export const CLOUD_NO_DEEP_AUTO = tr("Cloud Agent does not support deep autonomy and review loops yet: the cloud uses the host's model quota, which currently has no limit");
 
 /**
  * 「云端」接入方式下输入区底部工具条上的一组:模型下拉(托管方配置了多个模型才出现)+ 思考强度下拉(云端报了档位才出现)
@@ -44,13 +45,13 @@ export function CloudModelBar(props: {
         <select
           className="ai-bar-select ai-model-select"
           data-pc="ai-cloud-model"
-          aria-label="模型"
+          aria-label={tr("Model")}
           value={shown}
           disabled={disabled}
-          title={`云端这次用哪个模型${shown ? `:${shown}` : ""}`}
+          title={tr("Model the cloud uses this time{0}", shown ? `:${shown}` : "")}
           onChange={(e) => onModel(e.target.value)}
         >
-          <option value="">默认{info?.defaultModel ? `(${info.defaultModel})` : ""}</option>
+          <option value="">{tr("Default{0}", info?.defaultModel ? `(${info.defaultModel})` : "")}</option>
           {models.map((m) => <option key={m.id} value={m.id}>{m.label || m.id}</option>)}
         </select>
       )}
@@ -58,14 +59,14 @@ export function CloudModelBar(props: {
         <select
           className="ai-bar-select"
           data-pc="ai-cloud-effort"
-          aria-label="思考强度"
+          aria-label={tr("Thinking effort")}
           value={effortShown}
           disabled={disabled}
-          title={`思考强度:越高想得越久、用的额度越多 · ${effortLabel(effortShown)}`}
+          title={tr("Thinking effort: higher means longer thinking and more quota used · {0}", effortLabel(effortShown))}
           onChange={(e) => props.onEffort?.(e.target.value)}
         >
-          <option value="">思考 {EFFORT_LABEL[""]}</option>
-          {efforts.map((e) => <option key={e} value={e}>思考 {effortLabel(e)}</option>)}
+          <option value="">{tr("Thinking {0}", EFFORT_LABEL[""])}</option>
+          {efforts.map((e) => <option key={e} value={e}>{tr("Thinking {0}", effortLabel(e))}</option>)}
         </select>
       )}
       <div className="ai-pop-anchor" ref={pop.anchorRef}>
@@ -75,31 +76,31 @@ export function CloudModelBar(props: {
           data-pc="ai-run-options"
           aria-haspopup="true"
           aria-expanded={pop.open}
-          aria-label="运行选项"
-          title={`运行选项 · 创造力 ${CREATIVITY_LABEL[creativityNow]}${tabCreativity ? "" : "(跟项目)"}`}
+          aria-label={tr("Run options")}
+          title={tr("Run options · creativity {0}{1}", tr(CREATIVITY_LABEL[creativityNow]), tabCreativity ? "" : tr(" (follows project)"))}
           onClick={pop.toggle}
         >
           <IconMore size={16} />
           {tabCreativity !== null && <i className="ai-bar-dot" aria-hidden="true" />}
         </button>
-        <div className="ai-pop ai-modelbar" role="group" aria-label="运行选项" data-pop style={{ display: pop.open ? undefined : "none" }}>
+        <div className="ai-pop ai-modelbar" role="group" aria-label={tr("Run options")} data-pop style={{ display: pop.open ? undefined : "none" }}>
           <label className="ai-modelbar-item">
-            <span className="ai-modelbar-label">创造力</span>
+            <span className="ai-modelbar-label">{tr("Creativity")}</span>
             <select
               className="ai-modelbar-select"
               data-pc="ai-creativity"
               value={tabCreativity ?? ""}
               disabled={disabled}
-              title={`创造力等级「${CREATIVITY_LABEL[creativityNow]}」:${CREATIVITY_HINT[creativityNow]}。只管这个对话;项目的默认等级在项目设置里改`}
+              title={tr("Creativity level \"{0}\": {1}. Applies to this chat only; change the project's default level in project settings", tr(CREATIVITY_LABEL[creativityNow]), tr(CREATIVITY_HINT[creativityNow]))}
               onChange={(e) => setTabCreativity(tabId, normalizeCreativity(e.target.value))}
             >
-              <option value="">跟项目({CREATIVITY_LABEL[projectLevel]})</option>
-              {CREATIVITY_LEVELS.map((lv) => <option key={lv} value={lv}>{CREATIVITY_LABEL[lv]}</option>)}
+              <option value="">{tr("Follow project ({0})", tr(CREATIVITY_LABEL[projectLevel]))}</option>
+              {CREATIVITY_LEVELS.map((lv) => <option key={lv} value={lv}>{tr(CREATIVITY_LABEL[lv])}</option>)}
             </select>
           </label>
           <div className="ai-modelbar-toggles">
             <button type="button" data-pc="deep-auto" className="ai-modelbar-fast" disabled title={CLOUD_NO_DEEP_AUTO} aria-pressed={false}>
-              深度自主
+              {tr("Deep autonomy")}
             </button>
           </div>
         </div>

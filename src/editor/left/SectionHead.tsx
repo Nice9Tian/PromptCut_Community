@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { setRailCollapsed } from "../sideRails";
 import { useDockSide } from "../dock/dockSide";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 左栏五个分区统一的头部:标题行(分区名 +「收起面板」)+ 下面分区自己的主按钮 / 搜索 / 胶囊(children)。
@@ -17,8 +18,8 @@ export function SectionHead({ title, children }: { title: string; children?: Rea
       type="button"
       className="pc-icon-btn pc-left-collapse"
       data-pc={`${side}-collapse`}
-      title="收起面板"
-      aria-label="收起面板"
+      title={tr("Collapse panel")}
+      aria-label={tr("Collapse panel")}
       onClick={() => setRailCollapsed(side, true)}
     >
       {/* 面板轮廓 + 贴着 rail 那一边的侧栏线 + 朝 rail 的箭头:往那一侧收 */}

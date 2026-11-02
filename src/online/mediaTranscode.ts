@@ -8,6 +8,7 @@
  * - 流式哈希：纯 TypeScript 实现 SHA-256 分块计算，支持任意大小的 Blob/File 流式哈希，避免大文件占用页面内存。
  */
 import { Mp4Muxer, MemorySink } from "../export/mp4Mux.ts";
+import { tr } from "../i18n/index.ts";
 
 export const SMALL_MAX_WIDTH = 800;
 export const SMALL_MAX_HEIGHT = 600;
@@ -231,7 +232,7 @@ function resolveEnv(env?: Partial<TranscodeEnv>): TranscodeEnv {
         el.height = h;
         return el;
       }
-      throw new Error("没有可用画布");
+      throw new Error(tr("no canvas available"));
     }),
     createVideo: env?.createVideo ?? (() => {
       if (typeof document !== "undefined") {
@@ -241,7 +242,7 @@ function resolveEnv(env?: Partial<TranscodeEnv>): TranscodeEnv {
         el.playsInline = true;
         return el;
       }
-      throw new Error("没有可用视频元素");
+      throw new Error(tr("no video element available"));
     }),
   };
 }
@@ -259,8 +260,8 @@ function waitForVideoReady(video: any, timeoutMs = 5000): Promise<void> {
       video.removeEventListener?.("error", onError);
     };
     const onLoaded = () => { cleanup(); resolve(); };
-    const onError = () => { cleanup(); reject(new Error("视频加载失败")); };
-    timer = setTimeout(() => { cleanup(); reject(new Error("探测元数据超时")); }, timeoutMs);
+    const onError = () => { cleanup(); reject(new Error(tr("video failed to load"))); };
+    timer = setTimeout(() => { cleanup(); reject(new Error(tr("metadata probe timed out"))); }, timeoutMs);
     video.addEventListener?.("loadedmetadata", onLoaded);
     video.addEventListener?.("error", onError);
   });
@@ -278,7 +279,7 @@ function waitForSeeked(video: any, timeoutMs = 3000): Promise<void> {
       video.removeEventListener?.("error", onError);
     };
     const onSeeked = () => { cleanup(); resolve(); };
-    const onError = () => { cleanup(); reject(new Error("seek 出错")); };
+    const onError = () => { cleanup(); reject(new Error(tr("seek error"))); };
     timer = setTimeout(() => { cleanup(); resolve(); }, timeoutMs); // seek 超时容忍按当前帧过
     video.addEventListener?.("seeked", onSeeked);
     video.addEventListener?.("error", onError);

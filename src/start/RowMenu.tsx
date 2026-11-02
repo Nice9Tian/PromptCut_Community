@@ -20,6 +20,7 @@ import { useEffect, useRef } from "react";
 import type { JSX } from "react";
 import type { TreeKind } from "./treeKind";
 import type { MoveTarget } from "./vibeOrg";
+import { tr } from "../i18n/index.ts";
 
 export interface MenuAt {
   id: string;
@@ -36,7 +37,7 @@ const MENU = { w: 168, h: 148, pad: 8 };
 /** 「移到分组」每多一项,菜单高这么多 */
 const ITEM_H = 30;
 
-const KIND_WORD: Record<TreeKind, string> = { group: "分组", project: "项目", chat: "对话" };
+const KIND_WORD: Record<TreeKind, string> = { group: tr("Group"), project: tr("Project"), chat: tr("chat") };
 
 /** 一项做不了时的说明;给了就置灰并挂在悬停上 */
 export type MenuBlock = string | null | undefined;
@@ -129,19 +130,19 @@ export function RowMenu(props: {
       ref={box}
       className="ps-menu"
       role="menu"
-      aria-label={`${KIND_WORD[props.at.kind]}「${props.at.name}」的操作`}
+      aria-label={tr("Actions for {0} \"{1}\"", KIND_WORD[props.at.kind], props.at.name)}
       data-pc="start-row-menu"
       style={{ left, top }}
     >
       <div className="ps-menu-head" title={props.at.name}>{props.at.name}</div>
-      {item("重命名", props.onRename, { pc: "start-menu-rename", blocked: props.renameBlocked })}
-      {!props.archived && item(props.at.pinned ? "取消置顶" : "置顶", props.onPin, { pc: "start-menu-pin", blocked: props.pinBlocked })}
-      {item(props.archived ? "取消归档" : "归档", props.onArchive, { pc: "start-menu-archive", blocked: props.archiveBlocked })}
+      {item(tr("Rename"), props.onRename, { pc: "start-menu-rename", blocked: props.renameBlocked })}
+      {!props.archived && item(props.at.pinned ? tr("Unpin") : tr("Bring to front"), props.onPin, { pc: "start-menu-pin", blocked: props.pinBlocked })}
+      {item(props.archived ? tr("Unarchive") : tr("Archive"), props.onArchive, { pc: "start-menu-archive", blocked: props.archiveBlocked })}
       {props.moveTargets && props.onMove && props.moveTargets.length > 0 && <div className="ps-menu-sep" />}
       {props.moveTargets && props.onMove && props.moveTargets.map((g) =>
-        item(g.id === null ? "移出分组" : `移到「${g.name}」`, () => props.onMove!(g.id), { pc: "start-menu-move", blocked: g.blocked }))}
+        item(g.id === null ? tr("Remove from group") : tr("Move to \"{0}\"", g.name), () => props.onMove!(g.id), { pc: "start-menu-move", blocked: g.blocked }))}
       <div className="ps-menu-sep" />
-      {item("删除", props.onDelete, { danger: true, pc: "start-menu-delete", blocked: props.deleteBlocked })}
+      {item(tr("Delete"), props.onDelete, { danger: true, pc: "start-menu-delete", blocked: props.deleteBlocked })}
     </div>
   );
 }

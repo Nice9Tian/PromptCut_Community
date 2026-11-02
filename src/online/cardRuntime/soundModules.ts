@@ -55,7 +55,7 @@ for (const [file, load] of Object.entries(lazy)) {
 
 export const SOUND_PACKAGE_NAMES: readonly string[] = Object.freeze(Object.keys(packages));
 if (import.meta.env.DEV && (SOUND_PACKAGE_NAMES.length !== CARD_PACKAGES.length || CARD_PACKAGES.some((n) => !Object.hasOwn(packages, n)))) {
-  console.error("[cardRuntime] 声音线程的包表与白名单对不上", SOUND_PACKAGE_NAMES, CARD_PACKAGES);
+  console.error("[cardRuntime] Sound thread package table does not match the allowlist", SOUND_PACKAGE_NAMES, CARD_PACKAGES);
 }
 
 export const soundHostModules: HostModules = {

@@ -127,7 +127,7 @@ export function mergeRanges(list: readonly (readonly number[])[]): Range[] {
 function req<T>(r: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     r.onsuccess = () => resolve(r.result);
-    r.onerror = () => reject(r.error ?? new Error("IndexedDB 请求失败"));
+    r.onerror = () => reject(r.error ?? new Error("IndexedDB request failed"));
   });
 }
 
@@ -145,7 +145,7 @@ function runTx<T>(db: IDBDatabase, stores: string[], mode: IDBTransactionMode, b
     const fail = (e: unknown) => {
       if (settled) return;
       settled = true;
-      reject(e ?? new Error("IndexedDB 事务失败"));
+      reject(e ?? new Error("IndexedDB transaction failed"));
     };
     tx.oncomplete = () => { if (!settled) { settled = true; resolve(out); } };
     tx.onerror = (ev) => {
@@ -154,7 +154,7 @@ function runTx<T>(db: IDBDatabase, stores: string[], mode: IDBTransactionMode, b
       failure ??= err;
       fail(failure);
     };
-    tx.onabort = () => fail(failure ?? tx.error ?? Object.assign(new Error("IndexedDB 事务被中止"), { name: "AbortError" }));
+    tx.onabort = () => fail(failure ?? tx.error ?? Object.assign(new Error("IndexedDB transaction aborted"), { name: "AbortError" }));
     const abortWith = (e: unknown) => {
       failure ??= e;
       try { tx.abort(); } catch { fail(e); }
@@ -181,7 +181,7 @@ function openDb(factory: IDBFactory, name: string): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(L2_STORES.ranges)) db.createObjectStore(L2_STORES.ranges, { keyPath: "key" });
     };
     r.onsuccess = () => resolve(r.result);
-    r.onerror = () => reject(r.error ?? new Error("打不开页面内快照库"));
+    r.onerror = () => reject(r.error ?? new Error("cannot open the in-page snapshot store"));
     r.onblocked = () => { /* 别的标签页握着旧版本:等它关 */ };
   });
 }

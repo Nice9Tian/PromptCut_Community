@@ -7,7 +7,9 @@
  */
 import type { JSX, ReactNode } from "react";
 import { Logo } from "../ui/Logo";
+import { LanguageMenu } from "../ui/LanguageMenu";
 import { hueOf } from "./hue";
+import { tr } from "../i18n/index.ts";
 
 export function TopBar(props: {
   /** 现在就在开始页(首页按钮标成当前项) */
@@ -20,6 +22,8 @@ export function TopBar(props: {
   onSignOut?: () => void;
   center?: ReactNode;
   right?: ReactNode;
+  /** Saves the open project before a language switch reloads the page */
+  prepareLanguageSwitch?: (url: URL) => Promise<boolean>;
 }): JSX.Element {
   const seed = props.accountName ?? "guest";
   const account = !!props.onSignOut;
@@ -30,9 +34,9 @@ export function TopBar(props: {
         type="button"
         className="ps-top-home"
         data-pc="start-home"
-        aria-label="回到开始页"
+        aria-label={tr("back to the start page")}
         aria-current={props.atHome ? "page" : undefined}
-        title="开始页"
+        title={tr("start page")}
         onClick={props.onHome}
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -48,8 +52,8 @@ export function TopBar(props: {
         data-pc="start-side-collapse"
         /* 点亮(强调色)=列表栏开着,灰=关着(2026-10-23 用户定:原先反了,收起来时才亮) */
         aria-pressed={!props.collapsed}
-        aria-label={props.collapsed ? "展开侧栏" : "收起侧栏"}
-        title={props.collapsed ? "展开侧栏" : "收起侧栏"}
+        aria-label={props.collapsed ? tr("Expand sidebar") : tr("Collapse sidebar")}
+        title={props.collapsed ? tr("Expand sidebar") : tr("Collapse sidebar")}
         onClick={props.onToggleSide}
       >
         {/* 一个带左栏的面板:左栏实心表示侧栏在,空心表示收起来了 */}
@@ -66,6 +70,8 @@ export function TopBar(props: {
 
       <span className="ps-top-spacer" />
 
+      <LanguageMenu className="ps-ghost-btn" prepare={props.prepareLanguageSwitch} />
+
       {/* 账号:摆在右边那几颗的左侧(用户 2026-10-23 定,原来在侧栏底下)。桌面版没有账号,这一块不出现 */}
       {account && <div className="ps-top-account" data-pc="start-top-account">
         <span
@@ -75,9 +81,9 @@ export function TopBar(props: {
         >
           {(props.accountName ?? "?").slice(0, 1)}
         </span>
-        <span className="ps-top-account-name" data-pc="start-account-name">{props.accountName ?? "未登录"}</span>
+        <span className="ps-top-account-name" data-pc="start-account-name">{props.accountName ?? tr("Not logged in")}</span>
         <button type="button" className="ps-link" data-pc="start-sign-out" onClick={props.onSignOut}>
-          退出
+          {tr("Exit")}
         </button>
       </div>}
 

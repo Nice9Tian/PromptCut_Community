@@ -1,3 +1,4 @@
+import { tr } from "../../i18n/index.ts";
 type TauriGlobal = {
   core?: { invoke?: (command: string, args: Record<string, unknown>) => Promise<unknown> };
   app?: { getVersion?: () => Promise<string> };
@@ -11,7 +12,7 @@ export const ACCOUNT_BRIDGE_MIN_SHELL = '0.2.8';
  * 所以补丁装不出这个功能，要装完整安装包（用户 2026-10-17 定：补丁的最低外壳仍是 0.2.0，不抬，入口自己说明）。
  */
 export const OLD_SHELL_ACCOUNT_TEXT =
-  '这个功能要装完整安装包。你现在用的桌面外壳比较旧，只装更新补丁换不掉它，云端项目和账号登录要新外壳才能用；请安装最新的完整安装包。本地项目不受影响，照常可用。';
+  tr("This feature requires the full installer. Your desktop shell is too old and an update patch cannot replace it. Cloud projects and account sign-in need the new shell; please install the latest full installer. Local projects are not affected and keep working as usual.");
 
 /** 外壳里没有账号桥时抛这个。界面按 `code` 或 `isDesktopShellTooOld` 认，别拿文案比。 */
 export class DesktopShellTooOldError extends Error {
@@ -82,7 +83,7 @@ async function shellLacksAccountBridge(tauri: TauriGlobal): Promise<boolean> {
 export async function desktopAccountBridge(operation: string, args: Record<string, unknown> = {}): Promise<unknown> {
   const tauri = (window as unknown as { __TAURI__?: TauriGlobal }).__TAURI__;
   const invoke = tauri?.core?.invoke;
-  if (!tauri || !invoke) throw new Error('此环境没有桌面账号安全存储，请使用桌面版或在线编辑器。');
+  if (!tauri || !invoke) throw new Error(tr("This environment has no desktop account secure storage. Please use the desktop app or the online editor."));
   try {
     return await invoke('account_bridge', { operation, args });
   } catch (error) {

@@ -5,6 +5,7 @@ import {
 } from "../ai/agentBrowserStore";
 import { agentWebviewInfo } from "../ai/shellBrowser";
 import "./AgentBrowserTab.css";
+import { tr } from "../i18n/index.ts";
 
 /**
  * 顶栏的「浏览器」页签(只在桌面壳里出现)。
@@ -28,8 +29,8 @@ export function AgentBrowserTab(): JSX.Element | null {
 
   const cls = ["pc-btn", "pc-agent-tab", st.open ? "is-open" : "", st.pending ? "is-pending" : ""].filter(Boolean).join(" ");
   const title = st.pending
-    ? `AI 在等你操作${st.reason ? `：${st.reason}` : ""}。点一下切过去`
-    : st.open ? "回到编辑" : "切到 AI 的浏览器";
+    ? tr("The AI is waiting for you to act{0}. Click to switch over", st.reason ? tr(": {0}", st.reason) : "")
+    : st.open ? tr("Back to editing") : tr("Switch to the AI's browser");
 
   // 自带一组(.pc-bar-group):没有壳时整个不渲染,顶栏上不会留一个空组的间距
   return (
@@ -39,12 +40,12 @@ export function AgentBrowserTab(): JSX.Element | null {
           <circle cx="12" cy="12" r="9" />
           <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
         </svg>
-        <span className="pc-btn-label">浏览器</span>
+        <span className="pc-btn-label">{tr("Browser")}</span>
         {st.pending && <span className="pc-agent-dot" aria-hidden="true" />}
       </button>
       {st.pending && !st.open && (
         <span className="pc-agent-bubble" role="status">
-          有待操作事务{st.reason ? `：${st.reason}` : ""}
+          {tr("Pending transaction{0}", st.reason ? tr(": {0}", st.reason) : "")}
         </span>
       )}
     </span>

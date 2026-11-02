@@ -3,6 +3,7 @@ import { normalizeEmphasis, type ClipEmphasis } from "../../kernel/emphasis";
 import type { ClipFrame, ClipMotion, PartInstance } from "../../kernel/types";
 
 import { state, setProject, updateTrack } from "../core";
+import { tr } from "../../i18n/index.ts";
 
 export const properties = {
   /** 换卡片类型(保留时段)。keepParams 为 true 时,保留新卡也有的同名参数。 */
@@ -34,9 +35,9 @@ export const properties = {
   setClipEmphasis(clipId: string, emphasis: Partial<ClipEmphasis> | null): { ok: boolean; emphasis: ClipEmphasis | null; error?: string } {
     const p = state.project;
     const hit = findClip(p, clipId);
-    if (!hit) return { ok: false, emphasis: null, error: `找不到片段 ${clipId}` };
+    if (!hit) return { ok: false, emphasis: null, error: tr("Clip {0} not found", clipId) };
     const next = emphasis ? normalizeEmphasis(emphasis) : null;
-    if (emphasis && !next) return { ok: false, emphasis: null, error: "强调只有 shadow(阴影)和 outline(描边)两种" };
+    if (emphasis && !next) return { ok: false, emphasis: null, error: tr("Emphasis can only be shadow or outline") };
     setProject(updateTrack(p, hit.track.id, (t) => ({
       ...t,
       clips: t.clips.map((c) => {

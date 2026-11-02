@@ -26,7 +26,7 @@ export interface SoundRenderRequest {
 
 /** 一次最多求多少帧(同编辑页面 `CARD_AUDIO_MAX_BLOCK_FRAMES`) */
 export const SOUND_MAX_BLOCK_FRAMES = 1_048_576;
-export const SOUND_NEEDS_MEDIA = "这张卡要读素材的声音采样,在线页面取不到";
+export const SOUND_NEEDS_MEDIA = "This card needs to read the media's audio samples, which the online page cannot get";
 
 interface GraphNode { id: string; adapter?: string; cardId?: string; inputs?: Record<string, unknown> }
 
@@ -38,10 +38,10 @@ export function soundBlocker(nodes: readonly GraphNode[], nodeId: string, getCar
     if (seen.has(id)) return null;
     seen.add(id);
     const node = byId.get(id);
-    if (!node) return `找不到节点 ${id}`;
+    if (!node) return `Node ${id} not found`;
     if (node.adapter !== "card") return SOUND_NEEDS_MEDIA;
     const def = typeof node.cardId === "string" ? getCard(node.cardId) : undefined;
-    if (typeof def?.audio !== "function") return `声音线程里没有 ${node.cardId ?? id} 的声音代码`;
+    if (typeof def?.audio !== "function") return `The sound thread has no sound code for ${node.cardId ?? id}`;
     for (const ref of Object.values(node.inputs ?? {})) {
       const next = typeof ref === "string" ? ref : (ref as { nodeId?: unknown; clipId?: unknown } | null)?.nodeId;
       if (typeof next !== "string") return SOUND_NEEDS_MEDIA;
@@ -66,7 +66,7 @@ export function createSoundEngine(getCard: (id: string) => CardDef<any> | undefi
     reset() { last = null; },
     async render(req, signal) {
       if (!req || typeof req.nodeId !== "string" || !Number.isSafeInteger(req.start) || !Number.isSafeInteger(req.count) || req.count < 1 || req.count > SOUND_MAX_BLOCK_FRAMES
-        || !Number.isFinite(req.sampleRate) || req.sampleRate < 8000 || req.sampleRate > 192_000) throw new Error("声音请求的范围不对");
+        || !Number.isFinite(req.sampleRate) || req.sampleRate < 8000 || req.sampleRate > 192_000) throw new Error("Sound request is out of range");
       if (!last || last.project !== req.project) {
         // 与编辑页面同一份图(`audio/cardAudio.ts` 的 audioGraphOf):变速素材段上的声画一体卡按卡片时钟走(kernel/clipTime.mjs 的 cardClockOffset)
         const graph = withMediaRates(req.project, projectCardGraph(req.project, getCard));

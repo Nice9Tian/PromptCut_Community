@@ -14,6 +14,7 @@
 import type { CardRunState, SyncedUserCard } from "../../kernel/registry.ts";
 import type { BundleResult } from "../../online/cardRuntime/protocol.ts";
 import { cyrb53 } from "../../render/cyrb53.mjs";
+import { tr } from "../../i18n/index.ts";
 
 export interface EditorRunStateInput {
   /** 同步表(静态解析出来的卡;`source` 是入口文件的键) */
@@ -54,16 +55,16 @@ export function editorRunStates(input: EditorRunStateInput): Map<string, CardRun
 export function runStateMessage(s: CardRunState | undefined): string | null {
   if (!s) return null;
   const d = s.detail ? s.detail : "";
-  const where = s.file ? `,${s.file.replace(/^src\/cards\/user\//, "")}` : "";
+  const where = s.file ? `, ${s.file.replace(/^src\/cards\/user\//, "")}` : "";
   switch (s.state) {
     case "ready": case "loading": return null;
-    case "unsupported-syntax": return `在线浏览器不能运行这张卡:用了在线页面不支持的写法${d ? `(${d}${where})` : ""}。画面由渲染节点提供。`;
-    case "missing-module": return `在线浏览器不能运行这张卡:引用了在线页面里没有的模块${d ? ` ${d}` : ""}。画面由渲染节点提供。`;
-    case "load-error": return `在线浏览器不能运行这张卡:载入时出错${d ? `(${d})` : ""}。`;
-    case "gpu": return "这台设备的图形能力不够,素材效果卡的画面由渲染节点提供。";
-    case "media": return "这台设备解不了这段素材,素材效果卡的画面由渲染节点提供。";
-    case "runtime-error": return "这张卡在在线浏览器里运行出错,本次改由渲染节点提供画面。";
-    case "not-isolated": return d ? `${d},用户卡与素材效果卡的画面由渲染节点提供。` : "这个页面没有隔离的运行环境,用户卡与素材效果卡的画面由渲染节点提供。";
+    case "unsupported-syntax": return tr("The online browser cannot run this card: it uses syntax the online page does not support{0}. The picture is provided by a render node.", d ? ` (${d}${where})` : "");
+    case "missing-module": return tr("The online browser cannot run this card: it references a module that is not available on the online page{0}. The picture is provided by a render node.", d ? `: ${d}` : "");
+    case "load-error": return tr("The online browser cannot run this card: error while loading{0}.", d ? ` (${d})` : "");
+    case "gpu": return tr("This device's graphics capability is not enough, so the picture of media effect cards is provided by a render node.");
+    case "media": return tr("This device cannot decode this media clip, so the picture of media effect cards is provided by a render node.");
+    case "runtime-error": return tr("This card failed to run in the online browser, so a render node provides the picture this time.");
+    case "not-isolated": return d ? tr("{0}, so the picture of user cards and media effect cards is provided by a render node.", d) : tr("This page has no isolated runtime environment, so the picture of user cards and media effect cards is provided by a render node.");
     default: return null;
   }
 }

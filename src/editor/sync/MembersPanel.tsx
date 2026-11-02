@@ -18,6 +18,7 @@ import "./sync.css";
 // 局域网缺省成员源的注册已挪到入口（`src/main.tsx` → `./lanBoot.ts`）：
 // 原来写在本文件顶层，等于「谁 import 到这个面板就顺带注册」，手机端那条路上它不在闭包里
 import { getMemberSource, subscribeAccountExtensions } from "./accountExtensions";
+import { tr } from "../../i18n/index.ts";
 
 export type Flow =
   | { kind: "password" }
@@ -82,7 +83,7 @@ function LegacyMembersButton() {
         type="button"
         className="pc-sync-chip"
         data-pc="members-button"
-        title="成员"
+        title={tr("Members")}
         onClick={() => {
           if (!open && btnRef.current) setRect(btnRef.current.getBoundingClientRect());
           setOpen(!open);
@@ -121,14 +122,14 @@ function LegacyMembersButton() {
                   >
                     <span className={`pc-members-name${me ? " is-me" : ""}`}>
                       {row.displayName}
-                      {me ? " (自己)" : ""}
+                      {me ? tr(" (you)") : ""}
                     </span>
-                    {row.creator ? <span className="pc-sync-tag pc-sync-tag--creator">[创建者]</span> : null}
-                    {isCloudAgentOnly(row, running) ? <span className="pc-sync-tag" data-pc="members-offline-agent" title="这位成员不在线，他的云端 Agent 还在跑；不计入成员人数，计入 Agent 个数">[离线，Agent 在跑]</span> : null}
-                    {row.tags.editing ? <span className="pc-sync-tag pc-sync-tag--editing">[编辑中]</span> : null}
-                    {row.tags.rendering ? <span className="pc-sync-tag pc-sync-tag--rendering">[渲染中]</span> : null}
+                    {row.creator ? <span className="pc-sync-tag pc-sync-tag--creator">{tr("[creator]")}</span> : null}
+                    {isCloudAgentOnly(row, running) ? <span className="pc-sync-tag" data-pc="members-offline-agent" title={tr("This member is offline but their Cloud Agent is still running; not counted in the member count, counted in the Agent count")}>{tr("[offline, Agent running]")}</span> : null}
+                    {row.tags.editing ? <span className="pc-sync-tag pc-sync-tag--editing">{tr("[editing]")}</span> : null}
+                    {row.tags.rendering ? <span className="pc-sync-tag pc-sync-tag--rendering">{tr("[rendering]")}</span> : null}
                     {local.length > 0 ? <span className="pc-sync-tag">[Agent ×{local.length}]</span> : null}
-                    {cloud.length > 0 ? <span className="pc-sync-tag" data-pc="members-cloud-agent" title={cloudAgentLabel(row.username)}>[云端 Agent]</span> : null}
+                    {cloud.length > 0 ? <span className="pc-sync-tag" data-pc="members-cloud-agent" title={cloudAgentLabel(row.username)}>{tr("[Cloud Agent]")}</span> : null}
                     {iAmCreator && !me && row.deviceId ? (
                       <button
                         type="button"
@@ -138,7 +139,7 @@ function LegacyMembersButton() {
                           startFlow({ kind: "kick", row });
                         }}
                       >
-                        踢出
+                        {tr("Kick")}
                       </button>
                     ) : null}
                   </div>
@@ -146,7 +147,7 @@ function LegacyMembersButton() {
                     <div className="pc-members-sub">
                       {local.map((a, i) => (
                         <span key={i}>
-                          {row.username} · Agent · 第 {a.conversation ?? i + 1} 个对话
+                          {tr("{0} · Agent · chat {1}", row.username, a.conversation ?? i + 1)}
                         </span>
                       ))}
                       {cloud.length > 0 ? <span data-pc="members-cloud-agent-row">{cloudAgentLabel(row.username)}</span> : null}
@@ -155,37 +156,37 @@ function LegacyMembersButton() {
                 </div>
               );
             })}
-            {others.length === 0 ? <div className="pc-members-empty">只有你自己在线。</div> : null}
+            {others.length === 0 ? <div className="pc-members-empty">{tr("Only you are online.")}</div> : null}
             {services.length ? <div className="pc-members-sep" data-pc="members-services-sep" /> : null}
             {services.map((row) => (
               <div className="pc-members-row" key={`service:${row.service}@${row.deviceId}`} data-pc={`members-service-${row.service}`}>
                 <div className="pc-members-row-main">
                   <span className="pc-members-name">{serviceRowLabel(row.service)}</span>
-                  {row.tags.rendering ? <span className="pc-sync-tag pc-sync-tag--rendering">[渲染中]</span> : null}
+                  {row.tags.rendering ? <span className="pc-sync-tag pc-sync-tag--rendering">{tr("[rendering]")}</span> : null}
                 </div>
               </div>
             ))}
             {iAmCreator ? (
               <>
                 <div className="pc-members-sep" />
-                <div className="pc-members-admin-title">项目管理（仅创建者可见）</div>
+                <div className="pc-members-admin-title">{tr("Project management (visible to the creator only)")}</div>
                 {shared.mode === "free" ? (
                   <button type="button" className="pc-members-admin-item" onClick={() => startFlow({ kind: "password" })}>
-                    改项目密码
+                    {tr("Change project password")}
                   </button>
                 ) : (
                   <button type="button" className="pc-members-admin-item" onClick={() => startFlow({ kind: "list" })}>
-                    改名单
+                    {tr("Edit allowlist")}
                   </button>
                 )}
                 <button type="button" className="pc-members-admin-item" onClick={() => startFlow({ kind: "creator-password" })}>
-                  改创建者密码
+                  {tr("Change creator password")}
                 </button>
                 <button type="button" className="pc-members-admin-item" onClick={() => startFlow({ kind: "bans" })}>
-                  已禁入的设备
+                  {tr("Banned devices")}
                 </button>
                 <button type="button" className="pc-members-admin-item is-danger" onClick={() => startFlow({ kind: "delete" })}>
-                  删除项目
+                  {tr("Delete project")}
                 </button>
               </>
             ) : null}
@@ -265,27 +266,27 @@ function VerifyDialog({ onClose, onOk }: { onClose: () => void; onOk: (v: Verifi
     }
     if (r.error === "rate-limited") {
       setLockUntil(Date.now() + LOCK_MS);
-      setErr("尝试太多次，等 60 秒后再试。");
-    } else setErr("密码错误。");
+      setErr(tr("Too many attempts, try again in 60 seconds."));
+    } else setErr(tr("Wrong password."));
   };
   return (
     <Dialog
-      title="验证创建者身份"
+      title={tr("Verify creator identity")}
       pc="creator-verify"
       foot={
         <>
           <button type="button" className="pc-btn" onClick={onClose}>
-            取消
+            {tr("Cancel")}
           </button>
           <button type="button" className="pc-btn pc-btn--primary" disabled={!pw || busy || locked} onClick={() => void verify()}>
-            验证
+            {tr("Verify")}
           </button>
         </>
       }
     >
       <div className="pc-sync-field">
-        <label htmlFor="pc-cv-pw">创建者密码</label>
-        <input id="pc-cv-pw" type="password" autoFocus className={`pc-dialog-input${err ? " is-invalid" : ""}`} placeholder="输入创建者密码" value={pw} disabled={locked}
+        <label htmlFor="pc-cv-pw">{tr("Creator password")}</label>
+        <input id="pc-cv-pw" type="password" autoFocus className={`pc-dialog-input${err ? " is-invalid" : ""}`} placeholder={tr("Enter the creator password")} value={pw} disabled={locked}
           onChange={(e) => { setPw(e.target.value); setErr(""); }} onKeyDown={(e) => { if (e.key === "Enter") void verify(); }} />
         {err ? <div className="pc-sync-err">{err}</div> : null}
       </div>
@@ -294,10 +295,10 @@ function VerifyDialog({ onClose, onOk }: { onClose: () => void; onOk: (v: Verifi
 }
 
 function failText(error: string): string {
-  if (error === "rate-limited") return "尝试太多次，等 60 秒后再试。";
-  if (error === "forbidden") return "密码错误。";
-  if (error === "offline") return "没连上文档服务，稍后再试。";
-  return "没做成，稍后再试。";
+  if (error === "rate-limited") return tr("Too many attempts, try again in 60 seconds.");
+  if (error === "forbidden") return tr("Wrong password.");
+  if (error === "offline") return tr("Could not connect to the document service, try again later.");
+  return tr("Did not succeed, try again later.");
 }
 
 function PasswordDialog({ creator, v, onClose }: { creator: boolean; v: Verified; onClose: () => void }) {
@@ -307,7 +308,7 @@ function PasswordDialog({ creator, v, onClose }: { creator: boolean; v: Verified
   const [busy, setBusy] = useState(false);
   const submit = async () => {
     if (!a || a !== b) {
-      setErr(a !== b ? "两次输入不一致。" : "");
+      setErr(a !== b ? tr("The two entries do not match.") : "");
       return;
     }
     setBusy(true);
@@ -318,35 +319,35 @@ function PasswordDialog({ creator, v, onClose }: { creator: boolean; v: Verified
     // 项目设置「多用户协作」里显示的是本机记下的密码(C10a):改了就跟着换
     const pid = getSyncView().shared?.projectId;
     if (pid) await rememberPasswords(pid, creator ? { creatorPassword: a } : { projectPassword: a });
-    pushToast(creator ? "创建者密码已修改，之后的项目管理要用新密码。" : "项目密码已修改。在线的人不受影响，下次进入要用新密码。", "info");
+    pushToast(creator ? tr("Creator password changed. Use the new password for project management from now on.") : tr("Project password changed. People who are online are not affected; the new password is needed next time they join."), "info");
     onClose();
   };
   return (
     <Dialog
-      title={creator ? "改创建者密码" : "改项目密码"}
+      title={creator ? tr("Change creator password") : tr("Change project password")}
       pc={creator ? "creator-password" : "project-password"}
       foot={
         <>
           <button type="button" className="pc-btn" onClick={onClose}>
-            取消
+            {tr("Cancel")}
           </button>
           <button type="button" className="pc-btn pc-btn--primary" disabled={busy || !a || !b} onClick={() => void submit()}>
-            确认修改
+            {tr("Confirm change")}
           </button>
         </>
       }
     >
       <div className="pc-sync-field">
-        <label htmlFor="pc-pw-a">新密码</label>
+        <label htmlFor="pc-pw-a">{tr("New password")}</label>
         <input id="pc-pw-a" type="password" autoFocus className="pc-dialog-input" value={a} onChange={(e) => { setA(e.target.value); setErr(""); }} />
       </div>
       <div className="pc-sync-field">
-        <label htmlFor="pc-pw-b">确认新密码</label>
+        <label htmlFor="pc-pw-b">{tr("Confirm new password")}</label>
         <input id="pc-pw-b" type="password" className={`pc-dialog-input${err ? " is-invalid" : ""}`} value={b} onChange={(e) => { setB(e.target.value); setErr(""); }}
           onKeyDown={(e) => { if (e.key === "Enter") void submit(); }} />
         {err ? <div className="pc-sync-err">{err}</div> : null}
       </div>
-      <div className="pc-sync-hint">{creator ? "在线的人不受影响，之后的项目管理要用新的创建者密码。" : "在线的人不受影响，下次进入要用新密码。"}</div>
+      <div className="pc-sync-hint">{creator ? tr("People who are online are not affected. Use the new creator password for project management from now on.") : tr("People who are online are not affected; the new password is needed next time they join.")}</div>
     </Dialog>
   );
 }
@@ -361,15 +362,15 @@ function ListDialog({ v, onClose }: { v: Verified; onClose: () => void }) {
   const [err, setErr] = useState("");
   const add = () => {
     const u = rowName.trim();
-    if (!u) return setRowErr("用户名不能为空。");
-    if (!rowPw) return setRowErr("密码不能为空。");
-    if (u === shared?.username || rows.some((r) => r.username === u)) return setRowErr("名单里已有这个名字，换一个区分一下。");
+    if (!u) return setRowErr(tr("Username cannot be empty."));
+    if (!rowPw) return setRowErr(tr("Password cannot be empty."));
+    if (u === shared?.username || rows.some((r) => r.username === u)) return setRowErr(tr("This name is already in the list, use a different one to tell them apart."));
     setRows([...rows, { username: u, password: rowPw }]);
     setRowName("");
     setRowPw("");
   };
   const changePassword = (u: string) => {
-    const pw = window.prompt(`给 ${u} 设一个新密码`);
+    const pw = window.prompt(tr("Set a new password for {0}", u));
     if (pw) setRows(rows.map((r) => (r.username === u ? { username: u, password: pw } : r)));
   };
   const submit = async () => {
@@ -379,20 +380,20 @@ function ListDialog({ v, onClose }: { v: Verified; onClose: () => void }) {
     const res = await adminOp("set-list", { key: v.key }, { list });
     setBusy(false);
     if (!res.ok) return setErr(failText(res.error));
-    pushToast("名单已修改。", "info", 4000);
+    pushToast(tr("List updated."), "info", 4000);
     onClose();
   };
   return (
     <Dialog
-      title="改名单"
+      title={tr("Edit list")}
       pc="list-dialog"
       foot={
         <>
           <button type="button" className="pc-btn" onClick={onClose}>
-            取消
+            {tr("Cancel")}
           </button>
           <button type="button" className="pc-btn pc-btn--primary" disabled={busy} onClick={() => void submit()}>
-            确认修改
+            {tr("Confirm change")}
           </button>
         </>
       }
@@ -408,7 +409,7 @@ function ListDialog({ v, onClose }: { v: Verified; onClose: () => void }) {
         setRowPw={(x) => { setRowPw(x); setRowErr(""); }}
         onAdd={add}
         rowErr={rowErr}
-        hint="独立渲染主机是在另一台机器上帮你跑后台预渲染的 PromptCut 实例。如果有，在这里给它加一条专属名单，并在那边凭该用户名密码登录。"
+        hint={tr("A standalone render host is a PromptCut instance on another machine that runs background prerender for you. If you have one, add a dedicated list entry for it here, and log in there with that username and password.")}
       />
       {err ? <div className="pc-sync-err">{err}</div> : null}
     </Dialog>
@@ -425,11 +426,11 @@ function BansDialog({ v, onClose }: { v: Verified; onClose: () => void }) {
   };
   return (
     <Dialog
-      title="已禁入的设备"
+      title={tr("Banned devices")}
       pc="bans-dialog"
       foot={
         <button type="button" className="pc-btn" onClick={onClose}>
-          返回
+          {tr("Back")}
         </button>
       }
     >
@@ -440,13 +441,13 @@ function BansDialog({ v, onClose }: { v: Verified; onClose: () => void }) {
               <span>{b.username}</span>
               <small>{b.deviceId}</small>
               <button type="button" className="pc-dialog-opt" onClick={() => void unban(b)}>
-                撤销
+                {tr("Revoke")}
               </button>
             </div>
           ))}
         </div>
       ) : (
-        <div className="pc-sync-hint">（没有被禁入的设备）</div>
+        <div className="pc-sync-hint">{tr("(No banned devices)")}</div>
       )}
       {err ? <div className="pc-sync-err">{err}</div> : null}
     </Dialog>
@@ -462,8 +463,8 @@ function KickDialog({ row, v, onClose }: { row: MemberRow; v: Verified; onClose:
     const r = await adminOp("kick", { key: v.key }, { username: row.username, deviceId: row.deviceId });
     setBusy(false);
     if (!r.ok) return setErr(failText(r.error));
-    if (shared?.mode === "free") pushToast("已踢出。自由进入模式下，想彻底挡住，要改项目密码。", "info", 8000);
-    else pushToast("已踢出。", "info", 4000);
+    if (shared?.mode === "free") pushToast(tr("Kicked out. In open entry mode, to block them completely, you need to change the project password."), "info", 8000);
+    else pushToast(tr("Kicked."), "info", 4000);
     onClose();
   };
   return (
@@ -472,16 +473,16 @@ function KickDialog({ row, v, onClose }: { row: MemberRow; v: Verified; onClose:
       foot={
         <>
           <button type="button" className="pc-btn" onClick={onClose}>
-            取消
+            {tr("Cancel")}
           </button>
           <button type="button" className="pc-btn pc-sync-danger-btn" disabled={busy} onClick={() => void kick()}>
-            踢出
+            {tr("Kick")}
           </button>
         </>
       }
     >
       <div style={{ fontSize: 13.5, lineHeight: 1.6 }}>
-        确定要把 {row.username} ({row.deviceName ?? row.deviceId}) 踢出项目吗？
+        {tr("Are you sure you want to kick {0} ({1}) from the project?", row.username, row.deviceName ?? row.deviceId)}
       </div>
       {err ? <div className="pc-sync-err">{err}</div> : null}
     </Dialog>
@@ -497,8 +498,8 @@ function HostedServiceDialog({ service, enabled, v, onClose }: { service: Hosted
     setBusy(true);
     const r = await setHostedService(service, enabled, v.key);
     setBusy(false);
-    if (!r.ok) return setErr(hostedFailText(r, "这台云节点现在没有这个服务。", failText));
-    pushToast(enabled ? `已打开${label}。` : `已关闭${label}。`, "info", 4000);
+    if (!r.ok) return setErr(hostedFailText(r, tr("This cloud node does not currently have this service."), failText));
+    pushToast(enabled ? tr("Enabled {0}.", label) : tr("Disabled {0}.", label), "info", 4000);
     onClose();
   };
   return (
@@ -508,16 +509,16 @@ function HostedServiceDialog({ service, enabled, v, onClose }: { service: Hosted
       foot={
         <>
           <button type="button" className="pc-btn" onClick={onClose}>
-            取消
+            {tr("Cancel")}
           </button>
           <button type="button" className="pc-btn pc-btn--primary" data-pc="hosted-service-confirm" disabled={busy} onClick={() => void apply()}>
-            {enabled ? "打开" : "关闭"}
+            {enabled ? tr("Enable") : tr("Close")}
           </button>
         </>
       }
     >
       <div style={{ fontSize: 13.5, lineHeight: 1.6 }}>
-        {HOSTED_SERVICE_TEXT[service]?.confirm(enabled) ?? (enabled ? `打开${label}。` : `关闭${label}。`)}
+        {HOSTED_SERVICE_TEXT[service]?.confirm(enabled) ?? (enabled ? tr("Enable {0}.", label) : tr("Turn off {0}.", label))}
       </div>
       {err ? <div className="pc-sync-err">{err}</div> : null}
     </Dialog>
@@ -534,8 +535,8 @@ function HostedOptionDialog({ service, option, enabled, v, onClose }: { service:
     setBusy(true);
     const r = await setHostedOption(service, option, enabled, v.key);
     setBusy(false);
-    if (!r.ok) return setErr(hostedFailText(r, "这台云节点现在没有这个选项。", failText));
-    pushToast(enabled ? `已打开${label}。` : `已关闭${label}。`, "info", 4000);
+    if (!r.ok) return setErr(hostedFailText(r, tr("This cloud node doesn't have this option right now."), failText));
+    pushToast(enabled ? tr("Enabled {0}.", label) : tr("Disabled {0}.", label), "info", 4000);
     onClose();
   };
   return (
@@ -545,15 +546,15 @@ function HostedOptionDialog({ service, option, enabled, v, onClose }: { service:
       foot={
         <>
           <button type="button" className="pc-btn" onClick={onClose}>
-            取消
+            {tr("Cancel")}
           </button>
           <button type="button" className="pc-btn pc-btn--primary" data-pc="hosted-option-confirm" disabled={busy} onClick={() => void apply()}>
-            {enabled ? "打开" : "关闭"}
+            {enabled ? tr("Enable") : tr("Close")}
           </button>
         </>
       }
     >
-      <div style={{ fontSize: 13.5, lineHeight: 1.6 }}>{text?.confirm(enabled) ?? (enabled ? `打开${label}。` : `关闭${label}。`)}</div>
+      <div style={{ fontSize: 13.5, lineHeight: 1.6 }}>{text?.confirm(enabled) ?? (enabled ? tr("Enable {0}.", label) : tr("Turn off {0}.", label))}</div>
       {err ? <div className="pc-sync-err">{err}</div> : null}
     </Dialog>
   );
@@ -576,25 +577,25 @@ function DeleteDialog({ v, onClose }: { v: Verified; onClose: () => void }) {
   };
   return (
     <Dialog
-      title="删除项目"
+      title={tr("Delete project")}
       pc="delete-dialog"
       foot={
         <>
           <button type="button" className="pc-btn" onClick={onClose}>
-            取消
+            {tr("Cancel")}
           </button>
           <button type="button" className="pc-btn pc-sync-danger-btn" disabled={busy || typed !== shared.name} onClick={() => void del()}>
-            永久删除项目
+            {tr("Permanently delete project")}
           </button>
         </>
       }
     >
       <div style={{ fontSize: 13.5, lineHeight: 1.6 }}>
         {shared.where === "hosted"
-          ? "确定要删除这个项目吗？托管在阿里云的项目文档和素材将被永久销毁，所有成员立刻断开。此操作无法恢复。"
-          : "确定要删除这个项目吗？本机作为主机的项目数据将被永久销毁，所有成员立刻断开。此操作无法恢复。"}
+          ? tr("Are you sure you want to delete this project? The project document and media hosted on Alibaba Cloud will be permanently destroyed and all members will be disconnected immediately. This cannot be undone.")
+          : tr("Are you sure you want to delete this project? The project data hosted on this machine will be permanently destroyed and all members will be disconnected immediately. This cannot be undone.")}
       </div>
-      <input className="pc-dialog-input" style={{ marginLeft: 0 }} placeholder="输入项目名确认" value={typed} onChange={(e) => setTyped(e.target.value)} />
+      <input className="pc-dialog-input" style={{ marginLeft: 0 }} placeholder={tr("Enter the project name to confirm")} value={typed} onChange={(e) => setTyped(e.target.value)} />
       {err ? <div className="pc-sync-err">{err}</div> : null}
     </Dialog>
   );

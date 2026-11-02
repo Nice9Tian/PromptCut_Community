@@ -105,7 +105,7 @@ export interface MeasureSoundOptions {
  * 不足一块的声音按它的实际帧数合成,耗时按比例折算到一整块。
  */
 export async function measureSoundBlocks(o: MeasureSoundOptions): Promise<Pick<SoundCostRecord, "blockMs" | "blockMaxMs" | "blockFrames" | "sampleRate" | "samples">> {
-  if (!Number.isSafeInteger(o.frames) || o.frames < 1) throw new Error("声音测量的范围无效");
+  if (!Number.isSafeInteger(o.frames) || o.frames < 1) throw new Error("Invalid range for audio measurement");
   const tuning = resolveTuning(o.tuning ?? null);
   const now = o.now ?? (() => performance.now());
   const pause = o.yield ?? (() => new Promise<void>((resolve) => setTimeout(resolve, 0)));

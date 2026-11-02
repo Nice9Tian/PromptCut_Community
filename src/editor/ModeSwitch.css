@@ -5,8 +5,10 @@
 .pc-modeswitch {
   position: relative;
   display: grid;
-  /* 三格等宽 —— 滑块靠 translateX(index * 100%) 定位,等宽才对得上 */
+  /* 三格等宽 —— 滑块靠 translateX(index * 100%) 定位,等宽才对得上。
+     宽度按内容取(max-content),每格就都等于最宽那一格:英文、日文的标签比中文长,不能让某一格单独被撑宽 */
   grid-template-columns: repeat(3, 1fr);
+  width: max-content;
   height: 28px;
   padding: 2px;
   border: 1px solid var(--ui-border-strong);
@@ -42,6 +44,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  padding: 0 10px;
   border: none;
   background: transparent;
   color: var(--ui-fg-muted);

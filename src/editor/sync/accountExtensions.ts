@@ -14,6 +14,7 @@
 import type { JSX } from "react";
 
 import type { JoinRequestStatus } from "./joinRequestText.ts";
+import { tr } from "../../i18n/index.ts";
 
 export const MEMBERS_POLL_OPEN_MS = 3000;
 export const MEMBERS_POLL_CLOSED_MS = 15_000;
@@ -27,11 +28,11 @@ export const GUEST_LIMITS = Object.freeze({
 } as const);
 
 export const GUEST_LIMITS_TEXT =
-  `游客可创建 ${GUEST_LIMITS.projects} 个云端项目、开启 ${GUEST_LIMITS.conversations} 条 AI 对话、` +
-  `上传 ${GUEST_LIMITS.videos} 条视频（每条 ≤ ${GUEST_LIMITS.assetMB} MB），项目与素材保留 ${GUEST_LIMITS.ttlDays} 天；` +
-  `只能查看别人的项目。注册或登录账号后，当前游客项目和对话都会转到你的账号名下。`;
+  tr("Guests can create {0} cloud projects, start {1} AI chats, ", GUEST_LIMITS.projects, GUEST_LIMITS.conversations) +
+  tr("upload {0} videos (each ≤ {1} MB), and projects and media are kept for {2} days; ", GUEST_LIMITS.videos, GUEST_LIMITS.assetMB, GUEST_LIMITS.ttlDays) +
+  tr("You can only view other people's projects. After you sign up or log in, the current guest project and chats will be moved to your account.");
 
-export const GUEST_CHAT_LIMIT_TEXT = "游客最多开启 1 条对话。注册或登录账号后可继续新建对话。";
+export const GUEST_CHAT_LIMIT_TEXT = tr("Guests can open at most 1 chat. Sign up or log in to create more chats.");
 
 export interface Account {
   id: string;
@@ -349,17 +350,17 @@ const DEFAULT_MEMBER_SOURCE: MemberSource = {
     return null;
   },
   async memberAdmin() {
-    throw new Error("当前项目未开启网站账号成员管理");
+    throw new Error(tr("Website account member management is not enabled for the current project"));
   },
 };
 
 const DEFAULT_JOIN_SOURCE: JoinSource = {
   kind: "lan",
   async resolveLanInvite() {
-    return { ok: false, error: "连不上服务器，请稍后再试。" };
+    return { ok: false, error: tr("Can't reach the server. Please try again later.") };
   },
   async joinLanByInvite() {
-    return { ok: false, error: "连不上服务器，请稍后再试。" };
+    return { ok: false, error: tr("Can't reach the server. Please try again later.") };
   },
 };
 
@@ -466,9 +467,9 @@ export function resetAccountExtensions(): void {
 /* ---------------- 贯穿型便捷入口（带默认兜底） ---------------- */
 
 const DEFAULT_UPLOAD_REFUSAL_TEXT: Record<string, string> = {
-  "guest-file-too-large": `游客上传的每一条源文件不能超过 ${GUEST_LIMITS.assetMB} MB。`,
-  "guest-video-limit": `游客最多上传 ${GUEST_LIMITS.videos} 条视频。要传更多，请注册一个账号。`,
-  "guest-read-only": "你在这个项目里只能查看，改不了内容。",
+  "guest-file-too-large": tr("Each source file uploaded by a guest cannot exceed {0} MB.", GUEST_LIMITS.assetMB),
+  "guest-video-limit": tr("Guests can upload at most {0} videos. To upload more, please sign up for an account.", GUEST_LIMITS.videos),
+  "guest-read-only": tr("You can only view this project, you cannot change its content."),
 };
 
 /**
@@ -477,7 +478,7 @@ const DEFAULT_UPLOAD_REFUSAL_TEXT: Record<string, string> = {
  */
 export function formatUploadRejectionReason(code: string): string {
   if (currentExtensions.formatUploadError) return currentExtensions.formatUploadError(code);
-  return DEFAULT_UPLOAD_REFUSAL_TEXT[code] ?? `请求失败（${code || "unknown"}）`;
+  return DEFAULT_UPLOAD_REFUSAL_TEXT[code] ?? tr("Request failed ({0})", code || "unknown");
 }
 
 /** 项目链接拼装（`<origin>/p/<id>` 或 `<origin>/s/<id>/<linkToken>`） */
@@ -489,7 +490,7 @@ export function projectLink(origin: string, projectId: string, linkToken?: strin
 function createFallbackAccountClient(options: AccountClientOptions): CloudAccountClient {
   const cleanOrigin = new URL(options.origin).origin;
   const unavailable = async (): Promise<never> => {
-    const err = new Error("当前版本未安装网站账号扩展") as Error & { status?: number; code?: string };
+    const err = new Error(tr("The website account extension is not installed in this version")) as Error & { status?: number; code?: string };
     err.status = 501;
     err.code = "not-account-cloud";
     throw err;

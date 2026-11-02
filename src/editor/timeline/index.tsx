@@ -24,6 +24,7 @@ import { IconPlus } from "../../ui/icons";
 import { memberReadOnlyNow } from "../readOnlyCore";
 import { useReadOnly } from "../readOnly";
 import "./timeline.css";
+import { tr } from "../../i18n/index.ts";
 
 // 仅供调试和自动化测试使用，不是正式接口
 if (typeof window !== "undefined") {
@@ -86,7 +87,7 @@ function TimelineInner() {
             <div className="pc-tl-addtrack-wrap">
               <button type="button" className="pc-tl-addtrack" data-pc="add-track" disabled={ro.locked} title={ro.title()} onClick={() => actions.addTrack()}>
                 <IconPlus size={12} />
-                序列
+                {tr("Tracks")}
               </button>
             </div>
           </div>
@@ -99,7 +100,7 @@ function TimelineInner() {
               onChange={setHeaderW}
               onCommit={commitHeaderW}
               onReset={resetHeaderW}
-              title="拖动调整行头宽度,双击复位"
+              title={tr("Drag to resize the row header, double-click to reset")}
             />
           </div>
         </div>

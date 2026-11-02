@@ -4,6 +4,7 @@ import { shortSessionId, useDesktopSessions, type DesktopSession } from "../../a
 import { ReportCard } from "./chat/AgentBubble";
 import { KIND_LABEL, bareToolName, toolKind } from "./chat/iconRuns";
 import "./DesktopSessionsStrip.css";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 桌面 APP 会话在 AI 栏里的分组(计划 `docs/plan/agent-workflow-plan.md` A4;语义 `user-workflow.md`「Agent 接入方式」
@@ -16,7 +17,7 @@ export function DesktopSessionsStrip(): JSX.Element | null {
   const sessions = useDesktopSessions();
   if (!sessions.length) return null;
   return (
-    <div className="pc-desktop-sessions" data-pc="desktop-sessions" aria-label="桌面 APP 会话">
+    <div className="pc-desktop-sessions" data-pc="desktop-sessions" aria-label={tr("Desktop app session")}>
       {sessions.map((s) => (
         <DesktopGroup key={s.id} s={s} />
       ))}
@@ -28,18 +29,18 @@ export function DesktopSessionsStrip(): JSX.Element | null {
 export function operationText(s: DesktopSession): string {
   if (s.current) {
     const name = bareToolName(s.current.tool);
-    return `正在${KIND_LABEL[toolKind(name)]} · ${name}`;
+    return tr("Running {0} · {1}", KIND_LABEL[toolKind(name)], name);
   }
   if (s.last) {
     const name = bareToolName(s.last.tool);
-    return s.last.ok ? `上一步:${KIND_LABEL[toolKind(name)]} · ${name}` : `上一步失败:${name}`;
+    return s.last.ok ? tr("Last step: {0} · {1}", KIND_LABEL[toolKind(name)], name) : tr("Last step failed: {0}", name);
   }
-  return "已接入,还没有操作";
+  return tr("Connected, no actions yet");
 }
 
 function DesktopGroup({ s }: { s: DesktopSession }): JSX.Element {
   const [open, setOpen] = useState(true);
-  const vendor = s.label || s.vendor || "桌面 APP";
+  const vendor = s.label || s.vendor || tr("Desktop app");
   const reports = s.reports.slice(-5);
   return (
     <section className={`pc-desktop-group${s.current ? " is-busy" : ""}`} data-pc="desktop-session" data-session={s.id} data-vendor={s.vendor ?? ""}>
@@ -48,10 +49,10 @@ function DesktopGroup({ s }: { s: DesktopSession }): JSX.Element {
         className="pc-desktop-head"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        title={`桌面 APP 会话 ${s.id}${s.client ? `(${s.client.name} ${s.client.version})` : ""} · ${s.calls} 次调用`}
+        title={tr("Desktop app session {0}{1} · {2} calls", s.id, s.client ? `(${s.client.name} ${s.client.version})` : "", s.calls)}
       >
         <span className="pc-desktop-vendor" data-pc="desktop-vendor">{vendor}</span>
-        <span className="pc-desktop-id">会话 {shortSessionId(s.id)}</span>
+        <span className="pc-desktop-id">{tr("Session {0}", shortSessionId(s.id))}</span>
         <span className="pc-desktop-op" data-pc="desktop-op">{operationText(s)}</span>
         <span className="pc-desktop-caret" aria-hidden>{open ? "▾" : "▸"}</span>
       </button>
@@ -61,7 +62,7 @@ function DesktopGroup({ s }: { s: DesktopSession }): JSX.Element {
           {reports.length ? (
             reports.map((r, i) => <ReportCard key={`${r.at}-${i}`} r={r.report} />)
           ) : (
-            <div className="pc-desktop-empty">还没有交进度报告</div>
+            <div className="pc-desktop-empty">{tr("No progress report submitted yet")}</div>
           )}
         </div>
       )}

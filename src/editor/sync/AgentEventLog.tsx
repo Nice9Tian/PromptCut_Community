@@ -14,6 +14,7 @@ import { useMemo, useRef, useState, type UIEvent } from "react";
 import { agentOpOfEvent, displayNames, eventRecordList, me, revertAgentOp, useSync, type EventRecord } from "./syncManager";
 import { writerLabel } from "./labels";
 import "./sync.css";
+import { tr } from "../../i18n/index.ts";
 
 const ROW_H = 30;
 const VIEW_ROWS = 7;
@@ -37,11 +38,11 @@ function writeOpen(v: boolean) {
 }
 
 function statusMark(r: EventRecord): { ch: string; cls: string; title: string } {
-  if (r.kind === "text") return { ch: "…", cls: "text", title: "文字回复" };
-  if (r.status === null) return { ch: "●", cls: "running", title: "进行中" };
-  if (r.status === "ok") return { ch: "✓", cls: "ok", title: "完成" };
-  if (r.status === "cancelled") return { ch: "—", cls: "error", title: "取消了" };
-  return { ch: "✕", cls: "error", title: "出错了" };
+  if (r.kind === "text") return { ch: "…", cls: "text", title: tr("Text reply") };
+  if (r.status === null) return { ch: "●", cls: "running", title: tr("In progress") };
+  if (r.status === "ok") return { ch: "✓", cls: "ok", title: tr("Done") };
+  if (r.status === "cancelled") return { ch: "—", cls: "error", title: tr("Cancelled") };
+  return { ch: "✕", cls: "error", title: tr("Error occurred") };
 }
 
 function Row({ r, top }: { r: EventRecord; top: number }) {
@@ -62,7 +63,7 @@ function Row({ r, top }: { r: EventRecord; top: number }) {
       <span className="pc-evlog-who">{who}</span>
       {op ? (
         <button type="button" className="pc-dialog-opt pc-evlog-undo" data-pc="agent-undo" disabled={done} onClick={() => revertAgentOp(op)}>
-          {done ? "已撤销" : "撤销这步"}
+          {done ? tr("Undone") : tr("Undo this step")}
         </button>
       ) : null}
     </div>
@@ -96,8 +97,8 @@ export function AgentEventLog() {
           writeOpen(!open);
         }}
       >
-        <span>{open ? "▾" : "▸"} Agent 操作记录</span>
-        <span className="pc-evlog-count">{total} 条</span>
+        <span>{tr("{0} Agent action log", open ? "▾" : "▸")}</span>
+        <span className="pc-evlog-count">{tr("{0} items", total)}</span>
       </button>
       {open ? (
         <div

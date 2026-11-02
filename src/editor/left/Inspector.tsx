@@ -17,6 +17,7 @@ import { CutSegmentForm } from "./CutSegmentForm";
 import { isCutSegment } from "../../kernel/cutSegments";
 import { NumberField } from "../fields/NumberField";
 import { ReadOnlyFence } from "../ReadOnlyFence";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 编辑分区的参数 / 代码两页。哪一页显示由分区头部的胶囊分页决定(tab),
@@ -34,7 +35,7 @@ export function Inspector({ tab }: { tab: "form" | "code" }) {
   if (!hit) {
     return (
       <div className="flex-1 flex items-center justify-center p-4 text-center text-xs pc-left-muted">
-        在时间轴上点一个片段,或在「动画」里点一张卡片添加一个
+        {tr("Click a clip on the timeline, or click a card under \"Animation\" to add one")}
       </div>
     );
   }
@@ -50,11 +51,11 @@ export function Inspector({ tab }: { tab: "form" | "code" }) {
     return (
       <div className="flex-1 min-h-0 overflow-y-auto pc-left-scroll flex flex-col p-3 text-xs">
         <ReadOnlyFence>
-        <div className="pc-left-muted mb-2">标签: <span className="pc-left-strong">{clip.label || "无"}</span></div>
+        <div className="pc-left-muted mb-2">{tr("Label:")}{" "} <span className="pc-left-strong">{clip.label || tr("none")}</span></div>
         <div className="flex items-center gap-2 mb-2 pc-left-muted">
-          <span>开始</span>
+          <span>{tr("Start")}</span>
           <NumberField attrs={{ "data-pc": "clip-start" }} step={0.1} min={0} value={clip.start} onCommit={v => actions.moveClip(clip.id, { start: v })} className="w-16 pc-left-input is-sm" />
-          <span>结束</span>
+          <span>{tr("End")}</span>
           <NumberField attrs={{ "data-pc": "clip-end" }} step={0.1} min={0} value={clip.end} onCommit={v => actions.moveClip(clip.id, { end: v })} className="w-16 pc-left-input is-sm" />
           <span className="pc-left-faint">{(clip.end - clip.start).toFixed(2)}s</span>
         </div>
@@ -82,7 +83,7 @@ export function Inspector({ tab }: { tab: "form" | "code" }) {
         <div className="flex items-center justify-between">
           <div className="font-semibold text-xs pc-left-strong truncate pr-2">{cardDef?.name ?? clip.cardId}</div>
           <div className="flex items-center gap-2">
-            <span className="text-[10px] pc-left-faint shrink-0">换卡会清空参数</span>
+            <span className="text-[10px] pc-left-faint shrink-0">{tr("Changing the card clears its parameters")}</span>
             <select
               data-pc="switch-card"
               value={clip.cardId}
@@ -90,29 +91,29 @@ export function Inspector({ tab }: { tab: "form" | "code" }) {
               className="pc-left-select is-sm w-24 shrink-0"
             >
               {user.length > 0 && (
-                <optgroup label="新建">
-                  {user.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                <optgroup label={tr("New")}>
+                  {user.map(c => <option key={c.id} value={c.id}>{tr(c.name)}</option>)}
                 </optgroup>
               )}
               {asset.length > 0 && (
-                <optgroup label="动效素材">
-                  {asset.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                <optgroup label={tr("Motion assets")}>
+                  {asset.map(c => <option key={c.id} value={c.id}>{tr(c.name)}</option>)}
                 </optgroup>
               )}
               <optgroup label="Magic UI">
-                {magic.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                {magic.map(c => <option key={c.id} value={c.id}>{tr(c.name)}</option>)}
               </optgroup>
-              <optgroup label="自家">
-                {native.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              <optgroup label={tr("Built-in")}>
+                {native.map(c => <option key={c.id} value={c.id}>{tr(c.name)}</option>)}
               </optgroup>
             </select>
           </div>
         </div>
 
         <div className="flex items-center gap-2 text-xs pc-left-muted">
-          <span>开始</span>
+          <span>{tr("Start")}</span>
           <NumberField attrs={{ "data-pc": "clip-start" }} step={0.1} min={0} value={clip.start} onCommit={v => actions.moveClip(clip.id, { start: v })} className="w-16 pc-left-input is-sm" />
-          <span>结束</span>
+          <span>{tr("End")}</span>
           <NumberField attrs={{ "data-pc": "clip-end" }} step={0.1} min={0} value={clip.end} onCommit={v => actions.moveClip(clip.id, { end: v })} className="w-16 pc-left-input is-sm" />
           <span className="pc-left-faint ml-auto">{(clip.end - clip.start).toFixed(2)}s</span>
         </div>

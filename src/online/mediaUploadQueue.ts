@@ -28,6 +28,7 @@ import {
   docRequest,
 } from "../editor/media/assetTiers";
 import { onlinePage } from "./pageFlag";
+import { tr } from "../i18n/index.ts";
 
 export const CHUNK_SIZE = 8 * 1024 * 1024;
 /**
@@ -189,7 +190,7 @@ export function createMediaUploadQueue(deps: MediaUploadQueueDeps): MediaUploadQ
     /** 没过的回包摆成错误：带状态码和素材服务说的错误代号（`PERMANENT_REFUSALS` 靠它认） */
     const failure = async (res: Response, what: string) => {
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
-      return Object.assign(new Error(`${what} 回 ${res.status}${body?.error ? ` ${body.error}` : ""}`), { status: res.status, code: body?.error });
+      return Object.assign(new Error(tr("{0} returned {1}{2}", what, res.status, body?.error ? ` ${body.error}` : "")), { status: res.status, code: body?.error });
     };
 
     const authedFetch = async (url: string, init: RequestInit): Promise<Response> => {
@@ -239,7 +240,7 @@ export function createMediaUploadQueue(deps: MediaUploadQueueDeps): MediaUploadQ
           headers: chunkHeaders,
           body: chunkSlice,
         });
-        if (!putRes.ok) throw await failure(putRes, `PUT 第 ${n} 片`);
+        if (!putRes.ok) throw await failure(putRes, tr("PUT part {0}", n));
       }
 
       // 3. 收尾
@@ -266,7 +267,7 @@ export function createMediaUploadQueue(deps: MediaUploadQueueDeps): MediaUploadQ
             continue;
           }
         }
-        throw Object.assign(new Error(`complete 回 ${completeRes.status}${body?.error ? ` ${body.error}` : ""}`), { status: completeRes.status, code: body?.error });
+        throw Object.assign(new Error(tr("complete returned {0}{1}", completeRes.status, body?.error ? ` ${body.error}` : "")), { status: completeRes.status, code: body?.error });
       }
     }
 
@@ -274,7 +275,7 @@ export function createMediaUploadQueue(deps: MediaUploadQueueDeps): MediaUploadQ
     const verifyRes = await authedFetch(`${base}/media/${t.hash}/chunks`, { method: "GET", cache: "no-store" });
     const verifyData = (await verifyRes.json().catch(() => null)) as { complete?: boolean } | null;
     if (!verifyData?.complete) {
-      throw Object.assign(new Error(`素材服务上 ${t.tier} ${t.hash} 还没 complete`), { code: "not-complete" });
+      throw Object.assign(new Error(`${t.tier} ${t.hash} on the asset service is not complete yet`), { code: "not-complete" });
     }
 
     item.sent.add(tier);
@@ -315,7 +316,7 @@ export function createMediaUploadQueue(deps: MediaUploadQueueDeps): MediaUploadQ
           });
           const checkData = (await checkRes.json().catch(() => null)) as { complete?: boolean } | null;
           if (!checkData?.complete) {
-            throw Object.assign(new Error(`素材服务上 ${t.tier} ${t.hash} 尚未 complete`), { code: "not-complete" });
+            throw Object.assign(new Error(tr("{0} {1} is not complete yet on the asset service", t.tier, t.hash)), { code: "not-complete" });
           }
         }
         items.delete(item.id);

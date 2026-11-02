@@ -1,4 +1,5 @@
 import type { ChatMessage, MessagePart, ToolCallInfo } from "./types.ts";
+import { tr } from "../i18n/index.ts";
 
 /**
  * Agent 交给用户看的进度报告(report_progress 工具的参数)。
@@ -102,18 +103,18 @@ export function reportsOf(m: Pick<ChatMessage, "parts" | "tools">): ProgressRepo
  * 所以只写一份 —— 原来各写一遍,加 `blocked` 时差点只改了其中一处。
  */
 export function reportTitle(r: ProgressReport): string {
-  if (r.blocked) return "等你回话";
-  return r.final ? "本轮小结" : r.stage ? `阶段 · ${r.stage}` : "阶段小结";
+  if (r.blocked) return tr("Waiting for your reply");
+  return r.final ? tr("Round summary") : r.stage ? tr("Stage · {0}", r.stage) : tr("Stage summary");
 }
 
 /** 摘成一句话(换模型 / 回退后的「前情」用):只拼非空的组 */
 export function reportText(r: ProgressReport): string {
   const segs: string[] = [];
-  if (r.done.length) segs.push(`已完成:${r.done.join("、")}`);
-  if (r.todo.length) segs.push(`待办:${r.todo.join("、")}`);
-  if (r.problems.length) segs.push(`问题:${r.problems.join("、")}`);
-  const body = segs.join(";");
+  if (r.done.length) segs.push(tr("Done: {0}", r.done.join(tr(", "))));
+  if (r.todo.length) segs.push(tr("To do: {0}", r.todo.join(tr(", "))));
+  if (r.problems.length) segs.push(tr("Issues: {0}", r.problems.join(tr(", "))));
+  const body = segs.join("; ");
   const text = r.stage && body ? `[${r.stage}] ${body}` : body;
   // 换模型 / 回退后的「前情」里也要留住「在等用户」:不然新的那一轮会以为可以接着自己做
-  return r.blocked && text ? `${text}(停下等用户回话)` : text;
+  return r.blocked && text ? tr("{0} (stopped, waiting for the user to reply)", text) : text;
 }

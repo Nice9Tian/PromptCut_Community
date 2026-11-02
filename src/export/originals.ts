@@ -13,6 +13,7 @@
  */
 import { LAYER_MAP_PREFIX, parseLayerMap, type LayerMap, type OnlineLayer } from "../render/snapshotSource";
 import { clipInputSig, inputSigStale } from "../render/layerInputSig.mjs";
+import { tr } from "../i18n/index.ts";
 
 export interface OriginalsDeps {
   request(msg: Record<string, unknown>, timeoutMs?: number): Promise<Record<string, unknown>>;
@@ -99,9 +100,9 @@ export async function loadOriginalsIndex(projectId: string | null, deps: Origina
 /** 取一帧原尺寸 HTML 快照(`snap/<hash>`) */
 export async function fetchOriginalHtml(hash: string, deps: OriginalsDeps, signal?: AbortSignal): Promise<string> {
   const base = deps.assetBase();
-  if (!base) throw new Error("还没有远程素材服务");
+  if (!base) throw new Error(tr("There is no remote asset service yet"));
   const f = deps.fetch ?? fetch;
   const res = await f(`${base.replace(/\/+$/, "")}/snap/${hash}`, { headers: await deps.authHeaders(), signal });
-  if (!res.ok) throw new Error(`取不到预渲染原尺寸 ${hash}:${res.status}`);
+  if (!res.ok) throw new Error(tr("Cannot fetch the prerender original size {0}: {1}", hash, res.status));
   return res.text();
 }

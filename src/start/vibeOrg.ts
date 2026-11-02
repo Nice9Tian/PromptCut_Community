@@ -27,6 +27,7 @@
  * 一律返回新对象,不原地改(仓库约束)。单测 `vibeOrg.test.mjs`、`orgRealm.test.mjs`。
  */
 import type { OrgRealm, Ratio, TreeFlags, VibeChat, VibeGroup, VibeProject } from "./types.ts";
+import { tr } from "../i18n/index.ts";
 
 export type { OrgRealm } from "./types.ts";
 
@@ -80,8 +81,8 @@ const legacyOrgKey = (scope: string): string => `pc.start.org.${scope}`;
 export function moveRefusal(projectRealm: OrgRealm, groupRealm: OrgRealm): string | null {
   if (projectRealm === groupRealm) return null;
   return projectRealm === "local"
-    ? "本地项目不能放进云端分组：本地分组装本机的项目，云端分组装云端的项目。"
-    : "云端项目不能放进本地分组：云端分组装云端的项目，本地分组装本机的项目。";
+    ? tr("A local project cannot be placed into a cloud group: local groups hold local projects, and cloud groups hold cloud projects.")
+    : tr("A cloud project cannot be placed into a local group: cloud groups hold cloud projects, and local groups hold local projects.");
 }
 
 /**
@@ -96,15 +97,15 @@ export const CLOUD_ORG_IN_CLOUD = true;
  * `inCloud`:云端这一套此刻是不是真存在云端;缺省看 `CLOUD_ORG_IN_CLOUD`,在线屏在探到老服务端时传 false。
  */
 export function orgWhereText(realm: OrgRealm, inCloud: boolean = CLOUD_ORG_IN_CLOUD): string {
-  if (realm === "local") return "只记在这台机器上";
-  return inCloud ? "存在云端，换设备也能看到" : "暂时只记在这台浏览器里";
+  if (realm === "local") return tr("Only remembered on this machine");
+  return inCloud ? tr("Stored in the cloud, visible on other devices too") : tr("Only remembered in this browser for now");
 }
 
 /** 「新建分组」处说的话:这是哪一套分组、存在哪、装什么 */
 export function groupNoteText(realm: OrgRealm, inCloud: boolean = CLOUD_ORG_IN_CLOUD): string {
   return realm === "local"
-    ? `本地分组：${orgWhereText("local")}，只能放本机的项目。`
-    : `云端分组：${orgWhereText("cloud", inCloud)}，只能放云端的项目。`;
+    ? tr("Local group: {0}. Only local projects can go in it.", orgWhereText("local"))
+    : tr("Cloud group: {0}. Only cloud projects can go in it.", orgWhereText("cloud", inCloud));
 }
 
 /**
@@ -276,7 +277,7 @@ export function addGroup(org: OrgState, name: string, rand: () => string = () =>
   const taken = new Set(org.groups.map((g) => g.id));
   let id = `g-${rand()}`;
   for (let i = 0; taken.has(id) && i < 50; i++) id = `g-${rand()}${i}`;
-  const group: OrgGroup = { id, name: name.trim().slice(0, 200) || "新分组" };
+  const group: OrgGroup = { id, name: name.trim().slice(0, 200) || tr("New group") };
   return { org: { ...org, groups: [...org.groups, group] }, id };
 }
 
@@ -347,7 +348,7 @@ export function viewableChats(items: readonly ChatItemLike[], viewer: { accountI
     }
     out.push({
       id: it.id,
-      name: it.title || "云端对话",
+      name: it.title || tr("Cloud chat"),
       projectId,
       state: it.state,
       visibility,

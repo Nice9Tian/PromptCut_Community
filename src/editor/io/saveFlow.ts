@@ -17,6 +17,7 @@ import type { SaveOutcome } from "./proc";
 import { beginSaveLock, isSaveLocked, type SaveKind, type SaveLock } from "../saveLock";
 import { LOCAL_WRITES_TIMEOUT_MS, localCommitSeq, waitForLocalWrites, type LocalWriteProbe } from "./localWrites";
 import { writeToHandle } from "./safeWrite";
+import { tr } from "../../i18n/index.ts";
 
 export { SETTLE_TIMEOUT_TEXT } from "./localWrites";
 
@@ -61,16 +62,16 @@ export interface PackDeps extends Omit<SaveDeps, "writeProc" | "serialize" | "sa
 
 export { writeFailedText } from "./safeWrite";
 
-export const CHANGED_DURING_SAVE_TEXT = "保存期间项目又被本机改了（Agent 或后台任务）。文件里是保存开始那一刻的内容，之后的修改还没保存。";
+export const CHANGED_DURING_SAVE_TEXT = tr("The project was changed again on this machine during the save (by an Agent or a background task). The file holds the content as of the moment the save started; later changes are not saved yet.");
 
-export const SNAPSHOTS_SKIPPED_TEXT = "预渲染快照这次没来得及收进文件（渲染服务没有及时应答）。项目内容已完整保存，重新打开后会重新预渲染。";
+export const SNAPSHOTS_SKIPPED_TEXT = tr("The prerender snapshots could not be included in the file this time (the render service did not respond in time). The project content was saved in full, and it will be prerendered again when reopened.");
 
 /** `busy`:上一次保存还没结束,这一次不另起 */
 export type SaveResult = "saved" | "downloaded" | "cancelled" | "failed" | "busy";
 
 /** 保存进行中又点了一次:不另起,也不报错(「正在保存」那一层还在) */
 class SaveBusy extends Error {
-  constructor() { super("正在保存"); this.name = "SaveBusy"; }
+  constructor() { super(tr("Saving")); this.name = "SaveBusy"; }
 }
 
 /** 锁放在一个小盒子里:上锁发生在交给 writeProc 的回调里,外面的 finally 要拿得到 */
@@ -119,7 +120,7 @@ export async function saveProcFile(fileName: string, deps: SaveDeps): Promise<Sa
     } else deps.markSaved(fileName);
     if (outcome.kind === "downloaded") {
       // 这个 WebView 没有文件选择 API,至少告诉用户文件去哪了
-      infos.unshift(`当前环境不支持选择目录，已保存到浏览器的下载位置：${outcome.where}`);
+      infos.unshift(tr("This environment does not support choosing a folder, saved to the browser's download location: {0}", outcome.where));
     } else if (outcome.snapshotsSkipped) {
       infos.push(SNAPSHOTS_SKIPPED_TEXT);
     }
@@ -164,7 +165,7 @@ export async function savePackedFile(fileName: string, deps: PackDeps): Promise<
       await (deps.writeHandle ?? writeToHandle)(target, blob);
     } else {
       deps.download(blob, fileName);
-      infos.push(`当前环境不支持选择目录，已保存到浏览器的下载位置：${fileName}`);
+      infos.push(tr("This environment does not support choosing a folder, saved to the browser's download location: {0}", fileName));
       result = "downloaded";
     }
     if (missing.length) infos.push(deps.missingMessage(missing));

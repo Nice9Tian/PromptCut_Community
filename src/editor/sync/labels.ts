@@ -12,39 +12,41 @@ import type { Project } from "../../kernel/project";
 import { getCard } from "../../kernel/registry";
 import type { Writer } from "../../store/docsync";
 import { cloudAgentLabel } from "./hostedServices";
+import { tr } from "../../i18n/index.ts";
+import { shownName, shownNameOf } from "../../i18n/names.ts";
 
 /** 集合名 → 类别 */
 const KIND: Record<string, string> = {
-  tracks: "序列",
-  clips: "片段",
-  transitions: "转场",
-  cuts: "剪辑",
-  media: "素材",
-  cardNodes: "素材效果卡节点",
-  cardDefinitions: "卡片定义",
-  filters: "滤镜",
-  pixelMaps: "像素映射",
-  audioFx: "音频效果",
-  captions: "字幕",
+  tracks: tr("track"),
+  clips: tr("Clips"),
+  transitions: tr("Transition"),
+  cuts: tr("Cut"),
+  media: tr("media"),
+  cardNodes: tr("Media effect card nodes"),
+  cardDefinitions: tr("Card definitions"),
+  filters: tr("Filters"),
+  pixelMaps: tr("Pixel map"),
+  audioFx: tr("Audio effects"),
+  captions: tr("Captions"),
 };
 
 /** 项目顶层字段 → 名字 */
 const META: Record<string, string> = {
-  name: "名称",
-  fps: "帧率",
-  width: "宽度",
-  height: "高度",
-  duration: "时长",
-  themeId: "主题",
-  camera3dFov: "三维视角",
-  glRoute: "渲染路线",
-  creativity: "创造力等级",
-  media: "素材",
-  tracks: "序列",
-  cuts: "剪辑",
+  name: tr("Name"),
+  fps: tr("Frame rate"),
+  width: tr("Width"),
+  height: tr("Height"),
+  duration: tr("Duration"),
+  themeId: tr("Theme"),
+  camera3dFov: tr("3D perspective"),
+  glRoute: tr("Render route"),
+  creativity: tr("Creativity level"),
+  media: tr("media"),
+  tracks: tr("track"),
+  cuts: tr("Cut"),
 };
 
-const quoted = (s: string) => `「${s}」`;
+const quoted = (s: string) => tr("\"{0}\"", s);
 
 /**
  * 片段怎么称呼:和时间轴上片段的标题一致(ClipView:卡片片段用卡片名,素材段用它的标签),
@@ -53,7 +55,7 @@ const quoted = (s: string) => `「${s}」`;
 function clipName(c: Record<string, unknown> | undefined, id: string): string {
   if (!c) return id;
   let name = "";
-  if (typeof c.cardId === "string" && c.cardId) name = getCard(c.cardId)?.name ?? c.cardId;
+  if (typeof c.cardId === "string" && c.cardId) name = shownNameOf(getCard(c.cardId)?.name) ?? c.cardId;
   else if (typeof c.label === "string" && c.label.trim()) name = c.label.trim();
   if (!name) return id;
   return typeof c.start === "number" ? `${name} @${c.start.toFixed(1)}s` : name;
@@ -61,20 +63,20 @@ function clipName(c: Record<string, unknown> | undefined, id: string): string {
 
 /** 实体 → 给人看的名字,例如 `片段「开头空镜」`、`序列「序列 1」`、`项目设置「帧率」` */
 export function entityLabel(entity: string, project: Project | null): string {
-  if (entity === "*") return "整个项目";
+  if (entity === "*") return tr("Entire project");
   if (entity.startsWith("/meta/")) {
     const key = entity.slice("/meta/".length).replace(/~1/g, "/").replace(/~0/g, "~");
-    return `项目设置${quoted(META[key] ?? key)}`;
+    return tr("Project setting {0}", quoted(META[key] ?? key));
   }
   const segs = parsePath(entity);
   if (!segs || segs.length < 2) return entity;
   const coll = segs[segs.length - 2];
   const id = segs[segs.length - 1].replace(/^@/, "");
-  const kind = KIND[coll] ?? "条目";
+  const kind = KIND[coll] ?? tr("Items");
   // 序列在停放剪辑里时实体(不分住在哪)的路径要按序列 id 换到它现在住的地方才取得到值
   const valuePath = entityValuePath(entity);
   const value = project ? ((getAt(project, valuePath) ?? getAt(project, relocatePath(project, valuePath))) as Record<string, unknown> | undefined) : undefined;
-  if (coll === "clips") return `片段${quoted(clipName(value, id))}`;
+  if (coll === "clips") return tr("Clip {0}", quoted(clipName(value, id)));
   const name = value && typeof value.name === "string" && value.name.trim() ? value.name.trim() : id;
   return `${kind}${quoted(name)}`;
 }
@@ -119,27 +121,27 @@ export function writerLabel(by: Writer | undefined, me: Me, names: DisplayNames 
   const actor = ((raw?.actor && typeof raw.actor === "object" ? raw.actor : raw && typeof raw.userId === "string" ? raw : {}) as Actor);
   const session = by?.session ?? actor.session;
   const sameUser = !!actor.userId && actor.userId === me.userId;
-  if (!actor.userId && session === me.session) return "你在这个页面";
+  if (!actor.userId && session === me.session) return tr("You on this page");
   if (actor.role === "agent" && actor.service === "agent") {
-    if (sameUser) return "你的云端 Agent";
+    if (sameUser) return tr("Your Cloud Agent");
     // 账号云端项目:云端 Agent 的写入身份是 `account:<账号号>@run:<任务号>`,不带设备,按账号认人、按账号查名字
     if (typeof actor.accountId === "string") {
-      if (me.userId?.startsWith(`${accountNameKey(actor.accountId)}@`)) return "你的云端 Agent";
+      if (me.userId?.startsWith(`${accountNameKey(actor.accountId)}@`)) return tr("Your Cloud Agent");
       if (names.has(accountNameKey(actor.accountId))) return cloudAgentLabel(names.get(accountNameKey(actor.accountId))!);
     }
     return cloudAgentLabel(actor.username ?? usernameOf(actor.userId));
   }
   if (actor.role === "agent") {
-    const n = typeof actor.conversation === "number" ? `第 ${actor.conversation} 个对话` : "某个对话";
+    const n = typeof actor.conversation === "number" ? tr("Chat #{0}", actor.conversation) : tr("A chat");
     if (sameUser || !actor.username) return `Agent${quoted(n)}`;
     return `${names.get(actor.userId ?? "") ?? actor.username} · Agent · ${n}`;
   }
-  if (session === me.session && (sameUser || !actor.userId)) return "你在这个页面";
-  if (sameUser) return "你在另一个页面";
+  if (session === me.session && (sameUser || !actor.userId)) return tr("You on this page");
+  if (sameUser) return tr("You on another page");
   if (actor.userId && names.has(actor.userId)) return names.get(actor.userId)!;
   // 账号云端项目:成员名单按账号给名字(`syncManager.ts` 的 `displayNames`)
   if (typeof actor.accountId === "string" && names.has(accountNameKey(actor.accountId))) return names.get(accountNameKey(actor.accountId))!;
-  return actor.username ?? actor.userId ?? "别人";
+  return actor.username ?? actor.userId ?? tr("Someone else");
 }
 
 /**
@@ -147,12 +149,12 @@ export function writerLabel(by: Writer | undefined, me: Me, names: DisplayNames 
  * （`product/document-service.md`「保存与延迟退出的修改处理」，2026-10-22 用户定）。〈用户名〉是改密码的那个账号；名字取不到时退回「有成员」。
  */
 export function rolledBackText(name: unknown): string {
-  return typeof name === "string" && name.trim() ? `${name.trim()}撤回了内容` : "有成员撤回了内容";
+  return typeof name === "string" && name.trim() ? tr("{0} undid content", name.trim()) : tr("A member undid content");
 }
 
 /** 项目历史序号（修改计数）给人看的文字：历史序号 N */
 export function historySeqLabel(rev: number | null | undefined): string {
-  if (rev === null || rev === undefined || !Number.isFinite(rev)) return "历史序号 -";
-  return `历史序号 ${rev}`;
+  if (rev === null || rev === undefined || !Number.isFinite(rev)) return tr("History sequence number -");
+  return tr("History sequence number {0}", rev);
 }
 

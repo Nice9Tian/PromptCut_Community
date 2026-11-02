@@ -23,20 +23,20 @@ beforeEach(() => {
   state.durationManual = null;
 });
 
-test("手动输入较短时长会截短并记住截断点", () => {
+test("Manually entering a shorter duration truncates it and remembers the truncation point", () => {
   projectMeta.setDurationManual(25);
   assert.equal(state.project.duration, 25);
   assert.equal(state.durationManual, 25);
 });
 
-test("输入超过内容末尾会钳到末尾，并恢复跟随内容", () => {
+test("Entering a value past the end of the content clamps to the end and resumes following the content", () => {
   projectMeta.setDurationManual(25);
   projectMeta.setDurationManual(90);
   assert.equal(state.project.duration, 40);
   assert.equal(state.durationManual, null);
 });
 
-test("空项目保留设置的时长，不记录截断点", () => {
+test("An empty project keeps the configured duration and records no truncation point", () => {
   state.project = { duration: 30, tracks: [] };
   projectMeta.setDurationManual(30);
   assert.equal(state.project.duration, 30);

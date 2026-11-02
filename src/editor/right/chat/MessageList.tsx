@@ -11,9 +11,10 @@ import type { InboundAgentMessage } from "../../../ai/types";
 import { inboundPlan } from "./rowPlan";
 import { HeightBook, isAtBottom, planSegments, prefixOffsets, shouldWindow, touchRecent, windowRange, type Segment } from "./listWindow";
 import "./chat.css";
+import { tr } from "../../../i18n/index.ts";
 
 /** 空对话里唯一的示例句(本机与云端都用它;云端用它也要能只靠内置卡做出一支短片,见 `scripts/probes/cloud-agent-first-video-probe.mjs`) */
-export const EMPTY_EXAMPLE = "为我快速创建一个视频告诉我软件都可以做什么。";
+export const EMPTY_EXAMPLE = tr("Quickly create a video for me that shows what the app can do.");
 
 /** 工具方块 / 工具详情的展开回调。AiPanel 里经 ref 中转,引用永远不变 */
 export interface RowHandlers {
@@ -51,7 +52,7 @@ const pad2 = (n: number) => String(n).padStart(2, "0");
 /** 时间分隔行的写法:M月D日 HH:mm */
 function formatStamp(ts: number): string {
   const d = new Date(ts);
-  return `${d.getMonth() + 1}月${d.getDate()}日 ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  return tr("{0}/{1} {2}:{3}", d.getMonth() + 1, d.getDate(), pad2(d.getHours()), pad2(d.getMinutes()));
 }
 
 interface MessageRowProps {
@@ -376,7 +377,7 @@ export function MessageList(props: MessageListProps) {
           kind: "note",
           render: () => (
             <div key={`${m.id}:inbound`} className="ai-inbound-note">
-              收到 {orphan} 条其他 Agent 的消息,等 Agent 开始处理
+              {tr("Received {0} messages from other Agents, waiting for the Agent to start processing", orphan)}
             </div>
           ),
         });

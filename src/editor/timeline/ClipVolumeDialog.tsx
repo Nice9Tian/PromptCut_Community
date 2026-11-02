@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { TrackClip, Track } from "../../kernel/project";
 import { actions } from "../../store/project";
+import { tr } from "../../i18n/index.ts";
 
 export function ClipVolumeDialog({ clip, track, onClose }: { clip: TrackClip; track: Track; onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -24,24 +25,24 @@ export function ClipVolumeDialog({ clip, track, onClose }: { clip: TrackClip; tr
         e.preventDefault();
         if (!valid) return;
         const result = actions.setClipVolume(clip.id, value / 100);
-        if (!result.ok) setError(result.error ?? "音量设置失败");
+        if (!result.ok) setError(result.error ?? tr("Failed to set volume"));
         else onClose();
       }}>
-        <h3 id={titleId}>调整声音音量</h3>
-        <p className="pc-volume-name">{clip.label || "媒体片段"}</p>
+        <h3 id={titleId}>{tr("Adjust volume")}</h3>
+        <p className="pc-volume-name">{clip.label || tr("Media clip")}</p>
         <div className="pc-volume-controls">
-          <input autoFocus type="range" aria-label="声音音量" min="0" max="100" step="1"
+          <input autoFocus type="range" aria-label={tr("Clip volume")} min="0" max="100" step="1"
             value={valid ? value : 0} onChange={(e) => setPercent(e.target.value)} />
-          <label><input type="number" aria-label="音量百分比" min="0" max="100" step="1"
+          <label><input type="number" aria-label={tr("Volume percentage")} min="0" max="100" step="1"
             value={percent} onChange={(e) => setPercent(e.target.value)} /> %</label>
         </div>
-        <p>0% 为无声，100% 为原声。点击确定后生效。</p>
-        {(clip.audioMuted || track.muted || track.hidden) && <p>当前片段或序列已静音或隐藏，调整音量不会解除该状态。</p>}
+        <p>{tr("0% is silent, 100% is the original volume. Takes effect after you click OK.")}</p>
+        {(clip.audioMuted || track.muted || track.hidden) && <p>{tr("This clip or track is muted or hidden. Adjusting the volume will not lift that state.")}</p>}
         {error && <p role="alert">{error}</p>}
         <div className="pc-volume-actions">
-          <button type="button" onClick={() => setPercent("100")}>恢复原声</button>
-          <button type="button" onClick={onClose}>取消</button>
-          <button type="submit" disabled={!valid || track.locked}>确定</button>
+          <button type="button" onClick={() => setPercent("100")}>{tr("Restore original volume")}</button>
+          <button type="button" onClick={onClose}>{tr("Cancel")}</button>
+          <button type="submit" disabled={!valid || track.locked}>{tr("OK")}</button>
         </div>
       </form>
     </dialog>, document.body,

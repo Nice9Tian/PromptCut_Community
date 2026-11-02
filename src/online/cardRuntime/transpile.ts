@@ -13,6 +13,7 @@ import { REMOTION_LOCK_CACHE_TAG, remotionLockSuffix } from "./remotionLock.mjs"
 import { resolveCardImport, type ResolveEnv } from "./resolve.ts";
 import { classCandidates, type CardCssCompiler } from "./tailwind.ts";
 import type { BundleResult, CardBundle, CardModule, CardRunState, ResolvedImport } from "./protocol.ts";
+import { tr } from "../../i18n/index.ts";
 
 /** 单个文件的上限(字符);超过不转 */
 export const MAX_SOURCE_CHARS = 512 * 1024;
@@ -37,18 +38,18 @@ export function requireSpecifiers(js: string): string[] {
  * `lockSuffix`：要接在源码末尾的那一段（`remotionLock.mjs`）；不给就现算。该锁的卡才有，别的卡是空串、源码原样。
  */
 export function transpileCardFile(key: string, source: string, lockSuffix?: string): FileResult {
-  if (typeof source !== "string") return { ok: false, state: { state: "load-error", detail: "源码取不到", file: key } };
-  if (source.length > MAX_SOURCE_CHARS) return { ok: false, state: { state: "unsupported-syntax", detail: `文件太大(超过 ${MAX_SOURCE_CHARS / 1024} KB)`, file: key } };
+  if (typeof source !== "string") return { ok: false, state: { state: "load-error", detail: tr("Source unavailable"), file: key } };
+  if (source.length > MAX_SOURCE_CHARS) return { ok: false, state: { state: "unsupported-syntax", detail: tr("File too large (over {0} KB)", MAX_SOURCE_CHARS / 1024), file: key } };
   try {
     const bad = unsupportedSyntax(source);
-    if (bad.length) return { ok: false, state: { state: "unsupported-syntax", detail: `${bad[0].what}(第 ${bad[0].line} 行)`, file: key } };
+    if (bad.length) return { ok: false, state: { state: "unsupported-syntax", detail: tr("{0} (line {1})", bad[0].what, bad[0].line), file: key } };
     const js = transform(source + (lockSuffix ?? remotionLockSuffix(key, source)), {
       transforms: ["typescript", "jsx", "imports"], jsxRuntime: "automatic", production: true,
       preserveDynamicImport: true, filePath: key,
     }).code;
     return { ok: true, js, specifiers: requireSpecifiers(js) };
   } catch (err) {
-    return { ok: false, state: { state: "unsupported-syntax", detail: `转译出错:${firstLine(err)}`, file: key } };
+    return { ok: false, state: { state: "unsupported-syntax", detail: tr("Transpile error: {0}", firstLine(err)), file: key } };
   }
 }
 
@@ -87,7 +88,7 @@ export async function bundleCard(input: BundleInput): Promise<BundleResult> {
     const key = queue.shift()!;
     if (seen.has(key)) continue;
     seen.add(key);
-    if (seen.size > MAX_CLOSURE_FILES) return fail({ state: "missing-module", detail: `这张卡引的文件太多(超过 ${MAX_CLOSURE_FILES} 个)`, file: entry });
+    if (seen.size > MAX_CLOSURE_FILES) return fail({ state: "missing-module", detail: tr("This card imports too many files (over {0})", MAX_CLOSURE_FILES), file: entry });
     const file = read(key);
     if (!file) return fail({ state: "missing-module", detail: key, file: entry });
     hashes.set(key, file.hash);

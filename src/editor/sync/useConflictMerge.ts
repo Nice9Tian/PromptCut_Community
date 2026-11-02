@@ -21,6 +21,7 @@ import {
   type ThingRow,
 } from "./mergeItems";
 import { deleteSelected, mergeSelected, useSync } from "./syncManager";
+import { tr } from "../../i18n/index.ts";
 
 export interface ConflictMergeState {
   rows: ThingRow[];
@@ -75,7 +76,7 @@ export function useConflictMerge(): ConflictMergeState {
         }
         return out;
       });
-      setNote(`${changed.length} 项刚被别人改过，已取消勾选，请看过现在的值再决定。`);
+      setNote(tr("{0} items were just changed by someone else and have been unchecked. Review the current values before deciding.", changed.length));
     } else {
       setSel((s) => pruneSelection(rows, s));
     }
@@ -128,5 +129,5 @@ export function useMergeCounts(): { total: number; conflicts: number } {
 
 /** 横条与按钮上的那句话:「N 处改动待合并，其中 M 处有冲突」 */
 export function mergeBarText(c: { total: number; conflicts: number }): string {
-  return `${c.total} 处改动待合并${c.conflicts ? `，其中 ${c.conflicts} 处有冲突` : ""}`;
+  return tr("{0} changes to merge{1}", c.total, c.conflicts ? tr(", {0} of them in conflict", c.conflicts) : "");
 }

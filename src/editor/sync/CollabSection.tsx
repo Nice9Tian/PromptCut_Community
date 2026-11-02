@@ -36,23 +36,24 @@ import {
   type InviteInfo, type InviteStatus,
 } from "./collab";
 import "./sync.css";
+import { tr } from "../../i18n/index.ts";
 
 /** 表 B（契约第 14 节）：原文照抄 */
 export const COLLAB_TEXT = {
-  enabling: "正在设置多用户协作…",
-  enabled: "多用户协作已开启。",
-  offline: "当前离线，不能放到云端。联网后再试。",
-  unreachable: "连不上云端，设置没有完成。",
-  copied: "已复制",
-  regenConfirm: "作废后，旧链接和旧二维码立刻失效（项目密码不受影响）。确认作废并重新生成？",
-  regenDone: "已生成新的邀请链接与二维码。",
-  inviteDead: "邀请码已失效，可以重新生成。",
-  cancelConfirm: "取消后其他成员不能再进入。会先把项目内容和素材原尺寸拉回本机，确认取消？",
-  cancelling: "正在把项目内容拉回本机…",
-  cancelled: "多用户协作已关闭，内容已拉回本机。",
-  cancelFailed: "拉回本机没有完成，已恢复为开启状态。检查网络后重试。",
-  localNote: "你的电脑关机后其他人打不开，可在设置里搬到云端",
-  localLimit: "放本机时，主机在线且云端登记成功后，其他成员可通过中继加入；临时网络故障会自动重试登记。",
+  enabling: tr("Setting up multi-user collaboration…"),
+  enabled: tr("Multi-user collaboration is on."),
+  offline: tr("You are offline, so it cannot be moved to the cloud. Try again once you are online."),
+  unreachable: tr("Cannot reach the cloud, setup did not finish."),
+  copied: tr("Copied"),
+  regenConfirm: tr("Once revoked, the old link and old QR code stop working immediately (the project password is not affected). Revoke and regenerate?"),
+  regenDone: tr("A new invite link and QR code have been generated."),
+  inviteDead: tr("The invite code has expired. You can generate a new one."),
+  cancelConfirm: tr("After canceling, other members can no longer join. The project content and original-size media will first be pulled back to this machine. Cancel?"),
+  cancelling: tr("Pulling project content back to this machine…"),
+  cancelled: tr("Multi-user collaboration is off, and the content has been pulled back to this machine."),
+  cancelFailed: tr("Pulling back to this machine did not finish, and collaboration was restored to on. Check the network and try again."),
+  localNote: tr("Others cannot open it when your computer is off. You can move it to the cloud in settings"),
+  localLimit: tr("When kept on this machine, other members can join through the relay once the host is online and cloud registration succeeds; temporary network failures retry registration automatically."),
 } as const;
 
 export interface CollabHandle {
@@ -128,12 +129,12 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
   const lanOk = !ONLINE && !!device?.localEditor;
   useEffect(() => {
     if (movingHosted && shared?.where === "hosted") {
-      setMovingHosted(false); setStatus({ text: "已搬到云端，仍是原房间。", tone: "ok" });
+      setMovingHosted(false); setStatus({ text: tr("Moved to the cloud, still the original room."), tone: "ok" });
     }
   }, [movingHosted, shared?.where]);
   useEffect(() => {
     if (movingLan && shared?.where === "lan") {
-      setMovingLan(false); setStatus({ text: "已搬回本机，仍是原房间。", tone: "ok" });
+      setMovingLan(false); setStatus({ text: tr("Moved back to this machine, still the original room."), tone: "ok" });
     }
   }, [movingLan, shared?.where]);
 
@@ -186,9 +187,9 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
 
   const addRow = () => {
     const u = rowName.trim();
-    if (!u) return setRowErr("用户名不能为空。");
-    if (!rowPw) return setRowErr("密码不能为空。");
-    if (u === creator.trim() || list.some((r) => r.username === u)) return setRowErr("名单里已有这个名字，换一个区分一下。");
+    if (!u) return setRowErr(tr("Username cannot be empty."));
+    if (!rowPw) return setRowErr(tr("Password cannot be empty."));
+    if (u === creator.trim() || list.some((r) => r.username === u)) return setRowErr(tr("This name is already in the list, use a different one to tell them apart."));
     setList([...list, { username: u, password: rowPw }]);
     setRowName("");
     setRowPw("");
@@ -209,7 +210,7 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
           if (oldShellBlocksAccountMove(hostedUrl)) { setStatus({ text: OLD_SHELL_ACCOUNT_TEXT, tone: "info" }); return true; }
         }
         if (!creator.trim() || !creatorPw || (mode === "free" && !projectPw)) {
-          setStatus({ text: "创建者用户名和密码不能为空。", tone: "err" });
+          setStatus({ text: tr("Creator username and password cannot be empty."), tone: "err" });
           return true;
         }
         if (where === "lan" && !lanOk) return true;
@@ -227,8 +228,8 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
         setBusy(false);
         if (!r.ok) {
           const text = r.error === "offline" ? COLLAB_TEXT.offline
-            : r.error === "name-taken" ? "这个项目名已被占用，换一个吧。"
-              : r.error === "lan-failed" ? "本机端口被占用，先关掉占用的另一个 PromptCut 窗口，或重启软件试试。"
+            : r.error === "name-taken" ? tr("This project name is already taken, pick another.")
+              : r.error === "lan-failed" ? tr("The local port is in use. Close the other PromptCut window using it, or restart the app and try again.")
                 : COLLAB_TEXT.unreachable;
           setStatus({ text, tone: "err" });
           return true;
@@ -244,7 +245,7 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
         }
         const pw = local?.creatorPassword || cancelPw;
         if (!pw) {
-          setStatus({ text: "要创建者密码才能取消。", tone: "err" });
+          setStatus({ text: tr("The creator password is required to cancel."), tone: "err" });
           return true;
         }
         if (!window.confirm(COLLAB_TEXT.cancelConfirm)) {
@@ -253,11 +254,11 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
         }
         setBusy(true);
         setStatus({ text: COLLAB_TEXT.cancelling, tone: "info" });
-        const r = await disableCollab(pw, (done, total) => setStatus({ text: `${COLLAB_TEXT.cancelling}（素材原尺寸 ${done}/${total}）`, tone: "info" }));
+        const r = await disableCollab(pw, (done, total) => setStatus({ text: tr("{0} (original-size media {1}/{2})", COLLAB_TEXT.cancelling, done, total), tone: "info" }));
         setBusy(false);
         if (!r.ok) {
           setChecked(true);
-          setStatus({ text: r.error === "forbidden" ? "密码错误。" : r.error === "rate-limited" ? "尝试太多次，等 60 秒后再试。" : COLLAB_TEXT.cancelFailed, tone: "err" });
+          setStatus({ text: r.error === "forbidden" ? tr("Wrong password.") : r.error === "rate-limited" ? tr("Too many attempts, try again in 60 seconds.") : COLLAB_TEXT.cancelFailed, tone: "err" });
           return true;
         }
         setStatus({ text: COLLAB_TEXT.cancelled, tone: "ok" });
@@ -275,7 +276,7 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
     setStatus({ text: ACCOUNT_MOVE_TEXT.stage.check, tone: "info" });
     let user: Account | null;
     try { user = await accountCloudLogin(c); }
-    catch (e) { setBusy(false); setStatus({ text: e instanceof Error ? e.message : "连接云端失败，请检查网络后重试。", tone: "err" }); return; }
+    catch (e) { setBusy(false); setStatus({ text: e instanceof Error ? e.message : tr("Failed to connect to the cloud. Check the network and try again."), tone: "err" }); return; }
     setAcctUser(user);
     if (!user) { setBusy(false); setLoginFor({ name }); setStatus({ text: ACCOUNT_MOVE_TEXT.needLogin, tone: "info" }); return; }
     setLoginFor(null);
@@ -288,7 +289,7 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
       setStatus({ text: r.kind === "room" ? ACCOUNT_MOVE_TEXT.doneRoom : ACCOUNT_MOVE_TEXT.doneLocal, tone: "ok" });
       return;
     }
-    console.warn("[collab] 搬到云端没成:", r.error, r.stage, r.detail ?? "", r.localClosed ? "(本机协作已关)" : "");
+    console.warn("[collab] move to cloud failed:", r.error, r.stage, r.detail ?? "", r.localClosed ? "(local collaboration closed)" : "");
     if (r.error === "login-required") { setAcctUser(null); setLoginFor({ name }); }
     if (r.error === "name-taken" || r.error === "invalid-name") setAskCloudName(true);
     if (r.error === "creator-password" || r.error === "bad-password") setAskMovePw(true);
@@ -306,7 +307,7 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
     const r = await abandonPendingMove(acct);
     setBusy(false);
     if (r.ok) { setStatus({ text: r.already ? ACCOUNT_MOVE_TEXT.abandonedAlready(r.name) : ACCOUNT_MOVE_TEXT.abandoned(r.name), tone: "ok" }); return; }
-    console.warn("[collab] 放弃这次搬迁没成:", r.error, r.detail ?? "");
+    console.warn("[collab] abandoning the move failed:", r.error, r.detail ?? "");
     if (r.error === "login-required") { setAcctUser(null); setLoginFor(null); }
     setStatus({ text: abandonFailureText(r), tone: r.error === "login-required" ? "info" : "err" });
   };
@@ -320,7 +321,7 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
       if (resume) void startAccountMove(acct, resume.name);
     } catch (e) {
       setLoginBusy(false);
-      setStatus({ text: e instanceof Error ? e.message : "登录失败，请重试。", tone: "err" });
+      setStatus({ text: e instanceof Error ? e.message : tr("Login failed, please try again."), tone: "err" });
     }
   };
 
@@ -335,7 +336,7 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
     const r = await createInvite(regenPw);
     setBusy(false);
     if (!r.ok) {
-      setStatus({ text: r.error === "forbidden" ? "密码错误。" : r.error === "rate-limited" ? "尝试太多次，等 60 秒后再试。" : COLLAB_TEXT.unreachable, tone: "err" });
+      setStatus({ text: r.error === "forbidden" ? tr("Wrong password.") : r.error === "rate-limited" ? tr("Too many attempts, try again in 60 seconds.") : COLLAB_TEXT.unreachable, tone: "err" });
       return;
     }
     setRegenPw(null);
@@ -350,12 +351,12 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
       const r = await regenAccountProjectLink();
       if (r.ok) {
         setMoveLink(r.link);
-        pushToast("项目链接已重新生成，旧链接已失效。", "info", 5000);
+        pushToast(tr("The project link was regenerated, and the old link is no longer valid."), "info", 5000);
       } else {
-        setStatus({ text: r.error || "重新生成项目链接失败。", tone: "err" });
+        setStatus({ text: r.error || tr("Failed to regenerate the project link."), tone: "err" });
       }
     } catch (e) {
-      setStatus({ text: (e as Error).message || "重新生成项目链接失败。", tone: "err" });
+      setStatus({ text: (e as Error).message || tr("Failed to regenerate the project link."), tone: "err" });
     } finally {
       setBusy(false);
     }
@@ -365,14 +366,14 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
     try {
       const r = await setAccountSecondaryPassword(secondaryPw || null);
       if (r.ok) {
-        pushToast(secondaryPw ? "项目二级密码已设置。" : "项目二级密码已清除。", "info", 4000);
+        pushToast(secondaryPw ? tr("Project secondary password set.") : tr("Project secondary password cleared."), "info", 4000);
         setSecondaryModalOpen(false);
         setSecondaryPw("");
       } else {
-        setStatus({ text: r.error || "设置项目二级密码失败。", tone: "err" });
+        setStatus({ text: r.error || tr("Failed to set the project secondary password."), tone: "err" });
       }
     } catch (e) {
-      setStatus({ text: (e as Error).message || "设置项目二级密码失败。", tone: "err" });
+      setStatus({ text: (e as Error).message || tr("Failed to set the project secondary password."), tone: "err" });
     } finally {
       setSecondaryBusy(false);
     }
@@ -386,21 +387,21 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
       void startAccountMove(c!, (askCloudName ? cloudName.trim() : "") || shared.name);
       return;
     }
-    setMovingHosted(true); setBusy(true); setStatus({ text: "正在搬到云端，完成后自动连接原房间…", tone: "info" });
+    setMovingHosted(true); setBusy(true); setStatus({ text: tr("Moving to the cloud, will reconnect to the original room when done…"), tone: "info" });
     const result = await moveSharedToHosted(); setBusy(false);
-    if (!result.ok) { setMovingHosted(false); setStatus({ text: result.error === "not-original-host" ? "请在当前实际主机上执行搬到云端。"
-      : result.error === "relocation-materials-missing" ? "有项目引用的素材尚未入库，补齐后重试；原房间和身份已保留。"
-        : "搬迁暂未完成，原房间信息已保留。检查连接或存储后重试。", tone: "err" }); }
+    if (!result.ok) { setMovingHosted(false); setStatus({ text: result.error === "not-original-host" ? tr("Run the move to the cloud on the current actual host.")
+      : result.error === "relocation-materials-missing" ? tr("Some media referenced by the project is not yet in the library. Fill in the gaps and retry; the original room and identity are kept.")
+        : tr("The move did not finish, and the original room info is kept. Check the connection or storage and try again."), tone: "err" }); }
   };
   const moveLan = async () => {
-    setMovingLan(true); setBusy(true); setStatus({ text: "正在搬回本机，完成后自动连接原房间…", tone: "info" });
+    setMovingLan(true); setBusy(true); setStatus({ text: tr("Moving back to this machine, will reconnect to the original room when done…"), tone: "info" });
     const result = await moveSharedToLan(); setBusy(false);
-    if (!result.ok) { setMovingLan(false); setStatus({ text: "搬迁暂未完成，房间和本机恢复信息已保留。请检查连接、身份或存储后重试。", tone: "err" }); }
+    if (!result.ok) { setMovingLan(false); setStatus({ text: tr("The move did not finish, and the room and local recovery info are kept. Check the connection, identity or storage and try again."), tone: "err" }); }
   };
 
   const copied$ = (key: string) => (copied === key ? <span className="pc-sync-hint">{COLLAB_TEXT.copied}</span> : null);
   const copyBtn = (key: string, text: string) => (
-    <button type="button" className="pc-sync-link-btn" onClick={() => copy(text, () => setCopied(key))}>复制</button>
+    <button type="button" className="pc-sync-link-btn" onClick={() => copy(text, () => setCopied(key))}>{tr("Copy")}</button>
   );
 
   const on = checked;
@@ -418,17 +419,17 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
   ) : (
     <div data-pc="collab-account-login">
       <div className="pc-sync-field">
-        <label htmlFor="pc-collab-acct-name">账号名</label>
+        <label htmlFor="pc-collab-acct-name">{tr("Account name")}</label>
         <input id="pc-collab-acct-name" className="pc-dialog-input" data-pc="collab-account-name" autoComplete="username" value={loginName} onChange={(e) => setLoginName(e.target.value)} />
       </div>
       <div className="pc-sync-field">
-        <label htmlFor="pc-collab-acct-pw">密码</label>
+        <label htmlFor="pc-collab-acct-pw">{tr("Password")}</label>
         <input id="pc-collab-acct-pw" type="password" className="pc-dialog-input" data-pc="collab-account-password" autoComplete="current-password" value={loginPw}
           onChange={(e) => setLoginPw(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void signIn(); }} />
       </div>
       <div className="pc-collab-actions">
         <button type="button" className="pc-dialog-opt" data-pc="collab-account-submit" disabled={loginBusy || busy || !loginName.trim() || !loginPw} onClick={() => void signIn()}>{ACCOUNT_MOVE_TEXT.loginButton}</button>
-        <a className="pc-sync-hint" href={`${acct.origin}/account`} target="_blank" rel="noopener noreferrer">注册账号 / 忘记密码</a>
+        <a className="pc-sync-hint" href={`${acct.origin}/account`} target="_blank" rel="noopener noreferrer">{tr("Sign up / forgot password")}</a>
       </div>
     </div>
   );
@@ -444,16 +445,16 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
               if (!projectPw) setProjectPw(generatePassword());
             }
           }} />
-        多用户协作
+        {tr("Multi-user collaboration")}
       </label>
 
       {on && !isOn ? (
         <>
           {hostedTarget ? (
             <div className="pc-collab-row">
-              <span className="pc-collab-key">放在</span>
-              <button type="button" className={`pc-dialog-opt${where === "lan" ? " pc-dialog-opt--on" : ""}`} data-pc="collab-where-lan" disabled={ONLINE} onClick={() => setWhere("lan")}>本机</button>
-              <button type="button" className={`pc-dialog-opt${where === "hosted" ? " pc-dialog-opt--on" : ""}`} data-pc="collab-where-hosted" onClick={() => setWhere("hosted")}>云端</button>
+              <span className="pc-collab-key">{tr("Keep on")}</span>
+              <button type="button" className={`pc-dialog-opt${where === "lan" ? " pc-dialog-opt--on" : ""}`} data-pc="collab-where-lan" disabled={ONLINE} onClick={() => setWhere("lan")}>{tr("This machine")}</button>
+              <button type="button" className={`pc-dialog-opt${where === "hosted" ? " pc-dialog-opt--on" : ""}`} data-pc="collab-where-hosted" onClick={() => setWhere("hosted")}>{tr("Cloud")}</button>
             </div>
           ) : null}
           {where === "lan" ? (
@@ -464,10 +465,10 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
             </>
           ) : (
             <div className="pc-sync-field">
-              <label htmlFor="pc-collab-hosted">云端地址</label>
+              <label htmlFor="pc-collab-hosted">{tr("Cloud address")}</label>
               <div style={{ display: "flex", gap: 8 }}>
                 <input id="pc-collab-hosted" className="pc-dialog-input" data-pc="collab-hosted-url" value={hostedUrl} onChange={(e) => setHostedUrl(e.target.value)} />
-                <button type="button" className="pc-dialog-opt" style={{ height: 30 }} onClick={() => setHostedUrl(hosted.DEFAULT_HOSTED_URL)}>恢复默认</button>
+                <button type="button" className="pc-dialog-opt" style={{ height: 30 }} onClick={() => setHostedUrl(hosted.DEFAULT_HOSTED_URL)}>{tr("Restore default")}</button>
               </div>
             </div>
           )}
@@ -482,26 +483,26 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
           ) : (
           <>
           <div className="pc-collab-row">
-            <span className="pc-collab-key">进入方式</span>
-            <button type="button" className={`pc-dialog-opt${mode === "free" ? " pc-dialog-opt--on" : ""}`} onClick={() => setMode("free")}>自由进入</button>
-            <button type="button" className={`pc-dialog-opt${mode === "restricted" ? " pc-dialog-opt--on" : ""}`} onClick={() => setMode("restricted")}>限定进入</button>
+            <span className="pc-collab-key">{tr("Access mode")}</span>
+            <button type="button" className={`pc-dialog-opt${mode === "free" ? " pc-dialog-opt--on" : ""}`} onClick={() => setMode("free")}>{tr("Open access")}</button>
+            <button type="button" className={`pc-dialog-opt${mode === "restricted" ? " pc-dialog-opt--on" : ""}`} onClick={() => setMode("restricted")}>{tr("Restricted access")}</button>
           </div>
           <div className="pc-sync-field">
-            <label htmlFor="pc-collab-creator">创建者用户名</label>
+            <label htmlFor="pc-collab-creator">{tr("Creator username")}</label>
             <input id="pc-collab-creator" className="pc-dialog-input" value={creator} maxLength={64} onChange={(e) => setCreator(e.target.value)} />
           </div>
           <div className="pc-sync-field">
-            <label htmlFor="pc-collab-cpw">创建者密码（已自动生成，存在本机）</label>
+            <label htmlFor="pc-collab-cpw">{tr("Creator password (auto-generated, stored on this machine)")}</label>
             <input id="pc-collab-cpw" className="pc-dialog-input" value={creatorPw} onChange={(e) => setCreatorPw(e.target.value)} />
           </div>
           {mode === "free" ? (
             <div className="pc-sync-field">
-              <label htmlFor="pc-collab-ppw">项目密码（已自动生成，存在本机）</label>
+              <label htmlFor="pc-collab-ppw">{tr("Project password (auto-generated, stored on this machine)")}</label>
               <input id="pc-collab-ppw" className="pc-dialog-input" value={projectPw} onChange={(e) => setProjectPw(e.target.value)} />
             </div>
           ) : (
             <ListEditor
-              creatorName={creator.trim() || "你的名字"}
+              creatorName={creator.trim() || tr("Your name")}
               list={list}
               onRemove={(u) => setList(list.filter((r) => r.username !== u))}
               rowName={rowName}
@@ -510,38 +511,38 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
               setRowPw={(v) => { setRowPw(v); setRowErr(""); }}
               onAdd={addRow}
               rowErr={rowErr}
-              hint="如果有独立渲染主机，记得在这里给它也加一条名单。"
+              hint={tr("If you have a standalone render host, remember to add it to the allowlist here too.")}
             />
           )}
           </>
           )}
-          <div className="pc-sync-hint">点「确定」开始设置。</div>
+          <div className="pc-sync-hint">{tr("Click \"OK\" to start setup.")}</div>
         </>
       ) : null}
 
       {isOn && shared ? (
         <>
           <div className="pc-collab-row">
-            <span className="pc-collab-key">放在</span>
+            <span className="pc-collab-key">{tr("Keep on")}</span>
             {/* 账号云端项目只写「云端」:「自由进入 / 限定进入」是本地项目的说法,账号项目的 mode 恒为 free,原来这里总写「自由进入」,
                 取消下面「任何知道链接的人都可加入」后两处打架;进入方式只由那个勾选说明(〔裁〕主会话 2026-10-22,报告 AGENT-claude-join-requests.md) */}
-            <span data-pc="collab-where-text">{isAccount ? "云端" : <>{shared.where === "hosted" ? "云端" : "本机"} · {shared.mode === "free" ? "自由进入" : "限定进入"}</>}</span>
+            <span data-pc="collab-where-text">{isAccount ? tr("Cloud") : <>{shared.where === "hosted" ? tr("Cloud") : tr("Local")} · {shared.mode === "free" ? tr("Open entry") : tr("Restricted entry")}</>}</span>
           </div>
           {/* 账号办法的云端项目没有「搬回本机」（点了必然失败，用户 2026-10-13 定先收起来）；旧办法的房间照旧显示 */}
-          {shared.where === "hosted" && !ONLINE && !shared.accountId ? <button type="button" className="pc-dialog-opt" data-pc="collab-move-lan" disabled={busy} onClick={() => void moveLan()}>搬回本机</button> : null}
+          {shared.where === "hosted" && !ONLINE && !shared.accountId ? <button type="button" className="pc-dialog-opt" data-pc="collab-move-lan" disabled={busy} onClick={() => void moveLan()}>{tr("Move back to this machine")}</button> : null}
           <div className="pc-collab-row" data-pc="collab-project-name">
-            <span className="pc-collab-key">项目名</span>
+            <span className="pc-collab-key">{tr("Project name")}</span>
             <code>{shared.name}</code>
             {copyBtn("name", shared.name)}
             {copied$("name")}
           </div>
           <div className="pc-collab-row" data-pc="collab-project-rev">
-            <span className="pc-collab-key">历史序号</span>
+            <span className="pc-collab-key">{tr("History sequence number")}</span>
             <code>{rev ?? 1}</code>
           </div>
           {shared.mode === "free" && local?.projectPassword ? (
             <div className="pc-collab-row" data-pc="collab-project-password">
-              <span className="pc-collab-key">项目密码</span>
+              <span className="pc-collab-key">{tr("Project password")}</span>
               <code>{local.projectPassword}</code>
               {copyBtn("pw", local.projectPassword)}
               {copied$("pw")}
@@ -554,8 +555,8 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
           {shared.where === "lan" ? (
             <>
               <div className="pc-sync-warn">{COLLAB_TEXT.localNote}</div>
-              <div className="pc-sync-hint" data-pc="host-registration" data-state={hostRegistration ?? "member"}>{hostRegistration === "online" ? "原房间已登记上线，中继接入已就绪。" : hostRegistration === "host-conflict" ? "主机占用冲突，未自动接管。" : COLLAB_TEXT.localLimit}</div>
-              {!ONLINE && hostedTarget ? <button type="button" className="pc-dialog-opt" data-pc="collab-move-hosted" disabled={busy} onClick={() => void moveHosted()}>搬到云端</button> : null}
+              <div className="pc-sync-hint" data-pc="host-registration" data-state={hostRegistration ?? "member"}>{hostRegistration === "online" ? tr("The original room is registered online and relay access is ready.") : hostRegistration === "host-conflict" ? tr("Host slot conflict, not taken over automatically.") : COLLAB_TEXT.localLimit}</div>
+              {!ONLINE && hostedTarget ? <button type="button" className="pc-dialog-opt" data-pc="collab-move-hosted" disabled={busy} onClick={() => void moveHosted()}>{tr("Move to cloud")}</button> : null}
               {askCloudName ? (
                 <div className="pc-sync-field">
                   <label htmlFor="pc-collab-cloud-name">{ACCOUNT_MOVE_TEXT.nameLabel}</label>
@@ -564,7 +565,7 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
               ) : null}
               {askMovePw ? (
                 <div className="pc-sync-field">
-                  <label htmlFor="pc-collab-move-pw">创建者密码</label>
+                  <label htmlFor="pc-collab-move-pw">{tr("Creator password")}</label>
                   <input id="pc-collab-move-pw" type="password" className="pc-dialog-input" data-pc="collab-move-password" value={movePw} onChange={(e) => setMovePw(e.target.value)} />
                 </div>
               ) : null}
@@ -576,39 +577,39 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
             <>
               {isAccount ? (
                 <div className="pc-collab-actions">
-                  <button type="button" className="pc-dialog-opt" data-pc="collab-regen-link" disabled={busy} onClick={() => void regenLink()}>作废并重新生成项目链接</button>
-                  <button type="button" className="pc-dialog-opt" data-pc="collab-secondary-password" disabled={busy} onClick={() => setSecondaryModalOpen(true)}>项目二级密码</button>
+                  <button type="button" className="pc-dialog-opt" data-pc="collab-regen-link" disabled={busy} onClick={() => void regenLink()}>{tr("Revoke and regenerate project link")}</button>
+                  <button type="button" className="pc-dialog-opt" data-pc="collab-secondary-password" disabled={busy} onClick={() => setSecondaryModalOpen(true)}>{tr("Project secondary password")}</button>
                 </div>
               ) : (
                 <>
                   {invite ? (
                     <div className="pc-collab-qr">
-                      <div className="pc-collab-qr-img" data-pc="collab-qr" aria-label="邀请二维码" dangerouslySetInnerHTML={{ __html: qrSvg(invite.link, { ec: "M", quiet: 4, scale: 8 }) }} />
+                      <div className="pc-collab-qr-img" data-pc="collab-qr" aria-label={tr("Invite QR code")} dangerouslySetInnerHTML={{ __html: qrSvg(invite.link, { ec: "M", quiet: 4, scale: 8 }) }} />
                       <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0, flex: 1 }}>
                         <code data-pc="collab-invite-link" style={{ fontSize: 11.5, wordBreak: "break-all" }}>{invite.link}</code>
                         <div className="pc-collab-actions">
-                          <button type="button" className="pc-dialog-opt" data-pc="collab-copy-link" onClick={() => copy(invite.link, () => setCopied("link"))}>复制邀请链接</button>
+                          <button type="button" className="pc-dialog-opt" data-pc="collab-copy-link" onClick={() => copy(invite.link, () => setCopied("link"))}>{tr("Copy invite link")}</button>
                           {copied$("link")}
                         </div>
                         <div className="pc-sync-hint" data-pc="collab-invite-status">
                           {inviteStatus && !inviteStatus.active ? COLLAB_TEXT.inviteDead
-                            : `有效期至 ${when(inviteStatus?.expiresAt ?? invite.expiresAt)}${inviteStatus ? ` · 已用 ${inviteStatus.used} 次` : ""}${(inviteStatus?.maxUses ?? invite.maxUses) ? ` / 限 ${inviteStatus?.maxUses ?? invite.maxUses} 次` : ""}`}
+                            : tr("Valid until {0}{1}{2}", when(inviteStatus?.expiresAt ?? invite.expiresAt), inviteStatus ? tr(" · used {0} times", inviteStatus.used) : "", (inviteStatus?.maxUses ?? invite.maxUses) ? tr(" / limit {0} uses", inviteStatus?.maxUses ?? invite.maxUses) : "")}
                         </div>
                       </div>
                     </div>
                   ) : (
-                    <div className="pc-sync-hint">这台设备上没有邀请链接（链接只存在签发它的那台设备上）。</div>
+                    <div className="pc-sync-hint">{tr("There is no invite link on this device (the link exists only on the device that issued it).")}</div>
                   )}
                   <div className="pc-collab-actions">
-                    <button type="button" className="pc-dialog-opt" data-pc="collab-regen" disabled={busy} onClick={() => void regen()}>作废并重新生成邀请码</button>
+                    <button type="button" className="pc-dialog-opt" data-pc="collab-regen" disabled={busy} onClick={() => void regen()}>{tr("Revoke and regenerate invite code")}</button>
                   </div>
                   {regenPw !== null ? (
                     <div className="pc-sync-field">
-                      <label htmlFor="pc-collab-regen-pw">创建者密码</label>
+                      <label htmlFor="pc-collab-regen-pw">{tr("Creator password")}</label>
                       <div style={{ display: "flex", gap: 8 }}>
                         <input id="pc-collab-regen-pw" type="password" autoFocus className="pc-dialog-input" data-pc="collab-regen-password" value={regenPw}
                           onChange={(e) => setRegenPw(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void regen(); }} />
-                        <button type="button" className="pc-dialog-opt" data-pc="collab-regen-confirm" style={{ height: 30 }} disabled={!regenPw || busy} onClick={() => void regen()}>确认</button>
+                        <button type="button" className="pc-dialog-opt" data-pc="collab-regen-confirm" style={{ height: 30 }} disabled={!regenPw || busy} onClick={() => void regen()}>{tr("Confirm")}</button>
                       </div>
                     </div>
                   ) : null}
@@ -616,15 +617,15 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
               )}
               {secondaryModalOpen ? (
                 <div className="pc-sync-field" data-pc="secondary-password-modal" style={{ marginTop: 12, padding: 8, border: "1px solid var(--border, #ccc)", borderRadius: 6 }}>
-                  <label htmlFor="pc-secondary-pw">项目二级密码（留空表示清除二级密码）</label>
+                  <label htmlFor="pc-secondary-pw">{tr("Project secondary password (leave empty to clear it)")}</label>
                   <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-                    <input id="pc-secondary-pw" type="password" className="pc-dialog-input" data-pc="collab-secondary-pw-input" placeholder="输入新密码或留空清除"
+                    <input id="pc-secondary-pw" type="password" className="pc-dialog-input" data-pc="collab-secondary-pw-input" placeholder={tr("Enter a new password, or leave empty to clear")}
                       value={secondaryPw} onChange={(e) => setSecondaryPw(e.target.value)} />
                     <button type="button" className="pc-dialog-opt" data-pc="collab-secondary-pw-confirm" disabled={secondaryBusy || busy} onClick={() => void submitSecondaryPw()}>
-                      确定
+                      {tr("OK")}
                     </button>
                     <button type="button" className="pc-dialog-opt" onClick={() => { setSecondaryModalOpen(false); setSecondaryPw(""); }}>
-                      取消
+                      {tr("Cancel")}
                     </button>
                   </div>
                 </div>
@@ -636,21 +637,21 @@ export const CollabSection = forwardRef<CollabHandle, { open: boolean }>(functio
           {iAmCreator ? (
             <div className="pc-collab-actions">
               {!isAccount && (shared.mode === "free"
-                ? <button type="button" className="pc-dialog-opt" onClick={() => setFlow({ kind: "password" })}>改项目密码</button>
-                : <button type="button" className="pc-dialog-opt" onClick={() => setFlow({ kind: "list" })}>改名单</button>)}
-              {!isAccount && <button type="button" className="pc-dialog-opt" onClick={() => setFlow({ kind: "creator-password" })}>改创建者密码</button>}
-              {!isAccount && <button type="button" className="pc-dialog-opt" onClick={() => setFlow({ kind: "bans" })}>已禁入的设备</button>}
-              <button type="button" className="pc-dialog-opt" onClick={() => setFlow({ kind: "delete" })}>删除项目</button>
+                ? <button type="button" className="pc-dialog-opt" onClick={() => setFlow({ kind: "password" })}>{tr("Change project password")}</button>
+                : <button type="button" className="pc-dialog-opt" onClick={() => setFlow({ kind: "list" })}>{tr("Edit allowlist")}</button>)}
+              {!isAccount && <button type="button" className="pc-dialog-opt" onClick={() => setFlow({ kind: "creator-password" })}>{tr("Change creator password")}</button>}
+              {!isAccount && <button type="button" className="pc-dialog-opt" onClick={() => setFlow({ kind: "bans" })}>{tr("Banned devices")}</button>}
+              <button type="button" className="pc-dialog-opt" onClick={() => setFlow({ kind: "delete" })}>{tr("Delete project")}</button>
             </div>
           ) : null}
-          {iAmCreator ? <div className="pc-sync-hint">踢人：在顶栏的成员列表里，悬停到那个人那一行点「踢出」。</div> : null}
+          {iAmCreator ? <div className="pc-sync-hint">{tr("Kick a member: in the member list in the top bar, hover over that person's row and click \"Kick\".")}</div> : null}
           {!checked && iAmCreator && !local?.creatorPassword ? (
             <div className="pc-sync-field">
-              <label htmlFor="pc-collab-cancel-pw">创建者密码</label>
+              <label htmlFor="pc-collab-cancel-pw">{tr("Creator password")}</label>
               <input id="pc-collab-cancel-pw" type="password" className="pc-dialog-input" value={cancelPw} onChange={(e) => setCancelPw(e.target.value)} />
             </div>
           ) : null}
-          {!checked && iAmCreator ? <div className="pc-sync-hint">点「确定」取消多用户协作。</div> : null}
+          {!checked && iAmCreator ? <div className="pc-sync-hint">{tr("Click \"OK\" to cancel multi-user collaboration.")}</div> : null}
         </>
       ) : null}
 

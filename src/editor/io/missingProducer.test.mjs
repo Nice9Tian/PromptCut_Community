@@ -86,7 +86,7 @@ test("说不清的不认定:编辑器进程不应答、接口报错;片段编排
   actions.newProject("说不清");
   const m = actions.addMedia({ kind: "audio", name: "voice.mp3", url: `/@media/${H("a")}`, hash: H("a") });
   const u = actions.addMedia({ kind: "audio", name: "old.mp3", url: fileUrl("C:/m/old.mp3"), path: "C:/m/old.mp3" });
-  const track = actions.addTrack("配音");
+  const track = actions.addTrack("Voiceover");
   actions.addMediaClip(m.id, 2, { trackId: track.id, duration: 3 });
   const clips = JSON.stringify(getState().project.tracks);
   for (const world of [{ down: true }, { localStatus: 500 }, { localStatus: 429 }]) {
@@ -106,7 +106,7 @@ test("保存重开后记录还对得上(占位还在),不再弹窗;占位上显�
   actions.newProject("保存重开");
   const hashed = actions.addMedia({ kind: "video", name: "场景:访谈(一).mp4", url: `/@media/${H("a")}`, hash: H("a"), path: "C:/A/media/x.mp4" });
   actions.addMedia({ kind: "audio", name: "旁白.wav", url: fileUrl("C:/A/media/旁白.wav"), path: "C:/A/media/旁白.wav" });
-  const bare = actions.addMedia({ kind: "image", name: "(缺失) 封面.png", url: "" }); // 打开老文件时已被清空地址的那种
+  const bare = actions.addMedia({ kind: "image", name: "(missing) 封面.png", url: "" }); // 打开老文件时已被清空地址的那种
   actions.addMedia({ kind: "audio", name: "场景:访谈(一).mp4", url: `/@media/${H("a")}`, hash: H("a"), soundOf: hashed.id });
   editor({});
   await ingestUnhashedMedia({ background: true, markMissing: true }); await checkHashedMedia();
@@ -116,7 +116,6 @@ test("保存重开后记录还对得上(占位还在),不再弹窗;占位上显�
     const media = reopen(external);
     for (const m of media) assert.equal(confirmedMissing(m), true, `${m.name} external=${external}`);
     assert.deepEqual(media.map((m) => m.url), getState().project.media.map((m) => m.url), "重开后地址不变");
-    assert.deepEqual(media.map(missingMaterialLabel), ["场景:访谈(一).mp4", "旁白.wav", "封面.png", "场景:访谈(一).mp4"], "占位上是原名,不带「(缺失) 」");
     assert.equal(confirmedMissingAudio(media[3], { media }), true, "从缺失视频派生的声音跟着出人声");
   }
   // 再检查一轮(重开之后的后台检查):不重复写、不重复弹
@@ -128,12 +127,34 @@ test("保存重开后记录还对得上(占位还在),不再弹窗;占位上显�
 
 test("旧版本只加了「(缺失) 」标记、清空了地址的文件:打开后补上记录", async () => {
   actions.newProject("旧标记");
-  const m = actions.addMedia({ kind: "video", name: "(缺失) old.mp4", url: "", hash: H("a") });
+  const m = actions.addMedia({ kind: "video", name: "(missing) old.mp4", url: "", hash: H("a") });
   editor({});
   assert.deepEqual(await checkHashedMedia(), { missing: [m.id], restored: [] });
-  assert.equal(get(m.id).url, `/@media/${H("a")}`); assert.equal(get(m.id).name, "(缺失) old.mp4");
+  assert.equal(get(m.id).url, `/@media/${H("a")}`); assert.equal(get(m.id).name, "(missing) old.mp4");
   assert.equal(confirmedMissing(get(m.id)), true);
   assert.deepEqual(takeMissingMaterials(), [{ id: m.id, name: "old.mp4", kind: "video" }]);
+});
+
+// 占位上要显示原名、不带标记。标记是写进素材名字里的,现在由 tr("(missing) ") 写;
+// 而 src/audio/missingMaterialRecord.ts 的 missingMaterialLabel 还只认「(缺失) 」,所以占位上会带着 "(missing) "。
+test("占位上显示原名,不带缺失标记", async () => {
+  actions.newProject("占位原名");
+  const hashed = actions.addMedia({ kind: "video", name: "场景:访谈(一).mp4", url: `/@media/${H("a")}`, hash: H("a"), path: "C:/A/media/x.mp4" });
+  actions.addMedia({ kind: "audio", name: "旁白.wav", url: fileUrl("C:/A/media/旁白.wav"), path: "C:/A/media/旁白.wav" });
+  actions.addMedia({ kind: "image", name: "(missing) 封面.png", url: "" });
+  actions.addMedia({ kind: "audio", name: "场景:访谈(一).mp4", url: `/@media/${H("a")}`, hash: H("a"), soundOf: hashed.id });
+  editor({});
+  await ingestUnhashedMedia({ background: true, markMissing: true }); await checkHashedMedia();
+  const media = reopen(true);
+  assert.deepEqual(media.map(missingMaterialLabel), ["场景:访谈(一).mp4", "旁白.wav", "封面.png", "场景:访谈(一).mp4"]);
+});
+
+test("旧版本只加了中文「(缺失) 」标记、清空了地址的文件:打开后补上记录,标记不叠", async () => {
+  actions.newProject("旧标记-中文");
+  const m = actions.addMedia({ kind: "video", name: "(缺失) old.mp4", url: "", hash: H("a") });
+  editor({});
+  await checkHashedMedia();
+  assert.equal(get(m.id).name, "(缺失) old.mp4");
 });
 
 test("素材找回来以后记录清掉(占位消失):内容库里有了、原路径上放回来了、没哈希的老素材取得到了", async () => {
@@ -225,7 +246,7 @@ test("检查到一半换了项目(同一份文件进了云端项目、素材号�
   assert.deepEqual(await hashedRun, { missing: [], restored: [] });
   await ingestRun;
   assert.equal(getState().project, after, "新项目一个字段都没被写");
-  assert.equal(getState().project.media.some((m) => m.missingMaterial || m.name.startsWith("(缺失)")), false);
+  assert.equal(getState().project.media.some((m) => m.missingMaterial || m.name.startsWith("(missing)")), false);
   assert.deepEqual(takeMissingMaterials(), []);
 });
 
@@ -274,7 +295,7 @@ test("没读成不认定:原路径 403(不是「不在素材目录」那种)、5
 });
 
 test("缺失素材改名:记录里的名字跟着改,占位不失效,占位上显示新名字;存盘重开仍然对得上", async () => {
-  actions.newProject("改名");
+  actions.newProject("Renamed");
   const m = actions.addMedia({ kind: "video", name: "旧名字.mp4", url: `/@media/${H("a")}`, hash: H("a") });
   editor({});
   await checkHashedMedia(); takeMissingMaterials();

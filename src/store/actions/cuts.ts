@@ -6,6 +6,7 @@ import { CUT_SEGMENT_REF_FIXED, cutCycleReason, cutDuration, cutReferences, isCu
 import { findClip, newId, type Track, type TrackClip } from "../../kernel/project";
 
 import { state, set, setProject, updateTrack, runInCutScope } from "../core";
+import { tr } from "../../i18n/index.ts";
 
 export const cuts = {
 
@@ -67,7 +68,7 @@ export const cuts = {
     let p = state.project;
     let trackId = opts.trackId;
     if (opts.newTrackIndex !== undefined || (!trackId && !p.tracks.length)) {
-      const track: Track = { id: newId("t"), name: `序列 ${p.tracks.length + 1}`, clips: [] };
+      const track: Track = { id: newId("t"), name: tr("Track {0}", p.tracks.length + 1), clips: [] };
       const tracks = [...p.tracks];
       const at = Math.max(0, Math.min(tracks.length, opts.newTrackIndex ?? tracks.length));
       tracks.splice(at, 0, track);
@@ -92,13 +93,13 @@ export const cuts = {
   setCutSegment(clipId: string, patch: { cutOffset?: number }): TrackClip {
     const p = state.project;
     const hit = findClip(p, clipId);
-    if (!hit || !isCutSegment(hit.clip)) throw new Error(`${clipId} 不是剪辑段`);
-    if (hit.track.locked) throw new Error(`序列「${hit.track.name}」锁着`);
+    if (!hit || !isCutSegment(hit.clip)) throw new Error(tr("{0} is not a cut segment", clipId));
+    if (hit.track.locked) throw new Error(tr("Track \"{0}\" is locked", hit.track.name));
     if (patch && Object.hasOwn(patch, "cutId")) throw new Error(CUT_SEGMENT_REF_FIXED);
     const cutId = hit.clip.cutId!;
     const offset = Math.max(0, patch.cutOffset ?? hit.clip.cutOffset ?? 0);
     const total = cutDuration(p, cutId);
-    if (offset >= total) throw new Error(`偏移 ${offset} 秒超出了被引用剪辑的总时长 ${total} 秒`);
+    if (offset >= total) throw new Error(tr("Offset {0} s exceeds the total duration of the referenced cut, {1} s", offset, total));
     const { cutOffset: _o, ...rest } = hit.clip;
     const next: TrackClip = { ...rest, cutId, end: Math.min(hit.clip.end, hit.clip.start + (total - offset)), ...(offset > 0 ? { cutOffset: offset } : {}) };
     setProject(updateTrack(p, hit.track.id, (t) => ({ ...t, clips: t.clips.map((c) => (c.id === clipId ? next : c)) })));

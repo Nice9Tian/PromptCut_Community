@@ -1,5 +1,6 @@
 import { newProjectId, type Project } from "../../kernel/project";
 import type { CollaborationDescriptor, ConvertedFrom } from "./recoveryAssociation";
+import { tr } from "../../i18n/index.ts";
 
 /** 文档服务签发、客户端核对过的「这个项目已不存在」的证明（`server/recovery/gone-proof.mjs` 的 `verifyGoneProof`） */
 export interface GoneProof {
@@ -20,9 +21,9 @@ export function convertGoneProject(
   proof: GoneProof,
   deps: { newId?: () => string; now?: () => Date } = {},
 ): { project: Project; from: ConvertedFrom } {
-  if (descriptor.version !== 1 || descriptor.where !== "hosted" || !descriptor.roomId || !descriptor.service) throw new Error("只有云端项目才按「已不存在」转成本地项目");
-  if (proof?.state !== "gone" || proof.projectId !== descriptor.roomId) throw new Error("「已不存在」的证明与这个项目对不上");
-  if (!project || !Array.isArray(project.tracks)) throw new Error("项目内容不可读，没有转换");
+  if (descriptor.version !== 1 || descriptor.where !== "hosted" || !descriptor.roomId || !descriptor.service) throw new Error(tr("Only cloud projects can be converted to local projects as \"no longer exists\""));
+  if (proof?.state !== "gone" || proof.projectId !== descriptor.roomId) throw new Error(tr("The \"no longer exists\" proof does not match this project"));
+  if (!project || !Array.isArray(project.tracks)) throw new Error(tr("The project content is unreadable, nothing was converted"));
   const id = (deps.newId ?? newProjectId)();
   return {
     project: { ...project, id },
@@ -48,9 +49,9 @@ export async function restoreOfflineEdits(o: {
   if (o.restored) return "already";
   let journal: unknown;
   try { journal = await o.readJournal(); }
-  catch (cause) { throw Object.assign(new Error("这台设备上的离线修改暂时读不出来"), { reason: "offline-edits-unreadable", cause }); }
+  catch (cause) { throw Object.assign(new Error(tr("The offline edits on this device cannot be read for now")), { reason: "offline-edits-unreadable", cause }); }
   if (journal === null || journal === undefined) return "none";
   try { o.restoreJournal(journal); }
-  catch (cause) { throw Object.assign(new Error("这台设备上的离线修改记录损坏"), { reason: "offline-edits-damaged", cause }); }
+  catch (cause) { throw Object.assign(new Error(tr("The offline edit records on this device are damaged")), { reason: "offline-edits-damaged", cause }); }
   return "restored";
 }

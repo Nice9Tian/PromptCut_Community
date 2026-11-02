@@ -11,12 +11,13 @@ import { cssFilter, describeFilter, isAnimated, resolveOps, type FilterDef, type
 import { createFilterTools, usesOf } from "../editor/right/filterTools";
 import { ControlField, Slider } from "./controls";
 import { useConfirm, useToast } from "./ui";
+import { tr } from "../i18n/index.ts";
 
 const tools = createFilterTools({ getState, actions });
 
 /** 滤镜库是空的时的提示:口径同桌面(`ClipFilterForm.tsx`、`filtersGroup.tsx`),位置换成手机版的「卡片库 → 滤镜」 */
-export const FILTERS_EMPTY_SHORT = "滤镜库是空的：让 Agent 建一个，会出现在卡片库的「滤镜」分类";
-export const FILTERS_EMPTY_LONG = "还没有滤镜。让 Agent 建一个（比如「给夜景那几段做个冷色调」），它会出现在这里，之后能挂到任意视频 / 图片片段上复用。";
+export const FILTERS_EMPTY_SHORT = tr("The filter library is empty: ask the Agent to create one, and it will appear in the \"Filters\" category of the card library");
+export const FILTERS_EMPTY_LONG = tr("No filters yet. Ask the Agent to create one (for example, \"give those night-scene clips a cool tone\"). It will appear here and can then be attached to any video / image clip for reuse.");
 
 /** 能不能挂滤镜:视频 / 图片段(不是卡片、不是声音、不是剪辑段) */
 export function filterableClip(p: Project, c: TrackClip | null | undefined): c is TrackClip {
@@ -52,7 +53,7 @@ export function FiltersGrid() {
   return (
     <>
       {filters.length > 0 && <div className="hint" data-pcm="filters-hint">
-        {target ? "点一个滤镜，挂到选中的片段上（每段只挂一个，会替换原来的）；再点一次摘掉。" : "先在缩略时间轴上选中一段视频或图片，再点滤镜挂上去。"}
+        {target ? tr("Tap a filter to apply it to the selected clip (one per clip, it replaces the existing one); tap again to remove it.") : tr("First select a video or image in the thumbnail timeline, then tap a filter to apply it.")}
       </div>}
       {filters.length === 0 ? <div className="hint" data-pcm="filters-empty">{FILTERS_EMPTY_LONG}</div> : (
         <div className="grid">
@@ -62,17 +63,17 @@ export function FiltersGrid() {
             return (
               <div key={f.id} className={on ? "tile fx picked" : "tile fx"} data-pcm="filter" data-filter={f.id} data-on={on ? "1" : undefined}>
                 <button type="button" className="fx-pick" disabled={!target} data-pcm="filter-apply" onClick={() => {
-                  if (!target) { toast("先选中一段视频或图片"); return; }
+                  if (!target) { toast(tr("Select a video or image first")); return; }
                   const err = run(() => tools.applyFilter({ clipId: target.id, filterId: on ? "" : f.id }));
-                  toast(err ?? (on ? `已从选中的片段摘掉「${f.name}」` : `已把「${f.name}」挂到选中的片段`));
+                  toast(err ?? (on ? tr("Detached \"{0}\" from the selected clip", f.name) : tr("Attached \"{0}\" to the selected clip", f.name)));
                 }}>
-                  <div className="pic"><FilterSwatch def={f} />{isAnimated(f) && <span className="st">随时间变化</span>}</div>
-                  <div className="cap">{f.name}<small title={describeFilter(f)}>{uses.length ? `用在 ${uses.length} 段 · ` : ""}{describeFilter(f)}</small></div>
+                  <div className="pic"><FilterSwatch def={f} />{isAnimated(f) && <span className="st">{tr("Changes over time")}</span>}</div>
+                  <div className="cap">{f.name}<small title={describeFilter(f)}>{uses.length ? tr("Used on {0} clips · ", uses.length) : ""}{describeFilter(f)}</small></div>
                 </button>
-                <button type="button" className="fx-del" data-pcm="filter-del" aria-label={`删除滤镜「${f.name}」`} onClick={() => confirm({
-                  text: uses.length ? `「${f.name}」用在 ${uses.length} 段上，删了会把这些段上的它一起摘掉。删除？` : `从滤镜库删除「${f.name}」？`,
-                  ok: "删除", danger: true,
-                  run: () => { const err = run(() => tools.removeFilter({ filterId: f.id, force: uses.length > 0, reason: "用户在手机版卡片库里删除" })); toast(err ?? `已删除「${f.name}」`); },
+                <button type="button" className="fx-del" data-pcm="filter-del" aria-label={tr("Delete filter \"{0}\"", f.name)} onClick={() => confirm({
+                  text: uses.length ? tr("\"{0}\" is used on {1} clips; deleting it removes it from those clips too. Delete?", f.name, uses.length) : tr("Delete \"{0}\" from the filter library?", f.name),
+                  ok: tr("Delete"), danger: true,
+                  run: () => { const err = run(() => tools.removeFilter({ filterId: f.id, force: uses.length > 0, reason: "User deleted it in the mobile app card library" })); toast(err ?? tr("Deleted \"{0}\"", f.name)); },
                 })}>×</button>
               </div>
             );
@@ -91,9 +92,9 @@ export function ClipFilterFields({ clip }: { clip: TrackClip }) {
   const apply = (filterId: string, params?: Record<string, number>) => setErr(run(() => tools.applyFilter({ clipId: clip.id, filterId, params })));
   return (
     <div data-pcm="clip-filter">
-      <div className="field"><label>滤镜</label>
+      <div className="field"><label>{tr("Filter")}</label>
         <select className="text-in" data-pcm="clip-filter-select" value={cur?.id ?? ""} onChange={(e) => apply(e.target.value)}>
-          <option value="">无</option>
+          <option value="">{tr("None")}</option>
           {filters.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
         </select>
       </div>

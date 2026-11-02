@@ -36,7 +36,7 @@ const seg = (id, cutId, start, end) => ({ id, cardId: "", cutId, start, end });
 
 function project(clips, cuts = []) {
   return { version: 1, id: "p", name: "p", width: 1280, height: 720, fps: FPS, duration: 60, themeId: "midnight", media: [], activeCutId: "A",
-    tracks: [{ id: "t", name: "t", clips }], ...(cuts.length ? { cuts: [{ id: "A", name: "剪辑1" }, ...cuts] } : {}) };
+    tracks: [{ id: "t", name: "t", clips }], ...(cuts.length ? { cuts: [{ id: "A", name: "Cut 1" }, ...cuts] } : {}) };
 }
 
 /** 这个项目里某个片段的成本身份(与判定用的是同一份 `clipIdentityOf`) */

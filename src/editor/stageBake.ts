@@ -22,6 +22,7 @@ import { bakeFrameBase, bakeInputOf, isolatedBakeProject, type BakeInput } from 
 import type { Project } from "../kernel/project";
 import type { BakeFrameReply, StageEvent, StageRpcClient } from "../render/stageRpc.ts";
 import type { NodeTask } from "../online/browserNode.ts";
+import { tr } from "../i18n/index.ts";
 
 export type BakeFrameEvent = Extract<StageEvent, { type: "bake-frame" }>;
 export type BakeFrameOk = Extract<BakeFrameReply, { ok: true }>;
@@ -126,7 +127,7 @@ export function createStageBaker(deps: StageBakerDeps): StageBaker {
   /** 开这一段的活:排进单飞队列(最不急),拿到后台舞台才回 */
   const openLease = (task: NodeTask, project: unknown): Promise<Lease> => {
     const input = bakeInputOf(task);
-    if (!input) return Promise.reject(retryable("任务没有 input.bake / clipId(切分方没给浏览器那一份的参数)", false));
+    if (!input) return Promise.reject(retryable(tr("Task has no input.bake / clipId (the splitter didn't pass the browser its share of the parameters)"), false));
     let isolated: Project;
     // 顶层的卡:隔离单卡工程;剪辑段里的卡:带着剪辑段链的隔离工程(`isolatedBakeProject`)
     try { isolated = isolatedBakeProject(project as Project, input) as Project; } catch (e) { return Promise.reject(Object.assign(e as Error, { retryable: false })); }
@@ -157,7 +158,7 @@ export function createStageBaker(deps: StageBakerDeps): StageBaker {
     if (!lease || lease.taskId !== task.id) {
       close();
       const l = await openLease(task, project);
-      if (signal.aborted) { l.close(); throw retryable("已中止", true); }
+      if (signal.aborted) { l.close(); throw retryable(tr("Aborted"), true); }
       lease = l;
     }
     const l = lease;
@@ -208,13 +209,13 @@ export function createStageBaker(deps: StageBakerDeps): StageBaker {
         deps.noteError?.(reply.reason);
         // 不可重试:再做一遍结果一样。`not-ready`(就绪闸超时)按可重试交回,同桌面 waitFrameReady 抛错的处理
         if (reply.reason === "role" || reply.reason === "no-project") l.pushedTo = null;
-        throw retryable(`生成快照没成:${reply.reason}${reply.detail ? `(${reply.detail})` : ""}`, !FINAL_REASONS.has(reply.reason));
+        throw retryable(tr("Generate snapshots failed: {0}{1}", reply.reason, reply.detail ? `(${reply.detail})` : ""), !FINAL_REASONS.has(reply.reason));
       }
       const ev = bakeEvents.get(`${session}#${localFrame}`);
       bakeEvents.delete(`${session}#${localFrame}`);
       if (!ev || ev.hash !== reply.hash) {
         if (redo < SWAP_REDO_MAX && moved()) { l.ahead = null; stats.redos++; continue; }
-        throw retryable("舞台的 bake-frame 事件没到", true);
+        throw retryable(tr("Stage bake-frame event did not arrive"), true);
       }
       return { reply, event: ev, stage };
     }

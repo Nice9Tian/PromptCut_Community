@@ -9,6 +9,8 @@ import { fmtDur } from "./mediaGroups";
 import type { GroupData, GroupItem } from "./groups";
 import { useReadOnly } from "../../readOnly";
 import "../../timeline/cut-tabs.css";
+import { tr } from "../../../i18n/index.ts";
+import { shownName } from "../../../i18n/names.ts";
 
 /**
  * 素材库的「剪辑」组(`workflow/materials.md`「素材库里的剪辑」,2026-10-20 用户定)。
@@ -23,7 +25,7 @@ import "../../timeline/cut-tabs.css";
 type Row = ReturnType<typeof listCuts>[number];
 
 function describeRefs(row: Row): string {
-  return row.referencedBy.map((r) => `「${r.name}」(${r.clipIds.length} 段)`).join("、");
+  return row.referencedBy.map((r) => tr("\"{0}\" ({1} clips)", r.name, r.clipIds.length)).join(tr(", "));
 }
 
 export function useCutsGroup(q: string, flash: (text: string, ms?: number) => void): { data: GroupData; overlay: React.ReactNode } {
@@ -36,7 +38,7 @@ export function useCutsGroup(q: string, flash: (text: string, ms?: number) => vo
   const rows = useMemo(() => listCuts(project), [project]);
 
   const askDelete = (row: Row) => {
-    if (rows.length <= 1) { flash("这是最后一条剪辑,不能删", 3000); return; }
+    if (rows.length <= 1) { flash(tr("This is the last cut and cannot be deleted"), 3000); return; }
     setConfirm(row);
   };
 
@@ -59,11 +61,11 @@ export function useCutsGroup(q: string, flash: (text: string, ms?: number) => vo
         <button type="button" className="pc-btn-primary is-block pc-lib-cut-new" data-pc="lib-cut-add"
           disabled={ro.locked} title={ro.title()}
           onClick={() => { const cut = actions.addCut(undefined, { switchTo: false }); openCutInTimeline(cut.id); }}>
-          新建剪辑
+          {tr("New cut")}
         </button>
       ),
-      emptyHint: "还没有剪辑",
-      emptyDetail: <div className="pc-left-note">没有匹配的剪辑</div>,
+      emptyHint: tr("No cuts yet"),
+      emptyDetail: <div className="pc-left-note">{tr("No matching cuts")}</div>,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, q, renaming, ro.locked]);
@@ -73,11 +75,11 @@ export function useCutsGroup(q: string, flash: (text: string, ms?: number) => vo
     if (!row) return [];
     const off = ro.locked ? { disabled: true, title: ro.why } : null;
     return [
-      { label: "在时间轴上打开", onClick: () => openCutInTimeline(id), ...off },
-      { label: "改名", onClick: () => setRenaming(id), ...off },
+      { label: tr("Open on the timeline"), onClick: () => openCutInTimeline(id), ...off },
+      { label: tr("Rename"), onClick: () => setRenaming(id), ...off },
       {
-        label: "删除剪辑", danger: true, disabled: rows.length <= 1,
-        title: rows.length <= 1 ? "这是最后一条剪辑,不能删" : undefined,
+        label: tr("Delete cut"), danger: true, disabled: rows.length <= 1,
+        title: rows.length <= 1 ? tr("This is the last cut and cannot be deleted") : undefined,
         onClick: () => askDelete(row),
         ...off,
       },
@@ -90,16 +92,16 @@ export function useCutsGroup(q: string, flash: (text: string, ms?: number) => vo
       {confirm && (
         <ConfirmDialog
           open={true}
-          title="删除剪辑"
+          title={tr("Delete cut")}
           message={confirm.referencedBy.length
-            ? `剪辑「${confirm.name}」正被这些剪辑用着:${describeRefs(confirm)}。\n确认后连同引用它的剪辑段一起删除,可以撤销。`
-            : `确定删除剪辑「${confirm.name}」?${confirm.clipCount ? `\n里面有 ${confirm.clipCount} 段内容。` : ""}\n可以撤销。`}
-          confirmText="删除"
+            ? tr("Cut \"{0}\" is in use by these cuts: {1}.\nIf you confirm, it is deleted together with the cut segments that reference it. This can be undone.", confirm.name, describeRefs(confirm))
+            : tr("Delete cut \"{0}\"?{1}\nThis can be undone.", confirm.name, confirm.clipCount ? tr("\nIt contains {0} items.", confirm.clipCount) : "")}
+          confirmText={tr("Delete")}
           onConfirm={() => {
             try {
               const { removedSegments } = actions.removeCut(confirm.id);
               const n = removedSegments.reduce((s, r) => s + r.clipIds.length, 0);
-              flash(n ? `已删除「${confirm.name}」和引用它的 ${n} 个剪辑段(可撤销)` : `已删除「${confirm.name}」(可撤销)`, 3000);
+              flash(n ? tr("Deleted \"{0}\" and the {1} cut segments that reference it (undoable)", confirm.name, n) : tr("Deleted \"{0}\" (undoable)", confirm.name), 3000);
             } catch (err) {
               flash(err instanceof Error ? err.message : String(err), 4000);
             }
@@ -116,7 +118,7 @@ export function useCutsGroup(q: string, flash: (text: string, ms?: number) => vo
 function CutThumb({ row }: { row: Row }) {
   return (
     <div className={`pc-lib-cut${row.active ? " is-on" : ""}`} aria-hidden="true">
-      <span className="pc-lib-cut-name">{row.name}</span>
+      <span className="pc-lib-cut-name">{shownName(row.name)}</span>
       <span className="pc-lib-cut-meta">{fmtDur(row.duration)}</span>
     </div>
   );
@@ -135,7 +137,7 @@ function CutTile({ row, canDelete, renaming, locked, why, onRename, onRenamed, o
     if (next && next !== row.name) actions.renameCut(row.id, next);
     onRenamed();
   };
-  const refs = row.referencedBy.length ? `\n被 ${describeRefs(row)} 引用` : "";
+  const refs = row.referencedBy.length ? tr("\nReferenced by {0}", describeRefs(row)) : "";
   return (
     <div
       className={`pc-lib-cut${row.active ? " is-on" : ""}`}
@@ -144,7 +146,7 @@ function CutTile({ row, canDelete, renaming, locked, why, onRename, onRenamed, o
       tabIndex={0}
       draggable={!renaming && !locked}
       aria-disabled={locked || undefined}
-      title={locked ? `${row.name} · ${fmtDur(row.duration)}${refs}\n${why}` : `${row.name} · ${fmtDur(row.duration)}${refs}\n单击在时间轴上打开,拖到序列上放一个剪辑段`}
+      title={locked ? `${shownName(row.name)} · ${fmtDur(row.duration)}${refs}\n${why}` : tr("{0} · {1}{2}\nClick to open on the timeline, drag onto a track to place a cut segment", shownName(row.name), fmtDur(row.duration), refs)}
       onClick={() => { if (!renaming && !locked) openCutInTimeline(row.id); }}
       onKeyDown={(e) => { if (!locked && !renaming && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openCutInTimeline(row.id); } }}
       onContextMenu={onContextMenu}
@@ -157,25 +159,25 @@ function CutTile({ row, canDelete, renaming, locked, why, onRename, onRenamed, o
     >
       <span className="pc-tl-cut-glyph" style={{ position: "absolute", top: 8, left: 8 }}><IconFilm size={12} /></span>
       {renaming ? (
-        <input className="pc-tl-cut-input" value={draft} autoFocus aria-label="剪辑名"
+        <input className="pc-tl-cut-input" value={draft} autoFocus aria-label={tr("Cut name")}
           onFocus={(e) => e.currentTarget.select()}
           onChange={(e) => setDraft(e.target.value)} onBlur={commit}
           onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") commit(); else if (e.key === "Escape") onRenamed(); }}
           onClick={(e) => e.stopPropagation()} />
       ) : (
-        <span className="pc-lib-cut-name">{row.name}</span>
+        <span className="pc-lib-cut-name">{shownName(row.name)}</span>
       )}
       <span className="pc-lib-cut-meta">
-        {fmtDur(row.duration)} · {row.clipCount} 段{row.active ? " · 当前" : ""}{row.referencedBy.length ? ` · 被引用 ${row.referencedBy.length}` : ""}
+        {tr("{0} · {1} segments{2}{3}", fmtDur(row.duration), row.clipCount, row.active ? tr(" · current") : "", row.referencedBy.length ? tr(" · referenced {0}", row.referencedBy.length) : "")}
       </span>
       <span className="pc-lib-cut-acts">
-        <button type="button" className="pc-lib-cut-act" data-pc="lib-cut-rename" title={locked ? why : "改名"} aria-label={`改名 ${row.name}`}
+        <button type="button" className="pc-lib-cut-act" data-pc="lib-cut-rename" title={locked ? why : tr("Rename")} aria-label={tr("Rename {0}", shownName(row.name))}
           disabled={locked}
           onClick={(e) => { e.stopPropagation(); onRename(); }}>
           <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true"><path d="M3 13l1-3.5L11 2.5l2.5 2.5L6.5 12z" /></svg>
         </button>
         <button type="button" className="pc-lib-cut-act" data-pc="lib-cut-delete" disabled={!canDelete || locked}
-          title={locked ? why : canDelete ? "删除这条剪辑" : "这是最后一条剪辑,不能删"} aria-label={`删除 ${row.name}`}
+          title={locked ? why : canDelete ? tr("Delete this cut") : tr("This is the last cut and cannot be deleted")} aria-label={tr("Delete {0}", shownName(row.name))}
           onClick={(e) => { e.stopPropagation(); onDelete(); }}>
           <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5" /></svg>
         </button>

@@ -99,7 +99,9 @@ it('C10A-API-04 桌面构建照旧：base 是 /，不受在线模式影响', { t
   assert.equal(html.includes('/editor/'), false);
 });
 
-const walkBundle = (dir) => fs.readdirSync(path.join(dir, 'assets')).filter((f) => f.endsWith('.js')).map((f) => path.join(dir, 'assets', f));
+/** The translation table chunk holds every interface string, including ones this build prunes */
+const isTranslationTable = (f) => /^i18n-[\w-]+\.js$/.test(f);
+const walkBundle = (dir) => fs.readdirSync(path.join(dir, 'assets')).filter((f) => f.endsWith('.js') && !isTranslationTable(f)).map((f) => path.join(dir, 'assets', f));
 
 it('C10-MERGE-01 「合并 Skill 结果…」随 SKILL 的三方合并归档(计划 agent-workflow-plan.md A4):在线、桌面两份产物里都没有这一项', { timeout: 240_000 }, async () => {
   await buildOnline();
@@ -214,12 +216,12 @@ it('C10A-API-07 在线产物里没有桌面专用的标识', { timeout: 240_000 
   const text = bundleText(onlineDir);
   for (const id of ['/api/mcp/events', '/api/ai/setup', '/api/chats/', 'PROMPTCUT_AGENT', '/api/ai/diagnostics']) assert.equal(text.includes(id), false, `在线产物里不该有 ${id}`);
   // 云端对话的诊断报告在页面里生成、浏览器下载(用户 2026-10-07 定):诊断报告的窗口在在线产物里,走本机编辑器写盘的那条路被剪掉
-  assert.ok(text.includes('云端对话诊断报告'), '在线产物里带云端对话的诊断报告');
+  assert.ok(text.includes('Cloud chat diagnostic report'), '在线产物里带云端对话的诊断报告');
 });
 
 it('C10A-API-08 桌面产物里没有写死的云节点地址：云端 Agent 的地址由文档服务下发', { timeout: 240_000 }, async () => {
   await buildDesktop();
   const text = bundleText(desktopDir);
-  assert.ok(text.includes('在云端运行'), '桌面产物里带云端 AI 栏');
+  assert.ok(text.includes('Runs in the cloud and continues after you close it'), '桌面产物里带云端 AI 栏');
   assert.equal(/https?:\/\/[^"'`\s]*\/agent\/v1/.test(text), false, '桌面产物里不该写死云节点的 /agent/v1 地址');
 });

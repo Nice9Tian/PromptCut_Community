@@ -143,6 +143,7 @@ import { applyMerge, cardConflictThing, selectionList, staleSelections, type Box
 import { MergeTable } from "./mergeTable";
 import { offlineThings } from "./offlineTransfer";
 import { cacheKey, defaultStore, defaultStoreDurable } from "./offlineCache";
+import { tr } from "../../i18n/index.ts";
 
 /* ---------------- 界面状态 ---------------- */
 
@@ -520,12 +521,12 @@ export function onlineBackups(): OnlineBackups {
  */
 function saveOnlineBackup(b: LocalBackup) {
   const index = onlineBackupStore.save(b);
-  const action = { label: "下载备份", pc: "backup-download", run: () => { onlineBackupStore.download(index); } };
+  const action = { label: tr("Download backup"), pc: "backup-download", run: () => { onlineBackupStore.download(index); } };
   if (b.kind === "overwritten") {
     const what = entityLabel(b.entity, getState().project);
-    pushToast(`${what}被别人覆盖了，你之前那一版已留在本页。关闭页面前可以下载备份。`, "info", 10_000, action);
+    pushToast(tr("{0} was overwritten by someone else; your earlier version is kept on this page. You can download a backup before closing the page.", what), "info", 10_000, action);
   } else {
-    pushToast(`已丢弃 ${b.batch.length} 步离线时的修改，这些修改已留在本页。关闭页面前可以下载备份。`, "warn", Infinity, action);
+    pushToast(tr("Discarded {0} offline edit steps; they are kept on this page. You can download a backup before closing the page.", b.batch.length), "warn", Infinity, action);
   }
 }
 
@@ -548,7 +549,7 @@ async function saveBackup(b: LocalBackup) {
     if (!r.ok) throw new Error(String(r.status));
   } catch (e) {
     // 存不下来也要让用户知道:不能让他以为备份在那儿(转表时的安全网除外:内容在待合并表里)
-    if (!quiet) pushToast(`本地备份没存下来(${(e as Error).message}),被覆盖的那一版找不回了。`, "warn", 10_000);
+    if (!quiet) pushToast(tr("The local backup was not saved ({0}); the overwritten version cannot be recovered.", (e as Error).message), "warn", 10_000);
   }
 }
 
@@ -604,17 +605,17 @@ function onNotice(n: SyncNotice) {
     case "overwritten": {
       // 文案按交互稿第 5 节,「找回入口待裁定」换成裁定定下的入口(c65-design.md 第 8 节)
       const who = writerLabel(n.by, me(), displayNames());
-      pushToast(`你的近期修改已被 ${who} 覆盖。已将你修改的版本存入草稿备份（「项目」菜单 →「本地备份…」可找回）。`, "warn", 10_000);
+      pushToast(tr("Your recent edits were overwritten by {0}. Your edited version has been saved to the draft backups (find it under the \"Project\" menu → \"Local backups…\").", who), "warn", 10_000);
       return;
     }
     case "remote":
       flashEntities(n.entities);
       return;
     case "rejected":
-      pushToast(`有一步修改没被文档服务接受(${n.reason}),已撤回。`, "warn");
+      pushToast(tr("An edit was not accepted by the document service ({0}) and has been rolled back.", n.reason), "warn");
       return;
     case "replay-dropped":
-      pushToast("有一步离线时的修改在最新历史序号上落不下去,已丢弃。", "warn");
+      pushToast(tr("An offline edit could not be applied on top of the latest history sequence number and was discarded."), "warn");
       return;
     default:
       return;
@@ -679,7 +680,7 @@ export async function issueAgentTicket(req: { reqId?: unknown; projectId?: unkno
   if (!reqId) return;
   let reply: Record<string, unknown>;
   try {
-    if (!cur || cur.kind !== "shared" || cur.docProjectId !== req.projectId) throw new Error("本页面没有连着这个共享项目");
+    if (!cur || cur.kind !== "shared" || cur.docProjectId !== req.projectId) throw new Error(tr("This page is not connected to this shared project"));
     const r = await cur.link.request({ type: "auth.ticket", kind: "conn", role: "agent", conversation: Number(req.conversation) });
     if (r.type !== "auth.ticket.ok" || typeof r.ticket !== "string") throw new Error(String(r.reason ?? r.detail ?? r.type));
     reply = { reqId, ticket: r.ticket };
@@ -695,14 +696,14 @@ export async function issueAgentTicket(req: { reqId?: unknown; projectId?: unkno
  */
 const cardSyncHooks = {
   ticket: async (projectId: string): Promise<string> => {
-    if (!cur || cur.kind !== "shared" || cur.docProjectId !== projectId) throw new Error("本页面没有连着这个共享项目");
+    if (!cur || cur.kind !== "shared" || cur.docProjectId !== projectId) throw new Error(tr("This page is not connected to this shared project"));
     const r = await cur.link.request({ type: "auth.ticket", kind: "conn", role: "page" });
     if (r.type !== "auth.ticket.ok" || typeof r.ticket !== "string") throw new Error(String(r.reason ?? r.detail ?? r.type));
     return r.ticket;
   },
   toast: (text: string, tone: Toast["tone"], ms?: number) => pushToast(text, tone, ms),
   who: (actor: Record<string, unknown> | null | undefined) =>
-    actor ? writerLabel({ actor, session: typeof actor.session === "string" ? actor.session : undefined }, me(), displayNames()) : "别人",
+    actor ? writerLabel({ actor, session: typeof actor.session === "string" ? actor.session : undefined }, me(), displayNames()) : tr("Someone else"),
   // 断网期间改过、云端也被别人改过的卡:一张卡一条进「冲突合并」(本机已换成云端的版本,我的版本在表里,另有备份)
   conflict: (c: { key: string; mine: string; cloud: string; rev: number }) => {
     const table = mergeTable;
@@ -719,7 +720,7 @@ const cardSyncHooks = {
  */
 const renderNodeHooks = {
   ticket: async (projectId: string): Promise<string> => {
-    if (!cur || cur.kind !== "shared" || cur.docProjectId !== projectId) throw new Error("本页面没有连着这个共享项目");
+    if (!cur || cur.kind !== "shared" || cur.docProjectId !== projectId) throw new Error(tr("This page is not connected to this shared project"));
     const r = await cur.link.request({ type: "auth.ticket", kind: "conn", role: "render", owner: { kind: "user" } });
     if (r.type !== "auth.ticket.ok" || typeof r.ticket !== "string") throw new Error(String(r.reason ?? r.detail ?? r.type));
     return r.ticket;
@@ -1150,7 +1151,7 @@ function onSideMessage(msg: AnyMsg) {
       setHostedAgent(view.shared?.projectId ?? currentDocProjectId(), (msg.hosted as { agent?: unknown } | undefined)?.agent ?? null);
       return;
     case "shared.notice":
-      if (msg.event === "password-changed") pushToast("项目密码已被修改。你当前的连接不受影响，但下次进入需要新密码。", "info", 8000);
+      if (msg.event === "password-changed") pushToast(tr("The project password has been changed. Your current connection is not affected, but you will need the new password next time you enter."), "info", 8000);
       // 改密码后选了退出、文档服务撤回了旧设备在那段时间里的修改:此刻在线的成员各一条(不在线的不补)
       if (msg.event === "content-rolled-back") pushToast(rolledBackText(msg.name), "info", 8000);
       // 创建者开关了托管方的服务:界面马上跟着变(紧接着还有一条刷新后的成员列表,以它为准)
@@ -1263,8 +1264,8 @@ export function isJoinPage(): boolean {
 
 /** `.proc` 只在所有本地修改都拿到确认之后写(语义「项目文件」);没接文档服务时直接放行 */
 export async function whenSaved(timeoutMs = 10_000): Promise<void> {
-  if (identitySave) { try { await identitySave; } catch { if (!lastIdentity) throw new Error("协作身份未保存"); identitySave = saveRecoveryIdentity(lastIdentity.descriptor, lastIdentity.record); await identitySave; } }
-  if (currentAssociation() && !cur && view.reopenState !== "unsupported") throw new Error("协作身份尚未恢复；请等待主机或重新认证后保存。文件内容已保留。");
+  if (identitySave) { try { await identitySave; } catch { if (!lastIdentity) throw new Error(tr("Collaboration identity not saved")); identitySave = saveRecoveryIdentity(lastIdentity.descriptor, lastIdentity.record); await identitySave; } }
+  if (currentAssociation() && !cur && view.reopenState !== "unsupported") throw new Error(tr("The collaboration identity has not been restored yet; wait for the host or re-authenticate before saving. The file content has been kept."));
   if (!cur) return;
   await cur.link.ds.whenSettled({ timeoutMs });
   const descriptor = currentAssociation();
@@ -1343,7 +1344,7 @@ function transferOffline(link: SyncLink) {
   // 在线页面的恢复阶段:离线修改没有提交,转进了待合并表,不能说「离线时的修改已全部提交」
   if (ONLINE) { recoveryState = { phase: null, wasOffline: false, hadUnsent: false }; patch({ recovery: null }); }
   void table.add(things).then((durable) => {
-    if (!durable && table.pendingOps) pushToast("离线修改已转进「冲突合并」，但这台设备暂时存不下来；连上文档服务前请不要关闭页面。", "warn", 10_000);
+    if (!durable && table.pendingOps) pushToast(tr("Offline edits were moved into \"Conflict merge\", but this device cannot store them for now; do not close the page until the document service is reachable."), "warn", 10_000);
   });
   clearBrowserJournal(link);
 }
@@ -1359,7 +1360,7 @@ function routeUndoConflict(conflict: NonNullable<UndoResult["conflict"]>): boole
   const plan = undoConflictPlan(ds.project, conflict, { batch: newBatchId(), baseRev: ds.rev, at: Date.now() },
     { manualDuration: getState().durationManual });
   if (plan.direct) {
-    try { ds.commitAside(plan.direct); } catch (e) { pushToast(`没撤成：${(e as Error).message}`, "warn"); }
+    try { ds.commitAside(plan.direct); } catch (e) { pushToast(tr("Could not undo: {0}", (e as Error).message), "warn"); }
   }
   if (plan.things.length) {
     void table.add(plan.things);
@@ -1381,7 +1382,7 @@ export interface MergeOutcome { ok: boolean; message: string; stale?: string[] }
  */
 export function mergeSelected(sel: Selection, seen: Map<string, Box>): MergeOutcome {
   const table = mergeTable;
-  if (!table || !cur || view.status !== "online") return { ok: false, message: "当前离线，连上后再合并。" };
+  if (!table || !cur || view.status !== "online") return { ok: false, message: tr("Currently offline. Merge after reconnecting.") };
   const ds = cur.link.ds;
   const things = table.things;
   const stale = staleSelections(ds.project, things, seen, sel);
@@ -1397,15 +1398,15 @@ export function mergeSelected(sel: Selection, seen: Map<string, Box>): MergeOutc
     try {
       ds.mergeOffline(r.project, ds.rev);
     } catch (e) {
-      return { ok: false, message: `没合并成：${(e as Error).message}` };
+      return { ok: false, message: tr("Could not merge: {0}", (e as Error).message) };
     }
     void table.remove(r.done);
   }
   const n = r.done.reduce((k, d) => k + (chosen.get(d.key)?.size ? d.props.filter((p) => chosen.get(d.key)!.has(p)).length : 0), 0);
-  const parts = [n ? `已合并 ${n} 项。` : r.external.length ? "" : "没有合并任何项。"];
-  if (r.external.length) parts.push(`${r.external.length} 张卡片的源码正在照你这边写回去。`);
-  if (stale.length) parts.push(`${stale.length} 项在窗口打开后又被别人改过，这次没有合并，请看过现在的值再决定。`);
-  if (r.failed.length) parts.push(`${r.failed.length} 项没合并成：${[...new Set(r.failed.map((f) => f.reason))].join("；")}。`);
+  const parts = [n ? tr("Merged {0} items.", n) : r.external.length ? "" : tr("No items were merged.")];
+  if (r.external.length) parts.push(tr("The source of {0} cards is being written back to match your side.", r.external.length));
+  if (stale.length) parts.push(tr("{0} items were changed by someone else after the window was opened and were not merged this time. Please review the current values and decide.", stale.length));
+  if (r.failed.length) parts.push(tr("{0} items could not be merged: {1}.", r.failed.length, [...new Set(r.failed.map((f) => f.reason))].join(tr(";"))));
   return { ok: r.failed.length === 0 && stale.length === 0, message: parts.join(""), stale };
 }
 
@@ -1413,18 +1414,18 @@ async function mergeCards(list: { key: string; props: string[]; thing: MergeThin
   for (const x of list) {
     const r = await takeMineCard(x.thing.ref.id, String(x.thing.mine?.v ?? ""));
     if (r.ok) void mergeTable?.remove([{ key: x.key, props: x.props }]);
-    else pushToast(`卡片 ${x.thing.ref.id.replace(/^src\//, "")} 没写回去:${r.error ?? ""}`, "warn", 10_000);
+    else pushToast(tr("Card {0} was not written back: {1}", x.thing.ref.id.replace(/^src\//, ""), r.error ?? ""), "warn", 10_000);
   }
 }
 
 /** 「删除选中」:从待合并表里拿掉,云端保持现状;断网时也能删(连上后再交给文档服务) */
 export function deleteSelected(sel: Selection): MergeOutcome {
   const table = mergeTable;
-  if (!table) return { ok: false, message: "没有待合并项。" };
+  if (!table) return { ok: false, message: tr("No pending items to merge.") };
   const list = selectionList(sel);
   const n = list.reduce((k, x) => k + x.props.length, 0);
   void table.remove(list);
-  return { ok: true, message: `已删除 ${n} 项，云端保持现状。` };
+  return { ok: true, message: tr("Deleted {0} items, the cloud stays as it is.", n) };
 }
 
 /* ---------------- 浏览器本地缓存里的离线批次 ---------------- */
@@ -1524,7 +1525,7 @@ export function revertAgentOp(rec: AgentOp): UndoResult | null {
   if (!cur) return null;
   const ds = cur.link.ds;
   if (!ds.canRevertRemote(rec.opId, rec.inverse)) {
-    pushToast("这一步的改动记录不在本页面上,撤不了。", "warn");
+    pushToast(tr("The change record for this step is not on this page, so it cannot be undone."), "warn");
     return null;
   }
   const result = ds.revertRemote({ opId: rec.opId, inverse: rec.inverse, rev: rec.rev, by: rec.by });
@@ -1533,7 +1534,7 @@ export function revertAgentOp(rec: AgentOp): UndoResult | null {
     patch({ agentOpsVersion: view.agentOpsVersion + 1 });
   } else if (!result.skipped.length && !result.failed.length) {
     // 既没有被后来的改动挡住的、也没有落不下去的,却一处都没撤成:要说出来,不能让按钮点了没反应
-    pushToast("这一步没撤成:它改过的地方现在已经是撤之前的样子(可能已被撤回过),没有需要退回的内容。", "warn");
+    pushToast(tr("This step could not be undone: what it changed already looks the way it did before the step (it may have been undone already), so there is nothing to roll back."), "warn");
   }
   return result;
 }
@@ -1626,7 +1627,7 @@ export async function enterAccountProject(options: { client: CloudAccountClient;
     if (error instanceof AccountFailure && error.status === 403 && ['banned', 'not-listed'].includes(error.code))
       patch({ blocked: error.code === 'banned' ? 'kicked' : 'removed' });
   } if (!ready) rejectEntry(error);
-    else { disconnectSharedAssets(); pushToast(error instanceof Error ? error.message : '云端登录已失效，请重新登录。', 'warn', Infinity); } };
+    else { disconnectSharedAssets(); pushToast(error instanceof Error ? error.message : tr("Cloud sign-in has expired, please sign in again."), 'warn', Infinity); } };
   const link = new SyncLink({ url, projectId: options.projectId, initial: options.initial, initialize: false, session,
     // 接续不带票据:文档服务规定接续项旁边不能有鉴权项(带了握手回 400,只能白等保留期过完再重建会话);
     // 接续时服务端按会话里记下的身份重新核对登录与成员资格。票据只在建新会话时出示(`protocols`)
@@ -1637,7 +1638,7 @@ export async function enterAccountProject(options: { client: CloudAccountClient;
     isFatalClose: () => false,
     onProtocolError: error => { const e = error as { status?: number }; if (e.status === 401 || e.status === 403) { fail(error); return true; }
       if (e.status === 404) { fail(new AccountFailure(404, 'project-gone')); return true; }
-      pushToast(error instanceof Error ? error.message : '云端服务暂时不可用，正在等待重连。', 'warn'); return false; },
+      pushToast(error instanceof Error ? error.message : tr("Cloud service is temporarily unavailable, waiting to reconnect."), 'warn'); return false; },
     onAuthExpired: () => { void life.authExpired(); },
     onOpen: () => { life.opened(); void (async () => {
       // 重新建成会话(断线重连、到期前换会话):进项目时接好的东西都还在,只把跟着连接走的那几样在新连接上重建 ——
@@ -1765,10 +1766,10 @@ export async function enterAccountProject(options: { client: CloudAccountClient;
       const linkText = () => projectLink(origin, options.projectId, current.creator ? current.linkToken ?? undefined : undefined);
       // 同一个键:再进别的项目时替换掉上一条,不叠(issue #15)。缺省那句只是提醒可以把链接发给别人,8 秒就够
       // (氛围式顶栏另有一颗常驻的「复制项目链接」);调用方自带文案的(「搬到云端」)是一次性的要紧通知,照旧常驻、由用户自己关
-      if (options.announce !== false) pushToast(options.enteredText ?? '已进入云端项目，可以将项目链接发给另一位已登录成员。', 'info',
+      if (options.announce !== false) pushToast(options.enteredText ?? tr("Entered the cloud project. You can send the project link to another signed-in member."), 'info',
         options.enteredText ? Infinity : ENTERED_TOAST_MS, {
-          label: '复制项目链接', pc: 'cloud-project-copy', run: () => { const text = linkText(); void navigator.clipboard.writeText(text).then(
-            () => pushToast('项目链接已复制。', 'info'), () => pushToast(`项目链接：${text}`, 'info', Infinity)); },
+          label: tr("Copy project link"), pc: 'cloud-project-copy', run: () => { const text = linkText(); void navigator.clipboard.writeText(text).then(
+            () => pushToast(tr("Project link copied."), 'info'), () => pushToast(tr("Project link: {0}", text), 'info', Infinity)); },
         }, ENTERED_TOAST_KEY);
     })().catch(fail); },
     onClosed: info => { if (!ready || info.fatal) fail(new AccountFailure(info.fatal ? 403 : 0, info.reason || 'network'));
@@ -1891,10 +1892,10 @@ export async function enterShared(candidate: Candidate, cred: EnterCredentials, 
       recoveryCoordinator.cancel(); cancelHostTask(descriptor);
       clearSharedResume(); detach(); disconnectSharedAssets();
       patch({ blocked: failure === "auth" ? null : failure, shared: null, members: [], hosted: null, reopenState: failure === "auth" ? "needs-auth" : failure === "deleted" ? "deleted" : "rejected" });
-      if (failure === "auth") pushToast("原协作身份已失效，请重新认证；本地内容已保留。", "warn", Infinity);
+      if (failure === "auth") pushToast(tr("The original collaboration identity has expired, please authenticate again; local content has been kept."), "warn", Infinity);
       // 即便隧道在致命关闭帧到达前中断，可信发现接口的 deleted 也必须持久注销。
       if (failure === "deleted" && descriptor && !ONLINE_BUILD && !ONLINE) {
-        void recoveryRequest("revoke", descriptor).catch(() => pushToast("房间已删除，但本机注销记录保存失败，请检查磁盘并重试。", "warn", Infinity));
+        void recoveryRequest("revoke", descriptor).catch(() => pushToast(tr("The room was deleted, but saving the local revocation record failed. Check the disk and try again."), "warn", Infinity));
       }
     };
     const link = new SyncLink({
@@ -1958,11 +1959,11 @@ export async function enterShared(candidate: Candidate, cred: EnterCredentials, 
         if (key) {
           lastIdentity = { descriptor, record: { candidate, as: cred.as, username: cred.username, key, profile: "default" } };
           identitySave = saveRecoveryIdentity(descriptor, { candidate, as: cred.as, username: cred.username, key, profile: "default" });
-          try { await identitySave; } catch { pushToast("协作身份未能可靠保存；请重试保存，否则下次打开需要重新认证。", "warn", Infinity); }
+          try { await identitySave; } catch { pushToast(tr("The collaboration identity could not be saved reliably; retry saving, otherwise you will need to authenticate again next time you open it."), "warn", Infinity); }
         }
         if (!current()) { link.stop(); resolve({ code: 0, reason: "cancelled", fatal: false, neverOpened: true }); return; }
         if (candidate.originalHost && !ONLINE_BUILD && !ONLINE) {
-          try { await recoveryRequest("activate-host", descriptor); } catch { pushToast("本机房间已恢复，云端登记尚未恢复，请查看协作状态。", "warn"); }
+          try { await recoveryRequest("activate-host", descriptor); } catch { pushToast(tr("The local room has been restored, but the cloud registration has not. Check the collaboration status."), "warn"); }
           if (!current()) { link.stop(); resolve({ code: 0, reason: "cancelled", fatal: false, neverOpened: true }); return; }
         }
         link.send({ type: "shared.watch" });
@@ -2040,11 +2041,11 @@ export function descriptorOf(candidate: Candidate): CollaborationDescriptor {
     service: serviceIdentity(candidate.service ?? (candidate.where === "hosted" ? candidate.base : hosted.resolveHostedUrl() || candidate.base)), hint: serviceIdentity(candidate.base) };
 }
 export async function recoveryRequest(endpoint: string, descriptor: CollaborationDescriptor, fields: Record<string, unknown> = {}, signal?: AbortSignal): Promise<Record<string, any>> {
-  if (ONLINE_BUILD) throw new Error("在线页面没有本机身份接口");
+  if (ONLINE_BUILD) throw new Error(tr("The online page has no local identity interface"));
   const r = await fetch(`/api/collaboration/${endpoint}`, { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ descriptor, ...fields, task: session, taskVersion: recoveryCoordinator.generation }), signal, redirect: "error" });
   const body = await r.json();
-  if (!r.ok || !body.ok) throw Object.assign(new Error("协作恢复失败"), { reason: body.error, retryAfter: body.retryAfter });
+  if (!r.ok || !body.ok) throw Object.assign(new Error(tr("Collaboration recovery failed")), { reason: body.error, retryAfter: body.retryAfter });
   return body;
 }
 function cancelHostTask(descriptor: CollaborationDescriptor | null) {
@@ -2151,7 +2152,7 @@ const recoveryCoordinator = new RecoveryCoordinator({
       return { identities, selected };
     }
     let result = await recoveryRequest("select", descriptor, { contentId }, signal);
-    if (result.recoveryMove?.terminal) throw Object.assign(new Error("房间搬迁需要处理"), { reason: result.recoveryMove.error === "auth" ? "auth"
+    if (result.recoveryMove?.terminal) throw Object.assign(new Error(tr("Room migration needs attention")), { reason: result.recoveryMove.error === "auth" ? "auth"
       : result.recoveryMove.error === "deleted" ? "deleted" : result.recoveryMove.error === "host-auth" || result.recoveryMove.error === "host-conflict" ? "host-conflict" : "relocation-damaged" });
     if (!signal.aborted && !result.selected && !result.revoked) {
       const legacy = readSharedResume();
@@ -2175,7 +2176,7 @@ const recoveryCoordinator = new RecoveryCoordinator({
     }
     if (!signal.aborted && result.selected && holding && holding.ds.projectId === descriptor.roomId && !holding.restored) {
       try { if (result.journal) holding.ds.restoreJournal(result.journal); holding.restored = true; }
-      catch { throw Object.assign(new Error("离线恢复数据损坏"), { reason: "recovery-storage" }); }
+      catch { throw Object.assign(new Error(tr("Offline recovery data is corrupted")), { reason: "recovery-storage" }); }
       if (holding.ds.unconfirmed) persistJournal(holding.ds, descriptor, contentId);
     }
     return result;
@@ -2187,7 +2188,7 @@ const recoveryCoordinator = new RecoveryCoordinator({
       const relayBase = `${service!.replace(/\/+$/, "")}/hosting/relay/${descriptor.roomId}/doc`;
       // A persisted relay address never contains a current route capability; discover it afresh.
       if (record.candidate.base.replace(/\/+$/, "") !== relayBase) {
-        const device = await ensureDevice(); if (!device) throw new Error("设备信息尚未就绪");
+        const device = await ensureDevice(); if (!device) throw new Error(tr("Device information is not ready yet"));
         try {
           await client.buildAuthProtocols({ base: record.candidate.base, projectId: descriptor.roomId!, username: record.username, as: record.as, key: record.key,
             deviceId: device.deviceId, deviceName: device.deviceName,
@@ -2198,7 +2199,7 @@ const recoveryCoordinator = new RecoveryCoordinator({
           // Only the durably sealed old service may redirect recovery to its trusted authority.
         }
       }
-      const device = await ensureDevice(); if (!device) throw new Error("设备信息尚未就绪");
+      const device = await ensureDevice(); if (!device) throw new Error(tr("Device information is not ready yet"));
       return discoverRoom({ service, roomId: descriptor.roomId, username: record.username, as: record.as, deviceId: device.deviceId, key: record.key });
     }
     if (!ONLINE_BUILD && !ONLINE) {
@@ -2216,7 +2217,7 @@ const recoveryCoordinator = new RecoveryCoordinator({
     }
     // Kept only as a trusted device-owned hint; file-provided hints never receive a key.
     const device = await ensureDevice();
-    if (!device) throw new Error("设备信息尚未就绪");
+    if (!device) throw new Error(tr("Device information is not ready yet"));
     return discoverRoom({ service: record.candidate.service ?? descriptor.service, roomId: descriptor.roomId, username: record.username, as: record.as, deviceId: device.deviceId, key: record.key });
   },
   enter: (candidate: Candidate, record: RecoveryIdentity, current: () => boolean) => enterShared(candidate, { ...record, password: "" }, { current }),
@@ -2226,13 +2227,13 @@ let journalWrite: Promise<unknown> = Promise.resolve();
 function persistJournal(ds: DocSync, descriptor: CollaborationDescriptor, contentId: string) {
   const journal = ds.recoveryJournal();
   journalWrite = journalWrite.catch(() => undefined).then(() => recoveryRequest("journal", descriptor, { contentId, journal }));
-  void journalWrite.catch(() => pushToast("离线修改未能可靠保存，请保留当前页面并重试。", "warn", Infinity));
+  void journalWrite.catch(() => pushToast(tr("Offline changes could not be saved reliably. Keep the current page open and try again."), "warn", Infinity));
 }
 function sharedStateReady(link: SyncLink): Promise<void> {
   return new Promise((resolve, reject) => {
     const ready = () => !!link.ds.confirmedProject && (link.ds.status === "online" || link.ds.status === "paused");
     if (ready()) { resolve(); return; }
-    const timeout = setTimeout(() => { off(); reject(new Error("服务状态未恢复")); }, 10000);
+    const timeout = setTimeout(() => { off(); reject(new Error(tr("Service state was not restored"))); }, 10000);
     const off = link.ds.on("status", () => { if (ready()) { clearTimeout(timeout); off(); resolve(); } });
     // Initial root acknowledgement can leave status unchanged (online -> online).
     void link.ds.whenSettled({ timeoutMs: 10000 }).then(() => { if (ready()) { clearTimeout(timeout); off(); resolve(); } }, () => undefined);
@@ -2271,7 +2272,7 @@ export async function chooseRecoveryIdentity(as: string, username: string, profi
   const contentId = getState().project.id;
   const saved = await recoveryRequest("select", descriptor, { contentId });
   const selected = saved.identities?.find((r: RecoveryIdentity) => r.as === as && r.username === username && (r.profile ?? "default") === profile);
-  if (!selected || saved.revoked) throw new Error("这个身份无法恢复");
+  if (!selected || saved.revoked) throw new Error(tr("This identity cannot be recovered"));
   await recoveryRequest("identity", descriptor, { contentId, record: selected });
   recoveryCoordinator.start(descriptor, contentId);
 }
@@ -2379,9 +2380,9 @@ export async function adminOp(
       if (cur?.link === link) cur.updateAuthentication?.(record.key);
       lastIdentity = { descriptor, record }; identitySave = saveRecoveryIdentity(descriptor, record);
       rememberSharedResume(record);
-      try { await identitySave; } catch { pushToast("新密码已生效，但本机恢复凭证保存失败；请重试保存。", "warn", Infinity); }
+      try { await identitySave; } catch { pushToast(tr("The new password is in effect, but saving the local recovery credential failed; retry saving."), "warn", Infinity); }
     }
-    if (descriptor && !ONLINE_BUILD && !ONLINE) void recoveryRequest("host-update", descriptor).catch(() => pushToast("云端权限登记待重试，本机权限已更新。", "warn"));
+    if (descriptor && !ONLINE_BUILD && !ONLINE) void recoveryRequest("host-update", descriptor).catch(() => pushToast(tr("Cloud permission registration is waiting for a retry; local permissions have been updated."), "warn"));
     return { ok: true, reply, key };
   }
   const reason = String(reply.reason ?? "");
@@ -2453,16 +2454,16 @@ export function makeCredential(password: string) {
  * 只有账号项目有这一项(旧办法的房间走「作废并重新生成邀请码」)。
  */
 export async function regenAccountProjectLink(): Promise<{ ok: true; link: string } | { ok: false; error: string }> {
-  if (!view.shared?.accountId || !cur?.regenAccountLink) return { ok: false, error: "当前不是账号云端项目。" };
+  if (!view.shared?.accountId || !cur?.regenAccountLink) return { ok: false, error: tr("This is not an account cloud project.") };
   try { return { ok: true, link: await cur.regenAccountLink() }; }
-  catch (e) { return { ok: false, error: e instanceof Error && e.message ? e.message : "重新生成项目链接失败。" }; }
+  catch (e) { return { ok: false, error: e instanceof Error && e.message ? e.message : tr("Failed to regenerate the project link.") }; }
 }
 
 /** 账号云端项目:设置 / 修改项目二级密码(字符串,照原样,不去空白)或清除(null 或空串)(10-14 第 3.3 节) */
 export async function setAccountSecondaryPassword(password: string | null): Promise<{ ok: true } | { ok: false; error: string }> {
-  if (!view.shared?.accountId || !cur?.setAccountSecondaryPassword) return { ok: false, error: "当前不是账号云端项目。" };
+  if (!view.shared?.accountId || !cur?.setAccountSecondaryPassword) return { ok: false, error: tr("This is not an account cloud project.") };
   try { await cur.setAccountSecondaryPassword(password || null); return { ok: true }; }
-  catch (e) { return { ok: false, error: e instanceof Error && e.message ? e.message : "设置项目二级密码失败。" }; }
+  catch (e) { return { ok: false, error: e instanceof Error && e.message ? e.message : tr("Failed to set the project secondary password.") }; }
 }
 
 /** 账号云端项目现在的项目链接(创建者带当前的链接口令);不在账号项目里回 null */

@@ -35,15 +35,17 @@ import { LanOpenDialog } from "./LanOpenDialog";
 import { AgentBrowserTab } from "./AgentBrowserTab";
 import { ProjectSettingsDialog } from "./ProjectSettingsDialog";
 import { SkinDialog } from "./SkinDialog";
+import { LanguageMenu } from "../ui/LanguageMenu";
+import { tr } from "../i18n/index.ts";
 import { SkillDialog } from "./SkillDialog";
 import { isViewOnly, viewOnlyReason, viewOnlyText } from "./io/viewOnly";
 import { useReadOnly } from "./readOnly";
 import { ReadOnlyMarker } from "./ReadOnlyFence";
 import { SyncChips } from "./sync/SyncChips";
 import { BackupsDialog } from "./sync/BackupsDialog";
-import { useSync, whenSaved } from "./sync/syncManager";
+import { hasSharedResume, useSync, whenSaved } from "./sync/syncManager";
 import { unsentAtRisk, UNSENT_LEAVE_TEXT } from "./sync/onlineStatus";
-import { onlineUnsupported } from "../online/pageFlag";
+import { onlineUnsupported } from "../online/onlineUnsupported";
 import "../ui/toolbar.css";
 
 /** 在线浏览器模式里置灰的项目菜单项:都要编辑器进程(草稿、另存、本地备份),C10a 不提供(契约第 2 节) */
@@ -60,8 +62,8 @@ const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.V
  * 「快捷键」「关于 PromptCut」的说明文字。桌面版在标题栏菜单「帮助」里点开(`WindowTitleBar.tsx`,经 `pc-titlebar-command` 交到下面的 `onCommand`);
  * 在线构建不画标题栏(2026-10-22 用户定),这两项改住在「⋯」菜单里,点了弹同一段说明。
  */
-const SHORTCUTS_TEXT = "空格 播放/暂停\nCtrl/Cmd + Z 撤销\nCtrl/Cmd + Shift + Z 重做\nCtrl/Cmd + Y 重做\nDelete 删除选中片段";
-const ABOUT_TEXT = "PromptCut\nAI 视频编辑器";
+const SHORTCUTS_TEXT = tr("Space Play/pause\nCtrl/Cmd + Z Undo\nCtrl/Cmd + Shift + Z Redo\nCtrl/Cmd + Y Redo\nDelete Delete selected clips");
+const ABOUT_TEXT = tr("PromptCut\nAI video editor");
 
 /** 「⋯」菜单里没有图标的那几项占位:图标默认 18px,占住同样宽度,文字才和「皮肤…」那一行对齐 */
 const MoreMenuNoIcon = () => <span aria-hidden="true" style={{ flex: "0 0 18px", width: 18 }} />;
@@ -249,7 +251,7 @@ export function TopBar() {
     if (!renamingRef.current) return;
     renamingRef.current = false;
     setRenaming(false);
-    const next = draftName.trim() || "未命名";
+    const next = draftName.trim() || tr("Untitled");
     if (next !== name) actions.setProjectMeta({ name: next });
   };
 
@@ -376,7 +378,7 @@ export function TopBar() {
    */
   /** 保存的结果说给用户(顶部那张卡片,`SaveStatusLayer`):没保存成的是 error,保存成了但有话要说的是 info */
   const notifySave = (message: string, tone: "error" | "info" = "error") => {
-    showSaveNotice({ tone, title: tone === "error" ? "这次没有保存" : "已保存", message });
+    showSaveNotice({ tone, title: tone === "error" ? tr("Not saved this time") : tr("Saved"), message });
   };
 
   const saveProject = ONLINE_BUILD ? async () => {} : async () => {
@@ -401,7 +403,7 @@ export function TopBar() {
    */
   const savePackedProject = ONLINE_BUILD ? async () => {} : async () => {
     await savePackedFile(`${name}${PROCP_EXT}`, {
-      pick: (fileName) => pickSaveTarget(fileName, "PromptCut 打包项目", { "application/zip": [PROCP_EXT] }),
+      pick: (fileName) => pickSaveTarget(fileName, tr("PromptCut packaged project"), { "application/zip": [PROCP_EXT] }),
       settle: (ms) => whenSaved(ms),
       probes: LOCAL_WRITE_PROBES,
       pack: () => packProcp(),
@@ -448,7 +450,7 @@ export function TopBar() {
     const suggested = `${name}.mp4`;
     let target: FileSystemFileHandle | null = null;
     try {
-      target = await pickSaveTarget(suggested, "MP4 视频", { "video/mp4": [".mp4"] });
+      target = await pickSaveTarget(suggested, tr("MP4 video"), { "video/mp4": [".mp4"] });
     } catch (e) {
       if ((e as Error)?.name === "AbortError") return; // 用户取消,不是错误
       throw e;
@@ -460,7 +462,7 @@ export function TopBar() {
       // Seed a visible total immediately; the server also seeds this before
       // spawning Chrome, so the dialog never presents a misleading 0/0.
       total: Math.max(1, Math.floor(project.duration * (project.fps || 30))),
-      target: target ? target.name : "产物目录（本机不支持选择位置）",
+      target: target ? target.name : tr("Output folder (this machine does not support choosing a location)"),
       startedAt: Date.now(),
       ...(mode ? { mode } : {}),
     });
@@ -506,7 +508,7 @@ export function TopBar() {
 
   /** 新建项目:清空当前编排,并断开草稿绑定(保存时会新开一份) */
   const createProject = ONLINE_BUILD ? () => {} : () => {
-    if (dirty && !confirm("当前项目还有未保存的改动，新建会丢掉它们。继续？")) return;
+    if (dirty && !confirm(tr("The current project has unsaved changes, and creating a new one will discard them. Continue?"))) return;
     newProject();
     setActiveDraftId(null);
   };
@@ -517,7 +519,7 @@ export function TopBar() {
    * loadProc(连剧本和对话一起灌回去),其余的旧 JSON 才交给 importProjectFile。
    */
   const openProjectFile = ONLINE_BUILD ? async (_file: File) => {} : async (file: File) => {
-    if (dirty && !confirm("当前项目还有未保存的改动，打开别的项目会丢掉它们。继续？")) return;
+    if (dirty && !confirm(tr("The current project has unsaved changes, and opening another project will discard them. Continue?"))) return;
     // .procp 是「编排 + 素材」的 zip 包(A1):先把素材按哈希拆进本地内容库,
     // 再拿里面那条 project.proc 走和 .proc 完全一样的路。不能先 file.text() ——
     // 那会把一个可能几 GB 的 zip 整份读进页面。
@@ -546,7 +548,7 @@ export function TopBar() {
   /** 回到开始页。Shell 在监听这个事件 */
   const goHome = () => {
     if (!okToLeaveOnline()) return;
-    if (dirty && !confirm("当前项目还有未保存的改动，回首页会丢掉它们。继续？")) return;
+    if (dirty && !confirm(tr("The current project has unsaved changes, and going back to the home page will discard them. Continue?"))) return;
     window.dispatchEvent(new Event("pc-go-home"));
   };
 
@@ -581,8 +583,23 @@ export function TopBar() {
     if (!dirty) { go(); return; }
     void saveDraft(ensureActiveDraftId()).then(go, (e: unknown) => {
       const why = e instanceof Error ? e.message : String(e);
-      if (confirm(`这次没能把改动存进本机项目（${why}）。切到氛围式会丢掉它们，继续？`)) go();
+      if (confirm(tr("Could not save the changes to the local project ({0}). Switching to Vibe mode will discard them. Continue?", why))) go();
     });
+  };
+
+  /** Switching language reloads the page: save to the local draft and come back to it in the editor */
+  const prepareLanguageSwitch = async (url: URL): Promise<boolean> => {
+    if (ONLINE_BUILD) return okToLeaveOnline();
+    if (hasSharedResume()) return true; // a shared project reopens by itself after a reload
+    const id = ensureActiveDraftId();
+    try {
+      await saveDraft(id);
+    } catch (e) {
+      const why = e instanceof Error ? e.message : String(e);
+      return confirm(tr("Your changes could not be saved to the local project ({0}). Switching language will lose them. Continue?", why));
+    }
+    url.searchParams.set("draft", id);
+    return true;
   };
 
   // 标题栏菜单和顶栏里的按钮共用同一套动作，避免维护两份文件/导出逻辑。
@@ -627,7 +644,7 @@ export function TopBar() {
           className="pc-projname pc-projname--editing"
           value={draftName}
           maxLength={80}
-          placeholder="未命名"
+          placeholder={tr("Untitled")}
           onChange={(e) => setDraftName(e.target.value)}
           onBlur={commitRename}
           onKeyDown={(e) => {
@@ -639,7 +656,7 @@ export function TopBar() {
         <button
           type="button"
           className="pc-projname pc-projname--btn"
-          title={ro.title("点击重命名项目")}
+          title={ro.title(tr("Click to rename project"))}
           aria-disabled={ro.locked || undefined}
           onClick={startRename}
         >
@@ -652,11 +669,11 @@ export function TopBar() {
       {/* A · 编辑控制:撤销与重做恒为纯图标态 */}
       <div className="pc-bar-group">
         {/* 禁用的按钮收不到悬停,提示挂在外面那层上(稿件:悬停提示含不可点时) */}
-        <span title={ro.title("撤销 (Ctrl+Z) —— 只撤你自己在这个页面做的")} data-pc="undo-btn">
-          <Btn onClick={() => actions.undo()} label="撤销" title={ro.title("撤销 (Ctrl+Z) —— 只撤你自己在这个页面做的")} icon={<IconUndo />} collapsed disabled={!canUndo || ro.locked} />
+        <span title={ro.title(tr("Undo (Ctrl+Z): only undoes your own actions on this page"))} data-pc="undo-btn">
+          <Btn onClick={() => actions.undo()} label={tr("Revoke")} title={ro.title(tr("Undo (Ctrl+Z): only undoes your own actions on this page"))} icon={<IconUndo />} collapsed disabled={!canUndo || ro.locked} />
         </span>
-        <span title={ro.title("重做 (Ctrl+Shift+Z / Ctrl+Y) —— 恢复刚撤销的操作（有新操作后即失效）")} data-pc="redo-btn">
-          <Btn onClick={() => actions.redo()} label="重做" title={ro.title("重做 (Ctrl+Shift+Z / Ctrl+Y) —— 恢复刚撤销的操作（有新操作后即失效）")} icon={<IconRedo />} collapsed disabled={!canRedo || ro.locked} />
+        <span title={ro.title(tr("Redo (Ctrl+Shift+Z / Ctrl+Y): restores the action you just undid (no longer available after a new action)"))} data-pc="redo-btn">
+          <Btn onClick={() => actions.redo()} label={tr("Redo")} title={ro.title(tr("Redo (Ctrl+Shift+Z / Ctrl+Y): restores the action you just undid (no longer available after a new action)"))} icon={<IconRedo />} collapsed disabled={!canRedo || ro.locked} />
         </span>
       </div>
       <span className="pc-bar-sep" />
@@ -685,7 +702,7 @@ export function TopBar() {
           ref={moreBtnRef}
           type="button"
           className="pc-btn pc-btn--icon"
-          title="更多设置"
+          title={tr("More settings")}
           aria-haspopup="true"
           aria-expanded={menuOpen}
           onClick={toggleMoreMenu}
@@ -709,15 +726,16 @@ export function TopBar() {
             type="button"
             className="pc-btn"
             style={{ width: "100%", justifyContent: "flex-start" }}
-            title="皮肤"
+            title={tr("Skin")}
             onClick={() => {
               setMenuOpen(false);
               setSkinOpen(true);
             }}
           >
             <IconPalette />
-            <span className="pc-btn-label">皮肤…</span>
+            <span className="pc-btn-label">{tr("Skin…")}</span>
           </button>
+          <LanguageMenu className="pc-btn" prepare={prepareLanguageSwitch} />
           {/* 在线构建没有标题栏菜单(2026-10-22 用户定),它「帮助」里的这两项挪到这里;桌面版仍在标题栏菜单里,这里不重复 */}
           {ONLINE_BUILD && (
             <>
@@ -732,7 +750,7 @@ export function TopBar() {
                 }}
               >
                 <MoreMenuNoIcon />
-                <span className="pc-btn-label">快捷键</span>
+                <span className="pc-btn-label">{tr("Shortcuts")}</span>
               </button>
               <button
                 type="button"
@@ -745,7 +763,7 @@ export function TopBar() {
                 }}
               >
                 <MoreMenuNoIcon />
-                <span className="pc-btn-label">关于 PromptCut</span>
+                <span className="pc-btn-label">{tr("About PromptCut")}</span>
               </button>
             </>
           )}
@@ -763,7 +781,7 @@ export function TopBar() {
               }}
             >
               <MoreMenuNoIcon />
-              <span className="pc-btn-label">在手机上打开</span>
+              <span className="pc-btn-label">{tr("Open on your phone")}</span>
             </button>
           )}
           {/* 模式开关只在窄档收进来,宽档它还在条上;项目设置已经住进「项目」菜单 */}
@@ -787,24 +805,24 @@ export function TopBar() {
             left: Math.max(8, Math.min(projRect?.left ?? 0, window.innerWidth - 248)),
           }}
         >
-          <button type="button" role="menuitem" className="pc-proj-item" disabled={ONLINE_BUILD} title={ONLINE_BUILD ? ONLINE_OFF("新建项目") : undefined} onClick={() => { setProjOpen(false); createProject(); }}>
+          <button type="button" role="menuitem" className="pc-proj-item" disabled={ONLINE_BUILD} title={ONLINE_BUILD ? ONLINE_OFF(tr("New project")) : undefined} onClick={() => { setProjOpen(false); createProject(); }}>
             <IconNew />
-            <span className="pc-proj-text"><b>新建项目</b><small>开一个空项目</small></span>
+            <span className="pc-proj-text"><b>{tr("New project")}</b><small>{tr("Start an empty project")}</small></span>
           </button>
-          <button type="button" role="menuitem" className="pc-proj-item" disabled={ONLINE_BUILD} title={ONLINE_BUILD ? ONLINE_OFF("打开项目") : undefined} onClick={() => { setProjOpen(false); projectInput.current?.click(); }}>
+          <button type="button" role="menuitem" className="pc-proj-item" disabled={ONLINE_BUILD} title={ONLINE_BUILD ? ONLINE_OFF(tr("Open project")) : undefined} onClick={() => { setProjOpen(false); projectInput.current?.click(); }}>
             <IconOpen />
-            <span className="pc-proj-text"><b>打开项目…</b><small>{PROC_EXT} 项目文件</small></span>
+            <span className="pc-proj-text"><b>{tr("Open project…")}</b><small>{tr("{0} project file", PROC_EXT)}</small></span>
           </button>
           <button
             type="button"
             role="menuitem"
             className="pc-proj-item"
             disabled={viewOnly || ONLINE_BUILD}
-            title={ONLINE_BUILD ? ONLINE_OFF("保存项目") : viewOnly ? viewOnlyText() : undefined}
+            title={ONLINE_BUILD ? ONLINE_OFF(tr("Save project")) : viewOnly ? viewOnlyText() : undefined}
             onClick={() => { setProjOpen(false); void saveProject(); }}
           >
             <IconSave />
-            <span className="pc-proj-text"><b>保存项目</b><small>{dirty ? "有没保存的改动" : "已是最新"}</small></span>
+            <span className="pc-proj-text"><b>{tr("Save project")}</b><small>{dirty ? tr("Has unsaved changes") : tr("Up to date")}</small></span>
             {dirty && <span className="pc-proj-dirty" />}
           </button>
           <button
@@ -813,21 +831,21 @@ export function TopBar() {
             className="pc-proj-item"
             data-pc="menu-pack"
             disabled={viewOnly || ONLINE_BUILD}
-            title={ONLINE_BUILD ? ONLINE_OFF("打包保存") : viewOnly ? viewOnlyText() : "编排和素材打成一个包,换台机器直接打开"}
+            title={ONLINE_BUILD ? ONLINE_OFF(tr("Save as package")) : viewOnly ? viewOnlyText() : tr("Bundle the arrangement and media into one package, then open it directly on another machine")}
             onClick={() => { setProjOpen(false); void savePackedProject(); }}
           >
             <IconSave />
-            <span className="pc-proj-text"><b>打包保存…</b><small>{PROCP_EXT} 连素材一起</small></span>
+            <span className="pc-proj-text"><b>{tr("Save as package…")}</b><small>{tr("{0} with media included", PROCP_EXT)}</small></span>
           </button>
           <div className="pc-proj-sep" role="separator" />
           <button type="button" role="menuitem" className="pc-proj-item" data-pc="menu-backups" onClick={() => { setProjOpen(false); setBackupsOpen(true); }}>
             <IconSave />
-            <span className="pc-proj-text"><b>本地备份…</b><small>{ONLINE_BUILD ? "被覆盖、离线丢弃的修改(只留在本页)" : "被覆盖、离线丢弃的修改"}</small></span>
+            <span className="pc-proj-text"><b>{tr("Local backup…")}</b><small>{ONLINE_BUILD ? tr("Changes that were overwritten or discarded offline (kept only on this page)") : tr("Changes that were overwritten or discarded offline")}</small></span>
           </button>
           <div className="pc-proj-sep" role="separator" />
           <button type="button" role="menuitem" className="pc-proj-item" onClick={() => { setProjOpen(false); setSettingsOpen(true); }}>
             <IconSettings />
-            <span className="pc-proj-text"><b>项目设置…</b><small>尺寸、帧率、多用户协作</small></span>
+            <span className="pc-proj-text"><b>{tr("Project settings…")}</b><small>{tr("Size, frame rate, multi-user collaboration")}</small></span>
           </button>
         </div>,
         document.body,
@@ -861,9 +879,9 @@ export function TopBar() {
             whiteSpace: "nowrap",
             fontWeight: 500,
           }}
-          title={`云端 Agent 正在用这台电脑上的登录下载：${collectUrl}`}
+          title={tr("Cloud Agent is downloading with the login on this computer: {0}", collectUrl)}
         >
-          {`云端 Agent 正在用这台电脑上的登录下载：${collectUrl}`}
+          {tr("Cloud Agent is downloading with the login on this computer: {0}", collectUrl)}
         </div>
       )}
 
@@ -873,38 +891,38 @@ export function TopBar() {
           className="pc-viewonly-badge"
           data-pc="viewonly-badge"
           data-pc-reason={reason ?? undefined}
-          title={reason === "read-only-member" ? viewOnlyText() : "这个页面是用只读方式打开的(?observe=1):能看,不能改。"}
+          title={reason === "read-only-member" ? viewOnlyText() : tr("This page was opened in read-only mode (?observe=1): you can view but not edit.")}
         >
-          {reason === "read-only-member" ? "只能查看" : "只读查看"}
+          {reason === "read-only-member" ? tr("View only") : tr("Read-only view")}
         </span>
       )}
 
       {/* C · 文件操作条:打开/保存参与中档收起,导出为主按钮永远不收起。
           导入视频已迁到左栏「素材 → 视频」的 + 按钮,顶栏不再重复 */}
       <div className="pc-bar-group">
-        <Btn onClick={goHome} label="首页" icon={<IconHome />} collapsed={tier !== "wide"} />
+        <Btn onClick={goHome} label={tr("Home")} icon={<IconHome />} collapsed={tier !== "wide"} />
         {/* 新建 / 打开 / 保存 / 项目设置收在这一个按钮里,点开才出子菜单(见 toggleProjMenu) */}
         <button
           ref={projBtnRef}
           type="button"
           className={`pc-btn pc-proj-btn${projOpen ? " is-open" : ""}`}
-          title="项目:新建、打开、保存、设置"
+          title={tr("Project: new, open, save, settings")}
           aria-haspopup="menu"
           aria-expanded={projOpen}
           onClick={toggleProjMenu}
         >
           <IconOpen />
-          <span className="pc-btn-label">项目</span>
+          <span className="pc-btn-label">{tr("Project")}</span>
           <svg className="pc-proj-caret" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
             <path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-          {dirty && <span className="pc-proj-dirty" title="有没保存的改动" />}
+          {dirty && <span className="pc-proj-dirty" title={tr("Has unsaved changes")} />}
         </button>
         {/* 配音设置:开子窗口,和开始页配音卡的「设置」是同一个 */}
-        <Btn onClick={openVoiceSettings} label="配音设置" icon={<IconVoice />} collapsed={tier !== "wide"} disabled={ONLINE_BUILD} title={ONLINE_BUILD ? ONLINE_OFF("配音") : undefined} />
+        <Btn onClick={openVoiceSettings} label={tr("Voiceover settings")} icon={<IconVoice />} collapsed={tier !== "wide"} disabled={ONLINE_BUILD} title={ONLINE_BUILD ? ONLINE_OFF(tr("Voiceover")) : undefined} />
         <Btn
           onClick={run(() => exportProject())}
-          label="导出视频"
+          label={tr("Export video")}
           icon={<IconExport />}
           primary
           collapsed={false}

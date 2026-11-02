@@ -9,6 +9,7 @@ import { whenStagesHaveCards } from "./stageCards";
 import { ONLINE } from "../online/mode";
 import { singleStageTier } from "../online/onlineTier";
 import "./ProbeGate.css";
+import { tr } from "../i18n/index.ts";
 
 /**
  * K1 的**加载遮罩**：打开项目时把所有活跃卡逐张测完才进编辑（pinned 渲染 5）。
@@ -99,10 +100,10 @@ export function ProbeGate() {
       onKeyDown={(e) => e.stopPropagation()}
     >
       <div className="pc-probe-gate-ring" aria-hidden="true" />
-      <div className="pc-probe-gate-title">正在测量卡片 {done + 1} / {p.total}</div>
+      <div className="pc-probe-gate-title">{tr("Measuring card {0} / {1}", done + 1, p.total)}</div>
       <div className="pc-probe-gate-bar" aria-hidden="true"><i style={{ width: `${(done / total) * 100}%` }} /></div>
       {p.card && <div className="pc-probe-gate-card">{p.card}</div>}
-      {p.failed.length > 0 && <div className="pc-probe-gate-note">{p.failed.length} 张没测出来，按声明兜底分派</div>}
+      {p.failed.length > 0 && <div className="pc-probe-gate-note">{tr("{0} could not be measured, falling back to the declared dispatch", p.failed.length)}</div>}
     </div>
   );
 }

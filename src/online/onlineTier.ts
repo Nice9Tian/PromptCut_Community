@@ -19,6 +19,7 @@
  * 不引 `mode.ts`（它读 `import.meta.env`，Node 单测里没有）；在线与否由调用方在页面载入时 `initTier` 传进来。
  */
 import type { DeviceKind } from "./deviceKind.ts";
+import { tr } from "../i18n/index.ts";
 
 /** 舞台闸门的三级：1 一个舞台；2 两个舞台共用一套 canvas 渲染器；3 两个舞台各用一套 */
 export type StageLevel = 1 | 2 | 3;
@@ -162,18 +163,18 @@ export function tierName(s: TierState = state): TierName {
 
 /** 档位气泡的文字（2026-10-08 用户定，`product/platforms.md`「在线浏览器」的「名词」） */
 export const TIER_BUBBLE_TEXT: Readonly<Record<TierName, string>> = Object.freeze({
-  top: "这台设备运行在顶配模式",
-  standard: "这台设备运行在标准模式",
-  lite: "这台设备运行在精简模式：复杂的效果交给云端渲染",
-  low: "这台设备运行在低配模式：播放时只显示已渲染好的画面",
+  top: tr("This device is running in top-spec mode"),
+  standard: tr("This device is running in standard mode"),
+  lite: tr("This device is running in lite mode: complex effects are handed off to cloud rendering"),
+  low: tr("This device is running in low-spec mode: playback only shows frames that are already rendered"),
 });
 
 /** 四档的名字（查看口用） */
 export const TIER_LABEL: Readonly<Record<TierName, string>> = Object.freeze({
-  top: "顶配模式",
-  standard: "标准模式",
-  lite: "精简模式",
-  low: "低配模式",
+  top: tr("Top mode"),
+  standard: tr("Standard mode"),
+  lite: tr("Lite mode"),
+  low: tr("Low mode"),
 });
 
 /** 测试用 */

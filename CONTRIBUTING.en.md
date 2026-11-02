@@ -30,6 +30,15 @@ This repository is upstream: the closed commercial edition and the Lite edition 
 | `src/online/`, `src/mobile/`, `server/auth/`, `server/lan/` (LAN sharing and the phone UI) | PRs welcome |
 | `desktop/` | PRs welcome, but only Windows x64 is verified |
 
+## Interface text
+
+The interface comes in English, Simplified Chinese and Japanese, and English is the source language.
+
+- Write interface text in English and show it through `tr()` from `src/i18n/index.ts`. `{0}`, `{1}` mark values that are filled in.
+- Add the Chinese and Japanese of every new string to `src/i18n/table.json`.
+- `src/i18n/interface-text.test.mjs` fails when interface code contains Chinese or Japanese. Where a Chinese literal is data rather than text (a protocol token, a marker older projects carry, words matched in user content), keep it and put an `i18n-allow:` comment with the reason on the line above.
+- Text drawn into a rendered frame never goes through `tr()`: a project must render the same pixels whatever the interface language.
+
 ## What to run before you submit
 
 ```bash

@@ -5,6 +5,7 @@ import { SearchBox } from "./SearchBox";
 import { SectionHead } from "./SectionHead";
 import { CaptionsTab } from "./CaptionsTab";
 import { useReadOnly } from "../readOnly";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 「字幕」分区:导入 .srt / .vtt → 搜索 → 字幕树(CaptionsTab)。
@@ -36,7 +37,7 @@ export function CaptionsSection({
       await importSrtFile(files[0], { mediaId: mediaId ?? undefined });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      alert(`导入字幕失败: ${msg}`);
+      alert(tr("Failed to import captions: {0}", msg));
     } finally {
       e.target.value = "";
     }
@@ -44,19 +45,19 @@ export function CaptionsSection({
 
   return (
     <div data-pc="captions" className="pc-left-section">
-      <SectionHead title="字幕">
+      <SectionHead title={tr("Captions")}>
         <button
           type="button"
           className="pc-btn-primary is-block pc-left-primary"
           data-pc-add="captions"
-          title={ro.title("导入字幕 (.srt / .vtt)")}
+          title={ro.title(tr("Import captions (.srt / .vtt)"))}
           disabled={ro.locked}
           onClick={() => srtInputRef.current?.click()}
         >
           <IconImport size={16} />
-          <span>导入 .srt / .vtt</span>
+          <span>{tr("Import .srt / .vtt")}</span>
         </button>
-        <SearchBox value={search} onChange={setSearch} placeholder="搜索字幕…" dataPc="caption-search" />
+        <SearchBox value={search} onChange={setSearch} placeholder={tr("Search captions…")} dataPc="caption-search" />
       </SectionHead>
 
       <div className="pc-left-pane" style={{ display: "flex" }}>

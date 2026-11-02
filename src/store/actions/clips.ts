@@ -18,6 +18,7 @@ import {
   resolveOverlap,
   placeOrShift, pickTrack
 } from "../core";
+import { tr as trText } from "../../i18n/index.ts";
 
 /** Keep linked WAV companions on the same timeline anchor; reject overlaps instead of silently shifting audio. */
 function moveSoundCompanions(p: import("../../kernel/project").Project, before: TrackClip, after: TrackClip, checkOverlap = true): import("../../kernel/project").Project | null {
@@ -53,7 +54,7 @@ export const clips = {
     assertAudiovisualCardKind(def);
     // 音频素材效果卡拖进时间轴是个既无声又无画的空片段(没有 nodeId,消费方只看节点):
     // 它只能经 apply_card 挂到片段上。
-    if (def.kind === "audio" && !isAudiovisualCard(def)) throw new Error("音频素材效果卡请用 apply_card");
+    if (def.kind === "audio" && !isAudiovisualCard(def)) throw new Error(trText("For audio media effect cards, use apply_card"));
     const p = state.project;
     const track = opts.trackId ? p.tracks.find((t) => t.id === opts.trackId) : p.tracks[0];
     if (!track) return null;
@@ -99,7 +100,7 @@ export const clips = {
       const def = getCard(spec.cardId!);
       if (!def) return null;
       assertAudiovisualCardKind(def);
-      if (def.kind === "audio" && !isAudiovisualCard(def)) throw new Error("音频素材效果卡请用 apply_card");
+      if (def.kind === "audio" && !isAudiovisualCard(def)) throw new Error(trText("For audio media effect cards, use apply_card"));
       const dur = spec.duration ?? DEFAULT_CARD_DUR;
       clip = { id: newId("c"), cardId: spec.cardId!, ...(isAudiovisualCard(def) ? { embeddedAudio: true } : {}), start, end: start + dur, params: { ...def.defaults } };
     } else {
@@ -108,7 +109,7 @@ export const clips = {
       const dur = spec.duration ?? media.duration ?? DEFAULT_MEDIA_DUR;
       clip = { id: newId("v"), cardId: "", mediaId: media.id, mediaOffset: 0, start, end: start + dur, params: {}, label: media.name, ...(media.soundEffect ? { soundEffect: { ...media.soundEffect, requestId: newId("sound-request") } } : {}) };
     }
-    const track: Track = { id: newId("t"), name: `序列 ${p.tracks.length + 1}`, clips: [clip] };
+    const track: Track = { id: newId("t"), name: trText("Track {0}", p.tracks.length + 1), clips: [clip] };
     const tracks = [...p.tracks];
     const at = spec.index == null ? tracks.length : Math.max(0, Math.min(tracks.length, spec.index));
     tracks.splice(at, 0, track);
@@ -238,20 +239,20 @@ export const clips = {
   setClipSpeed(clipId: string, speed: number): { ok: true; pushed?: { clips: number; by: number }; moved?: string[]; transitions?: { kind: Transition["kind"]; from: number; to: number }[] } | { ok: false; error: string } {
     const p = state.project;
     const hit = findClip(p, clipId);
-    if (!hit) return { ok: false, error: "找不到这个片段" };
+    if (!hit) return { ok: false, error: trText("Clip not found") };
     // 速度是素材的属性:套了素材效果卡的视频段(片段同时带 cardId)也认,取帧走素材节点的倍率(kernel/clipTime.mjs 的 withMediaRates)
     const media = hit.clip.mediaId && !hit.clip.cutId ? p.media.find((m) => m.id === hit.clip.mediaId) : undefined;
-    if (!media || (media.kind !== "video" && media.kind !== "audio")) return { ok: false, error: "只有视频段和声音段能改速度" };
-    if (hit.track.locked) return { ok: false, error: "请先解锁序列" };
-    if (!speedInRange(speed)) return { ok: false, error: `速度要在 ${CLIP_SPEED_MIN}～${CLIP_SPEED_MAX} 倍之间` };
+    if (!media || (media.kind !== "video" && media.kind !== "audio")) return { ok: false, error: trText("Only video clips and audio clips can change speed") };
+    if (hit.track.locked) return { ok: false, error: trText("Unlock the track first") };
+    if (!speedInRange(speed)) return { ok: false, error: trText("Speed must be between {0} and {1}x", CLIP_SPEED_MIN, CLIP_SPEED_MAX) };
     const next = normalizeSpeed(speed);
-    if (next === null) return { ok: false, error: "速度要是正数" };
+    if (next === null) return { ok: false, error: trText("Speed must be a positive number") };
     if (next === clipSpeed(hit.clip)) return { ok: true };
     const start = hit.clip.start;
     const end = start + mediaSpanOf(hit.clip) / next;
     let fadePatches = new Map<string, Partial<TrackClip>>();
     const len = end - start;
-    if (len < 0.1) return { ok: false, error: "这一段太短，改成这个速度后不到 0.1 秒" };
+    if (len < 0.1) return { ok: false, error: trText("This clip is too short; at this speed it would be under 0.1 seconds") };
     const own = transitionsOfClip(p, clipId);
     /*
      * 转场装不下时跟着缩(用户 2026-10-23 定:挂着转场「可以改」,装不下「气泡提示即可」):这一段身上比新长度还长(或一样长)的转场
@@ -262,7 +263,7 @@ export const clips = {
     for (const tr of own) {
       if (tr.dur < len - 1e-9) continue;
       const to = Math.max(MIN_TRANSITION_DUR, Math.floor((len - 0.01) * 100) / 100);
-      if (!(to < len)) return { ok: false, error: `改成 ${speedLabel(next)} 后这一段只有 ${len.toFixed(2)} 秒，连最短的转场（${MIN_TRANSITION_DUR} 秒）都装不下；先删掉转场` };
+      if (!(to < len)) return { ok: false, error: trText("After changing to {0} this clip is only {1} seconds, which can't even fit the shortest transition ({2} seconds); delete the transition first", speedLabel(next), len.toFixed(2), MIN_TRANSITION_DUR) };
       shrunk.set(tr.id, { kind: tr.kind, from: tr.dur, to });
     }
     const durOf = (tr: Transition) => shrunk.get(tr.id)?.to ?? tr.dur;
@@ -292,9 +293,9 @@ export const clips = {
       const b = findClip(p, partner)!;
       pushedBy = Math.max(pushedBy, pushAfter(b.track.id, partner, b.clip.end, b.clip.end + moves.get(partner)!));
     }
-    if (moves.has(clipId)) return { ok: false, error: "后面的段和这一段绑在同一组转场里，推不开；先删掉转场" };
+    if (moves.has(clipId)) return { ok: false, error: trText("The following clips share the same transition group as this clip and can't be pushed apart; delete the transition first") };
     const lockedTrack = p.tracks.find((t) => t.locked && t.clips.some((c) => moves.has(c.id)));
-    if (lockedTrack) return { ok: false, error: `要挪的段在锁着的序列「${lockedTrack.name}」上；先解锁那条序列` };
+    if (lockedTrack) return { ok: false, error: trText("The clip to move is on the locked track \"{0}\"; unlock that track first", lockedTrack.name) };
 
     // 缩了的转场:片段两端的淡化跟着改(交叉溶解两头都改),转场记录换新对象
     if (shrunk.size) {
@@ -319,7 +320,7 @@ export const clips = {
     if (moves.size) {
       const companions = new Map(base.tracks.map((t) => [t.id, t.clips.filter((c) => c.soundEffect?.sourceClipId && moves.has(c.soundEffect.sourceClipId))]));
       const lockedCompanion = base.tracks.find((t) => t.locked && companions.get(t.id)!.length);
-      if (lockedCompanion) return { ok: false, error: `要挪的段的声音在锁着的序列「${lockedCompanion.name}」上；先解锁那条序列` };
+      if (lockedCompanion) return { ok: false, error: trText("The sound of the clip to move is on the locked track \"{0}\"; unlock that track first", lockedCompanion.name) };
       let moved: import("../../kernel/project").Project | null = { ...base, tracks: base.tracks.map((t) => ({ ...t, clips: sortClips([
         ...t.clips.filter((c) => !companions.get(t.id)!.includes(c)).map((c) => (moves.has(c.id) ? { ...c, start: c.start + moves.get(c.id)!, end: c.end + moves.get(c.id)! } : c)),
         ...companions.get(t.id)!,
@@ -327,17 +328,17 @@ export const clips = {
       for (const id of moves.keys()) {
         const before = findClip(base, id)?.clip, after = moved ? findClip(moved, id)?.clip : undefined;
         if (before && after && moved) moved = moveSoundCompanions(moved, before, after, false);
-        if (!moved) return { ok: false, error: "要挪的段的声音伴随段挪不开，没有改速度" };
+        if (!moved) return { ok: false, error: trText("The companion audio clip of the clip to move can't be moved; speed was not changed") };
       }
       base = moved!;
     }
     base = updateTrack(base, hit.track.id, (t) => ({ ...t, clips: sortClips(t.clips) }));
     // 自己的声音伴随段:溶解缩短把这一段往后挪了时先整体平移,再按新长度裁到片段里
     const linked = moveSoundCompanions(base, hit.clip, placed, false);
-    if (!linked) return { ok: false, error: "这一段的声音伴随段放不下，没有改速度" };
+    if (!linked) return { ok: false, error: trText("The companion audio clip of this clip doesn't fit; speed was not changed") };
     // 挪完整体核一遍:任何序列上重叠或跑到 0 之前都整个拒绝(不截断)
     const clash = linked.tracks.find((t) => { const s2 = sortClips(t.clips); return s2.some((c, i) => c.start < -1e-9 || (i > 0 && c.start < s2[i - 1].end - 1e-9)); });
-    if (clash) return { ok: false, error: `挪动后序列「${clash.name}」上的段会重叠，没有改速度` };
+    if (clash) return { ok: false, error: trText("After the move, clips on track \"{0}\" would overlap; speed unchanged", clash.name) };
     setProject(linked);
     return { ok: true, ...(pushedBy > 0 ? { pushed: { clips: [...moves.keys()].filter((id) => id !== partner).length, by: pushedBy } } : {}),
       ...(partner || lateBy > 0 ? { moved: [...(partner ? [partner] : []), ...(lateBy > 0 ? [clipId] : [])] } : {}),

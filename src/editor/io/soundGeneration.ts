@@ -10,6 +10,7 @@ import { decideClipSound, decideRecipeSound } from "./onlineSoundJudge";
 import { soundEffectReuseDigest } from "../../audio/soundGeneration";
 import { isViewOnly } from "./viewOnly";
 import { planSoundGeneration, type GenerateSoundOptions } from "../../audio/soundRequest";
+import { tr } from "../../i18n/index.ts";
 
 export type { GenerateSoundOptions };
 
@@ -26,21 +27,21 @@ const manager = createSoundGenerationManager({ upload: uploadGeneratedAudio, ren
 export function soundPresets() {
   return {
     presets: [
-      { id: "notification", name: "短提示音", source: "PromptCut 原生 TypeScript 合成", defaults: NOTIFICATION_SOUND_DEFAULTS, controls: getCard("sound-notification")?.controls ?? [], useWhen: "段落结尾、确认或轻提示;无需外部音频素材" },
-      { id: "keyboard", name: "合成键盘声", source: "PromptCut 原生 TypeScript 合成", defaults: KEYBOARD_SOUND_DEFAULTS,
+      { id: "notification", name: tr("Short notification sound"), source: "PromptCut native TypeScript synthesis", defaults: NOTIFICATION_SOUND_DEFAULTS, controls: getCard("sound-notification")?.controls ?? [], useWhen: tr("End of a paragraph, confirmation or light cue; no external audio asset needed") },
+      { id: "keyboard", name: tr("Synthesized keyboard sound"), source: "PromptCut native TypeScript synthesis", defaults: KEYBOARD_SOUND_DEFAULTS,
         controls: (getCard("sound-keyboard")?.controls ?? []).filter(c => ["tone", "keyDuration", "frequency", "brightness", "variation", "gain", "seed"].includes(c.key)).map(c => c.key === "keyDuration" ? { ...c, key: "duration" } : c),
         typingControls: (getCard("sound-keyboard")?.controls ?? []).filter(c => ["text", "duration", "delayMs", "punctuationPauseMs", "newlinePauseMs", "jitterMs", "punctuationSound", "whitespaceSound"].includes(c.key)),
-        useWhen: "mu-typing 逐字同步;传 sourceClipId 复用其文字与节奏" },
+        useWhen: tr("Syncs with mu-typing character by character; pass sourceClipId to reuse its text and rhythm") },
     ],
     limits: { ...SOUND_EFFECT_LIMITS, ...SOUND_JOB_LIMITS },
-    hint: "先复用这些预设。sound_generate 只生成 WAV 普通音频段,不另挂音频素材效果卡。文字或速度改变后 refreshSource:true 显式重生成;用 sound_status 查进度,sound_cancel 取消。",
+    hint: tr("Reuse these presets first. sound_generate only generates plain WAV audio clips and does not attach an audio media effect card. After the text or speed changes, regenerate explicitly with refreshSource:true; use sound_status to check progress and sound_cancel to cancel."),
   };
 }
 
 const implicitRequests = new Map<string, string>();
 
 export function startSoundGeneration(options: GenerateSoundOptions): SoundGenerationJob {
-  if (isViewOnly()) throw new Error("只读页面不能生成音效");
+  if (isViewOnly()) throw new Error(tr("Read-only pages cannot generate sound effects"));
   const p = getState().project;
   const projectLoadToken = getState().projectLoadToken;
   const { recipe, target, source, sourceClipId, start, duration, mediaOffset, name, expectedClip, expectedSource } = planSoundGeneration(p, options);
@@ -93,10 +94,10 @@ export const waitSoundGeneration = manager.wait;
  * 取消、片段中途被改都不提交;在线页面判重的不在浏览器里合成(`onlineSoundJudge.ts`)。
  */
 export async function restoreSoundEffectAsset(clipId: string, options: { signal?: AbortSignal; onProgress?: (fraction: number) => void } = {}): Promise<{ clipId: string; mediaId: string; committed: boolean }> {
-  if (isViewOnly()) throw new Error("只读页面不能生成音效");
+  if (isViewOnly()) throw new Error(tr("Read-only pages cannot generate sound effects"));
   const state = getState(), p = state.project, hit = findClip(p, clipId);
   const link = hit?.clip.soundEffect;
-  if (!hit || !link) throw new Error("找不到这段音效的配方");
+  if (!hit || !link) throw new Error(tr("Cannot find the recipe for this sound effect"));
   const controller = new AbortController();
   const abort = () => controller.abort();
   options.signal?.addEventListener("abort", abort, { once: true });
@@ -106,7 +107,7 @@ export async function restoreSoundEffectAsset(clipId: string, options: { signal?
     controller.signal.throwIfAborted();
     const now = getState();
     if (now.projectLoadToken !== state.projectLoadToken || now.project.id !== p.id || now.project.activeCutId !== p.activeCutId
-        || JSON.stringify(findClip(now.project, clipId)?.clip) !== expectedClip) throw new Error("片段或项目已变化，旧的声音生成结果不会覆盖当前内容");
+        || JSON.stringify(findClip(now.project, clipId)?.clip) !== expectedClip) throw new Error(tr("The clip or project has changed, the old sound generation result will not overwrite the current content"));
   };
   try {
     const decision = await decideClipSound(p, hit.clip, controller.signal);
@@ -117,7 +118,7 @@ export async function restoreSoundEffectAsset(clipId: string, options: { signal?
     check();
     const asset = await uploadGeneratedAudio(wav, controller.signal);
     check();
-    if (!(await hasGeneratedAudio(asset.hash, controller.signal))) throw new Error("声音入库后素材服务仍然没有它的字节");
+    if (!(await hasGeneratedAudio(asset.hash, controller.signal))) throw new Error(tr("The asset service still does not have the sound's bytes after it was stored"));
     check();
     const current = getState().project;
     const media = current.media.find((m) => m.id === hit.clip.mediaId);
@@ -125,10 +126,10 @@ export async function restoreSoundEffectAsset(clipId: string, options: { signal?
       options.onProgress?.(1);
       return { clipId, mediaId: media.id, committed: false };
     }
-    if (hit.track.locked) throw new Error("请先解锁音效所在序列");
+    if (hit.track.locked) throw new Error(tr("Unlock the track containing the sound effect first"));
     const reuseKey = await soundEffectReuseDigest(recipe);
     check();
-    const name = hit.clip.label || media?.name || (recipe.preset === "keyboard" ? "键盘声.wav" : "提示音.wav");
+    const name = hit.clip.label || media?.name || (recipe.preset === "keyboard" ? tr("keyboard-sound.wav") : tr("notification-sound.wav"));
     const result = actions.commitSoundEffect({
       projectId: p.id, cutId: p.activeCutId, expectedClip, replaceClipId: clipId, silent: true,
       expectedSource: link.sourceClipId ? JSON.stringify(findClip(current, link.sourceClipId)?.clip) : undefined,

@@ -88,6 +88,7 @@ import { backStage } from "./stageBridge";
 import { holdProbe, onCostRecords, onProbeProgress, probeFrameDiag, probeProgress, probeRunDiag, probeSettledFor, releaseProbe, runCardMeasuredHook, setCostBackend, setProbeMeasureHooks } from "./probeRunner";
 import { browserNodeReady, keepConfirmedProject, startBrowserNodeHost, subscribeBrowserNodeReady } from "./browserNodeHost";
 import type { SettleResult } from "../render/settleFrame";
+import { tr as trText } from "../i18n/index.ts";
 
 setCostResolver((proj, clipId) => {
   const key = clipIdentityOf(proj).identityKeys[clipId];
@@ -459,7 +460,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     };
     const offs = [subscribeOnlineCardExec(sync), subscribeOnlineStages(sync)];
     sync();
-    return () => { for (const off of offs) off(); setCardExecGate({ isolated: false, reason: "页面卸载", visual: true }); };
+    return () => { for (const off of offs) off(); setCardExecGate({ isolated: false, reason: "page unload", visual: true }); };
   }, []);
   /** 每台舞台的取档策略发到第几次了(等自检与票据交接是异步的,晚回来的旧一次不许盖掉新的) */
   const policySeqRef = useRef<Partial<Record<StageId, number>>>({});
@@ -981,14 +982,14 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     if (!ONLINE || !handshakeRound) return;
     // 这一轮只从 `pending` 开始计时(过渡期、换回之后都不重建;真走到这里说明布局被别的原因打断过,按失败收场)
     if (onlineStageState().handshake !== "pending") {
-      if (onlineStageState().handshake === "interim") markStageHandshake("failed", "过渡期的首次握手计时中断");
+      if (onlineStageState().handshake === "interim") markStageHandshake("failed", trText("Handshake timer interrupted during the first handshake in the transition period"));
       return;
     }
     handshookRef.current = new Set();
     const hs = createStageHandshake({
       ids: STAGE_IDS,
       fail: (reason) => {
-        console.warn(`[preview] ${reason},退回同源单舞台`);
+        console.warn(`[preview] ${reason}, falling back to the same-origin single stage`);
         markStageHandshake("failed", reason);
       },
       ok: () => markStageHandshake("ok"),
@@ -1184,11 +1185,11 @@ export function Preview(props: { variant?: "mobile" } = {}) {
           rpcRef.current[id] = null;
           hostCapsRef.current[id] = null;
         }
-        console.warn(`[preview] 舞台 ${id} 断开(${reason}),整页重载它`);
+        console.warn(`[preview] stage ${id} disconnected (${reason}), reloading the whole page for it`);
         if (frame) frame.src = frame.src;
       },
       fallback: (reason) => {
-        console.warn(`[preview] ${reason},退回同源单舞台`);
+        console.warn(`[preview] ${reason}, falling back to the same-origin single stage`);
         markStageHandshake("failed", reason);
       },
       hidden: () => typeof document !== "undefined" && document.hidden,
@@ -1224,7 +1225,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
         rpcRef.current[id] = null;
         hostCapsRef.current[id] = null;
       }
-      console.warn(`[preview] 舞台 ${id} 没换上新的卡片代码,整页重载它`);
+      console.warn(`[preview] stage ${id} did not pick up the new card code, reloading the whole page for it`);
       frame.src = frame.src;
     });
   }, [dual]);
@@ -1498,7 +1499,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
     const soundLink = createIsolatedSoundLink({
       render: (request) => {
         const c = rpcRef.current[soundStageId()];
-        return c ? c.synthCardAudio(request) : Promise.reject(new Error("起声音线程的那一台舞台不在"));
+        return c ? c.synthCardAudio(request) : Promise.reject(new Error(trText("The stage that started the audio thread is gone")));
       },
     });
     soundLinkRef.current = soundLink;
@@ -2666,7 +2667,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
             type="button"
             className={view === id ? "is-on" : undefined}
             onClick={() => setView(id)}
-            title={id === "2d" ? "成片预览:所见即导出所得" : "三维视图:像 Blender 那样绕着看这些卡在空间里怎么摆"}
+            title={id === "2d" ? trText("Final video preview: what you see is what you export") : trText("3D view: orbit around like in Blender to see how these cards are arranged in space")}
           >
             {label}
           </button>
@@ -2761,7 +2762,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
                     key={`single-${stageFrameGen.A}`}
                     ref={cover ? undefined : frameRefOf.A}
                     data-pc={cover ? "stage-frame-cover" : "stage-frame"}
-                    title="预览舞台"
+                    title={trText("Preview stage")}
                     sandbox={ONLINE ? STAGE_SANDBOX : undefined}
                     onLoad={() => onStageFrameLoad("A")}
                     /*
@@ -2791,7 +2792,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
                     key={`dualA-${stageFrameGen.A}`}
                     ref={warm ? warmRefOf.A : frameRefOf.A}
                     data-pc={warm ? "stage-frame-warm" : "stage-frame"}
-                    title={warm ? "预热舞台" : "预览舞台"}
+                    title={warm ? trText("Warm-up stage") : trText("Preview stage")}
                     /*
                      * 在线的跨源舞台带 sandbox(契约 `online-card-exec-contract.md` 第 3.3 节):只开脚本与保有自己的源两项,
                      * 不给弹窗、带走顶层、表单、模态框、下载。舞台是跨源地址,`allow-same-origin` 只是让它保有自己的源
@@ -2811,7 +2812,7 @@ export function Preview(props: { variant?: "mobile" } = {}) {
                       key={`dualB-${stageFrameGen.B}`}
                       ref={warm ? warmRefOf.B : frameRefOf.B}
                       data-pc={warm ? "stage-frame-warm" : "stage-frame-back"}
-                      title={warm ? "预热舞台" : "后台舞台"}
+                      title={warm ? trText("Warm-up stage") : trText("Background stage")}
                       sandbox={ONLINE ? STAGE_SANDBOX : undefined}
                       src={stageSrc("B", { dual: true })}
                       onLoad={() => onStageFrameLoad("B")}

@@ -11,6 +11,7 @@ import { useReadOnly } from "../../readOnly";
 import { usePreviewMediaUrl } from "../../media/previewUrl";
 import { ThumbTile } from "./ThumbTile";
 import type { GroupData, GroupItem } from "./groups";
+import { tr as trText } from "../../../i18n/index.ts";
 
 /**
  * 特效 → 转场组。
@@ -67,7 +68,7 @@ function Still({ media, style }: { media: MediaAsset | undefined; style?: React.
   if (media.kind === "audio") {
     return (
       <div style={{ ...style, background: "var(--ui-panel-2)", display: "grid", placeItems: "center", color: "var(--ui-fg-faint)", fontSize: 10 }}>
-        声音
+        {trText("Sound")}
       </div>
     );
   }
@@ -119,9 +120,9 @@ function TransitionGlyph({ kind }: { kind: TransitionKind }) {
 }
 
 const KIND_HINT: Record<TransitionKind, string> = {
-  crossfade: "拖到两段首尾相接的地方;两段会绑成一组",
-  fadeIn: "拖到一段的开头(或选中片段后点一下)",
-  fadeOut: "拖到一段的结尾(或选中片段后点一下)",
+  crossfade: trText("Drag to where two clips meet end to end; the two clips will be bound as a group"),
+  fadeIn: trText("Drag to the start of a clip (or select a clip and click once)"),
+  fadeOut: trText("Drag to the end of a clip (or select a clip and click once)"),
 };
 
 /** q 是已经 trim + 小写的搜索词;flash 是分区底部的提示条 */
@@ -136,26 +137,26 @@ export function useTransitionsGroup(q: string, flash: (text: string, ms?: number
   const pairs = useMemo(() => findPairs(project), [project]);
   const transitions = transitionsOf(project);
   const mediaOf = (c: TrackClip) => project.media.find((m) => m.id === c.mediaId);
-  const nameOf = (c: TrackClip) => mediaOf(c)?.name ?? "素材";
+  const nameOf = (c: TrackClip) => mediaOf(c)?.name ?? trText("media");
 
   const apply = (pair: Pair) => {
     const r = actions.addTransition({ kind: "crossfade", clipId: pair.a.id, otherClipId: pair.b.id, dur });
-    flash(r.ok ? `已加 ${dur}s 交叉溶解,这两段现在是一组` : r.error);
+    flash(r.ok ? trText("Added {0}s crossfade, these two clips are now a group", dur) : r.error);
   };
 
   /** 点卡片:淡入淡出加在选中的片段上;交叉溶解要两段,让用户去拖或用下面的接缝列表 */
   const clickKind = (kind: TransitionKind) => {
     if (kind === "crossfade") {
-      flash("交叉溶解要两段:把这张卡拖到时间轴上两段相接的地方,或用下面的接缝列表");
+      flash(trText("A crossfade needs two clips: drag this card to where two clips meet on the timeline, or use the seam list below"));
       return;
     }
     const clipId = selection[0];
     if (!clipId) {
-      flash(`先在时间轴上选中一个片段,再点${TRANSITION_LABEL[kind]};也可以直接把卡拖到片段的${kind === "fadeIn" ? "开头" : "结尾"}`);
+      flash(trText("First select a clip on the timeline, then click {0}; or drag the card straight to the clip's {1}", TRANSITION_LABEL[kind], kind === "fadeIn" ? trText("Start") : trText("end")));
       return;
     }
     const r = actions.addTransition({ kind, clipId, dur });
-    flash(r.ok ? `已加 ${dur}s ${TRANSITION_LABEL[kind]}` : r.error);
+    flash(r.ok ? trText("Added {0}s {1}", dur, TRANSITION_LABEL[kind]) : r.error);
   };
 
   const drag = (kind: TransitionKind) => (e: React.DragEvent) => {
@@ -193,7 +194,7 @@ export function useTransitionsGroup(q: string, flash: (text: string, ms?: number
 
   const detailTop = (
     <div className="pc-lib-block">
-      <div className="pc-lib-label">转场时长</div>
+      <div className="pc-lib-label">{trText("Transition duration")}</div>
       <div className="pc-lib-seg">
         {DURATIONS.map((d) => (
           <button key={d} type="button" className={`pc-chip${dur === d ? " is-on" : ""}`} aria-pressed={dur === d} onClick={() => setDur(d)}>
@@ -210,7 +211,7 @@ export function useTransitionsGroup(q: string, flash: (text: string, ms?: number
       {transitions.length > 0 && (
         <div className="pc-lib-block">
           <div className="pc-lib-label">
-            <span>已有转场</span>
+            <span>{trText("Existing transitions")}</span>
             <span>({transitions.length})</span>
           </div>
           <div className="pc-lib-rows">
@@ -223,13 +224,13 @@ export function useTransitionsGroup(q: string, flash: (text: string, ms?: number
                   type="button"
                   className="pc-left-btn"
                   disabled={ro.locked}
-                  title={ro.title("删掉这处转场,相关片段解锁")}
+                  title={ro.title(trText("Remove this transition and unlock the related clips"))}
                   onClick={() => {
                     const r = actions.removeTransition(tr.id);
-                    flash(r.ok ? `已删掉转场${r.note ? `(${r.note})` : ",相关片段解锁了"}` : r.error);
+                    flash(r.ok ? trText("Removed transition{0}", r.note ? `(${r.note})` : trText(", related clips unlocked")) : r.error);
                   }}
                 >
-                  删除
+                  {trText("Delete")}
                 </button>
               </div>
             ))}
@@ -239,12 +240,12 @@ export function useTransitionsGroup(q: string, flash: (text: string, ms?: number
 
       {/* 时间轴上首尾相接的接缝:一键接成交叉溶解 */}
       <div className="pc-lib-block">
-        <div className="pc-lib-label">相接的两段</div>
+        <div className="pc-lib-label">{trText("Adjoining clips")}</div>
         {pairs.length === 0 ? (
           <div className="pc-left-note">
-            没有找到相接的两段素材。
+            {trText("No adjoining clips found.")}
             <br />
-            把两段视频前后接在时间轴上,这里就会列出它们的衔接点。
+            {trText("Place two videos back to back on the timeline and their join points will be listed here.")}
           </div>
         ) : (
           <div className="pc-lib-grid">
@@ -259,7 +260,7 @@ export function useTransitionsGroup(q: string, flash: (text: string, ms?: number
                 <PreviewCard
                   key={`${pair.a.id}-${pair.b.id}`}
                   title={`${nameOf(pair.a)} → ${nameOf(pair.b)}`}
-                  subtitle={has ? `已是一组 · ${pair.a.end.toFixed(1)}s` : `衔接于 ${pair.a.end.toFixed(1)}s`}
+                  subtitle={has ? trText("Already grouped · {0}s", pair.a.end.toFixed(1)) : trText("Joined at {0}s", pair.a.end.toFixed(1))}
                   onHover={(v) => setHotIndex(v ? i : (cur) => (cur === i ? null : cur))}
                   preview={
                     <>
@@ -267,11 +268,11 @@ export function useTransitionsGroup(q: string, flash: (text: string, ms?: number
                       <Still media={mediaOf(pair.b)} style={fadeStyle} />
                     </>
                   }
-                  titleAttr={has ? "这两段已经用交叉溶解绑成一组" : "悬停预览交叉溶解;点下面的按钮加上"}
+                  titleAttr={has ? trText("These two clips are already bound as a group with a crossfade") : trText("Hover to preview the crossfade; click the button below to add it")}
                   footer={
                     <div className="pc-lib-card-foot">
                       <button type="button" className="pc-left-btn is-block" disabled={has || ro.locked} title={ro.title()} onClick={() => apply(pair)}>
-                        {has ? "已加转场" : "加交叉溶解"}
+                        {has ? trText("Transition added") : trText("Add crossfade")}
                       </button>
                     </div>
                   }
@@ -284,5 +285,5 @@ export function useTransitionsGroup(q: string, flash: (text: string, ms?: number
     </>
   );
 
-  return { items, thumbs, detailTop, detailBottom, emptyDetail: <div className="pc-left-note">没有匹配的转场</div> };
+  return { items, thumbs, detailTop, detailBottom, emptyDetail: <div className="pc-left-note">{trText("No matching transitions")}</div> };
 }

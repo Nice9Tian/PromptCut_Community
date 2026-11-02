@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { KIND_LABEL } from "./io/mediaKinds";
 import { onMediaMigrations, takeMediaMigrations, type MediaKindMigration } from "./io/mediaMigrationBus";
 import { onPythonDrops, takePythonDrops, pythonDropMessage } from "./io/pythonDrop";
+import { tr } from "../i18n/index.ts";
 
 /**
  * 打开项目时的一次性提示层。两件事共用它（都只在加载那一刻发生、都只说一次）：
@@ -32,12 +33,12 @@ export function MediaMigrationDialog(): JSX.Element | null {
     return createPortal(
       <div className="pc-dialog-mask" role="presentation">
         <div className="pc-dialog" role="dialog" aria-modal="true" aria-labelledby="pc-python-nodes-dropped-title">
-          <div id="pc-python-nodes-dropped-title" className="pc-dialog-title">部分卡片已停用</div>
+          <div id="pc-python-nodes-dropped-title" className="pc-dialog-title">{tr("Some cards have been disabled")}</div>
           <div className="pc-dialog-body">
             <p className="text-neutral-300 text-sm">{pythonDropMessage(droppedCards)}</p>
           </div>
           <div className="pc-dialog-foot">
-            <button type="button" className="pc-dialog-opt is-on" onClick={() => setDroppedCards(0)}>确定</button>
+            <button type="button" className="pc-dialog-opt is-on" onClick={() => setDroppedCards(0)}>{tr("OK")}</button>
           </div>
         </div>
       </div>,
@@ -48,9 +49,9 @@ export function MediaMigrationDialog(): JSX.Element | null {
   return createPortal(
     <div className="pc-dialog-mask" role="presentation">
       <div className="pc-dialog" role="dialog" aria-modal="true" aria-labelledby="pc-media-migration-title">
-        <div id="pc-media-migration-title" className="pc-dialog-title">已自动整理素材分类</div>
+        <div id="pc-media-migration-title" className="pc-dialog-title">{tr("Media categories organized automatically")}</div>
         <div className="pc-dialog-body">
-          <p className="text-neutral-300 text-sm mb-3">发现旧项目中有素材分类与文件扩展名不一致，已移动到对应分页：</p>
+          <p className="text-neutral-300 text-sm mb-3">{tr("Found media in an old project whose category did not match the file extension; moved to the matching tab:")}</p>
           <div className="max-h-64 overflow-y-auto rounded border border-neutral-700">
             {items.map((item, index) => (
               <div key={`${item.id}-${index}`} className="flex items-center justify-between gap-3 px-3 py-2 border-b last:border-b-0 border-neutral-800 text-xs">
@@ -61,7 +62,7 @@ export function MediaMigrationDialog(): JSX.Element | null {
           </div>
         </div>
         <div className="pc-dialog-foot">
-          <button type="button" className="pc-dialog-opt is-on" onClick={() => setItems([])}>确定</button>
+          <button type="button" className="pc-dialog-opt is-on" onClick={() => setItems([])}>{tr("OK")}</button>
         </div>
       </div>
     </div>,

@@ -17,7 +17,7 @@ const D = await import(srcUrl("editor/timeline/durationSync.ts"));
 
 const clip = (id, start, end) => ({ id, cardId: "", start, end, params: {} });
 function load(clips) {
-  actions.newProject("时长");
+  actions.newProject("Duration");
   const p = getState().project;
   core.setProject({ ...p, tracks: [{ ...p.tracks[0], clips }], duration: Math.max(...clips.map((c) => c.end)) }, { undoable: false });
   core.set({ durationManual: null });

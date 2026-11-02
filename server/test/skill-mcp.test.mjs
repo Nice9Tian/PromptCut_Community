@@ -486,7 +486,7 @@ test('SM-13 无头实例、任务目录、submit_merge、三方合并归档后�
 test('SM-14 对话式布局的入口不再出现:顶栏开关只有传统式 / SKILL,布局模式模块与迷你进度条删掉,没有 "chat" 布局', () => {
   const sw = fs.readFileSync(path.join(ROOT, 'src/editor/ModeSwitch.tsx'), 'utf8');
   assert.equal(/label: "对话式"/.test(sw), false);
-  assert.match(sw, /label: "传统式"/);
+  assert.match(sw, /label: tr\("Classic mode"\)/);
   assert.match(sw, /label: "SKILL"/);
   for (const f of ['src/editor/layoutMode.ts', 'src/editor/preview/MiniScrubber.tsx']) assert.equal(fs.existsSync(path.join(ROOT, f)), false, `${f} 应已删除`);
   const patterns = [/\buseLayoutMode\b/, /\bgetLayoutMode\b/, /\bsetLayoutMode\b/, /\bDockMode\b/, /\buseSideVisible\b/, /\bMiniScrubber\b/, /layoutMode === "chat"/, /mode === "chat"/, /pc\.layout\.mode/, /label: "对话式"/];

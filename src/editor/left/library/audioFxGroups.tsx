@@ -6,6 +6,7 @@ import { createAudioFxTools, audioFxUsesOf } from "../../right/audioFxTools";
 import { AudioStrip } from "./AudioStrip";
 import { useReadOnly } from "../../readOnly";
 import type { GroupData, GroupItem } from "./groups";
+import { tr } from "../../../i18n/index.ts";
 
 /** 和 Agent 的 apply_audio_fx / remove_audio_fx 同一份校验 */
 const tools = createAudioFxTools({ getState, actions });
@@ -65,42 +66,42 @@ export function useAudioFxGroup(q: string, flash: (text: string, ms?: number) =>
           name={
             <>
               <span className="pc-lib-ellipsis">{f.name}</span>
-              {isAudioFxAnimated(f) && <span className="pc-lib-tag">随时间变化</span>}
+              {isAudioFxAnimated(f) && <span className="pc-lib-tag">{tr("Changes over time")}</span>}
             </>
           }
-          sub={`${describeAudioFx(f)}${uses.length ? ` · 用在 ${uses.length} 段` : ""}`}
+          sub={`${describeAudioFx(f)}${uses.length ? tr(" · used in {0} segments", uses.length) : ""}`}
           actions={
             <>
               <button
                 type="button"
                 className="pc-left-btn"
                 disabled={!canApply || ro.locked}
-                title={ro.locked ? ro.why : canApply ? (on ? "从选中的片段上摘掉" : "挂到选中的片段上(每段只挂一个,会替换原来的)") : "先在时间轴上选中一段视频或声音"}
+                title={ro.locked ? ro.why : canApply ? (on ? tr("Detach from the selected clip") : tr("Attach to the selected clip (one per segment, replaces the existing one)")) : tr("First select a video or audio segment on the timeline")}
                 onClick={() =>
                   canApply &&
                   (on
-                    ? run(() => tools.applyAudioFx({ clipId: selClip.id, fxId: "" }), `已从选中的片段摘掉「${f.name}」`)
-                    : run(() => tools.applyAudioFx({ clipId: selClip.id, fxId: f.id }), `已把「${f.name}」挂到选中的片段`))
+                    ? run(() => tools.applyAudioFx({ clipId: selClip.id, fxId: "" }), tr("Detached \"{0}\" from the selected clip", f.name))
+                    : run(() => tools.applyAudioFx({ clipId: selClip.id, fxId: f.id }), tr("Attached \"{0}\" to the selected clip", f.name)))
                 }
               >
-                {on ? "摘掉" : "挂到选中"}
+                {on ? tr("Detach") : tr("Attach to selection")}
               </button>
               <button
                 type="button"
                 className={`pc-left-btn${armed === f.id ? " is-danger" : ""}`}
                 disabled={ro.locked}
-                title={ro.title(uses.length ? `用在 ${uses.length} 段上,删了会一起摘掉` : "从效果库删掉")}
+                title={ro.title(uses.length ? tr("Used in {0} segments, deleting it detaches it from all of them", uses.length) : tr("Delete from effects library"))}
                 onClick={() => {
                   if (uses.length && armed !== f.id) {
                     setArmed(f.id);
-                    flash(`「${f.name}」用在 ${uses.length} 段上;再点一次「确认删除」会把这些段上的它一起摘掉`, 2000);
+                    flash(tr("\"{0}\" is used in {1} segments; click \"Confirm delete\" again to detach it from those segments as well", f.name, uses.length), 2000);
                     return;
                   }
                   setArmed(null);
-                  run(() => tools.removeAudioFx({ fxId: f.id, force: uses.length > 0, reason: "用户在素材库里删除" }), `已删除「${f.name}」`);
+                  run(() => tools.removeAudioFx({ fxId: f.id, force: uses.length > 0, reason: "User deleted it in the media library" }), tr("Deleted \"{0}\"", f.name));
                 }}
               >
-                {armed === f.id ? "确认删除" : "删除"}
+                {armed === f.id ? tr("Confirm delete") : tr("Delete")}
               </button>
             </>
           }
@@ -116,14 +117,14 @@ export function useAudioFxGroup(q: string, flash: (text: string, ms?: number) =>
 
   const detailTop = (
     <div className="pc-left-hint">
-      效果大多由 Agent 用 create_audio_fx 建；这里能看、能复用、能删；预览和导出用同一套 Web Audio，听到的就是导出的。
+      {tr("Most effects are created by the Agent with create_audio_fx; here you can view, reuse and delete them; preview and export use the same Web Audio, so what you hear is what gets exported.")}
     </div>
   );
 
   // 效果类的参考说明:每种效果是做什么的、有哪些参数和取值范围
   const detailBottom = (
     <details className="pc-lib-details">
-      <summary>效果种类 (点击展开)</summary>
+      <summary>{tr("Effect types (click to expand)")}</summary>
       <div className="pc-lib-details-body">
         {Object.entries(AUDIO_FX_KINDS).map(([kind, spec]) => (
           <div key={kind}>
@@ -150,14 +151,14 @@ export function useAudioFxGroup(q: string, flash: (text: string, ms?: number) =>
     thumbs,
     detailTop,
     detailBottom,
-    emptyHint: "让 AI 助手新建音频效果,或从「音频预设」新建",
+    emptyHint: tr("Ask the AI assistant to create an audio effect, or create one from \"Audio presets\""),
     emptyDetail:
       rawFx.length === 0 ? (
         <div className="pc-left-note">
-          还没有音频效果。让 Agent 建一个（比如「把配乐压低给人声让路」「给结尾的字加大厅混响」），或从「音频预设」组新建。
+          {tr("No audio effects yet. Ask the Agent to create one (for example \"duck the music under the voice\", \"add hall reverb to the closing text\"), or create one from the \"Audio presets\" group.")}
         </div>
       ) : (
-        <div className="pc-left-note">没搜到匹配的效果。</div>
+        <div className="pc-left-note">{tr("No matching effects found.")}</div>
       ),
   };
 }
@@ -185,7 +186,7 @@ export function useAudioPresetsGroup(q: string, flash: (text: string, ms?: numbe
   const create = (preset: (typeof AUDIO_FX_PRESETS)[number]) =>
     ro.locked ? undefined : run(
       () => tools.createAudioFx({ ...preset, createdBy: "user", ...(canApply ? { clipId: selClip.id } : null) }),
-      canApply ? `已新建「${preset.name}」并挂到选中片段` : `已新建「${preset.name}」`,
+      canApply ? tr("Created \"{0}\" and attached it to the selected clip", preset.name) : tr("Created \"{0}\"", preset.name),
     );
 
   const items: GroupItem[] = hits.map(({ preset, idx }) => ({
@@ -198,7 +199,7 @@ export function useAudioPresetsGroup(q: string, flash: (text: string, ms?: numbe
         edits
         role="button"
         tabIndex={0}
-        title={canApply ? `点一下:从「${preset.name}」新建并挂到选中片段` : `点一下:从「${preset.name}」新建`}
+        title={canApply ? tr("Click: create from \"{0}\" and attach to the selected clip", preset.name) : tr("Click: create from \"{0}\"", preset.name)}
         name={preset.name}
         sub={preset.description}
         onClick={() => create(preset)}
@@ -208,7 +209,7 @@ export function useAudioPresetsGroup(q: string, flash: (text: string, ms?: numbe
             create(preset);
           }
         }}
-        actions={<span className="pc-left-btn is-label">{canApply ? "新建并挂到选中" : "新建"}</span>}
+        actions={<span className="pc-left-btn is-label">{canApply ? tr("Create and attach to selection") : tr("New")}</span>}
       />
     ),
   }));
@@ -221,7 +222,7 @@ export function useAudioPresetsGroup(q: string, flash: (text: string, ms?: numbe
   return {
     items,
     thumbs,
-    detailTop: <div className="pc-left-hint">从预设新建:点一条就在音频效果库里建一份;选中了视频 / 声音片段时会顺手挂上。</div>,
-    emptyDetail: <div className="pc-left-note">没搜到匹配的预设。</div>,
+    detailTop: <div className="pc-left-hint">{tr("Create from preset: click one to create a copy in the audio effects library; if a video / audio clip is selected, it is attached too.")}</div>,
+    emptyDetail: <div className="pc-left-note">{tr("No matching presets found.")}</div>,
   };
 }

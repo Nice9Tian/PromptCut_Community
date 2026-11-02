@@ -55,18 +55,18 @@ test('AV3 一轮回复:动手之前的话 → 操作卡片 → 动手之后的�
   const v = roundView(m, 1);
   assert.deepEqual(v.before.map((s) => s.text), ['我先看一下素材']);
   assert.deepEqual(v.after.map((s) => s.text), ['标题放好了']);
-  assert.deepEqual(v.items.map((i) => [i.state, i.kind, i.name]), [['done', '读取', 'list_media'], ['done', '新增', 'add_clip'], ['err', '修改', 'set_clip_param']]);
-  assert.equal(v.title, '第 1 轮 · 3 项操作');
+  assert.deepEqual(v.items.map((i) => [i.state, i.kind, i.name]), [['done', 'Read', 'list_media'], ['done', 'Add', 'add_clip'], ['err', 'Change', 'set_clip_param']]);
+  assert.equal(v.title, 'Turn 1 · 3 actions');
   assert.equal(v.hasCard, true);
 });
 
 test('AV4 小结变成卡片里的行;send_message 给用户的话不算操作;没有操作也没有小结就没有卡片', () => {
-  const report = { kind: 'tool', name: 'mcp__promptcut__report_progress', input: { final: true, done: ['加了标题'], todo: ['配乐'], problems: ['字体缺失'] }, ok: true };
+  const report = { kind: 'tool', name: 'mcp__promptcut__report_progress', input: { final: true, done: ['加了标题'], todo: ['Background music'], problems: ['字体缺失'] }, ok: true };
   const v = roundView(asst('a2', [op('add_clip', true), report, say('好了')]), 2);
   assert.equal(v.items.length, 1);
   assert.equal(v.reports.length, 1);
-  assert.equal(v.reports[0].title, '本轮小结');
-  assert.deepEqual(v.reports[0].rows.map((r) => [r.state, r.text]), [['done', '加了标题'], ['todo', '配乐'], ['ask', '字体缺失']]);
+  assert.equal(v.reports[0].title, 'Round summary');
+  assert.deepEqual(v.reports[0].rows.map((r) => [r.state, r.text]), [['done', '加了标题'], ['todo', 'Background music'], ['ask', '字体缺失']]);
   const only = roundView(asst('a3', [say('嗯,我在想')]), 3);
   assert.equal(only.hasCard, false);
   assert.deepEqual(only.before.map((s) => s.text), ['嗯,我在想']);

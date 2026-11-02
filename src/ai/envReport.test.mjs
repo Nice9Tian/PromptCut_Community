@@ -24,18 +24,18 @@ function store(initial = {}) {
 const base = { project: null };
 
 test("两种工作方式都要说得出人话;对话式布局已去掉,旧报告里的 layout 字段不影响", () => {
-  assert.equal(describeMode({}), "传统式");
-  assert.equal(describeMode({ layout: "chat" }), "传统式");
+  assert.equal(describeMode({}), "Classic mode");
+  assert.equal(describeMode({ layout: "chat" }), "Classic mode");
   assert.match(describeMode({ skill: { active: true } }), /SKILL/);
   assert.doesNotMatch(describeMode({ skill: { active: true } }), /对话式|只读/);
-  assert.match(describeMode({ agentTabs: 3 }), /多 Agent\(3 个页签\)/);
-  assert.equal(describeMode({ agentTabs: 1 }), "传统式");
+  assert.match(describeMode({ agentTabs: 3 }), /Multi-Agent \(3 tabs\)/);
+  assert.equal(describeMode({ agentTabs: 1 }), "Classic mode");
 });
 
 test("没保存过的项目要**显式**说出来 —— 素材在临时目录的怪事都是从这儿来的", () => {
   const r = buildEnvReport({ ...base, project: { name: "未命名", filePath: null, media: [], tracks: [] } });
   assert.equal(r.project.saved, false);
-  assert.match(r.project.savedNote, /临时目录/);
+  assert.match(r.project.savedNote, /temp directory/);
 
   const saved = buildEnvReport({ ...base, project: { name: "x", filePath: "D:\\片子\\a.proc", media: [], tracks: [] } });
   assert.equal(saved.project.saved, true);
@@ -46,7 +46,7 @@ test("没保存过的项目要**显式**说出来 —— 素材在临时目录�
 test("素材库是空的时候要写在报告里 —— 模型说得出名字就是对质证据", () => {
   const r = buildEnvReport({ ...base, project: { media: [], tracks: [] } });
   assert.equal(r.media.count, 0);
-  assert.match(r.media.说明, /空的/);
+  assert.match(r.media.note, /library is empty/);
 });
 
 test("素材要报到文件一级,还要单列它们在哪些目录", () => {
@@ -75,14 +75,14 @@ test("可见 0 条 + 会话 id 还在 = 后端接着旧历史,两个数必须摆
   });
   assert.equal(r.chat.visibleMessages, 0);
   assert.deepEqual(r.chat.backendSessionIds, { "aiSession:api": "api-9433c3ac" });
-  assert.match(r.chat.说明, /1 把/);
+  assert.match(r.chat.note, /1 backend session ids/);
   assert.deepEqual(r.localSettings, { aiProvider: "api" }, "会话 id 不该同时混进偏好那一段");
 });
 
 test("干净起步时也要说清「就是干净的」,而不是留一个空对象让人猜", () => {
   const r = buildEnvReport({ ...base, visibleMessages: 0, storage: store({ aiProvider: "api" }) });
   assert.deepEqual(r.chat.backendSessionIds, {});
-  assert.match(r.chat.说明, /从零开始/);
+  assert.match(r.chat.note, /starts from scratch/);
 });
 
 test("用户写的剧本正文不许进报告 —— 这份报告是要上传的", () => {
@@ -95,8 +95,8 @@ test("用户写的剧本正文不许进报告 —— 这份报告是要上传的
   const r = buildEnvReport({ ...base, storage: store({ "pc.ai.script": 剧本 }) });
   const dumped = JSON.stringify(r);
   assert.ok(!dumped.includes("快乐小狗"), `剧本正文漏进报告了:${dumped}`);
-  assert.match(r.localSettings["pc.ai.script"], /有值/, "但要让人知道有这么个键");
-  assert.match(r.localSettings["pc.ai.script"], new RegExp(`共 ${剧本.length} 字`), "长度要报出来");
+  assert.match(r.localSettings["pc.ai.script"], /has a value/, "但要让人知道有这么个键");
+  assert.match(r.localSettings["pc.ai.script"], new RegExp(`${剧本.length} characters in total`), "长度要报出来");
 });
 
 test("白名单里的纯设置项照旧带值 —— 不然排查时什么也看不出来", () => {
@@ -125,11 +125,11 @@ test("跟我们无关的键一个都不收", () => {
 test("长值要截断:一条草稿能把整份报告顶爆", () => {
   const r = buildEnvReport({ ...base, storage: store({ aiProvider: "x".repeat(5000) }) });
   assert.ok(r.localSettings.aiProvider.length < 300);
-  assert.match(r.localSettings.aiProvider, /共 5000 字/);
+  assert.match(r.localSettings.aiProvider, /5000 characters in total/);
 });
 test("读不到 localStorage 时报一句话,不许整份报告跟着挂", () => {
   const r = buildEnvReport({ ...base, storage: null });
-  assert.match(r.localNote, /读不到/);
+  assert.match(r.localNote, /Can.t read localStorage/);
   assert.deepEqual(r.chat.backendSessionIds, {});
 });
 

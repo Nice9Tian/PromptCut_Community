@@ -220,7 +220,7 @@ export function sanitizeRpcResult(method: string, result: unknown): unknown {
   let nodes = 0;
   const timing = TIMING_METHODS.has(method);
   const walk = (v: unknown, depth: number, key: string | null, inTiming: boolean): unknown => {
-    if (++nodes > L.maxNodes) throw new Error("stage rpc: 回包太大");
+    if (++nodes > L.maxNodes) throw new Error("stage rpc: response too large");
     if (v === null || v === undefined || typeof v === "boolean") return v;
     if (typeof v === "number") {
       if (!Number.isFinite(v)) return 0;
@@ -228,13 +228,13 @@ export function sanitizeRpcResult(method: string, result: unknown): unknown {
       return v < -L.maxAbs ? -L.maxAbs : v > L.maxAbs ? L.maxAbs : v;
     }
     if (typeof v === "string") {
-      if (v.length > L.maxHtmlLength) throw new Error("stage rpc: 回包里的字符串太长");
+      if (v.length > L.maxHtmlLength) throw new Error("stage rpc: string in response too long");
       return v;
     }
-    if (typeof v !== "object") throw new Error("stage rpc: 回包里有不认得的值");
-    if (v instanceof ArrayBuffer) { if (v.byteLength > L.maxBufferBytes) throw new Error("stage rpc: 回包里的字节块太大"); return v; }
-    if (ArrayBuffer.isView(v)) { if (v.byteLength > L.maxBufferBytes) throw new Error("stage rpc: 回包里的字节块太大"); return v; }
-    if (depth >= L.maxDepth) throw new Error("stage rpc: 回包嵌套太深");
+    if (typeof v !== "object") throw new Error("stage rpc: response contains an unrecognized value");
+    if (v instanceof ArrayBuffer) { if (v.byteLength > L.maxBufferBytes) throw new Error("stage rpc: byte buffer in response too large"); return v; }
+    if (ArrayBuffer.isView(v)) { if (v.byteLength > L.maxBufferBytes) throw new Error("stage rpc: byte buffer in response too large"); return v; }
+    if (depth >= L.maxDepth) throw new Error("stage rpc: response nested too deeply");
     if (Array.isArray(v)) {
       // `steps`(每帧活渲耗时)是一串数:整串按耗时钳
       const t = inTiming || (timing && (key === "steps"));
@@ -242,7 +242,7 @@ export function sanitizeRpcResult(method: string, result: unknown): unknown {
       return v;
     }
     const proto = Object.getPrototypeOf(v);
-    if (proto !== Object.prototype && proto !== null) throw new Error("stage rpc: 回包里有不认得的对象");
+    if (proto !== Object.prototype && proto !== null) throw new Error("stage rpc: response contains an unrecognized object");
     const o = v as Record<string, unknown>;
     // `snapshot` / `snapshotSteps[]` 里的三段耗时本身的键就在 TIMING_KEYS 里;`glGpuMs` 是「卡 → 毫秒」的表,整张按耗时钳
     const t = inTiming || (timing && key === "glGpuMs");

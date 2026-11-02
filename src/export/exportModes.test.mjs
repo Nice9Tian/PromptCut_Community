@@ -178,7 +178,7 @@ test("XM-05 出不了、失败、不是这一版:各自停下并说明", async (
   const done = (svc, task, index) => svc.emit({ type: "task.done", id: task.id, result: { exportIndex: index } });
   // 节点说这张卡出不了
   await assert.rejects(run((svc, task, step) => { if (step === 1) done(svc, task, { v: 1, streams: [], unsupported: [{ clipId: "s", reason: "no-card" }] }); }),
-    (e) => e.message === T.ONLINE_EXPORT_TEXT.nodeCannot(1, "no-card") && /没有这张卡片的代码/.test(e.message));
+    (e) => e.message === T.ONLINE_EXPORT_TEXT.nodeCannot(1, "no-card") && /does not have the code for this card/.test(e.message));
   // 计划本身失败
   await assert.rejects(run((svc, task, step) => { if (step === 1) svc.emit({ type: "task.failed", id: task.id, error: "bad-snapshot" }); }),
     (e) => e.message === T.ONLINE_EXPORT_TEXT.nodeFailed("bad-snapshot"));
@@ -224,7 +224,7 @@ test("XM-06 流的一帧上下两半合成", () => {
   assert.deepEqual([...out.subarray(4, 8)], [255, 64, 64, 40]);
   assert.deepEqual([...out.subarray(8, 12)], [0, 0, 0, 0]);
   assert.deepEqual([...out.subarray(12, 16)], [255, 255, 255, 255]);
-  assert.throws(() => S.composeHalves(raw, w, 10, h), /放不下/);
+  assert.throws(() => S.composeHalves(raw, w, 10, h), /cannot fit two halves/);
   assert.equal(S.HALF_GAP_ROWS, 8);
 });
 

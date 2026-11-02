@@ -1,3 +1,4 @@
+import { tr } from "../../i18n/index.ts";
 /**
  * 打开旧云端项目文件、缺失素材这两件事里给用户看的字，集中在这一处。
  *
@@ -7,22 +8,22 @@
  */
 export const CLOUD_GONE_TEXT = {
   /** 转成本地项目后提示一次的窗口 */
-  title: "云端项目已不存在",
-  body: "这个文件对应的云端项目已经从云端删除。文件里保存的内容已转成一个本地项目，多用户协作已关闭，需要时可以在项目设置里重新打开。",
-  keep: "原文件没有改动；保存时会另存为一个新文件。",
-  ok: "知道了",
+  title: tr("Cloud project no longer exists"),
+  body: tr("The cloud project for this file has been deleted from the cloud. The content saved in the file was converted into a local project and multi-user collaboration is turned off; you can turn it back on in project settings if needed."),
+  keep: tr("The original file is unchanged; saving will save it as a new file."),
+  ok: tr("Got it"),
   /** 协作状态条：服务明确答了没有这个项目，但拿不到「已删除」的证明 */
-  missingUnconfirmed: "云端没有找到这个项目，也无法确认它已被删除；本地内容已保留，没有转成本地项目。",
+  missingUnconfirmed: tr("The cloud could not find this project and cannot confirm it was deleted; local content has been kept and was not converted to a local project."),
   /** 协作状态条：回来的「已删除」证明核对不过 */
-  proofRejected: "云端返回的删除证明核对不通过，可能连到了别的服务；本地内容已保留，没有转成本地项目。",
+  proofRejected: tr("The deletion proof returned by the cloud failed verification, possibly because it connected to a different service; local content has been kept and was not converted to a local project."),
 } as const;
 
 export const UNSUPPORTED_PROC_TEXT = (version: unknown) =>
-  `这个项目文件是更新版本的 PromptCut 保存的（格式版本 ${String(version)}），这一版打不开；原文件没有改动。`;
+  tr("This project file was saved by a newer version of PromptCut (format version {0}) and cannot be opened by this version; the original file was not changed.", String(version));
 
 export const MISSING_MATERIALS_TEXT = {
-  title: "找不到素材",
-  missing: (n: number) => `下面 ${n} 个素材在这台电脑上找不到文件。用到它们的片段位置和编排都保留着，画面显示「找不到素材」和文件名，声音放一次「找不到素材」的提示音；把文件导入回来后会自动恢复。`,
-  changed: "原位置的文件内容已经变了",
-  ok: "知道了",
+  title: tr("Media not found"),
+  missing: (n: number) => tr("The files for the {0} media items below could not be found on this computer. The positions and arrangement of the clips that use them are kept; the picture shows \"Media not found\" and the file name, and the audio plays a \"Media not found\" prompt tone once. Import the files back and they will be restored automatically.", n),
+  changed: tr("The file at the original location has changed"),
+  ok: tr("Got it"),
 } as const;

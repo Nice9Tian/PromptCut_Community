@@ -48,7 +48,7 @@ function tokensOf(source) {
   const head = rows[0] ?? "";
   const at = (name) => head.indexOf(name);
   const cLabel = at("Label"), cRaw = at("Raw"), cDepth = at("scopeDepth"), cType = at("isType"), cRole = at("identifierRole"), cJsx = at("jsxRole");
-  if (cLabel < 0 || cRaw < 0 || cDepth < 0 || cType < 0 || cRole < 0 || cJsx < 0) throw new Error("词法结果的表头变了");
+  if (cLabel < 0 || cRaw < 0 || cDepth < 0 || cType < 0 || cRole < 0 || cJsx < 0) throw new Error("The lexer result header changed");
   // 行首的偏移：与 Sucrase 用的 lines-and-columns 同一种数法（\n、\r\n、单独的 \r 各算一次换行）
   const lineStart = [0];
   for (let i = 0; i < source.length; i++) {
@@ -160,7 +160,7 @@ export function remotionLockSuffix(key, source) {
   const file = String(key).replace(/\\/g, "/");
   const lines = [
     "",
-    "/* 载入时把顶层锁成只读（remotion 式的框架；这一段是载入时接上的，不在卡片源码里） */",
+    "/* Lock the top level to read-only at load time (remotion-style framework; this part is attached at load time, not in the card source) */",
     `import { lockTopLevel as __pcLockTopLevel } from ${JSON.stringify(lock)};`,
     ...plan.specifiers.map((spec, i) => `import * as __pcForeign${i} from ${JSON.stringify(spec)};`),
     `__pcLockTopLevel(${JSON.stringify(file)}, [${plan.names.map((n) => `[${JSON.stringify(n)}, () => ${n}]`).join(", ")}], [${plan.specifiers.map((_, i) => `__pcForeign${i}`).join(", ")}]);`,

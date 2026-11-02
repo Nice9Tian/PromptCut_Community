@@ -20,7 +20,7 @@ mock.module(srcUrl("render/frameClient.ts"), {
     restoreSnapshots: () => {},
     frameRequest: (op, project, extra, signal) => {
       if (archiveMode === "ok") return Promise.resolve({ snapshots: "SNAP" });
-      return new Promise((_, reject) => signal?.addEventListener("abort", () => reject(new Error("帧读取失败")), { once: true }));
+      return new Promise((_, reject) => signal?.addEventListener("abort", () => reject(new Error("Frame read failed")), { once: true }));
     },
   },
 });
@@ -96,7 +96,7 @@ test("预渲染快照等到时限没收到:项目照存(不带快照),结果里�
   assert.equal(await saveProcFile("快照超时2.proc", saveDeps(notes)), "saved");
   assert.equal(notes.length, 1);
   assert.equal(notes[0].tone, "info");
-  assert.match(notes[0].m, /预渲染快照/);
+  assert.match(notes[0].m, /prerender snapshots/);
   assert.equal(getState().dirty, false, "项目内容完整,算保存了");
   archiveMode = "ok";
 });
@@ -111,7 +111,7 @@ test("写到一半出错:原文件逐字节不变,临时副本丢掉(abort),没�
   actions.newProject("半截");
   await assert.rejects(() => proc.writeProcToDisk(async () => proc.serializeProc(), "半截.proc"), (e) => {
     assert.match(e.message, /磁盘满了/);
-    assert.match(e.message, /原来的文件没有改动/);
+    assert.match(e.message, /The original file was not changed/);
     return true;
   });
   assert.equal(target.bytes, "上一次有效保存的内容", "原文件逐字节不变");
@@ -129,7 +129,7 @@ test("关闭(替换原文件)那一步出错:也 abort,原文件不变", async (
   };
   target = file;
   actions.newProject("关不上");
-  await assert.rejects(() => proc.writeProcToDisk(async () => proc.serializeProc(), "关不上.proc"), /原来的文件没有改动/);
+  await assert.rejects(() => proc.writeProcToDisk(async () => proc.serializeProc(), "关不上.proc"), /The original file was not changed/);
   assert.equal(file.bytes, "旧内容");
   assert.deepEqual(file.log, ["close-failed", "abort"]);
 });
@@ -138,7 +138,7 @@ test("保存流程里写到一半出错:提示说清原文件没动、不标已�
   proc.forgetSaveTarget();
   target = fakeFile("流程.proc", "旧的");
   target.failAfterHalf = "设备没有空间";
-  actions.newProject("流程");
+  actions.newProject("process");
   actions.setProjectMeta({ name: "流程改过" });
   const notes = [];
   let drafts = 0;
@@ -148,7 +148,7 @@ test("保存流程里写到一半出错:提示说清原文件没动、不标已�
   assert.equal(notes.length, 1);
   assert.equal(notes[0].tone, "error");
   assert.match(notes[0].m, /设备没有空间/);
-  assert.match(notes[0].m, /原来的文件没有改动/);
+  assert.match(notes[0].m, /The original file was not changed/);
   assert.equal(getState().dirty, true, "不标已保存");
   assert.equal(drafts, 0, "草稿不动");
   const { isSaveLocked } = await import(srcUrl("editor/saveLock.ts"));
@@ -180,5 +180,5 @@ test("打包保存写到一半出错:包文件不变、abort、提示原文件�
   assert.equal(result, "failed");
   assert.equal(pkg.bytes, "旧包");
   assert.deepEqual(pkg.log, ["write-failed", "abort"]);
-  assert.match(notes[0].m, /原来的文件没有改动/);
+  assert.match(notes[0].m, /The original file was not changed/);
 });

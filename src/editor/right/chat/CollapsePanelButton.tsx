@@ -2,6 +2,7 @@ import { setRailCollapsed } from "../../sideRails";
 import { useDockSide } from "../../dock/dockSide";
 import type { Side } from "../../dock/railLayout";
 import "./chat.css";
+import { tr } from "../../../i18n/index.ts";
 
 /**
  * 「收起面板」的图标:面板外框、贴着 rail 那一边一条侧栏,另一边一对朝 rail 的箭头 —— 面板往那一侧收进 rail。
@@ -52,8 +53,8 @@ export function CollapsePanelButton({ placement }: { placement?: "start" | "end"
       type="button"
       className={`pc-icon-btn pc-collapse-btn is-${side}`}
       data-pc={`${side}-collapse`}
-      title="收起面板"
-      aria-label="收起面板"
+      title={tr("Collapse panel")}
+      aria-label={tr("Collapse panel")}
       onClick={() => setRailCollapsed(side, true)}
     >
       <IconCollapse side={side} />

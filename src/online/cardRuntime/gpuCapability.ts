@@ -10,6 +10,7 @@
  * 判定是纯函数(`judgeGraphCapability`,单测逐条核);探测(`probeGraphFacts`)建一个 1×1 的离屏画布,探完立刻放掉上下文。
  */
 import type { StageGraphCapability } from "../../render/stageRpc.ts";
+import { tr } from "../../i18n/index.ts";
 
 export interface GraphFacts {
   /** 带 `failIfMajorPerformanceCaveat: true` 拿到了 WebGL2 上下文 */
@@ -32,10 +33,10 @@ export function judgeGraphCapability(facts: GraphFacts | null, opts: { longSide:
 /** 给参数面板的细节(状态是 `gpu`) */
 export function graphCapabilityDetail(cap: StageGraphCapability): string {
   switch (cap) {
-    case "no-webgl2": return "拿不到 WebGL2";
-    case "software": return "只有软件渲染";
-    case "texture": return "最大纹理尺寸小于画幅";
-    case "context-lost": return "运行中丢过图形上下文";
+    case "no-webgl2": return tr("WebGL2 is unavailable");
+    case "software": return tr("Only software rendering is available");
+    case "texture": return tr("Max texture size is smaller than the aspect ratio");
+    case "context-lost": return tr("Graphics context was lost while running");
     default: return "";
   }
 }

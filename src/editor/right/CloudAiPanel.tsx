@@ -40,6 +40,7 @@ import { CLOUD_CHAT_TEXT } from "../../ai/chatTexts";
 import { createPoller, type Poller } from "../../ai/poll";
 import type { CloudChatItem } from "../../ai/chatTypes";
 import { readQuote } from "../quoteBus";
+import { tr } from "../../i18n/index.ts";
 
 const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.VITE_PC_ONLINE === "1";
 
@@ -87,7 +88,7 @@ export function CloudAiPanel(props: {
     if (!cloud.accountMode || !cloud.available || !cloud.projectId || !consent.accountId || consent.accountId !== cloud.accountId) return;
     let dead = false;
     void refreshCloudConsent().then(accepted => { if (!dead) setConsentOpen(!accepted && cloudConsentState().accepted !== true); },
-      error => { if (!dead && cloudConsentState().accepted !== true) setConsentError(error instanceof Error ? error.message : "云端账号暂时不可用。"); });
+      error => { if (!dead && cloudConsentState().accepted !== true) setConsentError(error instanceof Error ? error.message : tr("The cloud account is temporarily unavailable.")); });
     return () => { dead = true; };
     // A new account/project binding gets a fresh server result; rejecting does not trigger a loop.
   }, [cloud.accountMode, cloud.available, cloud.projectId, cloud.accountId, consent.accountId, consent.bindingVersion]);
@@ -100,7 +101,7 @@ export function CloudAiPanel(props: {
     if (!stillCurrent()) return null;
     const expected = cloud.accountId ? { accountId: cloud.accountId, bindingVersion: consent.bindingVersion } : null;
     if (!expected || consent.accountId !== expected.accountId || cloudConsentState().bindingVersion !== expected.bindingVersion) {
-      setConsentError("请先登录当前项目的账号。");
+      setConsentError(tr("Please sign in to the account for the current project first."));
       return null;
     }
     try {
@@ -113,13 +114,13 @@ export function CloudAiPanel(props: {
       if (!stillCurrent()) return null;
       // 断网读不到告知:不弹告知框,这条消息排着等网络恢复(恢复后发出之前再核一次告知)
       if (opts?.queueable && chat.outbox.transient(error)) return { queue: true };
-      setConsentError(error instanceof Error ? error.message : "云端账号暂时不可用。");
+      setConsentError(error instanceof Error ? error.message : tr("The cloud account is temporarily unavailable."));
       setConsentOpen(true);
       return null;
     }
   };
   const acceptConsent = () => { void acceptCloudConsent().then(() => { if (stillCurrent()) { setConsentError(null); setConsentOpen(false); } },
-    error => { if (stillCurrent()) setConsentError(error instanceof Error ? error.message : "云端账号暂时不可用。"); }); };
+    error => { if (stillCurrent()) setConsentError(error instanceof Error ? error.message : tr("The cloud account is temporarily unavailable.")); }); };
   // 断网待发(2026-10-22 用户定):断网时发的消息排着、网络恢复后自动发出;排着的带附件的,真发出去之前同样先放进素材库
   const chat = useCloudChat({ tabId, cloud, enabled: true, autoAttach: true, initialConversation: props.initialConversation,
     outbox: true, prepareFiles: (files) => withLibrary(files) });
@@ -145,7 +146,7 @@ export function CloudAiPanel(props: {
     });
   }, [cloud.accountMode, cloud.accountId, consent.bindingVersion, tabId]);
   const { tabs } = useAgentTabs();
-  const tabTitle = desktop ? (tabs.find((t) => t.id === tabId)?.title ?? "AI 助手") : "云端 Agent";
+  const tabTitle = desktop ? (tabs.find((t) => t.id === tabId)?.title ?? tr("AI assistant")) : tr("Cloud Agent");
   // 页签上的「对话 ID」是给本机 Agent 的多 Agent 通信用的;桌面版里这一页选回本机驱动后还要用它,云端的对话 id 不往里写
   // 开始页占位页还不是真会话(isDraft):点发送变成真页之后才记得上
   const isDraft = tabs.find((t) => t.id === tabId)?.draft === true;
@@ -314,7 +315,7 @@ export function CloudAiPanel(props: {
 
   const sendNow = async (text: string, files?: ChatAttachment[], staged?: string | null, consentPermit?: CloudConsentPermit | null,
     opts?: { queueOnNetwork?: boolean }): Promise<boolean> => {
-    if (off || !stillCurrent() || !controlPolicy.canSend || view.revoked) { if (staged) chat.failStaged(staged, "现在不能在这个对话里发消息。"); return false; }
+    if (off || !stillCurrent() || !controlPolicy.canSend || view.revoked) { if (staged) chat.failStaged(staged, tr("You can't send messages in this chat right now.")); return false; }
     if (!cloud.accountMode) markSent();
     // 账号模式:图片、视频、音频附件先放进素材库,告诉 Agent 是哪一条(2026-10-18 用户定)
     const prepared = cloud.accountMode && files?.length ? await withLibrary(files) : files;
@@ -347,22 +348,22 @@ export function CloudAiPanel(props: {
       };
       // 断网了,或这个对话里已经有排着等网络的(新发的排在它后面,顺序不乱):不报错,排着,网络恢复后自动发出
       if (staged && (chat.outbox.offline() || chat.outbox.mustQueue()) && chat.outbox.enqueue(text.trim(), usable, staged)) {
-        if (skipped > 0) chat.notify(`${skipped} 个附件还在上传或上传失败,这次没带上。`);
+        if (skipped > 0) chat.notify(tr("{0} attachments are still uploading or failed to upload and were not included this time.", skipped));
         return;
       }
       const admission = await consentForUse({ queueable: Boolean(staged) });
       if (admission && "queue" in admission) {
         if (staged && stillCurrent() && chat.outbox.enqueue(text.trim(), usable, staged)) return;
-        if (staged) chat.failStaged(staged, "使用云端 Agent 前，请先阅读并确认告知。");
+        if (staged) chat.failStaged(staged, tr("Read and confirm the notice before using Cloud Agent."));
         restore();
         return;
       }
       if (!admission || !stillCurrent()) {
-        if (staged) chat.failStaged(staged, "使用云端 Agent 前，请先阅读并确认告知。");
+        if (staged) chat.failStaged(staged, tr("Read and confirm the notice before using Cloud Agent."));
         restore();
         return;
       }
-      if (skipped > 0) chat.notify(`${skipped} 个附件还在上传或上传失败,这次没带上。`);
+      if (skipped > 0) chat.notify(tr("{0} attachments are still uploading or failed to upload and were not included this time.", skipped));
       if (!await sendNow(text.trim(), usable, staged, admission.permit, { queueOnNetwork: true })) restore();
       return;
     }
@@ -372,10 +373,10 @@ export function CloudAiPanel(props: {
     const { usable, skipped } = pickSendable(attachments, chat.conversationId);
     if (!text.trim()) {
       // 服务端不收空消息:只有附件时留在输入框里,等用户写一句话
-      chat.notify(skipped > 0 && usable.length === 0 ? `${skipped} 个附件还在上传或上传失败,请等它传好、或重试后再发。` : CLOUD_ATTACH_NEED_TEXT);
+      chat.notify(skipped > 0 && usable.length === 0 ? tr("{0} attachments are still uploading or failed to upload. Wait for them to finish or retry before sending.", skipped) : CLOUD_ATTACH_NEED_TEXT);
       return;
     }
-    if (skipped > 0) chat.notify(`${skipped} 个附件还在上传或上传失败,这次没带上。`);
+    if (skipped > 0) chat.notify(tr("{0} attachments are still uploading or failed to upload and were not included this time.", skipped));
     if (!cloud.accountMode && busy()) {
       enqueue(qKey, { text: text.trim(), ...(usable.length ? { attachments: usable } : {}) });
     } else {
@@ -413,7 +414,7 @@ export function CloudAiPanel(props: {
     controlInFlightRef.current = request.requestId;
     controlPendingRef.current = request;
     setControlPending(request);
-    setControlNote(request.kind === "visibility" ? "正在更新对话权限…" : "正在向云端提交停止请求…");
+    setControlNote(request.kind === "visibility" ? tr("Updating chat permissions…") : tr("Submitting stop request to the cloud…"));
     try {
       if (request.kind === "visibility") await chat.switchVisibility(request.target, request.requestId);
       else await chat.abort(request.runId, request.requestId);
@@ -424,8 +425,8 @@ export function CloudAiPanel(props: {
       controlPendingRef.current = null;
       setControlPending(null);
       setControlNote(request.kind === "visibility"
-        ? request.target === "private" ? "已切为私有。" : "已切为共有。"
-        : "云端已确认停止请求。正在同步对话状态。");
+        ? request.target === "private" ? tr("Switched to private.") : tr("Switched to shared.")
+        : tr("The cloud confirmed the stop request. Syncing chat state."));
     } catch (error) {
       if (!isCurrentControl(request)) return;
       // 重读可见性；503/fence pending 时保留原请求号，让用户安全重试同一操作。
@@ -437,12 +438,12 @@ export function CloudAiPanel(props: {
         controlPendingRef.current = request;
         setControlPending(request);
         setControlNote(error instanceof CloudError && error.code === "agent-fence-pending"
-          ? "已禁止新访问，相关服务关闭待确认。点击重试会沿用原请求。"
-          : "云端尚未确认这项操作。状态已重读；点击重试会沿用原请求。");
+          ? tr("New access is blocked, and the related services are still waiting to be confirmed closed. Clicking retry reuses the original request.")
+          : tr("The cloud has not yet confirmed this operation. State was re-read; clicking retry reuses the original request."));
       } else {
         controlPendingRef.current = null;
         setControlPending(null);
-        setControlNote(error instanceof Error ? error.message : "云端控制请求失败，请重读对话状态。");
+        setControlNote(error instanceof Error ? error.message : tr("The cloud control request failed. Please re-read the chat state."));
       }
     } finally {
       if (isCurrentControl(request) && controlInFlightRef.current === request.requestId) controlInFlightRef.current = null;
@@ -530,7 +531,7 @@ export function CloudAiPanel(props: {
       retryFilesRef.current.set(id, file);
       setAttachments((prev) => [...prev, { id, url: "", name: file.name, kind: cloudAttachKindOfName(file.name), bytes: file.size,
         srcPath: null, conversationId: chat.conversationId, status: admitted ? "importing" as const : "error" as const,
-        ...(!admitted ? { error: "请先确认云端 Agent 告知，再重试上传。" } : {}) }]);
+        ...(!admitted ? { error: tr("Please acknowledge the Cloud Agent notice first, then retry the upload.") } : {}) }]);
       if (admitted) runUpload(id, file);
     }
   };
@@ -673,11 +674,11 @@ export function CloudAiPanel(props: {
     // 只算云端已经有的消息：点发送当场放的本地气泡(还在发、没发出去的，sendState)不算，没发出去的对话不能先列进历史
     const landed = chat.messages.filter((m) => !m.sendState || m.id.startsWith("cq-"));
     if (hit || landed.length === 0) return chat.history.items;
-    const title = landed.find((m) => m.role === "user")?.text.slice(0, 40) || "云端对话";
+    const title = landed.find((m) => m.role === "user")?.text.slice(0, 40) || tr("Cloud chat");
     return [{ id: chat.conversationId, title, updatedAt: Date.now(), state: streaming ? "running" as const : "idle" as const, lastSeq: view.lastSeq }, ...chat.history.items];
   }, [chat.history.items, chat.conversationId, chat.messages, streaming, view.lastSeq]);
 
-  const connLabel = view.connection === "live" ? "已连接云端" : view.connection === "connecting" ? "正在连接云端…" : view.connection === "reconnecting" ? "连接中断,重新连接中…" : "未连接云端";
+  const connLabel = view.connection === "live" ? tr("Connected to the cloud") : view.connection === "connecting" ? tr("Connecting to the cloud…") : view.connection === "reconnecting" ? tr("Connection lost, reconnecting…") : tr("Not connected to the cloud");
 
   return (
     <aside className="panel panel-right ai-panel pc-cloud-panel" data-pc="cloud-ai-panel" data-cloud-running={streaming ? "1" : "0"} data-cloud-can-stop={canStopCurrentRun ? "1" : "0"} data-inactive={active ? undefined : "1"} aria-hidden={active ? undefined : true}>
@@ -691,16 +692,16 @@ export function CloudAiPanel(props: {
         onChangeShowThinking={setShowThinking}
         onOpenHistory={openHistory}
         onOpenSetup={() => {}}
-        settingsDisabled="云端 Agent 的模型由托管方配置,这里没有 AI 设置可改"
+        settingsDisabled={tr("The Cloud Agent's model is configured by the host, so there are no AI settings to change here")}
       />
 
-      {!cloud.available && <div className="ai-banner" data-pc="cloud-unavailable">这个项目所在的托管端没有云端 Agent 服务。</div>}
+      {!cloud.available && <div className="ai-banner" data-pc="cloud-unavailable">{tr("The hosting side of this project has no Cloud Agent service.")}</div>}
       {cloud.available && off && <div className="ai-banner" data-pc="cloud-off">{offText}</div>}
       {cloud.accountMode && cloud.available && off && creator && <button type="button" data-pc="cloud-agent-enable" disabled={enabling}
-        onClick={() => { setEnabling(true); void setAccountAgentEnabled(true).catch(error => chat.notify(error instanceof Error ? error.message : '暂时无法开启云端 Agent。')).finally(() => setEnabling(false)); }}>开启云端 Agent</button>}
+        onClick={() => { setEnabling(true); void setAccountAgentEnabled(true).catch(error => chat.notify(error instanceof Error ? error.message : tr("Unable to enable the Cloud Agent right now."))).finally(() => setEnabling(false)); }}>{tr("Enable Cloud Agent")}</button>}
       {view.connection === "reconnecting" && (
         <div className="ai-banner pc-cloud-reconnect" data-pc="cloud-reconnecting">
-          和云端 Agent 的连接断了,正在重新连接。云端的这一轮仍在继续,连上后会把错过的过程补齐。
+          {tr("The connection to the Cloud Agent dropped and is reconnecting. This round is still running in the cloud, and the missed progress will be filled in once reconnected.")}
         </div>
       )}
 
@@ -708,23 +709,23 @@ export function CloudAiPanel(props: {
         <div className="pc-cloud-controls" data-pc="cloud-conversation-controls" data-visibility={view.revoked ? "revoked" : (currentMeta?.visibility ?? "unknown")}>
           {view.revoked ? (
             <span className="pc-cloud-access-label is-revoked" data-pc="cloud-visibility-label">
-              已无读取权限
+              {tr("Read access revoked")}
             </span>
-          ) : !metadataReady ? <span data-pc="cloud-permission-loading">正在读取对话权限…</span> : currentMeta ? <>
+          ) : !metadataReady ? <span data-pc="cloud-permission-loading">{tr("Reading chat permissions…")}</span> : currentMeta ? <>
             <span className="pc-cloud-access-label" data-pc="cloud-visibility-label">
-              {currentMeta.visibility === "private" ? "私有对话" : "共有对话"}{creatorReadOnly ? " · 项目创建者只读" : ""}
+              {currentMeta.visibility === "private" ? tr("Private chat") : tr("Shared chat")}{creatorReadOnly ? tr(" · Project creator is read-only") : ""}
             </span>
             {canSwitchVisibility && <button type="button" className="pc-cloud-control-btn" data-pc="cloud-visibility-toggle"
               disabled={visibleControlPending?.kind === "stop"}
               onClick={handleVisibilityToggle}>
               {visibleControlPending?.kind === "visibility"
-                ? `重试设为${visibleControlPending.target === "private" ? "私有" : "共有"}`
-                : currentMeta.visibility === "private" ? "设为共有" : "设为私有"}
+                ? tr("Retry setting to {0}", visibleControlPending.target === "private" ? tr("private") : tr("shared"))
+                : currentMeta.visibility === "private" ? tr("Make shared") : tr("Make private")}
             </button>}
-          </> : <span className="pc-cloud-access-label" data-pc="cloud-new-conversation">新云端对话 · 默认共有</span>}
+          </> : <span className="pc-cloud-access-label" data-pc="cloud-new-conversation">{tr("New cloud chat · shared by default")}</span>}
           {controlNote && <span className="pc-cloud-control-note" data-pc="cloud-control-status" role="status">{controlNote}</span>}
           {visibleControlPending?.kind === "stop" && <button type="button" className="pc-cloud-control-btn" data-pc="cloud-stop-retry"
-            onClick={() => visibleControlPending && void applyCloudControl(visibleControlPending)}>重试停止请求</button>}
+            onClick={() => visibleControlPending && void applyCloudControl(visibleControlPending)}>{tr("Retry stop request")}</button>}
         </div>
       )}
 
@@ -757,14 +758,14 @@ export function CloudAiPanel(props: {
       {cloud.accountMode && chat.messages.some(m => m.role === 'assistant' && m.pending && (m.progress?.waitingJobs || m.progress?.phase === 'waiting_jobs')) &&
         (!view.queue?.items?.filter(item => item.state === 'queued').length) && (
         <div className="ai-banner pc-cloud-waiting-jobs" data-pc="cloud-waiting-jobs">
-          上一条消息发起的后台作业（转写、镜头识别等）还在做，做完就处理你这条消息。
+          {tr("The background job started by the previous message (transcription, shot detection, etc.) is still running. Your message will be handled once it finishes.")}
         </div>
       )}
 
       {cloud.accountMode && chat.messages.some(m => m.role === 'assistant' && m.pending && ((m.progress as Record<string, any>)?.renderQueuePosition || m.progress?.phase === 'render_queued')) &&
         (!view.queue?.items?.filter(item => item.state === 'queued').length) && (
         <div className="ai-banner pc-cloud-render-queued" data-pc="cloud-render-queued">
-          云端渲染正在给别的项目用，排在第 {(chat.messages.find(m => m.role === 'assistant' && m.pending && ((m.progress as Record<string, any>)?.renderQueuePosition || m.progress?.phase === 'render_queued'))?.progress as Record<string, any>)?.renderQueuePosition ?? 1} 位，轮到了会接着做。
+          {tr("The cloud render is busy with another project. You are No. {0} in the queue and it will continue when your turn comes.", (chat.messages.find(m => m.role === 'assistant' && m.pending && ((m.progress as Record<string, any>)?.renderQueuePosition || m.progress?.phase === 'render_queued'))?.progress as Record<string, any>)?.renderQueuePosition ?? 1)}
         </div>
       )}
 
@@ -774,21 +775,21 @@ export function CloudAiPanel(props: {
         </div>
       )}
       {chat.notice && (
-        <div className="ai-toast" data-pc="cloud-notice" role="alert" onClick={chat.clearNotice} title="点一下关掉">{chat.notice}</div>
+        <div className="ai-toast" data-pc="cloud-notice" role="alert" onClick={chat.clearNotice} title={tr("Click to dismiss")}>{chat.notice}</div>
       )}
-      <div className="pc-cloud-note" data-pc="cloud-note">{cloud.accountMode && chat.info?.executorMounted !== true ? '消息会持久排队，等待执行服务；重新打开可接着看。' : '在云端运行,关闭后继续;重新打开可接着看'}</div>
+      <div className="pc-cloud-note" data-pc="cloud-note">{cloud.accountMode && chat.info?.executorMounted !== true ? tr("Messages are queued persistently while waiting for the executor service; reopen to pick up where you left off.") : tr("Runs in the cloud and continues after you close it; reopen to pick up where you left off")}</div>
 
       {creatorReadOnly ? <div className="pc-cloud-readonly" data-pc="cloud-readonly-note">
-        项目创建者可以查看这段私有对话，但不能发送消息。
-        {canStopCurrentRun && <button type="button" className="pc-cloud-control-btn" data-pc="cloud-stop-readonly" onClick={handleStop}>停止当前一轮</button>}
-      </div> : !metadataReady ? <div className="pc-cloud-readonly" data-pc="cloud-permission-wait">正在确认对话权限，确认前暂不能发送。</div> : <Composer
+        {tr("The project creator can view this private chat but cannot send messages.")}
+        {canStopCurrentRun && <button type="button" className="pc-cloud-control-btn" data-pc="cloud-stop-readonly" onClick={handleStop}>{tr("Stop current turn")}</button>}
+      </div> : !metadataReady ? <div className="pc-cloud-readonly" data-pc="cloud-permission-wait">{tr("Checking chat permissions. You can't send messages until this is confirmed.")}</div> : <Composer
         text={inputText}
         onTextChange={setInputText}
         textareaRef={textareaRef}
         attachments={attachments}
         uploading={false}
         disabled={Boolean(view.revoked) || guestNoNewChat}
-        disabledReason={view.revoked ? "当前账号已无法读取这个对话，请重新选择有权限的对话。" : guestNoNewChat ? CLOUD_CHAT_TEXT.guestLimit : undefined}
+        disabledReason={view.revoked ? tr("The current account can no longer read this chat. Please select a chat you have access to.") : guestNoNewChat ? CLOUD_CHAT_TEXT.guestLimit : undefined}
         readOnly={ro.locked}
         readOnlyReason={ro.why}
         onPickFiles={() => fileInputRef.current?.click()}
@@ -797,7 +798,7 @@ export function CloudAiPanel(props: {
         onSubmit={handleSend}
         onStop={handleStop}
         canStop={cloud.accountMode ? canStopCurrentRun : undefined}
-        stopDisabledReason={cloud.accountMode && !canStopCurrentRun ? "只能停止自己发起的任务" : undefined}
+        stopDisabledReason={cloud.accountMode && !canStopCurrentRun ? tr("You can only stop tasks you started") : undefined}
         streaming={streaming}
         hotkeysOff={props.hotkeysOff}
         active={active}
@@ -828,9 +829,9 @@ export function CloudAiPanel(props: {
 
       <ReportDialog
         open={diagOpen}
-        title="云端对话诊断报告"
-        label="云端对话诊断"
-        hint="含这段云端对话的过程、出错原因和客户端信息;不含票据、委托、模型 Key 或任何凭证"
+        title={tr("Cloud chat diagnostic report")}
+        label={tr("Cloud chat diagnostics")}
+        hint={tr("Includes the process, error causes and client info of this cloud chat; does not include tickets, delegations, model keys or any credentials")}
         text={diagReport}
         onClose={() => setDiagOpen(false)}
       />

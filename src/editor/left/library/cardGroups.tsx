@@ -10,6 +10,7 @@ import { CardCell } from "../CardCell";
 import { PartCell } from "../PartCell";
 import { ThumbTile } from "./ThumbTile";
 import type { GroupData, GroupItem } from "./groups";
+import { tr } from "../../../i18n/index.ts";
 
 type AnyCard = CardDef<any>;
 
@@ -101,7 +102,7 @@ const THUMBS = 8;
 
 /** 卡片没悬停时就是「名字 + 说明」,缩略也照这个样子画 */
 const cardThumbs = (list: { id: string; name: string; description: string }[]): GroupItem[] =>
-  list.slice(0, THUMBS).map((def) => ({ id: def.id, node: <ThumbTile name={def.name} desc={def.description} /> }));
+  list.slice(0, THUMBS).map((def) => ({ id: def.id, node: <ThumbTile name={tr(def.name)} desc={def.description && tr(def.description)} /> }));
 
 /** 六个卡片类组的内容(定制卡片 / Magic UI / 自家卡片 / 部件库 / Lottie / 粒子背景) */
 export function useCardGroups(
@@ -115,7 +116,7 @@ export function useCardGroups(
     const cards = (list: AnyCard[]): GroupItem[] => list.map((def) => ({ id: def.id, node: <CardCell def={def} fill /> }));
     const none = (
       <div className="pc-left-note">
-        {searching ? "没有匹配的卡片" : "这一组的卡片被卡片筛选藏起来了;点搜索框旁边的筛选按钮调整"}
+        {searching ? tr("No matching cards") : tr("Cards in this group are hidden by the card filter; use the filter button next to the search box to adjust")}
       </div>
     );
     const featured = particles.filter((c) => featuredParticleIds.has(c.id));
@@ -138,7 +139,7 @@ export function useCardGroups(
       parts: {
         items: parts.map((def) => ({ id: def.id, node: <PartCell def={def} fill /> })),
         thumbs: cardThumbs(parts),
-        emptyDetail: <div className="pc-left-note">{searching ? "没有匹配的部件" : "部件库是空的"}</div>,
+        emptyDetail: <div className="pc-left-note">{searching ? tr("No matching parts") : tr("The parts library is empty")}</div>,
       },
       lottie: { items: cards(lottie), thumbs: cardThumbs(lottie), emptyDetail: none },
       // 粒子卡多(五十多种):总览只露精选,详情和计数都是全部;搜索时精选里没命中就露命中的前几个

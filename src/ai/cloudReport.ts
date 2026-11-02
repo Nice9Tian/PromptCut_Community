@@ -16,6 +16,7 @@
 import type { ChatMessage, MessagePart } from "./types.ts";
 import { redactDebug } from "./debug.ts";
 import type { CloudInfo } from "./chatTypes.ts";
+import { tr } from "../i18n/index.ts";
 
 export interface CloudReportSessionView {
   streaming: boolean;
@@ -47,9 +48,9 @@ export function scrubCloudSecrets(text: string): string {
 function walk(v: unknown, depth = 0): unknown {
   if (typeof v === "string") {
     const s = scrubCloudSecrets(v);
-    return s.length > FIELD_LIMIT ? `${s.slice(0, FIELD_LIMIT)}…(已截断,原 ${s.length} 字)` : s;
+    return s.length > FIELD_LIMIT ? tr("{0}… (truncated, original {1} characters)", s.slice(0, FIELD_LIMIT), s.length) : s;
   }
-  if (depth > 8) return "[层级过深,已省略]";
+  if (depth > 8) return tr("[nesting too deep, omitted]");
   if (Array.isArray(v)) return v.slice(0, 200).map((x) => walk(x, depth + 1));
   if (v && typeof v === "object") {
     return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, SECRET_KEY.test(k) ? "[REDACTED]" : walk(x, depth + 1)]));
@@ -164,7 +165,7 @@ export function cloudConversationReport(input: CloudReportInput): string {
     },
     client: input.client,
     rounds,
-    note: "这份报告在页面里生成,含这段云端对话的过程、出错原因和客户端信息;不含票据、委托、模型 Key 或任何凭证。过长的字段已截断并写明。",
+    note: tr("This report is generated in the page. It contains the course of this cloud chat, the cause of errors and client information; it does not contain tickets, delegations, model keys or any credentials. Fields that are too long are truncated and marked."),
   };
   const redacted = redactDebug(walk(report));
   return scrubCloudSecrets(JSON.stringify(redacted, null, 2));

@@ -5,6 +5,7 @@ import { runSttInstall } from "./io/runSttInstall";
 import { useInstallJobs } from "../ai/sttInstallStore";
 import { SttInstallProgress } from "./right/SttInstallProgress";
 import "./DependencyPrompt.css";
+import { tr } from "../i18n/index.ts";
 
 const DISMISS_KEY = "pc.deps.sttDismissed";
 
@@ -81,18 +82,17 @@ export function DependencyPrompt() {
             <SttInstallProgress job={job} />
           ) : (
             <>
-              <div className="dep-prompt-title">缺少依赖扩展,请安装:语音转文字引擎</div>
+              <div className="dep-prompt-title">{tr("Missing dependency extension, please install: speech-to-text engine")}</div>
               <div className="dep-prompt-body">
-                装上之后才能把视频里的人声转成文字稿,自动配字幕和一键配特效都要用它。
-                约几百 MB,装在软件自己的目录里,不动系统的 Python。
+                {tr("Once installed, it can turn speech in videos into a transcript. Auto captions and one-click effects both need it. About a few hundred MB, installed in the app's own directory, without touching the system Python.")}
               </div>
-              {job?.phase === "failed" && <div className="dep-prompt-error">上次安装失败:{job.error}</div>}
+              {job?.phase === "failed" && <div className="dep-prompt-error">{tr("Last install failed: {0}", job.error)}</div>}
               {startError && <div className="dep-prompt-error">{startError}</div>}
               <div className="dep-prompt-actions">
                 <button className="dep-prompt-btn is-primary" onClick={startInstall}>
-                  {job?.phase === "failed" ? "重试安装" : "安装"}
+                  {job?.phase === "failed" ? tr("Retry install") : tr("Install")}
                 </button>
-                <button className="dep-prompt-btn" onClick={dismiss}>忽略</button>
+                <button className="dep-prompt-btn" onClick={dismiss}>{tr("Dismiss")}</button>
               </div>
             </>
           )}

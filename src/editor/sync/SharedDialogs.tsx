@@ -10,6 +10,7 @@ import { pushToast } from "./syncManager";
 import { hosted, type LanHost } from "./sharedApi";
 import { ONLINE } from "../../online/mode";
 import "./sync.css";
+import { tr } from "../../i18n/index.ts";
 
 /* ---------------- 托管地址(记在本机) ---------------- */
 
@@ -44,8 +45,7 @@ export function LanRestartHint() {
   const cmd = "PROMPTCUT_LAN_HOST=1 npm run dev";
   return (
     <div className="pc-sync-hint" data-pc="lan-restart-hint">
-      编辑器现在只在本机上监听，局域网里的成员连不上。要当局域网主机，得让编辑器以局域网主机方式重新启动（带 PROMPTCUT_LAN_HOST=1）。
-      这个窗口没法替你重启：请关掉编辑器，用下面的命令重新打开后再建。
+      {tr("The editor is currently listening on this machine only, so members on the LAN cannot connect. To be a LAN host, the editor must be restarted in LAN host mode (with PROMPTCUT_LAN_HOST=1). This window cannot restart it for you: close the editor, reopen it with the command below, then create the room.")}
       <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
         <code style={{ fontFamily: "var(--ui-font-mono)", fontSize: 11.5, padding: "2px 6px", borderRadius: 4, background: "var(--ui-float)" }}>{cmd}</code>
         <button
@@ -54,12 +54,12 @@ export function LanRestartHint() {
           style={{ height: 24, padding: "0 10px", fontSize: 12 }}
           onClick={() => {
             void navigator.clipboard?.writeText(cmd).then(
-              () => pushToast("启动命令已复制。", "info", 3000),
-              () => pushToast("复制不了，请手动选中命令。", "warn", 4000),
+              () => pushToast(tr("Startup command copied."), "info", 3000),
+              () => pushToast(tr("Could not copy. Please select the command manually."), "warn", 4000),
             );
           }}
         >
-          复制命令
+          {tr("Copy command")}
         </button>
       </div>
     </div>
@@ -85,9 +85,9 @@ export function ListEditor(props: {
       <div className="pc-sync-list" data-pc="list-editor">
         <div className="pc-sync-list-row">
           <span>
-            {props.creatorName} <span className="pc-sync-tag pc-sync-tag--creator">[创建者]</span>
+            {props.creatorName} <span className="pc-sync-tag pc-sync-tag--creator">{tr("[creator]")}</span>
           </span>
-          <span className="is-muted">同创建者密码</span>
+          <span className="is-muted">{tr("Same as creator's password")}</span>
           <span />
         </div>
         {props.list.map((r) => (
@@ -97,21 +97,21 @@ export function ListEditor(props: {
               {r.kept ? "••••" : "••••"}
               {props.onChangePassword ? (
                 <button type="button" className="pc-sync-link-btn" style={{ marginLeft: 8 }} onClick={() => props.onChangePassword!(r.username)}>
-                  修改密码
+                  {tr("Change password")}
                 </button>
               ) : null}
             </span>
-            <button type="button" className="pc-sync-icon-btn" title="删除" aria-label={`删除 ${r.username}`} onClick={() => props.onRemove(r.username)}>
+            <button type="button" className="pc-sync-icon-btn" title={tr("Delete")} aria-label={tr("Delete {0}", r.username)} onClick={() => props.onRemove(r.username)}>
               ✕
             </button>
           </div>
         ))}
         <div className="pc-sync-list-row">
-          <input className="pc-dialog-input" placeholder="用户名" value={props.rowName} onChange={(e) => props.setRowName(e.target.value)} />
-          <input className="pc-dialog-input" type="password" placeholder="密码" value={props.rowPw} onChange={(e) => props.setRowPw(e.target.value)}
+          <input className="pc-dialog-input" placeholder={tr("Username")} value={props.rowName} onChange={(e) => props.setRowName(e.target.value)} />
+          <input className="pc-dialog-input" type="password" placeholder={tr("Password")} value={props.rowPw} onChange={(e) => props.setRowPw(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") props.onAdd(); }} />
           <button type="button" className="pc-dialog-opt" style={{ height: 26, padding: "0 8px", fontSize: 12 }} onClick={props.onAdd}>
-            添加
+            {tr("Add")}
           </button>
         </div>
       </div>
@@ -123,7 +123,7 @@ export function ListEditor(props: {
 
 /** 浏览器发不了 UDP:本机编辑器替页面在本网段查找(`/api/docservice/lan-discover`) */
 export async function discoverViaEditor({ name }: { name: string; timeoutMs: number }): Promise<{ hosts: LanHost[]; errors?: { reason: string }[] }> {
-  if (ONLINE) throw new Error("在线页面不在局域网里查找");
+  if (ONLINE) throw new Error(tr("The online page does not search the LAN"));
   const r = await fetch(`/api/docservice/lan-discover?name=${encodeURIComponent(name)}`, { cache: "no-store" });
   if (!r.ok) throw new Error(`lan-discover ${r.status}`);
   const j = await r.json();

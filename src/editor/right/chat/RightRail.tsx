@@ -1,4 +1,5 @@
 import type { AgentTab } from "../../../ai/agentTabs";
+import { tr } from "../../../i18n/index.ts";
 
 /**
  * rail 上 AI 类项(剧本、Agent 分页)的画法小件:剧本图标、Agent 头像里的字、标签截断、悬停说明。
@@ -44,7 +45,7 @@ export function shortLabel(title: string): string {
 /** 悬停说明:完整标题 + 范围 + 对话 ID(给模型看的 Agent ID,send_message 的收件人就写它) */
 export function tabTooltip(t: AgentTab): string {
   const lines = [t.title];
-  if (t.scope) lines.push(`范围:${t.scope}`);
-  lines.push(t.conversationId ? `对话 ID:${t.conversationId}` : "还没开始对话");
+  if (t.scope) lines.push(tr("Scope: {0}", t.scope));
+  lines.push(t.conversationId ? tr("Chat ID: {0}", t.conversationId) : tr("No chat started yet"));
   return lines.join("\n");
 }

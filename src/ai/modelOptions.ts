@@ -1,4 +1,5 @@
 import type { AiProvider } from "./types";
+import { tr } from "../i18n/index.ts";
 
 /**
  * 每家驱动到底支持哪几样,以及当前这次运行选了什么。
@@ -36,7 +37,7 @@ export const CAPABILITIES: Record<AiProvider, ProviderCapability> = {
     efforts: ["", "low", "medium", "high", "xhigh", "max"],
     fast: true,
     suggestedModels: "opus|sonnet|haiku",
-    modelsHint: "填别名就行（opus / sonnet / haiku），也可以填完整模型名",
+    modelsHint: tr("An alias is enough (opus / sonnet / haiku), or enter a full model name"),
   },
   codex: {
     /*
@@ -52,13 +53,13 @@ export const CAPABILITIES: Record<AiProvider, ProviderCapability> = {
     efforts: ["", "none", "low", "medium", "high", "xhigh", "max"],
     fast: false,
     suggestedModels: "gpt-5.6-terra|gpt-5.6-sol",
-    modelsHint: "填 codex 支持的模型名，多个用 | 分开",
+    modelsHint: tr("Enter model names supported by codex, separate multiple with |"),
   },
   agy: {
     efforts: ["", "low", "medium", "high"],
     fast: false,
     suggestedModels: "",
-    modelsHint: "可以点「从 CLI 读取」直接拉 agy models 的清单",
+    modelsHint: tr("You can click \"Read from CLI\" to pull the agy models list directly"),
   },
   api: {
     /*
@@ -73,20 +74,20 @@ export const CAPABILITIES: Record<AiProvider, ProviderCapability> = {
     efforts: ["", "low", "medium", "high"],
     fast: false,
     suggestedModels: "",
-    modelsHint: "多个模型用 | 分开，面板上就能切",
+    modelsHint: tr("Separate multiple models with |, then you can switch between them in the panel"),
   },
 };
 
 export const EFFORT_LABEL: Record<EffortLevel, string> = {
-  "": "默认",
+  "": tr("default"),
   // codex 的 none 是「明确关掉思考」,和 ""(不传这个参数、随它自己的默认)不是一回事
-  none: "关闭",
-  minimal: "极简",
-  low: "低",
-  medium: "中",
-  high: "高",
-  xhigh: "很高",
-  max: "最高",
+  none: tr("Close"),
+  minimal: tr("Minimal"),
+  low: tr("Low"),
+  medium: tr("Medium"),
+  high: tr("High"),
+  xhigh: tr("Very high"),
+  max: tr("Max"),
 };
 
 /** `a|b|c` → ["a","b","c"]。空段和首尾空格都去掉,允许用户随手写成 `a | b` */
@@ -176,19 +177,19 @@ export function writeChoice(provider: AiProvider, patch: Partial<RunChoice>): vo
  */
 export function compatPolicy(provider: AiProvider, model: string, vendor: string | undefined, pref: SchemaCompat): { on: boolean; locked: boolean; reason: string; applies: boolean } {
   const m = (model || "").toLowerCase();
-  if (provider === "claude" || provider === "codex") return { on: false, locked: true, applies: true, reason: "Claude Code / Codex 吃完整的工具 schema,不用兼容模式" };
-  if (provider === "agy") return { on: true, locked: true, applies: false, reason: "Antigravity 的工具走 MCP 注册,不经过这里的 schema 清洗,这个开关对它不起作用" };
-  if (/claude/.test(m) || /(^|[^a-z])(gpt|o[1-9]|codex)/.test(m)) return { on: false, locked: true, applies: true, reason: "Claude / GPT 系列吃完整的工具 schema,不用兼容模式" };
+  if (provider === "claude" || provider === "codex") return { on: false, locked: true, applies: true, reason: "Claude Code / Codex take the full tool schema, no compatibility mode needed" };
+  if (provider === "agy") return { on: true, locked: true, applies: false, reason: "Antigravity tools are registered through MCP and don't go through the schema cleanup here, so this switch has no effect on it" };
+  if (/claude/.test(m) || /(^|[^a-z])(gpt|o[1-9]|codex)/.test(m)) return { on: false, locked: true, applies: true, reason: "Claude / GPT models take the full tool schema, no compatibility mode needed" };
   /*
    * Gemini 仍然锁开,但**理由变了**,别再说成「只认最窄的子集」。
    * 按 v1beta 的 discovery 契约,它的 Schema 认 title / default / minItems / maxItems / format 等等;
    * 真正不认的只有 additionalProperties / $schema / exclusiveMinimum / exclusiveMaximum(见 harness/schema.mjs)。
    * 所以关掉这个开关会把 additionalProperties 原样发过去 —— 那是真的会 400,因此仍然锁死。
    */
-  if (/gemini/.test(m)) return { on: true, locked: true, applies: true, reason: "Gemini 不认 additionalProperties 这几个字段,发过去会 400,所以这一档锁死开着" };
+  if (/gemini/.test(m)) return { on: true, locked: true, applies: true, reason: "Gemini doesn't recognize these additionalProperties fields and sending them returns a 400, so this tier is locked on" };
   const auto = vendor === "gemini";
   const on = pref === "on" ? true : pref === "off" ? false : auto;
-  return { on, locked: false, applies: true, reason: `模型名看不出厂商:${auto ? "按厂商字段默认开" : "默认关"};工具调用报 schema 相关的 400 就打开` };
+  return { on, locked: false, applies: true, reason: `Can't tell the vendor from the model name: ${auto ? tr("On by default per the vendor field") : tr("Off by default")}; turn it on if tool calls fail with a schema-related 400` };
 }
 
 /** 发请求时带的值:锁死的直接给定论,可调的把用户偏好交给服务端(auto 由服务端按模型名再推一次) */

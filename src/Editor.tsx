@@ -23,6 +23,7 @@ import { CloudGoneDialog } from "./editor/sync/CloudGoneDialog";
 import { SyncOverlays } from "./editor/sync/SyncOverlays";
 import { isJoinPage, resumeShared, startSync } from "./editor/sync/syncManager";
 import { undoRedoKey } from "./editor/undoKeys";
+import { tr } from "./i18n/index.ts";
 
 /** 拖杆宽度(px),和 ResizeHandle 里的 w-2 对应 */
 const HANDLE_W = 8;
@@ -217,7 +218,7 @@ export default function Editor() {
             onChange={drawerW.set}
             onCommit={drawerW.commit}
             onReset={drawerW.reset}
-            title="拖动调整左栏宽度,双击复位"
+            title={tr("Drag to resize the left rail, double-click to reset")}
             disabled={leftCollapsed}
           />
           <motion.main
@@ -245,7 +246,7 @@ export default function Editor() {
             onChange={panelW.set}
             onCommit={panelW.commit}
             onReset={panelW.reset}
-            title="拖动调整右栏宽度,双击复位"
+            title={tr("Drag to resize the right rail, double-click to reset")}
             disabled={rightCollapsed}
           />
           <motion.aside
@@ -285,7 +286,7 @@ export default function Editor() {
               onChange={footer.set}
               onCommit={footer.commit}
               onReset={footer.reset}
-              title="拖动调整时间轴高度,双击复位"
+              title={tr("Drag to resize the timeline height, double-click to reset")}
             />
             <motion.footer
               initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.28, delay: 0.12, ease: [0.16, 1, 0.3, 1] }}

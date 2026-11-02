@@ -17,7 +17,7 @@ import { test, mock, after } from "node:test";
 import assert from "node:assert/strict";
 
 globalThis.window = globalThis;
-globalThis.document = {};
+globalThis.document = { documentElement: {} };
 
 const runnerUrl = srcUrl("editor/probeRunner.ts");
 const hook = registerHooks({ load(url, context, next) {
@@ -138,7 +138,7 @@ test("AVC-02 clipIdentityOf:有声动效卡有身份、帧模式、能力表(桌
     for (const online of [false, true]) {
       H.setOnlineBrowserMode(online);
       const id = CI.clipIdentityOf(p);
-      const where = online ? "在线" : "桌面";
+      const where = online ? "在线" : "Desktop";
       for (const c of ["a", "s", "m", "p"]) assert.equal(typeof id.identityKeys[c], "string", `${where}:${c} 有身份`);
       assert.equal(id.frameModes.a, "direct", `${where}:声明的帧模式`);
       assert.equal(id.frameModes.s, "stateful");

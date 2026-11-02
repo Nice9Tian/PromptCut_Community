@@ -1,3 +1,4 @@
+import { tr } from "../../i18n/index.ts";
 /**
  * 本页能不能执行同步来的用户卡与素材效果卡(`docs/plan/online-card-exec-contract.md` 3.1 的前提)。
  *
@@ -19,7 +20,7 @@ export interface CardExecGate {
   visual: boolean;
 }
 
-let gate: CardExecGate = { site: null, isolated: false, reason: "还没有隔离环境的结论", visual: true };
+let gate: CardExecGate = { site: null, isolated: false, reason: "No verdict on the isolated environment yet", visual: true };
 const listeners = new Set<() => void>();
 
 export function cardExecGate(): Readonly<CardExecGate> {
@@ -41,7 +42,7 @@ export function cardVisualExecAvailable(): boolean {
 
 /** 不能执行时,卡片该报哪一句(参数面板):站点关了与没有隔离环境是两句话,状态都是 `not-isolated` */
 export function cardExecBlockedDetail(): string | null {
-  if (gate.site === false) return "这个站点没有开启在线运行用户卡与素材效果卡";
+  if (gate.site === false) return tr("This site does not have online running of user cards and media effect cards enabled");
   if (!gate.isolated) return null;
   return null;
 }
@@ -68,6 +69,6 @@ export function siteCardExecOf(config: unknown): boolean {
 
 /** 单测用 */
 export function resetCardExecGateForTest(): void {
-  gate = { site: null, isolated: false, reason: "还没有隔离环境的结论", visual: true };
+  gate = { site: null, isolated: false, reason: "No verdict on the isolated environment yet", visual: true };
   listeners.clear();
 }

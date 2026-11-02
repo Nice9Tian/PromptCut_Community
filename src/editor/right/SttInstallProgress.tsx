@@ -3,6 +3,7 @@ import { motion, useReducedMotion } from "motion/react";
 import type { InstallJob } from "../../ai/sttInstallStore";
 import { describe, fractionOf } from "../../ai/sttInstallStore";
 import "./SttInstallProgress.css";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 安装进度控件。启动时的缺依赖提示和聊天窗口里的 stt_install 都用它,
@@ -28,7 +29,7 @@ export function SttInstallProgress(props: { job: InstallJob; compact?: boolean }
   const fraction = fractionOf(job);
   const running = job.phase !== "done" && job.phase !== "failed";
   const seconds = Math.floor(((job.finishedAt ?? now) - job.startedAt) / 1000);
-  const elapsed = seconds >= 60 ? `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒` : `${seconds} 秒`;
+  const elapsed = seconds >= 60 ? tr("{0} min {1} s", Math.floor(seconds / 60), seconds % 60) : tr("{0} s", seconds);
 
   return (
     <div className={`stt-install ${job.phase} ${compact ? "is-compact" : ""}`} role="status" aria-live="polite">
@@ -37,7 +38,7 @@ export function SttInstallProgress(props: { job: InstallJob; compact?: boolean }
           {job.phase === "done" ? "✓" : job.phase === "failed" ? "✗" : <span className="stt-install-spin" />}
         </span>
         <span className="stt-install-title">
-          {job.phase === "done" ? "听写引擎已安装" : job.phase === "failed" ? "听写引擎安装失败" : "正在安装听写引擎"}
+          {job.phase === "done" ? tr("Speech-to-text engine installed") : job.phase === "failed" ? tr("Speech-to-text engine install failed") : tr("Installing speech-to-text engine")}
           <span className="stt-install-engine">{job.engine}</span>
         </span>
         {running && <span className="stt-install-elapsed">{elapsed}</span>}
@@ -66,18 +67,17 @@ export function SttInstallProgress(props: { job: InstallJob; compact?: boolean }
         {job.phase === "downloading" && job.totalMB !== undefined && job.gotMB !== undefined && (
           // 标清楚这个百分比是「当前这个文件」的,不是整体进度
           <span className="stt-install-sub">
-            本文件 {job.gotMB.toFixed(1)}/{job.totalMB.toFixed(1)} MB
-            {job.downloaded > 1 ? ` · 已下载 ${job.downloaded} 个包` : ""}
+            {tr("This file {0}/{1} MB{2}", job.gotMB.toFixed(1), job.totalMB.toFixed(1), job.downloaded > 1 ? tr(" · {0} packages downloaded", job.downloaded) : "")}
           </span>
         )}
         {job.phase === "resolving" && job.downloaded > 0 && (
-          <span className="stt-install-sub">已下载 {job.downloaded} 个包</span>
+          <span className="stt-install-sub">{tr("{0} packages downloaded", job.downloaded)}</span>
         )}
       </div>
 
       {job.phase === "failed" && job.logTail.length > 0 && (
         <details open={logOpen} onToggle={(e) => setLogOpen((e.target as HTMLDetailsElement).open)}>
-          <summary>查看安装日志</summary>
+          <summary>{tr("View install log")}</summary>
           <pre>{job.logTail.join("\n")}</pre>
         </details>
       )}

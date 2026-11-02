@@ -5,6 +5,7 @@ import type { ClipPixelMap, PixelMapDef } from "../../kernel/pixelMap.mjs";
 import { checkCrossfade, checkFade, clampDur, transitionsOf, type Transition, type TransitionKind } from "../../kernel/transitions";
 
 import { state, setProject, clearTransitionFades, updateTrack, sortClips } from "../core";
+import { tr as trText } from "../../i18n/index.ts";
 
 export const effects = {
 
@@ -98,7 +99,7 @@ export const effects = {
       return { ok: true, transition: tr };
     }
 
-    if (!args.otherClipId) return { ok: false, error: "交叉溶解要两段:clipId 和 otherClipId" };
+    if (!args.otherClipId) return { ok: false, error: trText("A crossfade needs two clips: clipId and otherClipId") };
     const chk = checkCrossfade(p, args.clipId, args.otherClipId, dur);
     if (!chk.ok) return chk;
     const { a, b } = chk;
@@ -112,7 +113,7 @@ export const effects = {
 
     // 先原地(后一段本来就不在前一段那条序列上、且挪过去放得下),再找别的,最后新建一条
     const target = [bTrack, ...p.tracks.filter((t) => t.id !== bTrack.id)].find(fits);
-    const newTrack: Track | null = target ? null : { id: newId("t"), name: `序列 ${p.tracks.length + 1}`, clips: [] };
+    const newTrack: Track | null = target ? null : { id: newId("t"), name: trText("Track {0}", p.tracks.length + 1), clips: [] };
     const targetId = target?.id ?? newTrack!.id;
 
     const movedB: TrackClip = { ...b, start: newStart, end: newStart + len, fadeIn: chk.dur };
@@ -139,7 +140,7 @@ export const effects = {
   removeTransition(transitionId: string): { ok: true; note?: string } | { ok: false; error: string } {
     const p = state.project;
     const tr = transitionsOf(p).find((x) => x.id === transitionId);
-    if (!tr) return { ok: false, error: `找不到转场 ${transitionId}` };
+    if (!tr) return { ok: false, error: trText("Transition {0} not found", transitionId) };
     let next = clearTransitionFades(p, tr);
     let note: string | undefined;
     if (tr.kind === "crossfade" && tr.bId && tr.prevB) {
@@ -161,7 +162,7 @@ export const effects = {
             }),
           };
         } else {
-          note = "后一段原来的位置被占了,留在当前位置(两段现在还重叠着,可以自己挪开)";
+          note = trText("The original position of the later clip is occupied, so it stays at its current position (the two clips still overlap; you can move them apart yourself)");
         }
       }
     }

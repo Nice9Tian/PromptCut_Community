@@ -6,7 +6,8 @@
  */
 import type { CardDef, Control } from "../../kernel/types";
 import type { SkippedControl, SyncedCardView } from "../../kernel/registry";
-import { onlineUnsupported } from "../../online/pageFlag";
+import { onlineUnsupported } from "../../online/onlineUnsupported";
+import { tr } from "../../i18n/index.ts";
 
 /** 面板要的那几样:能跑的定义与同步来的视图都满足 */
 export interface ParamsCardView {
@@ -29,9 +30,9 @@ export function paramsCardView(
 }
 
 /** 没有控件可画时的那句话 */
-export const NO_PARAMS_TEXT = "这张卡没有可调参数";
+export const NO_PARAMS_TEXT = tr("This card has no adjustable parameters");
 /** 源码里有控件、在线一个都认不出来时用的入口名(`onlineUnsupported` 那句的中间) */
-export const ONLINE_PARAMS_ENTRY = "修改这张卡的参数";
+export const ONLINE_PARAMS_ENTRY = tr("changing this card's parameters");
 
 /**
  * 参数面板画不出控件时显示什么;有控件可画回 null。同步来的卡源码里写了控件、却一个都没解析出来时,
@@ -44,7 +45,7 @@ export function paramsEmptyText(view: ParamsCardView | undefined): string | null
 }
 
 /** 源码里的控件只认出一部分时,面板在认出的控件下面加的那一行用的入口名 */
-export const ONLINE_PARAMS_REST_ENTRY = "修改这张卡的其余参数";
+export const ONLINE_PARAMS_REST_ENTRY = tr("changing this card's remaining parameters");
 
 /**
  * 同步来的卡控件只认出一部分(比如展开了从别的文件引进来的控件):照常画认出的那些,下面加一行提示;
@@ -60,10 +61,10 @@ export const SKIPPED_LIST_MAX = 5;
 
 /** 一个没认出的控件在面板上怎么称呼:「标签」(key),没有就用 key,再没有就说「一个控件」 */
 function skippedName(s: SkippedControl): string {
-  if (s.label && s.key) return `「${s.label}」(${s.key})`;
-  if (s.label) return `「${s.label}」`;
+  if (s.label && s.key) return tr("\"{0}\" ({1})", s.label, s.key);
+  if (s.label) return tr("\"{0}\"", s.label);
   if (s.key) return s.key;
-  return "一个控件";
+  return tr("a control");
 }
 
 /**
@@ -74,8 +75,8 @@ export function paramsSkippedText(view: ParamsCardView | undefined): string | nu
   const list = view?.controlsIncomplete && Array.isArray(view.skippedControls) ? view.skippedControls : [];
   if (!list.length) return null;
   const shown = list.slice(0, SKIPPED_LIST_MAX).map((s) => `${skippedName(s)}:${s.reason}`);
-  const more = list.length > SKIPPED_LIST_MAX ? `;等 ${list.length} 条` : "";
-  return `没认出的参数:${shown.join(";")}${more}`;
+  const more = list.length > SKIPPED_LIST_MAX ? tr("; and {0} more", list.length) : "";
+  return tr("Unrecognized parameters: {0}{1}", shown.join(";"), more);
 }
 
 /** 时间轴副标题:第一个文字控件的当前值 → 卡片说明 → 空 */

@@ -21,7 +21,7 @@ let rejectJobs = false;
 let device = 'test-device';
 let stageCaps = {};
 const stage = { setTime: async () => ({ stepMs: 1, snapshot: { inlineMs: 1, rasterMs: 1, serializeMs: 1 } }) };
-globalThis.document = {};
+globalThis.document = { documentElement: {} };
 mock.module(srcUrl('editor/costIdentity.ts'), { exports: {
   resetClipIdentityCache() {},
   clipIdentityOf: () => ({ identityKeys: { clip: identity }, capabilities: new Map([['clip', { frameMode: 'direct' }]]) }),

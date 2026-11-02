@@ -5,6 +5,7 @@ import { attachIcon } from "./attachIcon";
 import { OUTBOX_RESEND_EVENT, OUTBOX_TEXT } from "../../../ai/outbox";
 import "./chat.css";
 import "./queue.css";
+import { tr } from "../../../i18n/index.ts";
 
 /**
  * 「回退到这里」要用的几样。AiPanel 里经 ref 中转,引用永远不变 —— MessageRow 是 memo 的,
@@ -68,8 +69,8 @@ export function UserBubble(props: { m: ChatMessage; rewind?: RewindHandlers }) {
               type="button"
               className="pc-icon-btn"
               data-pc="ai-rewind"
-              title="回到发这条消息之前:它和之后的对话从界面上移除,这条消息放回输入框"
-              aria-label="回退到这里"
+              title={tr("Go back to before this message was sent: it and the chat after it are removed from the interface, and this message is put back in the input box")}
+              aria-label={tr("Rewind to here")}
               aria-expanded={!!confirm}
               onClick={toggleConfirm}
             >
@@ -94,8 +95,8 @@ export function UserBubble(props: { m: ChatMessage; rewind?: RewindHandlers }) {
               <LiveMarkdown text={m.text} live={!!m.pending} />
             </div>
           ) : null}
-          {m.sendState === "sending" && <div className="ai-message-send-state" data-pc="cloud-send-state" data-state="sending">发送中…</div>}
-          {m.sendState === "accepted" && <div className="ai-message-send-state" data-pc="cloud-send-state" data-state="accepted">已发出，等待云端开始处理…</div>}
+          {m.sendState === "sending" && <div className="ai-message-send-state" data-pc="cloud-send-state" data-state="sending">{tr("Sending…")}</div>}
+          {m.sendState === "accepted" && <div className="ai-message-send-state" data-pc="cloud-send-state" data-state="accepted">{tr("Sent, waiting for the cloud to start processing…")}</div>}
           {m.sendState === "queued" && <div className="ai-message-send-state" data-pc="cloud-send-state" data-state="queued">{OUTBOX_TEXT.queued}</div>}
           {m.error && <div className="ai-message-error" data-pc={m.sendState === "failed" ? "cloud-send-failed" : undefined}>{m.error}</div>}
           {m.sendState === "failed" && m.resendable && (
@@ -110,7 +111,7 @@ export function UserBubble(props: { m: ChatMessage; rewind?: RewindHandlers }) {
         <div
           className="ai-rewind-confirm"
           role="alertdialog"
-          aria-label="确认回退"
+          aria-label={tr("Confirm rewind")}
           data-pc="ai-rewind-dialog"
           ref={confirmRef}
           onKeyDown={(e) => {
@@ -120,10 +121,10 @@ export function UserBubble(props: { m: ChatMessage; rewind?: RewindHandlers }) {
           }}
         >
           <p>
-            回退后,这条及之后的 {confirm.count} 条消息会被移除,Agent 也会忘掉它们。时间轴上已经做过的修改<strong>不会</strong>撤销。
+            {tr("After rolling back, this message and the {0} messages after it will be removed, and the Agent will forget them. Changes already made on the timeline", confirm.count)}<strong>{tr("will not")}</strong>{tr(" be undone.")}
           </p>
-          {confirm.running && <p className="ai-rewind-note">会先停止当前运行。</p>}
-          {confirm.draft && <p className="ai-rewind-note">输入框里现有的内容会被这条消息替换。</p>}
+          {confirm.running && <p className="ai-rewind-note">{tr("The current run will be stopped first.")}</p>}
+          {confirm.draft && <p className="ai-rewind-note">{tr("The current content of the input box will be replaced by this message.")}</p>}
           <div className="ai-rewind-actions">
             <button
               type="button"
@@ -134,10 +135,10 @@ export function UserBubble(props: { m: ChatMessage; rewind?: RewindHandlers }) {
                 rewind.onRewind(m.id);
               }}
             >
-              回退
+              {tr("Rewind")}
             </button>
             <button type="button" className="ai-rewind-cancel" data-pc="ai-rewind-cancel" onClick={() => setConfirm(null)}>
-              取消
+              {tr("Cancel")}
             </button>
           </div>
         </div>

@@ -3,6 +3,7 @@ import {
   ALL_GROUPS, GROUP_LABEL, readVisibility, writeVisibility,
   type BaseGroup, type CardVisibility,
 } from "../cardScope";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 「动画」分区「卡片筛选」浮层里那一行筛选钮:**基础 / 自定义 / 项目**。
@@ -48,11 +49,11 @@ export function CardScopeBar({ onChange }: { onChange: (v: CardVisibility) => vo
         data-pc="scope-base"
         className={chip(v.base)}
         aria-pressed={v.base}
-        title={v.base ? `基础素材:开(${enabledGroups}/3 组)。再点一下关掉;右键或长按点开分组` : "基础素材:关"}
+        title={v.base ? tr("Base media: on ({0}/3 groups). Click again to turn off; right-click or long-press to pick groups", enabledGroups) : tr("Base media: off")}
         onClick={() => apply({ ...v, base: !v.base })}
         onContextMenu={(e) => { e.preventDefault(); setGroupsOpen((o) => !o); }}
       >
-        基础{v.base && enabledGroups < ALL_GROUPS.length ? ` ${enabledGroups}/3` : ""}
+        {tr("Base{0}", v.base && enabledGroups < ALL_GROUPS.length ? ` ${enabledGroups}/3` : "")}
       </button>
 
       {/* 分组开关藏在一个小三角里:三组不是常用开关,平时不该占位置 */}
@@ -61,7 +62,7 @@ export function CardScopeBar({ onChange }: { onChange: (v: CardVisibility) => vo
         data-pc="scope-groups"
         className="pc-lib-scope-caret"
         aria-expanded={groupsOpen}
-        title="选择基础素材里放出哪几组"
+        title={tr("Choose which groups of base media to show")}
         onClick={() => setGroupsOpen((o) => !o)}
       >
         ▾
@@ -72,10 +73,10 @@ export function CardScopeBar({ onChange }: { onChange: (v: CardVisibility) => vo
         data-pc="scope-custom"
         className={chip(v.custom)}
         aria-pressed={v.custom}
-        title="自定义素材:标了共享的定制卡,跨项目可见"
+        title={tr("Custom media: custom cards marked as shared, visible across projects")}
         onClick={() => apply({ ...v, custom: !v.custom })}
       >
-        自定义
+        {tr("Custom")}
       </button>
 
       <button
@@ -83,15 +84,15 @@ export function CardScopeBar({ onChange }: { onChange: (v: CardVisibility) => vo
         data-pc="scope-project"
         className={chip(v.project)}
         aria-pressed={v.project}
-        title="项目素材:只属于当前项目的定制卡"
+        title={tr("Project media: custom cards that belong only to the current project")}
         onClick={() => apply({ ...v, project: !v.project })}
       >
-        项目
+        {tr("Project")}
       </button>
 
       {groupsOpen && (
         <div className="pc-lib-scope-panel" data-pc="scope-groups-panel">
-          <div className="pc-lib-scope-panel-title">基础素材放出哪几组</div>
+          <div className="pc-lib-scope-panel-title">{tr("Base media groups to show")}</div>
           {ALL_GROUPS.map((g: BaseGroup) => (
             <label key={g} className="pc-lib-scope-option">
               <input

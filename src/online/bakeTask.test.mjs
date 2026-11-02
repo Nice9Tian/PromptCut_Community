@@ -32,11 +32,11 @@ function browserTask() {
   const tasks = splitPlan({ planTask, entryKey: "e1", cardPlan: [CONTROL], prerenderSet: new Set(["clip-a"]), envFingerprint: "aaaaaaaaaaaaaaaa",
     codeVersion: "cv-1", weightOf: () => ({ class: "medium", estMs: null }), browserFingerprints: ["bbbbbbbbbbbbbbbb"] });
   const t = tasks.find((x) => x.requires.envFingerprint === "bbbbbbbbbbbbbbbb");
-  assert.ok(t, `切分方应出浏览器那一份:${JSON.stringify(tasks.map((x) => x.requires.envFingerprint))}`);
+  assert.ok(t, `The splitter should produce the browser's share: ${JSON.stringify(tasks.map((x) => x.requires.envFingerprint))}`);
   return t;
 }
 
-test("M7-BT-01 切分方给浏览器那一份的 input.bake → 隔离单卡工程,与桌面 FramePipeline#isolatedCardProject 逐字段相同", () => {
+test("M7-BT-01 the share the splitter gives the browser, input.bake → an isolated single-card project, identical field by field to desktop FramePipeline#isolatedCardProject", () => {
   const task = browserTask();
   const input = bakeInputOf(task);
   assert.ok(input, JSON.stringify(task.input));
@@ -51,7 +51,7 @@ test("M7-BT-01 切分方给浏览器那一份的 input.bake → 隔离单卡工�
   assert.equal(PROJECT.tracks[0].clips[0].start, 1.5);
 });
 
-test("M7-BT-02 bakeInputOf 缺东西回 null(不猜)", () => {
+test("M7-BT-02 bakeInputOf returns null when something is missing (no guessing)", () => {
   assert.equal(bakeInputOf({ input: { clipId: "c" } }), null);
   assert.equal(bakeInputOf({ input: { bake: { start: 0, end: 1, count: 30, sampling: { phase: { numerator: 0, denominator: 1 } } } } }), null);
   assert.equal(bakeInputOf({ input: { clipId: "c", bake: { start: 0, end: 1, count: 0, sampling: { phase: { numerator: 0, denominator: 1 } } } } }), null);
@@ -59,7 +59,7 @@ test("M7-BT-02 bakeInputOf 缺东西回 null(不猜)", () => {
   assert.ok(bakeInputOf({ input: { clipId: "c", bake: { start: 0, end: 1, count: 3, sampling: { phase: { numerator: "0", denominator: "1" } } } } }));
 });
 
-test("M7-BT-03 清单形状同 collectSnapshotResult:过 manifestMatches;键同 manifestKeyOf;超限抛不可重试", () => {
+test("M7-BT-03 manifest shape same as collectSnapshotResult: passes manifestMatches; key same as manifestKeyOf; over the limit throws non-retryable", () => {
   const task = { ...browserTask(), range: { unit: "localFrame", from: 0, to: 2 } };
   const frames = [2, 0, 1].map((f) => ({ localFrame: f, hash: H(f + 1), bytes: 100 + f, small: { hash: H(f + 11), bytes: 50 } }));
   const m = snapshotManifest(task, frames);

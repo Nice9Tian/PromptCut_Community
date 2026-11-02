@@ -28,6 +28,7 @@
 import type { Project } from "../../kernel/project";
 import { UPLOAD_MAX_PARTS, UPLOAD_PART_CHARS } from "../../store/docsync";
 import { SyncLink } from "./link";
+import { tr } from "../../i18n/index.ts";
 
 /* ---------------- 结果与错误 ---------------- */
 
@@ -226,7 +227,7 @@ export function createAttemptStore(storage: AttemptStorage | null) {
       all[attemptKey(a.accountId, a.contentId)] = a;
       writeAll(all);
       const back = readAll()[attemptKey(a.accountId, a.contentId)];
-      if (!back || back.requestId !== a.requestId || back.projectId !== a.projectId) throw new Error("搬迁记录没有存下来");
+      if (!back || back.requestId !== a.requestId || back.projectId !== a.projectId) throw new Error(tr("The move record was not saved"));
     },
     /** 只删自己那一次的记录:请求号对不上(另一个窗口后来记的)不动 */
     drop(accountId: string, contentId: string, requestId: string): void {
@@ -811,111 +812,111 @@ export async function readProjectContent(o: ContentLinkOptions, projectId: strin
 
 export const ACCOUNT_MOVE_TEXT = {
   /** 设置里选了「放云端」、目标是账号云端时,表单上方的说明 */
-  intro: "云端项目属于你的网站账号。点「确定」后把当前项目搬到云端，编辑器接着就在云端项目里；本机这一份保留为普通的本地项目。",
-  loggedIn: (name: string) => `已登录：${name}`,
-  checkingLogin: "正在检查登录状态…",
-  needLogin: "搬到云端需要先登录网站账号。",
-  loginButton: "登录账号",
-  loginBusy: "正在登录…",
-  nameLabel: "云端项目名",
+  intro: tr("A cloud project belongs to your website account. After you click \"OK\", the current project is moved to the cloud and the editor continues in the cloud project; the local copy stays as a regular local project."),
+  loggedIn: (name: string) => tr("Logged in: {0}", name),
+  checkingLogin: tr("Checking login status…"),
+  needLogin: tr("You need to log in to your website account before moving to the cloud."),
+  loginButton: tr("Log in"),
+  loginBusy: tr("Logging in…"),
+  nameLabel: tr("Cloud project name"),
   /** 上一次没做完、云端项目已经建好:再点「确定」接着做 */
-  pending: (name: string) => `上次搬到云端没有做完，云端项目「${name}」已经建好。点「确定」接着做，不会多建一个。`,
+  pending: (name: string) => tr("The last move to the cloud was not finished, and the cloud project \"{0}\" has already been created. Click \"OK\" to continue; no extra project will be created.", name),
   /** 协作房间点「搬到云端」时的确认框 */
-  roomConfirm: (account: string) => `搬到云端后，云端会新建一个属于账号「${account}」的项目，内容和现在一样。\n本机协作会关闭，旧邀请码作废，原来的成员要用新的项目链接、登录自己的网站账号重新加入。\n确认搬到云端？`,
+  roomConfirm: (account: string) => tr("After the move, a new project belonging to the account \"{0}\" will be created in the cloud with the same content as now.\nLocal collaboration will be closed and the old invite code will be void. Existing members must rejoin using the new project link and their own website accounts.\nMove to the cloud?", account),
   stage: {
-    check: "正在搬到云端：检查登录和项目…",
-    create: "正在搬到云端：建立云端项目…",
-    upload: "正在搬到云端：上传项目内容…",
-    verify: "正在搬到云端：核对云端内容…",
-    "pull-media": "正在搬到云端：把素材拉到这台电脑…",
-    "close-local": "正在搬到云端：关闭本机协作…",
-    "sync-last": "正在搬到云端：补传最后的修改…",
-    enter: "正在搬到云端：进入云端项目…",
-    "queue-media": "正在搬到云端：安排素材上传…",
-    done: "正在搬到云端：收尾…",
+    check: tr("Moving to the cloud: checking login and project…"),
+    create: tr("Moving to the cloud: creating the cloud project…"),
+    upload: tr("Moving to the cloud: uploading project content…"),
+    verify: tr("Moving to the cloud: verifying cloud content…"),
+    "pull-media": tr("Moving to the cloud: pulling media to this computer…"),
+    "close-local": tr("Moving to the cloud: closing local collaboration…"),
+    "sync-last": tr("Moving to the cloud: uploading the last changes…"),
+    enter: tr("Moving to the cloud: entering the cloud project…"),
+    "queue-media": tr("Moving to the cloud: scheduling media uploads…"),
+    done: tr("Moving to the cloud: finishing up…"),
   } as Record<MoveStage, string>,
-  doneLocal: "已搬到云端，现在编辑的是云端项目。本机那一份保留为普通的本地项目。",
-  doneRoom: "已搬到云端。本机协作已关闭，旧邀请码已作废，原来的禁入名单没有带过去；请把新的项目链接发给原来的成员，他们登录自己的网站账号后加入。",
+  doneLocal: tr("Moved to the cloud. You are now editing the cloud project. The local copy stays as a regular local project."),
+  doneRoom: tr("Moved to the cloud. Local collaboration is closed, the old invite code is void, and the old ban list was not carried over. Send the new project link to the existing members; they can join after logging in to their own website accounts."),
   /** 搬完的气泡(带「复制项目链接」按钮) */
-  toastLocal: "已搬到云端，可以将项目链接发给其他已登录成员。",
-  toastRoom: "已搬到云端。本机协作已关闭、旧邀请码已作废，原来的禁入名单没有带过去，请把新的项目链接发给原来的成员。",
-  copyLink: "复制项目链接",
-  uploading: (n: number) => `素材还在后台上传（共 ${n} 个，含卡片声音；先传小尺寸、再传原尺寸）。传完之前，其他成员看到的是占位。`,
-  uploaded: "素材和卡片源码都已传到云端。",
-  uploadedWithMissing: (n: number) => `上传已结束，但有 ${n} 份素材文件在这台电脑上找不到，没有传上去，其他成员看不到它们。`,
-  mediaNotQueued: "素材还没开始上传（上传通道还没就绪），正在自动重试；传上去之前，其他成员看到的是占位。",
-  mediaRetrying: "素材上传出错，正在自动重试，会一直试到传上去。",
-  cardsUploading: "卡片源码还在同步到云端。",
-  cardsStuck: "卡片源码还没同步到云端（卡片同步没连上），其他成员暂时画不出自定义卡；连上后会自动补传。",
+  toastLocal: tr("Moved to the cloud. You can send the project link to other logged-in members."),
+  toastRoom: tr("Moved to the cloud. Local collaboration is closed, the old invite code is void, and the old ban list was not carried over. Send the new project link to the existing members."),
+  copyLink: tr("Copy project link"),
+  uploading: (n: number) => tr("Media is still uploading in the background ({0} in total, including card audio; small sizes first, then original sizes). Until it finishes, other members see placeholders.", n),
+  uploaded: tr("Media and card source code have all been uploaded to the cloud."),
+  uploadedWithMissing: (n: number) => tr("Upload finished, but {0} media files could not be found on this computer and were not uploaded, so other members cannot see them.", n),
+  mediaNotQueued: tr("Media has not started uploading (the upload channel is not ready yet) and is being retried automatically. Until it is uploaded, other members see placeholders."),
+  mediaRetrying: tr("Media upload failed and is being retried automatically, until it succeeds."),
+  cardsUploading: tr("Card source code is still syncing to the cloud."),
+  cardsStuck: tr("Card source code has not synced to the cloud yet (card sync is not connected), so other members cannot draw custom cards for now. It will be uploaded automatically once connected."),
   /** 旧文件带着搬到云端时关掉的那个房间的关联:重开时当普通本地项目开,提示一次 */
-  reopenedLocal: "这个文件原来的本机协作已在搬到云端时关闭，现在按普通的本地项目打开。",
-  versionExpired: "当前软件版本已过期，无法搬到云端",
+  reopenedLocal: tr("This file's original local collaboration was closed when it was moved to the cloud. It is now opened as a regular local project."),
+  versionExpired: tr("This app version has expired and cannot move to the cloud"),
   /* 放弃这次搬迁(〔裁〕H04) */
   /** 有没搬完的云端项目、但设置里没在「云端」表单上时的那一行(表单上是 `pending`) */
-  pendingIdle: (name: string, room: boolean) => `上次搬到云端没有做完，云端项目「${name}」已经建好。${room ? "点「搬到云端」接着做" : "勾「多用户协作」、选云端、点「确定」接着做"}；不搬了可以放弃这次搬迁。`,
-  abandonButton: "放弃这次搬迁",
-  abandonConfirm: (name: string) => `放弃这次搬迁会永久删除云端项目「${name}」（上次搬到云端没做完时建好的那一个），云端上的内容删了不能恢复。本机这一份项目不受影响，照常能改能存；以后还可以重新搬到云端。`,
-  abandonConfirmButton: "删除云端项目",
-  abandonCancel: "不放弃",
-  abandoning: (name: string) => `正在删除云端项目「${name}」…`,
-  abandoned: (name: string) => `已放弃这次搬迁：云端项目「${name}」已删除。本机项目没有改动。`,
-  abandonedAlready: (name: string) => `已放弃这次搬迁：云端项目「${name}」已经不在了，本机记的搬迁记录已清掉。本机项目没有改动。`,
+  pendingIdle: (name: string, room: boolean) => tr("The last move to the cloud was not finished, and the cloud project \"{0}\" has already been created. {1}; if you no longer want to move, you can abandon this move.", name, room ? tr("Click \"Move to cloud\" to continue") : tr("Check \"Multi-user collaboration\", choose cloud, and click \"OK\" to continue")),
+  abandonButton: tr("Abandon this move"),
+  abandonConfirm: (name: string) => tr("Abandoning this move will permanently delete the cloud project \"{0}\" (the one created when the last move to the cloud was not finished). Deleted cloud content cannot be recovered. The local project is not affected and can be edited and saved as usual; you can move it to the cloud again later.", name),
+  abandonConfirmButton: tr("Delete cloud project"),
+  abandonCancel: tr("Don't abandon"),
+  abandoning: (name: string) => tr("Deleting cloud project \"{0}\"…", name),
+  abandoned: (name: string) => tr("Abandoned this move: the cloud project \"{0}\" was deleted. The local project was not changed.", name),
+  abandonedAlready: (name: string) => tr("Abandoned this move: the cloud project \"{0}\" no longer exists, and the local move record has been cleared. The local project was not changed.", name),
 } as const;
 
 /** 放弃这次搬迁没成时的那句话:说清云端项目、本机项目现在是什么样 */
 export function abandonFailureText(r: Extract<AbandonResult, { ok: false }>): string {
-  const what = r.name ? `云端项目「${r.name}」` : "云端项目";
-  const kept = `${what}和本机项目都没有改动。`;
+  const what = r.name ? tr("Cloud project \"{0}\"", r.name) : tr("Cloud project");
+  const kept = tr("{0} and the local project were both left unchanged.", what);
   switch (r.error) {
-    case "not-ready": return "现在打开的不是本机项目，没有可放弃的搬迁。";
-    case "login-required": return "删除云端项目需要先登录网站账号（当初搬的那个账号）。";
-    case "no-pending": return "没有没搬完的云端项目可放弃。";
-    case "busy": return "另一个窗口正在搬这个项目，等它做完再试。";
-    case "not-creator": return `当前登录的账号不是${what}的创建者，不能删除。${kept}`;
-    case "in-use": return `${what}已经有其他成员加入，或有设备正打开着它，不当作没搬完的项目删除。${kept}`;
-    case "network": return `连不上云端，没能确认${what}已删除。本机项目没有改动；稍后再点一次，已经删掉的也不会出错。`;
-    case "delete-failed": return `云端暂时不可用，没能删除${what}（${r.detail || "未知原因"}）。本机项目没有改动；稍后再点一次。`;
+    case "not-ready": return tr("The open project is not a local project, so there is no move to abandon.");
+    case "login-required": return tr("Deleting the cloud project requires logging in to the website account first (the account that was used for the move).");
+    case "no-pending": return tr("There is no unfinished cloud project to abandon.");
+    case "busy": return tr("Another window is moving this project. Try again when it finishes.");
+    case "not-creator": return tr("The account currently logged in is not the creator of {0}, so it cannot be deleted. {1}", what, kept);
+    case "in-use": return tr("Other members have joined {0}, or a device has it open, so it is not treated as an unfinished project and will not be deleted. {1}", what, kept);
+    case "network": return tr("Could not reach the cloud, so deletion of {0} was not confirmed. The local project is unchanged; click again later, and anything already deleted will not cause an error.", what);
+    case "delete-failed": return tr("The cloud is temporarily unavailable, so {0} could not be deleted ({1}). The local project is unchanged; click again later.", what, r.detail || tr("unknown reason"));
   }
 }
 
-const unchanged = (kind: "local" | "room") => (kind === "room" ? "本机协作没有改动，原房间照常可用。" : "本机项目没有改动。");
-const resume = "再点一次会接着用云端已经建好的那个项目，不会多建一个。";
+const unchanged = (kind: "local" | "room") => (kind === "room" ? tr("Local collaboration is unchanged, and the original room works as before.") : tr("The local project is unchanged."));
+const resume = tr("Clicking again will continue with the cloud project that was already created, without creating another one.");
 /** 本机协作已经关掉之后的失败:现在打开的是本地项目,入口是设置里的「多用户协作 → 云端」 */
-const again = "在项目设置里勾「多用户协作」、选云端、点「确定」，会接着用云端已经建好的那个项目，不会多建一个。";
+const again = tr("In project settings, check \"Multi-user collaboration\", choose cloud, and click \"OK\". This will continue with the cloud project that was already created, without creating another one.");
 
 /** 本机协作已经关掉之后的失败:当前内容存到本机文件了没有 */
 const savedNote = (r: Extract<MoveResult, { ok: false }>) => (r.localSaved === false
-  ? "最新内容还在这个窗口里、没能存到本机文件，请先手动保存；"
-  : "最新内容已存在本机这份文件里；");
+  ? tr("The latest content is still in this window and could not be saved to the local file. Please save manually first; ")
+  : tr("The latest content is already saved in this local file; "));
 
 /** 失败时给用户的那句话:说清停在哪、本机现在是什么状态 */
 export function moveFailureText(r: Extract<MoveResult, { ok: false }>, kind: "local" | "room"): string {
   const local = unchanged(kind);
   switch (r.error) {
     case "login-required": return ACCOUNT_MOVE_TEXT.needLogin;
-    case "not-ready": return `现在还不能搬到云端（项目或协作身份尚未就绪）。${local}`;
-    case "not-creator": return "只有以创建者身份进入的人能把协作房间搬到云端。";
-    case "creator-password": return "要创建者密码才能搬到云端（搬完会关闭本机协作）。";
-    case "bad-password": return r.localClosed ? "密码错误。" : `密码错误。${local}`;
-    case "rate-limited": return `尝试太多次，等 60 秒后再试。${local}`;
-    case "busy": return "另一个窗口正在搬这个项目，等它做完再试。";
+    case "not-ready": return tr("Cannot move to the cloud yet (the project or collaboration identity is not ready). {0}", local);
+    case "not-creator": return tr("Only the person who entered as the creator can move the collaboration room to the cloud.");
+    case "creator-password": return tr("The creator password is required to move to the cloud (local collaboration will be closed after the move).");
+    case "bad-password": return r.localClosed ? tr("Wrong password.") : tr("Wrong password. {0}", local);
+    case "rate-limited": return tr("Too many attempts. Wait 60 seconds and try again. {0}", local);
+    case "busy": return tr("Another window is moving this project. Try again when it finishes.");
     case "busy-editing": return r.localClosed
-      ? `项目一直在被修改（可能有 Agent 或工具还在改），最后的修改没有追上。本机协作已关闭，${savedNote(r)}先让它停下，再搬一次：${again}`
-      : `搬的过程中项目一直在被修改（可能有 Agent 或工具还在改），没有搬成。${local}先让它停下，再点一次；${r.cloud ? resume : "不会多建项目。"}`;
-    case "save-pending": return `本机的修改还没保存完，没有开始搬。${local}`;
-    case "too-large": return `项目内容太大（约 ${(Number(r.detail) / 1_000_000 || 0).toFixed(1)} 百万字符，上限 ${(MAX_CONTENT_CHARS / 1_000_000).toFixed(1)} 百万），暂时搬不上云端。${local}`;
-    case "name-taken": return `这个项目名已被使用，请换一个名字。${local}`;
-    case "invalid-name": return `项目名不能为空，不能超过 200 个字。${local}`;
-    case "create-refused": return `这个账号现在不能新建云端项目（${r.detail || "被拒绝"}）。${local}`;
+      ? tr("The project kept being modified (an Agent or tool may still be changing it), and the last changes were not caught up. Local collaboration is closed. {0}Stop it first, then move again: {1}", savedNote(r), again)
+      : tr("The project kept being modified during the move (an Agent or tool may still be changing it), so the move did not complete. {0}Stop it first, then click again; {1}", local, r.cloud ? resume : tr("No extra project will be created."));
+    case "save-pending": return tr("Local changes have not finished saving, so the move did not start. {0}", local);
+    case "too-large": return tr("The project content is too large (about {0} million characters, limit {1} million), so it cannot be moved to the cloud for now. {2}", (Number(r.detail) / 1_000_000 || 0).toFixed(1), (MAX_CONTENT_CHARS / 1_000_000).toFixed(1), local);
+    case "name-taken": return tr("This project name is already taken. Please choose another name. {0}", local);
+    case "invalid-name": return tr("The project name cannot be empty or longer than 200 characters. {0}", local);
+    case "create-refused": return tr("This account cannot create a cloud project right now ({0}). {1}", r.detail || tr("rejected"), local);
     case "version-expired": return ACCOUNT_MOVE_TEXT.versionExpired;
-    case "not-account-cloud": return `这个云端不接受网站账号的项目，没有搬。${local}`;
-    case "network": return r.stage === "create" ? `连不上云端，云端项目没有建成。${local}稍后再点一次。` : `连不上云端，没有开始搬。${local}`;
-    case "create-failed": return `云端暂时不可用，云端项目没有建成。${local}稍后再点一次，不会多建一个。`;
-    case "upload-failed": return `项目内容没有传完。${local}${resume}`;
-    case "verify-failed": return `云端内容核对没通过，已停下。${local}${resume}`;
-    case "media-pull-failed": return `有 ${Number(r.detail) || "一些"} 个素材还没拉到这台电脑，没有关闭本机协作。${local}等素材拉完再点一次。`;
-    case "close-failed": return `云端项目已经建好并核对过，但本机协作没有关掉，现在仍是原来的房间。${resume}`;
-    case "sync-last-failed": return `本机协作已关闭，${savedNote(r)}云端项目已建好，但缺最后的几处修改。再补一次：${again}`;
-    case "enter-failed": return `已搬到云端${r.localClosed ? "，本机协作已关闭" : ""}，但这次没能进入云端项目「${r.cloud?.name ?? ""}」。${again}也可以回开始页用项目链接打开它。`;
+    case "not-account-cloud": return tr("This cloud does not accept projects from website accounts, so nothing was moved. {0}", local);
+    case "network": return r.stage === "create" ? tr("Could not reach the cloud, so the cloud project was not created. {0}Click again later.", local) : tr("Could not reach the cloud, so the move did not start. {0}", local);
+    case "create-failed": return tr("The cloud is temporarily unavailable, so the cloud project was not created. {0}Click again later; no extra project will be created.", local);
+    case "upload-failed": return tr("The project content was not fully uploaded. {0}{1}", local, resume);
+    case "verify-failed": return tr("The cloud content check failed, so the move was stopped. {0}{1}", local, resume);
+    case "media-pull-failed": return tr("{0} media items have not been pulled to this computer yet, so local collaboration was not closed. {1}Click again after the media has finished pulling.", Number(r.detail) || tr("some"), local);
+    case "close-failed": return tr("The cloud project has been created and verified, but local collaboration was not closed and it is still the original room. {0}", resume);
+    case "sync-last-failed": return tr("Local collaboration is closed, {0}the cloud project has been created, but the last few changes are missing. Sync them again: {1}", savedNote(r), again);
+    case "enter-failed": return tr("Moved to the cloud{0}, but could not enter the cloud project \"{1}\" this time. {2}You can also go back to the start page and open it with the project link.", r.localClosed ? tr(", local collaboration closed") : "", r.cloud?.name ?? "", again);
   }
 }

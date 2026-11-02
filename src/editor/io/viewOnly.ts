@@ -1,3 +1,4 @@
+import { tr } from "../../i18n/index.ts";
 /**
  * 这个页面此刻改不改得了项目。两个来源：
  *
@@ -45,6 +46,6 @@ export function isViewOnly(): boolean {
 /** 改不动时界面上说的那一句。两种只读说法不一样：一种是你自己用只读方式打开的，一种是这个项目没给你写的权限 */
 export function viewOnlyText(): string {
   return viewOnlyReason() === 'read-only-member'
-    ? '你在这个项目里只能查看，改不了内容。'
-    : '这是只读查看模式，改不了这个项目。';
+    ? tr("You can only view this project, you cannot change its content.")
+    : tr("This is read-only view mode, this project cannot be changed.");
 }

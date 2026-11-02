@@ -13,14 +13,15 @@ import { setMergeOpen, useSync } from "./syncManager";
 import { mergeBarText, useConflictMerge, useMergeCounts } from "./useConflictMerge";
 import type { ThingRow } from "./mergeItems";
 import "./sync.css";
+import { tr } from "../../i18n/index.ts";
 
 /** 文档服务不收待合并表时的说法(超限:整条不收、什么都不丢;处理掉一些之后自动再交) */
 export const MERGE_BLOCKED_TEXT: Record<string, string> = {
-  unsupported: "文档服务版本较旧，待合并项暂时只存在这台设备上。",
-  "too-large": "待合并项太多，文档服务存不下，暂时只存在这台设备上；合并或删除一些之后会自动再交。",
-  "too-many": "待合并项太多，文档服务存不下，暂时只存在这台设备上；合并或删除一些之后会自动再交。",
+  unsupported: tr("The document service version is outdated; items pending merge exist only on this device for now."),
+  "too-large": tr("Too many items pending merge for the document service to store; they exist only on this device for now. They will be resubmitted automatically after you merge or delete some."),
+  "too-many": tr("Too many items pending merge for the document service to store; they exist only on this device for now. They will be resubmitted automatically after you merge or delete some."),
 };
-export const mergeBlockedText = (reason: string) => MERGE_BLOCKED_TEXT[reason] ?? `待合并项暂时只存在这台设备上（${reason}）。`;
+export const mergeBlockedText = (reason: string) => MERGE_BLOCKED_TEXT[reason] ?? tr("Items pending merge exist only on this device for now ({0}).", reason);
 
 function Check(props: { state: "all" | "some" | "none"; onChange: () => void; label: string; pc: string }) {
   return (
@@ -42,22 +43,22 @@ function ThingItem(props: { row: ThingRow; m: ReturnType<typeof useConflictMerge
   return (
     <li className={`pc-merge-thing${row.conflict ? " is-conflict" : ""}`} data-pc="merge-thing" data-key={row.key}>
       <div className="pc-merge-thing-head">
-        <Check state={m.check(row)} onChange={() => m.toggleThing(row)} label={`勾选${row.label}`} pc="merge-thing-check" />
-        <button type="button" className="pc-merge-expand" aria-expanded={open} title={open ? "收起" : "展开各项"} onClick={() => setOpen((v) => !v)}>
+        <Check state={m.check(row)} onChange={() => m.toggleThing(row)} label={tr("Select {0}", row.label)} pc="merge-thing-check" />
+        <button type="button" className="pc-merge-expand" aria-expanded={open} title={open ? tr("Collapse") : tr("Expand items")} onClick={() => setOpen((v) => !v)}>
           {open ? "▾" : "▸"}
         </button>
         <span className="pc-merge-label" title={row.label}>{row.label}</span>
         <span className="pc-merge-kind">{row.changeText}</span>
-        <span className={`pc-merge-chip${row.conflict ? " is-conflict" : ""}`}>{row.conflict ? "有冲突" : "无冲突"}</span>
-        <span className="pc-merge-n">{row.props.length} 项</span>
+        <span className={`pc-merge-chip${row.conflict ? " is-conflict" : ""}`}>{row.conflict ? tr("Has conflicts") : tr("No conflicts")}</span>
+        <span className="pc-merge-n">{tr("{0} items", row.props.length)}</span>
       </div>
       {open ? (
         <ul className="pc-merge-props">
           {row.props.map((p) => (
             <li key={p.prop} className={p.conflict ? "is-conflict" : undefined} data-pc="merge-prop" data-prop={p.prop}>
-              <Check state={m.sel.get(row.key)?.has(p.prop) ? "all" : "none"} onChange={() => m.toggleProp(row, p.prop)} label={`勾选${p.text}`} pc="merge-prop-check" />
+              <Check state={m.sel.get(row.key)?.has(p.prop) ? "all" : "none"} onChange={() => m.toggleProp(row, p.prop)} label={tr("Select {0}", p.text)} pc="merge-prop-check" />
               <span className="pc-merge-text">{p.text}</span>
-              {p.conflict ? <span className="pc-merge-chip is-conflict">冲突</span> : null}
+              {p.conflict ? <span className="pc-merge-chip is-conflict">{tr("Conflict")}</span> : null}
             </li>
           ))}
         </ul>
@@ -84,14 +85,14 @@ function DialogBody() {
     <div className="pc-dialog-mask">
       <div className="pc-dialog pc-sync-dialog pc-merge-dialog" role="dialog" aria-modal="true" aria-labelledby="pc-merge-title" data-pc="conflict-merge">
         <div className="pc-merge-top">
-          <div id="pc-merge-title" className="pc-dialog-title">冲突合并</div>
-          <div className="pc-sync-hint" data-pc="merge-summary">{m.hasItems ? mergeBarText(m.counts) : "没有待合并的改动。"}</div>
+          <div id="pc-merge-title" className="pc-dialog-title">{tr("Merge conflicts")}</div>
+          <div className="pc-sync-hint" data-pc="merge-summary">{m.hasItems ? mergeBarText(m.counts) : tr("No changes to merge.")}</div>
         </div>
         {m.hasItems ? (
           <div className="pc-merge-tools">
-            <button type="button" className="pc-btn" data-pc="merge-select-clean" onClick={m.selectNonConflict}>选中无冲突项</button>
-            <button type="button" className="pc-btn" data-pc="merge-clear" onClick={m.clearAll}>取消全部勾选</button>
-            <span className="pc-sync-hint">已选 {m.selected} 项</span>
+            <button type="button" className="pc-btn" data-pc="merge-select-clean" onClick={m.selectNonConflict}>{tr("Select non-conflicting items")}</button>
+            <button type="button" className="pc-btn" data-pc="merge-clear" onClick={m.clearAll}>{tr("Clear all selections")}</button>
+            <span className="pc-sync-hint">{tr("{0} selected", m.selected)}</span>
           </div>
         ) : null}
         <div className="pc-dialog-body pc-merge-body">
@@ -100,21 +101,21 @@ function DialogBody() {
               {m.rows.map((r) => <ThingItem key={r.key} row={r} m={m} />)}
             </ul>
           ) : (
-            <div className="pc-merge-empty">全部处理完了。</div>
+            <div className="pc-merge-empty">{tr("All done.")}</div>
           )}
           {m.blocked ? <div className="pc-sync-hint pc-merge-warn" data-pc="merge-blocked">{mergeBlockedText(m.blocked)}</div> : null}
-          {!m.online && m.hasItems ? <div className="pc-sync-hint pc-merge-warn" data-pc="merge-offline">当前离线：可以先「删除选中」，连上后再「合并」。</div> : null}
+          {!m.online && m.hasItems ? <div className="pc-sync-hint pc-merge-warn" data-pc="merge-offline">{tr("You are offline: you can \"Delete selected\" for now, then \"Merge\" once connected.")}</div> : null}
           {m.note ? <div className="pc-sync-hint" role="status" data-pc="merge-note">{m.note}</div> : null}
         </div>
         <div className="pc-dialog-foot pc-merge-foot">
           {m.hasItems ? (
             <>
-              <button type="button" className="pc-btn pc-btn--primary" data-pc="merge-apply" disabled={!m.selected || !m.online} title={m.online ? "把选中的项照你这边的改动写进项目" : "当前离线"} onClick={m.merge}>合并</button>
-              <button type="button" className="pc-btn" data-pc="merge-delete" disabled={!m.selected} title="丢掉选中的项，云端保持现状" onClick={m.remove}>删除选中</button>
+              <button type="button" className="pc-btn pc-btn--primary" data-pc="merge-apply" disabled={!m.selected || !m.online} title={m.online ? tr("Write the selected items into the project as changed on your side") : tr("You are offline")} onClick={m.merge}>{tr("Merge")}</button>
+              <button type="button" className="pc-btn" data-pc="merge-delete" disabled={!m.selected} title={tr("Discard the selected items and leave the cloud as it is")} onClick={m.remove}>{tr("Delete selected")}</button>
             </>
           ) : null}
           <span style={{ flex: 1 }} />
-          <button type="button" className="pc-btn" data-pc="merge-close" onClick={close}>{m.hasItems ? "下次再说" : "完成"}</button>
+          <button type="button" className="pc-btn" data-pc="merge-close" onClick={close}>{m.hasItems ? tr("Later") : tr("Done")}</button>
         </div>
       </div>
     </div>,
@@ -135,7 +136,7 @@ export function ConflictMergeButton() {
       onClick={() => setMergeOpen(true)}
     >
       <span className="pc-sync-chip-dot" />
-      冲突合并
+      {tr("Merge conflicts")}
       <span className="pc-merge-badge">{c.total}</span>
     </button>
   );

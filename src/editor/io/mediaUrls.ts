@@ -1,7 +1,8 @@
 import type { MediaAsset } from "../../kernel/project";
 import { kindFromExtension, type AssetKind } from "./mediaKinds.ts";
 import { publishMediaMigrations, type MediaKindMigration } from "./mediaMigrationBus.ts";
-import { confirmedMissing } from "../../audio/missingMaterialRecord.ts";
+import { confirmedMissing, MISSING_NAME_MARK, hasMissingMark } from "../../audio/missingMaterialRecord.ts";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 素材地址在「存盘 → 再打开」之间怎么保持能播。
@@ -44,7 +45,6 @@ function isDurable(url: string): boolean {
   return /^(https?:|data:)/.test(url) || url.startsWith("/");
 }
 
-const MISSING = "(缺失) ";
 
 /**
  * 从文件里读回来的素材表 → 能播的素材表。不改入参。
@@ -78,7 +78,7 @@ export function restoreMediaUrls(media: MediaAsset[], opts: { externalPathUrl?: 
     const url = normalized.url || "";
     if (!url || isDurable(url)) return normalized.pending ? { ...normalized, pending: undefined } : normalized;
     missing.push(normalized);
-    return { ...normalized, url: "", pending: undefined, name: normalized.name.startsWith(MISSING) ? normalized.name : `${MISSING}${normalized.name}` };
+    return { ...normalized, url: "", pending: undefined, name: hasMissingMark(normalized.name) ? normalized.name : `${MISSING_NAME_MARK}${normalized.name}` };
   });
   publishMediaMigrations(moved);
   return { media: out, missing, moved };

@@ -1,3 +1,4 @@
+import { tr } from "../i18n/index.ts";
 /**
  * 主题库调色板:来自「视频剪辑软件 UI 色卡」设计稿的五套主题,深浅各一份取值。
  * 结构固定:5 级表面(L0 画布 / L1 面板底 / L2 面板 / L3 控件底 / L4 悬浮)、
@@ -39,10 +40,10 @@ const T = (video: string, audio: string, image: string, text: string, fx: string
 export const palettes: Palette[] = [
   {
     id: "studio",
-    name: "流光",
+    name: tr("Flow"),
     en: "Studio",
     // 强调色沿用 PromptCut 一直以来的青蓝品牌色(和靛夜那套同一个值),底色换成更深的生产力工具灰
-    blurb: "深邃的现代生产力工具底色,青蓝品牌色强调,分层清晰。",
+    blurb: tr("Deep modern productivity-tool base colors with a cyan-blue brand accent and clear layering."),
     dark: {
       surfaces: ["#111016", "#1B1A21", "#23222A", "#2C2B34", "#383742"],
       fg: "#F2F1F6", fgMuted: "#A6A4B2", accent: "#00DBDB",
@@ -57,9 +58,9 @@ export const palettes: Palette[] = [
   },
   {
     id: "steel",
-    name: "钢蓝",
+    name: tr("Steel blue"),
     en: "Steel",
-    blurb: "中性偏冷的灰阶 + 钢蓝强调。克制、可长时间注视,颜色全部留给素材。",
+    blurb: tr("Neutral, cool-leaning grays with a steel-blue accent. Restrained and easy on the eyes over long sessions, leaving all the color to your media."),
     dark: {
       surfaces: ["#0A0C0E", "#14171A", "#1B1F23", "#23282D", "#2E343A"],
       fg: "#E9EDF1", fgMuted: "#9BA5AF", accent: "#7FA8D4",
@@ -75,9 +76,9 @@ export const palettes: Palette[] = [
   },
   {
     id: "graphite",
-    name: "石墨",
+    name: tr("Graphite"),
     en: "Graphite",
-    blurb: "完全无色偏的中性灰,强调色换成琥珀。适合调色场景,界面不带任何色相。",
+    blurb: tr("Completely neutral gray with no color cast, and amber as the accent. Suited to color grading; the interface carries no hue at all."),
     dark: {
       surfaces: ["#0B0B0B", "#151515", "#1D1D1D", "#262626", "#333333"],
       fg: "#EDEDED", fgMuted: "#A1A1A1", accent: "#E3A047",
@@ -91,9 +92,9 @@ export const palettes: Palette[] = [
   },
   {
     id: "indigo",
-    name: "靛夜",
+    name: tr("Indigo night"),
     en: "Indigo",
-    blurb: "底色带蓝紫倾向,强调色是青。偏消费端的创作气质,轨道色更饱和、更活跃。",
+    blurb: tr("A base with a blue-violet lean and a cyan accent. A consumer-oriented creative feel, with more saturated, livelier track colors."),
     dark: {
       surfaces: ["#0C0E16", "#161A26", "#1E2331", "#282E3E", "#343B4D"],
       fg: "#E6E9F2", fgMuted: "#98A0B8", accent: "#00DBDB",
@@ -107,9 +108,9 @@ export const palettes: Palette[] = [
   },
   {
     id: "terminal",
-    name: "终端",
+    name: tr("Terminal"),
     en: "Terminal",
-    blurb: "对比度最高的一套:近黑的底、荷绿强调,描边比其他主题重一档。给键盘流与节点式工作流。",
+    blurb: tr("The highest-contrast set: near-black base, mint-green accent, and strokes one step heavier than other themes. Made for keyboard-driven and node-based workflows."),
     dark: {
       surfaces: ["#060707", "#101312", "#171B1A", "#202524", "#2B3231"],
       fg: "#E8F0EC", fgMuted: "#93A29C", accent: "#5FD39A",
@@ -123,9 +124,9 @@ export const palettes: Palette[] = [
   },
   {
     id: "clay",
-    name: "陶土",
+    name: tr("Terracotta"),
     en: "Clay",
-    blurb: "唯一的暖底主题:灰阶带一点褐,强调色是赭。长时间剪辑更松弛,浅色一档接近纸张。",
+    blurb: tr("The only warm-base theme: grays with a touch of brown and an ochre accent. More relaxed for long editing sessions, and the light tier is close to paper."),
     dark: {
       surfaces: ["#100E0C", "#1A1715", "#221F1C", "#2B2724", "#37322E"],
       fg: "#F0EBE5", fgMuted: "#A89E94", accent: "#E08A63",

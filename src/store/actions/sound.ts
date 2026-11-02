@@ -2,6 +2,10 @@ import { findClip, newId, type MediaAsset, type SoundEffectClipLink, type TrackC
 import { assertSoundRecipeSize } from "../../audio/soundGeneration";
 import { diffProject } from "../../kernel/diffProject";
 import { state, setProject, set, sortClips } from "../core";
+import { tr } from "../../i18n/index.ts";
+
+/** The project moved on under the generated sound: callers tell this apart by the flag, not by the wording */
+const staleError = (message: string) => Object.assign(new Error(message), { stale: true });
 
 export interface CommitSoundEffectOptions {
   projectId?: string;
@@ -25,16 +29,16 @@ export const sound = {
   commitSoundEffect(spec: CommitSoundEffectOptions): { mediaId: string; clipId?: string; reused: boolean } {
     assertSoundRecipeSize(spec.link.recipe);
     const p = state.project;
-    if (p.id !== spec.projectId || p.activeCutId !== spec.cutId) throw new Error("项目或剪辑已切换,未应用音效");
-    if (spec.link.sourceClipId && spec.expectedSource !== JSON.stringify(findClip(p, spec.link.sourceClipId)?.clip)) throw new Error("原打字片段已改变,请重新生成");
+    if (p.id !== spec.projectId || p.activeCutId !== spec.cutId) throw staleError(tr("The project or cut has changed; sound effect not applied"));
+    if (spec.link.sourceClipId && spec.expectedSource !== JSON.stringify(findClip(p, spec.link.sourceClipId)?.clip)) throw staleError(tr("The original typing clip has changed, please regenerate"));
     const target = spec.replaceClipId ? findClip(p, spec.replaceClipId) : null;
-    if (spec.replaceClipId && (!target || JSON.stringify(target.clip) !== spec.expectedClip)) throw new Error("音效片段已改变,请重新生成");
-    if (target?.track.locked) throw new Error("请先解锁音效序列");
-    if (target && (!target.clip.soundEffect || target.clip.nodeId)) throw new Error("只能重生成已有的 WAV 音效片段");
+    if (spec.replaceClipId && (!target || JSON.stringify(target.clip) !== spec.expectedClip)) throw staleError(tr("The sound effect clip has changed, please regenerate"));
+    if (target?.track.locked) throw new Error(tr("Unlock the sound effect track first"));
+    if (target && (!target.clip.soundEffect || target.clip.nodeId)) throw new Error(tr("Only existing WAV sound effect clips can be regenerated"));
     // Retrying a completed request, including after reopening, does not create another clip.
     const prior = p.tracks.flatMap(t => t.clips).find(c => c.soundEffect?.requestId === spec.link.requestId);
     if (prior && prior.id !== spec.replaceClipId) {
-      if (prior.soundEffect?.reuseKey !== spec.link.reuseKey) throw new Error("requestId 已用于不同音效");
+      if (prior.soundEffect?.reuseKey !== spec.link.reuseKey) throw new Error(tr("requestId was already used for a different sound effect"));
       return { mediaId: prior.mediaId!, clipId: prior.id, reused: true };
     }
     const existing = p.media.find(m => m.kind === "audio" && m.hash === spec.asset.hash && m.soundEffect?.reuseKey === spec.link.reuseKey);
@@ -52,23 +56,23 @@ export const sound = {
       const newNaturalEnd = Math.min(p.duration, sourceEnd, old.start + spec.link.recipe.frames / spec.link.recipe.sampleRate - offset);
       const wasUncropped = Math.abs(old.end - oldNaturalEnd) <= 1 / oldRecipe.sampleRate;
       const end = wasUncropped ? newNaturalEnd : Math.min(old.end, newNaturalEnd);
-      if (end <= old.start) throw new Error("新配方在此素材偏移后没有声音,请先调整片段范围");
-      if (target.track.clips.some(c => c.id !== old.id && c.start < end && c.end > old.start)) throw new Error("重生成后的尾音与同序列片段重叠,请先腾出空间");
+      if (end <= old.start) throw new Error(tr("The new recipe is silent after this media offset, please adjust the clip range first"));
+      if (target.track.clips.some(c => c.id !== old.id && c.start < end && c.end > old.start)) throw new Error(tr("The tail of the regenerated sound overlaps clips on the same track, please make room first"));
       clip = { ...old, end, mediaId: media.id, soundEffect: spec.link, label: media.name };
       tracks = p.tracks.map(t => t.id === target.track.id ? { ...t, clips: t.clips.map(c => c.id === clip!.id ? clip! : c) } : t);
     } else if (spec.start !== undefined) {
       const start = spec.start;
       const duration = spec.duration ?? media.duration ?? 0;
-      if (!Number.isFinite(start) || start < 0 || !Number.isFinite(duration) || duration <= 0) throw new Error("音效时间范围无效");
+      if (!Number.isFinite(start) || start < 0 || !Number.isFinite(duration) || duration <= 0) throw new Error(tr("Invalid sound effect time range"));
       // An audio tail never silently changes the project out point.
       const end = Math.min(start + duration, p.duration);
-      if (end <= start) throw new Error("音效起点在项目出点之外,请调整起点");
+      if (end <= start) throw new Error(tr("The sound effect start is beyond the project out point, please adjust the start"));
       const fits = (t: Track) => !t.locked && !t.clips.some(c => c.start < end && c.end > start);
       let track = spec.trackId ? p.tracks.find(t => t.id === spec.trackId) : p.tracks.find(fits);
-      if (spec.trackId && (!track || !fits(track))) throw new Error("指定序列不存在、已锁定或音效范围与已有片段重叠");
+      if (spec.trackId && (!track || !fits(track))) throw new Error(tr("The specified track does not exist, is locked, or the sound effect range overlaps existing clips"));
       clip = { id: newId("v"), cardId: "", mediaId: media.id, params: {}, label: media.name, start, end, mediaOffset: spec.mediaOffset ?? 0, soundEffect: spec.link };
       if (!track) {
-        track = { id: newId("t"), name: "音效", clips: [clip] };
+        track = { id: newId("t"), name: tr("Sound effect"), clips: [clip] };
         tracks = [...p.tracks, track];
       } else tracks = p.tracks.map(t => t.id === track!.id ? { ...t, clips: sortClips([...t.clips, clip!]) } : t);
     }
@@ -76,7 +80,7 @@ export const sound = {
       const next = { ...p, media: existing ? p.media : [...p.media, media], tracks };
       const patch = diffProject(p, next).ops;
       if (patch.some(op => op.path === "") || new TextEncoder().encode(JSON.stringify(patch)).byteLength > 224 * 1024) {
-        throw new Error("音效变更超过共享项目安全提交上限,请拆成多段生成");
+        throw new Error(tr("The sound effect change exceeds the safe commit limit for shared projects, please split it into several generations"));
       }
       setProject(next, { undoable: !!clip && !spec.silent });
     }

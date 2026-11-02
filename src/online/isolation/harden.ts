@@ -126,7 +126,7 @@ export function denyPersistentStorage(scope: object, opts: { passthrough?: boole
       const d = Object.getOwnPropertyDescriptor(proto, method);
       if (d && !d.configurable && !d.writable) { denied.push(`${ctor}.${method}`); return; }
       Object.defineProperty(proto, method, {
-        value: function () { return Promise.reject(new TypeError("PromptCut 舞台:不能用持久存储")); },
+        value: function () { return Promise.reject(new TypeError("PromptCut stage: persistent storage is not allowed")); },
         writable: false, configurable: false, enumerable: false,
       });
       denied.push(`${ctor}.${method}`);
@@ -221,7 +221,7 @@ export function hardenReport(): HardenReport | null {
   return report;
 }
 
-const BLOCKED = "PromptCut 舞台:不允许子框架类元素";
+const BLOCKED = "PromptCut stage: subframe-type elements are not allowed";
 
 /**
  * 装加固。`onBreach`:有代码试图造子框架(被哪一层拦下的)—— 调用方据此向父页上报。同一个文档只装一次。
@@ -401,7 +401,7 @@ export function installStageHardening(opts: { onBreach?: (kind: BreachKind) => v
         configurable: false, enumerable: rt.enumerable,
         get(this: XMLHttpRequest) { return apply(get, this, []); },
         set(this: XMLHttpRequest, v: unknown) {
-          if ((apply(strLower, `${v as string}`, []) as string) === "document") throw new TypeError("PromptCut 舞台:不能以文档类型取回");
+          if ((apply(strLower, `${v as string}`, []) as string) === "document") throw new TypeError("PromptCut stage: cannot be retrieved as a document type");
           apply(set, this, [v]);
         },
       });
@@ -422,7 +422,7 @@ export function installStageHardening(opts: { onBreach?: (kind: BreachKind) => v
     }
     const CS = (w as unknown as { CookieStore?: { prototype: object } }).CookieStore?.prototype;
     if (CS) for (const k of ["set", "delete"]) {
-      if (typeof (CS as Record<string, unknown>)[k] === "function") { lock(CS, k, function () { return Promise.reject(new TypeError("PromptCut 舞台:不能写 cookie")); }); hooks++; }
+      if (typeof (CS as Record<string, unknown>)[k] === "function") { lock(CS, k, function () { return Promise.reject(new TypeError("PromptCut stage: cannot write cookie")); }); hooks++; }
     }
   } catch (e) { errors.push(`cookie:${(e as Error).message}`); }
 

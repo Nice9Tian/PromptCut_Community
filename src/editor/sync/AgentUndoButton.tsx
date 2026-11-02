@@ -6,6 +6,7 @@
  * 撤成功后变成灰的「已撤销」。以页面身份提交逆操作 + `undoOf`,进用户自己的撤销栈;冲突照撤销的规矩处理。
  */
 import { agentOpFor, revertAgentOp, useSync } from "./syncManager";
+import { tr } from "../../i18n/index.ts";
 
 export function AgentUndoButton({ callId }: { callId?: string }) {
   useSync((v) => v.agentOpsVersion);
@@ -22,7 +23,7 @@ export function AgentUndoButton({ callId }: { callId?: string }) {
         disabled={done}
         onClick={() => revertAgentOp(rec)}
       >
-        {done ? "已撤销" : "撤销这步"}
+        {done ? tr("Undone") : tr("Undo this step")}
       </button>
     </div>
   );

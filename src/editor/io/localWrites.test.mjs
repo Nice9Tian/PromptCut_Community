@@ -46,7 +46,7 @@ function fresh(name = "起点") {
 
 /** 本机 Agent 的探测(与 localWrites.ts 的缺省一致,这里写成数据,改前的代码不认它也照样跑得起来) */
 let agentBusy = false;
-const agentProbe = { label: () => "Agent 正在执行的修改", count: () => (agentBusy ? 1 : 0) };
+const agentProbe = { label: () => "Changes the Agent is making", count: () => (agentBusy ? 1 : 0) };
 
 test("本机 Agent 的工具还在跑:保存等它写完再序列化,文件里有它最后那一笔", async () => {
   fresh();
@@ -66,7 +66,7 @@ test("这台设备正在导入的素材:等它传完;别的设备在传的(本�
   const other = actions.addMedia({ kind: "image", name: "别人在传.png", url: "", pending: true });
   const local = new Set([m.id]);
   const mediaProbe = {
-    label: (n) => `正在导入的素材（${n} 个）`,
+    label: (n) => `Media being imported (${n})`,
     count: () => getState().project.media.filter((x) => x.pending && local.has(x.id)).length,
   };
   setTimeout(() => actions.updateMedia(m.id, { pending: undefined, url: "/@media/abc" }), 200);
@@ -103,7 +103,7 @@ test("Agent 一直没写完:到时限不写文件,说清楚在等 Agent;之后�
   assert.equal(written.length, 0, "没写文件");
   assert.equal(marked.length, 0, "没标已保存");
   assert.match(notes[0].m, /Agent/);
-  assert.match(notes[0].m, /原来的文件没有改动/);
+  assert.match(notes[0].m, /The original file was not changed/);
   const { isSaveLocked } = await import(srcUrl("editor/saveLock.ts"));
   assert.equal(isSaveLocked(), false, "锁解开了");
 });
@@ -111,11 +111,11 @@ test("Agent 一直没写完:到时限不写文件,说清楚在等 Agent;之后�
 test("素材一直没导完:到时限不写文件,提示里有件数", async () => {
   fresh();
   const m = actions.addMedia({ kind: "video", name: "大文件.mp4", url: "", pending: true });
-  const probe = { label: (n) => `正在导入的素材（${n} 个）`, count: () => (getState().project.media.find((x) => x.id === m.id)?.pending ? 1 : 0) };
+  const probe = { label: (n) => `Media being imported (${n})`, count: () => (getState().project.media.find((x) => x.id === m.id)?.pending ? 1 : 0) };
   const { d, written, notes } = deps({ probes: [probe], waitTimeoutMs: 300 });
   assert.equal(await saveProcFile("a.proc", d), "failed");
   assert.equal(written.length, 0);
-  assert.match(notes[0].m, /正在导入的素材（1 个）/);
+  assert.match(notes[0].m, /Media being imported \(1\)/);
 });
 
 test("待文档服务确认的修改等不到:不写文件,沿用原来的说法", async () => {
@@ -123,7 +123,7 @@ test("待文档服务确认的修改等不到:不写文件,沿用原来的说法
   const { d, written, notes } = deps({ probes: [], settle: async () => { throw new Error("timeout"); } });
   assert.equal(await saveProcFile("a.proc", d), "failed");
   assert.equal(written.length, 0);
-  assert.match(notes[0].m, /文档服务确认/);
+  assert.match(notes[0].m, /not been confirmed by the document service/);
 });
 
 test("序列化之后项目又被本机改了(写盘期间 Agent 落了一笔):文件照存,但不标「已保存」,并告诉用户", async () => {
@@ -146,7 +146,7 @@ test("序列化之后项目又被本机改了(写盘期间 Agent 落了一笔):�
   assert.equal(getState().dirty, true);
   assert.equal(notes.length, 1);
   assert.equal(notes[0].tone, "info");
-  assert.match(notes[0].m, /还没保存/);
+  assert.match(notes[0].m, /later changes are not saved yet/);
 });
 
 test("缺省的探测:Agent 工具在跑时 agentToolProbe 记 1;本机正在导入的素材才算", async () => {
@@ -157,7 +157,7 @@ test("缺省的探测:Agent 工具在跑时 agentToolProbe 记 1;本机正在导
   assert.equal(lw.agentToolProbe.count(), 0);
   const probe = lw.mediaImportProbe(() => [{ id: "a", pending: true }, { id: "b", pending: true }, { id: "c" }], (id) => id !== "b");
   assert.equal(probe.count(), 1);
-  assert.equal(probe.label(1), "正在导入的素材（1 个）");
+  assert.equal(probe.label(1), "Media being imported (1)");
 });
 
 test("序列化之后协作者的修改到了(不是本机落的):不标「已保存」,但也不另外提示", async () => {

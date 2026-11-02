@@ -36,7 +36,7 @@ test("ACS-01 还在项目里:每次现取一份会话,交出连接票据", async
 
 test("ACS-02 已经不在项目里:不取会话,解绑", async () => {
   const h = harness({ current: false });
-  await assert.rejects(h.ticket("sp_x"), /不在这个云端项目/);
+  await assert.rejects(h.ticket("sp_x"), /no longer in this cloud project/);
   assert.deepEqual(h.calls, { session: 0, stop: 1 });
 });
 
@@ -56,7 +56,7 @@ test("ACS-03 401 / 403 / 404 解绑并抛;断网与 503 只抛", async () => {
 
 test("ACS-04 取票据的途中离开:票据不交出去", async () => {
   const h = harness({ session: async (_p, state) => { state.current = false; return { connectionTicket: TICKET, expiresAt: 1 }; } });
-  await assert.rejects(h.ticket("sp_x"), /不在这个云端项目/);
+  await assert.rejects(h.ticket("sp_x"), /no longer in this cloud project/);
   assert.deepEqual(h.calls, { session: 1, stop: 1 });
 });
 

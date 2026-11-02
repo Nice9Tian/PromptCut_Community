@@ -20,6 +20,7 @@ import { AgentTabsBar } from "./agentParts";
 import { useConfirm } from "./ui";
 import { AgentChat } from "./AgentChat";
 import { AgentChatLocal } from "./AgentChatLocal";
+import { tr } from "../i18n/index.ts";
 
 export function AgentPage({ active }: { active: boolean }) {
   const cloud = useCloudAgent();
@@ -42,9 +43,9 @@ export function AgentPage({ active }: { active: boolean }) {
     // 手机版没有历史对话列表,所以关之前先问一声。两种模式后果不一样,话也不一样:
     // 云端那段对话仍留在云端历史里;本机这一份这一版不归档(归档是电脑 AI 栏那边在做的事),关了就没了
     const text = local
-      ? `关闭「${title}」?这段对话不会留下来,关掉就没了。`
-      : `关闭「${title}」?这段对话在手机上不再显示,仍保存在云端的对话历史里(桌面版可以打开)。`;
-    confirm({ text, ok: "关闭", danger: true, run: () => closeTab(id) });
+      ? tr("Close \"{0}\"? This chat won't be kept; closing it deletes it.", title)
+      : tr("Close \"{0}\"? This chat will no longer show on mobile, but stays in the cloud chat history (open it in the desktop app).", title);
+    confirm({ text, ok: tr("Close"), danger: true, run: () => closeTab(id) });
   };
 
   return (

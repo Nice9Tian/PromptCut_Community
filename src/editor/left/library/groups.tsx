@@ -1,14 +1,15 @@
 import type { ReactNode } from "react";
 import type { GroupLayout } from "./layout";
 import type { MediaAsset } from "../../../kernel/project";
+import { tr } from "../../../i18n/index.ts";
 
 /**
  * 素材库 / 动画 / 特效三个分区的「组定义」表。要挪组、改 layout、改名、换分类,只改这里。
  * 每个组的内容由对应的 *Group 钩子按搜索词算出来(GroupData),GroupBrowser 负责总览和详情。
  */
 
-export type GroupCategory = "视觉" | "音频";
-export const CATEGORIES: readonly GroupCategory[] = ["视觉", "音频"];
+export type GroupCategory = "visual" | "audio";
+export const CATEGORIES: readonly GroupCategory[] = ["visual", "audio"];
 
 export interface GroupDef {
   id: string;
@@ -31,51 +32,51 @@ export interface GroupDef {
 
 /** 素材库:导入进来的素材 */
 export const LIBRARY_GROUPS: readonly GroupDef[] = [
-  { id: "videos", title: "视频", layout: "big_16_9", category: "视觉", empty: "import" },
-  { id: "images", title: "图片", layout: "big_16_9", category: "视觉", empty: "import" },
-  { id: "music", title: "音频", layout: "big_strip", category: "音频", empty: "import" },
+  { id: "videos", title: tr("Video"), layout: "big_16_9", category: "visual", empty: "import" },
+  { id: "images", title: tr("Images"), layout: "big_16_9", category: "visual", empty: "import" },
+  { id: "music", title: tr("Audio"), layout: "big_strip", category: "audio", empty: "import" },
   // 项目里的每条剪辑(2026-10-20 用户定:「剪辑应该也出现在素材库中」);单击在时间轴上打开,拖到序列上放剪辑段
-  { id: "cuts", title: "剪辑", layout: "big_16_9", category: "视觉", empty: "hint", hook: "lib-cuts", hint: "单击在时间轴上打开,拖到序列上放一个引用它的剪辑段" },
+  { id: "cuts", title: tr("Cut"), layout: "big_16_9", category: "visual", empty: "hint", hook: "lib-cuts", hint: tr("Click to open on the timeline, drag onto a track to place a cut segment that references it") },
 ];
 
 /** 动画:各类卡片和部件,全是视觉类(GroupBrowser 据此不画分类胶囊行) */
 export const ANIMATION_GROUPS: readonly GroupDef[] = [
   {
     id: "user-cards",
-    title: "定制卡片",
+    title: tr("Custom cards"),
     layout: "middle_cube",
-    category: "视觉",
+    category: "visual",
     empty: "hide",
-    hint: "AI 或用户现场建的卡。右键 = 在「项目素材」和「自定义素材」之间换档",
+    hint: tr("Cards built on the spot by the AI or the user. Right-click = switch tier between \"Project media\" and \"Custom media\""),
   },
-  { id: "magicui", title: "Magic UI", layout: "middle_cube", category: "视觉", empty: "hide" },
-  { id: "native", title: "自家卡片", layout: "middle_cube", category: "视觉", empty: "hide" },
+  { id: "magicui", title: tr("Magic UI"), layout: "middle_cube", category: "visual", empty: "hide" },
+  { id: "native", title: tr("Built-in cards"), layout: "middle_cube", category: "visual", empty: "hide" },
   {
     id: "parts",
-    title: "部件库",
+    title: tr("Parts library"),
     layout: "middle_cube",
-    category: "视觉",
+    category: "visual",
     empty: "hide",
-    hint: "组合卡的零件:点一下加进选中的组合卡,没选中就在播放头新建一张组合卡",
+    hint: tr("Parts for composite cards: click once to add to the selected composite card, or with none selected, create a new composite card at the playhead"),
   },
-  { id: "lottie", title: "Lottie 动效", layout: "middle_cube", category: "视觉", empty: "hide" },
+  { id: "lottie", title: tr("Lottie animations"), layout: "middle_cube", category: "visual", empty: "hide" },
   {
     id: "particles",
-    title: "粒子背景",
+    title: tr("Particle background"),
     layout: "big_16_9",
-    category: "视觉",
+    category: "visual",
     empty: "hide",
-    hint: "总览里只露精选的几种,打开这个组看全部",
+    hint: tr("The overview shows only a few featured items; open this group to see all"),
   },
 ];
 
 export const EFFECTS_GROUPS: readonly GroupDef[] = [
-  { id: "transitions", title: "转场", layout: "middle_cube", category: "视觉", empty: "hint" },
-  { id: "filters", title: "滤镜", layout: "middle_cube", category: "视觉", empty: "hint", hook: "filters" },
-  { id: "emphasis", title: "强调", layout: "middle_cube", category: "视觉", empty: "hint" },
-  { id: "themes", title: "全局风格", layout: "middle_cube", category: "视觉", empty: "hint", hook: "theme-list" },
-  { id: "audiofx", title: "音频效果", layout: "big_strip", category: "音频", empty: "hint", hook: "audiofx" },
-  { id: "audio-presets", title: "音频预设", layout: "big_strip", category: "音频", empty: "hint", hint: "点一条 = 从预设新建" },
+  { id: "transitions", title: tr("Transition"), layout: "middle_cube", category: "visual", empty: "hint" },
+  { id: "filters", title: tr("Filters"), layout: "middle_cube", category: "visual", empty: "hint", hook: "filters" },
+  { id: "emphasis", title: tr("Emphasis"), layout: "middle_cube", category: "visual", empty: "hint" },
+  { id: "themes", title: tr("Global style"), layout: "middle_cube", category: "visual", empty: "hint", hook: "theme-list" },
+  { id: "audiofx", title: tr("Audio effects"), layout: "big_strip", category: "audio", empty: "hint", hook: "audiofx" },
+  { id: "audio-presets", title: tr("Audio presets"), layout: "big_strip", category: "audio", empty: "hint", hint: tr("Click one = create from preset") },
 ];
 
 export const LIBRARY_GROUP_IDS = LIBRARY_GROUPS.map((g) => g.id);

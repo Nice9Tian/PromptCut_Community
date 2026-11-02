@@ -88,7 +88,7 @@ function makeStripLayout(W, blockCount) {
 
 const clip = (id, start, end) => ({ id, cardId: 'card-1', start, end, params: {} });
 
-test('SS1 1 段 6 秒卡片：t = 0 / 1 / 3 / 5.7 / 6 的 pos 与 want（W = 390）及端点连续性', () => {
+test('SS1 1 clip of 6 s card: pos and want at t = 0 / 1 / 3 / 5.7 / 6 (W = 390) and endpoint continuity', () => {
   const W = 390;
   const clips = [clip('c1', 0, 6)];
   const { el, bl } = makeStripLayout(W, 1);
@@ -105,7 +105,7 @@ test('SS1 1 段 6 秒卡片：t = 0 / 1 / 3 / 5.7 / 6 的 pos 与 want（W = 390
     return { t, pos, want };
   });
 
-  console.log('[SS1] 1段6秒 (W=390) 几何与采样读数:', {
+  console.log('[SS1] 1 clip of 6 s (W=390) geometry and sampled readings:', {
     offsetLeft: bl[0].offsetLeft,
     offsetWidth: bl[0].offsetWidth,
     scrollWidth: el.scrollWidth,
@@ -132,16 +132,16 @@ test('SS1 1 段 6 秒卡片：t = 0 / 1 / 3 / 5.7 / 6 的 pos 与 want（W = 390
   const posJustBefore = cardPosAtTime(clips, 6 - 2e-9);
   const posAtThreshold = cardPosAtTime(clips, 6 - 1e-9);
   const posAtEnd = cardPosAtTime(clips, 6);
-  console.log('[SS1] t=6 端点左极限与端点值:', {
+  console.log('[SS1] t=6 left limit at endpoint and endpoint value:', {
     't=6-2e-9': posJustBefore,
     't=6-1e-9': posAtThreshold,
     't=6': posAtEnd,
     diff: posAtEnd - posJustBefore,
   });
-  assert.ok(Math.abs(posAtEnd - posJustBefore) < 1e-9, 't=6 处连续无跳变');
+  assert.ok(Math.abs(posAtEnd - posJustBefore) < 1e-9, 'continuous at t=6 with no jump');
 });
 
-test('SS2 want 总行程、每秒速度、60/30/24 fps 每 tick 位移与 1px 时间误差（1 段 6 秒）', () => {
+test('SS2 want total travel, speed per second, per-tick displacement at 60/30/24 fps and 1px time error (1 clip of 6 s)', () => {
   const W = 390;
   const clips = [clip('c1', 0, 6)];
   const { el, bl } = makeStripLayout(W, 1);
@@ -156,7 +156,7 @@ test('SS2 want 总行程、每秒速度、60/30/24 fps 每 tick 位移与 1px �
   const secPerPx = 6 / totalTravelPx;
   const secPer1_5Px = (1.5 * 6) / totalTravelPx;
 
-  console.log('[SS2] 1段6秒 速度与分辨率读数:', {
+  console.log('[SS2] 1 clip of 6 s speed and resolution readings:', {
     totalTravelPx,
     pxPerSec,
     pxPerTick60,
@@ -175,7 +175,7 @@ test('SS2 want 总行程、每秒速度、60/30/24 fps 每 tick 位移与 1px �
   assert.equal(secPer1_5Px, 0.1125);
 });
 
-test('SS3 播放模拟循环（1 段 6 秒，fps = 60 / 30 / 24 三档）：验证 < 1 死区下每档最终 scrollLeft', () => {
+test('SS3 playback simulation loop (1 clip of 6 s, fps = 60 / 30 / 24 tiers): verify final scrollLeft of each tier under the < 1 dead zone', () => {
   const W = 390;
   const duration = 6;
   const clips = [clip('c1', 0, duration)];
@@ -226,7 +226,7 @@ test('SS3 播放模拟循环（1 段 6 秒，fps = 60 / 30 / 24 三档）：验�
   const r30 = simulateFps(30);
   const r24 = simulateFps(24);
 
-  console.log('[SS3] 1段6秒 三档 fps (60 / 30 / 24) 模拟结果:', { r60, r30, r24 });
+  console.log('[SS3] 1 clip of 6 s three fps tiers (60 / 30 / 24) simulation results:', { r60, r30, r24 });
 
   // fps = 60: 每 tick 2/9 px，每 5 tick 跳 10/9 px，360 ticks 共写入 72 次，终点 80
   assert.equal(r60.ticksPerJump, 5);
@@ -250,7 +250,7 @@ test('SS3 播放模拟循环（1 段 6 秒，fps = 60 / 30 / 24 三档）：验�
   assert.equal(r24.intScrollLeft.finalScrollLeft, 80);
 });
 
-test('SS4 对照组：3 段各 2 秒（中间两个 .mark）在 60fps 与 30fps 下跑满 6 秒', () => {
+test('SS4 control group: 3 clips of 2 s each (two .mark in the middle) run the full 6 s at 60fps and 30fps', () => {
   const W = 390;
   const clips = [clip('c1', 0, 2), clip('c2', 2, 4), clip('c3', 4, 6)];
   const dragging = { current: false };
@@ -275,7 +275,7 @@ test('SS4 对照组：3 段各 2 秒（中间两个 .mark）在 60fps 与 30fps 
   const wantEnd = scrollForPos(s60.el, s60.bl, cardPosAtTime(clips, 6));
   const totalTravelPx = wantEnd - wantStart;
 
-  console.log('[SS4] 3段各2秒对照组 (W=390) 模拟结果:', {
+  console.log('[SS4] 3 clips of 2 s each control group (W=390) simulation results:', {
     blockOffsets: s60.bl.map((b) => b.offsetLeft),
     scrollWidth: s60.el.scrollWidth,
     maxScrollLeft: s60.el.maxScrollLeft,
@@ -291,10 +291,10 @@ test('SS4 对照组：3 段各 2 秒（中间两个 .mark）在 60fps 与 30fps 
   assert.equal(s60.el.scrollLeft, 300);
   assert.equal(s60.updateCount, 180);
   assert.equal(s30.el.scrollLeft, 300);
-  assert.equal(s30.updateCount, 180, '30fps 下每段每 tick 走 4/3 >= 1 px，每 tick 都更新，180 ticks 共更新 180 次');
+  assert.equal(s30.updateCount, 180, 'At 30fps each clip moves 4/3 >= 1 px per tick, updates on every tick, 180 ticks give 180 updates in total');
 });
 
-test('SS5 posFromScroll 与 scrollForPos 来回一致性（1 段 6 秒）与 onScroll 1.5px 门限验证', () => {
+test('SS5 posFromScroll and scrollForPos round-trip consistency (1 clip of 6 s) and onScroll 1.5px threshold check', () => {
   const W = 390;
   const clips = [clip('c1', 0, 6)];
   const { el, bl } = makeStripLayout(W, 1);
@@ -309,11 +309,11 @@ test('SS5 posFromScroll 与 scrollForPos 来回一致性（1 段 6 秒）与 onS
     return { pos, want, posBack, tFromPos, tBack };
   });
 
-  console.log('[SS5] 1段6秒 scrollForPos <-> posFromScroll 往返读数:', roundTrips);
+  console.log('[SS5] 1 segment of 6 s scrollForPos <-> posFromScroll round-trip readings:', roundTrips);
 
   for (const r of roundTrips) {
-    assert.ok(Math.abs(r.posBack - r.pos) < 1e-12, `pos=${r.pos} 往返一致`);
-    assert.ok(Math.abs(r.tBack - r.tFromPos) < 1e-12, `t=${r.tFromPos} 往返一致`);
+    assert.ok(Math.abs(r.posBack - r.pos) < 1e-12, `pos=${r.pos} round-trip consistent`);
+    assert.ok(Math.abs(r.tBack - r.tFromPos) < 1e-12, `t=${r.tFromPos} round-trip consistent`);
   }
 
   // 验证 onScroll 的 1.5px 门限：微动 < 1.5px 被吞，累计 >= 1.5px 正常触发 onScrub
@@ -324,7 +324,7 @@ test('SS5 posFromScroll 与 scrollForPos 来回一致性（1 段 6 秒）与 onS
 
   el.scrollLeft = 1.0; // |1.0 - 0| < 1.5 -> 吞掉
   assert.equal(runOnScrollStep(el, bl, clips, progSl, onScrub), false);
-  assert.equal(progSl.current, 0, '被吞时 progSl.current 不更新，后续位移继续累加');
+  assert.equal(progSl.current, 0, 'progSl.current is not updated when swallowed, later displacement keeps accumulating');
 
   el.scrollLeft = 1.49; // |1.49 - 0| < 1.5 -> 仍被吞掉
   assert.equal(runOnScrollStep(el, bl, clips, progSl, onScrub), false);
@@ -335,7 +335,7 @@ test('SS5 posFromScroll 与 scrollForPos 来回一致性（1 段 6 秒）与 onS
   assert.equal(scrubbedTimes.length, 1);
   assert.ok(Math.abs(scrubbedTimes[0] - 0.1125) < 1e-15);
 
-  console.log('[SS5] onScroll 1.5px 门限验证:', {
+  console.log('[SS5] onScroll 1.5px threshold check:', {
     progSlAfter1_5px: progSl.current,
     scrubbedTimeAt1_5px: scrubbedTimes[0],
   });
@@ -346,7 +346,7 @@ test('SS5 posFromScroll 与 scrollForPos 来回一致性（1 段 6 秒）与 onS
  * want 从上一段末尾直接跳到下一段左缘，中间那 30px（.mark 宽 24 + 左右各 3）不属于任何一段 ——
  * 播到边界瞬移、手动滚进去时间卡住。改成按「本卡左缘 → 下一卡左缘」算之后两头都连续。
  */
-test('SS6 段边界不再有 30px 死区：want 连续、来回可逆（3 段各 2 秒，中间两个 .mark）', () => {
+test('SS6 segment boundaries no longer have a 30px dead zone: want is continuous and reversible back and forth (3 segments of 2 s each, two .mark in the middle)', () => {
   const W = 390, CARD = 80, MARK = 30;
   const el = { clientWidth: W, scrollLeft: 0 };
   const left0 = W / 2;
@@ -357,19 +357,19 @@ test('SS6 段边界不再有 30px 死区：want 连续、来回可逆（3 段各
   let prev = scrollForPos(el, bl, 0), maxJump = 0;
   for (let pos = STEP; pos <= 3; pos += STEP) {
     const w = scrollForPos(el, bl, pos);
-    assert.ok(w >= prev - 1e-9, `want 必须单调不减，pos=${pos}`);
+    assert.ok(w >= prev - 1e-9, `want must be monotonically non-decreasing, pos=${pos}`);
     maxJump = Math.max(maxJump, w - prev);
     prev = w;
   }
   // 每段跨 CARD+MARK=110px、512 步，单步约 0.215px；留宽到 1px 仍远小于 30
-  assert.ok(maxJump < 1, `相邻两步最大跨度 ${maxJump}px，不该出现 30px 的瞬移`);
+  assert.ok(maxJump < 1, `Max span between adjacent steps is ${maxJump}px, a 30px jump must not occur`);
 
   // 2) 整条可逆：滚动位置 → pos → 滚动位置，误差可忽略（改之前 .mark 那 30px 恒回整数）
   const maxScroll = scrollForPos(el, bl, 3);
   for (let x = 0; x <= maxScroll; x += 1) {
     el.scrollLeft = x;
     const back = scrollForPos(el, bl, posFromScroll(el, bl));
-    assert.ok(Math.abs(back - x) < 1e-6, `x=${x} 来回不一致：回来是 ${back}`);
+    assert.ok(Math.abs(back - x) < 1e-6, `x=${x} inconsistent round trip: came back as ${back}`);
   }
   el.scrollLeft = 0;
 
@@ -377,6 +377,6 @@ test('SS6 段边界不再有 30px 死区：want 连续、来回可逆（3 段各
   const boundary = scrollForPos(el, bl, 1);
   el.scrollLeft = boundary - 5; const before = posFromScroll(el, bl);
   el.scrollLeft = boundary + 5; const after = posFromScroll(el, bl);
-  assert.ok(before < 1 && before > 0.9, `边界左边应接近 1 但小于 1，实际 ${before}`);
-  assert.ok(after > 1 && after < 1.1, `边界右边应刚过 1，实际 ${after}`);
+  assert.ok(before < 1 && before > 0.9, `Left of the boundary should be close to 1 but below 1, actual ${before}`);
+  assert.ok(after > 1 && after < 1.1, `Right of the boundary should be just past 1, actual ${after}`);
 });

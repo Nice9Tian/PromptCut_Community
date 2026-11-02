@@ -1,3 +1,4 @@
+import { tr } from "../i18n/index.ts";
 /**
  * 页面上传器:把纯浏览器节点生成的快照块推到素材服务(M7 契约第 4.5 节、D7「父页推」)。
  *
@@ -69,7 +70,7 @@ export function createSnapUploader(deps: UploaderDeps): SnapUploader {
 
   const urlOf = (ns: Namespace, hash: string, tail: string) => {
     const base = deps.base();
-    if (!base) throw fail("还没有远程素材服务");
+    if (!base) throw fail(tr("There is no remote asset service yet"));
     return `${base.replace(/\/+$/, "")}/${ns}/${hash}${tail}`;
   };
 
@@ -108,15 +109,15 @@ export function createSnapUploader(deps: UploaderDeps): SnapUploader {
         headers: { "Content-Type": "application/octet-stream", "X-Media-Size": String(size), "X-Media-Ext": ext },
         body: body as BodyInit,
       });
-      if (!res.ok) throw fail(`推 ${ns} 第 ${n} 片回 ${res.status}`, { status: res.status });
+      if (!res.ok) throw fail(tr("push {0} part {1} returned {2}", ns, n, res.status), { status: res.status });
     }
   };
 
   /** 推一块:对账 → 缺的片 → 收尾;收尾回 `incomplete`(别人的请求与这一次交错)就重查 chunks、补传一次再收尾 */
   const pushOnce = async (ns: Namespace, hash: string, bytes: Uint8Array, ext: string): Promise<"pushed" | "skipped"> => {
     try {
-      if (!HEX64.test(hash)) throw fail(`哈希不对:${hash.slice(0, 16)}`, { retryable: false });
-      if (!bytes.length) throw fail("不能推空块", { retryable: false });
+      if (!HEX64.test(hash)) throw fail(tr("invalid hash: {0}", hash.slice(0, 16)), { retryable: false });
+      if (!bytes.length) throw fail(tr("cannot push an empty chunk"), { retryable: false });
       let state = await chunksOf(ns, hash);
       if (state.complete) { stats.skipped++; return "skipped"; }
       for (let attempt = 0; ; attempt++) {
@@ -130,7 +131,7 @@ export function createSnapUploader(deps: UploaderDeps): SnapUploader {
           if (state.complete) break;
           continue;
         }
-        throw fail(`收尾 ${ns} 回 ${done.status}${body?.error ? ` ${body.error}` : ""}`, { status: done.status });
+        throw fail(tr("finalize {0} returned {1}{2}", ns, done.status, body?.error ? ` ${body.error}` : ""), { status: done.status });
       }
       stats.pushed++;
       stats.pushedBytes += bytes.length;
@@ -144,7 +145,7 @@ export function createSnapUploader(deps: UploaderDeps): SnapUploader {
 
   const chunksOf = async (ns: Namespace, hash: string) => {
     const res = await authed(urlOf(ns, hash, "/chunks"), { method: "GET", cache: "no-store" });
-    if (!res.ok) throw fail(`对账 ${ns} 回 ${res.status}`, { status: res.status });
+    if (!res.ok) throw fail(tr("reconcile {0} returned {1}", ns, res.status), { status: res.status });
     const tb = now();
     const j = (await res.json()) as { size?: number | null; received?: number[]; complete?: boolean };
     stats.ms.body += now() - tb;

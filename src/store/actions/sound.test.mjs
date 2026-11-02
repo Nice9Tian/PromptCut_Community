@@ -60,17 +60,17 @@ test("regeneration replaces one reference only, retaining range/offset/gain and 
   const clip = findClip(getState().project, result.clipId).clip;
   assert.equal(clip.audioVolume, .4); assert.equal(clip.start, oldClip.start); assert.equal(clip.end, oldClip.end);
   assert.equal(before.media.length, 1); assert.equal(oldClip.mediaId, result.mediaId);
-  assert.throws(() => actions.commitSoundEffect(regen), /已改变/);
+  assert.throws(() => actions.commitSoundEffect(regen), /has changed/);
 });
 
 test("overlap, locked and stale project validation does not add an asset", () => {
   const p = fresh(); const result = actions.commitSoundEffect(spec({ duration: 1 }));
   const count = getState().project.media.length;
-  assert.throws(() => actions.commitSoundEffect(spec({ start: 1.2, trackId: p.tracks[0].id, link: { recipe, reuseKey, requestId: "other" } })), /重叠/);
+  assert.throws(() => actions.commitSoundEffect(spec({ start: 1.2, trackId: p.tracks[0].id, link: { recipe, reuseKey, requestId: "other" } })), /overlap/);
   assert.equal(getState().project.media.length, count);
   actions.updateTrack(p.tracks[0].id, { locked: true });
-  assert.throws(() => actions.commitSoundEffect(spec({ replaceClipId: result.clipId, expectedClip: JSON.stringify(findClip(getState().project, result.clipId).clip) })), /解锁/);
-  assert.throws(() => actions.commitSoundEffect(spec({ projectId: "old" })), /切换/);
+  assert.throws(() => actions.commitSoundEffect(spec({ replaceClipId: result.clipId, expectedClip: JSON.stringify(findClip(getState().project, result.clipId).clip) })), /Unlock the sound effect track/);
+  assert.throws(() => actions.commitSoundEffect(spec({ projectId: "old" })), /project or cut has changed/);
 });
 
 test("split and trim retain canonical source offsets; linked sounds move and split in sync", async () => {

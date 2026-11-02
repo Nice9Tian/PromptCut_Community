@@ -1,4 +1,5 @@
 import type { PickedFile, StorageProviderConfig } from "./storageImport";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * Google 的授权与选文件(任务书 `docs/plan/drive-connector-task.md` 第 5 节)。
@@ -47,9 +48,9 @@ function loadScript(src: string): Promise<void> {
     el.src = src;
     el.async = true;
     el.defer = true;
-    const timer = setTimeout(() => reject(new Error(`加载 ${src} 超时,检查网络`)), SCRIPT_TIMEOUT_MS);
+    const timer = setTimeout(() => reject(new Error(tr("Loading {0} timed out, check your network", src))), SCRIPT_TIMEOUT_MS);
     el.onload = () => { clearTimeout(timer); resolve(); };
-    el.onerror = () => { clearTimeout(timer); reject(new Error(`加载 ${src} 失败,检查网络`)); };
+    el.onerror = () => { clearTimeout(timer); reject(new Error(tr("Loading {0} failed, check your network", src))); };
     document.head.appendChild(el);
   });
   loading.set(src, p);
@@ -63,7 +64,7 @@ function waitFor<T>(get: () => T | undefined, what: string): Promise<T> {
     const tick = () => {
       const v = get();
       if (v) return resolve(v);
-      if (Date.now() - started > SCRIPT_TIMEOUT_MS) return reject(new Error(`${what} 没有就绪`));
+      if (Date.now() - started > SCRIPT_TIMEOUT_MS) return reject(new Error(tr("{0} is not ready", what)));
       setTimeout(tick, 60);
     };
     tick();
@@ -72,15 +73,15 @@ function waitFor<T>(get: () => T | undefined, what: string): Promise<T> {
 
 async function ensureGis(): Promise<any> {
   await loadScript(GIS_SRC);
-  return waitFor(() => G().google?.accounts?.oauth2, "Google 授权脚本");
+  return waitFor(() => G().google?.accounts?.oauth2, tr("Google authorization script"));
 }
 
 async function ensurePicker(): Promise<any> {
   await loadScript(GAPI_SRC);
-  const gapi = await waitFor(() => G().gapi, "Google API 脚本");
+  const gapi = await waitFor(() => G().gapi, tr("Google API script"));
   if (!G().google?.picker) {
     await new Promise<void>((resolve, reject) => {
-      try { gapi.load("picker", { callback: () => resolve(), onerror: () => reject(new Error("Picker 模块没载入")) }); }
+      try { gapi.load("picker", { callback: () => resolve(), onerror: () => reject(new Error(tr("Picker module failed to load"))) }); }
       catch (e) { reject(e); }
     });
   }
@@ -102,7 +103,7 @@ const EXPIRY_MARGIN_MS = 5 * 60 * 1000;
 /** 要一张 access token。手里那张还够用就直接给,不再弹窗 */
 export async function getDriveToken(cfg: StorageProviderConfig, { force = false } = {}): Promise<DriveToken> {
   if (!force && cached && cached.expiresAt - EXPIRY_MARGIN_MS > Date.now()) return cached;
-  if (!cfg.clientId) throw new Error("没有 OAuth 客户端 ID,服务端还没配好");
+  if (!cfg.clientId) throw new Error(tr("No OAuth client ID, the server is not configured yet"));
   const oauth2 = await ensureGis();
   const scope = cfg.scope || "https://www.googleapis.com/auth/drive.file";
 
@@ -111,21 +112,26 @@ export async function getDriveToken(cfg: StorageProviderConfig, { force = false 
       client_id: cfg.clientId,
       scope,
       callback: (resp: any) => {
-        if (resp?.error) return reject(new Error(`授权没通过:${resp.error_description || resp.error}`));
-        if (!resp?.access_token) return reject(new Error("授权回包里没有 access token"));
+        if (resp?.error) return reject(authError(tr("Authorization failed: {0}", resp.error_description || resp.error)));
+        if (!resp?.access_token) return reject(authError(tr("No access token in the authorization response")));
         resolve({
           token: String(resp.access_token),
           expiresAt: Date.now() + (Number(resp.expires_in) || 3600) * 1000,
           scope: String(resp.scope || scope),
         });
       },
-      error_callback: (err: any) => reject(new Error(`授权窗口关闭或被拦:${err?.type || "未知原因"}`)),
+      error_callback: (err: any) => reject(Object.assign(new Error(tr("Authorization window closed or blocked: {0}", err?.type || tr("unknown reason"))), { closed: true })),
     });
     client.requestAccessToken();
   });
 
   cached = got;
   return got;
+}
+
+/** An error the caller should answer by dropping the token (StorageImportButton.tsx) */
+function authError(message: string): Error {
+  return Object.assign(new Error(message), { authFailed: true });
 }
 
 /** 手动把手里那张票作废(换账号、撤销授权之后) */
@@ -156,8 +162,8 @@ function randomB64url(bytes = 48): string {
  * 也就谈不上「关掉页面还能继续传」。
  */
 export async function requestDriveAuthCode(cfg: StorageProviderConfig): Promise<{ code: string; codeVerifier: string } | null> {
-  if (!cfg.clientId) throw new Error("没有 OAuth 客户端 ID,服务端还没配好");
-  if (!cfg.redirectUri) throw new Error("没有重定向地址,服务端还没配好凭据托管");
+  if (!cfg.clientId) throw new Error(tr("No OAuth client ID, the server is not configured yet"));
+  if (!cfg.redirectUri) throw new Error(tr("No redirect URI, the server has not configured hosted credentials yet"));
 
   const codeVerifier = randomB64url(48);
   const challenge = b64url(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(codeVerifier)));
@@ -176,7 +182,7 @@ export async function requestDriveAuthCode(cfg: StorageProviderConfig): Promise<
   })}`;
 
   const popup = window.open(url, "promptcut-oauth", "width=520,height=640");
-  if (!popup) throw new Error("授权窗口被浏览器拦住了,请允许本站弹窗后重试");
+  if (!popup) throw new Error(tr("The authorization window was blocked by the browser, allow pop-ups for this site and try again"));
 
   return new Promise((resolve, reject) => {
     let done = false;
@@ -194,8 +200,8 @@ export async function requestDriveAuthCode(cfg: StorageProviderConfig): Promise<
       if (e.origin !== window.location.origin) return;
       const d = e.data;
       if (!d || d.source !== "promptcut-oauth" || d.state !== state) return;
-      if (d.error) return finish(() => reject(new Error(`授权没通过:${d.error}`)));
-      if (typeof d.code !== "string" || !d.code) return finish(() => reject(new Error("授权回调里没有授权码")));
+      if (d.error) return finish(() => reject(authError(tr("Authorization failed: {0}", d.error))));
+      if (typeof d.code !== "string" || !d.code) return finish(() => reject(authError(tr("No authorization code in the authorization callback"))));
       const code = d.code;
       finish(() => resolve({ code, codeVerifier }));
     }
@@ -214,8 +220,8 @@ export async function requestDriveAuthCode(cfg: StorageProviderConfig): Promise<
  * 必须带 `setAppId`(Cloud 项目编号):`drive.file` 的「按文件授权」是记在这个应用名下的,不给就选了也读不到。
  */
 export async function pickDriveFiles(cfg: StorageProviderConfig, token: string): Promise<PickedFile[] | null> {
-  if (!cfg.apiKey) throw new Error("没有 API 密钥,服务端还没配好");
-  if (!cfg.appId) throw new Error("没有 Cloud 项目编号,Picker 的按文件授权记不上账");
+  if (!cfg.apiKey) throw new Error(tr("No API key, the server is not configured yet"));
+  if (!cfg.appId) throw new Error(tr("No Cloud project number, Picker's per-file authorization cannot be recorded"));
   const picker = await ensurePicker();
 
   return new Promise<PickedFile[] | null>((resolve, reject) => {

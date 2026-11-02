@@ -14,9 +14,9 @@ if (exists("src/online/mode.ts")) {
   mock.module(srcUrl("online/mode.ts"), { exports: { ONLINE: false } });
   guard = await findApiGuard((rel) => import(repoUrl(rel)));
 }
-const skip = skipIf(!guard, "src/online/ 下的 /api 守卫（K6）");
+const skip = skipIf(!guard, "/api guard under src/online/ (K6)");
 
-test("C10A-API-06 桌面运行环境（ONLINE = false）：装了守卫也不拦 /api/", { skip }, async () => {
+test("C10A-API-06 desktop runtime (ONLINE = false): the guard does not block /api/ even when installed", { skip }, async () => {
   const passed = [];
   const real = globalThis.fetch;
   globalThis.window ??= globalThis;

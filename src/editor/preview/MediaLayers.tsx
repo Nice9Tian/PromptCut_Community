@@ -17,6 +17,7 @@ import { ONLINE_CARD_AUDIO_BLOCKED } from "../../online/soundPolicy";
 import { onlineLiveCardAudio, onlineLiveEffectAudio } from "../io/onlineSoundSource";
 import { confirmedMissingAudio } from "../io/missingMaterials";
 import "../io/onlineSoundBoot";
+import { tr as trText } from "../../i18n/index.ts";
 
 /**
  * 预览里的素材层:画面(视频/图片)和声音(配乐、旁白)。
@@ -91,7 +92,7 @@ function AudioLayer({ project, clip, media, volume, t, playing, scrubbing, audio
       setCardOffset(0);
       if (onlinePage()) {
         const live = await onlineLiveCardAudio(project, clip, nodeId, frames);
-        if (!live) throw new Error(embedded ? `${clip.label ?? clip.id} 的卡片声音素材无法读取，请恢复素材或重新生成` : ONLINE_CARD_AUDIO_BLOCKED);
+        if (!live) throw new Error(embedded ? trText("The card audio asset of {0} cannot be read, please restore the asset or regenerate it", clip.label ?? clip.id) : ONLINE_CARD_AUDIO_BLOCKED);
         return live;
       }
       return acquireCardAudioClipUrl({ project, nodeId, frames });
@@ -135,7 +136,7 @@ function AudioLayer({ project, clip, media, volume, t, playing, scrubbing, audio
     onError={() => {
       // 在线页面:产物的字节取不到(没同步到、素材服务里被清了)→ 换成浏览器合成的播放源
       if (!missingAudio && onlinePage() && !productFailed && (effectKey || (nodeId && embedded))) { setProductFailed(true); return; }
-      if (nodeId && cardUrl) { const message = `${clip.label ?? clip.id} 的卡片声音素材无法读取，请恢复素材或重新生成`; setCardState("error"); onCardState?.(clip.id, "error", message); }
+      if (nodeId && cardUrl) { const message = trText("The card audio asset of {0} cannot be read, please restore the asset or regenerate it", clip.label ?? clip.id); setCardState("error"); onCardState?.(clip.id, "error", message); }
     }}
     src={nodeId ? (cardUrl ?? undefined) : missingAudio ? MISSING_MATERIAL_WAV_URL : (effectUrl ?? held.current)} preload="auto" hidden
     data-pc-audio-clip={clip.id} data-pc-audio-source={nodeId ? (cardUrl ? (cardLive ? "live" : "product") : undefined) : (effectUrl ? "live" : "product")}
@@ -218,7 +219,7 @@ export function MediaLayers({
       {generated.map((a) => <AudioLayer key={`card-audio:${a.clip.id}`} project={sound} clip={a.clip} media={a.media} volume={a.volume * master} t={t} playing={playing} scrubbing={scrubbing} audioFx={project.audioFx} onCardState={setGeneratedStatus} localHashes={localHashes} />)}
       {generated.map(({ clip }) => {
         const status = cardStatus[clip.id]; if (!status || status.state === "ready") return null;
-        return <div key={`card-audio-status:${clip.id}`} role="status" aria-live="polite" style={{ position: "absolute", left: 12, bottom: 12, zIndex: 100, padding: "6px 9px", borderRadius: 4, color: "#fff", background: status.state === "error" ? "#a11" : "#333", fontSize: 12 }}>{status.state === "pending" ? `正在生成音频：${clip.label ?? clip.id}` : `音频生成失败：${status.message ?? clip.label ?? clip.id}`}</div>;
+        return <div key={`card-audio-status:${clip.id}`} role="status" aria-live="polite" style={{ position: "absolute", left: 12, bottom: 12, zIndex: 100, padding: "6px 9px", borderRadius: 4, color: "#fff", background: status.state === "error" ? "#a11" : "#333", fontSize: 12 }}>{status.state === "pending" ? trText("Generating audio: {0}", clip.label ?? clip.id) : trText("Audio generation failed: {0}", status.message ?? clip.label ?? clip.id)}</div>;
       })}
     </>
   );

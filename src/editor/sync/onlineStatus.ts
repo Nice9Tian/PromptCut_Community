@@ -14,13 +14,14 @@
  * 「同步已暂停」(离线批次第一条被拒,C6.5)照旧用原来的小部件,不在这五条里。
  */
 import type { SyncStatus } from "../../store/docsync";
+import { tr } from "../../i18n/index.ts";
 
 export const ONLINE_STATUS_TEXT = {
-  noNetwork: "当前没有网络连接。",
-  docDown: "连不上服务器，请稍后再试。你的修改先留在本页，恢复后会自动提交。",
-  assetDown: "连不上素材服务，素材原尺寸和预渲染结果暂时显示不了。",
-  recovering: "已恢复连接，正在提交离线时的修改…",
-  recovered: "离线时的修改已全部提交。",
+  noNetwork: tr("No network connection at the moment."),
+  docDown: tr("Can't connect to the server, please try again later. Your changes stay on this page for now and will be submitted automatically once the connection is restored."),
+  assetDown: tr("Can't connect to the asset service, so original-size media and prerender output can't be displayed for now."),
+  recovering: tr("Connection restored. Submitting the changes made while offline…"),
+  recovered: tr("All changes made while offline have been submitted."),
 } as const;
 
 export type OnlineStatusKind = keyof typeof ONLINE_STATUS_TEXT;
@@ -32,8 +33,8 @@ export type OnlineStatusKind = keyof typeof ONLINE_STATUS_TEXT;
  * 原文「当前离线，有未提交的修改。关闭页面将丢失这些操作。」作废:对账号项目是一句假警告。
  */
 export const OFFLINE_UNSENT_TEXT = {
-  saved: "当前离线。你的改动已存在本机，连上网络后会合并回项目。",
-  page: "当前离线。你的改动只在这个页面里，关掉页面就会丢失。",
+  saved: tr("Currently offline. Your changes are saved on this machine and will be merged back into the project once you're back online."),
+  page: tr("Currently offline. Your changes exist only on this page and will be lost when you close it."),
 } as const;
 
 /** 离线改动现在存在哪:本机(浏览器本地缓存、本机恢复文件)还是只在这个页面里 */
@@ -50,9 +51,9 @@ export function offlineUnsentText(store: OfflineStore): string {
  * 改动已存在本机(`store: "saved"`)的不问:再进这个项目会把它接着提交(`syncManager.ts` 的 `restoreBrowserJournal`)。
  * 「项目还没保存」那一类提示不在这里:在线页面都是云端项目,没有本机草稿这回事(issue #16)。
  */
-export const UNSENT_LEAVE_BODY = "当前离线，你的改动只在这个页面里。离开编辑界面会丢失它们。";
+export const UNSENT_LEAVE_BODY = tr("You are offline, and your changes exist only in this page. Leaving the editor will lose them.");
 /** 顶栏那两条路用浏览器原生的 `confirm`(按钮是「确定 / 取消」),所以末尾要带一问 */
-export const UNSENT_LEAVE_TEXT = `${UNSENT_LEAVE_BODY}继续？`;
+export const UNSENT_LEAVE_TEXT = tr("{0} Continue?", UNSENT_LEAVE_BODY);
 
 /**
  * 离线改动这会儿到底存在哪。**存不住就得说存不住**:这台浏览器连 IndexedDB 和 localStorage 都给不了时,
@@ -68,7 +69,7 @@ export function offlineStoreOf(o: { durable: boolean; account: boolean; online: 
  * 气泡:离线时手里有没提交的改动,而这台浏览器存不下它们(存储用不了、或者写失败)。
  * 常驻提示只说「在哪」,这一句说「为什么」,出一次就够,别每拍都弹。
  */
-export const UNSENT_NO_STORE_TOAST = "这台浏览器存不下离线时的修改：它们只在这个页面里，关掉页面或离开编辑界面就会丢。";
+export const UNSENT_NO_STORE_TOAST = tr("This browser can't store changes made offline: they exist only in this page and will be lost if you close the page or leave the editor.");
 
 /** 离线类措辞持续这么久才显示(不闪) */
 export const OFFLINE_SHOW_DELAY_MS = 1500;
@@ -130,7 +131,7 @@ export function nextRecovery(prev: { phase: "recovering" | "recovered" | null; w
 }
 
 /** 在线浏览器断网时「导入媒体」置灰后的提示(2026-10-22 用户定,`workflow/project.md`「断网时能做的事」) */
-export const IMPORT_OFFLINE_TEXT = "当前离线";
+export const IMPORT_OFFLINE_TEXT = tr("You are offline");
 
 /**
  * 「导入媒体」要不要置灰:只有在线浏览器断网时(浏览器说没网,或连不上文档服务)。桌面版照常导入,连上后再上传;

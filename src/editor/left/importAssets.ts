@@ -54,7 +54,7 @@ function probeAudio(url: string, name: string): Promise<{ duration?: number }> {
     el.preload = "metadata";
     el.onloadedmetadata = () => settle({ duration: Number.isFinite(el.duration) ? el.duration : undefined });
     el.onerror = () => {
-      console.warn(`[left] 探测音频失败: ${name}`);
+      console.warn(`[left] failed to probe audio: ${name}`);
       settle({});
     };
     el.src = url;
@@ -66,7 +66,7 @@ function probeImage(url: string, name: string): Promise<{ width?: number; height
     const img = new Image();
     img.onload = () => settle({ width: img.naturalWidth || undefined, height: img.naturalHeight || undefined });
     img.onerror = () => {
-      console.warn(`[left] 探测图片失败: ${name}`);
+      console.warn(`[left] failed to probe image: ${name}`);
       settle({});
     };
     img.src = url;

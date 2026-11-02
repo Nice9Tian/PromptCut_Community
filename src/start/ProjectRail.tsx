@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import type { JSX } from "react";
 import { CreateTile, ProjectThumb } from "./ProjectThumb";
 import type { VibeProject } from "./types";
+import { tr } from "../i18n/index.ts";
 
 /** 一格的宽度和间距,与 `start.css` 里 `.ps-tile` 的 flex-basis、`.ps-strip` 的 gap 对齐 */
 const TILE_W = 196;
@@ -56,14 +57,14 @@ export function ProjectRail(props: {
     <section className="ps-rail" data-pc="start-rail">
       <div className="ps-rail-head">
         <h2 className="ps-rail-title">{props.title}</h2>
-        <span className="ps-muted" data-pc="start-rail-count">共 {props.projects.length} 个</span>
+        <span className="ps-muted" data-pc="start-rail-count">{tr("{0} total", props.projects.length)}</span>
         <span className="ps-rail-spacer" />
-        <span className="ps-page-at" data-pc="start-rail-page">第 {at + 1} / {pages} 页</span>
+        <span className="ps-page-at" data-pc="start-rail-page">{tr("Page {0} / {1}", at + 1, pages)}</span>
         <button
           type="button"
           className="ps-page-btn"
           data-pc="start-rail-prev"
-          aria-label="上一页"
+          aria-label={tr("Previous page")}
           disabled={at <= 0}
           onClick={() => setPage(at - 1)}
         >
@@ -73,7 +74,7 @@ export function ProjectRail(props: {
           type="button"
           className="ps-page-btn"
           data-pc="start-rail-next"
-          aria-label="下一页"
+          aria-label={tr("Next page")}
           disabled={at >= pages - 1}
           onClick={() => setPage(at + 1)}
         >

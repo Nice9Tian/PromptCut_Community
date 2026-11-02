@@ -208,7 +208,7 @@ function stageOf(ctx: BaseAudioContext, op: ResolvedAudioOp): Stage {
     p.pan.value = values.pan;
     return { input: p, output: p, nodes: [p], apply: (v, when, c, ramp) => setParam(p.pan, v.pan, when, c, ramp) };
   }
-  throw new Error(`不认识的音频效果种类 ${String(kind)}`);
+  throw new Error(`Unknown audio effect kind ${String(kind)}`);
 }
 
 /* ---------------------------------------------------------------- 整条链 */

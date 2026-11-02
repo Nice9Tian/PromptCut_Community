@@ -7,6 +7,7 @@ import { CollabSection, type CollabHandle } from "./sync/CollabSection";
 import { ReadOnlyFence } from "./ReadOnlyFence";
 import { useReadOnly } from "./readOnly";
 import { CREATIVITY_HINT, CREATIVITY_LABEL, CREATIVITY_LEVELS, CREATIVITY_SHORT, DEFAULT_CREATIVITY, normalizeCreativity, projectCreativity, type CreativityLevel } from "../kernel/creativity.mjs";
+import { tr } from "../i18n/index.ts";
 
 export interface ProjectSettingsDialogProps {
   open: boolean;
@@ -88,7 +89,7 @@ export function ProjectSettingsDialog({ open, onClose }: ProjectSettingsDialogPr
     if (!Number.isFinite(requestedDuration) || requestedDuration < 1) return;
     // 名字允许留空,但不允许真的变成空标题——空了就退回「未命名」
     actions.setProjectMeta({
-      name: name.trim() || "未命名",
+      name: name.trim() || tr("Untitled"),
       width: currentRes.width,
       height: currentRes.height,
       // pinned 架构 7：所有步长按 1/fps。成本键含 fps（`cardCostKey`），换了帧率
@@ -101,7 +102,7 @@ export function ProjectSettingsDialog({ open, onClose }: ProjectSettingsDialogPr
     });
     if (requestedDuration !== curDuration) actions.setDurationManual(requestedDuration);
     // 多用户协作:勾上并保存 = 开启,取消勾选并保存 = 关闭;这一段在忙时对话框不关
-    if (await collabRef.current?.apply(name.trim() || "未命名")) return;
+    if (await collabRef.current?.apply(name.trim() || tr("Untitled"))) return;
     onClose();
   };
 
@@ -162,25 +163,25 @@ export function ProjectSettingsDialog({ open, onClose }: ProjectSettingsDialogPr
         onClick={(e) => e.stopPropagation()}
       >
         <div id="pc-dialog-title-settings" className="pc-dialog-title">
-          项目设置
+          {tr("Project settings")}
         </div>
         <div className="pc-dialog-body">
           {ro.locked && <div className="pc-dialog-row" data-pc="settings-readonly-note">{ro.why}</div>}
           <ReadOnlyFence>
           <div className="pc-dialog-row">
-            <label className="pc-dialog-label" htmlFor="pc-proj-name">项目名称</label>
+            <label className="pc-dialog-label" htmlFor="pc-proj-name">{tr("Project name")}</label>
             <input
               id="pc-proj-name"
               className="pc-dialog-input"
               type="text"
               value={name}
               maxLength={80}
-              placeholder="未命名"
+              placeholder={tr("Untitled")}
               onChange={(e) => setName(e.target.value)}
             />
           </div>
           <div className="pc-dialog-row">
-            <span className="pc-dialog-label">画幅比例</span>
+            <span className="pc-dialog-label">{tr("Aspect ratio")}</span>
             <div className="pc-dialog-options">
               <button
                 type="button"
@@ -199,26 +200,26 @@ export function ProjectSettingsDialog({ open, onClose }: ProjectSettingsDialogPr
             </div>
           </div>
           <div className="pc-dialog-row">
-            <span className="pc-dialog-label">画幅方向</span>
+            <span className="pc-dialog-label">{tr("Orientation")}</span>
             <div className="pc-dialog-options">
               <button
                 type="button"
                 className={`pc-dialog-opt${orientation === "horizontal" ? " pc-dialog-opt--on" : ""}`}
                 onClick={() => setOrientation("horizontal")}
               >
-                横版
+                {tr("Landscape")}
               </button>
               <button
                 type="button"
                 className={`pc-dialog-opt${orientation === "vertical" ? " pc-dialog-opt--on" : ""}`}
                 onClick={() => setOrientation("vertical")}
               >
-                竖版
+                {tr("Portrait")}
               </button>
             </div>
           </div>
           <div className="pc-dialog-row">
-            <label className="pc-dialog-label" htmlFor="pc-proj-fps">帧率</label>
+            <label className="pc-dialog-label" htmlFor="pc-proj-fps">{tr("Frame rate")}</label>
             <select
               id="pc-proj-fps"
               data-pc="fps-select"
@@ -232,7 +233,7 @@ export function ProjectSettingsDialog({ open, onClose }: ProjectSettingsDialogPr
             </select>
           </div>
           <div className="pc-dialog-row">
-            <label className="pc-dialog-label" htmlFor="pc-proj-gl-route">三维渲染</label>
+            <label className="pc-dialog-label" htmlFor="pc-proj-gl-route">{tr("3D rendering")}</label>
             <select
               id="pc-proj-gl-route"
               data-pc="gl-route-select"
@@ -240,28 +241,28 @@ export function ProjectSettingsDialog({ open, onClose }: ProjectSettingsDialogPr
               value={glRoute}
               onChange={(e) => setGlRoute(e.target.value as "" | "perDocument" | "shared")}
             >
-              <option value="">自动(按本机内存)</option>
-              <option value="perDocument">每个舞台各一个</option>
-              <option value="shared">两个舞台共用一个(省内存)</option>
+              <option value="">{tr("Auto (by local memory)")}</option>
+              <option value="perDocument">{tr("One per stage")}</option>
+              <option value="shared">{tr("One shared by both stages (saves memory)")}</option>
             </select>
           </div>
           <div className="pc-dialog-row">
-            <label className="pc-dialog-label" htmlFor="pc-proj-creativity">创造力等级</label>
+            <label className="pc-dialog-label" htmlFor="pc-proj-creativity">{tr("Creativity level")}</label>
             <select
               id="pc-proj-creativity"
               data-pc="creativity-select"
               className="pc-dialog-select"
               value={creativity}
-              title={`${CREATIVITY_LABEL[creativity]}:${CREATIVITY_HINT[creativity]}。AI 栏每个对话默认取这个等级,可以单独改;桌面 APP 的会话跟随它`}
+              title={tr("{0}: {1}. Each chat in the AI panel uses this level by default and can override it; desktop app sessions follow it", tr(CREATIVITY_LABEL[creativity]), tr(CREATIVITY_HINT[creativity]))}
               onChange={(e) => setCreativity(normalizeCreativity(e.target.value) ?? DEFAULT_CREATIVITY)}
             >
               {CREATIVITY_LEVELS.map((lv) => (
-                <option key={lv} value={lv} title={CREATIVITY_HINT[lv]}>{CREATIVITY_LABEL[lv]} · {CREATIVITY_SHORT[lv]}</option>
+                <option key={lv} value={lv} title={tr(CREATIVITY_HINT[lv])}>{tr(CREATIVITY_LABEL[lv])} · {tr(CREATIVITY_SHORT[lv])}</option>
               ))}
             </select>
           </div>
           <div className="pc-dialog-row">
-            <label className="pc-dialog-label" htmlFor="pc-proj-duration">总时长（秒）</label>
+            <label className="pc-dialog-label" htmlFor="pc-proj-duration">{tr("Total duration (seconds)")}</label>
             <input
               ref={durationInputRef}
               id="pc-proj-duration"
@@ -275,7 +276,7 @@ export function ProjectSettingsDialog({ open, onClose }: ProjectSettingsDialogPr
             />
           </div>
           <div className="pc-dialog-row">
-            <span className="pc-dialog-label">应用分辨率</span>
+            <span className="pc-dialog-label">{tr("Apply resolution")}</span>
             <span className="pc-dialog-res">
               {currentRes.width} × {currentRes.height}
             </span>
@@ -285,7 +286,7 @@ export function ProjectSettingsDialog({ open, onClose }: ProjectSettingsDialogPr
         </div>
         <div className="pc-dialog-foot">
           <button type="button" className="pc-btn" onClick={handleCancel}>
-            {ro.locked ? "关闭" : "取消"}
+            {ro.locked ? tr("Close") : tr("Cancel")}
           </button>
           <button
             type="button"
@@ -294,7 +295,7 @@ export function ProjectSettingsDialog({ open, onClose }: ProjectSettingsDialogPr
             title={ro.title()}
             onClick={() => void handleConfirm()}
           >
-            确定
+            {tr("OK")}
           </button>
         </div>
       </div>

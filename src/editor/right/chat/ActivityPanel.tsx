@@ -11,6 +11,7 @@ import { inboundPlan, promptOf } from "./rowPlan";
 import type { RowHandlers } from "./MessageList";
 import type { ViewMode } from "./viewPrefs";
 import "./agent.css";
+import { tr } from "../../../i18n/index.ts";
 
 /**
  * AI 栏底部的「Agent 操作」:原来气泡里的那套可视化(操作图标组、操作详细预览、阶段 / 本轮小结),按轮显示。
@@ -71,7 +72,7 @@ function RoundActivity(props: {
   const prefix = m.id;
   const segments = useMemo(() => segmentsOf(parts), [parts]);
   const inboundIcon: ExtraIcon | null = inbound?.length
-    ? { key: `${prefix}:in`, className: "ai-op--agent", label: `收到 ${inbound.length} 条其他 Agent 的消息`, count: inbound.length }
+    ? { key: `${prefix}:in`, className: "ai-op--agent", label: tr("Received {0} messages from other Agents", inbound.length), count: inbound.length }
     : null;
   const segs: RowSeg[] = segments.map((s, si) => ({
     tools: s.tools,
@@ -117,18 +118,18 @@ function RoundActivity(props: {
     if (!live && (m.error || m.outcome === "error")) {
       return (
         <div className="ai-activity-empty is-failed" data-pc="agent-activity-empty" data-failed="1">
-          这一轮失败了,没有执行任何操作{m.error ? `:${m.error}` : "。"}
+          {tr("This round failed, no operations were performed{0}", m.error ? `:${m.error}` : tr("."))}
         </div>
       );
     }
-    return <div className="ai-activity-empty" data-pc="agent-activity-empty">{live ? "还没有操作" : "这一轮没有操作"}</div>;
+    return <div className="ai-activity-empty" data-pc="agent-activity-empty">{live ? tr("No actions yet") : tr("No actions in this round")}</div>;
   }
 
   if (view === "verbose") {
     return (
       <div className="ai-activity-verbose">
         {parts.map((p, pidx) => {
-          if (p.kind === "status") return <div key={pidx} className="ai-tool-chip info">信息: {p.text}</div>;
+          if (p.kind === "status") return <div key={pidx} className="ai-tool-chip info">{tr("Info: {0}", p.text)}</div>;
           if (p.kind !== "tool" || isUserMessageCall(p.name, p.input)) return null;
           if (isReportTool(p.name)) {
             const r = parseProgressReport(p.input);
@@ -199,17 +200,17 @@ export function AgentActivityPanel(props: {
             writeOpen(!open);
           }}
         >
-          <span>{open ? "▾" : "▸"} Agent 操作</span>
-          <span className="pc-activity-count">第 {idx + 1}/{rounds.length} 轮 · {ops} 次操作{m.pending ? " · 进行中" : ""}</span>
+          <span>{tr("{0} Agent operations", open ? "▾" : "▸")}</span>
+          <span className="pc-activity-count">{tr("Round {0}/{1} · {2} operations{3}", idx + 1, rounds.length, ops, m.pending ? tr(" · in progress") : "")}</span>
         </button>
-        <button type="button" className="pc-activity-nav" data-pc="agent-activity-prev" aria-label="上一轮" title="上一轮"
+        <button type="button" className="pc-activity-nav" data-pc="agent-activity-prev" aria-label={tr("Previous round")} title={tr("Previous round")}
           disabled={idx <= 0} onClick={() => onSelect(rounds[idx - 1].id)}>‹</button>
-        <button type="button" className="pc-activity-nav" data-pc="agent-activity-next" aria-label="下一轮" title="下一轮"
+        <button type="button" className="pc-activity-nav" data-pc="agent-activity-next" aria-label={tr("Next round")} title={tr("Next round")}
           disabled={idx >= rounds.length - 1} onClick={() => onSelect(rounds[idx + 1].id)}>›</button>
       </div>
       {open ? (
         <div className="pc-activity-body">
-          {promptText ? <div className="pc-activity-prompt" title={promptText}>回应:{promptText}</div> : null}
+          {promptText ? <div className="pc-activity-prompt" title={promptText}>{tr("Reply: {0}", promptText)}</div> : null}
           {/* 换一轮时整块重挂:操作详细预览翻到哪一页、点过哪个图标都是那一轮自己的 */}
           <RoundActivity key={m.id} m={m} inbound={plan.inboundFor.get(m.id)?.list} view={view} installJobs={installJobs} expanded={expanded} on={on} />
         </div>

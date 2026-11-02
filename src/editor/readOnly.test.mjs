@@ -61,7 +61,7 @@ test("RO3 置灰说明永远是 viewOnlyText()；没锁时原来的悬停说明�
   const on = core.readOnlyState(core.memberReadOnlyNow());
   assert.equal(on.locked, true);
   assert.equal(on.why, vo.viewOnlyText());
-  assert.match(on.why, /只能查看/);
+  assert.match(on.why, /You can only view this project/);
   assert.equal(on.title("原来的说明"), vo.viewOnlyText(), "锁着就是那一句，不是控件自己编的");
   assert.equal(on.title(), vo.viewOnlyText());
   reset();
@@ -126,7 +126,7 @@ test("RO6 总时长自动对齐是个写：只读项目里不做（读写照旧�
   const D = await import(srcUrl("editor/timeline/durationSync.ts"));
   const clip = (id, start, end) => ({ id, cardId: "", start, end, params: {} });
   const load = () => {
-    actions.newProject("时长");
+    actions.newProject("Duration");
     const p = getState().project;
     // 内容末尾 4 秒，但项目里记的总时长是 10 秒：对齐的话会改成 4
     stateCore.setProject({ ...p, tracks: [{ ...p.tracks[0], clips: [clip("a", 0, 2), clip("b", 2, 4)] }], duration: 10 }, { undoable: false });

@@ -64,7 +64,7 @@ function bareCardClip(clip: Record<string, unknown>): Record<string, unknown> {
 export function isolatedBakeProject<P extends object>(project: P, input: BakeInput): P {
   if (!isFlatClipId(input.clipId)) return isolatedCardProject(project, input);
   const isolated = isolatedFlatProject(project, input.clipId, bareCardClip);
-  if (!isolated) throw Object.assign(new Error(`剪辑段里没有片段 ${input.clipId}`), { retryable: false });
+  if (!isolated) throw Object.assign(new Error(`No clip ${input.clipId} in the cut segment`), { retryable: false });
   return isolated as P;
 }
 
@@ -108,7 +108,7 @@ export function manifestBytes(m: unknown): number {
  * 超体积的帧(DOM 300 KB、画布位图 1 MB)照桌面列进清单,由拉取方判。
  */
 export function snapshotManifest(task: { resultKey: string; range: { from: number; to: number } | null; input?: Record<string, unknown> }, frames: readonly ManifestFrame[]): SnapshotManifest {
-  if (!task.range) throw Object.assign(new Error("任务没有 range"), { retryable: false });
+  if (!task.range) throw Object.assign(new Error("Task has no range"), { retryable: false });
   const { from, to } = task.range;
   const inRange = [...frames].filter((f) => f.localFrame >= from && f.localFrame <= to).sort((a, b) => a.localFrame - b.localFrame);
   const small = inRange.filter((f) => f.small && typeof f.small.hash === "string" && f.small.bytes > 0)
@@ -122,7 +122,7 @@ export function snapshotManifest(task: { resultKey: string; range: { from: numbe
     ...(small.length ? { small } : {}),
   };
   const bytes = manifestBytes(out);
-  if (bytes > RESULT_MAX_BYTES) throw Object.assign(new Error(`任务清单 ${bytes} 字节,超过上限 ${RESULT_MAX_BYTES}`), { code: "result-too-large", bytes, retryable: false });
+  if (bytes > RESULT_MAX_BYTES) throw Object.assign(new Error(`Task manifest is ${bytes} bytes, over the limit of ${RESULT_MAX_BYTES}`), { code: "result-too-large", bytes, retryable: false });
   return out;
 }
 

@@ -429,18 +429,19 @@ export function planFactoryDeps({ endpoint, ...rest }) {
 
 /** 第 17 节表 A（契约原文） */
 export const TABLE_A = [
-  '当前没有网络连接。',
-  '连不上服务器，请稍后再试。你的修改先留在本页，恢复后会自动提交。',
-  '连不上素材服务，素材原尺寸和预渲染结果暂时显示不了。',
-  '已恢复连接，正在提交离线时的修改…',
-  '离线时的修改已全部提交。',
+  // 界面源码改成英文后（经 tr() 显示），表 A 里界面的几句以英文原文为准；pageFlag.ts 还是中文，那两句不变
+  'No network connection at the moment.',
+  "Can't connect to the server, please try again later. Your changes stay on this page for now and will be submitted automatically once the connection is restored.",
+  "Can't connect to the asset service, so original-size media and prerender output can't be displayed for now.",
+  'Connection restored. Submitting the changes made while offline…',
+  'All changes made while offline have been submitted.',
   // 离线常驻提示按改动存没存下来分两句(〔裁:2026-10-22 主会话〕,原「当前离线，有未提交的修改。关闭页面将丢失这些操作。」作废)
-  '当前离线。你的改动已存在本机，连上网络后会合并回项目。',
-  '当前离线。你的改动只在这个页面里，关掉页面就会丢失。',
+  "Currently offline. Your changes are saved on this machine and will be merged back into the project once you're back online.",
+  'Currently offline. Your changes exist only on this page and will be lost when you close it.',
   '在线浏览器模式暂不支持',
   '，请在电脑上的 PromptCut 里使用。',
 ];
-export const C10_UI_MARKERS = ['，请在电脑上的 PromptCut 里使用。', '当前离线。你的改动已存在本机，连上网络后会合并回项目。'];
+export const C10_UI_MARKERS = ['，请在电脑上的 PromptCut 里使用。', "Currently offline. Your changes are saved on this machine and will be merged back into the project once you're back online."];
 /** 第 9 节：并入图标，不另报错 */
 export const DROPPED_TEXTS = ['该模式暂不支持素材输入的音频素材效果卡', '该模式暂不支持自定义卡',
   // 2026-10-21 用户定:「无论哪种都不存在『本地PC辅助渲染』这个情况」—— 舞台图标与时间轴徽标一并撤掉

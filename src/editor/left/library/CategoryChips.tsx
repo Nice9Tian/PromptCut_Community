@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { CATEGORIES, type GroupCategory } from "./groups";
+import { tr } from "../../../i18n/index.ts";
 
 export interface CategoryChipsProps {
   active: GroupCategory | null;
@@ -34,7 +35,7 @@ export function CategoryChips({ active, onCategory, onOpenGroup, groupsByCategor
   }, [menu]);
 
   return (
-    <div ref={ref} className="pc-lib-chips" role="toolbar" aria-label="分类">
+    <div ref={ref} className="pc-lib-chips" role="toolbar" aria-label={tr("Category")}>
       <button
         type="button"
         className={`pc-chip${active === null ? " is-on" : ""}`}
@@ -45,7 +46,7 @@ export function CategoryChips({ active, onCategory, onOpenGroup, groupsByCategor
           onCategory(null);
         }}
       >
-        所有
+        {tr("All")}
       </button>
       {CATEGORIES.map((cat) => {
         const groups = groupsByCategory[cat] ?? [];
@@ -60,14 +61,14 @@ export function CategoryChips({ active, onCategory, onOpenGroup, groupsByCategor
                 onCategory(cat);
               }}
             >
-              {cat}
+              {tr(cat === "visual" ? "Visual" : "Audio")}
             </button>
             <button
               type="button"
               className="pc-lib-split-caret"
               aria-haspopup="menu"
               aria-expanded={menu === cat}
-              title={`「${cat}」里的组`}
+              title={tr("Groups in \"{0}\"", cat)}
               onClick={() => setMenu((m) => (m === cat ? null : cat))}
             >
               <svg className="pc-chip-caret" viewBox="0 0 14 14" aria-hidden="true">
@@ -77,7 +78,7 @@ export function CategoryChips({ active, onCategory, onOpenGroup, groupsByCategor
             {menu === cat && (
               <div className="pc-lib-menu" role="menu">
                 {groups.length === 0 ? (
-                  <div className="pc-lib-menu-empty">没有可打开的组</div>
+                  <div className="pc-lib-menu-empty">{tr("No groups to open")}</div>
                 ) : (
                   groups.map((g) => (
                     <button

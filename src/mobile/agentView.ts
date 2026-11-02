@@ -10,6 +10,7 @@ import type { ChatMessage, MessagePart, ToolCallInfo } from "../ai/types.ts";
 import { isReportTool, parseProgressReport, type ProgressReport } from "../ai/progressReport.ts";
 import { isUserMessageCall, sayingsOf, type Saying } from "../ai/userMessages.ts";
 import { KIND_LABEL, bareToolName, toolKind } from "../editor/right/chat/iconRuns.ts";
+import { tr } from "../i18n/index.ts";
 
 /* ---------------- 引用 ---------------- */
 
@@ -26,7 +27,12 @@ export interface QuoteRef {
 }
 
 /** 一条引用在正文里的写法:同桌面 AI 栏「引用到 AI」插进输入框的那串 */
+/** Quote kind for a single overlay card inside a clip; part of the wire format like the token itself */
+// i18n-allow: wire format agents are told about, not interface text
+export const OVERLAY_QUOTE_KIND = "叠加卡";
+
 export function quoteToken(q: QuoteRef): string {
+  // i18n-allow: the quote token is a wire format agents are told about, not interface text
   return `@${q.kind || "卡片"} ${q.label}(${q.id})`;
 }
 
@@ -37,6 +43,7 @@ export function withQuotes(text: string, quotes: readonly QuoteRef[]): string {
   return `${quotes.map(quoteToken).join(" ")} ${body}`;
 }
 
+// i18n-allow: the quote token is a wire format agents are told about, not interface text
 const QUOTE_RE = /^@卡片 (.+?)\(([^()\s]+)\)(?:[ \t]+|$)/;
 
 /** 把一条用户消息开头的引用串认出来(桌面发的、手机发的写法一样);余下的是用户写的话 */
@@ -107,7 +114,7 @@ export interface RoundView {
   hasCard: boolean;
 }
 
-const reportTitle = (r: ProgressReport): string => (r.final ? "本轮小结" : r.stage ? `阶段 · ${r.stage}` : "阶段小结");
+const reportTitle = (r: ProgressReport): string => (r.final ? tr("Round summary") : r.stage ? tr("Stage · {0}", r.stage) : tr("Stage summary"));
 
 function reportView(r: ProgressReport): ReportView {
   const rows: ReportRow[] = [
@@ -156,7 +163,7 @@ export function roundView(m: ChatMessage, ordinal: number): RoundView {
     after,
     items,
     reports,
-    title: `第 ${ordinal} 轮 · ${items.length} 项操作`,
+    title: tr("Turn {0} · {1} actions", ordinal, items.length),
     hasCard: items.length > 0 || reports.length > 0,
   };
 }

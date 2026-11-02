@@ -4,6 +4,7 @@ import { collectSnapshots, frameRequest, see_frames } from "../../render/frameCl
 import { usePrerenderPreload } from "./usePrerenderPreload";
 import { MovPlayer } from "../../render/movPlayer";
 import { frameCss } from "../../kernel/layout";
+import { tr } from "../../i18n/index.ts";
 
 /** Paused exact frames and live MOV playback share see_frames and its caches. */
 export function UnifiedPreview({ project, t, playing }: { project: Project; t: number; playing: boolean }) {
@@ -124,7 +125,7 @@ export function UnifiedPreview({ project, t, playing }: { project: Project; t: n
     {!playing && image?.project === project && <img src={image.url} alt="" style={style} />}
     <style>{`@keyframes pc-card-hourglass{0%,35%{transform:rotate(0)}65%,100%{transform:rotate(180deg)}}`}</style>
     {project.tracks.flatMap(track => track.hidden ? [] : track.clips).filter(clip => missing.includes(clip.id) && t >= clip.start && t < clip.end).map(clip =>
-      <div key={clip.id} role="status" aria-label="正在预渲染" style={{ ...frameCss(clip.frame, project), display: 'grid', placeItems: 'center', border: '2px dashed #dcb66a', boxSizing: 'border-box' }}>
+      <div key={clip.id} role="status" aria-label={tr("Prerendering")} style={{ ...frameCss(clip.frame, project), display: 'grid', placeItems: 'center', border: '2px dashed #dcb66a', boxSizing: 'border-box' }}>
         <span style={{ fontSize: 28, animation: 'pc-card-hourglass 1.8s ease-in-out infinite', background: '#202934', borderRadius: 8, padding: 8 }}>⌛</span>
       </div>)}
     {error && <div role="status" style={{ position: "absolute", bottom: 8, left: 8, color: "white", background: "#842323", fontSize: 16 }}>{error}</div>}

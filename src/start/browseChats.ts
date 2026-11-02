@@ -20,6 +20,7 @@
 import { CloudError, ONLINE_AGENT_PATH, getAiCloudProvider } from "../ai/extensions.ts";
 import { viewableChats } from "./vibeOrg.ts";
 import type { VibeChat } from "./types.ts";
+import { tr } from "../i18n/index.ts";
 
 /** 会话回包里列对话用得到的几项（结构类型，不直接依赖 `src/account/client.ts`） */
 export interface BrowseSession {
@@ -74,8 +75,8 @@ export type BrowseState = Readonly<Record<string, BrowseEntry>>;
  */
 export function agentBaseOf(hosted: BrowseSession["hosted"], origin: string): { url: string | null; note?: string } {
   const agent = hosted?.agent;
-  if (!agent?.available) return { url: null, note: "这个项目所在的云端没有 Agent 服务，列不出对话。" };
-  if (agent.enabled === false) return { url: null, note: "项目创建者关闭了云端 Agent，这里列不出对话。" };
+  if (!agent?.available) return { url: null, note: tr("The cloud hosting this project has no Agent service, so chats cannot be listed.") };
+  if (agent.enabled === false) return { url: null, note: tr("The project creator turned off the Cloud Agent, so chats cannot be listed here.") };
   const url = agent.url ? agent.url.replace(/\/+$/, "") : `${origin}${ONLINE_AGENT_PATH}`;
   return { url };
 }
@@ -84,17 +85,17 @@ export function agentBaseOf(hosted: BrowseSession["hosted"], origin: string): { 
 export function browseNoteOf(error: unknown): { note: string; retry: boolean } {
   if (isAccountFailure(error)) {
     // 要输这个项目的二级密码、已不在名单、被禁入、项目没了:重试多少次都一样,告诉他去做什么
-    if (error.code === "secondary-password-required") return { note: "这个项目要先输项目二级密码：点项目名进去，按提示输入。", retry: false };
+    if (error.code === "secondary-password-required") return { note: tr("This project requires the project secondary password first: click the project name to open it and follow the prompt."), retry: false };
     if (["not-listed", "banned", "no-project", "project-gone"].includes(error.code)) return { note: error.message, retry: false };
     if (error.status === 401) return { note: error.message, retry: false };
     return { note: error.message, retry: true };
   }
   if (error instanceof CloudError) {
-    if (error.code === "disabled") return { note: "项目创建者关闭了云端 Agent，这里列不出对话。", retry: false };
-    if (error.code === "unauthorized" || error.code === "forbidden") return { note: "没有读这个项目对话的权限。", retry: false };
+    if (error.code === "disabled") return { note: tr("The project creator turned off the Cloud Agent, so chats cannot be listed here."), retry: false };
+    if (error.code === "unauthorized" || error.code === "forbidden") return { note: tr("You do not have permission to read this project's chats."), retry: false };
     return { note: error.message, retry: true };
   }
-  return { note: error instanceof Error && error.message ? error.message : "暂时读不到这个项目的对话。", retry: true };
+  return { note: error instanceof Error && error.message ? error.message : tr("Cannot read this project's chats right now."), retry: true };
 }
 
 /**
@@ -144,7 +145,7 @@ export function createBrowseChats(deps: BrowseDeps): BrowseChats {
       if (!options?.force && had && had.state === "ready" && now() - had.at < BROWSE_TTL_MS) return;
       inFlight.add(projectId);
       // 取的时候把上一次的结果留在原处:只在那一行写「正在取」,底下已经列着的对话不闪掉
-      put(projectId, { state: "loading", chats: had?.chats ?? [], note: "正在读这个项目的对话…", at: had?.at ?? 0 });
+      put(projectId, { state: "loading", chats: had?.chats ?? [], note: tr("Reading this project's chats…"), at: had?.at ?? 0 });
       void fetchBrowsedChats(projectId, deps).then(
         (out) => { inFlight.delete(projectId); put(projectId, { state: "ready", chats: out.chats, ...(out.note ? { note: out.note } : {}), at: now() }); },
         (error) => {

@@ -10,6 +10,7 @@
  * 加「叠加卡」这一级时两处都要改,漏一处就是另一个面板里引用写错级别。
  */
 import { quoteToken } from "../mobile/agentView";
+import { tr } from "../i18n/index.ts";
 
 const EVENT = "pc-quote-clip";
 
@@ -44,7 +45,7 @@ export function readQuote(ev: Event): QuoteRead | null {
   const label =
     (typeof d.label === "string" && d.label) ||
     (typeof d.cardId === "string" && d.cardId) ||
-    "未命名";
+    tr("Untitled");
   const kind = typeof d.kind === "string" && d.kind ? d.kind : undefined;
   return { id, label, kind, token: quoteToken({ id, label, kind }) };
 }

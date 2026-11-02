@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import "./railOverflow.css";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * rail 竖向放不下时的收纳:最后一格换成「▾ n」,点开一个贴着 rail 弹出的子窗口,列出放不下的项。
@@ -46,7 +47,7 @@ export const RailMoreButton = forwardRef<
       data-pc={dataPc}
       aria-haspopup="menu"
       aria-expanded={open}
-      title={title ?? `还有 ${count} 项`}
+      title={title ?? tr("{0} more", count)}
       onPointerDown={onPointerDown}
       onClick={onToggle}
     >

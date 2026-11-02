@@ -17,7 +17,7 @@ function projectWith(extra = {}) {
   return {
     filters: [{ id: "f1", name: "压暗", ops: [{ kind: "brightness", value: 0.72 }] }],
     pixelMaps: [{ id: "p1", name: "抠绿", where: "g>0.6", source: { stage: "origin" }, to: {}, mode: "continuous" }],
-    audioFx: [{ id: "a1", name: "人声清晰", ops: [{ kind: "gain", values: { db: 3 } }] }],
+    audioFx: [{ id: "a1", name: "Vocal clarity", ops: [{ kind: "gain", values: { db: 3 } }] }],
     cardNodes: [{ id: "n1", adapter: "filter", cardId: "vignette", kind: "filter" }],
     ...extra,
   };
@@ -63,7 +63,7 @@ test("摘要算不出来时留空,不抛错", () => {
 test("停用的照列,带上标着 off —— 清单是「挂着什么」,不是「现在生效什么」", () => {
   const clip = { id: "c1", start: 0, end: 1, filter: { id: "f1", off: true }, audioFx: { id: "a1" } };
   const items = overlaysOfClip(projectWith(), clip, libs);
-  assert.deepEqual(items.map((i) => [i.name, i.off]), [["压暗", true], ["人声清晰", false]]);
+  assert.deepEqual(items.map((i) => [i.name, i.off]), [["压暗", true], ["Vocal clarity", false]]);
 });
 
 test("素材效果卡切不了停用:它是节点图里的一个节点", () => {
@@ -152,6 +152,6 @@ test("没挂东西的片段在中 / 大行高照样留出带那一格", () => {
 });
 
 test("宽度估算随名字变长", () => {
-  assert.ok(chipWidth("压暗") < chipWidth("人声清晰"));
+  assert.ok(chipWidth("压暗") < chipWidth("Vocal clarity"));
   assert.ok(countWidth(9) < countWidth(10));
 });

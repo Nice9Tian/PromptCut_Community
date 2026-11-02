@@ -2,6 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import type { JSX } from "react";
 import { prerenderUrl, usePrerenderBase, withBase } from "../../render/prerender";
 import { cloudTicket } from "../../ai/extensions";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 聊天栏里一步工具的「看得见的结果」:当时返回的位图、改了哪几个参数、前后两段动图。
@@ -162,7 +163,7 @@ async function fetchCloudAssetAsUrl(
   const mime = res.headers.get("content-type") || "image/gif";
   const buf = await res.arrayBuffer();
   if (myEpoch !== scopeEpoch || currentCloudScope?.revoked) {
-    throw new Error("对话权限已变更");
+    throw new Error(tr("Chat permissions changed"));
   }
   if (typeof URL !== "undefined" && typeof URL.createObjectURL === "function" && typeof Blob !== "undefined") {
     const u = URL.createObjectURL(new Blob([buf], { type: mime }));
@@ -177,11 +178,11 @@ async function fetchCloudAssetAsUrl(
 }
 
 async function loadCloudVisualRecord(id: string, scope: CloudVisualScope, myEpoch: number): Promise<VisualRecord> {
-  if (scope.revoked) throw new Error("当前账号已无法读取这个对话的画面记录");
+  if (scope.revoked) throw new Error(tr("The current account can no longer read this chat's visual records"));
   const getTicket = scope.ticket ?? cloudTicket;
   const ticketStr = await getTicket();
   if (myEpoch !== scopeEpoch || currentCloudScope?.revoked) {
-    throw new Error("对话权限已变更");
+    throw new Error(tr("Chat permissions changed"));
   }
   const f = scope.fetchImpl ?? globalThis.fetch;
   const recordUrl = resolveCloudEndpointUrl(
@@ -201,7 +202,7 @@ async function loadCloudVisualRecord(id: string, scope: CloudVisualScope, myEpoc
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
   if (myEpoch !== scopeEpoch || currentCloudScope?.revoked) {
-    throw new Error("对话权限已变更");
+    throw new Error(tr("Chat permissions changed"));
   }
   // 如果服务端返回的 aclRevision 与当前 scope 期望的不一致，同步更新缓存键
   const rawRec = (data?.record ?? data) as VisualRecord;
@@ -234,7 +235,7 @@ async function loadCloudVisualRecord(id: string, scope: CloudVisualScope, myEpoc
 export function loadVisualRecord(id: string): Promise<VisualRecord> {
   const scope = currentCloudScope;
   if (scope) {
-    if (scope.revoked) return Promise.reject(new Error("当前账号已无法读取这个对话的画面记录"));
+    if (scope.revoked) return Promise.reject(new Error(tr("The current account can no longer read this chat's visual records")));
     const key = cacheKeyOf(id, scope);
     const hit = inflight.get(key);
     if (hit) return hit;
@@ -252,7 +253,7 @@ export function loadVisualRecord(id: string): Promise<VisualRecord> {
     return p;
   }
 
-  if (ONLINE_BUILD) return Promise.reject(new Error("在线浏览器模式没有这一步的画面记录"));
+  if (ONLINE_BUILD) return Promise.reject(new Error(tr("Online browser mode has no visual record for this step")));
   const key = cacheKeyOf(id, null);
   const hit = inflight.get(key);
   if (hit) return hit;
@@ -290,7 +291,7 @@ export function useVisualRecord(id: string | null): { rec: VisualRecord | null; 
     if (!id) return;
     const k = `${snap}:${id}`;
     if (currentCloudScope?.revoked) {
-      setState({ key: k, rec: null, err: "当前账号已无法读取这个对话的画面记录" });
+      setState({ key: k, rec: null, err: tr("The current account can no longer read this chat's visual records") });
       return;
     }
     const cached = peekVisualRecord(id);
@@ -314,7 +315,7 @@ export function useVisualRecord(id: string | null): { rec: VisualRecord | null; 
   }, [id, snap]);
 
   if (!id) return { rec: null, err: "" };
-  if (currentCloudScope?.revoked) return { rec: null, err: "当前账号已无法读取这个对话的画面记录" };
+  if (currentCloudScope?.revoked) return { rec: null, err: tr("The current account can no longer read this chat's visual records") };
   const expectedKey = `${snap}:${id}`;
   if (state.key !== expectedKey) return { rec: peekVisualRecord(id) || null, err: "" };
   return { rec: state.rec, err: state.err };
@@ -329,14 +330,14 @@ export function ToolVisual({ id }: { id: string }): JSX.Element {
   const base = usePrerenderBase();
   const cloudMode = currentCloudScope !== null;
 
-  if (err) return <div className="ai-visual-note">这一步的画面取不回来了({err})</div>;
-  if (!rec) return <div className="ai-visual-note">正在取回画面…</div>;
-  if (!cloudMode && base === null) return <div className="ai-visual-note">预渲染进程还没就绪,画面取不回来</div>;
+  if (err) return <div className="ai-visual-note">{tr("The visual for this step can no longer be retrieved ({0})", err)}</div>;
+  if (!rec) return <div className="ai-visual-note">{tr("Retrieving visual…")}</div>;
+  if (!cloudMode && base === null) return <div className="ai-visual-note">{tr("The prerender process is not ready yet, can't retrieve the visual")}</div>;
 
   const resolveSrc = (u: string) => (cloudMode || isDirectAssetUrl(u) ? u : withBase(base ?? "", u));
   const hasGif = !!(rec.before || rec.after);
-  const afterLabel = rec.before ? "修改后" : rec.tool === "get_gif" ? "整段动效" : "新加的卡片";
-  const beforeLabel = rec.after ? "修改前" : "删掉的卡片";
+  const afterLabel = rec.before ? tr("After") : rec.tool === "get_gif" ? tr("Full animation") : tr("New card");
+  const beforeLabel = rec.after ? tr("Before") : tr("Deleted card");
 
   return (
     <div className="ai-visual">
@@ -344,7 +345,7 @@ export function ToolVisual({ id }: { id: string }): JSX.Element {
         <div className="ai-visual-images">
           {rec.images.map((im, i) => (
             <figure key={i}>
-              <img src={resolveSrc(im.url)} alt={im.label || `画面 ${i + 1}`} loading="lazy" />
+              <img src={resolveSrc(im.url)} alt={im.label || tr("Frame {0}", i + 1)} loading="lazy" />
               {im.label ? <figcaption>{im.label}</figcaption> : null}
             </figure>
           ))}
@@ -363,7 +364,7 @@ export function ToolVisual({ id }: { id: string }): JSX.Element {
           ))}
         </ul>
       ) : rec.before && rec.after ? (
-        <div className="ai-visual-note">参数没有变化(可能只改了别的轨道,或者这一步被夹回了原值)</div>
+        <div className="ai-visual-note">{tr("Parameters unchanged (maybe only other tracks were changed, or this step was clamped back to the original value)")}</div>
       ) : null}
 
       {hasGif ? (
@@ -393,7 +394,7 @@ export function Gif({ src, label, onSettled }: { src: string; label: string; onS
     <figure className={`ai-visual-gif is-${state}`}>
       <div className="box">
         {state === "err" ? (
-          <button type="button" onClick={() => { setState("loading"); setAttempt((n) => n + 1); }}>动图没做出来,点这里重试</button>
+          <button type="button" onClick={() => { setState("loading"); setAttempt((n) => n + 1); }}>{tr("The animation failed to generate, click here to retry")}</button>
         ) : (
           <>
             {state === "loading" ? <span className="ai-spinner" aria-hidden /> : null}
@@ -407,7 +408,7 @@ export function Gif({ src, label, onSettled }: { src: string; label: string; onS
           </>
         )}
       </div>
-      <figcaption>{label}{state === "loading" ? " · 正在渲染…" : ""}</figcaption>
+      <figcaption>{label}{state === "loading" ? tr(" · Rendering…") : ""}</figcaption>
     </figure>
   );
 }

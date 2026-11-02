@@ -58,7 +58,7 @@ export function routePreviewAudio(el: HTMLMediaElement | null, audioFx: AudioFxD
       const s = el.currentSrc || el.src;
       if (!warned.has(s)) {
         warned.add(s);
-        console.warn(`[previewAudio] 外链素材接不进 Web Audio(跨域会静音),预览里效果不生效,导出不受影响: ${s}`);
+        console.warn(`[previewAudio] External-link media cannot be connected to Web Audio (cross-origin is muted), so effects do not apply in preview; export is not affected: ${s}`);
       }
       return;
     }
@@ -76,7 +76,7 @@ export function routePreviewAudio(el: HTMLMediaElement | null, audioFx: AudioFxD
     const s = el.currentSrc || el.src;
     if (s && !warned.has(s)) {
       warned.add(s);
-      console.warn(`[previewAudio] 这个播放槽位已经接进了 Web Audio,现在换到跨域外链素材会没声(预览限制,导出不受影响): ${s}`);
+      console.warn(`[previewAudio] This playback slot is already connected to Web Audio, so switching to cross-origin external-link media will be silent (preview limitation; export is not affected): ${s}`);
     }
   }
 

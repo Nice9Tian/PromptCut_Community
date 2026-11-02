@@ -11,6 +11,7 @@ import { useStore } from "../../store/project";
 import type { ShotTransition, TrackClip } from "../../kernel/project";
 import { mediaSpanOf, timelineSpanOf } from "../../kernel/clipTime.mjs";
 import { useTimelineContext } from "./TimelineContext";
+import { tr } from "../../i18n/index.ts";
 
 /** 缩略图太小就看不清，太大又盖住片段本身，行高不够时干脆只留竖线 */
 const THUMB_MIN_ROW_H = 40;
@@ -66,7 +67,7 @@ function thumbUrl(name: string): string {
 function CutMark({ t, left, showThumbs }: { t: ShotTransition; left: number; showThumbs: boolean }) {
   const thumb = t.thumbs?.[0];
   return (
-    <div className="pc-shot-cut" style={{ left }} title={`硬切 ${t.time.toFixed(2)}s`}>
+    <div className="pc-shot-cut" style={{ left }} title={tr("Hard cut {0}s", t.time.toFixed(2))}>
       <div className="pc-shot-line" />
       {!ONLINE_BUILD && showThumbs && thumb && (
         // 和溶解用同一个 .pc-shot-stack 包一层:标记本身宽度是 0(它就是一条线),
@@ -88,7 +89,7 @@ function DissolveMark(
     <div
       className="pc-shot-dissolve"
       style={{ left, width }}
-      title={`溶解 ${t.start.toFixed(2)}~${t.end.toFixed(2)}s`}
+      title={tr("Dissolve {0}~{1}s", t.start.toFixed(2), t.end.toFixed(2))}
     >
       {/* 渐变的两端各一条细线，中间一层薄底表示「这一段在交融」 */}
       <div className="pc-shot-line pc-shot-line--start" />

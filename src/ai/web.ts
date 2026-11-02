@@ -1,3 +1,4 @@
+import { tr } from "../i18n/index.ts";
 /**
  * 网页操作的前端胶水。
  *
@@ -51,8 +52,8 @@ async function post(path: string, body?: unknown): Promise<WebView> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body ?? {}),
   });
-  const data = await r.json().catch(() => ({ ok: false, error: `${path} 返回 ${r.status}` }));
-  if (!r.ok && data.ok !== false) return { ok: false, error: data.error || `${path} 返回 ${r.status}` };
+  const data = await r.json().catch(() => ({ ok: false, error: tr("{0} returned {1}", path, r.status) }));
+  if (!r.ok && data.ok !== false) return { ok: false, error: data.error || tr("{0} returned {1}", path, r.status) };
   return data;
 }
 

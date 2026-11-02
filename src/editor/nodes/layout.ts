@@ -1,4 +1,5 @@
 import type { Project, TrackClip } from "../../kernel/project";
+import { tr } from "../../i18n/index.ts";
 
 export interface GraphNode { id: string; label: string; kind: "media" | "filter" | "audio" | "pixelmap" | "out"; clipId?: string; trackId?: string; width: number; height: number; depth: number; x: number; y: number; active?: boolean; }
 export interface GraphEdge { id: string; from: string; to: string; active: boolean; }
@@ -15,11 +16,11 @@ export function graphOf(project: Project, time = 0): Graph {
   for (const { t, c } of visual) {
     const media = c.mediaId ? project.media.find((m) => m.id === c.mediaId) : null;
     const baseId = `clip:${c.id}`;
-    nodes.push(node(baseId, media?.name ?? c.cardId ?? "卡片", "media", 0, { clipId: c.id, trackId: t.id, active: time >= c.start && time < c.end }));
+    nodes.push(node(baseId, media?.name ?? c.cardId ?? tr("Cards"), "media", 0, { clipId: c.id, trackId: t.id, active: time >= c.start && time < c.end }));
     let prev = baseId; let depth = 1;
-    if (c.filter) { const f = project.filters?.find((x) => x.id === c.filter!.id); const id = `filter:${c.id}`; nodes.push(node(id, f?.name ?? "滤镜", "filter", depth, { clipId: c.id, active: time >= c.start && time < c.end })); edges.push({ id: `${prev}->${id}`, from: prev, to: id, active: nodes.at(-1)?.active ?? false }); prev = id; depth++; }
-    if (c.pixelMap) { const f = project.pixelMaps?.find((x) => x.id === c.pixelMap!.id); const id = `pixelmap:${c.id}`; nodes.push(node(id, f?.name ?? "像素映射", "pixelmap", depth, { clipId: c.id, active: time >= c.start && time < c.end })); edges.push({ id: `${prev}->${id}`, from: prev, to: id, active: nodes.at(-1)?.active ?? false }); prev = id; depth++; }
-    if (c.audioFx) { const f = project.audioFx?.find((x) => x.id === c.audioFx!.id); const id = `audio:${c.id}`; nodes.push(node(id, f?.name ?? "音频效果", "audio", depth, { clipId: c.id, active: time >= c.start && time < c.end })); edges.push({ id: `${prev}->${id}`, from: prev, to: id, active: nodes.at(-1)?.active ?? false }); prev = id; depth++; }
+    if (c.filter) { const f = project.filters?.find((x) => x.id === c.filter!.id); const id = `filter:${c.id}`; nodes.push(node(id, f?.name ?? tr("Filters"), "filter", depth, { clipId: c.id, active: time >= c.start && time < c.end })); edges.push({ id: `${prev}->${id}`, from: prev, to: id, active: nodes.at(-1)?.active ?? false }); prev = id; depth++; }
+    if (c.pixelMap) { const f = project.pixelMaps?.find((x) => x.id === c.pixelMap!.id); const id = `pixelmap:${c.id}`; nodes.push(node(id, f?.name ?? tr("Pixel map"), "pixelmap", depth, { clipId: c.id, active: time >= c.start && time < c.end })); edges.push({ id: `${prev}->${id}`, from: prev, to: id, active: nodes.at(-1)?.active ?? false }); prev = id; depth++; }
+    if (c.audioFx) { const f = project.audioFx?.find((x) => x.id === c.audioFx!.id); const id = `audio:${c.id}`; nodes.push(node(id, f?.name ?? tr("Audio effects"), "audio", depth, { clipId: c.id, active: time >= c.start && time < c.end })); edges.push({ id: `${prev}->${id}`, from: prev, to: id, active: nodes.at(-1)?.active ?? false }); prev = id; depth++; }
     edges.push({ id: `${prev}->out`, from: prev, to: "out", active: time >= c.start && time < c.end });
   }
   nodes.push(node("out", "OUT", "out", Math.max(1, ...nodes.map((n) => n.depth)) + 1, { width: 300, height: 86 }));

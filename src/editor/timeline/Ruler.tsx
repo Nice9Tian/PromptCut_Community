@@ -3,6 +3,7 @@ import { useStore } from "../../store/project";
 import { useScrub } from "./useScrub";
 import { xOfTime } from "./utils";
 import { RenderBar } from "./RenderBar";
+import { tr } from "../../i18n/index.ts";
 
 /** 主刻度标签:mm:ss(00:05、01:30)。步长 0.5 秒时主刻度会落在 2.5 秒这种位置,补一位小数(00:02.5) */
 function mss(t: number): string {
@@ -51,7 +52,7 @@ export function Ruler() {
       className="pc-tl-ruler relative cursor-ew-resize overflow-hidden select-none touch-none"
       style={{ height: RULER_H }}
       onPointerDown={(e) => startScrub(e, { jumpToPointer: true })}
-      title="按住拖动 = 移动播放头(按 Alt 不吸附)"
+      title={tr("Press and drag = move the playhead (hold Alt to disable snapping)")}
     >
       {ticks.map((tick) => {
         const isMajor = Math.abs(tick % Math.max(1, step * 5)) < 1e-6 || tick === 0;

@@ -50,10 +50,10 @@ export async function renderSoundEffectWav(recipeInput: SoundEffectRecipe, opts:
     opts.signal?.throwIfAborted();
     const count = Math.min(SOUND_RENDER_BLOCK_FRAMES, recipe.frames - start);
     const pcm = (opts.render ?? renderSoundEffectBlock)(recipe, { start, count });
-    if (pcm.length !== count * recipe.channels) throw new Error("音效合成返回了错误的采样长度");
+    if (pcm.length !== count * recipe.channels) throw new Error("Sound effect synthesis returned the wrong sample length");
     for (let i = 0; i < pcm.length; i++) {
       const value = pcm[i];
-      if (!Number.isFinite(value) || Math.abs(value) > 1) throw new Error("音效采样超出安全范围,请降低音量");
+      if (!Number.isFinite(value) || Math.abs(value) > 1) throw new Error("Sound effect samples exceed the safe range, please lower the volume");
       view.setInt16(44 + (start * recipe.channels + i) * 2, Math.round(value * (value < 0 ? 32768 : 32767)), true);
     }
     opts.progress?.((start + count) / recipe.frames);
@@ -73,7 +73,7 @@ export const SOUND_JOB_LIMITS = Object.freeze({ simultaneousJobs: 1, pendingJobs
 /** Shared-document patches must stay entity-sized, never force whole-project replacement. */
 export function assertSoundRecipeSize(recipe: SoundEffectRecipe): void {
   if (new TextEncoder().encode(JSON.stringify(recipe)).byteLength > SOUND_JOB_LIMITS.maxRecipeBytes) {
-    throw new Error("音效配方超过 96 KiB 的共享项目安全上限,请把打字内容拆成多段生成");
+    throw new Error("Sound effect recipe exceeds the 96 KiB shared project safety limit, please split the typed content into multiple generations");
   }
 }
 
@@ -110,50 +110,50 @@ export function createSoundGenerationManager(deps: SoundGenerationDeps) {
         if (!entry) break;
         const request = entry.request!;
         try {
-          if (!current(entry)) { set(entry, { state: "stale", error: "项目或片段已改变,旧生成结果未应用" }); continue; }
+          if (!current(entry)) { set(entry, { state: "stale", error: "The project or clip has changed, the old generation result was not applied" }); continue; }
           set(entry, { state: "rendering" });
           const wav = await (deps.renderWav ?? renderSoundEffectWav)(request.recipe, {
             signal: entry.abort.signal, yield: deps.yield, render: deps.render,
             progress: fraction => { if (!entry.abort.signal.aborted) set(entry, { progress: fraction * 0.8 }); },
           });
           entry.abort.signal.throwIfAborted();
-          if (!current(entry)) { set(entry, { state: "stale", error: "项目或片段已改变,旧生成结果未应用" }); continue; }
+          if (!current(entry)) { set(entry, { state: "stale", error: "The project or clip has changed, the old generation result was not applied" }); continue; }
           set(entry, { state: "uploading", progress: 0.8 });
           const asset = await deps.upload(wav, entry.abort.signal);
           entry.abort.signal.throwIfAborted();
-          if (!/^[a-f0-9]{64}$/.test(asset.hash)) throw new Error("素材服务未返回有效内容哈希");
+          if (!/^[a-f0-9]{64}$/.test(asset.hash)) throw new Error("The asset service did not return a valid content hash");
           const reuseKey = await soundEffectReuseDigest(request.recipe);
           entry.abort.signal.throwIfAborted();
-          if (!current(entry)) { set(entry, { state: "stale", error: "项目或片段已改变,旧生成结果未应用" }); continue; }
+          if (!current(entry)) { set(entry, { state: "stale", error: "The project or clip has changed, the old generation result was not applied" }); continue; }
           const result = request.commit(asset, request.recipe, reuseKey);
           set(entry, { state: "succeeded", progress: 1, result });
         } catch (error) {
-          if (!soundJobFinished(entry.job)) set(entry, { state: entry.abort.signal.aborted ? "cancelled" : "failed", error: entry.abort.signal.aborted ? "已取消,原音效保持不变" : String((error as Error)?.message ?? error) });
+          if (!soundJobFinished(entry.job)) set(entry, { state: entry.abort.signal.aborted ? "cancelled" : "failed", error: entry.abort.signal.aborted ? "Cancelled; the original sound effect is unchanged" : String((error as Error)?.message ?? error) });
         } finally { finish(entry); }
       }
     } finally { running = false; }
   };
   return {
     start(request: SoundGenerationRequest): SoundGenerationJob {
-      if (!request.requestId || request.requestId.length > 200) throw new Error("requestId 必须是 1 到 200 个字符");
+      if (!request.requestId || request.requestId.length > 200) throw new Error("requestId must be 1 to 200 characters");
       const recipe = validateSoundEffectRecipe(structuredClone(request.recipe));
       assertSoundRecipeSize(recipe);
       const signature = soundEffectReuseKey(recipe);
       const key = `${request.targetKey}\0${request.requestId}`;
       const old = entries.get(requests.get(key) ?? "");
       if (old && !["failed", "cancelled", "stale"].includes(old.job.state) && (old.job.state !== "succeeded" || !old.job.result || !request.isResultCurrent || request.isResultCurrent(old.job.result))) {
-        if (old.signature !== signature) throw new Error("requestId 已用于不同配方,修改后请使用新的 requestId");
+        if (old.signature !== signature) throw new Error("requestId was already used for a different recipe; use a new requestId after changing it");
         return { ...old.job };
       }
       const pending = [...entries.values()].filter(e => !soundJobFinished(e.job) && e.job.targetKey !== request.targetKey);
-      if (pending.length >= SOUND_JOB_LIMITS.pendingJobs) throw new Error(`音效任务队列已满(最多 ${SOUND_JOB_LIMITS.pendingJobs} 个),请等待或取消`);
+      if (pending.length >= SOUND_JOB_LIMITS.pendingJobs) throw new Error(`The sound effect queue is full (max ${SOUND_JOB_LIMITS.pendingJobs}); wait or cancel`);
       const id = `sound-${++sequence}`;
       let resolve!: Entry["resolve"];
       const done = new Promise<SoundGenerationJob>(r => { resolve = r; });
       const entry: Entry = { job: { id, requestId: request.requestId, targetKey: request.targetKey, state: "queued", progress: 0 }, request: { ...request, recipe }, abort: new AbortController(), done, resolve, signature, requestKey: key };
       for (const prior of entries.values()) if (prior.job.targetKey === request.targetKey && !soundJobFinished(prior.job)) {
         const queued = prior.job.state === "queued";
-        prior.abort.abort(); set(prior, { state: "stale", error: "已有新的生成请求,旧结果未应用" }); prior.resolve({ ...prior.job });
+        prior.abort.abort(); set(prior, { state: "stale", error: "A newer generation request exists; the old result was not applied" }); prior.resolve({ ...prior.job });
         if (queued) finish(prior);
       }
       entries.set(id, entry); requests.set(key, id); latest.set(request.targetKey, id); publish();
@@ -163,13 +163,13 @@ export function createSoundGenerationManager(deps: SoundGenerationDeps) {
     get(id: string) { const entry = entries.get(id); return entry ? { ...entry.job } : null; },
     list: () => snapshot,
     subscribe(fn: () => void) { listeners.add(fn); return () => { listeners.delete(fn); }; },
-    async wait(id: string) { const entry = entries.get(id); if (!entry) throw new Error("找不到音效任务"); return entry.done; },
+    async wait(id: string) { const entry = entries.get(id); if (!entry) throw new Error("Sound effect job not found"); return entry.done; },
     cancel(id: string) {
       const entry = entries.get(id);
-      if (!entry) throw new Error("找不到音效任务");
+      if (!entry) throw new Error("Sound effect job not found");
       if (!soundJobFinished(entry.job)) {
         const queued = entry.job.state === "queued";
-        entry.abort.abort(); set(entry, { state: "cancelled", error: "已取消,原音效保持不变" }); entry.resolve({ ...entry.job });
+        entry.abort.abort(); set(entry, { state: "cancelled", error: "Cancelled; the original sound effect is unchanged" }); entry.resolve({ ...entry.job });
         if (queued) finish(entry);
       }
       return { ...entry.job };

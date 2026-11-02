@@ -68,7 +68,7 @@ export async function importVideoFiles(files: FileList | File[], { place = true 
           resolve({ duration: video.duration, videoWidth: video.videoWidth, videoHeight: video.videoHeight });
         };
         video.onerror = () => {
-          console.warn(`[io] 探测视频失败: ${file.name}`);
+          console.warn(`[io] video probe failed: ${file.name}`);
           resolve({ duration: 5, videoWidth: 1920, videoHeight: 1080 });
         };
         video.src = url;
@@ -95,7 +95,7 @@ export async function importVideoFiles(files: FileList | File[], { place = true 
         if (clip) {
           cursor = clip.end;
         } else {
-          console.warn(`[io] addMediaClip 返回 null, mediaId: ${media.id}`);
+          console.warn(`[io] addMediaClip returned null, mediaId: ${media.id}`);
         }
       }
 
@@ -117,7 +117,7 @@ export async function importVideoFiles(files: FileList | File[], { place = true 
  */
 export async function importVideoFromServer(opts: { url: string; name?: string; uploaded?: UploadedMedia | null }): Promise<string> {
   const res = await fetch(opts.url);
-  if (!res.ok) throw new Error(`取文件失败(HTTP ${res.status}):${opts.url}`);
+  if (!res.ok) throw new Error(tr("Failed to fetch file (HTTP {0}): {1}", res.status, opts.url));
   const blob = await res.blob();
   const name = opts.name || decodeURIComponent(opts.url.split("/").pop() || "video.mp4");
   const file = new File([blob], name, { type: blob.type || "video/mp4" });
@@ -131,7 +131,7 @@ export async function importVideoFromServer(opts: { url: string; name?: string; 
   const meta = await new Promise<{ duration: number; videoWidth: number; videoHeight: number }>((resolve) => {
     video.onloadedmetadata = () => resolve({ duration: video.duration, videoWidth: video.videoWidth, videoHeight: video.videoHeight });
     video.onerror = () => {
-      console.warn(`[io] 探测视频失败: ${name}`);
+      console.warn(`[io] video probe failed: ${name}`);
       resolve({ duration: 5, videoWidth: 1920, videoHeight: 1080 });
     };
     video.src = url;
@@ -152,7 +152,7 @@ export async function importVideoFromServer(opts: { url: string; name?: string; 
   mediaFiles.set(media.id, file);
   applyUploadedMedia(media.id, opts.uploaded ?? null);
   const clip = actions.addMediaClip(media.id, getState().t);
-  if (!clip) console.warn(`[io] addMediaClip 返回 null, mediaId: ${media.id}`);
+  if (!clip) console.warn(`[io] addMediaClip returned null, mediaId: ${media.id}`);
   return media.id;
 }
 
@@ -165,7 +165,7 @@ export async function importVideoFromServer(opts: { url: string; name?: string; 
  */
 export async function importAudioFromServer(opts: { url: string; name?: string; uploaded?: UploadedMedia | null }): Promise<string> {
   const res = await fetch(opts.url);
-  if (!res.ok) throw new Error(`取文件失败(HTTP ${res.status}):${opts.url}`);
+  if (!res.ok) throw new Error(tr("Failed to fetch file (HTTP {0}): {1}", res.status, opts.url));
   const blob = await res.blob();
   const name = opts.name || decodeURIComponent(opts.url.split("/").pop() || "voice.mp3");
   const file = new File([blob], name, { type: blob.type || "audio/mpeg" });
@@ -174,7 +174,7 @@ export async function importAudioFromServer(opts: { url: string; name?: string; 
     el.preload = "metadata";
     const timer = window.setTimeout(() => resolve(undefined), 8000);
     el.onloadedmetadata = () => { window.clearTimeout(timer); resolve(Number.isFinite(el.duration) ? el.duration : undefined); };
-    el.onerror = () => { window.clearTimeout(timer); console.warn(`[io] 探测音频失败: ${name}`); resolve(undefined); };
+    el.onerror = () => { window.clearTimeout(timer); console.warn(`[io] Failed to probe audio: ${name}`); resolve(undefined); };
     el.src = opts.url;
   });
   const media = actions.addMedia({ kind: "audio", name, url: opts.url, duration });
@@ -202,7 +202,7 @@ export async function importProjectFile(file: File): Promise<Project> {
 
     // 和打开 .proc 同一套换算(parseProc 也调它),规则只有一份
     const restored = restoreMediaUrls(project.media || [], { externalPathUrl: true });
-    for (const m of restored.missing) console.warn(`[io] 缺失素材: ${m.name} (${m.url})`);
+    for (const m of restored.missing) console.warn(`[io] Missing asset: ${m.name} (${m.url})`);
     project.media = restored.media;
 
     actions.loadProject(project, file.name);
@@ -220,7 +220,7 @@ export async function importProjectFile(file: File): Promise<Project> {
     for (const c of json.cards) {
       const cardId = c.cardId || c.id || c.card;
       if (!getCard(cardId)) {
-        console.warn(`[io] 未知卡片 ${cardId}，已跳过`);
+        console.warn(`[io] Unknown card ${cardId}, skipped`);
         continue;
       }
       const dur = c.end !== undefined ? c.end - c.start : c.duration;
@@ -233,7 +233,7 @@ export async function importProjectFile(file: File): Promise<Project> {
     actions.setProjectMeta({ duration: Math.max(maxEnd, 10) });
     return getState().project;
   } else {
-    throw new Error("无法识别的项目文件：期望 .promptcut.json 或 {cards:[...]} 编排");
+    throw new Error(tr("Unrecognized project file: expected .promptcut.json or a {cards:[...]} arrangement"));
   }
 }
 
@@ -296,12 +296,12 @@ export async function importSrtFile(
   if (blockedByReadOnly()) throw new Error(viewOnlyText());
   const segments = parseSrt(await file.text());
   if (segments.length === 0) {
-    throw new Error(`${file.name} 里没解析出字幕段,检查是不是 SRT / VTT 格式`);
+    throw new Error(tr("No caption segments were parsed from {0}, check whether it is in SRT / VTT format", file.name));
   }
   const p = getState().project;
   const mediaId = opts.mediaId && p.media.some((m) => m.id === opts.mediaId) ? opts.mediaId : p.media[0]?.id;
   if (!mediaId) {
-    throw new Error("还没有素材:先在「视频」分页导入视频,再导入它的字幕");
+    throw new Error(tr("No media yet: first import a video in the \"Video\" tab, then import its captions"));
   }
   actions.setMediaTranscript(mediaId, {
     engine: "srt",
@@ -315,7 +315,7 @@ export async function importSrtFile(
 /** 把当前项目序列化成 JSON 字符串(blob URL 换成相对路径) */
 export function exportProjectJson(): string {
   const p = JSON.parse(JSON.stringify(getState().project)) as Project & { _note?: string };
-  p._note = "这个文件只记录编排；素材按 media[].hash（文件内容的 sha256）在本地内容库里找回（/@media/<hash>）。想把素材一起带走，用「打包保存…」存成 .procp。老文件里没有 hash 的素材按 media[].path 的文件名找（/@media/<文件名>），连 path 都没有的重新打开后要用「导入视频」重新导入。";
+  p._note = tr("This file only records the arrangement. Media is recovered from the local content store by media[].hash (the sha256 of the file content) (/@media/<hash>). To take the media along, use \"Save as package…\" to save a .procp. For old files whose media has no hash, media is looked up by the file name in media[].path (/@media/<file name>). For files with no path either, after reopening you need to re-import the media with \"Import video\".");
 
   for (const m of p.media) {
     if (m.url.startsWith("blob:")) {
@@ -366,7 +366,7 @@ export async function exportVideo(
 }
 
 export type ExportStage = "sound" | "render" | "compose";
-const exportCancelled = () => Object.assign(new Error("已取消导出"), { cancelled: true });
+const exportCancelled = () => Object.assign(new Error(tr("Export canceled")), { cancelled: true });
 
 /**
  * 「先生成声音」那一步的任务表。这一步在页面里跑、还没有预渲染进程的任务 id,所以先发一个自己的 id 给调用方取消用;
@@ -418,11 +418,11 @@ async function exportVideoDesktop(
           const data = await res.json();
           m.url = data.url;
         } else {
-          console.warn(`[io] 上传素材失败: ${file.name}`);
+          console.warn(`[io] Failed to upload asset: ${file.name}`);
           m.url = "";
         }
       } else {
-        console.warn(`[io] 找不到 blob 对应的 File: ${m.name}`);
+        console.warn(`[io] Could not find the File for the blob: ${m.name}`);
         m.url = "";
       }
     }
@@ -440,7 +440,7 @@ async function exportVideoDesktop(
     if (res.status === 409) {
       try {
         const body = JSON.parse(text) as { code?: string; message?: string; missing?: unknown };
-        if (body.code === "awaiting-uploader") throw Object.assign(new Error(body.message || "等待上传方"), { code: "awaiting-uploader", missing: body.missing });
+        if (body.code === "awaiting-uploader") throw Object.assign(new Error(body.message || tr("Waiting for the uploader")), { code: "awaiting-uploader", missing: body.missing });
       } catch (err) {
         if ((err as { code?: string })?.code === "awaiting-uploader") throw err;
       }
@@ -452,7 +452,7 @@ async function exportVideoDesktop(
   const { id, outDir } = started;
   // 已标「(缺失)」、本机取不到文件的老素材:它们所在的片段没进这次导出(预渲染进程的 dropSkippedMediaClips),完成时告诉用户
   const skippedMedia = parseExportSkipped(started.skippedMedia);
-  if (skippedMedia.length) console.warn("[io] 导出跳过缺失素材所在的片段:", skippedMedia.map((m) => m.name || m.id));
+  if (skippedMedia.length) console.warn("[io] Export skipped clips whose media is missing:", skippedMedia.map((m) => m.name || m.id));
   jobBase.set(id, base);
   if (prep.id) {
     const job = soundPrepJobs.get(prep.id);
@@ -481,13 +481,13 @@ async function exportVideoDesktop(
           resolve(skippedMedia.length ? { outDir, id, skippedMedia } : { outDir, id });
         });
       } else if (data.status === "cancelled") {
-        finish(() => reject(Object.assign(new Error("已取消导出"), { cancelled: true })));
+        finish(() => reject(Object.assign(new Error(tr("Export canceled")), { cancelled: true })));
       } else if (data.status === "error") {
-        finish(() => reject(new Error(data.message || "导出错误")));
+        finish(() => reject(new Error(data.message || tr("Export error"))));
       }
     };
     es.onerror = () => {
-      finish(() => reject(new Error("和导出进程的连接断了,导出可能仍在后台进行")));
+      finish(() => reject(new Error(tr("The connection to the export process was lost, the export may still be running in the background"))));
     };
   });
 }
@@ -526,11 +526,11 @@ export async function revealExport(id: string): Promise<void> {
 export async function fetchExportFile(id: string, name: string): Promise<Blob> {
   const online = onlineJobs.get(id);
   if (online) {
-    if (!online.blob) throw new Error("这次导出已经直接写到选的文件里了");
+    if (!online.blob) throw new Error(tr("This export was already written directly to the selected file"));
     return online.blob;
   }
   const r = await fetch(exportJobUrl(id, `/file/${encodeURIComponent(name)}`));
-  if (!r.ok) throw new Error(`取不到 ${name}:${await r.text()}`);
+  if (!r.ok) throw new Error(tr("Could not fetch {0}: {1}", name, await r.text()));
   return r.blob();
 }
 
@@ -543,8 +543,8 @@ export async function streamExportFile(id: string, name: string, writable: FileS
     return;
   }
   const r = await fetch(exportJobUrl(id, `/file/${encodeURIComponent(name)}`));
-  if (!r.ok) throw new Error(`取不到 ${name}:${await r.text()}`);
-  if (!r.body) throw new Error(`取不到 ${name}:响应没有数据流`);
+  if (!r.ok) throw new Error(tr("Could not fetch {0}: {1}", name, await r.text()));
+  if (!r.body) throw new Error(tr("Could not fetch {0}: the response has no data stream", name));
   const reader = r.body.getReader();
   try {
     for (;;) {
@@ -562,6 +562,7 @@ export async function streamExportFile(id: string, name: string, writable: FileS
 
 export type { OnlineExportOptions } from "../../export/onlineExport";
 import type { OnlineExportOptions, OnlineJob } from "../../export/onlineExport";
+import { tr } from "../../i18n/index.ts";
 const onlineJobs = new Map<string, OnlineJob>();
 async function exportVideoOnline(opts: Parameters<typeof exportVideo>[0] & OnlineExportOptions): Promise<{ outDir: string; id: string; written?: boolean }> {
   return (await import("../../export/onlineExport")).exportVideoOnline(opts ?? {}, onlineJobs);

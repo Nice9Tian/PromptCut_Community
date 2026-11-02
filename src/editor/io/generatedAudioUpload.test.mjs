@@ -40,7 +40,7 @@ test("online generated WAV uses only remote media chunks with rw tickets and 401
 test("online mode without the connected asset service fails before trying any local route", async () => {
   const oldBase = base, oldFetch = globalThis.fetch; base = null;
   globalThis.fetch = async () => { throw new Error("must not fetch"); };
-  try { await assert.rejects(uploadGeneratedAudio(new Uint8Array([1]), new AbortController().signal), /尚未连接素材服务/); }
+  try { await assert.rejects(uploadGeneratedAudio(new Uint8Array([1]), new AbortController().signal), /The asset service is not connected yet/); }
   finally { base = oldBase; globalThis.fetch = oldFetch; }
 });
 
@@ -72,6 +72,6 @@ test("账号云端项目:上传途中换了项目就取消", async () => {
   const old = globalThis.fetch;
   accountProject = "sp_aaaaaaaaaaaaaaaaaaaaaaaaaa";
   globalThis.fetch = async () => { accountProject = "sp_bbbbbbbbbbbbbbbbbbbbbbbbbb"; return Response.json({ complete: false, received: [] }); };
-  try { await assert.rejects(uploadGeneratedAudio(new Uint8Array([1, 2, 3]), new AbortController().signal), /已切换/); }
+  try { await assert.rejects(uploadGeneratedAudio(new Uint8Array([1, 2, 3]), new AbortController().signal), /has changed, upload canceled/); }
   finally { globalThis.fetch = old; accountProject = null; }
 });

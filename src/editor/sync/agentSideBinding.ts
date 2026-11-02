@@ -27,7 +27,7 @@ export function bindAgentSide(kind: "local" | "shared", docProjectId: string, ur
     .then((j) => {
       if (!j?.ok) {
         if (boundKey === key) boundKey = null;
-        console.warn("[sync] Agent 服务端没绑上项目副本:", j?.error ?? "无回包");
+        console.warn("[sync] Agent server failed to bind the project copy:", j?.error ?? "no response");
       }
     })
     .catch(() => {

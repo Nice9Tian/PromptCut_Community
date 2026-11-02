@@ -62,13 +62,13 @@ function harness({ hidden = () => false } = {}) {
 
 beforeEach(() => resetOnlineStagesForTest({ config: "done", origins }));
 
-test("C10-SW-00 数字:重载后等握回来的时限与首次握手相同(20 秒);断开判定晚于三拍心跳", () => {
+test("C10-SW-00 numbers: the time limit for waiting for the handshake after a reload equals the first handshake limit (20 seconds); disconnect is judged later than three heartbeats", () => {
   assert.equal(STAGE_RECONNECT_TIMEOUT_MS, STAGE_HANDSHAKE_TIMEOUT_MS);
   assert.equal(STAGE_RECONNECT_TIMEOUT_MS, 20_000);
   assert.ok(STAGE_LOST_AFTER_MS >= STAGE_PING_INTERVAL_MS * 3);
 });
 
-test("C10-SW-01 心跳照常回包:一分钟里每拍都问两台,不重载、不退回,仍是双舞台", async () => {
+test("C10-SW-01 heartbeat replies as usual: both stages are pinged on every beat for a minute, no reload, no fallback, still dual stage", async () => {
   const { clock, calls, watch } = harness();
   await clock.advance(60_000);
   assert.equal(calls.reload.length, 0);
@@ -79,17 +79,17 @@ test("C10-SW-01 心跳照常回包:一分钟里每拍都问两台,不重载、�
   watch.dispose();
 });
 
-test("C10-SW-02 握手后 B 断开 → 重载 B → 时限内握回来,恢复双舞台、不退回;之后照常看守", async () => {
+test("C10-SW-02 after handshake B disconnects → reload B → handshake returns within the time limit, dual stage is restored with no fallback; watching continues as usual afterwards", async () => {
   const { clock, alive, calls, watch } = harness();
   await clock.advance(10_000);
   alive.B = false; // B 的渲染进程崩了:心跳不再回包
   await clock.advance(STAGE_LOST_AFTER_MS + STAGE_PING_INTERVAL_MS);
   assert.equal(calls.reload.length, 1);
   assert.equal(calls.reload[0].id, "B");
-  assert.match(calls.reload[0].reason, /没有心跳回包/);
+  assert.match(calls.reload[0].reason, /No heartbeat reply/);
   assert.equal(watch.status("B"), "reloading");
   assert.equal(watch.status("A"), "alive");
-  assert.equal(layout(), "dual", "重载期间仍按双舞台挂 iframe");
+  assert.equal(layout(), "dual", "iframes stay mounted as dual stage during the reload");
   // 新文档起来,发了 pc-stage-ready
   await clock.advance(3000);
   alive.B = true;
@@ -103,41 +103,41 @@ test("C10-SW-02 握手后 B 断开 → 重载 B → 时限内握回来,恢复双
   watch.dispose();
 });
 
-test("C10-SW-03 重载也握不回来:重载后 20 秒到点走 markStageHandshake('failed'),退回单舞台", async () => {
+test("C10-SW-03 reload also fails to get a handshake: 20 seconds after the reload it calls markStageHandshake('failed') and falls back to single stage", async () => {
   const { clock, alive, calls, watch } = harness();
   alive.A = false; // 可见舞台那一台卡死
   await clock.advance(STAGE_LOST_AFTER_MS + STAGE_PING_INTERVAL_MS);
   assert.deepEqual(calls.reload.map((r) => r.id), ["A"]);
   await clock.advance(STAGE_RECONNECT_TIMEOUT_MS - 1000);
-  assert.equal(calls.fallback.length, 0, "时限之内不退回");
+  assert.equal(calls.fallback.length, 0, "no fallback within the time limit");
   await clock.advance(1000);
   assert.equal(calls.fallback.length, 1);
-  assert.match(calls.fallback[0], /舞台 A 断开后重载,20 秒内没握回来/);
+  assert.match(calls.fallback[0], /Stage A reloaded after disconnecting and did not reconnect within 20 s/);
   assert.equal(watch.fellBack, true);
   assert.equal(onlineStageState().handshake, "failed");
   assert.equal(layout(), "single");
 });
 
-test("C10-SW-04 退回后不反复重载:定时器全停,之后再怎么断、再来 ready 都不重载、不再退回,握手状态也不回到 ok", async () => {
+test("C10-SW-04 no repeated reloads after fallback: all timers stop, and no matter how many more disconnects or ready events arrive, no reload and no further fallback happens, and the handshake state never returns to ok", async () => {
   const { clock, alive, calls, watch } = harness();
   alive.A = false; alive.B = false;
   await clock.advance(STAGE_LOST_AFTER_MS + STAGE_PING_INTERVAL_MS);
-  assert.equal(calls.reload.length, 2, "两台都断:各重载一次");
+  assert.equal(calls.reload.length, 2, "both disconnected: one reload each");
   await clock.advance(STAGE_RECONNECT_TIMEOUT_MS);
-  assert.equal(calls.fallback.length, 1, "只退回一次");
+  assert.equal(calls.fallback.length, 1, "falls back only once");
   const pings = { ...calls.ping };
-  assert.equal(clock.pending(), 0, "没有留下定时器");
+  assert.equal(clock.pending(), 0, "no timers left behind");
   await clock.advance(30 * 60_000);
   watch.ready("A"); watch.lost("A", "x"); watch.lost("B", "x");
   await clock.advance(10 * 60_000);
   assert.equal(calls.reload.length, 2);
   assert.equal(calls.fallback.length, 1);
-  assert.deepEqual(calls.ping, pings, "退回后不再发心跳");
+  assert.deepEqual(calls.ping, pings, "no more heartbeats after fallback");
   markStageHandshake("ok"); // 迟到的 pc-stage-ready 也翻不回双舞台
   assert.equal(layout(), "single");
 });
 
-test("C10-SW-05 反复断:重载成功又断,10 分钟内第 4 次要重载时直接退回单舞台", async () => {
+test("C10-SW-05 repeated disconnects: reload succeeds then disconnects again; at the 4th reload within 10 minutes it falls back to single stage directly", async () => {
   const { clock, alive, calls, watch } = harness();
   for (let i = 0; i < STAGE_MAX_RELOADS; i++) {
     alive.B = false;
@@ -150,13 +150,13 @@ test("C10-SW-05 反复断:重载成功又断,10 分钟内第 4 次要重载时�
   assert.equal(calls.fallback.length, 0);
   alive.B = false;
   await clock.advance(STAGE_LOST_AFTER_MS + STAGE_PING_INTERVAL_MS);
-  assert.equal(calls.reload.length, STAGE_MAX_RELOADS, "第 4 次不重载");
+  assert.equal(calls.reload.length, STAGE_MAX_RELOADS, "the 4th time does not reload");
   assert.equal(calls.fallback.length, 1);
-  assert.match(calls.fallback[0], /反复断开/);
+  assert.match(calls.fallback[0], /keeps disconnecting/);
   assert.equal(layout(), "single");
 });
 
-test("C10-SW-06 页面隐藏、父页主线程卡住时不判:回到前台 / 缓过来那一拍重新起算,活着的舞台不被重载", async () => {
+test("C10-SW-06 no judgment while the page is hidden or the parent page main thread is stuck: the count restarts on the beat after returning to the foreground / recovering, and a live stage is not reloaded", async () => {
   let hid = false;
   const { clock, alive, calls, watch } = harness({ hidden: () => hid });
   // 隐藏:舞台被节流,心跳不回包也不判
@@ -184,7 +184,7 @@ test("C10-SW-06 页面隐藏、父页主线程卡住时不判:回到前台 / 缓
   watch.dispose();
 });
 
-test("C10-SW-07 还没握手的舞台不看守;没有客户端(ping 回 null)不算回包,到点照样判断开", async () => {
+test("C10-SW-07 a stage that has not completed its handshake is not watched; no client (ping returns null) does not count as a reply, and at the deadline it is still judged disconnected", async () => {
   const clock = fakeClock();
   const calls = { ping: 0, reload: [] };
   let client = true;
@@ -196,7 +196,7 @@ test("C10-SW-07 还没握手的舞台不看守;没有客户端(ping 回 null)不
     now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer,
   });
   await clock.advance(60_000);
-  assert.equal(calls.ping, 0, "都没 ready:不发心跳");
+  assert.equal(calls.ping, 0, "none is ready: no heartbeat is sent");
   assert.equal(watch.status("A"), "pending");
   watch.ready("A");
   client = false;

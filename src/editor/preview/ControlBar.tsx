@@ -16,6 +16,7 @@ import {
   IconVolumeMute,
 } from "../../ui/icons";
 import "./preview.css";
+import { tr } from "../../i18n/index.ts";
 
 function parseTime(str: string): number {
   const s = str.trim();
@@ -91,33 +92,33 @@ export function ControlBar() {
 
   return (
     <div className="pc-pv-ctrl" data-pc="control-bar">
-      <div ref={progressRef} className="pc-pv-progress" onPointerDown={onProgressDown} title="拖动 = 定位播放头">
+      <div ref={progressRef} className="pc-pv-progress" onPointerDown={onProgressDown} title={tr("Drag = set playhead")}>
         <div className="pc-pv-progress-fill" style={{ right: `${(1 - ratio) * 100}%` }} />
         <div className="pc-pv-progress-knob" style={{ left: `${ratio * 100}%` }} />
       </div>
 
       <div className="pc-pv-row">
         <div className="pc-pv-btns">
-          <button type="button" className="pc-pv-btn" onClick={() => actions.seek(0)} title="跳到开头">
+          <button type="button" className="pc-pv-btn" onClick={() => actions.seek(0)} title={tr("Jump to start")}>
             <IconSkipBack size={14} />
           </button>
           <button
             type="button"
             className="pc-pv-btn pc-pv-btn--play"
             onClick={() => actions.togglePlay()}
-            title={playing ? "暂停" : "播放"}
+            title={playing ? tr("Pause") : tr("Play")}
           >
             {playing ? <IconPause size={14} /> : <IconPlay size={14} />}
           </button>
-          <button type="button" className="pc-pv-btn" onClick={() => actions.seek(duration)} title="跳到结尾">
+          <button type="button" className="pc-pv-btn" onClick={() => actions.seek(duration)} title={tr("Jump to end")}>
             <IconSkipForward size={14} />
           </button>
-          <button type="button" className="pc-pv-btn" onClick={() => actions.replay()} title="重播">
+          <button type="button" className="pc-pv-btn" onClick={() => actions.replay()} title={tr("Replay")}>
             <IconLoop size={14} />
           </button>
         </div>
 
-        <span className="pc-pv-time" title="点击输入秒数跳转">
+        <span className="pc-pv-time" title={tr("Click to enter seconds and jump")}>
           {editing ? (
             <input
               ref={inputRef}
@@ -145,7 +146,7 @@ export function ControlBar() {
             type="button"
             className="pc-pv-vol-btn"
             onClick={() => actions.toggleMute()}
-            title={muted ? "取消静音" : "静音"}
+            title={muted ? tr("Unmute") : tr("Muted")}
             aria-pressed={muted}
           >
             {muted || volume === 0 ? <IconVolumeMute size={14} /> : <IconVolume size={14} />}
@@ -158,8 +159,8 @@ export function ControlBar() {
               max={100}
               value={Math.round(shownVolume * 100)}
               onChange={(e) => actions.setVolume(Number(e.target.value) / 100)}
-              aria-label="预览音量"
-              title="预览音量(不影响导出)"
+              aria-label={tr("Preview volume")}
+              title={tr("Preview volume (does not affect export)")}
             />
           </div>
         </div>

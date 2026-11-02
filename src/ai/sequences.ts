@@ -1,4 +1,5 @@
 import type { Shots, Transcript, TransitionKind } from "../kernel/project";
+import { tr } from "../i18n/index.ts";
 
 /**
  * see_frames 素材模式(source: "media")的纯逻辑:把镜头划分变成「要看哪几个镜头、分几页、每张拼图抽哪几帧」。
@@ -67,15 +68,15 @@ export function planSequences(all: SceneSpec[], opts: PlanOptions = {}): Sequenc
   const totalScenes = all.length;
   if (opts.scene !== undefined) {
     const n = Number(opts.scene);
-    if (!Number.isInteger(n) || n < 1 || n > totalScenes) throw new Error(`scene 要在 1~${totalScenes} 之间,收到 ${JSON.stringify(opts.scene)}`);
+    if (!Number.isInteger(n) || n < 1 || n > totalScenes) throw new Error(tr("scene must be between 1 and {0}, got {1}", totalScenes, JSON.stringify(opts.scene)));
     const grid = opts.grid === 4 ? 4 : 9;
     return { scenes: [all[n - 1]], page: 1, pages: 1, perPage: 1, grid, matched: 1, totalScenes, nextPage: null, prevPage: null };
   }
   const from = opts.from !== undefined ? Number(opts.from) : -Infinity;
   const to = opts.to !== undefined ? Number(opts.to) : Infinity;
-  if (opts.from !== undefined && !Number.isFinite(from)) throw new Error("from 要是秒数");
-  if (opts.to !== undefined && !Number.isFinite(to)) throw new Error("to 要是秒数");
-  if (from > to) throw new Error("from 不能大于 to");
+  if (opts.from !== undefined && !Number.isFinite(from)) throw new Error(tr("from must be a number of seconds"));
+  if (opts.to !== undefined && !Number.isFinite(to)) throw new Error(tr("to must be a number of seconds"));
+  if (from > to) throw new Error(tr("from must not be greater than to"));
   // 和区间有交集的镜头都算(用户说「看 30 秒到 60 秒」,跨在 30 秒上的那个镜头也该看)
   const matched = all.filter((s) => s.end > from && s.start < to);
   const perPage = Math.max(1, Math.min(MAX_PER_PAGE, Math.round(Number(opts.perPage) || DEFAULT_PER_PAGE)));

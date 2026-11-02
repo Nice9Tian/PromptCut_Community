@@ -5,6 +5,7 @@ import { useScrub } from "./useScrub";
 import { xOfTime } from "./utils";
 import { RULER_H } from "./Ruler";
 import { RENDER_H } from "./RenderBar";
+import { tr } from "../../i18n/index.ts";
 
 /** 标尺行扣掉底边进度线后的中线:胶囊、刻度线、刻度时间都按它竖向居中 */
 const MID_Y = (RULER_H - RENDER_H) / 2;
@@ -38,7 +39,7 @@ export function Playhead() {
       className="absolute bottom-0 z-20 flex justify-center cursor-ew-resize w-[11px] touch-none"
       style={{ left: `${xOfTime(t, pxPerSec)}px`, top: 0, transform: "translateX(-50%)", pointerEvents: dropping ? "none" : undefined }}
       onPointerDown={(e) => startScrub(e, { jumpToPointer: false })}
-      title="拖动 = 移动播放头(按 Alt 不吸附)"
+      title={tr("Drag = move the playhead (hold Alt to disable snapping)")}
     >
       <div className="absolute bottom-0 w-px bg-white pointer-events-none" style={{ top: MID_Y }} />
       <span className="pc-tl-playhead-label" style={{ top: MID_Y }}>{stamp(t)}</span>

@@ -71,8 +71,8 @@ export const STAGE_CSP_HEADER_ONLY_DIRECTIVE = "frame-ancestors";
 /** 一个源:`http(s)://host[:port]`,不带路径 */
 function checkOrigin(origin, what) {
   let u;
-  try { u = new URL(String(origin)); } catch { throw new Error(`${what} 不是合法的源:${String(origin)}`); }
-  if ((u.protocol !== "https:" && u.protocol !== "http:") || u.origin !== String(origin)) throw new Error(`${what} 不是合法的源:${String(origin)}`);
+  try { u = new URL(String(origin)); } catch { throw new Error(`${what} is not a valid origin: ${String(origin)}`); }
+  if ((u.protocol !== "https:" && u.protocol !== "http:") || u.origin !== String(origin)) throw new Error(`${what} is not a valid origin: ${String(origin)}`);
   return u.origin;
 }
 
@@ -81,7 +81,7 @@ function checkOrigin(origin, what) {
  * nginx 模板里 `editorOrigin` 是 `https://{{DOMAIN}}`(占位符原样传进来,不校验)。
  */
 export function stageCspHeader(editorOrigin, { template = false } = {}) {
-  const origin = template ? String(editorOrigin) : checkOrigin(editorOrigin, "编辑器页的源");
+  const origin = template ? String(editorOrigin) : checkOrigin(editorOrigin, "editor page origin");
   return `${STAGE_CSP_BASE}; ${STAGE_CSP_HEADER_ONLY_DIRECTIVE} ${origin}`;
 }
 
@@ -98,7 +98,7 @@ export const THIRD_PARTY_SIGNIN_FRAME_ORIGIN = "https://accounts.google.com";
  * `blob:` 与 `data:` 不放行:编辑器页自己没有这样的子框架。
  */
 export function editorCspHeader(stageOrigins, { template = false } = {}) {
-  const list = (Array.isArray(stageOrigins) ? stageOrigins : []).map((o) => (template ? String(o) : checkOrigin(o, "舞台源")));
+  const list = (Array.isArray(stageOrigins) ? stageOrigins : []).map((o) => (template ? String(o) : checkOrigin(o, "stage origin")));
   return ["frame-src 'self'", ...list, THIRD_PARTY_SIGNIN_FRAME_ORIGIN].join(" ");
 }
 

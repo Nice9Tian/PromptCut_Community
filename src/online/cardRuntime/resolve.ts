@@ -56,7 +56,7 @@ function candidates(base: string): string[] {
 }
 
 export function resolveCardImport(fromKey: string, spec: string, env: ResolveEnv): ResolveOutcome {
-  if (typeof spec !== "string" || !spec) return { ok: false, reason: "空的导入" };
+  if (typeof spec !== "string" || !spec) return { ok: false, reason: "Empty import" };
   if (!(spec.startsWith("./") || spec.startsWith("../"))) {
     if (CARD_PACKAGES.includes(spec)) return { ok: true, to: { kind: "package", name: spec } };
     return { ok: false, reason: spec };

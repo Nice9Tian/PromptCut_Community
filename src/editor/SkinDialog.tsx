@@ -12,6 +12,7 @@ import {
   subscribeOverrides,
 } from "../skins/overrides";
 import "./SkinDialog.css";
+import { tr } from "../i18n/index.ts";
 
 /**
  * 皮肤对话框:上面挑预设,下面逐项调。
@@ -56,12 +57,12 @@ export function SkinDialog(props: { open: boolean; onClose: () => void }): JSX.E
         onClick={(e) => e.stopPropagation()}
       >
         <div id="pc-dialog-title-skin" className="pc-dialog-title">
-          皮肤
+          {tr("Skin")}
         </div>
 
         <div className="pc-skin-body">
           <section>
-            <h3 className="pc-skin-h">预设风格</h3>
+            <h3 className="pc-skin-h">{tr("Preset styles")}</h3>
             {groups.map((g) => (
               <div key={g.group} className="pc-skin-group">
                 <div className="pc-skin-group-name">{g.group}</div>
@@ -96,18 +97,18 @@ export function SkinDialog(props: { open: boolean; onClose: () => void }): JSX.E
 
           <section>
             <div className="pc-skin-custom-head">
-              <h3 className="pc-skin-h">自定义</h3>
+              <h3 className="pc-skin-h">{tr("Custom")}</h3>
               <button
                 type="button"
                 className="pc-btn"
                 disabled={Object.keys(overrides).length === 0}
                 onClick={() => clearOverrides()}
               >
-                全部恢复默认
+                {tr("Reset all to defaults")}
               </button>
             </div>
             <p className="pc-skin-note">
-              改哪项就盖哪项，其余仍跟着预设走；换预设时这些改动会保留。
+              {tr("Whatever you change overrides only that item; the rest keep following the preset. These changes are kept when you switch presets.")}
             </p>
             {Object.entries(slotGroups).map(([group, slots]) => (
               <div key={group} className="pc-skin-group">
@@ -122,7 +123,7 @@ export function SkinDialog(props: { open: boolean; onClose: () => void }): JSX.E
 
         <div className="pc-dialog-foot">
           <button type="button" className="pc-btn pc-btn--primary" onClick={onClose}>
-            完成
+            {tr("Done")}
           </button>
         </div>
       </div>
@@ -166,7 +167,7 @@ function SlotRow({
       <button
         type="button"
         className="pc-skin-reset"
-        title={overridden ? "恢复这一项的默认值" : "还没改过这一项"}
+        title={overridden ? tr("Reset this item to its default") : tr("This item hasn't been changed")}
         disabled={!overridden}
         onClick={() => setOverride(slot.key, null)}
       >

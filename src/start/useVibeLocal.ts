@@ -24,6 +24,7 @@ import { activateTab, addTab, closeTab, commitDraft, setAgentProject, useAgentTa
 import { enqueue as enqueueChat, getQueue, setPaused, useQueue } from "../ai/chatQueue";
 import type { VibeAgent } from "./vibeAgent";
 import type { VibeChat } from "./types";
+import { tr } from "../i18n/index.ts";
 
 export interface VibeLocal extends VibeAgent {
   /** 底下那一份 `useAiChat`。驱动条和「配置 Agent」那个窗口要整份,所以原样交出去 */
@@ -85,12 +86,12 @@ export function useVibeLocal(o: { projectId: string | null; tabId?: string }): V
    */
   const looking = ai.providers.length === 0;
   const whyNot = !o.projectId
-    ? "先在左边打开一个项目，再和它的 Agent 说话。"
+    ? tr("Open a project on the left first, then talk to its Agent.")
     : ai.provider
       ? null
       : looking
-        ? "正在找这台机器上的 Agent…"
-        : "还没选 Agent：点上面的「配置 Agent」挑一个本机的命令行 Agent，或填一个 API 密钥。";
+        ? tr("Looking for Agents on this machine…")
+        : tr("No Agent selected yet: click \"Configure Agent\" above to pick a local CLI Agent, or enter an API key.");
 
   /** 发送。这一页在跑就排队(不打断它),空闲就直发 —— 和 AI 栏的 `handleSend` 同一条路 */
   const send = useCallback(async (text: string): Promise<boolean> => {
@@ -134,7 +135,7 @@ export function useVibeLocal(o: { projectId: string | null; tabId?: string }): V
     },
     me: null,
     projectId: o.projectId,
-    hint: "在本机运行，关掉软件这一轮就停了。",
+    hint: tr("Runs on this machine; closing the app stops this turn."),
     canSend: !whyNot,
     whyNot,
     streaming: ai.streaming,

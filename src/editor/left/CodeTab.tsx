@@ -4,6 +4,7 @@ import { getCard } from "../../kernel/registry";
 import type { TrackClip } from "../../kernel/project";
 import { applyEnvelope, describeLifecycle, envelopeOf, type ClipEnvelope } from "../../kernel/envelope";
 import { useReadOnly } from "../readOnly";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 编辑 → 代码:显示并编辑这张卡的**约定封装**(kernel/envelope.ts),不是原始代码。
@@ -54,7 +55,7 @@ export function CodeTab({ clip }: { clip: TrackClip }) {
     try {
       parsed = JSON.parse(draft);
     } catch (e: any) {
-      setErrorMsg(`JSON 不合法: ${e.message}`);
+      setErrorMsg(tr("Invalid JSON: {0}", e.message));
       return;
     }
     try {
@@ -77,7 +78,7 @@ export function CodeTab({ clip }: { clip: TrackClip }) {
       setErrorMsg(null);
       if (report.changed.length) adoptNext.current = true;
       else setDraft(current);
-      setApplied(report.changed.length ? `已应用:${report.changed.join(" / ")}` : "没有改动");
+      setApplied(report.changed.length ? tr("Applied: {0}", report.changed.join(" / ")) : tr("No changes"));
       setTimeout(() => setApplied(null), 2000);
     } catch (e: any) {
       setErrorMsg(e?.message || String(e));
@@ -126,22 +127,22 @@ export function CodeTab({ clip }: { clip: TrackClip }) {
   return (
     <div className="flex-1 min-h-0 flex flex-col p-3">
       <div className="flex items-center gap-2 mb-2 shrink-0 flex-wrap">
-        <span className="text-[11px] pc-left-muted" title={ENVELOPE_TITLE}>约定封装</span>
+        <span className="text-[11px] pc-left-muted" title={ENVELOPE_TITLE}>{tr("Card contract")}</span>
         <button type="button" onClick={handleCopy} className="pc-left-btn">
-          {copied ? "✓ 已复制" : "复制"}
+          {copied ? tr("✓ Copied") : tr("Duplicate")}
         </button>
         <button type="button" onClick={handleReset} className="pc-left-btn" disabled={ro.locked} title={ro.title()}>
-          参数重置为默认
+          {tr("Reset parameters to defaults")}
         </button>
         {missing.length > 0 && (
           <button
             type="button"
             onClick={handleReset}
             disabled={ro.locked}
-            title={ro.locked ? ro.why : `这张卡后来新增了参数,当前 clip 里没有:${missing.join(", ")}。点「参数重置为默认」把它们补齐(会一并丢掉已有的改动)`}
+            title={ro.locked ? ro.why : tr("This card gained new parameters later that the current clip does not have: {0}. Click \"Reset parameters to defaults\" to fill them in (this also discards existing changes)", missing.join(", "))}
             className="text-[11px] px-2 py-1 bg-amber-950 hover:bg-amber-900 text-amber-400 rounded border border-amber-800"
           >
-            缺 {missing.length} 项参数
+            {tr("Missing {0} parameters", missing.length)}
           </button>
         )}
         {applied && <span className="text-[11px] text-green-500 ml-auto">{applied}</span>}
@@ -158,9 +159,9 @@ export function CodeTab({ clip }: { clip: TrackClip }) {
         光看这段 JSON 是不知道它们存在的,这一页偏偏正是给想直接写值的人用的。
       */}
       <div className="mb-2 shrink-0 text-[10px] leading-relaxed pc-left-faint">
-        frame.local:x / y / w / h / anchor / scale / rotate,以及三维的{" "}
+        {tr("frame.local:x / y / w / h / anchor / scale / rotate, and for 3D: {0}", " ")}
         <span className="pc-left-muted">rotateX / rotateY / translateZ</span>
-        (三维要在「参数」页打开透视相机才有近大远小,否则只是斜切)
+        {tr("(for 3D, turn on the perspective camera in the \"Parameters\" tab to get near-large/far-small depth, otherwise it is only a skew)")}
       </div>
 
       <textarea
@@ -179,20 +180,20 @@ export function CodeTab({ clip }: { clip: TrackClip }) {
         {errorMsg ? (
           <div className="text-[10px] text-red-500 truncate" title={errorMsg}>{errorMsg}</div>
         ) : dirty ? (
-          <div className="text-[10px] pc-left-muted">有未应用的修改 · Ctrl+Enter 应用 / 失焦应用</div>
+          <div className="text-[10px] pc-left-muted">{tr("Unapplied changes · Ctrl+Enter to apply / applies on blur")}</div>
         ) : missing.length > 0 ? (
           <div className="text-[10px] text-amber-500 truncate" title={missing.join(", ")}>
-            缺 {missing.length} 项参数,正靠默认值兜底渲染:{missing.join(", ")}
+            {tr("Missing {0} parameters, rendering with defaults as a fallback: {1}", missing.length, missing.join(", "))}
           </div>
         ) : (
-          <div className="text-[10px] pc-left-faint">可改:card.id / time / frame.local / blend / parts(组合卡整棵可增删改)/ params;world、motion、lifecycle 只读</div>
+          <div className="text-[10px] pc-left-faint">{tr("Editable: card.id / time / frame.local / blend / parts (the whole composite card tree can be added, removed and edited) / params; world, motion, lifecycle are read-only")}</div>
         )}
       </div>
     </div>
   );
 }
 
-const ENVELOPE_TITLE = "这张卡对外唯一的样子:card(含生命周期)、time、frame(位置)、blend(淡入淡出)、parts(部件树)、params。Agent 的 get_clip / set_clip 看到和改的也是它。";
+const ENVELOPE_TITLE = tr("The one canonical outward form of this card: card (including lifecycle), time, frame (position), blend (fade in/out), parts (part tree), params. This is also what the Agent sees and edits with get_clip / set_clip.");
 
 // 让未使用的类型导入不报 lint(类型只在注释里提到)
 export type { ClipEnvelope };

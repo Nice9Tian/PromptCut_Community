@@ -6,6 +6,7 @@ import { createFilterTools, usesOf } from "../../right/filterTools";
 import { ThumbTile } from "./ThumbTile";
 import { useReadOnly } from "../../readOnly";
 import type { GroupData, GroupItem } from "./groups";
+import { tr } from "../../../i18n/index.ts";
 
 /** 和 Agent 的 apply_filter / remove_filter 同一份校验(锁定的序列、卡片段、还挂着就删要确认) */
 const tools = createFilterTools({ getState, actions });
@@ -72,43 +73,43 @@ export function useFiltersGroup(q: string, flash: (text: string, ms?: number) =>
           <div className="pc-lib-fxcard-body">
             <div className="pc-lib-fxcard-name" title={f.description ?? f.name}>
               <span className="pc-lib-ellipsis">{f.name}</span>
-              {isAnimated(f) && <span className="pc-lib-tag">随时间变化</span>}
+              {isAnimated(f) && <span className="pc-lib-tag">{tr("Changes over time")}</span>}
             </div>
             <div className="pc-lib-fxcard-sub" title={describeFilter(f)}>
               {describeFilter(f)}
-              {uses.length ? ` · 用在 ${uses.length} 段` : ""}
+              {uses.length ? tr(" · used in {0} segments", uses.length) : ""}
             </div>
             <div className="pc-lib-fxcard-actions">
               <button
                 type="button"
                 className="pc-left-btn"
                 disabled={!selClip || ro.locked}
-                title={ro.locked ? ro.why : selClip ? (on ? "从选中的片段上摘掉" : "挂到选中的片段上(每段只挂一个,会替换原来的)") : "先在时间轴上选中一段视频或图片"}
+                title={ro.locked ? ro.why : selClip ? (on ? tr("Detach from the selected clip") : tr("Attach to the selected clip (one per segment, replaces the existing one)")) : tr("First select a video or image clip on the timeline")}
                 onClick={() =>
                   selClip &&
                   (on
-                    ? run(() => tools.applyFilter({ clipId: selClip.id, filterId: "" }), `已从选中的片段摘掉「${f.name}」`)
-                    : run(() => tools.applyFilter({ clipId: selClip.id, filterId: f.id }), `已把「${f.name}」挂到选中的片段`))
+                    ? run(() => tools.applyFilter({ clipId: selClip.id, filterId: "" }), tr("Detached \"{0}\" from the selected clip", f.name))
+                    : run(() => tools.applyFilter({ clipId: selClip.id, filterId: f.id }), tr("Attached \"{0}\" to the selected clip", f.name)))
                 }
               >
-                {on ? "摘掉" : "挂到选中"}
+                {on ? tr("Detach") : tr("Attach to selection")}
               </button>
               <button
                 type="button"
                 className={`pc-left-btn${armed === f.id ? " is-danger" : ""}`}
                 disabled={ro.locked}
-                title={ro.title(uses.length ? `用在 ${uses.length} 段上,删了会一起摘掉` : "从滤镜库删掉")}
+                title={ro.title(uses.length ? tr("Used in {0} segments, deleting it detaches it from all of them", uses.length) : tr("Delete from the filter library"))}
                 onClick={() => {
                   if (uses.length && armed !== f.id) {
                     setArmed(f.id);
-                    flash(`「${f.name}」用在 ${uses.length} 段上;再点一次「确认删除」会把这些段上的它一起摘掉`);
+                    flash(tr("\"{0}\" is used in {1} segments; click \"Confirm delete\" again to detach it from those segments as well", f.name, uses.length));
                     return;
                   }
                   setArmed(null);
-                  run(() => tools.removeFilter({ filterId: f.id, force: uses.length > 0, reason: "用户在素材库里删除" }), `已删除「${f.name}」`);
+                  run(() => tools.removeFilter({ filterId: f.id, force: uses.length > 0, reason: "User deleted it in the media library" }), tr("Deleted \"{0}\"", f.name));
                 }}
               >
-                {armed === f.id ? "确认删除" : "删除"}
+                {armed === f.id ? tr("Confirm delete") : tr("Delete")}
               </button>
             </div>
           </div>
@@ -125,16 +126,16 @@ export function useFiltersGroup(q: string, flash: (text: string, ms?: number) =>
   return {
     items,
     thumbs,
-    emptyHint: "让 AI 助手新建滤镜",
+    emptyHint: tr("Ask the AI assistant to create a filter"),
     emptyDetail:
       filters.length === 0 ? (
         <div className="pc-left-note">
-          还没有滤镜。
+          {tr("No filters yet.")}
           <br />
-          让 Agent 建一个(比如「给夜景那几段做个冷色调」),它会出现在这里,之后能挂到任意视频 / 图片片段上复用。
+          {tr("Ask the Agent to create one (e.g. \"give the night shots a cool tone\"). It will appear here and can then be attached to any video / image clip for reuse.")}
         </div>
       ) : (
-        <div className="pc-left-note">没搜到匹配的滤镜。</div>
+        <div className="pc-left-note">{tr("No matching filters found.")}</div>
       ),
   };
 }

@@ -49,7 +49,7 @@ test("A→B→A 被拒;set_cut_segment 改偏移并截短出点;get_clip 带 cut
   actions.switchCut("A");
   const r = call("set_cut_segment", { clipId: seg.clipId, cutOffset: 2 });
   assert.deepEqual([r.segment.cutOffset, r.segment.end], [2, 4]);
-  assert.throws(() => call("set_cut_segment", { clipId: seg.clipId, cutOffset: 9 }), /超出/);
+  assert.throws(() => call("set_cut_segment", { clipId: seg.clipId, cutOffset: 9 }), /exceeds the total duration/);
   const env = call("get_clip", { clipId: seg.clipId });
   assert.equal(env.cutSegment.cutId, "B");
   assert.equal(env.cutSegment.cutDuration, 6);

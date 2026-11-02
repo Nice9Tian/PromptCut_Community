@@ -19,7 +19,7 @@ const ue = await import(srcUrl("editor/userEditing.ts"));
 /** 一个两段片段的项目(不依赖卡片注册表) */
 function load(name) {
   const p = createEmptyProject(name);
-  p.tracks = [{ id: "t1", name: "画面", clips: [
+  p.tracks = [{ id: "t1", name: "Video", clips: [
     { id: "a", cardId: "title", params: {}, start: 0, end: 2 },
     { id: "b", cardId: "title", params: {}, start: 5, end: 7 },
   ] }];

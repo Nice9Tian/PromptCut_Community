@@ -28,13 +28,3 @@ export function markOnlinePage(): void {
   (globalThis as Record<string, unknown>)[KEY] = true;
 }
 
-/**
- * 在线浏览器模式里置灰的入口悬停时的说明(C10 契约第 10 节、第 17 节表 A):
- * 「在线浏览器模式暂不支持{入口名}，请在电脑上的 PromptCut 里使用。」
- * 入口名用用户在界面上看到的叫法(「导入媒体」「语音识别」「配音」……)。
- */
-export const ONLINE_UNSUPPORTED_PREFIX = "在线浏览器模式暂不支持";
-export const ONLINE_UNSUPPORTED_SUFFIX = "，请在电脑上的 PromptCut 里使用。";
-export function onlineUnsupported(entry: string): string {
-  return `${ONLINE_UNSUPPORTED_PREFIX}${entry}${ONLINE_UNSUPPORTED_SUFFIX}`;
-}

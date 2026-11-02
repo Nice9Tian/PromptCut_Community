@@ -18,6 +18,7 @@
  * 不引 React、不引同步管理的运行时（只用类型），单测直接 import。
  */
 import type { AdminError, MemberRow } from "./syncManager";
+import { tr } from "../../i18n/index.ts";
 
 export type HostedServiceName = "render" | "agent";
 
@@ -54,18 +55,18 @@ export interface HostedServiceText {
 /** 每种服务在界面上的文案。加服务时在这里加一项、再把名字加进 `HOSTED_SERVICE_ROWS` */
 export const HOSTED_SERVICE_TEXT: Partial<Record<HostedServiceName, HostedServiceText>> = {
   render: {
-    label: "托管方的渲染节点",
-    hint: (enabled) => (enabled ? "云节点上托管方的渲染节点为这个项目做预渲染，创建者可以关掉。" : "已关闭：托管方的渲染节点不再为这个项目做预渲染，已经渲好的结果保留。"),
+    label: tr("Host's render node"),
+    hint: (enabled) => (enabled ? tr("The host's render node on the cloud node prerenders this project. The creator can turn this off.") : tr("Turned off: the host's render node no longer prerenders this project. Existing prerender output is kept.")),
     // 与云端 Agent 同一个规矩：只在关闭时给别的成员气泡，打开时不提示〔用户 2026-10-07 定〕
-    changed: (enabled) => (enabled ? "" : "创建者关闭了托管方的渲染节点，它不再为这个项目做预渲染。"),
-    confirm: (enabled) => (enabled ? "打开后，托管方的渲染节点会为这个项目做预渲染。" : "关闭后，托管方的渲染节点不再为这个项目做预渲染，已经渲好的结果保留。"),
+    changed: (enabled) => (enabled ? "" : tr("The creator turned off the host's render node. It no longer prerenders this project.")),
+    confirm: (enabled) => (enabled ? tr("Once turned on, the host's render node will prerender this project.") : tr("Once turned off, the host's render node will no longer prerender this project. Existing prerender output is kept.")),
   },
   agent: {
-    label: "云端 Agent",
-    hint: (enabled) => (enabled ? "成员可以在 AI 栏里选「云端」，让云节点上的 Agent 代自己改项目，关掉软件也会继续。创建者可以关掉。" : "已关闭：成员不能再用云端 Agent，进行中的云端对话已被停下；已经落地的改动保留。"),
+    label: tr("Cloud Agent"),
+    hint: (enabled) => (enabled ? tr("Members can choose \"Cloud\" in the AI panel to have an Agent on the cloud node edit the project on their behalf, and it keeps going after the app is closed. The creator can turn this off.") : tr("Turned off: members can no longer use the Cloud Agent, and cloud chats in progress have been stopped. Changes already applied are kept.")),
     // 只有关闭时给别的成员一条气泡，打开时不提示（空串就不弹）〔用户 2026-10-07 定〕
-    changed: (enabled) => (enabled ? "" : "创建者关闭了云端 Agent，进行中的云端对话已被停下。"),
-    confirm: (enabled) => (enabled ? "打开后，成员可以在 AI 栏里选「云端」，让云节点上的 Agent 代自己改项目。" : "关闭后，成员不能再用云端 Agent，进行中的云端对话会被立刻停下；已经落地的改动保留。"),
+    changed: (enabled) => (enabled ? "" : tr("The creator turned off the Cloud Agent, and cloud chats in progress have been stopped.")),
+    confirm: (enabled) => (enabled ? tr("Once turned on, members can choose \"Cloud\" in the AI panel to have an Agent on the cloud node edit the project on their behalf.") : tr("Once turned off, members can no longer use the Cloud Agent, and cloud chats in progress will be stopped immediately. Changes already applied are kept.")),
   },
 };
 
@@ -82,10 +83,10 @@ export interface HostedOptionText {
 /** 每个子选项在界面上的文案（先照任务书，用户看过截图再定）。键是 `<服务名>.<选项名>` */
 export const HOSTED_OPTION_TEXT: Record<string, HostedOptionText> = {
   "render.streams": {
-    label: "生成轨道流",
-    hint: (enabled) => (enabled ? "托管方的渲染节点为这个项目生成轨道流，重卡在在线浏览器里播放更流畅。" : "没有打开：托管方的渲染节点不为这个项目生成轨道流，播放时用成员们各自设备生成的轨道流。打开后托管方也会生成，重卡在在线浏览器里播放更流畅，会多用云端的渲染时间。"),
-    changed: (enabled) => (enabled ? "" : "创建者关闭了轨道流，托管方的渲染节点不再为这个项目生成轨道流。"),
-    confirm: (enabled) => (enabled ? "打开后，托管方的渲染节点会为这个项目生成轨道流。" : "关闭后，托管方的渲染节点不再为这个项目生成轨道流，已经生成的保留。"),
+    label: tr("Generate track streams"),
+    hint: (enabled) => (enabled ? tr("The host's render node generates track streams for this project, so heavy cards play more smoothly in the online browser.") : tr("Not turned on: the host's render node does not generate track streams for this project, and playback uses the track streams generated on each member's own device. Once turned on, the host generates them too, so heavy cards play more smoothly in the online browser, at the cost of more cloud render time.")),
+    changed: (enabled) => (enabled ? "" : tr("The creator turned off track streams, so the host's render node no longer generates track streams for this project.")),
+    confirm: (enabled) => (enabled ? tr("Once turned on, the host's render node will generate track streams for this project.") : tr("Once turned off, the host's render node no longer generates track streams for this project, and the ones already generated are kept.")),
   },
 };
 
@@ -121,7 +122,7 @@ export function accountHostedFailure(error: unknown): { ok: false; error: AdminE
   const status = typeof e.status === "number" ? e.status : NaN;
   const kind: AdminError = status === 403 ? "forbidden" : status === 400 ? "bad-message" : status === 0 || e.code === "network" ? "offline" : "other";
   const known = typeof e.code === "string" && typeof e.message === "string" && e.message !== "" && e.message !== e.code;
-  const message = known ? (e.message as string) : kind === "offline" ? "没连上云端服务，稍后再试。" : "没做成，稍后再试。";
+  const message = known ? (e.message as string) : kind === "offline" ? tr("Could not reach the cloud service. Try again later.") : tr("Did not succeed, try again later.");
   return { ok: false, error: kind, message };
 }
 
@@ -233,14 +234,14 @@ export function cloudAgentConns<T extends { role: string; service?: string }>(co
 }
 
 /** 云端 Agent 的署名:「〈成员名〉的云端 Agent」(操作记录、覆盖提示、成员列表都用这一处) */
-export const cloudAgentLabel = (name: string): string => `${name}的云端 Agent`;
+export const cloudAgentLabel = (name: string): string => tr("{0}'s Cloud Agent", name);
 
 /** 成员列表的这一行是不是托管方的服务 */
 export const isServiceRow = (row: Pick<MemberRow, "service">): boolean => typeof row.service === "string" && row.service !== "";
 
 /** 服务行显示的名字：按服务名，不看用户名；不认识的服务名给一个通用名 */
 export function serviceRowLabel(service: string | undefined): string {
-  return (isServiceName(service) && HOSTED_SERVICE_TEXT[service]?.label) || "托管方的服务";
+  return (isServiceName(service) && HOSTED_SERVICE_TEXT[service]?.label) || tr("Host's service");
 }
 
 /** 成员列表拆成两段：成员（在前，计入成员数）、托管方的服务（在后，不计数、没有踢人按钮） */
@@ -317,7 +318,7 @@ export function memberCounts(people: readonly CountRow[], running: CloudRunning)
 /** 顶栏按钮上的字。自己总是在线的，所以人数至少 1 */
 export function memberCountLabel(people: readonly CountRow[], running: CloudRunning): string {
   const c = memberCounts(people, running);
-  return `成员：${Math.max(1, c.people)} 人 · Agent：${c.agents} 个`;
+  return tr("Members: {0} · Agents: {1}", Math.max(1, c.people), c.agents);
 }
 
 /* ---------------------------------------------------------------------------------------------
@@ -369,5 +370,5 @@ export function accountMemberCounts(snapshot: { members: readonly { accountId: s
 /** 账号项目顶栏按钮上的字 */
 export function accountMemberCountLabel(snapshot: Parameters<typeof accountMemberCounts>[0]): string {
   const c = accountMemberCounts(snapshot);
-  return `成员：${c.people} 人 · Agent：${c.agents} 个`;
+  return tr("Members: {0} · Agents: {1}", c.people, c.agents);
 }

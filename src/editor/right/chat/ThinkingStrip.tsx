@@ -5,6 +5,7 @@ import { isReportTool } from "../../../ai/progressReport";
 import { partsOf, runningTool } from "./AgentBubble";
 import { bareToolName, KIND_LABEL, toolKind } from "./iconRuns";
 import "./agent.css";
+import { tr } from "../../../i18n/index.ts";
 
 /**
  * 输入框上方的一条:这一页里正在跑的 Agent 此刻在做哪一步。
@@ -28,18 +29,18 @@ function fmtElapsed(ms: number): string {
 export function stripText(m: ChatMessage): string {
   const p = m.progress as Record<string, any> | undefined;
   if (p?.waitingJobs || p?.phase === 'waiting_jobs') {
-    return p.text || "上一条消息发起的后台作业（转写、镜头识别等）还在做，做完就处理你这条消息。";
+    return p.text || tr("Background jobs started by the previous message (transcription, shot detection, etc.) are still running. Your message will be handled when they finish.");
   }
   if (p?.renderQueuePosition || p?.phase === 'render_queued') {
     const pos = p.renderQueuePosition ?? 1;
-    return `云端渲染正在给别的项目用，排在第 ${pos} 位，轮到了会接着做。`;
+    return tr("Cloud rendering is busy with another project. You are number {0} in the queue and it will continue when your turn comes.", pos);
   }
   const parts = partsOf(m);
   const step = currentStep(parts);
   if (step) return step;
   const t = runningTool(parts);
-  if (t) return isReportTool(t.name) ? "正在整理小结" : `正在${KIND_LABEL[toolKind(t.name)]}:${bareToolName(t.name)}`;
-  return "正在思考…";
+  if (t) return isReportTool(t.name) ? tr("Writing summary") : tr("Now {0}: {1}", KIND_LABEL[toolKind(t.name)], bareToolName(t.name));
+  return tr("Thinking…");
 }
 
 export function ThinkingStrip(props: { messages: ChatMessage[]; streaming: boolean }) {
@@ -81,7 +82,7 @@ export function ThinkingStrip(props: { messages: ChatMessage[]; streaming: boole
           {text}
         </span>
       </span>
-      <span className="ai-tstrip-time" title="已用时间">
+      <span className="ai-tstrip-time" title={tr("Elapsed time")}>
         {fmtElapsed(now - startedAt)}
       </span>
     </div>

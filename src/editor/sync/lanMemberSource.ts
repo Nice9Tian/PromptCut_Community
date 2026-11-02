@@ -17,6 +17,7 @@ import type {
   LanInviteResolution,
   MemberSource,
 } from "./accountExtensions.ts";
+import { tr } from "../../i18n/index.ts";
 
 export interface LanMemberInput {
   username: string;
@@ -177,13 +178,13 @@ export function createLanMemberSource(deps: LanMemberSourceDeps): MemberSource {
     async memberAdmin(operation: AccountMemberOperation): Promise<AccountMemberResult> {
       const sync = deps.getSyncView();
       const shared = sync.shared;
-      if (!shared) throw new Error("当前未连接共享项目");
+      if (!shared) throw new Error(tr("Not currently connected to a shared project"));
       const isCreator = shared.creator === true || shared.as === "creator";
-      if (!isCreator) throw new Error("只有项目创建者可以管理成员。");
+      if (!isCreator) throw new Error(tr("Only the project creator can manage members."));
       const password = deps.localCollab?.(shared.projectId)?.creatorPassword ?? "";
       if (operation.op === "kick") {
         const username = operation.accountId.trim();
-        if (!username || username === shared.username) throw new Error("无法移除该成员");
+        if (!username || username === shared.username) throw new Error(tr("Cannot remove this member"));
         const r = await deps.adminOp("kick", { password }, { username, deviceId: null });
         if (!r.ok) throw new Error(r.error);
         return {
@@ -203,7 +204,7 @@ export function createLanMemberSource(deps: LanMemberSourceDeps): MemberSource {
           state: "pending-services",
         };
       }
-      throw new Error("局域网共享项目不支持此操作");
+      throw new Error(tr("This operation is not supported for LAN shared projects"));
     },
 
     async kickLanMember(
@@ -237,16 +238,16 @@ export function createLanMemberSource(deps: LanMemberSourceDeps): MemberSource {
 /* ---------------- 公开侧局域网加入源 ---------------- */
 
 export const LAN_JOIN_TEXT = Object.freeze({
-  badLink: "这不是有效的邀请链接。",
-  oldLink: "这是旧版邀请链接，向创建者要一张新的（设置里「作废并重新生成邀请码」），或手动填写项目信息。",
-  inviteInvalid: "这个邀请链接已失效，向创建者要一个新的，或手动填写项目信息。",
-  needUsername: "请输入用户名",
-  badUsername: "用户名格式不对（1～64 个字符，不能有控制字符，首尾不能是空格）",
-  needPassword: "请输入密码",
-  auth: "用户名或密码不对。忘了的话找创建者问一下。",
-  kicked: "你被创建者踢出了这个项目。想回来，找创建者撤销。",
-  noProject: "找不到这个项目，检查一下项目名。",
-  unreachable: "连不上服务器，请稍后再试。",
+  badLink: tr("This is not a valid invite link."),
+  oldLink: tr("This is an old-style invite link. Ask the creator for a new one (\"Revoke and regenerate invite code\" in settings), or enter the project details manually."),
+  inviteInvalid: tr("This invite link is no longer valid. Ask the creator for a new one, or enter the project details manually."),
+  needUsername: tr("Enter a username"),
+  badUsername: tr("Invalid username format (1-64 characters, no control characters, no leading or trailing spaces)"),
+  needPassword: tr("Enter a password"),
+  auth: tr("Wrong username or password. If you've forgotten them, ask the creator."),
+  kicked: tr("You were removed from this project by the creator. To come back, ask the creator to revoke it."),
+  noProject: tr("Project not found. Check the project name."),
+  unreachable: tr("Can't reach the server. Please try again later."),
 });
 
 export function lanUsernameOk(v: string): boolean {

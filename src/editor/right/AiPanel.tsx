@@ -54,6 +54,7 @@ import {
   acceptAttr,
   type AttachJobView,
 } from "../../ai/attachments";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 一个 AI 助手分页。
@@ -91,7 +92,7 @@ export function AiPanel(props: { mcpConnected: boolean; hotkeysOff?: boolean; mo
 
   // 顶栏标题就是这一页的页签名:Agent 用 declare_scope 声明范围之后会跟着改名
   const { tabs } = useAgentTabs();
-  const tabTitle = tabs.find((t) => t.id === tabId)?.title ?? "AI 助手";
+  const tabTitle = tabs.find((t) => t.id === tabId)?.title ?? tr("AI assistant");
 
   // 页签上要知道这一页的对话 ID(给模型看的 Agent ID)和忙不忙
   // 开始页占位页还不是真会话(isDraft):点发送变成真页之后这两句才记得上
@@ -134,7 +135,7 @@ export function AiPanel(props: { mcpConnected: boolean; hotkeysOff?: boolean; mo
           return;
         }
         // 模型读 formatInbound 的全文;界面认 inbound 字段(不画成用户气泡,放进回复的操作详细预览控件)
-        void send(agentBus.formatInbound(msgs), undefined, { inbound: msgs.map((x) => ({ from: x.fromLabel ?? x.from ?? "未知", text: x.text })), hops: Math.max(...msgs.map((m) => m.hops)) });
+        void send(agentBus.formatInbound(msgs), undefined, { inbound: msgs.map((x) => ({ from: x.fromLabel ?? x.from ?? tr("unknown"), text: x.text })), hops: Math.max(...msgs.map((m) => m.hops)) });
       });
     };
     deliver();
@@ -329,7 +330,7 @@ export function AiPanel(props: { mcpConnected: boolean; hotkeysOff?: boolean; mo
   // 收集要等一次本机请求,期间菜单项还点得动 —— 每点一次就多一轮采集
   const diagBusy = useRef(false);
   const openDiagnostics = async () => {
-    if (messages.length === 0) return setToast("还没有对话可以导出");
+    if (messages.length === 0) return setToast(tr("No chat to export yet"));
     if (diagBusy.current) return;
     diagBusy.current = true;
     /*
@@ -339,7 +340,7 @@ export function AiPanel(props: { mcpConnected: boolean; hotkeysOff?: boolean; mo
      * 收集要等一次本机请求,所以先说一声 —— 服务正好挂了的话这里会停满 5 秒,
      * 一个没有任何反馈的按钮会让用户以为点漏了,再点一次。
      */
-    setToast("正在收集诊断信息…");
+    setToast(tr("Collecting diagnostics…"));
     let environment: unknown;
     try {
       environment = await collectEnvironment(messages.length);
@@ -352,7 +353,7 @@ export function AiPanel(props: { mcpConnected: boolean; hotkeysOff?: boolean; mo
       setDiagOpen(true);
       setToast(null);
     } catch (e) {
-      setToast(e instanceof Error ? e.message : "诊断报告生成失败");
+      setToast(e instanceof Error ? e.message : tr("Failed to generate the diagnostic report"));
     } finally {
       diagBusy.current = false;
     }
@@ -381,15 +382,15 @@ export function AiPanel(props: { mcpConnected: boolean; hotkeysOff?: boolean; mo
       <aside className="panel panel-right ai-panel" data-inactive={active ? undefined : "1"} aria-hidden={active ? undefined : true}>
         <div className="ai-panel-header">
           <CollapsePanelButton placement="start" />
-          <div className="ai-panel-title">AI 助手</div>
-          <button className="ai-gear-btn" title="AI 设置" aria-label="AI 设置" onClick={openSetup}><span aria-hidden="true">⚙</span><span>AI 设置</span></button>
+          <div className="ai-panel-title">{tr("AI assistant")}</div>
+          <button className="ai-gear-btn" title={tr("AI settings")} aria-label={tr("AI settings")} onClick={openSetup}><span aria-hidden="true">⚙</span><span>{tr("AI settings")}</span></button>
           <CollapsePanelButton placement="end" />
         </div>
         <div className="ai-empty-state">
-          没找到 Claude Code / agy / Codex,装好任意一个后重启本地服务
+          {tr("Claude Code / agy / Codex not found. Install any one of them, then restart the local service")}
           {cloud.available && (
             <div style={{ marginTop: 8 }}>
-              <button className="ai-banner-btn" data-pc="ai-use-cloud" disabled={cloudOff} title={cloudOff ? cloudErrorText("disabled") : "项目放在云端,可以直接用云端 Agent"} onClick={() => selectCloudTab(tabId)}>改用云端 Agent</button>
+              <button className="ai-banner-btn" data-pc="ai-use-cloud" disabled={cloudOff} title={cloudOff ? cloudErrorText("disabled") : tr("The project is in the cloud, so you can use the Cloud Agent directly")} onClick={() => selectCloudTab(tabId)}>{tr("Switch to Cloud Agent")}</button>
             </div>
           )}
         </div>
@@ -445,7 +446,7 @@ export function AiPanel(props: { mcpConnected: boolean; hotkeysOff?: boolean; mo
     // 还在导入或导入失败的附件这次先不带上,但发送本身任何时候都不许被挡住
     const usable = attachments.filter((a) => a.status !== "importing" && a.status !== "error");
     const skipped = attachments.length - usable.length;
-    if (skipped > 0) setToast(`${skipped} 个附件还在导入或导入失败,这次没带上`);
+    if (skipped > 0) setToast(tr("{0} attachments are still importing or failed to import, and were not included this time", skipped));
     if (isBusy()) {
       // 排一条空消息没有意义:只有没导好的附件时留在输入框里,等导好了再交
       if (!text.trim() && usable.length === 0) return;
@@ -504,7 +505,7 @@ export function AiPanel(props: { mcpConnected: boolean; hotkeysOff?: boolean; mo
             // 保留占位卡片的 id,这样重试和删除还能对得上
             return { ...a, ...job.attachment, id: placeholderId, status: "ready" as const };
           }
-          return { ...a, status: "error" as const, error: job.error || job.attachment?.error || "导入失败", jobId: job.id };
+          return { ...a, status: "error" as const, error: job.error || job.attachment?.error || tr("Import failed"), jobId: job.id };
         }),
       );
     })().catch((err: unknown) => {
@@ -555,20 +556,20 @@ export function AiPanel(props: { mcpConnected: boolean; hotkeysOff?: boolean; mo
       {/* 云端有这位成员还在跑的对话(重新打开软件之后):提示一下,点了接上;不自动切到云端 */}
       {cloud.available && digest.running.length > 0 && (
         <div className="ai-banner" data-pc="cloud-running-banner">
-          <span>云端有一个对话正在进行</span>
-          <button className="ai-banner-btn" onClick={() => selectCloudTab(tabId, digest.running[0])}>接上看看</button>
+          <span>{tr("A chat is in progress in the cloud")}</span>
+          <button className="ai-banner-btn" onClick={() => selectCloudTab(tabId, digest.running[0])}>{tr("Join and take a look")}</button>
         </div>
       )}
 
       {needsLogin && (
         <div className="ai-banner">
-          <span>{pInfo.auth?.status === 'invalid' ? 'Codex 登录已失效，请重新登录' : showLoginPrompt ? "请先登录再发送" : `${pInfo.label} 还没登录`}</span>
+          <span>{pInfo.auth?.status === 'invalid' ? tr("Codex login has expired, please log in again") : showLoginPrompt ? tr("Log in before sending") : tr("{0} is not logged in", pInfo.label)}</span>
           <button
             className="ai-banner-btn"
             onClick={() => { if (provider) login(provider); setShowLoginPrompt(false); }}
             disabled={st === "waiting"}
           >
-            {st === "waiting" ? "登录窗口已打开,等你完成…" : st === "timeout" ? "登录超时,可以再试一次" : pInfo.auth?.status === 'invalid' ? '重新登录' : "去登录"}
+            {st === "waiting" ? tr("Login window opened, waiting for you to finish…") : st === "timeout" ? tr("Login timed out, you can try again") : pInfo.auth?.status === 'invalid' ? tr("Log in again") : tr("Log in")}
           </button>
         </div>
       )}
@@ -576,7 +577,7 @@ export function AiPanel(props: { mcpConnected: boolean; hotkeysOff?: boolean; mo
       {!needsLogin && pInfo?.auth?.loggedIn === null && pInfo.auth.fixHint && (
         <div className="ai-banner">
           {pInfo.auth.fixHint}
-          <button className="ai-banner-btn" onClick={openSetup}>打开 AI 设置</button>
+          <button className="ai-banner-btn" onClick={openSetup}>{tr("Open AI settings")}</button>
         </div>
       )}
 
@@ -692,9 +693,9 @@ export function AiPanel(props: { mcpConnected: boolean; hotkeysOff?: boolean; mo
       />
       <ReportDialog
         open={diagOpen}
-        title="对话诊断报告"
-        label="对话诊断"
-        hint={diagTruncated ? "含可见对话与每一步执行事件;过大的事件已截断" : "含可见对话与每一步执行事件;不含密钥与模型私有思考"}
+        title={tr("Chat diagnostic report")}
+        label={tr("Chat diagnostics")}
+        hint={diagTruncated ? tr("Includes the visible chat and every execution event; oversized events were truncated") : tr("Includes the visible chat and every execution event; excludes keys and the model's private reasoning")}
         text={diagReport}
         onClose={() => setDiagOpen(false)}
       />

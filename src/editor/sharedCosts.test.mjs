@@ -85,10 +85,10 @@ test("SC-04 被拒、连不上:publish 不抛、回 ok:false;list 抛错", async
   const w = await S.publishSharedCosts({ request: desk, projectId: "sp_zzzzzzzzzzzzzzzzzzzzzzzzzz", environment: ENV, records: [S.toSharedInput(k1("a", 1))] });
   assert.equal(w.ok, false);
   assert.match(w.error, /forbidden/);
-  const dead = async () => { throw new Error("没连上文档服务"); };
+  const dead = async () => { throw new Error("Not connected to the document service"); };
   const w2 = await S.publishSharedCosts({ request: dead, projectId: P.projectId, environment: ENV, records: [S.toSharedInput(k1("a", 1))] });
   assert.equal(w2.ok, false);
-  await assert.rejects(S.listSharedCosts({ request: dead, projectId: P.projectId, environment: ENV }), /没连上/);
+  await assert.rejects(S.listSharedCosts({ request: dead, projectId: P.projectId, environment: ENV }), /Not connected to the document service/);
 });
 
 test("SC-05 转写:连着共享项目时把本机测的(单舞台、双舞台都算)、当前项目用到的卡写进文档服务;别的机器、项目外的卡不写", async (t) => {

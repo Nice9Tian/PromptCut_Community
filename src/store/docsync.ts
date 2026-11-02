@@ -32,6 +32,7 @@ import { relocateOps, undoEntitiesOf, undoEntityOfOp } from "../kernel/cutPaths"
 import type { Project } from "../kernel/project";
 import { attachProjectSync, set, state } from "./core";
 import { pageStateAfterRemote } from "./remotePageState";
+import { tr } from "../i18n/index.ts";
 
 /* ---------------- 消息 ---------------- */
 
@@ -417,10 +418,10 @@ export class DocSync {
 
   restoreJournal(journal: ReturnType<DocSync["recoveryJournal"]>) {
     if (journal.version !== 1 || journal.projectId !== this.projectId || !Number.isSafeInteger(journal.rev) || journal.rev < 0 || !Array.isArray(journal.project?.tracks)
-      || !Array.isArray(journal.pending) || journal.pending.some(p => typeof p.opId !== "string" || !Array.isArray(p.ops) || !Array.isArray(p.inverse))) throw new Error("离线操作恢复数据损坏");
+      || !Array.isArray(journal.pending) || journal.pending.some(p => typeof p.opId !== "string" || !Array.isArray(p.ops) || !Array.isArray(p.inverse))) throw new Error(tr("Offline operation recovery data is corrupted"));
     const newer = this.pending;
     let recovered = journal.project;
-    for (const p of newer) { const applied = applyOps(recovered, p.ops); if (!applied.ok) throw new Error("恢复期间的离线修改无法接续；请先保留独立备份"); recovered = applied.value; }
+    for (const p of newer) { const applied = applyOps(recovered, p.ops); if (!applied.ok) throw new Error(tr("Offline changes made during recovery cannot be continued; please keep a separate backup first")); recovered = applied.value; }
     this.local = recovered;
     this.confirmedRev = journal.rev;
     this.offlineRev = journal.pending.length || newer.length ? journal.offlineRev ?? journal.rev : null;
@@ -572,7 +573,7 @@ export class DocSync {
     if (msg.project == null) {
       if (!this.initialize) {
         this.connected = false;
-        this.emit("notice", { kind: "resync", reason: "协作服务状态缺失，保留本地内容，请从原备份恢复。" });
+        this.emit("notice", { kind: "resync", reason: "Collaboration service state is missing. Local content is kept; please restore from the original backup." });
         this.emit("status", this.status);
         return;
       }
@@ -631,10 +632,10 @@ export class DocSync {
     this.partial = null;
     let project: Project;
     try {
-      if (part.chunks.length !== part.count || part.chunks.some((c) => typeof c !== "string")) throw new Error("分片不全");
+      if (part.chunks.length !== part.count || part.chunks.some((c) => typeof c !== "string")) throw new Error(tr("Incomplete chunks"));
       project = JSON.parse(part.chunks.join(""));
     } catch (e) {
-      this.resync(`项目分片拼不起来:${(e as Error).message}`);
+      this.resync(tr("Project shards cannot be assembled: {0}", (e as Error).message));
       return;
     }
     this.onState({ type: "project.state", rev: part.rev, project });
@@ -654,16 +655,16 @@ export class DocSync {
     if (this.awaitingState || !this.confirmed) return;
     if (msg.rev <= this.confirmedRev) return;
     if (msg.resync || !Array.isArray(msg.ops)) {
-      this.resync("远端的大根替换没带操作,重新打开");
+      this.resync(tr("The remote large-root replacement carried no operations, reopening"));
       return;
     }
     if (msg.rev !== this.confirmedRev + 1) {
-      this.resync(`版本跳号:本地 ${this.confirmedRev},收到 ${msg.rev}`);
+      this.resync(tr("Version gap: local {0}, received {1}", this.confirmedRev, msg.rev));
       return;
     }
     const r = applyOps(this.confirmed, msg.ops);
     if (!r.ok) {
-      this.resync(`远端操作在已确认副本上落不下去:${r.detail}`);
+      this.resync(tr("Remote operation cannot be applied to the confirmed copy: {0}", r.detail));
       return;
     }
     // 顺手记下这次别人提交的逆操作(AI 栏「撤销这一步」用;事件里带了 inverse 时以事件为准)。
@@ -719,18 +720,18 @@ export class DocSync {
     // 换连接之后也可能走到这里:旧连接上在途的提交晚到,先于排在它前面那条的回音。不去猜前面那条落没落地
     // (猜错了页面与文档服务的内容会悄悄不一样),一律整份重取、在取到的状态上重放没确认的
     if (idx !== 0 || msg.rev !== this.confirmedRev + 1 || entry.brokenLocally) {
-      this.resync(`确认乱序或与本地不一致:${entry.opId} rev ${msg.rev}`);
+      this.resync(tr("Acknowledgement out of order or inconsistent with local: {0} rev {1}", entry.opId, msg.rev));
       return;
     }
     if (this.confirmed === null) {
       // 根替换建项目
       const r0 = applyOps({} as Project, entry.ops);
-      if (!r0.ok) return this.resync("建项目的根替换落不下去");
+      if (!r0.ok) return this.resync(tr("The root replacement that creates the project cannot be applied"));
       this.confirmed = r0.value;
     } else {
       const r = applyOps(this.confirmed, entry.ops);
       if (!r.ok) {
-        this.resync(`已确认的提交在已确认副本上落不下去:${r.detail}`);
+        this.resync(tr("The confirmed commit cannot be applied to the confirmed copy: {0}", r.detail));
         return;
       }
       this.confirmed = r.value;
@@ -834,8 +835,8 @@ export class DocSync {
    * 连接还没就绪(没拿到已确认的一版、在等状态、已经停着)抛错;没有差异回 false,什么都不发。
    */
   mergeOffline(next: Project, baseRev: number): boolean {
-    if (!this.connected || this.awaitingState || !this.confirmed || this.paused || this.gateOpId) throw new Error("文档连接还没就绪，不能合并离线修改");
-    if (!Number.isSafeInteger(baseRev) || baseRev < 0) throw new Error("离线修改的历史序号不对");
+    if (!this.connected || this.awaitingState || !this.confirmed || this.paused || this.gateOpId) throw new Error(tr("The document connection is not ready yet; offline changes cannot be merged"));
+    if (!Number.isSafeInteger(baseRev) || baseRev < 0) throw new Error(tr("The history sequence number of the offline changes is wrong"));
     if (baseRev === this.confirmedRev && this.offlineRev === null) {
       // 不是经 store 发起的:用 replay 作原因,接 store 的一侧把结果写进 state
       const prev = this.local;
@@ -845,7 +846,7 @@ export class DocSync {
     const d = diffProject(this.local, next);
     if (d.ops.length === 0) return false;
     const r = applyOps(this.local, d.ops);
-    if (!r.ok) throw new Error(`离线修改落不下去:${r.detail}`);
+    if (!r.ok) throw new Error(tr("Offline changes cannot be applied: {0}", r.detail));
     const ops: PathOp[] = utf8Bytes(JSON.stringify(d.ops)) > MAX_OPS_BYTES ? [{ op: "set", path: "", value: r.value }] : d.ops;
     const entry: Pending = { opId: this.newOpId(), ops, inverse: d.inverse, sent: false };
     this.pending.push(entry);
@@ -925,7 +926,7 @@ export class DocSync {
     const d = diffProject(prev, next);
     if (d.ops.length === 0) return prev;
     const r = applyOps(prev, d.ops);
-    if (!r.ok) throw new Error(`diffProject 产出的操作落不下去:${r.detail}`);
+    if (!r.ok) throw new Error(tr("Operations produced by diffProject cannot be applied: {0}", r.detail));
     // 差异本身超过文档服务的单次上限:改成一条根替换(值就是落地后的本地副本),发送时走分片上传。
     // 在已确认副本上重放它得到的仍是这一份,与文档服务「最后写的赢」一致;逆操作照旧用差异算的那份
     const ops: PathOp[] = utf8Bytes(JSON.stringify(d.ops)) > MAX_OPS_BYTES ? [{ op: "set", path: "", value: r.value }] : d.ops;
@@ -1175,7 +1176,7 @@ export class DocSync {
       if (opts.timeoutMs !== undefined) {
         w.timer = setTimeout(() => {
           this.settleWaiters = this.settleWaiters.filter((x) => x !== w);
-          reject(new Error(`等文档服务确认超时(还有 ${this.pending.length} 条没确认,状态 ${this.status})`));
+          reject(new Error(tr("Timed out waiting for document service confirmation ({0} still unconfirmed, status {1})", this.pending.length, this.status)));
         }, opts.timeoutMs);
       }
       this.settleWaiters.push(w);

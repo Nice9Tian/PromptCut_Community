@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { subscribeMediaUploadRejected, type MediaUploadRejection } from "../../online/mediaUploadQueue";
 import { formatUploadRejectionReason } from "../sync/accountExtensions";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 在线上传队列里有一项被素材服务永久拒掉（游客视频条数满了、文件太大，`mediaUploadQueue.ts` 的 `PERMANENT_REFUSALS`）时
@@ -8,8 +9,8 @@ import { formatUploadRejectionReason } from "../sync/accountExtensions";
  * 用户只看到本机有、云端和别的设备上没有）。那句话本身照 `src/account/client.ts` 的 `accountErrorText`，数从 `GUEST_LIMITS` 拼。
  */
 export function uploadRejectedText(rejection: Pick<MediaUploadRejection, "name" | "code">): string {
-  const what = rejection.name ? `「${rejection.name}」` : "这个素材";
-  return `${what}没有传上云端：${formatUploadRejectionReason(rejection.code)}`;
+  const what = rejection.name ? tr("\"{0}\"", rejection.name) : tr("this media");
+  return tr("{0} was not uploaded to the cloud: {1}", what, formatUploadRejectionReason(rejection.code));
 }
 
 /** 编辑台（素材库分区、手机版编辑页）挂一个：有一项被拒就用它自己的提示条说一句 */

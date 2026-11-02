@@ -5,6 +5,7 @@ import { checkCrossfade, checkFade, clampDur, planTransitionDrop, TRANSITION_LAB
 import { describeEmphasis } from "../../kernel/emphasis";
 import { cutCycleReason } from "../../kernel/cutSegments";
 import { type DragPayload } from "../dnd";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 「这一拖会落成什么样」的完整描述。dragover 时算一次画成落点预览,drop 时再算一次照着落。
@@ -56,11 +57,11 @@ export function planTransition(
   dur: number,
 ): { plan: TransitionPlan | null; status: "ok" | "forbidden"; hint: string; span: { start: number; end: number } | null } {
   const track = project.tracks.find((t) => t.id === trackId);
-  if (!track) return { plan: null, status: "forbidden", hint: "找不到这条序列", span: null };
-  if (track.locked) return { plan: null, status: "forbidden", hint: "序列已锁定", span: null };
+  if (!track) return { plan: null, status: "forbidden", hint: tr("Track not found"), span: null };
+  if (track.locked) return { plan: null, status: "forbidden", hint: tr("Track is locked"), span: null };
   const spot = planTransitionDrop(project, trackId, rawSec);
   if (!spot) {
-    return { plan: null, status: "forbidden", hint: kind === "crossfade" ? "拖到两段首尾相接的地方" : "拖到片段的开头或结尾", span: null };
+    return { plan: null, status: "forbidden", hint: kind === "crossfade" ? tr("Drop where two clips meet end to start") : tr("Drop at the start or end of a clip"), span: null };
   }
   // 拖的是哪一种就只认哪一种:拖着「淡入」落在接缝上,给的还是淡入(落在后一段的头上)
   const wanted = kind === "crossfade" ? spot : { kind, aId: spot.kind === "crossfade" && kind === "fadeIn" ? spot.bId! : spot.aId };
@@ -71,7 +72,7 @@ export function planTransition(
     return {
       plan: { kind: "crossfade", aId: chk.a.id, bId: chk.b.id, dur: chk.dur },
       status: "ok",
-      hint: `交叉溶解 ${chk.dur.toFixed(1)}s`,
+      hint: tr("Crossfade {0}s", chk.dur.toFixed(1)),
       span: { start: chk.b.start - chk.dur, end: chk.b.start },
     };
   }
@@ -95,10 +96,10 @@ export function planDrop(
   if (payload.kind === "emphasis") {
     const base = { label: payload.name, trackId: null as string | null, newTrackIndex: null as number | null };
     if ("newTrackIndex" in target) {
-      return { ...base, start: rawSec, end: rawSec, status: "forbidden", hint: "强调要落在已有的片段上" };
+      return { ...base, start: rawSec, end: rawSec, status: "forbidden", hint: tr("Emphasis must land on an existing clip") };
     }
     const hit = clipAt(project, target.trackId, rawSec);
-    if (!hit) return { ...base, trackId: target.trackId, start: rawSec, end: rawSec, status: "forbidden", hint: "拖到某一段片段上" };
+    if (!hit) return { ...base, trackId: target.trackId, start: rawSec, end: rawSec, status: "forbidden", hint: tr("Drop onto a clip") };
     return {
       ...base, trackId: target.trackId, start: hit.start, end: hit.end, status: "ok",
       hint: describeEmphasis(payload.emphasis),
@@ -109,7 +110,7 @@ export function planDrop(
   if (payload.kind === "transition") {
     const base = { label: payload.name, trackId: null as string | null, newTrackIndex: null as number | null };
     if ("newTrackIndex" in target) {
-      return { ...base, start: rawSec, end: rawSec, status: "forbidden", hint: "转场要落在已有片段上,不能新建序列" };
+      return { ...base, start: rawSec, end: rawSec, status: "forbidden", hint: tr("A transition must land on an existing clip and cannot create a track") };
     }
     const r = planTransition(project, payload.transition, target.trackId, rawSec, payload.duration);
     return {
@@ -140,16 +141,16 @@ export function planDrop(
       start,
       end: start + dur,
       status: "ok",
-      hint: "松手 = 新建一条序列",
+      hint: tr("Release = create a new track"),
     };
   }
 
   const track = project.tracks.find((t) => t.id === target.trackId);
   if (!track) {
-    return { ...base, start, end: start + dur, status: "forbidden", hint: "找不到这条序列" };
+    return { ...base, start, end: start + dur, status: "forbidden", hint: tr("Track not found") };
   }
   if (track.locked) {
-    return { ...base, trackId: track.id, start, end: start + dur, status: "forbidden", hint: "序列已锁定" };
+    return { ...base, trackId: track.id, start, end: start + dur, status: "forbidden", hint: tr("Track is locked") };
   }
 
   const placed = planPlacement(track, start, dur);
@@ -159,6 +160,6 @@ export function planDrop(
     start: placed.start,
     end: placed.end,
     status: placed.shifted ? "shift" : "ok",
-    hint: placed.shifted ? `这里被占用,顺延到 ${formatTime(placed.start)}` : formatTime(placed.start),
+    hint: placed.shifted ? tr("This spot is taken, moved to {0}", formatTime(placed.start)) : formatTime(placed.start),
   };
 }

@@ -12,6 +12,7 @@ import { newProject } from "./editor/io/proc";
 import { currentDeviceKind, pickLayout } from "./online/deviceKind";
 import { predictIdentity } from "./online/stageGate";
 import { CODE_VERSION } from "./online/boot";
+import { tr } from "./i18n/index.ts";
 
 /**
  * 开始页和编辑器之间的门。
@@ -87,7 +88,7 @@ export function Shell(): JSX.Element {
   useEffect(() => {
     if (inEditor || !hasSharedResume() || peekCapturedInvite()) return;
     let live = true;
-    newProject("未命名");
+    newProject(tr("Untitled"));
     void resumeShared().then((ok) => {
       if (ok && live) {
         setActiveDraftId(null);
@@ -148,7 +149,7 @@ export function Shell(): JSX.Element {
   if (bootError) {
     return (
       <div style={{ padding: 24, color: "var(--ui-danger)", fontFamily: "var(--ui-font)" }}>
-        打不开:{bootError}
+        {tr("Cannot open: {0}", bootError)}
       </div>
     );
   }

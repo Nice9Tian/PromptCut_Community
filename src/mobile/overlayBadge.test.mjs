@@ -8,27 +8,27 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { OVM_TAP_PX, OVM_WIDE_PX, planOverlayBadge } from "./overlayBadge.ts";
 
-test("没挂东西就不画角标", () => {
+test("no badge is drawn when nothing is attached", () => {
   assert.equal(planOverlayBadge(200, 0), null);
   assert.equal(planOverlayBadge(20, 0), null);
 });
 
-test("够宽写「叠加 N」", () => {
-  assert.deepEqual(planOverlayBadge(OVM_WIDE_PX, 2), { text: "叠加 2", tappable: true });
+test("wide enough to write \"Overlay N\"", () => {
+  assert.deepEqual(planOverlayBadge(OVM_WIDE_PX, 2), { text: "Overlay 2", tappable: true });
 });
 
-test("窄一些只写数字,还点得动", () => {
+test("narrower writes only the number, still tappable", () => {
   assert.deepEqual(planOverlayBadge(OVM_WIDE_PX - 1, 3), { text: "3", tappable: true });
   assert.deepEqual(planOverlayBadge(OVM_TAP_PX, 3), { text: "3", tappable: true });
 });
 
-test("最窄那一档不吃点击,整块热区归片段", () => {
+test("the narrowest tier does not take taps, the whole hot area belongs to the clip", () => {
   assert.deepEqual(planOverlayBadge(OVM_TAP_PX - 1, 1), { text: "1", tappable: false });
   // 线上片段最窄 18px(FullTimeline 的 Math.max(..., 18)),那一档一定落在这里
   assert.equal(planOverlayBadge(18, 1).tappable, false);
 });
 
-test("两位数也写得下", () => {
-  assert.equal(planOverlayBadge(300, 12).text, "叠加 12");
+test("two digits also fit", () => {
+  assert.equal(planOverlayBadge(300, 12).text, "Overlay 12");
   assert.equal(planOverlayBadge(80, 12).text, "12");
 });

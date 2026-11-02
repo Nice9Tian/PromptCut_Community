@@ -7,13 +7,14 @@ import { useStore } from "../../store/project";
 import { IconCursor, IconText, IconMove } from "../../ui/icons";
 import { useReadOnly } from "../readOnly";
 import "./preview.css";
+import { tr } from "../../i18n/index.ts";
 
 export type ToolType = "select" | "text" | "move";
 
 const TOOLS: { key: ToolType; label: string; Icon: typeof IconCursor }[] = [
-  { key: "select", label: "选择", Icon: IconCursor },
-  { key: "move", label: "移动", Icon: IconMove },
-  { key: "text", label: "文字", Icon: IconText },
+  { key: "select", label: tr("Select"), Icon: IconCursor },
+  { key: "move", label: tr("Move"), Icon: IconMove },
+  { key: "text", label: tr("Text"), Icon: IconText },
 ];
 
 export function ToolBar({
@@ -37,7 +38,7 @@ export function ToolBar({
   // 这个项目只给了只读权限(游客):移动、文字两个工具会改项目,置灰;选择照常
   const ro = useReadOnly();
   return (
-    <div className="pc-pv-tools" role="toolbar" aria-label="预览工具">
+    <div className="pc-pv-tools" role="toolbar" aria-label={tr("Preview tools")}>
       {TOOLS.map(({ key, label, Icon }) => (
         <button
           key={key}
@@ -65,9 +66,9 @@ export function ToolBar({
         className={`pc-pv-badge pc-pv-fit${fitted ? " is-on" : ""}`}
         onClick={onFit}
         disabled={fitted}
-        title={fitted ? "画面正跟着窗口自动适应。滚轮缩放、中键拖动平移" : "回到适应窗口(滚轮缩放、中键拖动平移)"}
+        title={fitted ? tr("The frame is automatically fitting to the window. Scroll to zoom, middle-drag to pan") : tr("Back to fit window (scroll to zoom, middle-drag to pan)")}
       >
-        适应窗口
+        {tr("Fit window")}
       </button>
     </div>
   );

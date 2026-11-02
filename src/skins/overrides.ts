@@ -1,5 +1,6 @@
 import type { SkinMode } from "./skins";
 import { agentColorFor } from "./agentColor";
+import { tr } from "../i18n/index.ts";
 
 /**
  * 自定义配色:压在预设皮肤之上的一层覆盖。
@@ -21,23 +22,23 @@ export interface SkinSlot {
 }
 
 export const SKIN_SLOTS: SkinSlot[] = [
-  { key: "ui-accent", label: "强调色", group: "主色", hint: "按钮、选中态、播放头;悬停/按下/淡底会跟着一起算" },
-  { key: "ui-bg", label: "画布底色", group: "表面" },
-  { key: "ui-panel", label: "面板底色", group: "表面" },
-  { key: "ui-panel-2", label: "次级面板", group: "表面" },
-  { key: "ui-float", label: "浮层底色", group: "表面", hint: "菜单、对话框" },
-  { key: "ui-fg", label: "主文字", group: "文字与描边" },
-  { key: "ui-fg-muted", label: "次要文字", group: "文字与描边" },
-  { key: "ui-border", label: "描边", group: "文字与描边" },
-  { key: "ui-border-strong", label: "强描边", group: "文字与描边" },
-  { key: "ui-danger", label: "危险", group: "语义色" },
-  { key: "ui-warn", label: "警告", group: "语义色" },
-  { key: "ui-success", label: "成功", group: "语义色" },
-  { key: "ui-track-video", label: "视频轨", group: "轨道" },
-  { key: "ui-track-audio", label: "音频轨", group: "轨道" },
-  { key: "ui-track-text", label: "文字轨", group: "轨道" },
-  { key: "ui-track-image", label: "图片轨", group: "轨道" },
-  { key: "ui-track-fx", label: "特效轨", group: "轨道" },
+  { key: "ui-accent", label: tr("Accent color"), group: tr("Primary color"), hint: tr("Buttons, selected state, playhead; hover/pressed/faint background are derived from it") },
+  { key: "ui-bg", label: tr("Canvas background"), group: tr("Surfaces") },
+  { key: "ui-panel", label: tr("Panel background"), group: tr("Surfaces") },
+  { key: "ui-panel-2", label: tr("Secondary panel"), group: tr("Surfaces") },
+  { key: "ui-float", label: tr("Floating layer background"), group: tr("Surfaces"), hint: tr("Menus, dialogs") },
+  { key: "ui-fg", label: tr("Primary text"), group: tr("Text and strokes") },
+  { key: "ui-fg-muted", label: tr("Secondary text"), group: tr("Text and strokes") },
+  { key: "ui-border", label: tr("Outline"), group: tr("Text and strokes") },
+  { key: "ui-border-strong", label: tr("Strong stroke"), group: tr("Text and strokes") },
+  { key: "ui-danger", label: tr("Danger"), group: tr("Semantic colors") },
+  { key: "ui-warn", label: tr("Warning"), group: tr("Semantic colors") },
+  { key: "ui-success", label: tr("Success"), group: tr("Semantic colors") },
+  { key: "ui-track-video", label: tr("Video track"), group: tr("Track") },
+  { key: "ui-track-audio", label: tr("Audio track"), group: tr("Track") },
+  { key: "ui-track-text", label: tr("Text track"), group: tr("Track") },
+  { key: "ui-track-image", label: tr("Image track"), group: tr("Track") },
+  { key: "ui-track-fx", label: tr("Effects track"), group: tr("Track") },
 ];
 
 export type SkinOverrides = Record<string, string>;

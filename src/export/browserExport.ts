@@ -31,6 +31,7 @@ import { prepareExportLayers, type ExportLayerDeps, type ExportLayerStats, type 
 import { ONLINE_EXPORT_TEXT } from "./text";
 import { rgbaToI420 } from "./yuv";
 import { resampleVarispeed } from "../kernel/clipTime.mjs";
+import { tr } from "../i18n/index.ts";
 
 /** 编码队列上限(契约第 11.1 节) */
 export const MAX_ENCODE_QUEUE = 3;
@@ -168,11 +169,11 @@ export async function encodeAudio(deps: BrowserExportDeps, durationSec: number):
     if (!bytes) {
       if (confirmedMissingAudio(m, project)) {
         const res = await fetch(MISSING_MATERIAL_WAV_URL, { signal: deps.signal });
-        if (!res.ok) throw new Error(`内置缺失素材人声无法读取:HTTP ${res.status}`);
+        if (!res.ok) throw new Error(tr("Cannot read the built-in missing-media voice: HTTP {0}", res.status));
         bytes = await res.arrayBuffer();
       } else {
         const res = await fetch(deps.mediaUrl ? deps.mediaUrl(m.url) : m.url, { signal: deps.signal });
-        if (!res.ok) throw new Error(`${m.name || m.id} 的声音取不到:HTTP ${res.status}`);
+        if (!res.ok) throw new Error(tr("Cannot get the audio of {0}: HTTP {1}", m.name || m.id, res.status));
         bytes = await res.arrayBuffer();
       }
       sources.set(m.id, bytes);
@@ -195,7 +196,7 @@ export async function encodeAudio(deps: BrowserExportDeps, durationSec: number):
   };
   const fetchSlice = (async (input: RequestInfo | URL) => {
     const s = slices.get(String(input));
-    if (!s) throw new Error(`不认识的声音 ${String(input)}`);
+    if (!s) throw new Error(tr("Unknown voice {0}", String(input)));
     return new Response(await sliceWav(sources.get(s.mediaId)!, s.offset, s.dur, s.speed ?? 1));
   }) as typeof fetch;
   const { buffer } = await renderMix(plan, fetchSlice);
@@ -230,7 +231,7 @@ export async function encodeAudio(deps: BrowserExportDeps, durationSec: number):
   await encoder.flush();
   encoder.close();
   if (failure) throw failure;
-  if (!asc) throw new Error("AAC 编码器没给出 AudioSpecificConfig");
+  if (!asc) throw new Error(tr("The AAC encoder did not provide an AudioSpecificConfig"));
   return { chunks, asc };
 }
 
@@ -330,7 +331,7 @@ export async function runBrowserExport(deps: BrowserExportDeps): Promise<Browser
     }
     await encoder.flush();
     if (failure) throw failure;
-    if (!muxer) throw new Error("编码器一帧都没给出");
+    if (!muxer) throw new Error(tr("The encoder produced no frames"));
     const bytes = await (muxer as Mp4Muxer).finalize();
     // 先收掉合成器(连同卡片画面的来源):解码用时、取了多少字节这几项统计在收的时候才落定
     compositor.close();

@@ -6,6 +6,7 @@
  */
 import { readSseStream } from "../editor/io/stt";
 import type { UploadedMedia } from "../editor/io/mediaUpload";
+import { tr } from "../i18n/index.ts";
 
 /** 某个站点存盘的登录态 */
 export interface SiteCookieStatus {
@@ -90,7 +91,7 @@ export async function qrStart(site = "bilibili"): Promise<QrStartResult> {
     signal: AbortSignal.timeout(20_000),
   });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok || !data.ok) throw new Error(data.error || `/api/collect/qr/start 返回 ${r.status}`);
+  if (!r.ok || !data.ok) throw new Error(data.error || tr("/api/collect/qr/start returned {0}", r.status));
   return data as QrStartResult;
 }
 
@@ -98,7 +99,7 @@ export async function qrStart(site = "bilibili"): Promise<QrStartResult> {
 export async function qrPoll(key: string): Promise<QrPollResult> {
   const r = await fetch(`/api/collect/qr/poll?key=${encodeURIComponent(key)}`, { signal: AbortSignal.timeout(20_000) });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok || !data.ok) throw new Error(data.error || `/api/collect/qr/poll 返回 ${r.status}`);
+  if (!r.ok || !data.ok) throw new Error(data.error || tr("/api/collect/qr/poll returned {0}", r.status));
   return data as QrPollResult;
 }
 
@@ -111,7 +112,7 @@ export async function collectLogin(site = "bilibili", force = false): Promise<Lo
     signal: AbortSignal.timeout(58_000),
   });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.error || `/api/collect/login 返回 ${r.status}`);
+  if (!r.ok) throw new Error(data.error || tr("/api/collect/login returned {0}", r.status));
   return data as LoginResult;
 }
 
@@ -124,14 +125,14 @@ export async function collectLoginCheck(site = "bilibili", hide = true): Promise
     signal: AbortSignal.timeout(58_000),
   });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.error || `/api/collect/login/check 返回 ${r.status}`);
+  if (!r.ok) throw new Error(data.error || tr("/api/collect/login/check returned {0}", r.status));
   return data as LoginCheck;
 }
 
 export async function cookieStatus(): Promise<Record<string, SiteCookieStatus>> {
   const r = await fetch("/api/collect/cookies");
   const data = await r.json().catch(() => ({}));
-  if (!r.ok || !data.ok) throw new Error(data.error || "查不到登录态");
+  if (!r.ok || !data.ok) throw new Error(data.error || tr("Can't get the login state"));
   return data.cookies as Record<string, SiteCookieStatus>;
 }
 
@@ -139,7 +140,7 @@ export async function cookieStatus(): Promise<Record<string, SiteCookieStatus>> 
 export async function collectLogout(site = "bilibili"): Promise<{ removed: boolean; cookies: Record<string, SiteCookieStatus> }> {
   const r = await fetch(`/api/collect/cookies?site=${encodeURIComponent(site)}`, { method: "DELETE" });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok || !data.ok) throw new Error(data.error || "退出登录失败");
+  if (!r.ok || !data.ok) throw new Error(data.error || tr("Logout failed"));
   return { removed: !!data.removed, cookies: data.cookies };
 }
 
@@ -254,13 +255,13 @@ export async function searchVideos(query: string, opts: { site?: string; limit?:
     signal: AbortSignal.timeout(58_000),
   });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.error || `/api/collect/search 返回 ${r.status}`);
+  if (!r.ok) throw new Error(data.error || tr("/api/collect/search returned {0}", r.status));
   return data as CollectSearch;
 }
 
 export async function collectStatus(): Promise<CollectStatus> {
   const r = await fetch("/api/collect/status");
-  if (!r.ok) throw new Error("查不到素材收集拓展的状态");
+  if (!r.ok) throw new Error(tr("Can't get the status of the media collection extension"));
   return r.json();
 }
 
@@ -271,7 +272,7 @@ export async function installCollect(
   const res = await fetch("/api/collect/install", { method: "POST" });
   if (!res.ok || !res.body) {
     const d = await res.json().catch(() => ({}));
-    throw new Error(d.error || `/api/collect/install 返回 ${res.status}`);
+    throw new Error(d.error || tr("/api/collect/install returned {0}", res.status));
   }
   const log: string[] = [];
   let ok = true;
@@ -285,7 +286,7 @@ export async function installCollect(
       status = ev as unknown as CollectStatus;
     } else if (ev.event === "error") {
       ok = false;
-      const msg = ev.message ?? "安装失败";
+      const msg = ev.message ?? tr("Install failed");
       const detail = typeof ev.stderr === "string" ? ev.stderr.trim() : "";
       const full = detail ? `${msg}\n${detail}` : msg;
       log.push("[error] " + full);
@@ -303,7 +304,7 @@ export async function probeLink(url: string, opts: { site?: string; quality?: nu
     signal: AbortSignal.timeout(58_000),
   });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.error || `/api/collect/probe 返回 ${r.status}`);
+  if (!r.ok) throw new Error(data.error || tr("/api/collect/probe returned {0}", r.status));
   return data as CollectProbe;
 }
 
@@ -314,14 +315,14 @@ export async function startDownload(url: string, opts: DownloadOptions = {}): Pr
     body: JSON.stringify({ url, ...opts }),
   });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok || !data.ok) throw new Error(data.error || "下载没能启动");
+  if (!r.ok || !data.ok) throw new Error(data.error || tr("The download could not start"));
   return { jobId: data.jobId as string, reused: !!data.reused };
 }
 
 export async function pollDownload(jobId: string): Promise<CollectJob> {
   const r = await fetch(`/api/collect/job/${jobId}`);
   const data = await r.json().catch(() => ({}));
-  if (!r.ok || !data.ok) throw new Error(data.error || "查不到这个下载作业");
+  if (!r.ok || !data.ok) throw new Error(data.error || tr("Can't find this download job"));
   return data.job as CollectJob;
 }
 
@@ -336,10 +337,10 @@ export async function waitForDownload(
   signal?: AbortSignal,
 ): Promise<CollectJob> {
   for (;;) {
-    if (signal?.aborted) throw new Error("已取消");
+    if (signal?.aborted) throw new Error(tr("Cancelled"));
     const job = await pollDownload(jobId);
     onProgress?.(job);
-    if (job.status === "error") throw new Error(job.message || "下载失败");
+    if (job.status === "error") throw new Error(job.message || tr("Download failed"));
     if (job.status === "done") return job;
     await new Promise((r) => setTimeout(r, 1000));
   }

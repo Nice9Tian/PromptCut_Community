@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { commitDraft, useAgentTabs } from "../../../ai/agentTabs";
 import { useReadOnly } from "../../readOnly";
 import "./startHero.css";
+import { tr } from "../../../i18n/index.ts";
 
 /**
  * AI 栏的「开始页」(2026-10-22 用户定,`workflow/editing.md`「AI 栏的 Agent 标签」):本项目一个 Agent 会话都没有时,
@@ -15,7 +16,7 @@ import "./startHero.css";
  *
  * `prefers-reduced-motion` 下动画都关掉,只留静态描边。
  */
-export const START_PRESET = "做一个动画告诉我使用软件可以干什么";
+export const START_PRESET = tr("Make an animation that tells me what I can do with the software");
 
 export type StartGuide = "input" | "send" | null;
 
@@ -57,7 +58,7 @@ export function StartHero(props: { animated: boolean; onPickPreset: () => void }
   if (ro.locked) {
     return (
       <div className="ai-messages pc-start" data-pc="ai-start" data-pc-start-animated="0" data-pc-readonly="1">
-        <div className="pc-start-title">只能查看</div>
+        <div className="pc-start-title">{tr("View only")}</div>
         <div className="pc-start-hint">{ro.why}</div>
         <button type="button" className="pc-start-preset" data-pc="ai-start-preset" disabled title={ro.why}>
           {START_PRESET}
@@ -74,9 +75,9 @@ export function StartHero(props: { animated: boolean; onPickPreset: () => void }
           <span className="pc-start-orb-core">✦</span>
         </div>
       )}
-      <div className="pc-start-title">{animated ? "从这里开始" : "开始"}</div>
+      <div className="pc-start-title">{animated ? tr("Start here") : tr("Start")}</div>
       <div className="pc-start-hint">
-        {animated ? "在下面的输入框里写下你想做的片子,或者点这一句:" : "在下面的输入框里写下你想做的,或者点这一句:"}
+        {animated ? tr("Write the video you want to make in the box below, or click this line:") : tr("Write what you want to make in the box below, or click this line:")}
       </div>
       <button type="button" className="pc-start-preset" data-pc="ai-start-preset" onClick={onPickPreset}>
         {START_PRESET}

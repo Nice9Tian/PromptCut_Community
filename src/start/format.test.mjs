@@ -12,43 +12,43 @@ import { createWithFreeName, nextProjectName } from './format.ts';
 
 const taken = () => Object.assign(new Error('name-taken'), { code: 'name-taken' });
 
-test('PNAME-01 第一次用原名,接下来四次缀 2～5,再往后缀四位十六进制', () => {
-  assert.equal(nextProjectName('未命名', 0), '未命名');
-  assert.deepEqual([1, 2, 3, 4].map(i => nextProjectName('未命名', i)),
-    ['未命名 2', '未命名 3', '未命名 4', '未命名 5']);
-  assert.match(nextProjectName('未命名', 5), /^未命名 [0-9a-f]{4}$/);
-  assert.match(nextProjectName('未命名', 9), /^未命名 [0-9a-f]{4}$/);
+test('PNAME-01 the first use is the original name, the next four get suffixes 2-5, after that a four-digit hex suffix', () => {
+  assert.equal(nextProjectName('Untitled', 0), 'Untitled');
+  assert.deepEqual([1, 2, 3, 4].map(i => nextProjectName('Untitled', i)),
+    ['Untitled 2', 'Untitled 3', 'Untitled 4', 'Untitled 5']);
+  assert.match(nextProjectName('Untitled', 5), /^Untitled [0-9a-f]{4}$/);
+  assert.match(nextProjectName('Untitled', 9), /^Untitled [0-9a-f]{4}$/);
 });
 
-test('PNAME-02 一次就建成:只调一次,用的是原名', async () => {
+test('PNAME-02 created on the first try: called only once, with the original name', async () => {
   const seen = [];
-  const used = await createWithFreeName(async n => { seen.push(n); }, '未命名');
-  assert.deepEqual(seen, ['未命名']);
-  assert.equal(used, '未命名');
+  const used = await createWithFreeName(async n => { seen.push(n); }, 'Untitled');
+  assert.deepEqual(seen, ['Untitled']);
+  assert.equal(used, 'Untitled');
 });
 
-test('PNAME-03 连撞三次:第四个名字建成,返回真正用上的那个', async () => {
+test('PNAME-03 three collisions in a row: the fourth name succeeds, and the one actually used is returned', async () => {
   const seen = [];
-  const used = await createWithFreeName(async n => { seen.push(n); if (seen.length < 4) throw taken(); }, '未命名');
-  assert.deepEqual(seen, ['未命名', '未命名 2', '未命名 3', '未命名 4']);
-  assert.equal(used, '未命名 4');
+  const used = await createWithFreeName(async n => { seen.push(n); if (seen.length < 4) throw taken(); }, 'Untitled');
+  assert.deepEqual(seen, ['Untitled', 'Untitled 2', 'Untitled 3', 'Untitled 4']);
+  assert.equal(used, 'Untitled 4');
 });
 
-test('PNAME-04 不是重名的错照原样抛出,不换名重试(游客超额、没登录、网络断都走这条)', async () => {
+test('PNAME-04 errors that are not name collisions are rethrown as is, no retry with another name (guest over limit, not logged in, network down all take this path)', async () => {
   const seen = [];
   await assert.rejects(
-    () => createWithFreeName(async n => { seen.push(n); throw Object.assign(new Error('游客只能建 1 个项目。'), { code: 'guest-limit' }); }, '未命名'),
-    /游客只能建 1 个项目/);
-  assert.deepEqual(seen, ['未命名'], '只试了一次');
+    () => createWithFreeName(async n => { seen.push(n); throw Object.assign(new Error('Guests can only create 1 project.'), { code: 'guest-limit' }); }, 'Untitled'),
+    /Guests can only create 1 project/);
+  assert.deepEqual(seen, ['Untitled'], 'tried only once');
 });
 
-test('PNAME-05 试满次数还在撞:抛最后那个错,不无限转', async () => {
+test('PNAME-05 still colliding after all attempts: throw the last error, do not loop forever', async () => {
   let n = 0;
-  await assert.rejects(() => createWithFreeName(async () => { n += 1; throw taken(); }, '未命名', 3), /name-taken/);
+  await assert.rejects(() => createWithFreeName(async () => { n += 1; throw taken(); }, 'Untitled', 3), /name-taken/);
   assert.equal(n, 3);
 });
 
-test('PNAME-06 说一句话取的名字也走同一条路(名字最长 24 字,缀上去不超 64 字上限)', () => {
+test('PNAME-06 names generated from a single sentence take the same path (names are at most 24 characters, with the suffix they stay within the 64-character limit)', () => {
   const long = '一'.repeat(24);
   assert.ok([...nextProjectName(long, 4)].length <= 64);
   assert.ok([...nextProjectName(long, 5)].length <= 64);

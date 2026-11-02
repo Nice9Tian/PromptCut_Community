@@ -1,5 +1,6 @@
 import type { ToolCallInfo } from "../../../ai/types.ts";
 import { isReportTool } from "../../../ai/progressReport.ts";
+import { tr } from "../../../i18n/index.ts";
 
 /**
  * 聊天气泡里那排操作图标(ToolIcons.tsx)背后的纯函数:动作分类和图标分组。
@@ -53,16 +54,16 @@ export function toolKind(rawName: string): ToolKind {
 }
 
 export const KIND_LABEL: Record<ToolKind, string> = {
-  add: "新增",
-  remove: "删除",
-  edit: "修改",
-  read: "读取",
-  look: "查看",
-  download: "收集",
-  ui: "界面操作",
-  agent: "多 Agent",
-  wait: "等待",
-  job: "处理",
+  add: tr("Add"),
+  remove: tr("Delete"),
+  edit: tr("Change"),
+  read: tr("Read"),
+  look: tr("View"),
+  download: tr("Collect"),
+  ui: tr("UI actions"),
+  agent: tr("Multi-Agent"),
+  wait: tr("Wait"),
+  job: tr("Process"),
 };
 
 /**

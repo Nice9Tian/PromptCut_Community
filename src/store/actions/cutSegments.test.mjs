@@ -22,7 +22,7 @@ function load() {
 }
 const seg = () => getState().project.tracks.flatMap((t) => t.clips).find((c) => c.cutId);
 
-test("放置:默认长度 = 被引用剪辑总长;循环引用拒绝", () => {
+test("Placement: default length = total length of the referenced cut; circular references are rejected", () => {
   load();
   const c = actions.addCutSegment("B", 2, { trackId: "ta" });
   assert.deepEqual([c.start, c.end, c.cutId, c.cardId], [2, 10, "B", ""]);
@@ -30,20 +30,20 @@ test("放置:默认长度 = 被引用剪辑总长;循环引用拒绝", () => {
   assert.equal(actions.cutCycleReason("A"), "不能把剪辑「剪辑A」放进它自己");
 });
 
-test("修头:偏移跟着走,不能往前越过被引用剪辑开头;出点不能超出剩下的长度", () => {
+test("Trim head: the offset follows, cannot go back past the start of the referenced cut; the out point cannot exceed the remaining length", () => {
   load();
   const c = actions.addCutSegment("B", 2, { trackId: "ta" });
   actions.moveClip(c.id, { start: 3, end: c.end });
   assert.deepEqual([seg().start, seg().end, seg().cutOffset], [3, 10, 1]);
   actions.moveClip(c.id, { start: 0.5, end: 10 });
-  assert.deepEqual([seg().start, seg().cutOffset ?? 0], [2, 0], "往前拉不能越过被引用剪辑的开头");
+  assert.deepEqual([seg().start, seg().cutOffset ?? 0], [2, 0], "Dragging backward cannot go past the start of the referenced cut");
   actions.moveClip(c.id, { start: 2, end: 15 });
-  assert.equal(seg().end, 10, "出点不能超出被引用剪辑的总长");
+  assert.equal(seg().end, 10, "The out point cannot exceed the total length of the referenced cut");
   actions.moveClip(c.id, { start: 5, end: 13 });
-  assert.deepEqual([seg().start, seg().end, seg().cutOffset ?? 0], [5, 13, 0], "整段平移不动偏移");
+  assert.deepEqual([seg().start, seg().end, seg().cutOffset ?? 0], [5, 13, 0], "Moving the whole segment does not change the offset");
 });
 
-test("切分:后半段偏移累加;复制带着引用;独立静音", () => {
+test("Split: the second half's offset accumulates; a copy keeps the reference; independent mute", () => {
   load();
   const c = actions.addCutSegment("B", 2, { trackId: "ta" });
   const right = actions.splitClip(c.id, 5);
@@ -57,7 +57,7 @@ test("切分:后半段偏移累加;复制带着引用;独立静音", () => {
   assert.equal(getState().project.tracks[0].clips.find((x) => x.id === c.id).audioMuted, true);
 });
 
-test("删被引用的剪辑:连同剪辑段一起删,一步撤销全回来", () => {
+test("Deleting a referenced cut: its cut segments are deleted along with it, and one undo restores everything", () => {
   load();
   actions.addCutSegment("B", 2, { trackId: "ta" });
   const { removedSegments } = actions.removeCut("B");
@@ -66,5 +66,5 @@ test("删被引用的剪辑:连同剪辑段一起删,一步撤销全回来", () 
   assert.equal(getState().project.cuts.length, 1);
   actions.undo();
   assert.equal(getState().project.cuts.length, 2);
-  assert.ok(seg(), "剪辑段回来了");
+  assert.ok(seg(), "The cut segment is back");
 });

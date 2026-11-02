@@ -4,6 +4,7 @@ import { CategoryChips } from "./CategoryChips";
 import { GroupBox } from "./GroupBox";
 import { DetailChips, GroupDetail } from "./GroupDetail";
 import type { GroupCategory, GroupData, GroupDef } from "./groups";
+import { tr } from "../../../i18n/index.ts";
 
 const EMPTY: GroupData = { items: [] };
 
@@ -61,7 +62,7 @@ export function GroupBrowser({ groups, data, searching, openId, onOpen, onImport
   const available = groups.filter((g) => (searching ? countOf(g) > 0 : countOf(g) > 0 || g.empty !== "hide"));
   const visible = category && !singleCategory ? available.filter((g) => g.category === category) : available;
 
-  const byCategory: Record<GroupCategory, { id: string; title: string }[]> = { 视觉: [], 音频: [] };
+  const byCategory: Record<GroupCategory, { id: string; title: string }[]> = { visual: [], audio: [] };
   for (const g of available) byCategory[g.category].push({ id: g.id, title: g.title });
 
   // 单一分类的总览没有胶囊行,整条 bar 不渲染(否则留下一截空的下内边距)
@@ -93,7 +94,7 @@ export function GroupBrowser({ groups, data, searching, openId, onOpen, onImport
 
       <div className="pc-lib-scroll pc-left-scroll" ref={overviewRef} style={{ display: open ? "none" : "flex" }}>
         {visible.length === 0 ? (
-          <div className="pc-left-note">{searching ? noMatch : "这一类下面没有可显示的组"}</div>
+          <div className="pc-left-note">{searching ? noMatch : tr("No groups to show in this category")}</div>
         ) : (
           visible.map((g) => (
             <GroupBox key={g.id} def={g} data={data[g.id] ?? EMPTY} onOpen={() => onOpen(g.id)} onImport={onImport} />

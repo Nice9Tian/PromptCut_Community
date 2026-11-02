@@ -1,7 +1,9 @@
 import { useEffect } from "react";
 import { setCardScope, type CardScope, type ScopeEntry } from "../cardScope";
 import { getState } from "../../store/project";
-import { onlinePage, onlineUnsupported } from "../../online/pageFlag";
+import { onlinePage } from "../../online/pageFlag";
+import { onlineUnsupported } from "../../online/onlineUnsupported";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 定制卡的右键菜单:在「项目素材」和「自定义素材」之间换档。
@@ -44,7 +46,7 @@ export function UserCardMenu({
   // 没有条目 = 这个功能之前建的老卡,当作「未归属」——它现在按自定义处理,所以给的是「收归本项目」
   const current: CardScope | "unknown" = entry?.scope ?? "unknown";
   const target: CardScope = current === "project" ? "custom" : "project";
-  const label = target === "custom" ? "转换为自定义素材(跨项目可用)" : "收归本项目(不再跨项目出现)";
+  const label = target === "custom" ? tr("Convert to custom media (usable across projects)") : tr("Move into this project (no longer shown across projects)");
 
   const apply = async () => {
     await setCardScope(cardId, target, getState().project.id ?? null);
@@ -61,14 +63,14 @@ export function UserCardMenu({
       onMouseDown={(e) => e.stopPropagation()}
     >
       <div className="px-3 pb-1 pt-0.5 text-[10px] uppercase tracking-wide text-neutral-500">
-        {current === "project" ? "项目素材" : current === "custom" ? "自定义素材" : "未归属(按自定义处理)"}
+        {current === "project" ? tr("Project media") : current === "custom" ? tr("Custom media") : tr("Unassigned (treated as custom)")}
       </div>
       <button
         type="button"
         className="block w-full px-3 py-1.5 text-left text-neutral-200 hover:bg-neutral-700/50 disabled:opacity-40"
         // 在线浏览器模式:改卡的归属要写编辑器进程里的卡片目录(C10 契约第 10 节「建卡与改卡」),置灰
         disabled={onlinePage()}
-        title={onlinePage() ? onlineUnsupported("改卡") : undefined}
+        title={onlinePage() ? onlineUnsupported(tr("edit card")) : undefined}
         onClick={() => { if (!onlinePage()) void apply(); }}
       >
         {label}

@@ -20,6 +20,7 @@ import { ingestUnhashedMedia } from "../io/mediaUpload";
 import { ONLINE } from "../../online/mode";
 import { HOSTED_DOC_PATH, inviteLinkOf } from "../../online/invite";
 import { cacheCollabSecrets, cachedCollabSecrets } from "./collabSecrets";
+import { tr } from "../../i18n/index.ts";
 
 /* ---------------- 本机记下的东西 ---------------- */
 
@@ -63,7 +64,7 @@ export function localCollab(projectId: string): LocalCollab | null {
 async function saveLocal(rec: LocalCollab) {
   const descriptor = getSyncView().association;
   if (ONLINE) { cacheCollabSecrets(rec.projectId, rec); return; }
-  if (!descriptor || descriptor.roomId !== rec.projectId) throw new Error("当前房间的秘密无法可靠保存");
+  if (!descriptor || descriptor.roomId !== rec.projectId) throw new Error(tr("The secret of the current room cannot be saved reliably"));
   await recoveryRequest("settings-write", descriptor, { settings: rec });
   cacheCollabSecrets(rec.projectId, rec);
   const all = readAll(); delete all[rec.projectId]; writeAll(all);
@@ -96,7 +97,7 @@ export function generatePassword(length = 16): string {
 /** 缺省的创建者用户名：设备名 */
 export async function defaultCreatorName(): Promise<string> {
   const d = await ensureDevice();
-  return (d?.deviceName || "我").slice(0, 64);
+  return (d?.deviceName || tr("Me")).slice(0, 64);
 }
 
 /* ---------------- 邀请码 ---------------- */
@@ -236,7 +237,7 @@ export async function enableCollab(o: EnableOptions): Promise<{ ok: true; invite
     });
   } catch (e) {
     const { status, reason } = errorStatus(e);
-    console.warn("[collab] 建共享项目没成:", status, reason, (e as Error)?.message);
+    console.warn("[collab] Creating the shared project failed:", status, reason, (e as Error)?.message);
     if (status === 409 || reason === "name-taken") return { ok: false, error: "name-taken" };
     return { ok: false, error: o.where === "hosted" ? "unreachable" : "lan-failed" };
   }
@@ -247,7 +248,7 @@ export async function enableCollab(o: EnableOptions): Promise<{ ok: true; invite
     { initialize: true },
   );
   if (!entered.ok) {
-    console.warn("[collab] 以创建者身份进入没成:", entered.error);
+    console.warn("[collab] Entering as the creator failed:", entered.error);
     return { ok: false, error: o.where === "hosted" ? "unreachable" : "lan-failed" };
   }
   if (o.where === "lan") {
@@ -293,10 +294,10 @@ export async function enableCollab(o: EnableOptions): Promise<{ ok: true; invite
  */
 export async function queueExistingMedia(): Promise<{ queued: number; missing: string[] } | null> {
   if (ONLINE) return null;
-  try { await ingestUnhashedMedia(); } catch (e) { console.warn("[collab] 补入库没做完:", (e as Error)?.message); }
+  try { await ingestUnhashedMedia(); } catch (e) { console.warn("[collab] Backfilling into the store did not finish:", (e as Error)?.message); }
   const media = getState().project.media ?? [];
   const r = await enqueueExistingMedia(media, { post: postEnqueue });
-  if (!r) { console.warn("[collab] 已有素材没交给上传队列(等不到上传目标,或没有本机编辑器)"); return null; }
+  if (!r) { console.warn("[collab] Existing media was not handed to the upload queue (no upload target available, or no local editor)"); return null; }
   const nameOfHash = new Map<string, string>();
   for (const m of media) {
     const h = String(m.tiers?.original || m.hash || "").toLowerCase();
@@ -307,17 +308,18 @@ export async function queueExistingMedia(): Promise<{ queued: number; missing: s
     ...r.missing.map((h) => nameOfHash.get(String(h).toLowerCase()) ?? String(h)),
   ];
   if (!names.length) return { queued: r.queued.length, missing: [] };
-  console.warn("[collab] 这些素材传不上去:", names);
+  console.warn("[collab] These assets could not be uploaded:", names);
   pushToast(uploadMissingMessage(names), "warn", Infinity);
   return { queued: r.queued.length, missing: names };
 }
 
 /** 放云端时传不上去的素材:给用户的那句话(名字去重,太多时只列前面若干条) */
 export function uploadMissingMessage(names: readonly string[], limit = 8): string {
-  const uniq = [...new Set(names.map((n) => String(n || "").replace(/^\(缺失\) /, "")).filter(Boolean))];
-  const shown = uniq.slice(0, limit).join("、");
-  const more = uniq.length > limit ? ` 等 ${uniq.length} 条` : "";
-  return `这些素材本机找不到文件，没有传到云端，其他成员看不到：${shown}${more}`;
+// i18n-allow: names in older projects carry the Chinese marker
+  const uniq = [...new Set(names.map((n) => String(n || "").replace(/^\((?:missing|缺失)\) /, "")).filter(Boolean))];
+  const shown = uniq.slice(0, limit).join(tr(", "));
+  const more = uniq.length > limit ? tr(" and {0} more", uniq.length) : "";
+  return tr("These media files were not found on this machine and were not uploaded to the cloud, so other members cannot see them: {0}{1}", shown, more);
 }
 
 /**
@@ -405,7 +407,7 @@ export async function disableCollab(creatorPassword: string, onProgress?: (done:
   const descriptor = getSyncView().association;
   if (descriptor) {
     try { await recoveryRequest("revoke", descriptor); }
-    catch { pushToast("房间已经删除，但本机注销记录未能保存。请保留项目并检查磁盘；旧房间不会重新创建。", "warn", Infinity); }
+    catch { pushToast(tr("The room was deleted, but the local deregistration record could not be saved. Keep the project and check the disk; the old room will not be recreated."), "warn", Infinity); }
   }
   leaveSharedToLocal(final);
   return { ok: true };

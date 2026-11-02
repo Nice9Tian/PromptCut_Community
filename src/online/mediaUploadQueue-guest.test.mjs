@@ -81,7 +81,7 @@ async function runQueue(items, target) {
   return { puts: rec.puts, events, stats: q.stats(), rejected };
 }
 
-test("游客经在线上传队列传 3 个视频（6 个文件）全收；第 4 个视频被拒后整项出队，后面的图片照常传上去", async () => {
+test("A guest uploads 3 videos (6 files) through the online upload queue and all are accepted; after the 4th video is rejected its whole item is dequeued, and the images after it upload as usual", async () => {
   const projectId = "p-queue";
   const imgBytes = Buffer.from(`queue guest image ${crypto.randomUUID()}`);
   const image = { id: "img", name: "a.png", tiers: [{ tier: "original", hash: sha(imgBytes), ext: "png", blob: new Blob([imgBytes]) }] };
@@ -90,24 +90,24 @@ test("游客经在线上传队列传 3 个视频（6 个文件）全收；第 4 
   console.log("D", JSON.stringify({ done: stats.done, failures: stats.failures, rejected: stats.rejected, items: stats.items, codes: rejected.map((r) => r.code) }));
   const store = factory.project(projectId).stores.media;
   const stored = new Map((await store.inventory()).stored.map((e) => [e.hash, e.tier]));
-  for (const it of items.slice(0, 3)) for (const t of it.tiers) assert.equal(stored.get(t.hash), t.tier, `${it.name} ${t.tier} 入库且档位对`);
+  for (const it of items.slice(0, 3)) for (const t of it.tiers) assert.equal(stored.get(t.hash), t.tier, `${it.name} ${t.tier} stored with the correct tier`);
   const [small4, original4] = items[3].tiers;
-  assert.equal(stored.has(small4.hash), false, "第 4 个视频的小档被拒（小档也数）");
-  assert.equal(stored.has(original4.hash), false, "第 4 个视频的原尺寸也没传");
-  assert.equal(stored.get(image.tiers[0].hash), "original", "排在后面的图片传上去了（改前被堵住）");
-  assert.equal(stats.done, 4, "前 3 个视频和图片出队");
-  assert.deepEqual(stats.items, [], "被拒的那一项不留在队里");
+  assert.equal(stored.has(small4.hash), false, "The small tier of the 4th video is rejected (the small tier counts too)");
+  assert.equal(stored.has(original4.hash), false, "The original size of the 4th video was not uploaded either");
+  assert.equal(stored.get(image.tiers[0].hash), "original", "The image queued after it was uploaded (it was blocked before the fix)");
+  assert.equal(stats.done, 4, "The first 3 videos and the image are dequeued");
+  assert.deepEqual(stats.items, [], "The rejected item does not stay in the queue");
   assert.equal(stats.rejected, 1);
   assert.deepEqual(rejected.map((r) => [r.id, r.code]), [["v-four", "guest-video-limit"]]);
-  assert.equal(events.filter((e) => e.event === "upload.retry").length, 0, "被拒的不进退避重试");
-  assert.equal(uploadRejectedText(rejected[0]), "「four.mp4」没有传上云端：游客最多上传 3 条视频。要传更多，请注册一个账号。");
+  assert.equal(events.filter((e) => e.event === "upload.retry").length, 0, "Rejected items do not enter backoff retry");
+  assert.equal(uploadRejectedText(rejected[0]), "\"four.mp4\" was not uploaded to the cloud: Guests can upload at most 3 videos. To upload more, please sign up for an account.");
   // 每一片都带了档位头，和这一档对得上
   const tierByHash = new Map(items.flatMap((it) => it.tiers.map((t) => [t.hash, t.tier])));
   assert.ok(puts.length >= 7);
-  for (const p of puts) assert.equal(p.tier, tierByHash.get(p.hash), `PUT ${p.hash.slice(0, 8)} 的 X-Media-Tier`);
+  for (const p of puts) assert.equal(p.tier, tierByHash.get(p.hash), `X-Media-Tier of PUT ${p.hash.slice(0, 8)}`);
 });
 
-test("别的 403（不是限额）照旧退避重试；限额那几种才算永久被拒；全局订阅收得到", async () => {
+test("Other 403s (not quota) still get backoff retry; only the quota kinds count as permanently rejected; the global subscription receives them", async () => {
   assert.deepEqual([...PERMANENT_REFUSALS].sort(), ["guest-file-too-large", "guest-read-only", "guest-video-limit"]);
   const bytes = Buffer.from(`queue 403 ${crypto.randomUUID()}`);
   const item = { id: "x", name: "x.mp4", tiers: [{ tier: "original", hash: sha(bytes), ext: "mp4", blob: new Blob([bytes]) }] };
@@ -131,7 +131,7 @@ test("别的 403（不是限额）照旧退避重试；限额那几种才算永�
   assert.deepEqual(got, []);
 });
 
-test("不是云端账号项目的目标（本地项目、经托管中继）：PUT 不带 X-Media-Tier", async () => {
+test("Not a target of a cloud account project (local project, via hosted relay): PUT carries no X-Media-Tier", async () => {
   const { puts, stats } = await runQueue([videoItem("local")], { base, ticket: "p-local", accountProject: false });
   assert.equal(stats.done, 1);
   assert.equal(puts.length, 2);

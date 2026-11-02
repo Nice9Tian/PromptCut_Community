@@ -84,7 +84,7 @@ test("queue and terminal history are bounded, cancel queued releases a slot", as
   let release;
   const manager = createSoundGenerationManager({ yield: () => Promise.resolve(), upload: async bytes => { if (!release) await new Promise(resolve => { release = resolve; }); return uploaded(bytes); } });
   const jobs = Array.from({ length: SOUND_JOB_LIMITS.pendingJobs }, (_, i) => manager.start(request({ requestId: `r${i}`, targetKey: `t${i}` })));
-  assert.throws(() => manager.start(request({ targetKey: "overflow" })), /队列已满/);
+  assert.throws(() => manager.start(request({ targetKey: "overflow" })), /queue is full/);
   manager.cancel(jobs.at(-1).id);
   const replacement = manager.start(request({ targetKey: "replacement" }));
   await until(() => release); release();
@@ -113,6 +113,6 @@ test("oversized persisted recipes reject before upload rather than triggering wh
   const large = createTypingSoundRecipe({ text: "a".repeat(1000), duration: 10 });
   let uploads = 0;
   const manager = createSoundGenerationManager({ upload: async bytes => { uploads++; return uploaded(bytes); } });
-  assert.throws(() => manager.start(request({ recipe: large })), /96 KiB.*拆/);
+  assert.throws(() => manager.start(request({ recipe: large })), /96 KiB.*split/);
   assert.equal(manager.list().length, 0); assert.equal(uploads, 0);
 });

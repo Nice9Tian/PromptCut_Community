@@ -1,4 +1,5 @@
 import type { MediaAsset } from "../../kernel/project";
+import { tr } from "../../i18n/index.ts";
 
 export type AssetKind = MediaAsset["kind"];
 
@@ -13,7 +14,7 @@ export const EXT_KIND: Record<string, AssetKind> = {
   tif: "image", tiff: "image", avif: "image", heic: "image", heif: "image", svg: "image",
 };
 
-export const KIND_LABEL: Record<AssetKind, string> = { video: "视频", audio: "配乐", image: "图片" };
+export const KIND_LABEL: Record<AssetKind, string> = { video: tr("Video"), audio: tr("Background music"), image: tr("Images") };
 
 export function extensionOf(name: string): string {
   const clean = name.trim().split(/[?#]/, 1)[0];
@@ -56,18 +57,18 @@ export function classifyFileDetailed(file: Pick<File, "name" | "type">): FileCla
   const mimeIsGeneric = !mime || mime === "application/octet-stream" || mime === "binary/octet-stream";
 
   if (extensionKind && !mimeIsGeneric && (!mimeKind || mimeKind !== extensionKind)) {
-    const detected = mime || "未知 MIME";
+    const detected = mime || tr("Unknown MIME");
     return {
       kind: null, extensionKind, mimeKind, extension, mime,
       conflict: true,
-      reason: `文件“${file.name}”的扩展名表示${KIND_LABEL[extensionKind]}，但检测到 MIME 为 ${detected}，不能按${KIND_LABEL[extensionKind]}导入。请把它放入“${KIND_LABEL[extensionKind]}”素材，或改用与实际内容匹配的扩展名。`,
+      reason: `The extension of file "${file.name}" indicates ${KIND_LABEL[extensionKind]}, but the detected MIME is ${detected}, so it cannot be imported as ${KIND_LABEL[extensionKind]}. Put it in the "${KIND_LABEL[extensionKind]}" media, or use an extension that matches the actual content.`,
     };
   }
   if (mimeKind) return { kind: mimeKind, extensionKind, mimeKind, extension, mime };
   if (extensionKind) return { kind: extensionKind, extensionKind, mimeKind, extension, mime };
   return {
     kind: null, extensionKind, mimeKind, extension, mime,
-    reason: `无法识别文件“${file.name}”的类型。请使用视频、音频或图片文件，并保留正确的扩展名。`,
+    reason: `Cannot recognize the type of file "${file.name}". Use a video, audio or image file and keep the correct extension.`,
   };
 }
 

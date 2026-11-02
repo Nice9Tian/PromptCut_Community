@@ -66,7 +66,7 @@ export async function renderMix(plan: MixPlan, fetchImpl: typeof fetch = fetch):
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return await ctx.decodeAudioData(await res.arrayBuffer());
       } catch (e) {
-        const message = `${c.clipId} 的声音解不出来:${e instanceof Error ? e.message : String(e)}`;
+        const message = `Audio of ${c.clipId} could not be decoded: ${e instanceof Error ? e.message : String(e)}`;
         notes.push(message);
         throw new Error(message, { cause: e });
       }

@@ -7,6 +7,7 @@ import {
   type CoverageSegment,
 } from "../preview/bakeCoverage";
 import { xOfTime } from "./utils";
+import { tr as trText } from "../../i18n/index.ts";
 
 /** 进度条高度(px)。够看见、又不抢时间轴的地方 */
 export const RENDER_H = 2;
@@ -102,12 +103,12 @@ export function RenderBar() {
 
   const pct = (a: number, b: number) => (b ? Math.round((a / b) * 100) : 0);
   const title = shown.coarseTotal === 0
-    ? "预渲染:还没开始。切到预览面板的「3D」页会在空闲时自动预渲染"
+    ? trText("Prerender: not started yet. Switching to the \"3D\" tab of the preview panel prerenders automatically when idle")
     : [
-        `低帧率(黄)${shown.coarseBaked}/${shown.coarseTotal}(${pct(shown.coarseBaked, shown.coarseTotal)}%)—— 拖过去立刻有画面,最多差 0.25 秒`,
-        `原始帧率(绿)${shown.fullBaked}/${shown.fullTotal}(${pct(shown.fullBaked, shown.fullTotal)}%)—— 逐帧精确`,
-        `空白 = 要等它现场渲染(一张约 4 秒)。已占 ${(cov.bytes / 1048576).toFixed(1)}MB`,
-        ...(shown.stale ? [`${shown.stale} 张卡刚改过,它们那几段已作废,正在重新预渲染`] : []),
+        trText("Low frame rate (yellow) {0}/{1} ({2}%): dragging there shows a frame immediately, off by at most 0.25 s", shown.coarseBaked, shown.coarseTotal, pct(shown.coarseBaked, shown.coarseTotal)),
+        trText("Original frame rate (green) {0}/{1} ({2}%): frame-accurate", shown.fullBaked, shown.fullTotal, pct(shown.fullBaked, shown.fullTotal)),
+        trText("Blank = must wait for on-demand rendering (about 4 s per frame). Using {0}MB", (cov.bytes / 1048576).toFixed(1)),
+        ...(shown.stale ? [trText("{0} cards were just edited, their segments are invalidated and are being prerendered again", shown.stale)] : []),
       ].join("\n");
 
   return (

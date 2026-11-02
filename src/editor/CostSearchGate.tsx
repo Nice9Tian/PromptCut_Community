@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { costSearchState, onCostSearch, type CostSearchState } from "./costSearch";
 import "./ProbeGate.css";
+import { tr } from "../i18n/index.ts";
 
 /**
  * 只有一个舞台时界限搜索的加载遮罩(`costSearch.ts`)。与桌面的 `ProbeGate` 同一套样式(只用主题变量):
@@ -24,7 +25,7 @@ export function CostSearchGate() {
       onKeyDown={(e) => e.stopPropagation()}
     >
       <div className="pc-probe-gate-ring" aria-hidden="true" />
-      <div className="pc-probe-gate-title">正在测量这台设备能流畅播放哪些卡(第 {Math.min(done + 1, total)} 张,至多 {total} 张)</div>
+      <div className="pc-probe-gate-title">{tr("Measuring which cards this device can play smoothly (card {0}, at most {1})", Math.min(done + 1, total), total)}</div>
       <div className="pc-probe-gate-bar" aria-hidden="true"><i style={{ width: `${(done / total) * 100}%` }} /></div>
       {s.card && <div className="pc-probe-gate-card">{s.card}</div>}
     </div>

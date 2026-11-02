@@ -1,4 +1,5 @@
 import type { Project } from "../../kernel/project";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * `.procp` —— 「编排 + 素材」的打包件。
@@ -29,7 +30,7 @@ const MEDIA_PREFIX = "media/";
  * 任务书和设计里没有这句的原文,句式沿用读包失败的那一类(「这不是一个 .procp 包(…)」),
  * 草稿见 docs/reports/AGENT-v18-fixes.md「要用户定的事」。
  */
-export const PROCP_DAMAGED_MESSAGE = ".procp 包已损坏(里面有条目的内容校验不通过),没有打开它";
+export const PROCP_DAMAGED_MESSAGE = tr(".procp package is damaged (an entry inside failed its content check), it was not opened");
 
 /**
  * 这个文件是不是 .procp 包。
@@ -163,7 +164,7 @@ export async function readZip(file: Blob): Promise<ReadEntry[]> {
   for (let i = tail.length - 22; i >= 0; i--) {
     if (tail[i] === 0x50 && tail[i + 1] === 0x4b && tail[i + 2] === 0x05 && tail[i + 3] === 0x06) { eocd = i; break; }
   }
-  if (eocd < 0) throw new Error("这不是一个 .procp 包(没找到 zip 目录)");
+  if (eocd < 0) throw new Error(tr("This is not a .procp package (zip directory not found)"));
   const end = new DataView(tail.buffer, tail.byteOffset + eocd, 22);
   const count = end.getUint16(10, true);
   const cdOffset = end.getUint32(16, true);
@@ -199,7 +200,7 @@ export async function readZip(file: Blob): Promise<ReadEntry[]> {
 export async function inflate(entry: ReadEntry): Promise<Blob> {
   let body: Blob;
   if (entry.method === 0) body = entry.blob;
-  else if (entry.method !== 8) throw new Error(`.procp 里有不认识的压缩方式(${entry.method}):${entry.name}`);
+  else if (entry.method !== 8) throw new Error(tr(".procp contains an unknown compression method ({0}): {1}", entry.method, entry.name));
   else {
     try {
       body = await new Response(entry.blob.stream().pipeThrough(new DecompressionStream("deflate-raw"))).blob();
@@ -272,28 +273,29 @@ export async function packProcpFrom(procText: string, project: Project, urlOf: (
     let ok = false;
     try {
       const url = urlOf(hash);
-      if (!url) console.warn(`[procp] 素材服务还没就绪,跳过 ${hash}`);
+      if (!url) console.warn(`[procp] Asset service is not ready yet, skipping ${hash}`);
       else {
         const res = await fetch(url);
-        if (!res.ok) console.warn(`[procp] 本地内容库里没有 ${hash},跳过`);
+        if (!res.ok) console.warn(`[procp] ${hash} is not in the local content store, skipping`);
         else { entries.push({ name: MEDIA_PREFIX + file, blob: await res.blob() }); ok = true; }
       }
     } catch (err) {
-      console.warn(`[procp] 取素材失败 ${hash}`, err);
+      console.warn(`[procp] Failed to fetch asset ${hash}`, err);
     }
     if (!ok) for (const id of ids) missing.push({ id, name: nameOf.get(id) ?? "" });
   }
-  if (missing.length) console.warn("[procp] 这些素材没进包:", missing.map((m) => m.name));
+  if (missing.length) console.warn("[procp] These assets were not included in the package:", missing.map((m) => m.name));
   return { blob: await writeZip(entries), missing };
 }
 
 /** 打包结束时给用户的那句话:包里缺哪些素材(名字去重,太多时只列前面若干条) */
 export function packMissingMessage(missing: readonly PackMissing[], limit = 12): string {
-  const names = [...new Set(missing.map((m) => (m.name || m.id).replace(/^\(缺失\) /, "")))];
+// i18n-allow: names in older projects carry the Chinese marker
+  const names = [...new Set(missing.map((m) => (m.name || m.id).replace(/^\((?:missing|缺失)\) /, "")))];
   if (!names.length) return "";
   const shown = names.slice(0, limit).map((n) => `· ${n}`).join("\n");
-  const more = names.length > limit ? `\n……另有 ${names.length - limit} 条` : "";
-  return `包已保存，但下面 ${names.length} 条素材本机找不到文件，没有装进包里（换台机器打开这个包，这些素材放不出来）：\n${shown}${more}`;
+  const more = names.length > limit ? tr("\n…and {0} more", names.length - limit) : "";
+  return tr("Package saved, but {0} media items below have no file on this machine and were not included in the package (if you open this package on another machine, they won't play):\n{1}{2}", names.length, shown, more);
 }
 
 /** 这些哈希里哪些已经在本地内容库(拆包时用来跳过已有素材) */
@@ -328,7 +330,7 @@ export interface UnpackResult {
 export async function unpackProcp(file: Blob): Promise<UnpackResult> {
   const entries = await readZip(file);
   const proc = entries.find((e) => e.name === PROC_ENTRY) || entries[0];
-  if (!proc) throw new Error("这不是一个 .procp 包(里面是空的)");
+  if (!proc) throw new Error(tr("This is not a .procp package (it is empty)"));
   // 先把每个条目都核一遍 CRC,再碰编排和素材:有一条坏就整个包不读,不落任何素材
   const bodies = new Map<ReadEntry, Blob>();
   for (const e of entries) {
@@ -350,12 +352,12 @@ export async function unpackProcp(file: Blob): Promise<UnpackResult> {
     try {
       const body = bodies.get(entry)!;
       const res = await fetch(`/api/media/upload/${encodeURIComponent(name)}`, { method: "POST", body });
-      if (!res.ok) { console.warn(`[procp] 素材落库失败: ${name}`); continue; }
+      if (!res.ok) { console.warn(`[procp] Failed to store asset: ${name}`); continue; }
       const data = await res.json();
       if (data?.deduped) deduped += 1; else stored += 1;
       if (typeof data?.hash === "string") landed.add(data.hash.toLowerCase());
     } catch (err) {
-      console.warn(`[procp] 素材落库异常: ${name}`, err);
+      console.warn(`[procp] Error storing asset: ${name}`, err);
     }
   }
   return { procText, stored, deduped, landed: [...landed] };

@@ -31,6 +31,7 @@ import { ProjectRail } from "./ProjectRail";
 import { ProjectSidebar, scopeKeyOf, type Scope, type TreeOps } from "./ProjectSidebar";
 import { PromptBox } from "./PromptBox";
 import { TopBar } from "./TopBar";
+import { tr } from "../i18n/index.ts";
 import { EXT_WIDTH, SIDE_WIDTH, clampWidth, readSideCollapsed, readWidth, writeSideCollapsed, writeWidth } from "./sideWidth";
 import { removeById, rename, reorder, setArchived, togglePin, visible } from "./treeState";
 import type { OrgEntry, OrgState, SeenMeta } from "./vibeOrg";
@@ -56,6 +57,9 @@ const ORG_REALM = "local" as const;
 const AUTOSAVE_MS = 2500;
 
 /** 同级的键:和 `ProjectSidebar` 里判能不能拖到一起用的是同一套 */
+/** Address parameter that carries the open project across the reload of a language switch */
+const REOPEN_PARAM = "vibeOpen";
+
 const projectSib = (p: VibeProject) => `project:${p.realm}:${p.groupId ?? "loose"}`;
 const chatSib = (c: VibeChat) => `chat:p:${c.projectId}`;
 
@@ -95,7 +99,7 @@ export function DesktopStart(props: {
       setDrafts(await listDrafts());
       setListError("");
     } catch (e) {
-      setListError(e instanceof Error ? e.message : "读不到本机项目");
+      setListError(e instanceof Error ? e.message : tr("Cannot read local projects"));
     } finally {
       setLoading(false);
     }
@@ -154,6 +158,14 @@ export function DesktopStart(props: {
     setPanel(true);
   }, [openChat?.id]);
 
+  /** Switching language reloads the page: save, and reopen this project's chat afterwards */
+  const prepareLanguageSwitch = async (url: URL): Promise<boolean> => {
+    if (!openId) return true;
+    if (dirty && !(await save(openId)) && !confirm(tr("Your changes could not be saved. Switching language will lose them. Continue?"))) return false;
+    url.searchParams.set(REOPEN_PARAM, openId);
+    return true;
+  };
+
   /* ---------------- 自动保存 ---------------- */
   const dirty = useStore((s) => s.dirty);
   /** 存一次当前项目。存不下去(只读、盘满)如实说,不吞掉 */
@@ -163,7 +175,7 @@ export function DesktopStart(props: {
       await refresh();
       return true;
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : "这次没存上，改动还在，过一会儿会再试。");
+      setNotice(e instanceof Error ? e.message : tr("Not saved this time. Your changes are still there and it will retry shortly."));
       return false;
     }
   }, [refresh]);
@@ -196,9 +208,21 @@ export function DesktopStart(props: {
         // 刚载进来的草稿还没动过,不会有没存的改动,所以这里直接切,不用再存一次
         if (intoClassic) props.onEnterEditor();
       })
-      .catch((e: unknown) => setNotice(e instanceof Error ? e.message : "这个项目打不开。"))
+      .catch((e: unknown) => setNotice(e instanceof Error ? e.message : tr("This project cannot be opened.")))
       .finally(() => setBusy(false));
   };
+
+  // Back from a language switch: reopen the project that was open
+  useEffect(() => {
+    const url = new URL(location.href);
+    const id = url.searchParams.get(REOPEN_PARAM);
+    if (!id) return;
+    url.searchParams.delete(REOPEN_PARAM);
+    history.replaceState(history.state, "", url);
+    openProject(id);
+    // Only on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /** 进传统式之前先存一次:编辑界面那边是手动存,带着没存的改动过去,顶栏会一直标着「*」 */
   const enterEditor = () => {
@@ -225,15 +249,15 @@ export function DesktopStart(props: {
   const createBlank = () => {
     setNotice("");
     setBusy(true);
-    void createLocal("未命名")
-      .catch((e: unknown) => setNotice(e instanceof Error ? e.message : "新建没有成功。"))
+    void createLocal(tr("Untitled"))
+      .catch((e: unknown) => setNotice(e instanceof Error ? e.message : tr("Creating the project did not succeed.")))
       .finally(() => setBusy(false));
   };
 
   /** 开始页说一句话:建项目 → 定画幅 → 放素材 → 进聊天页 → 这句话发给本机 Agent */
   const submitPrompt = async (text: string, ratio: Ratio) => {
     setBusy(true);
-    setNotice("正在新建项目…");
+    setNotice(tr("Creating project…"));
     const picked = files;
     try {
       // 顺序不能反:`createLocal` 里的 `newProject` 会把 store 里的项目整个换掉,
@@ -243,14 +267,14 @@ export function DesktopStart(props: {
       if (picked.length) {
         const r = await importMediaFiles(picked);
         const n = r.counts.video + r.counts.audio + r.counts.image;
-        setNotice(n ? `已把 ${n} 个素材放进项目。` : (r.rejected[0] ?? "挑的文件里没有能导入的素材。"));
+        setNotice(n ? tr("Added {0} media to the project.", n) : (r.rejected[0] ?? tr("None of the chosen files contain media that can be imported.")));
       } else setNotice("");
       // 画幅和素材一起落盘,免得等自动保存那几秒里关掉就白设了
       if (ratio !== "16:9" || picked.length) await saveDraft(id);
       setFiles([]);
       setPending({ projectId: id, text });
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : "没能建起这个项目。");
+      setNotice(e instanceof Error ? e.message : tr("Could not create this project."));
     } finally {
       setBusy(false);
     }
@@ -271,32 +295,32 @@ export function DesktopStart(props: {
       if (kind === "group") writeGroups((a) => togglePin(a, id));
       else if (kind === "project") writeProjects((a) => togglePin(a, id));
       else writeChats((a) => togglePin(a, id));
-      setNotice("置顶只在自己同级里生效。");
+      setNotice(tr("Pinning only applies among its own siblings."));
     },
     archive: (kind, id) => {
       const next = !archivedNow(kind, id);
       if (kind === "group") writeGroups((a) => setArchived(a, id, next));
       else if (kind === "project") writeProjects((a) => setArchived(a, id, next));
       else writeChats((a) => setArchived(a, id, next));
-      setNotice(next ? "已归档：收进侧栏最下面「已归档」，那里右键能取消归档。项目文件本身不动。" : "已取消归档。");
+      setNotice(next ? tr("Archived: moved to \"Archived\" at the bottom of the sidebar, where you can right-click to unarchive. The project files are untouched.") : tr("Unarchived."));
     },
     remove: (kind, id) => {
       if (kind === "group") {
         const g = groups.find((x) => x.id === id);
-        if (g && confirm(`删除分组「${g.name}」？里面的项目会放回「项目」，项目本身不删。`)) writeGroups((a) => removeById(a, id));
+        if (g && confirm(tr("Delete group \"{0}\"? Its projects will go back to \"Projects\" and are not deleted.", g.name))) writeGroups((a) => removeById(a, id));
         return;
       }
       if (kind === "project") {
         const p = projects.find((x) => x.id === id);
         if (!p) return;
-        if (id === openId) { setNotice("这个项目正开着，先回开始页或打开别的项目再删。"); return; }
-        if (!confirm(`删除项目「${p.name}」？这会删掉磁盘上的 .proc 文件，不能撤销。`)) return;
-        void deleteDraft(id).then(refresh, (e: unknown) => setNotice(e instanceof Error ? e.message : "删除失败。"));
+        if (id === openId) { setNotice(tr("This project is currently open. Go back to the start page or open another project before deleting it.")); return; }
+        if (!confirm(tr("Delete project \"{0}\"? This deletes the .proc file on disk and cannot be undone.", p.name))) return;
+        void deleteDraft(id).then(refresh, (e: unknown) => setNotice(e instanceof Error ? e.message : tr("Delete failed.")));
         return;
       }
       const c = chats.find((x) => x.id === id);
       if (!c || c.fresh) return;
-      if (!confirm(`关掉对话「${c.name}」？这一页的消息就没了。`)) return;
+      if (!confirm(tr("Close chat \"{0}\"? The messages on this page will be lost.", c.name))) return;
       vibe.removeChat(id);
     },
     reorder: (kind, dragId, overId, place) => {
@@ -314,11 +338,11 @@ export function DesktopStart(props: {
     },
     blocked: (kind, id) => {
       if (kind === "group") return {};
-      if (kind === "project") return { rename: "这一版改项目名要进传统式，在编辑界面里改。" };
+      if (kind === "project") return { rename: tr("In this version, renaming a project requires Classic mode: do it in the editor.") };
       const c = chats.find((x) => x.id === id);
       return {
-        rename: "对话的名字由 Agent 自己声明的范围决定，这里改不了。",
-        remove: c?.fresh ? "还没发过消息的新对话不用关。" : undefined,
+        rename: tr("A chat's name is set by the scope the Agent declares itself, so it can't be changed here."),
+        remove: c?.fresh ? tr("A new chat with no messages sent yet doesn't need closing.") : undefined,
       };
     },
   };
@@ -330,15 +354,15 @@ export function DesktopStart(props: {
     if (scope.kind === "loose") return live.filter((p) => p.groupId === null);
     return live;
   }, [projects, scope]);
-  const railTitle = scope.kind === "group" ? (groups.find((g) => g.id === scope.id)?.name ?? "分组") : scope.kind === "loose" ? "没放进分组" : "最近项目";
+  const railTitle = scope.kind === "group" ? (groups.find((g) => g.id === scope.id)?.name ?? tr("Group")) : scope.kind === "loose" ? tr("Not in a group") : tr("Recent projects");
 
   const listNotice = listError
-    ? <>{listError}<button type="button" className="ps-link" data-pc="start-list-retry" onClick={() => void refresh()}>重试</button></>
-    : loading && drafts.length === 0 ? "正在读本机项目…"
-    : drafts.length === 0 ? "本机还没有项目：在中间说一句话，或点「新建项目」。"
+    ? <>{listError}<button type="button" className="ps-link" data-pc="start-list-retry" onClick={() => void refresh()}>{tr("Retry")}</button></>
+    : loading && drafts.length === 0 ? tr("Reading local projects…")
+    : drafts.length === 0 ? tr("No local projects yet: say something in the middle, or click \"New project\".")
     : null;
-  const railEmpty = listError ? `本机项目暂时读不到：${listError}`
-    : loading && drafts.length === 0 ? "正在读本机项目…"
+  const railEmpty = listError ? tr("Local projects can't be read right now: {0}", listError)
+    : loading && drafts.length === 0 ? tr("Reading local projects…")
     : undefined;
 
   const agentName = vibe.ai.providers.find((p) => p.id === vibe.ai.provider)?.label ?? null;
@@ -346,6 +370,7 @@ export function DesktopStart(props: {
   return (
     <div className="ps" data-pc="start-desktop" data-vibe="desktop">
       <TopBar
+        prepareLanguageSwitch={prepareLanguageSwitch}
         atHome={!openChat}
         onHome={() => {
           setChatPage(false);
@@ -364,7 +389,7 @@ export function DesktopStart(props: {
           openChat ? (
             <div className="ps-top-title">
               <span className="ps-top-name" data-pc="start-chat-name">{openChat.name}</span>
-              <span className="ps-top-where">项目「{projects.find((p) => p.id === openChat.projectId)?.name ?? ""}」</span>
+              <span className="ps-top-where">{tr("Project \"{0}\"", projects.find((p) => p.id === openChat.projectId)?.name ?? "")}</span>
             </div>
           ) : null
         }
@@ -374,10 +399,10 @@ export function DesktopStart(props: {
               type="button"
               className="ps-ghost-btn"
               data-pc="start-agent-setup"
-              title={agentName ? `这台机器上的 Agent：${agentName}。点这里换一个或改登录` : "挑一个本机的命令行 Agent，或填一个 API 密钥"}
+              title={agentName ? tr("Agent on this machine: {0}. Click here to switch or change the login", agentName) : tr("Pick a local command-line Agent, or enter an API key")}
               onClick={vibe.ai.openSetup}
             >
-              {agentName ? `Agent：${agentName}` : "配置 Agent"}
+              {agentName ? tr("Agent: {0}", agentName) : tr("Set up Agent")}
             </button>
             {openChat ? (
               <button
@@ -385,8 +410,8 @@ export function DesktopStart(props: {
                 className="ps-chat-ext-btn"
                 data-pc="start-chat-ext-toggle"
                 aria-pressed={panel}
-                aria-label="右侧拓展栏"
-                title="画面、修改前 / 修改后"
+                aria-label={tr("right side panel")}
+                title={tr("Picture, before / after")}
                 onClick={() => setPanel((v) => !v)}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round">
@@ -395,8 +420,8 @@ export function DesktopStart(props: {
                 </svg>
               </button>
             ) : (
-              <button type="button" className="ps-ghost-btn" data-pc="start-go-classic" title="打开项目文件、加入别人的项目、拓展功能和存储都在那一页" onClick={props.onClassic}>
-                拓展与存储
+              <button type="button" className="ps-ghost-btn" data-pc="start-go-classic" title={tr("Opening project files, joining other people's projects, extensions and storage are all on that page")} onClick={props.onClassic}>
+                {tr("Extensions and storage")}
               </button>
             )}
           </>
@@ -438,7 +463,7 @@ export function DesktopStart(props: {
           }}
           groupNote={groupNoteText(ORG_REALM)}
           onNewGroup={() => {
-            const name = prompt(`新分组叫什么？（${groupNoteText(ORG_REALM)}）`, "新分组");
+            const name = prompt(tr("What should the new group be called? ({0})", groupNoteText(ORG_REALM)), tr("New group"));
             if (name === null) return;
             setOrg((o) => addGroup(o, name).org);
           }}
@@ -474,9 +499,9 @@ export function DesktopStart(props: {
           <main className="ps-main">
             <div className="ps-body">
               <div className="ps-hero">
-                <span className="ps-hero-kicker">由你这台机器上的 Agent 驱动</span>
-                <h1 className="ps-hero-title">说一句话，先得到一支片子</h1>
-                <span className="ps-hero-sub">写下主题或贴进文案，Agent 建好项目、排好卡片，再由你接着剪。</span>
+                <span className="ps-hero-kicker">{tr("Driven by the Agent on this machine")}</span>
+                <h1 className="ps-hero-title">{tr("Say one sentence, get a video first")}</h1>
+                <span className="ps-hero-sub">{tr("Write a topic or paste in a script, the Agent builds the project and arranges the cards, and then you carry on editing.")}</span>
               </div>
 
               <PromptBox
@@ -489,12 +514,12 @@ export function DesktopStart(props: {
                 onChange={(e) => {
                   const list = e.target.files ? [...e.target.files] : [];
                   e.target.value = "";
-                  if (list.length) { setFiles((f) => [...f, ...list]); setNotice(`已挑 ${files.length + list.length} 个素材，发出这句话时一起放进新项目。`); }
+                  if (list.length) { setFiles((f) => [...f, ...list]); setNotice(tr("{0} media selected, they will be put into the new project together when this message is sent.", files.length + list.length)); }
                 }} />
               <p className="ps-prompt-note" role="status" data-pc="start-notice">
                 {notice || (vibe.whyNot && openId ? vibe.whyNot : "")
-                  || (openId && !chatPage ? "项目还开着：点左边它底下的对话回去接着聊。"
-                    : "行上右键可以置顶、归档、放进分组，按住能拖着排序，侧栏右边那条缝能拖宽窄。")}
+                  || (openId && !chatPage ? tr("The project is still open: click the chat under it on the left to pick up where you left off.")
+                    : tr("Right-click a row to pin, archive, or put it in a group. Press and hold to drag to reorder. The seam on the right of the sidebar can be dragged to resize it."))}
               </p>
 
               <ProjectRail

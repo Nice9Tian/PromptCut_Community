@@ -16,7 +16,7 @@ const project = () => ({
   id: "old-content-id", name: "旧云端项目", duration: 12, fps: 30, width: 1920, height: 1080,
   media: [{ id: "m1", kind: "video", name: "a.mp4", url: `/@media/${"b".repeat(64)}`, hash: "b".repeat(64), path: "C:/x/a.mp4" }],
   tracks: [{ id: "t1", clips: [{ id: "c1", mediaId: "m1", start: 1, end: 4, mediaOffset: 2, opacity: 0.5, audioVolume: 0.3, fadeIn: 0.2, params: { k: [1, 2] } }] }],
-  cardNodes: [{ id: "n1", adapter: "card", cardId: "user-card", params: { title: "原样" } }], cuts: [{ id: "cut" }], extra: { kept: true },
+  cardNodes: [{ id: "n1", adapter: "card", cardId: "user-card", params: { title: "asIs" } }], cuts: [{ id: "cut" }], extra: { kept: true },
 });
 
 test("内容原样保留、换新的本地项目号、不带任何协作关联", () => {
@@ -35,13 +35,13 @@ test("内容原样保留、换新的本地项目号、不带任何协作关联",
 });
 
 test("证明与项目对不上、不是云端项目、内容不可读:不转", () => {
-  assert.throws(() => convertGoneProject(project(), descriptor, { ...proof, projectId: `sp_${"c".repeat(26)}` }), /对不上/);
-  assert.throws(() => convertGoneProject(project(), descriptor, { ...proof, state: "exists" }), /对不上/);
-  assert.throws(() => convertGoneProject(project(), descriptor, null), /对不上/);
-  assert.throws(() => convertGoneProject(project(), { ...descriptor, where: "lan" }, proof), /云端项目/);
-  assert.throws(() => convertGoneProject(project(), { version: 2, roomId: room, service: descriptor.service, where: "hosted" }, proof), /云端项目/);
-  assert.throws(() => convertGoneProject({ id: "x" }, descriptor, proof), /不可读/);
-  assert.throws(() => convertGoneProject(null, descriptor, proof), /不可读/);
+  assert.throws(() => convertGoneProject(project(), descriptor, { ...proof, projectId: `sp_${"c".repeat(26)}` }), /does not match this project/);
+  assert.throws(() => convertGoneProject(project(), descriptor, { ...proof, state: "exists" }), /does not match this project/);
+  assert.throws(() => convertGoneProject(project(), descriptor, null), /does not match this project/);
+  assert.throws(() => convertGoneProject(project(), { ...descriptor, where: "lan" }, proof), /Only cloud projects can be converted/);
+  assert.throws(() => convertGoneProject(project(), { version: 2, roomId: room, service: descriptor.service, where: "hosted" }, proof), /Only cloud projects can be converted/);
+  assert.throws(() => convertGoneProject({ id: "x" }, descriptor, proof), /is unreadable/);
+  assert.throws(() => convertGoneProject(null, descriptor, proof), /is unreadable/);
 });
 
 test("出处记录:形状不对的不收;只跟着那一个项目号;转换通知每条只取一次", () => {

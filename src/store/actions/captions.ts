@@ -37,20 +37,20 @@ export const captions = {
   buildCaptions(mediaId: string): { ok: true; clipId: string; count: number } | { ok: false; reason: string } {
     const p = state.project;
     const media = p.media.find((m) => m.id === mediaId);
-    if (!media) return { ok: false, reason: "找不到这份素材" };
+    if (!media) return { ok: false, reason: "Media not found" };
     const segments = media.transcript?.segments ?? [];
-    if (segments.length === 0) return { ok: false, reason: "这份素材还没有文字稿" };
+    if (segments.length === 0) return { ok: false, reason: "This media has no transcript yet" };
 
     const clips = p.tracks.flatMap((t) => t.clips);
     const plan = captionsFromTranscript(clips, mediaId, segments);
-    if (plan.lines.length === 0) return { ok: false, reason: "这份素材还没放到时间轴上,先把它拖上去再铺字幕" };
+    if (plan.lines.length === 0) return { ok: false, reason: "This media is not on the timeline yet; drag it onto the timeline first, then lay out the captions" };
 
     const track = captions.ensureCaptionTrack();
     // 同一时段已经有字幕卡就复用它(重新转写之后再铺一次是常事,不该越铺越多)
     const exist = track.clips.find((c) => isCaptionClip(c) && Math.max(c.start, plan.from) < Math.min(c.end, plan.to));
     if (exist) {
       const re = captionsFromTranscript(clips, mediaId, segments, { from: exist.start, to: exist.end });
-      if (re.lines.length === 0) return { ok: false, reason: "文字稿没有落在那张字幕卡的时段里" };
+      if (re.lines.length === 0) return { ok: false, reason: "The transcript does not fall within the time range of that captions card" };
       clipActions.setClipParams(exist.id, { lines: formatCaptions(re.lines) });
       return { ok: true, clipId: exist.id, count: re.lines.length };
     }
@@ -59,7 +59,7 @@ export const captions = {
       trackId: track.id,
       params: { lines: formatCaptions(plan.lines), showEn: "false" },
     });
-    if (!clip) return { ok: false, reason: "建字幕卡失败" };
+    if (!clip) return { ok: false, reason: "Failed to create the captions card" };
     return { ok: true, clipId: clip.id, count: plan.lines.length };
   },
   /**

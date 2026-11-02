@@ -171,10 +171,10 @@ test("限速:cancel 丢掉没交的", () => {
 function loadCutProject() {
   actions.loadProject({
     version: 1, id: "p-fields", name: "t", width: 1280, height: 720, fps: 30, duration: 20, themeId: "midnight", media: [],
-    tracks: [{ id: "ta", name: "序列 1", clips: [] }],
+    tracks: [{ id: "ta", name: "Track 1", clips: [] }],
     cuts: [
       { id: "A", name: "剪辑A" },
-      { id: "B", name: "剪辑B", tracks: [{ id: "tb", name: "序列 1", clips: [{ id: "b1", cardId: "", mediaId: "m", start: 0, end: 8, params: {} }] }], duration: 8, transitions: [] },
+      { id: "B", name: "剪辑B", tracks: [{ id: "tb", name: "Track 1", clips: [{ id: "b1", cardId: "", mediaId: "m", start: 0, end: 8, params: {} }] }], duration: 8, transitions: [] },
     ],
     activeCutId: "A",
   });

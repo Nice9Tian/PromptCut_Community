@@ -69,6 +69,7 @@ import { resolveFrameSize } from "./kernel/frameSize.mjs";
 import { frameWorkStatus, waitForFrameWork } from "./kernel/frameReady";
 import { pixelRect, renderSmallWebp, renderSnapshotBitmap } from "./render/bakeSmall";
 import "./cards";
+import { tr as trText } from "./i18n/index.ts";
 
 /**
  * 渲染面(?stage=1)。编辑器把它放在一个 iframe 里,只下发「现在是时间轴的第几秒」,
@@ -516,7 +517,7 @@ export default function StageView() {
           postStageEvent({ type: "sound-state", state: null });
         }
       } catch (err) {
-        console.warn("[stage] 载入同步来的卡片出错", err);
+        console.warn("[stage] error loading synced cards", err);
       }
     };
     const offCardExecGate = ONLINE ? subscribeStageExecGate(() => { void applyCardBundles(); }) : () => {};
@@ -1742,7 +1743,7 @@ export default function StageView() {
         await Promise.race([gate, new Promise<void>((r) => realSetTimeout(r, 4))]);
         if (done || stale()) break;
         if (realNow() - t0 > BAKE_READY_MAX_MS) {
-          return { ok: false, detail: `控件、字体或图片在 ${Math.round(BAKE_READY_MAX_MS / 1000)} 秒内未就绪:${frameWorkStatus().map((w) => w.label).join("、") || (document.fonts.status !== "loaded" ? "字体" : "图片")}` };
+          return { ok: false, detail: trText("Controls, fonts or images not ready within {0} seconds: {1}", Math.round(BAKE_READY_MAX_MS / 1000), frameWorkStatus().map((w) => w.label).join(trText(", ")) || (document.fonts.status !== "loaded" ? trText("fonts") : trText("Images"))) };
         }
         clock?.tick(clock.now());
       }
@@ -1765,7 +1766,7 @@ export default function StageView() {
         if (isProjectPatch(next)) {
           if (next.kind === "full") full = next.project;
           else {
-            if (!prev) throw new Error("setProject: 收到增量补丁但舞台上还没有项目(先发一份 full)");
+            if (!prev) throw new Error(trText("setProject: received an incremental patch but the stage has no project yet (send a full one first)"));
             full = applyProjectPatch(prev, next);
           }
         } else {
@@ -2553,7 +2554,7 @@ export default function StageView() {
         }
         if (stale()) return { ok: false, reason: "cancelled" } satisfies BakeFrameReply;
         // 时钟没落在这一帧上(不该发生:每一步都按帧号算,最后一步就是这一帧的时刻):不拿别的时刻的画面充数,按可重试交回
-        if (Math.abs(clock.now() - targetMs) > 1e-6) return bakeFail({ ok: false, reason: "cancelled", detail: `舞台时钟在 ${clock.now()} 毫秒,这一帧是 ${targetMs} 毫秒` } satisfies BakeFrameReply);
+        if (Math.abs(clock.now() - targetMs) > 1e-6) return bakeFail({ ok: false, reason: "cancelled", detail: trText("Stage clock is at {0} ms, this frame is at {1} ms", clock.now(), targetMs) } satisfies BakeFrameReply);
         ref.current.t = sec;
         const t0 = realNow();
         const ready = await bakeReady(stale);
@@ -2562,12 +2563,12 @@ export default function StageView() {
         const readyMs = realNow() - t0;
         const root = rootRef.current;
         const snap = createSnapshot(root, flat ? { flatControls: true } : undefined);
-        if (snap.lossy) return bakeFail({ ok: false, reason: "lossy", detail: `${snap.lossy} 张读不出像素的画布` } satisfies BakeFrameReply);
+        if (snap.lossy) return bakeFail({ ok: false, reason: "lossy", detail: trText("{0} canvases with unreadable pixels", snap.lossy) } satisfies BakeFrameReply);
         const own = snap.controls.find((c) => c.id === req.clipId);
         if (!own) return bakeFail({ ok: false, reason: "no-control" } satisfies BakeFrameReply);
         // 剪辑段里的卡:包裹层的本地帧从卡自己的起点算 = 这一刻 − (露出起点 − 截掉的那一截)
         const wantFrame = flat ? Math.round((sec - (clip.start - (Number((clip as { flat?: { lead?: number } }).flat?.lead) || 0))) * fps) : n;
-        if (flat ? Math.abs(own.frame - wantFrame) > 1 : own.frame !== n) return bakeFail({ ok: false, reason: "frame-mismatch", detail: `生成快照的本地帧是 ${own.frame},要的是 ${wantFrame}` } satisfies BakeFrameReply);
+        if (flat ? Math.abs(own.frame - wantFrame) > 1 : own.frame !== n) return bakeFail({ ok: false, reason: "frame-mismatch", detail: trText("The local frame of the generate snapshots step is {0}, expected {1}", own.frame, wantFrame) } satisfies BakeFrameReply);
         const bytes = new TextEncoder().encode(own.html);
         const hash = await sha256Hex(bytes);
         const wantHtml = req.html !== false;
@@ -2576,7 +2577,7 @@ export default function StageView() {
         let pixelsMs = 0;
         if (req.pixels) {
           const rect = pixelRect(req.pixels.rect);
-          if (!rect) return bakeFail({ ok: false, reason: "pixels-failed", detail: "要像素的矩形不对(要整数、宽高为偶数)" } satisfies BakeFrameReply);
+          if (!rect) return bakeFail({ ok: false, reason: "pixels-failed", detail: trText("Invalid rectangle for pixels (must be integers, with even width and height)") } satisfies BakeFrameReply);
           const p0 = realNow();
           const box = resolveFrameSize(clip.frame, p);
           try {
@@ -2601,7 +2602,7 @@ export default function StageView() {
             dropPixels();
             return { ok: false, reason: "small-failed", detail: String((e as Error)?.message ?? e).slice(0, 200) } satisfies BakeFrameReply;
           }
-          if (!webp) { dropPixels(); return { ok: false, reason: "small-failed", detail: "浏览器出不了 WebP" } satisfies BakeFrameReply; }
+          if (!webp) { dropPixels(); return { ok: false, reason: "small-failed", detail: trText("The browser cannot produce WebP") } satisfies BakeFrameReply; }
           small = { hash: await sha256Hex(new Uint8Array(webp)), bytes: webp.byteLength, webp };
           smallMs = realNow() - s0;
         }
@@ -2640,7 +2641,7 @@ export default function StageView() {
         return gate.allowed ? { ok: true } : { ok: false, reason: "gate" as const };
       },
       async synthCardAudio(request) {
-        if (!cardExec.soundHost || !stageExecGate().allowed) throw new Error("这一台舞台没有声音线程");
+        if (!cardExec.soundHost || !stageExecGate().allowed) throw new Error(trText("This stage has no sound thread"));
         return cardExec.soundHost.render(request);
       },
       /**
@@ -2704,7 +2705,7 @@ export default function StageView() {
     // 场景根就是 rootRef 指着的那个 [data-pc-scene] div(不走 document.querySelector:预渲染页上 #root 只是 display:none)。
     window.__pcCreateSnapshot = () => {
       const root = rootRef.current;
-      if (!root) throw new Error("stage: 还没有项目,没什么可生成快照的");
+      if (!root) throw new Error(trText("stage: there is no project yet, nothing to generate snapshots for"));
       return createSnapshot(root);
     };
     /*

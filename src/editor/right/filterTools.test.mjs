@@ -19,17 +19,17 @@ test("滤镜库:建、挂、改、删,门槛、撤销、跨剪辑清理", async 
       { id: "a", kind: "audio", name: "a.mp3", url: "/media/a.mp3", duration: 20 },
     ];
     p.tracks = [
-      { id: "t1", name: "画面", clips: [{ id: "c1", cardId: "", params: {}, mediaId: "v", start: 0, end: 5 }, { id: "c2", cardId: "", params: {}, mediaId: "v", start: 5, end: 10 }] },
-      { id: "t2", name: "卡片", clips: [{ id: "k1", cardId: "caption-track", params: {}, start: 0, end: 5 }] },
-      { id: "t3", name: "声音", clips: [{ id: "s1", cardId: "", params: {}, mediaId: "a", start: 0, end: 5 }] },
+      { id: "t1", name: "Video", clips: [{ id: "c1", cardId: "", params: {}, mediaId: "v", start: 0, end: 5 }, { id: "c2", cardId: "", params: {}, mediaId: "v", start: 5, end: 10 }] },
+      { id: "t2", name: "Cards", clips: [{ id: "k1", cardId: "caption-track", params: {}, start: 0, end: 5 }] },
+      { id: "t3", name: "Audio", clips: [{ id: "s1", cardId: "", params: {}, mediaId: "a", start: 0, end: 5 }] },
       { id: "t4", name: "锁住的", locked: true, clips: [{ id: "c3", cardId: "", params: {}, mediaId: "v", start: 0, end: 5 }] },
     ];
     actions.loadProject(p);
 
     // 建 + 顺手挂;片段不合规时什么都不建
-    assert.throws(() => ft.createFilter({ name: "x", ops: [{ kind: "blur", value: 1 }], clipId: "k1" }), /卡片/);
-    assert.throws(() => ft.createFilter({ name: "x", ops: [{ kind: "blur", value: 1 }], clipId: "s1" }), /声音/);
-    assert.throws(() => ft.createFilter({ name: "x", ops: [{ kind: "blur", value: 1 }], clipId: "c3" }), /锁定/);
+    assert.throws(() => ft.createFilter({ name: "x", ops: [{ kind: "blur", value: 1 }], clipId: "k1" }), /cards use their own style parameters/);
+    assert.throws(() => ft.createFilter({ name: "x", ops: [{ kind: "blur", value: 1 }], clipId: "s1" }), /audio with no picture/);
+    assert.throws(() => ft.createFilter({ name: "x", ops: [{ kind: "blur", value: 1 }], clipId: "c3" }), /is locked/);
     assert.equal(getState().project.filters, undefined, "校验没过不能留下半个滤镜");
     const made = ft.createFilter({
       name: "呼吸", params: { amount: { default: 0.2, min: 0, max: 0.5 } },
@@ -50,7 +50,7 @@ test("滤镜库:建、挂、改、删,门槛、撤销、跨剪辑清理", async 
     // 挂到第二段、换参数、摘掉
     assert.equal(ft.applyFilter({ clipId: "c2", filterId: fid }).filterId, fid);
     assert.throws(() => ft.applyFilter({ clipId: "c2", filterId: fid, params: { nope: 1 } }), /没有参数 nope/);
-    assert.throws(() => ft.applyFilter({ clipId: "c2", filterId: "fx-none" }), /滤镜库里没有 fx-none.*呼吸/);
+    assert.throws(() => ft.applyFilter({ clipId: "c2", filterId: "fx-none" }), /No fx-none in the filter library.*呼吸/);
     assert.equal(ft.listFilters().filters[0].usedBy.length, 2);
     assert.equal(ft.applyFilter({ clipId: "c2", filterId: "" }).removed, true);
     assert.equal("filter" in getState().project.tracks[0].clips[1], false, "摘掉要把字段整个拿掉");
@@ -59,7 +59,7 @@ test("滤镜库:建、挂、改、删,门槛、撤销、跨剪辑清理", async 
 
     // 改:挂着的都跟着变;删掉了声明的参数要提醒
     const upd = ft.updateFilter({ filterId: fid, params: {}, ops: [{ kind: "grayscale", value: "p" }] });
-    assert.match(upd.note, /2 段/);
+    assert.match(upd.note, /The 2 clips using it/);
     assert.match(upd.warning, /c1/);
     assert.throws(() => ft.updateFilter({ filterId: fid, ops: [{ kind: "saturate", value: 9 }] }), /0~2/);
 
@@ -71,7 +71,7 @@ test("滤镜库:建、挂、改、删,门槛、撤销、跨剪辑清理", async 
       cuts: q.cuts.map((c) => (c.id === other.id ? { ...c, tracks: [{ id: "tp", name: "p", clips: [{ id: "cp", cardId: "", params: {}, mediaId: "v", start: 0, end: 3, filter: { id: fid } }] }] } : c)),
     });
     assert.equal(ft.listFilters().filters[0].usedBy.length, 3);
-    assert.throws(() => ft.removeFilter({ filterId: fid }), /还挂在 3 段上.*剪辑备份 的 cp/);
+    assert.throws(() => ft.removeFilter({ filterId: fid }), /is still attached to 3 clips.*cp of 剪辑备份/);
     assert.throws(() => ft.removeFilter({ filterId: fid, force: true }), /reason/);
     const rm = ft.removeFilter({ filterId: fid, force: true, reason: "用户不要了" });
     assert.equal(rm.detached.length, 3);

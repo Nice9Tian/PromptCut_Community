@@ -10,6 +10,7 @@ import { useFiltersGroup } from "./library/filtersGroup";
 import { useEmphasisGroup } from "./library/emphasisGroup";
 import { useThemesGroup } from "./library/themesGroup";
 import { useAudioFxGroup, useAudioPresetsGroup } from "./library/audioFxGroups";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 「特效」分区:搜索 → 分类胶囊(所有 / 视觉 / 音频)→ 转场、滤镜、强调、全局风格、音频效果、音频预设。
@@ -39,8 +40,8 @@ export function EffectsSection() {
 
   return (
     <div data-pc="effects" className="pc-left-section">
-      <SectionHead title="特效">
-        <SearchBox value={search} onChange={setSearch} placeholder="搜索特效…" dataPc="effects-search" />
+      <SectionHead title={tr("Effects")}>
+        <SearchBox value={search} onChange={setSearch} placeholder={tr("Search effects…")} dataPc="effects-search" />
       </SectionHead>
 
       <GroupBrowser
@@ -49,7 +50,7 @@ export function EffectsSection() {
         searching={q !== ""}
         openId={openGroup}
         onOpen={setOpenGroup}
-        noMatch="没有匹配的特效"
+        noMatch={tr("No matching effects")}
       />
 
       <FlashBar msg={msg} />

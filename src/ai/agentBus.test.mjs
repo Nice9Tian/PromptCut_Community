@@ -82,7 +82,7 @@ test("MA-P3 agent.spawn:开一页带角色名、对话 ID 是服务端给的、�
 
 test("MA-P4 formatInbound:每条标出是谁发的", () => {
   const text = bus.formatInbound([{ from: "conv-a", text: "序列2 我来", hops: 1 }, { from: null, fromLabel: "Agent x(成员 bob 那边)", text: "好", hops: 1 }]);
-  assert.equal(text, "【来自 Agent conv-a 的消息】\n序列2 我来\n\n【来自 Agent x(成员 bob 那边) 的消息】\n好");
+  assert.equal(text, "[Message from Agent conv-a]\n序列2 我来\n\n[Message from Agent x(成员 bob 那边)]\n好");
 });
 
 test("MA-P5 取走又忙了:stash 放回页面这边,下次先送它们", async () => {

@@ -24,9 +24,10 @@ import type { JSX } from "react";
 import { actions, useStore } from "../store/project";
 import { TimelineView } from "../editor/timeline";
 import { ResizeHandle } from "../editor/ResizeHandle";
-import { quoteToken } from "../mobile/agentView";
+import { OVERLAY_QUOTE_KIND, quoteToken } from "../mobile/agentView";
 import { overlayQuoteId } from "../editor/timeline/overlayActions";
 import { VibeStage } from "./VibeStage";
+import { tr } from "../i18n/index.ts";
 
 const secs = (t: number) => `${t.toFixed(2)} s`;
 
@@ -102,18 +103,18 @@ export function DetailEdit(props: {
   return (
     <div className="ps-detail" data-pc="start-detail" ref={rootRef}>
       <header className="ps-detail-head">
-        <span className="ps-detail-title">详细编辑</span>
-        <span className="ps-detail-sub">时间轴可调；右键一张卡可以引用进输入框</span>
+        <span className="ps-detail-title">{tr("Detail editing")}</span>
+        <span className="ps-detail-sub">{tr("The timeline is adjustable; right-click a card to quote it into the input box")}</span>
         <span className="ps-rail-spacer" />
         {/*
           这一页属于氛围式 —— 对着 Agent 说话、在这儿看一眼、顺手调一下;
           点这个切到「传统式」,也就是打开整套编辑界面(`user-workflow.md`「工作方式」)。
         */}
-        <button type="button" className="ps-mode-btn" data-pc="start-enter-traditional" title="打开编辑界面自己动手：左栏 + 预览 + 时间轴 + AI 栏" onClick={props.onPro}>
-          进入传统式
+        <button type="button" className="ps-mode-btn" data-pc="start-enter-traditional" title={tr("Open the editor to work by hand: left rail + preview + timeline + AI panel")} onClick={props.onPro}>
+          {tr("Enter Classic mode")}
         </button>
         <button type="button" className="ps-ghost-btn" data-pc="start-detail-close" onClick={props.onClose}>
-          收起
+          {tr("Collapse")}
         </button>
       </header>
 
@@ -122,7 +123,7 @@ export function DetailEdit(props: {
       </div>
 
       <div className="ps-detail-transport">
-        <button type="button" className="ps-detail-play" data-pc="start-detail-play" aria-label={playing ? "暂停" : "播放"} onClick={() => actions.togglePlay()}>
+        <button type="button" className="ps-detail-play" data-pc="start-detail-play" aria-label={playing ? tr("Pause") : tr("Play")} onClick={() => actions.togglePlay()}>
           {playing ? (
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6.5" y="5" width="4" height="14" rx="1" /><rect x="13.5" y="5" width="4" height="14" rx="1" /></svg>
           ) : (
@@ -130,10 +131,10 @@ export function DetailEdit(props: {
           )}
         </button>
         <button type="button" className="ps-ghost-btn" data-pc="start-detail-rewind" onClick={() => { actions.pause(); actions.seek(0); }}>
-          回到开头
+          {tr("Back to start")}
         </button>
         <input type="range" className="ps-detail-scrub" data-pc="start-detail-scrub" min={0} max={duration} step={0.05}
-          value={Math.min(t, duration)} aria-label="进度" onPointerDown={() => window.getSelection()?.removeAllRanges()} onChange={(e) => actions.seek(Number(e.target.value))} />
+          value={Math.min(t, duration)} aria-label={tr("Progress")} onPointerDown={() => window.getSelection()?.removeAllRanges()} onChange={(e) => actions.seek(Number(e.target.value))} />
         <span className="ps-detail-time">{secs(t)} / {secs(total)}</span>
       </div>
 
@@ -155,7 +156,7 @@ export function DetailEdit(props: {
         onCommit={() => writeTlH(latestH.current)}
         onReset={() => { latestH.current = null; setTlH(null); writeTlH(null); }}
         onNudge={(delta) => writeTlH(sizeTl((latestH.current ?? TL_MIN_H) + delta))}
-        title="拖动调整时间轴高度,双击复位"
+        title={tr("Drag to resize the timeline height, double-click to reset")}
       />
 
       {/*
@@ -166,7 +167,7 @@ export function DetailEdit(props: {
         <TimelineView
           quoteClip={(clip, label) => props.onQuote(quoteToken({ id: clip.id, label }))}
           // 叠加卡比片段细一级:一段上挂两张同名的压暗很常见,不指明哪一张 Agent 只能反问
-          quoteOverlay={(clip, item) => props.onQuote(quoteToken({ id: overlayQuoteId(clip, item), label: item.name, kind: "叠加卡" }))}
+          quoteOverlay={(clip, item) => props.onQuote(quoteToken({ id: overlayQuoteId(clip, item), label: item.name, kind: OVERLAY_QUOTE_KIND }))}
         />
       </div>
     </div>

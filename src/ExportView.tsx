@@ -31,6 +31,7 @@ import { pageCssText, pasteLayer, sceneToSvg } from "./export/frameCompositor";
 import { withTicket } from "./export/ticketRenewal";
 import type { FrameLayer } from "./export/exportLayers";
 import "./cards";
+import { tr as trText } from "./i18n/index.ts";
 
 /** 导出页初始化:等舞台自检、等项目装好的时限(真毫秒) */
 const EXPORT_GATE_WAIT_MS = 10_000;
@@ -432,7 +433,7 @@ export default function ExportView() {
 
       t0 = performance.now();
       const snap = window.__pcCreateSnapshot!();
-      if (snap.lossy) throw new Error("这一帧有读不出像素的画布,导不出来");
+      if (snap.lossy) throw new Error(trText("This frame has a canvas whose pixels can't be read, so it can't be exported"));
       const tpl = document.createElement("template");
       tpl.innerHTML = snap.html;
       stats.snapshotMs = performance.now() - t0;
@@ -571,7 +572,7 @@ export default function ExportView() {
           }
           await window.__pcLoadProject!(data.project);
           if (!(await waitReal(() => !!window.__pcReady && typeof window.__pcSetT === "function", EXPORT_LOAD_WAIT_MS))) {
-            throw new Error("导出舞台装配项目超时");
+            throw new Error(trText("Timed out assembling the project on the export stage"));
           }
           reply({ type: "pc-export-init-result", ok: true });
         } catch (e) {

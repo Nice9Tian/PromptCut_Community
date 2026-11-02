@@ -7,6 +7,7 @@ import { ContextMenu } from "./ContextMenu";
 import { captionsOf, captionBounds, MIN_CAPTION_DUR, type CaptionLine } from "../../kernel/captions";
 import type { TrackClip } from "../../kernel/project";
 import { useReadOnly } from "../readOnly";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 字幕卡内部的一条条字幕。
@@ -58,16 +59,16 @@ export function CaptionLines({ clip, height }: { clip: TrackClip; height: number
           y={menu.y}
           onClose={() => setMenu(null)}
           items={ro.locked ? [{ label: ro.why, disabled: true, action: () => {} }] : [
-            { label: "改文字", action: () => setEditing(menu.index) },
+            { label: tr("Edit text"), action: () => setEditing(menu.index) },
             {
-              label: "在这里加一条",
+              label: tr("Add one here"),
               action: () => {
                 // 从当前这条的末尾开始塞;塞不下 addCaption 会返回 -1,那就什么都不做
                 const after = lines[menu.index];
-                actions.addCaption(clip.id, { start: after ? after.end : 0, zh: "新字幕" });
+                actions.addCaption(clip.id, { start: after ? after.end : 0, zh: tr("New caption") });
               },
             },
-            { label: "删除这条字幕", action: () => actions.removeCaption(clip.id, menu.index) },
+            { label: tr("Delete this caption"), action: () => actions.removeCaption(clip.id, menu.index) },
           ]}
         />
       )}
@@ -245,7 +246,7 @@ function CaptionBlock({
       data-pc-caption-line={index}
       className="pc-cap-line absolute pointer-events-auto"
       style={geom}
-      title={`${line.start.toFixed(2)}–${line.end.toFixed(2)}s · ${line.zh || line.en}${ro.locked ? `（${ro.why}）` : "（双击改字，右键更多）"}`}
+      title={`${line.start.toFixed(2)}–${line.end.toFixed(2)}s · ${line.zh || line.en}${ro.locked ? tr(" ({0})", ro.why) : tr("(double-click to edit, right-click for more)")}`}
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();

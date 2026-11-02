@@ -39,6 +39,7 @@ import type { TreeKind } from "./treeKind";
 import { ordered, visible, type Place } from "./treeState";
 import type { VibeChat, VibeGroup, VibeProject } from "./types";
 import { moveTargetsFor } from "./vibeOrg";
+import { tr } from "../i18n/index.ts";
 
 /**
  * 整块筛选用的那两行(「全部项目」和「没放进分组」)先归档,默认不显示 —— **用户 2026-10-23 要求的**:
@@ -298,7 +299,7 @@ export function ProjectSidebar(props: {
             data-pc="start-rename-input"
             autoFocus
             defaultValue={spec.name}
-            aria-label={`重命名${spec.name}`}
+            aria-label={tr("Rename {0}", spec.name)}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
@@ -365,8 +366,8 @@ export function ProjectSidebar(props: {
             data-agent={spec.kind === "chat" ? spec.id : undefined}
             data-open={spec.expanded}
             aria-expanded={!!spec.expanded}
-            aria-label={`${spec.expanded ? "收起" : "展开"}${spec.name}`}
-            title={spec.expanded ? "收起" : "展开，看这个项目里的对话"}
+            aria-label={`${spec.expanded ? tr("Collapse") : tr("Expand")}${spec.name}`}
+            title={spec.expanded ? tr("Collapse") : tr("Expand to see the chats in this project")}
             onClick={spec.onToggle}
           >
             ›
@@ -400,7 +401,7 @@ export function ProjectSidebar(props: {
         >
           <span className={`ps-row-icon${spec.kind === "chat" ? " is-agent" : ""}`}>{spec.icon}</span>
           <span className="ps-row-name">{spec.name}</span>
-          {spec.pinned && <span className="ps-row-pin" title="已置顶"><PinIcon /></span>}
+          {spec.pinned && <span className="ps-row-pin" title={tr("Pinned")}><PinIcon /></span>}
           {spec.count !== undefined && <span className="ps-row-count">{spec.count}</span>}
         </button>
       </div>
@@ -411,14 +412,14 @@ export function ProjectSidebar(props: {
     row({
       kind: "chat",
       id: chat.id,
-      name: chat.state === "running" ? `${chat.name} · 进行中` : chat.visibility === "private" ? `${chat.name} · 私有${chat.readOnly ? "（只读）" : ""}` : chat.name,
+      name: chat.state === "running" ? tr("{0} · running", chat.name) : chat.visibility === "private" ? tr("{0} · private{1}", chat.name, chat.readOnly ? tr(" (read-only)") : "") : chat.name,
       pinned: !!chat.pinned,
       sib: chatSib(chat),
       icon: <AgentIcon />,
       className: "is-agent",
       current: props.openChatId === chat.id,
       pc: "start-side-agent",
-      label: `Agent 对话 ${chat.name}${chat.visibility === "private" ? "，私有" : ""}${chat.pinned ? "（已置顶）" : ""}`,
+      label: tr("Agent chat {0}{1}{2}", chat.name, chat.visibility === "private" ? tr(", private") : "", chat.pinned ? tr(" (pinned)") : ""),
       onClick: () => props.onOpenChat(chat),
     });
 
@@ -426,11 +427,11 @@ export function ProjectSidebar(props: {
   const newChatRow = (projectId: string) => {
     const blocked = props.newChatBlocked?.(projectId) ?? null;
     return (
-    <button key="new-chat" type="button" className={`ps-row is-agent${blocked ? " is-blocked" : ""}`} data-pc="start-side-new-chat" aria-label="新对话"
+    <button key="new-chat" type="button" className={`ps-row is-agent${blocked ? " is-blocked" : ""}`} data-pc="start-side-new-chat" aria-label={tr("New chat")}
       aria-disabled={blocked ? true : undefined} title={blocked ?? undefined} onClick={() => props.onNewChat(projectId)}>
       <span className="ps-row-caret" data-empty aria-hidden="true">›</span>
-      <span className="ps-row-icon is-agent" aria-hidden="true">＋</span>
-      <span className="ps-row-name ps-muted">新对话</span>
+      <span className="ps-row-icon is-agent" aria-hidden="true">{tr("+")}</span>
+      <span className="ps-row-name ps-muted">{tr("New chat")}</span>
     </button>
     );
   };
@@ -466,7 +467,7 @@ export function ProjectSidebar(props: {
           onToggle: canExpand ? toggle : undefined,
           current: connected && !props.openChatId,
           pc: "start-side-project",
-          label: `项目 ${p.name}${chats.length ? `，${chats.length} 个 Agent 对话` : ""}${p.pinned ? "，已置顶" : ""}`,
+          label: tr("Project {0}{1}{2}", p.name, chats.length ? tr(", {0} Agent chats", chats.length) : "", p.pinned ? tr(", pinned") : ""),
           onClick: () => props.onOpen(p.id),
         })}
         {canExpand && expanded && (
@@ -476,7 +477,7 @@ export function ProjectSidebar(props: {
               <p className="ps-side-hint" role="status" data-pc="start-side-browse-note" data-project={p.id}>
                 {note.text}
                 {note.retry && (
-                  <button type="button" className="ps-link" data-pc="start-side-browse-retry" onClick={note.retry}>重试</button>
+                  <button type="button" className="ps-link" data-pc="start-side-browse-retry" onClick={note.retry}>{tr("Retry")}</button>
                 )}
               </p>
             )}
@@ -490,7 +491,7 @@ export function ProjectSidebar(props: {
   /** 「已归档」那张卡里的一行:点了、右键都出菜单(取消归档、删除),不进去 */
   const archivedRow = (kind: TreeKind, id: string, name: string, icon: JSX.Element) => (
     <button key={`${kind}:${id}`} type="button" className={`ps-row is-archived${kind === "chat" ? " is-agent" : ""}`} data-pc="start-side-archived-row"
-      data-kind={kind} data-id={id} aria-label={`已归档的${kind === "group" ? "分组" : kind === "project" ? "项目" : "对话"} ${name}`} title={`${name}（右键取消归档）`}
+      data-kind={kind} data-id={id} aria-label={tr("Archived {0} {1}", kind === "group" ? tr("Group") : kind === "project" ? tr("Project") : tr("chat"), name)} title={tr("{0} (right-click to unarchive)", name)}
       onClick={(e) => setMenu({ id, kind, name, pinned: false, x: e.clientX, y: e.clientY })}
       onContextMenu={(e) => { e.preventDefault(); setMenu({ id, kind, name, pinned: false, x: e.clientX, y: e.clientY }); }}>
       <span className="ps-row-caret" data-empty aria-hidden="true">›</span>
@@ -520,7 +521,7 @@ export function ProjectSidebar(props: {
         <button ref={newBtn} type="button" className="ps-side-new" data-pc="start-side-new" disabled={!!props.createBlocked}
           title={props.createBlocked ?? undefined} aria-hidden={searchOpen || undefined} tabIndex={searchOpen ? -1 : undefined}
           onClick={props.onCreate}>
-          <span aria-hidden="true">＋</span>新建项目
+          <span aria-hidden="true">{tr("+")}</span>{tr("New project")}
         </button>
 
         <label className="ps-search" style={newW ? { right: searchOpen ? 0 : newW + 6 } : undefined}>
@@ -533,8 +534,8 @@ export function ProjectSidebar(props: {
             type="search"
             value={query}
             /* 收着的时候只有一小条,长的那句放不下;展开了再写全 */
-            placeholder={searchOpen ? "搜项目和对话" : "搜索"}
-            aria-label="搜项目和对话"
+            placeholder={searchOpen ? tr("Search projects and chats") : tr("Search")}
+            aria-label={tr("Search projects and chats")}
             data-pc="start-side-search"
             onFocus={() => setTyping(true)}
             onBlur={() => setTyping(false)}
@@ -547,7 +548,7 @@ export function ProjectSidebar(props: {
             `onMouseDown` 要拦掉 —— 它在 <label> 里,不拦的话按下去会把焦点送进输入框,清完又算「正在用」,收不回去。
           */}
           {query && (
-            <button type="button" className="ps-search-clear" data-pc="start-side-search-clear" aria-label="清空搜索"
+            <button type="button" className="ps-search-clear" data-pc="start-side-search-clear" aria-label={tr("Clear search")}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => { setQuery(""); setTyping(false); }}>
               ✕
@@ -559,7 +560,7 @@ export function ProjectSidebar(props: {
       <div className="ps-side-scroll">
         {/* 搜索搜得到的只有已经取回来的对话:没展开过的项目底下是什么,这一页还不知道(issue #15) */}
         {q && props.browse && (
-          <p className="ps-side-hint" data-pc="start-side-search-scope">搜索只覆盖已经展开过的项目。</p>
+          <p className="ps-side-hint" data-pc="start-side-search-scope">{tr("Search only covers projects you have expanded.")}</p>
         )}
         {SHOW_SCOPE_ROWS && (
         <div className="ps-side-group">
@@ -567,20 +568,20 @@ export function ProjectSidebar(props: {
             type="button"
             className="ps-row"
             data-pc="start-scope-all"
-            aria-label={`全部项目，共 ${allProjects.length} 个`}
+            aria-label={tr("All projects, {0} in total", allProjects.length)}
             aria-current={isAt({ kind: "all" })}
             onClick={() => props.onScope({ kind: "all" })}
           >
             <span className="ps-row-caret" data-empty aria-hidden="true">›</span>
             <span className="ps-row-icon"><AllIcon /></span>
-            <span className="ps-row-name">全部项目</span>
+            <span className="ps-row-name">{tr("All projects")}</span>
             <span className="ps-row-count">{allProjects.length}</span>
           </button>
         </div>
         )}
 
         <div className="ps-side-group" data-open={cardOpen("groups")}>
-          {cardHead("groups", "分组", groups.length)}
+          {cardHead("groups", tr("Group"), groups.length)}
           {cardOpen("groups") && <div className="ps-side-body">
           {groups.map((g) => {
             const rows = projectsOf(g.id);
@@ -598,7 +599,7 @@ export function ProjectSidebar(props: {
                   count: rows.length,
                   current: isAt({ kind: "group", id: g.id }),
                   pc: "start-scope-group",
-                  label: `分组 ${g.name}，${rows.length} 个项目${g.pinned ? "，已置顶" : ""}`,
+                  label: tr("Group {0}, {1} projects{2}", g.name, rows.length, g.pinned ? tr(", pinned") : ""),
                   onClick: () => {
                     props.onScope({ kind: "group", id: g.id });
                     setOpen((o) => ({ ...o, [g.id]: !o[g.id] }));
@@ -607,37 +608,37 @@ export function ProjectSidebar(props: {
                 {expanded && (
                   <div className="ps-sub">
                     {rows.map(projectBlock)}
-                    {rows.length === 0 && <p className="ps-side-hint">分组是空的：在项目上右键「移到分组」。</p>}
+                    {rows.length === 0 && <p className="ps-side-hint">{tr("This group is empty: right-click a project and choose \"Move to group\".")}</p>}
                   </div>
                 )}
               </div>
             );
           })}
-          <button type="button" className="ps-row" data-pc="start-new-group" aria-label="新建分组" disabled={!!props.newGroupBlocked}
+          <button type="button" className="ps-row" data-pc="start-new-group" aria-label={tr("New group")} disabled={!!props.newGroupBlocked}
             title={props.newGroupBlocked ?? props.groupNote} onClick={props.onNewGroup}>
             <span className="ps-row-caret" data-empty aria-hidden="true">›</span>
-            <span className="ps-row-icon" aria-hidden="true">＋</span>
-            <span className="ps-row-name ps-muted">新建分组</span>
+            <span className="ps-row-icon" aria-hidden="true">{tr("+")}</span>
+            <span className="ps-row-name ps-muted">{tr("New group")}</span>
           </button>
           {props.groupStatus && <div className="ps-side-hint" role="status" data-pc="start-group-status">{props.groupStatus}</div>}
           </div>}
         </div>
 
         <div className="ps-side-group" data-open={cardOpen("projects")}>
-          {cardHead("projects", "项目", projectsOf(null).length)}
+          {cardHead("projects", tr("Project"), projectsOf(null).length)}
           {cardOpen("projects") && <div className="ps-side-body">
           {SHOW_SCOPE_ROWS && (
           <button
             type="button"
             className="ps-row"
             data-pc="start-scope-loose"
-            aria-label={`未分组，${projectsOf(null).length} 个项目`}
+            aria-label={tr("Ungrouped, {0} projects", projectsOf(null).length)}
             aria-current={isAt({ kind: "loose" })}
             onClick={() => props.onScope({ kind: "loose" })}
           >
             <span className="ps-row-caret" data-empty aria-hidden="true">›</span>
             <span className="ps-row-icon"><AllIcon /></span>
-            <span className="ps-row-name">没放进分组</span>
+            <span className="ps-row-name">{tr("Not in a group")}</span>
             <span className="ps-row-count">{projectsOf(null).length}</span>
           </button>
           )}
@@ -654,7 +655,7 @@ export function ProjectSidebar(props: {
               <button type="button" className="ps-card-toggle" data-pc="start-side-card" data-card="archived" aria-expanded={cards.archived === true}
                 onClick={() => setCards((c) => ({ ...c, archived: c.archived !== true }))}>
                 <span className="ps-card-caret" data-open={cards.archived === true} aria-hidden="true">›</span>
-                已归档
+                {tr("Archived")}
               </button>
               <span className="ps-card-count">{archivedCount}</span>
             </div>
@@ -662,7 +663,7 @@ export function ProjectSidebar(props: {
               {archivedGroups.map((g) => archivedRow("group", g.id, g.name, <GroupIcon />))}
               {archivedProjects.map((p) => archivedRow("project", p.id, p.name, <ProjectIcon />))}
               {archivedChats.map((c) => archivedRow("chat", c.id, c.name, <AgentIcon />))}
-              <p className="ps-side-hint">右键「取消归档」放回原处。</p>
+              <p className="ps-side-hint">{tr("Right-click \"Unarchive\" to put it back.")}</p>
             </div>}
           </div>
         )}
@@ -677,7 +678,7 @@ export function ProjectSidebar(props: {
           spec={SIDE_WIDTH}
           side="right"
           width={props.width}
-          label="侧栏宽度"
+          label={tr("Sidebar width")}
           pc="start-side-grip"
           onWidth={props.onWidth}
           onWidthCommit={props.onWidthCommit}

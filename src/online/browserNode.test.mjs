@@ -37,31 +37,31 @@ async function rig() {
 }
 
 for (const cause of ["play", "drag", "urgent"]) {
-  test(`让路(${cause})之后当前帧被挡住、${YIELD_FRAME_MAX_MS} ms 内做不完:中止并立即放回一次,迟到的帧丢掉`, async () => {
+  test(`After yielding (${cause}), the current frame is blocked and cannot finish within ${YIELD_FRAME_MAX_MS} ms: abort and release immediately once, drop the late frame`, async () => {
     const r = await rig();
     assert.equal(r.bakes.length, 1, "第 0 帧在做");
     r.node.yieldFor(cause);
     r.advance(YIELD_FRAME_MAX_MS - 1);
     r.node.tick();
     await flush();
-    assert.equal(r.of("task.release").length, 0, "上限之内照旧等当前帧做完");
+    assert.equal(r.of("task.release").length, 0, "Within the limit, still wait for the current frame to finish");
     r.advance(2);
     r.node.tick();
     await flush();
     const rel = r.of("task.release");
-    assert.equal(rel.length, 1, `上限到了立即放回:${JSON.stringify(r.sent)}`);
+    assert.equal(rel.length, 1, `Limit reached, released immediately: ${JSON.stringify(r.sent)}`);
     assert.deepEqual([rel[0].id, rel[0].token, rel[0].reason], [TASK.id, 5, `yield-${cause}`]);
-    assert.equal(r.bakes[0].job.signal.aborted, true, "中止舞台这一帧");
+    assert.equal(r.bakes[0].job.signal.aborted, true, "Abort this frame on the stage");
     const progress = r.of("task.progress").length;
     r.bakes[0].resolve({ hash: "0".repeat(64), bytes: 1 });
     await flush();
-    assert.equal(r.of("task.progress").length, progress, "迟到的帧不报进度");
+    assert.equal(r.of("task.progress").length, progress, "A late frame does not report progress");
     assert.equal(r.of("task.release").length, 1);
     assert.equal(r.of("task.complete").length + r.of("task.fail").length, 0);
   });
 }
 
-test("让路之后当前帧按时做完:照旧做完这一帧再放回(不走超时)", async () => {
+test("After yielding, the current frame finishes on time: still finish this frame and then release (no timeout path)", async () => {
   const r = await rig();
   r.node.yieldFor("play");
   r.advance(100);
@@ -70,9 +70,9 @@ test("让路之后当前帧按时做完:照旧做完这一帧再放回(不走超
   const rel = r.of("task.release");
   assert.equal(rel.length, 1);
   assert.equal(rel[0].reason, "yield-play");
-  assert.equal(r.bakes[0].job.signal.aborted, false, "做完的那一帧没被中止");
+  assert.equal(r.bakes[0].job.signal.aborted, false, "The frame that finished was not aborted");
   r.advance(YIELD_FRAME_MAX_MS * 2);
   r.node.tick();
   await flush();
-  assert.equal(r.of("task.release").length, 1, "不重复放回");
+  assert.equal(r.of("task.release").length, 1, "No duplicate release");
 });

@@ -12,6 +12,7 @@ import { checkAssociation, convertedFromOf, currentAssociation, noteConvertedFro
 import { snapshotForSave } from "../sync/cloudSnapshot";
 import { UNSUPPORTED_PROC_TEXT } from "../sync/recoveryTexts";
 import { writeToHandle } from "./safeWrite";
+import { tr } from "../../i18n/index.ts";
 
 export { writeToHandle } from "./safeWrite";
 
@@ -167,7 +168,7 @@ export function parseProc(text: string, opts: ParseProcOptions = {}): Project {
   }
   const project = doc?.format === PROC_FORMAT ? doc.project : doc;
   if (!project || typeof project !== "object" || !Array.isArray(project.tracks)) {
-    throw new Error("这不是一个 PromptCut 项目文件");
+    throw new Error(tr("This is not a PromptCut project file"));
   }
   const id = typeof project.id === "string" && project.id ? project.id : opts.legacyId || newProjectId();
   // Python 卡已归档,**转成 Project 之前**就把定义和节点丢掉(见 pythonDrop.ts)。
@@ -180,7 +181,7 @@ export function parseProc(text: string, opts: ParseProcOptions = {}): Project {
   // checkout's out/media.  Keep the absolute path behind the server's guarded
   // media endpoint so old projects remain playable after moving installations.
   const { media, missing } = restoreMediaUrls(full.media || [], { externalPathUrl: true });
-  for (const m of missing) console.warn(`[proc] 缺失素材: ${m.name} (${m.url})`);
+  for (const m of missing) console.warn(`[proc] Missing asset: ${m.name} (${m.url})`);
   return { ...full, media };
 }
 
@@ -214,11 +215,11 @@ export function loadProc(text: string, opts: ParseProcOptions = {}): Project {
 
 /** 当前项目名,拿来当默认文件名 */
 export function currentProjectName(): string {
-  return getState().project.name || "未命名";
+  return getState().project.name || tr("Untitled");
 }
 
 /** 新建一个空项目并载入(顶栏「新建项目」和开始页「开始创作」都走这里) */
-export function newProject(name = "未命名"): Project {
+export function newProject(name = tr("Untitled")): Project {
   // 新项目还没有落点,别让它覆盖上一个项目的文件
   forgetSaveTarget();
   // 新项目从空白开始,剧本和对话都不该跟过来
@@ -319,7 +320,7 @@ export async function writeProcToDisk(
     try {
       saveTarget = await picker({
         suggestedName: defaultName,
-        types: [{ description: "PromptCut 项目", accept: { "application/json": [PROC_EXT] } }],
+        types: [{ description: tr("PromptCut project"), accept: { "application/json": [PROC_EXT] } }],
       });
     } catch (e) {
       // 用户点取消是正常操作,不是错误,不要弹报错框

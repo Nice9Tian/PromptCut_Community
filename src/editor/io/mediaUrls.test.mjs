@@ -29,15 +29,20 @@ test("死掉的 blob: 有 path 就找回;没 path 标缺失、清空地址", () 
   ]);
   assert.equal(media[0].url, "/@media/a.mp4");
   assert.equal(media[1].url, "");
-  assert.equal(media[1].name, "(缺失) b.mp4");
+  assert.equal(media[1].name, "(missing) b.mp4");
   assert.deepEqual(missing.map((m) => m.id), ["b"]);
 });
 
 test("没 path 的裸文件名标缺失;反复打开不会叠「(缺失)」", () => {
   const once = restoreMediaUrls([{ id: "c", kind: "image", name: "c.jpg", url: "c.jpg" }]).media;
   const twice = restoreMediaUrls([{ ...once[0], url: "c.jpg" }]).media;
+  assert.equal(once[0].name, "(missing) c.jpg");
+  assert.equal(twice[0].name, "(missing) c.jpg");
+});
+
+test("老项目里已有的中文标记「(缺失) 」也不会再叠一层", () => {
+  const once = restoreMediaUrls([{ id: "c", kind: "image", name: "(缺失) c.jpg", url: "c.jpg" }]).media;
   assert.equal(once[0].name, "(缺失) c.jpg");
-  assert.equal(twice[0].name, "(缺失) c.jpg");
 });
 
 test("本来就能用的地址原样保留;空 url 不算缺失;不改入参", () => {

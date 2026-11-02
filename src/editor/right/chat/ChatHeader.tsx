@@ -2,6 +2,7 @@ import { IconHistory, IconSettings } from "../../../ui/icons";
 import { useDockSide } from "../../dock/dockSide";
 import { CollapsePanelButton } from "./CollapsePanelButton";
 import "./chat.css";
+import { tr } from "../../../i18n/index.ts";
 
 /** 「显示思考」按钮上的思考气泡。图标库里没有合适的,就地画一个,规格照 ui/icons:24 画幅、1.5 描边、currentColor */
 function IconThought({ size = 16 }: { size?: number }) {
@@ -39,7 +40,7 @@ export interface ChatHeaderProps {
 export function ChatHeader(props: ChatHeaderProps) {
   const { title, mcpConnected, showThinking, onChangeShowThinking, onOpenHistory, onOpenSetup, settingsDisabled, statusLabel } = props;
   const side = useDockSide("right");
-  const conn = statusLabel ?? (mcpConnected ? "已连接" : "未连接");
+  const conn = statusLabel ?? (mcpConnected ? tr("Connected") : tr("Not connected"));
   return (
     <div className={`ai-panel-header${side === "left" ? " is-left" : ""}`}>
       <CollapsePanelButton placement="start" />
@@ -54,18 +55,18 @@ export function ChatHeader(props: ChatHeaderProps) {
           className="pc-icon-btn ai-think-btn"
           data-pc="ai-show-thinking"
           aria-pressed={showThinking}
-          title="显示模型的思考过程(有的驱动方式不产出思考,开了也不会有内容)"
+          title={tr("Show the model's reasoning (some drivers produce no reasoning, so turning this on shows nothing)")}
           onClick={() => onChangeShowThinking(!showThinking)}
         >
           <IconThought />
-          <span>显示思考</span>
+          <span>{tr("Show reasoning")}</span>
         </button>
         <button
           type="button"
           className="pc-icon-btn"
           data-pc="ai-history"
-          title="历史对话"
-          aria-label="历史对话"
+          title={tr("Chat history")}
+          aria-label={tr("Chat history")}
           onClick={onOpenHistory}
         >
           <IconHistory size={16} />
@@ -74,8 +75,8 @@ export function ChatHeader(props: ChatHeaderProps) {
           type="button"
           className="pc-icon-btn"
           data-pc="ai-settings"
-          title={settingsDisabled ?? "AI 设置"}
-          aria-label="AI 设置"
+          title={settingsDisabled ?? tr("AI settings")}
+          aria-label={tr("AI settings")}
           disabled={!!settingsDisabled}
           onClick={onOpenSetup}
         >

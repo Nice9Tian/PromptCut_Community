@@ -25,6 +25,7 @@ import { takeLeaveAllowance } from "./leavePrompt";
 import { foldLine, NOTICE_FOLD_AT, undoNoticeTitle } from "../undoNotice";
 import { ConflictMergeDialog } from "./ConflictMerge";
 import "./sync.css";
+import { tr } from "../../i18n/index.ts";
 
 /** 提示条停留多久(稿件:约 8 秒后消失,带关闭按钮) */
 const NOTICE_MS = 8000;
@@ -41,8 +42,8 @@ function itemsOf(n: UndoNoticeView): Item[] {
   const names = displayNames();
   const self = me();
   return [
-    ...n.result.skipped.map((s) => ({ entity: s.entity, label: entityLabel(s.entity, n.project), by: `由 ${writerLabel(s.by, self, names)} 修改` })),
-    ...n.result.failed.map((e) => ({ entity: e, label: entityLabel(e, n.project), by: "已不存在，没法退回" })),
+    ...n.result.skipped.map((s) => ({ entity: s.entity, label: entityLabel(s.entity, n.project), by: tr("Changed by {0}", writerLabel(s.by, self, names)) })),
+    ...n.result.failed.map((e) => ({ entity: e, label: entityLabel(e, n.project), by: tr("No longer exists, cannot be reverted") })),
   ];
 }
 
@@ -79,7 +80,7 @@ function UndoNoticeBar({ n }: { n: UndoNoticeView }) {
     >
       <div className="pc-undo-bar-head">
         <div className="pc-undo-bar-title">{title}</div>
-        <button type="button" className="pc-undo-bar-close" aria-label="关闭" title="关闭" onClick={dismissNotice}>
+        <button type="button" className="pc-undo-bar-close" aria-label={tr("Close")} title={tr("Close")} onClick={dismissNotice}>
           ×
         </button>
       </div>
@@ -107,11 +108,10 @@ function UndoNoticeBar({ n }: { n: UndoNoticeView }) {
       </ul>
       {!n.result.done ? (
         <div className="pc-sync-hint">
-          你可以{" "}
+          {tr("You can{0}", " ")}
           <button type="button" className="pc-undo-entity" disabled={!firstJumpable} onClick={() => firstJumpable && jumpToEntity(firstJumpable.entity)}>
-            [点击这里]
-          </button>{" "}
-          查看被修改处的现状，或直接手动调整。
+            {tr("[click here]")}
+          </button>{tr("{0}see the current state of the changed spots, or adjust manually.", " ")}
         </div>
       ) : null}
     </div>,
@@ -132,7 +132,7 @@ function Toasts() {
               {t.action.label}
             </button>
           ) : null}
-          <button type="button" className="pc-undo-bar-close" aria-label="关闭" onClick={() => dismissToast(t.id)}>
+          <button type="button" className="pc-undo-bar-close" aria-label={tr("Close")} onClick={() => dismissToast(t.id)}>
             ×
           </button>
         </div>
@@ -150,34 +150,34 @@ function OfflineDialog() {
   return createPortal(
     <div className="pc-dialog-mask">
       <div className="pc-dialog pc-sync-dialog" role="dialog" aria-modal="true" aria-labelledby="pc-offline-title" data-pc="offline-dialog" style={{ position: "relative" }}>
-        <button type="button" className="pc-dialog-x" title="暂不决定，保留离线修改先查看项目" aria-label="关闭" onClick={() => setOfflineOpen(false)}>
+        <button type="button" className="pc-dialog-x" title={tr("Decide later, keep offline changes and review the project first")} aria-label={tr("Close")} onClick={() => setOfflineOpen(false)}>
           ×
         </button>
         <div id="pc-offline-title" className="pc-dialog-title">
-          断网期间项目有新改动
+          {tr("The project changed while you were offline")}
         </div>
         <div className="pc-dialog-body">
           <div className="pc-sync-hint" style={{ fontSize: 13, color: "var(--ui-fg)" }}>
-            你有 {paused.queued} 步断网期间的修改。但这段时间项目有以下改动，可能会和你的修改重叠：
+            {tr("You have {0} offline changes. But the project changed in the meantime in the following ways, which may overlap with your changes:", paused.queued)}
           </div>
           <ul className="pc-offline-list">
             {summary.length ? (
               summary.map((s, i) => (
                 <li key={i}>
-                  {s.who}：{s.what.join("、") || "（没有列出具体位置）"}
+                  {tr("{0}: {1}", s.who, s.what.join(tr(", ")) || tr("(no specific locations listed)"))}
                 </li>
               ))
             ) : (
-              <li>（文档服务没有列出具体改动）</li>
+              <li>{tr("(the document service did not list specific changes)")}</li>
             )}
           </ul>
-          <div style={{ fontSize: 13 }}>还要把你的修改加进去吗？</div>
+          <div style={{ fontSize: 13 }}>{tr("Do you still want to add your changes?")}</div>
           <div className="pc-sync-choices-v">
             <button type="button" className="pc-dialog-opt" style={{ justifyContent: "flex-start" }} onClick={replayOffline}>
-              加进去（可能会盖掉他们刚改的地方）
+              {tr("Add them (may overwrite what they just changed)")}
             </button>
             <button type="button" className="pc-dialog-opt" style={{ justifyContent: "flex-start" }} onClick={discardOffline}>
-              不要了，用现在的最新版本
+              {tr("No, use the latest version")}
             </button>
           </div>
         </div>
@@ -188,9 +188,9 @@ function OfflineDialog() {
 }
 
 const BLOCKED_TEXT = {
-  kicked: "你已被创建者踢出该项目，无法继续编辑。想回来，找创建者撤销。",
-  removed: "你已被移出名单，连接已断开，无法继续编辑。",
-  deleted: "项目已被创建者删除。回开始页新建或打开别的项目。",
+  kicked: tr("You were kicked out of this project by the creator and can no longer edit. To come back, ask the creator to revoke it."),
+  removed: tr("You have been removed from the list and disconnected, so you can no longer edit."),
+  deleted: tr("The project was deleted by its creator. Go back to the start page to create or open another project."),
 } as const;
 
 function BlockingDialog() {
@@ -201,11 +201,11 @@ function BlockingDialog() {
       <div className="pc-dialog pc-sync-dialog" role="alertdialog" aria-modal="true" data-pc="blocked-dialog">
         <div className="pc-dialog-body">
           <div style={{ fontSize: 14, lineHeight: 1.6 }}>{BLOCKED_TEXT[blocked]}</div>
-          {blocked === "removed" ? <div className="pc-sync-hint">找创建者把你加回名单，再重新打开。</div> : null}
+          {blocked === "removed" ? <div className="pc-sync-hint">{tr("Ask the creator to add you back to the list, then reopen.")}</div> : null}
         </div>
         <div className="pc-dialog-foot">
           <button type="button" className="pc-btn pc-btn--primary" onClick={leaveBlocked}>
-            开始页
+            {tr("start page")}
           </button>
         </div>
       </div>

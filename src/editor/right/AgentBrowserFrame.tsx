@@ -4,6 +4,7 @@ import "./AgentBrowserFrame.css";
 import { closeAgentBrowser, useAgentBrowserState } from "../../ai/agentBrowserStore";
 import { hideAgentWebview, muteAgentWebview, rectOf, showAgentWebview } from "../../ai/shellBrowser";
 import { webHandoff } from "../../ai/web";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 桌面壳模式下的「浏览器」面板:顶栏的「浏览器」页签点开就是它。
@@ -78,27 +79,26 @@ function Panel(props: { reason: string }) {
   }, []);
 
   return createPortal(
-    <div className="abf-panel" style={{ top }} role="region" aria-label="AI 的浏览器">
+    <div className="abf-panel" style={{ top }} role="region" aria-label={tr("AI browser")}>
       <div className="abf-head">
         <div className="abf-title">
-          {reason ? `AI 在等你操作：${reason}` : "AI 的浏览器"}
+          {reason ? tr("AI is waiting for you: {0}", reason) : tr("AI browser")}
         </div>
         <div className="abf-hint">
-          {reason
-            ? "在下面的页面里完成登录、验证码或确认，做完点「回到编辑」，再回到对话里告诉 AI 一声。"
-            : "这是 AI 上网用的页面。你可以看，也可以直接操作。"}
-          页面默认静音。
+          {tr("{0} The page is muted by default.", reason
+            ? tr("Complete the login, captcha or confirmation in the page below, then click \"Back to editing\" and tell the AI in the chat.")
+            : tr("This is the page the AI uses to browse the web. You can watch it or operate it directly."))}
         </div>
         <div className="abf-btns">
           <button
             className="abf-btn is-ghost"
             onClick={() => void toggleMute()}
-            title={muted ? "放开声音（回到编辑时会自动静音）" : "静音"}
+            title={muted ? tr("Unmute (it is muted again automatically when you go back to editing)") : tr("Muted")}
             aria-pressed={!muted}
           >
-            {muted ? "🔇 静音中" : "🔊 有声"}
+            {muted ? tr("🔇 Muted") : tr("🔊 Sound on")}
           </button>
-          <button className="abf-btn" onClick={back}>回到编辑 ⏎</button>
+          <button className="abf-btn" onClick={back}>{tr("Back to editing ⏎")}</button>
         </div>
       </div>
       <div className="abf-hole" ref={hole} aria-hidden="true" />

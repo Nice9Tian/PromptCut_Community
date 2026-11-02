@@ -14,7 +14,7 @@ import { emptyOrg } from './vibeOrg.ts';
 const failure = (status, code) => Object.assign(new Error(code), { status, code });
 const org = (o = {}) => ({ v: 1, realm: 'cloud', groups: [], projects: [], chats: [], ...o });
 
-test('TRN-01 没有这条路由翻成 OrgUnsupportedError;别的错误原样抛', async () => {
+test('TRN-01 a missing route is translated to OrgUnsupportedError; other errors are rethrown as is', async () => {
   for (const e of [failure(404, 'account-protocol'), failure(404, 'no-route'), failure(405, 'x'), failure(501, 'x'), failure(503, 'org-unavailable'), failure(200, 'no-route')])
     assert.equal(isUnsupported(e), true, `${e.status} ${e.code}`);
   for (const e of [failure(0, 'network'), failure(503, 'authority-unavailable'), failure(401, 'login-required'), failure(500, 'x'), new Error('boom'), null, 'str'])
@@ -28,7 +28,7 @@ test('TRN-01 没有这条路由翻成 OrgUnsupportedError;别的错误原样抛'
   await assert.rejects(t.put(0, emptyOrg('cloud')), (e) => !(e instanceof OrgUnsupportedError) && e.code === 'network');
 });
 
-test('TRN-02 冲突和成功原样交给引擎;客户端没就绪抛普通错误', async () => {
+test('TRN-02 conflicts and successes are passed to the engine as is; a client that is not ready throws a plain error', async () => {
   const conflict = { conflict: true, version: 5, org: org({ groups: [{ id: 'g', name: 'x' }] }) };
   const ok = { conflict: false, version: 6, org: org() };
   let next = conflict;
@@ -41,7 +41,7 @@ test('TRN-02 冲突和成功原样交给引擎;客户端没就绪抛普通错误
   await assert.rejects(none.get(), (e) => !(e instanceof OrgUnsupportedError));
 });
 
-test('TRN-03 接上引擎:老服务端 404 → unsupported、不抛;网络错 → pending', async () => {
+test('TRN-03 wired to the engine: old server 404 → unsupported, no throw; network error → pending', async () => {
   const run = async (error) => {
     const statuses = [];
     const sync = createOrgSync({

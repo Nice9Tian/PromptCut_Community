@@ -203,5 +203,5 @@ test('MX4 落点按位置写:先写 mdat 再回头补长度;MemorySink 拼得对
   const mdatSize = Number(dv.getBigUint64(ftypSize + 8));
   assert.equal(mdatSize, 16 + 10, 'mdat 长度 = 头 16 + 两个样本 10');
   assert.equal(String.fromCharCode(...b.subarray(ftypSize + mdatSize + 4, ftypSize + mdatSize + 8)), 'moov');
-  assert.throws(() => new Mp4Muxer({ sink, video: { codec: 'vp09.00.10.08', width: 16, height: 16, fps: 30, avcC: new Uint8Array() } }), /只封装 H\.264/);
+  assert.throws(() => new Mp4Muxer({ sink, video: { codec: 'vp09.00.10.08', width: 16, height: 16, fps: 30, avcC: new Uint8Array() } }), /Only H\.264 can be muxed/);
 });

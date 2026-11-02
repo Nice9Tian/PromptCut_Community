@@ -14,6 +14,7 @@ import { flushDataMirror, startDataMirror } from "../render/dataMirror";
 import { beginAgentTool, endAgentTool } from "../editor/userEditing";
 import { issueAgentTicket, pageOpIdsSince, pageOpMark } from "../editor/sync/syncManager";
 import { trackJobs, trackResults } from "../mcp/common";
+import { tr as trText } from "../i18n/index.ts";
 
 /**
  * Agent 服务端向页面要只读页面状态用的内部工具名(server/agent/agent-side.mjs 的 PAGE_STATE_TOOL)。
@@ -216,7 +217,7 @@ function visualRequest(tool: string, args: any, result: any, before: unknown): R
     const images: { mime?: string; base64: string; label: string }[] = [];
     if (result.__image?.base64) images.push({ mime: result.__image.mime, base64: result.__image.base64, label: typeof result.t === "number" ? `t=${result.t}s` : "" });
     for (const im of Array.isArray(result.__images) ? result.__images : []) {
-      if (im?.base64) images.push({ mime: im.mime, base64: im.base64, label: im.label ?? (im.sceneIndex != null ? `镜头 ${im.sceneIndex}` : "") });
+      if (im?.base64) images.push({ mime: im.mime, base64: im.base64, label: im.label ?? (im.sceneIndex != null ? trText("Shot {0}", im.sceneIndex) : "") });
     }
     return images.length ? { tool, images } : null;
   }
@@ -255,15 +256,15 @@ async function getGif(args: { clipId: string }) {
       body: JSON.stringify(body), signal: AbortSignal.timeout(180000),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) throw new Error(data.error || `做动图失败(HTTP ${res.status})`);
+    if (!res.ok || !data.ok) throw new Error(data.error || trText("Failed to make the animated image (HTTP {0})", res.status));
     return data;
   };
   const spec = await post("/api/ai/visual", { tool: "get_gif", clipId: args.clipId, after: getState().project });
-  if (!spec.gifKey) throw new Error(`时间轴上没有 id 为 ${args.clipId} 的片段。`);
+  if (!spec.gifKey) throw new Error(trText("No clip with id {0} on the timeline.", args.clipId));
   const data = await post("/api/ai/visual/render", { key: spec.gifKey });
   return {
     visualId: spec.visualId, ok: true, clipId: args.clipId, times: data.times, gif: data.gifUrl,
-    note: `拼图 4×2,第 k 格对应 times 的第 k 个时刻(按行从左到右)。用户在聊天栏点开这一步能看到动图。`,
+    note: trText("Collage 4×2: cell k corresponds to the k-th time in times (row by row, left to right). The user can open this step in the chat panel to see the animated image."),
     ...(data.grid ? { __image: { mime: "image/png", base64: data.grid } } : {}),
   };
 }
@@ -331,7 +332,7 @@ async function runWebTool(tool: string, args: any): Promise<any> {
       return r;
     }
     case "web_close": return webClose();
-    default: throw new Error(`未知的网页工具: ${tool}`);
+    default: throw new Error(trText("Unknown web tool: {0}", tool));
   }
 }
 
@@ -389,7 +390,7 @@ export function connectMcpExecutor(getApi: () => EditorApi, onStatus?: (s: { con
         if (source) source.close();
         source = null;
         onStatus?.({ connected: false });
-        window.dispatchEvent(new CustomEvent("ai-chat-error", { detail: "另一个编辑台页面接管了 AI 连接" }));
+        window.dispatchEvent(new CustomEvent("ai-chat-error", { detail: trText("Another editor page took over the AI connection") }));
         active = false;
       } else if (ev.type === "agent.board") {
         // 多 Agent 公告板(编辑器进程里的那份)变了:页签名跟着范围改、标未读(A3)
@@ -455,7 +456,7 @@ export function connectMcpExecutor(getApi: () => EditorApi, onStatus?: (s: { con
         try {
           const missing = missingRequired(tool, args);
           if (missing.length > 0) {
-            throw new Error(`缺少必填参数：${missing.join("、")}。请补齐后重试。`);
+            throw new Error(trText("Missing required parameters: {0}. Add them and try again.", missing.join(trText(", "))));
           }
           // 一对一转发 EditorApi 的那一百来个工具走路由表(src/mcp/routes.mjs)。
           // await 与否照抄原分发链:表里说 awaited 才 await,不做统一。
@@ -470,18 +471,18 @@ export function connectMcpExecutor(getApi: () => EditorApi, onStatus?: (s: { con
             if (source === "media") {
               result = rest.mediaId
                 ? await api.seeSequences(rest)
-                : { ok: false, error: 'source 为 "media" 时要给 mediaId(list_media 里的素材 id)' };
+                : { ok: false, error: trText("When source is \"media\", mediaId is required (the media id from list_media)") };
             } else if (source === "timeline" || source === undefined) {
               result = await api.seePreview(rest);
             } else {
-              result = { ok: false, error: `source 只能是 "timeline"(成片画面)或 "media"(素材镜头拼图),收到的是 ${JSON.stringify(source)}` };
+              result = { ok: false, error: trText("source can only be \"timeline\" (final video frames) or \"media\" (shot mosaic of the media), received {0}", JSON.stringify(source)) };
             }
           }
           else if (tool === "get_gif") result = await getGif(args);
           // 网页操作不经过 EditorApi:浏览器整个在服务端,这些工具不碰编辑台的任何状态。
           // 挂进 EditorApi 只会逼编辑台那边实现 8 个纯转发的方法。
           else if (tool.startsWith("web_") || tool === "user_interface_web_handoff") result = await runWebTool(pageToolName(tool), args);
-          else throw new Error(`未知工具: ${tool}`);
+          else throw new Error(trText("Unknown tool: {0}", tool));
         } catch (err: unknown) {
           ok = false;
           if (err instanceof Error) {

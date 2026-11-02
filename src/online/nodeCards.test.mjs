@@ -39,16 +39,16 @@ const USER = "zoe@devA";
 
 /* ================================================================== OCN-08 */
 
-test("OCN-08 登记处:只有 ready 且身份算得出的卡才登记;不能执行时一张也没有;换代后过了 NODE_CARD_SETTLE_MS 才报;到点通知订阅方", () => {
+test("OCN-08 registry: only cards that are ready and have a computable identity are registered; none when execution is impossible; after a generation change, reported only once NODE_CARD_SETTLE_MS has passed; subscribers are notified when due", () => {
   resetNodeCardInfo();
   const cards = [{ id: "a", source: "src/cards/user/a.tsx" }, { id: "b", source: "src/cards/user/b.tsx" }, { id: "c", source: "src/cards/user/c.tsx" }, { id: "d" }];
   const states = { a: "ready", b: "loading", c: "ready", d: "ready" };
   const identities = { "src/cards/user/a.tsx": "ia", "src/cards/user/b.tsx": "ib" };
   const info = computeNodeCardInfo({ runtime: RUNTIME, available: true, graphCapable: false, cards, stateOf: (id) => states[id], identities });
-  assert.deepEqual(info, { cardRuntime: RUNTIME, userCards: true, graphCards: false, cardSources: { a: "ia" } }, "b 还没 ready、c 算不出身份、d 没有入口文件");
+  assert.deepEqual(info, { cardRuntime: RUNTIME, userCards: true, graphCards: false, cardSources: { a: "ia" } }, "b is not ready yet, c has no computable identity, d has no entry file");
   assert.equal(computeNodeCardInfo({ runtime: RUNTIME, available: true, graphCapable: true, cards, stateOf: (id) => states[id], identities }).graphCards, true);
   assert.deepEqual(computeNodeCardInfo({ runtime: RUNTIME, available: false, graphCapable: true, cards, stateOf: () => "ready", identities }),
-    { cardRuntime: null, userCards: false, graphCards: false, cardSources: {} }, "本页不能执行:一样都没有");
+    { cardRuntime: null, userCards: false, graphCards: false, cardSources: {} }, "this page cannot execute: nothing at all");
 
   // 登记与换代
   const timers = [];
@@ -59,15 +59,15 @@ test("OCN-08 登记处:只有 ready 且身份算得出的卡才登记;不能执�
     assert.equal(setNodeCardInfo({ cardRuntime: RUNTIME, userCards: true, graphCards: false, cardSources: { a: "ia" } }, 10_000), true);
     assert.equal(notified, 1);
     assert.equal(setNodeCardInfo({ cardRuntime: RUNTIME, userCards: true, graphCards: false, cardSources: { a: "ia" } }, 10_100), false, "没变不通知");
-    assert.deepEqual(getNodeCardInfo(10_000 + NODE_CARD_SETTLE_MS - 1).cardSources, {}, "新出现的卡:定下来之前不报");
-    assert.deepEqual(getNodeCardInfo(10_000 + NODE_CARD_SETTLE_MS).cardSources, { a: "ia" }, "过了就报");
+    assert.deepEqual(getNodeCardInfo(10_000 + NODE_CARD_SETTLE_MS - 1).cardSources, {}, "newly appeared card: not reported before it settles");
+    assert.deepEqual(getNodeCardInfo(10_000 + NODE_CARD_SETTLE_MS).cardSources, { a: "ia" }, "reported once the time has passed");
     const last = timers.filter((t) => !t.cleared).at(-1);
-    assert.ok(last && last.ms >= NODE_CARD_SETTLE_MS, "起了一个到点通知的计时器");
+    assert.ok(last && last.ms >= NODE_CARD_SETTLE_MS, "started a timer to notify when due");
     last.fn();
-    assert.equal(notified, 2, "到点再通知订阅方");
+    assert.equal(notified, 2, "subscribers are notified when due");
     // 换代:身份变了就重新计时,旧身份不再报
     setNodeCardInfo({ cardRuntime: RUNTIME, userCards: true, graphCards: false, cardSources: { a: "ia2" } }, 50_000);
-    assert.deepEqual(getNodeCardInfo(50_000 + 10).cardSources, {}, "换代后一小段时间不报(也不报旧身份)");
+    assert.deepEqual(getNodeCardInfo(50_000 + 10).cardSources, {}, "not reported for a short time after a generation change (nor the old identity)");
     assert.deepEqual(getNodeCardInfo(50_000 + NODE_CARD_SETTLE_MS).cardSources, { a: "ia2" });
     // cardEnvFingerprint 单独登记
     assert.equal(setNodeCardEnvFingerprint(CARDFP), true);
@@ -111,25 +111,25 @@ function nodeRig({ info = null, cardFp = CARDFP } = {}) {
 }
 const INFO = (extra = {}) => ({ cardRuntime: RUNTIME, userCards: true, graphCards: false, cardSources: { "ouc-user": IDENT }, ...extra });
 
-test("OCN-09 browserNode:能执行时 node.hello 多报运行时版本(原始值,没有指纹);不能执行时 hello 与原来一字不差", () => {
+test("OCN-09 browserNode: when it can execute, node.hello additionally reports the runtime version (raw value, no fingerprint); when it cannot execute, hello is identical to the original, character for character", () => {
   const plain = nodeRig({ info: null });
   plain.node.start();
   const h0 = plain.of("node.hello")[0];
   assert.equal("cardRuntime" in h0, false);
   assert.equal("cardEnvFingerprint" in h0, false);
-  assert.equal("envFingerprint" in h0, false, "页面从不自报指纹");
+  assert.equal("envFingerprint" in h0, false, "the page never reports a fingerprint itself");
   assert.deepEqual(Object.keys(h0).sort(), ["capabilities", "codeVersions", "environment", "maxConcurrent", "nodeId", "profile", "resume", "type"].sort());
 
   const rig = nodeRig({ info: INFO() });
   rig.node.start();
   const h = rig.of("node.hello")[0];
   assert.equal(h.cardRuntime, RUNTIME);
-  assert.equal("cardEnvFingerprint" in h, false, "页面不自报 cardEnvFingerprint,由文档服务算");
+  assert.equal("cardEnvFingerprint" in h, false, "the page does not report cardEnvFingerprint itself, the document service computes it");
   assert.equal(h.profile, "browser");
   assert.deepEqual(rig.of("queue.watch")[0].projects, ["p1"]);
 });
 
-test("OCN-09 browserNode:welcome 的 cardEnvFingerprint 记下并交给宿主;用户卡任务按它认领,代码身份与能力位都要对;内置卡任务照旧按 envFingerprint", async () => {
+test("OCN-09 browserNode: the cardEnvFingerprint from welcome is recorded and handed to the host; user card tasks are claimed by it, and both the code identity and the capability bits must match; built-in card tasks are still claimed by envFingerprint", async () => {
   const rig = nodeRig({ info: INFO() });
   rig.node.start();
   rig.welcome();
@@ -146,14 +146,14 @@ test("OCN-09 browserNode:welcome 的 cardEnvFingerprint 记下并交给宿主;�
   rig.node.receive({ type: "queue.snapshot", tasks: [{ ...task, state: "open", version: 1 }] });
   rig.node.tick();
   await flush();
-  assert.deepEqual(rig.of("task.claim").map((m) => m.id), [task.id], "对得上的用户卡任务认领");
+  assert.deepEqual(rig.of("task.claim").map((m) => m.id), [task.id], "matching user card tasks are claimed");
 
   // 对不上的不认领:另一个身份、素材效果卡但没有图形能力、桌面那份指纹、别人的
   const other = nodeRig({ info: INFO({ cardSources: { "ouc-user": "other-version" } }) });
   other.node.start(); other.welcome();
   other.node.receive({ type: "queue.snapshot", tasks: [{ ...task, state: "open", version: 1 }] });
   other.node.tick();
-  assert.equal(other.of("task.claim").length, 0, "页面手里是另一版代码");
+  assert.equal(other.of("task.claim").length, 0, "the page holds a different version of the code");
   assert.equal(other.node.debug().counters.blocked["1:card-source"], 1);
 
   const noGraph = nodeRig({ info: INFO() });
@@ -177,10 +177,10 @@ test("OCN-09 browserNode:welcome 的 cardEnvFingerprint 记下并交给宿主;�
   plain.node.start(); plain.welcome({ cardEnvFingerprint: undefined });
   plain.node.receive({ type: "queue.snapshot", tasks: [builtin, { ...task, state: "open", version: 1 }] });
   plain.node.tick();
-  assert.deepEqual(plain.of("task.claim").map((m) => m.id), ["snapshot:rk-b:0-2"], "不能执行用户卡的页面只认内置卡的任务");
+  assert.deepEqual(plain.of("task.claim").map((m) => m.id), ["snapshot:rk-b:0-2"], "a page that cannot execute user cards only claims built-in card tasks");
 });
 
-test("OCN-09 browserNode:运行时版本在报到之后才可报(闸门晚立起来)→ 重新报到一次、带手里的认领;文档服务没回 cardEnvFingerprint 时不报能力", () => {
+test("OCN-09 browserNode: the runtime version becomes reportable only after check-in (the gate is set up late) → check in once more, carrying the claims in hand; capabilities are not reported when the document service did not return cardEnvFingerprint", () => {
   const rig = nodeRig({ info: null });
   rig.node.start();
   rig.welcome({ cardEnvFingerprint: undefined });
@@ -189,10 +189,10 @@ test("OCN-09 browserNode:运行时版本在报到之后才可报(闸门晚立起
   rig.state.info = INFO();
   rig.node.tick();
   const hellos = rig.of("node.hello");
-  assert.equal(hellos.length, 2, "运行时版本可报了:再报到一次");
+  assert.equal(hellos.length, 2, "the runtime version is reportable now: check in once more");
   assert.equal(hellos[1].cardRuntime, RUNTIME);
   rig.node.tick();
-  assert.equal(rig.of("node.hello").length, 2, "welcome 没回来之前不反复报");
+  assert.equal(rig.of("node.hello").length, 2, "does not report repeatedly before welcome comes back");
   rig.welcome();
   rig.node.tick();
   assert.equal(rig.node.debug().cards.userCards, true);
@@ -239,23 +239,23 @@ function fakeQueue() {
 }
 const published = (q) => q.sent.filter((m) => m.type === "task.publish").map((m) => m.tasks[0]);
 
-test("OCN-10 planPublisher:本页能运行的卡进 input.browser 与签名;不能运行时与原来逐字相同;登记变了重发;与队列侧逐字段相同", async () => {
+test("OCN-10 planPublisher: cards that can run on this page go into input.browser and the signature; identical to the original, character for character, when none can run; resent when the registry changes; identical field by field to the queue side", async () => {
   resetNodeCardInfo();
   const page = { cardEnvFingerprint: CARDFP, userCards: true, graphCards: false, cardSources: { b: "vb", a: "va" } };
   for (const codeVersion of [undefined, "cv-9"]) {
     const mine = clipsPlanTask({ projectId: "p1", projectRev: 7, clips: ["c2", "c1"], codeVersion, browser: page });
     const server = clipsPlanTaskOf({ projectId: "p1", projectRev: 7, clips: ["c2", "c1"], codeVersion, browser: page });
-    assert.deepEqual(mine, server, "页面与队列侧两份实现逐字段相同(含签名)");
+    assert.deepEqual(mine, server, "the page and queue-side implementations are identical field by field (including the signature)");
     assert.equal(parseInbound({ type: "task.publish", tasks: [mine] }).ok, true);
-    assert.deepEqual(clipsPlanTask({ projectId: "p1", projectRev: 7, clips: ["c2", "c1"], codeVersion }), clipsPlanTaskOf({ projectId: "p1", projectRev: 7, clips: ["c2", "c1"], codeVersion }), "不带时也相同");
+    assert.deepEqual(clipsPlanTask({ projectId: "p1", projectRev: 7, clips: ["c2", "c1"], codeVersion }), clipsPlanTaskOf({ projectId: "p1", projectRev: 7, clips: ["c2", "c1"], codeVersion }), "identical when not included too");
   }
   assert.deepEqual(browserCardsOf(page), serverBrowserCardsOf(page));
   assert.equal(browserCardsSig(browserCardsOf(page)), serverBrowserCardsSig(serverBrowserCardsOf(page)));
 
   // 默认读登记处
-  assert.equal(browserCardsFromInfo({ cardRuntime: null, userCards: false, graphCards: false, cardSources: {}, cardEnvFingerprint: CARDFP }), null, "不能执行:不带");
-  assert.equal(browserCardsFromInfo({ cardRuntime: RUNTIME, userCards: true, graphCards: false, cardSources: { a: "va" }, cardEnvFingerprint: null }), null, "没拿到 cardEnvFingerprint:不带");
-  assert.equal(browserCardsFromInfo({ cardRuntime: RUNTIME, userCards: true, graphCards: false, cardSources: {}, cardEnvFingerprint: CARDFP }), null, "一张能运行的卡也没有:不带");
+  assert.equal(browserCardsFromInfo({ cardRuntime: null, userCards: false, graphCards: false, cardSources: {}, cardEnvFingerprint: CARDFP }), null, "cannot execute: not included");
+  assert.equal(browserCardsFromInfo({ cardRuntime: RUNTIME, userCards: true, graphCards: false, cardSources: { a: "va" }, cardEnvFingerprint: null }), null, "did not get cardEnvFingerprint: not included");
+  assert.equal(browserCardsFromInfo({ cardRuntime: RUNTIME, userCards: true, graphCards: false, cardSources: {}, cardEnvFingerprint: CARDFP }), null, "no card that can run: not included");
   const q = fakeQueue();
   const tm = timers();
   const pub = createPlanPublisher({ request: q.request, publisherId: "pg", clips: () => ["c1", "c2"], codeVersion: "cv-9", ...tm });
@@ -264,13 +264,13 @@ test("OCN-10 planPublisher:本页能运行的卡进 input.browser 与签名;不�
     tm.fire();
     await flush();
     const first = published(q)[0];
-    assert.equal("browser" in first.input, false, "登记处是空的:计划与没有这个功能时相同");
+    assert.equal("browser" in first.input, false, "the registry is empty: the plan is the same as without this feature");
     assert.deepEqual(first, clipsPlanTaskOf({ projectId: "p1", projectRev: 7, clips: ["c1", "c2"], codeVersion: "cv-9" }));
 
     // 节点报到、卡载入成功:登记变了 → 防抖后重发,input.browser 带上,是另一个计划
     setNodeCardEnvFingerprint(CARDFP);
     setNodeCardInfo({ cardRuntime: RUNTIME, userCards: true, graphCards: false, cardSources: { a: "va" } }, 0);
-    assert.equal(tm.fire(), true, "登记变了排了一次重发");
+    assert.equal(tm.fire(), true, "the registry change scheduled one resend");
     await flush();
     const second = published(q)[1];
     assert.deepEqual(second.input.browser, { cardEnvFingerprint: CARDFP, userCards: true, graphCards: false, cardSources: { a: "va" } });
@@ -304,7 +304,7 @@ function planContext(OWN) {
   };
 }
 
-test("OCN-11 整条链路:页面发清单计划(带本页能运行的卡)→ 桌面同机切分出两份 → 浏览器节点认领自己的 → 替身渲染并完成 → 层表候选含浏览器那份、别的成员贴得上;别人的任务与代码身份对不上的页面一个都不认领", async () => {
+test("OCN-11 full pipeline: the page sends a manifest plan (with the cards that can run on this page) → the desktop on the same machine splits it into two parts → the browser node claims its own → a stand-in renders and completes → the layer table candidates include the browser's part, and other members can attach to it; a page whose task belongs to someone else or whose code identity does not match claims none", async () => {
   resetNodeCardInfo();
   const rig = createDocQueueRig();
   rig.connect("page", memberPrincipal({ username: "zoe", device: "devA", role: "page" }));
@@ -370,9 +370,9 @@ test("OCN-11 整条链路:页面发清单计划(带本页能运行的卡)→ 桌
   host.start();
   for (const node of [br, brX, brM]) node.start();
   await step(2);
-  assert.equal(br.cardEnvFingerprint, CARDFP, "文档服务按运行时版本算给浏览器节点");
-  assert.equal(getNodeCardInfo().cardEnvFingerprint, CARDFP, "宿主把它登记进登记处");
-  assert.equal(brM.cardEnvFingerprint, CARDFP, "别人的页面算出同一个指纹(同环境同版本),但它拿不到本人的任务");
+  assert.equal(br.cardEnvFingerprint, CARDFP, "the document service computes it for the browser node from the runtime version");
+  assert.equal(getNodeCardInfo().cardEnvFingerprint, CARDFP, "the host records it in the registry");
+  assert.equal(brM.cardEnvFingerprint, CARDFP, "another person's page computes the same fingerprint (same environment, same version), but it cannot get this user's tasks");
 
   /* 页面发清单计划:本页能运行的卡随计划交出 */
   rig.ask("page", { type: "publisher.hello", publisherId: "page-1" });
@@ -384,11 +384,11 @@ test("OCN-11 整条链路:页面发清单计划(带本页能运行的卡)→ 桌
     pub.measured({ projectId: "p1", projectRev: 7 });
     await step(12);
     const planId = pub.debug().last;
-    assert.ok(planId, `页面发出了清单计划:${JSON.stringify(pub.debug().log)}`);
+    assert.ok(planId, `the page sent a manifest plan: ${JSON.stringify(pub.debug().log)}`);
     const claimedPlan = rig.of("host", "task.claimed").find((m) => m.id === planId);
-    assert.deepEqual(claimedPlan?.task.input.browser, { cardEnvFingerprint: CARDFP, userCards: true, graphCards: false, cardSources: { "ouc-user": IDENT } }, "本页能运行的卡随计划交到切分方");
-    assert.deepEqual(claimedPlan.browserCardEnvFingerprints, [CARDFP], "文档服务确认有这样一台本人的在线节点");
-    assert.equal(rig.describe().tasks.find((t) => t.id === planId)?.state, "done", "桌面同机的独立主机认领并切分");
+    assert.deepEqual(claimedPlan?.task.input.browser, { cardEnvFingerprint: CARDFP, userCards: true, graphCards: false, cardSources: { "ouc-user": IDENT } }, "cards that can run on this page are handed to the splitter along with the plan");
+    assert.deepEqual(claimedPlan.browserCardEnvFingerprints, [CARDFP], "the document service confirms there is such an online node belonging to this user");
+    assert.equal(rig.describe().tasks.find((t) => t.id === planId)?.state, "done", "the standalone host on the same desktop machine claims and splits it");
 
     const spec = afterSplitTasks ?? [];
     const state = (id) => rig.describe().tasks.find((t) => t.id === id);
@@ -398,34 +398,34 @@ test("OCN-11 整条链路:页面发清单计划(带本页能运行的卡)→ 桌
     assert.equal(deskCopy.length, 1);
     assert.equal(brCopy[0].resultKey, resultKeyOf(CK, CARDFP));
     assert.equal(deskCopy[0].resultKey, resultKeyOf(CK, DESK_FP));
-    assert.notEqual(brCopy[0].resultKey, deskCopy[0].resultKey, "同一台机器上桌面与浏览器的结果键不同");
+    assert.notEqual(brCopy[0].resultKey, deskCopy[0].resultKey, "on the same machine, the desktop and browser result keys differ");
 
     /* 浏览器节点(本人、身份对)认领并完成;身份对不上的与别人的一个都没认领 */
-    assert.equal(brCopy[0].state, "done", `浏览器那份完成:${JSON.stringify(brCopy[0])}`);
-    assert.deepEqual(deskCopy.map((t) => [t.state, t.lastError]), [["failed", "superseded"]], "桌面那份作废:这一层只出自浏览器这一种环境");
-    assert.deepEqual(bakes.map((b) => [b.conn, b.localFrame]), [0, 1, 2, 3, 4, 5].map((f) => ["br", f]), "六帧都由本人的页面生成");
+    assert.equal(brCopy[0].state, "done", `the browser's part completed: ${JSON.stringify(brCopy[0])}`);
+    assert.deepEqual(deskCopy.map((t) => [t.state, t.lastError]), [["failed", "superseded"]], "the desktop's part is voided: this layer comes only from the browser environment");
+    assert.deepEqual(bakes.map((b) => [b.conn, b.localFrame]), [0, 1, 2, 3, 4, 5].map((f) => ["br", f]), "all six frames are generated by this user's page");
     assert.deepEqual(finishes, [{ conn: "br", id: brCopy[0].id, frames: 6 }]);
-    assert.equal(brX.debug().counters.claims, 0, "代码身份是另一版的页面不认领");
+    assert.equal(brX.debug().counters.claims, 0, "a page whose code identity is a different version does not claim");
     assert.equal(brX.debug().counters.blocked["1:card-source"] ?? 0, 1);
-    assert.equal(brM.debug().counters.claims, 0, "别人的页面不认领");
-    assert.deepEqual(brM.debug().counters.blocked, {}, "连任务都看不见(服务端只给本人看)");
+    assert.equal(brM.debug().counters.claims, 0, "other people's pages do not claim");
+    assert.deepEqual(brM.debug().counters.blocked, {}, "the task is not even visible (the server only shows it to its owner)");
     assert.equal(rig.describe().locks.find((l) => l.lockKey === `snapshot:${CK}`)?.envFingerprint, CARDFP);
 
     /* 入库后别的成员能贴上:层表的候选里有浏览器那份,按「活着」认定就贴它 */
     const ctx = planContext(DESK_FP);
     const entry = { key: "entry-1", project: { id: "p1", fps: 30, width: 1920, height: 1080, tracks: [] }, cardPlan: ctx.cardPlan };
     const candidates = splitCandidatesOf(afterSplitTasks);
-    assert.deepEqual(candidates.get(CK), [DESK_FP, CARDFP], "切分实际出键的指纹:桌面那份在前、浏览器那份在后");
+    assert.deepEqual(candidates.get(CK), [DESK_FP, CARDFP], "fingerprints of the keys actually produced by the split: the desktop app's first, the browser's second");
     const table = layerMapOf(entry, { fingerprint: DESK_FP, span: 60, now: 0, candidatesOf: (c) => candidates.get(c.contentKey) ?? [] });
     assert.equal(table.v, 3);
     const layer = table.layers[0];
     assert.deepEqual(layer.candidates.map((c) => [c.envFingerprint, c.resultKey]), [[DESK_FP, resultKeyOf(CK, DESK_FP)], [CARDFP, resultKeyOf(CK, CARDFP)]]);
     const alive = new Set([brCopy[0].resultKey]);   // task.done 与清单认定它活着
     const picked = layerRefOf(table, "clip-u", { alive });
-    assert.ok(picked, "别的成员按层表取到这一层");
+    assert.ok(picked, "other members pick up this layer from the layer table");
     assert.equal(picked.envFingerprint, CARDFP);
     assert.equal(picked.resultKey, resultKeyOf(CK, CARDFP));
-    assert.equal(layerRefOf(table, "clip-u", { alive: new Set() })?.envFingerprint, DESK_FP, "没有活着的候选时仍是第一个候选(桌面那份)");
+    assert.equal(layerRefOf(table, "clip-u", { alive: new Set() })?.envFingerprint, DESK_FP, "with no live candidates it is still the first candidate (the desktop app's)");
   } finally {
     pub.dispose();
     host.stop();

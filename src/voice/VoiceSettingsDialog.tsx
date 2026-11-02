@@ -3,6 +3,7 @@ import type { JSX } from "react";
 import { createPortal } from "react-dom";
 import { VoiceSettings } from "./VoiceSettings";
 import { closeVoiceSettings, useVoiceSettingsState } from "../ai/voiceSettingsStore";
+import { tr } from "../i18n/index.ts";
 
 /**
  * 「配音设置」子窗口。开始页的配音卡和编辑台顶栏的按钮都开它,两处各挂一份
@@ -20,7 +21,7 @@ function Dialog(): JSX.Element {
 
   // 有没保存的改动时关窗先问一句,免得调了半天一个 Esc 全没了
   const close = useCallback(() => {
-    if (dirty.current && !confirm("有没保存的改动，关掉就不要了？")) return;
+    if (dirty.current && !confirm(tr("You have unsaved changes. Discard them and close?"))) return;
     closeVoiceSettings();
   }, []);
 
@@ -33,10 +34,10 @@ function Dialog(): JSX.Element {
   return createPortal(
     // 只认在遮罩本身上按下的点击:在输入框里拖选文字拖出窗口外松手,不该把窗口关了
     <div className="vsd-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
-      <div className="vsd-dialog" role="dialog" aria-modal="true" aria-label="配音设置">
+      <div className="vsd-dialog" role="dialog" aria-modal="true" aria-label={tr("Voiceover settings")}>
         <div className="vsd-head">
-          <div className="vsd-title">配音设置</div>
-          <button className="vsd-x" onClick={close} aria-label="关闭">×</button>
+          <div className="vsd-title">{tr("Voiceover settings")}</div>
+          <button className="vsd-x" onClick={close} aria-label={tr("Close")}>×</button>
         </div>
         <div className="vsd-body">
           <VoiceSettings bare onDirtyChange={(d) => { dirty.current = d; }} />

@@ -18,6 +18,7 @@ import { RecoveryActions } from "./RecoveryActions";
 import "./sync.css";
 import { CLOUD_GONE_TEXT } from "./recoveryTexts";
 import { ConflictMergeButton } from "./ConflictMerge";
+import { tr } from "../../i18n/index.ts";
 
 function subscribeNavigator(cb: () => void): () => void {
   window.addEventListener("online", cb);
@@ -63,8 +64,8 @@ function OnlineBackupsChip() {
   if (!n) return null;
   return (
     <>
-      <button type="button" className="pc-sync-chip pc-sync-chip--backups" data-pc="sync-backups" title="被覆盖、离线丢弃的修改先留在本页，关闭页面前可以下载" onClick={() => setOpen(true)}>
-        备份 {n}
+      <button type="button" className="pc-sync-chip pc-sync-chip--backups" data-pc="sync-backups" title={tr("Changes that were overwritten or discarded while offline are kept on this page for now; you can download them before closing the page")} onClick={() => setOpen(true)}>
+        {tr("Backups {0}", n)}
       </button>
       <BackupsDialog open={open} onClose={() => setOpen(false)} />
     </>
@@ -80,12 +81,12 @@ export function SyncChips() {
   const merge = <ConflictMergeButton />;
   if (reopenState && reopenState !== "connected") {
     const text: Record<string, string> = {
-      recovering: "正在恢复原协作房间…", "waiting-host": "正在等待主机上线，将自动重试。",
-      "waiting-storage": "本机恢复信息暂时无法读取，将保留原身份并自动重试。",
-      "needs-auth": "请用原身份重新认证；本地项目内容已保留。", rejected: "原身份已被拒绝，请联系创建者。",
-      deleted: "原房间已删除或取消协作。", damaged: "协作恢复数据缺失或损坏，请从原备份恢复。",
-      unsupported: "本项目的协作恢复版本暂不支持；房间关联已保留。", "choose-identity": "这台设备保存了多个身份，请选择原身份。",
-      "host-conflict": "原房间已有主机，未接管。",
+      recovering: tr("Restoring the original collaboration room…"), "waiting-host": tr("Waiting for the host to come online; will retry automatically."),
+      "waiting-storage": tr("The local recovery info cannot be read for now; the original identity will be kept and it will retry automatically."),
+      "needs-auth": tr("Please re-authenticate with the original identity; local project content has been kept."), rejected: tr("The original identity was rejected. Please contact the creator."),
+      deleted: tr("The original room was deleted or collaboration was canceled."), damaged: tr("Collaboration recovery data is missing or damaged. Please restore from the original backup."),
+      unsupported: tr("This project's collaboration recovery version is not supported yet; the room link has been kept."), "choose-identity": tr("This device has several saved identities. Please choose the original identity."),
+      "host-conflict": tr("The original room already has a host; not taken over."),
       "missing-unconfirmed": CLOUD_GONE_TEXT.missingUnconfirmed, "proof-rejected": CLOUD_GONE_TEXT.proofRejected,
     };
     return <>{merge}<span className="pc-sync-chip pc-sync-chip--offline" role="status" data-pc="collaboration-recovery" data-kind={reopenState}>{text[reopenState] ?? reopenState}</span><RecoveryActions state={reopenState} /></>;
@@ -95,16 +96,16 @@ export function SyncChips() {
     <>
       {merge}
       {status === "paused" ? (
-        <button type="button" className="pc-sync-chip pc-sync-chip--paused" data-pc="sync-paused" title="断网期间项目有新改动，点开决定怎么处理" onClick={() => setOfflineOpen(true)}>
+        <button type="button" className="pc-sync-chip pc-sync-chip--paused" data-pc="sync-paused" title={tr("The project changed while you were offline. Click to decide how to handle it")} onClick={() => setOfflineOpen(true)}>
           <span className="pc-sync-chip-dot" />
-          同步已暂停
+          {tr("Sync paused")}
         </button>
       ) : ONLINE ? (
         <OnlineStatusChip />
       ) : status === "offline" ? (
-        <span className="pc-sync-chip pc-sync-chip--offline" data-pc="sync-offline" title="连不上文档服务：修改照常，先攒在本机，恢复后按顺序提交">
+        <span className="pc-sync-chip pc-sync-chip--offline" data-pc="sync-offline" title={tr("Cannot reach the document service: edits work as usual and are held on this machine, then submitted in order once it recovers")}>
           <span className="pc-sync-chip-dot" />
-          离线
+          {tr("Offline")}
         </span>
       ) : null}
       {ONLINE ? <OnlineBackupsChip /> : null}
