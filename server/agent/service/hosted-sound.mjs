@@ -120,7 +120,7 @@ export function createSoundTools({ state, slot, host, snapshot, mutate, ensureCa
       const message = String(err?.message ?? err);
       if (signal.aborted && job.state !== 'stale') { job.state = 'cancelled'; job.error = '已取消,原音效保持不变'; }
       else if (job.state === 'stale') { /* 被更新的请求顶掉时已经写好了原因 */ }
-      else if (err?.stale || /已改变|已切换/.test(message)) { job.state = 'stale'; job.error = err?.stale ? message : `项目或片段已改变,旧生成结果未应用(${message})`; }
+      else if (err?.stale || /已改变|已切换|has changed/.test(message)) { job.state = 'stale'; job.error = err?.stale ? message : `项目或片段已改变,旧生成结果未应用(${message})`; }
       else { job.state = 'failed'; job.error = message.slice(0, 300); }
     } finally {
       release?.();

@@ -139,7 +139,7 @@ export function describe(job: InstallJob): string {
       return job.currentPackage ? tr("Resolving dependencies: {0}", job.currentPackage) : tr("Resolving dependencies…");
     case "downloading":
       return job.currentPackage
-        ? tr("Downloading {0}{1}", job.currentPackage, job.totalMB ? `(${job.totalMB.toFixed(1)} MB)` : "")
+        ? tr("Downloading {0}{1}", job.currentPackage, job.totalMB ? ` (${job.totalMB.toFixed(1)} MB)` : "")
         : tr("Downloading…");
     case "installing":
       return job.packageCount ? tr("Installing {0} packages…", job.packageCount) : tr("Installing…");

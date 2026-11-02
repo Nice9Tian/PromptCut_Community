@@ -113,7 +113,7 @@ export function reportText(r: ProgressReport): string {
   if (r.done.length) segs.push(tr("Done: {0}", r.done.join(tr(", "))));
   if (r.todo.length) segs.push(tr("To do: {0}", r.todo.join(tr(", "))));
   if (r.problems.length) segs.push(tr("Issues: {0}", r.problems.join(tr(", "))));
-  const body = segs.join(";");
+  const body = segs.join("; ");
   const text = r.stage && body ? `[${r.stage}] ${body}` : body;
   // 换模型 / 回退后的「前情」里也要留住「在等用户」:不然新的那一轮会以为可以接着自己做
   return r.blocked && text ? tr("{0} (stopped, waiting for the user to reply)", text) : text;

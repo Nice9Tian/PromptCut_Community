@@ -4,6 +4,9 @@ import { diffProject } from "../../kernel/diffProject";
 import { state, setProject, set, sortClips } from "../core";
 import { tr } from "../../i18n/index.ts";
 
+/** The project moved on under the generated sound: callers tell this apart by the flag, not by the wording */
+const staleError = (message: string) => Object.assign(new Error(message), { stale: true });
+
 export interface CommitSoundEffectOptions {
   projectId?: string;
   cutId?: string;
@@ -26,10 +29,10 @@ export const sound = {
   commitSoundEffect(spec: CommitSoundEffectOptions): { mediaId: string; clipId?: string; reused: boolean } {
     assertSoundRecipeSize(spec.link.recipe);
     const p = state.project;
-    if (p.id !== spec.projectId || p.activeCutId !== spec.cutId) throw new Error(tr("The project or cut has changed; sound effect not applied"));
-    if (spec.link.sourceClipId && spec.expectedSource !== JSON.stringify(findClip(p, spec.link.sourceClipId)?.clip)) throw new Error(tr("The original typing clip has changed, please regenerate"));
+    if (p.id !== spec.projectId || p.activeCutId !== spec.cutId) throw staleError(tr("The project or cut has changed; sound effect not applied"));
+    if (spec.link.sourceClipId && spec.expectedSource !== JSON.stringify(findClip(p, spec.link.sourceClipId)?.clip)) throw staleError(tr("The original typing clip has changed, please regenerate"));
     const target = spec.replaceClipId ? findClip(p, spec.replaceClipId) : null;
-    if (spec.replaceClipId && (!target || JSON.stringify(target.clip) !== spec.expectedClip)) throw new Error(tr("The sound effect clip has changed, please regenerate"));
+    if (spec.replaceClipId && (!target || JSON.stringify(target.clip) !== spec.expectedClip)) throw staleError(tr("The sound effect clip has changed, please regenerate"));
     if (target?.track.locked) throw new Error(tr("Unlock the sound effect track first"));
     if (target && (!target.clip.soundEffect || target.clip.nodeId)) throw new Error(tr("Only existing WAV sound effect clips can be regenerated"));
     // Retrying a completed request, including after reopening, does not create another clip.

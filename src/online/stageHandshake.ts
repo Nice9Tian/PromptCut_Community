@@ -103,7 +103,7 @@ export function createStageHandshake(deps: StageHandshakeDeps): StageHandshake {
   const failWith = (why: string) => {
     if (!live()) return;
     phase = "failed";
-    reason = `${why}(${summary()})`;
+    reason = `${why} (${summary()})`;
     clearAll();
     deps.fail(reason);
   };

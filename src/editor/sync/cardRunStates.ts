@@ -55,12 +55,12 @@ export function editorRunStates(input: EditorRunStateInput): Map<string, CardRun
 export function runStateMessage(s: CardRunState | undefined): string | null {
   if (!s) return null;
   const d = s.detail ? s.detail : "";
-  const where = s.file ? `,${s.file.replace(/^src\/cards\/user\//, "")}` : "";
+  const where = s.file ? `, ${s.file.replace(/^src\/cards\/user\//, "")}` : "";
   switch (s.state) {
     case "ready": case "loading": return null;
-    case "unsupported-syntax": return tr("The online browser cannot run this card: it uses syntax the online page does not support{0}. The picture is provided by a render node.", d ? `(${d}${where})` : "");
+    case "unsupported-syntax": return tr("The online browser cannot run this card: it uses syntax the online page does not support{0}. The picture is provided by a render node.", d ? ` (${d}${where})` : "");
     case "missing-module": return tr("The online browser cannot run this card: it references a module that is not available on the online page{0}. The picture is provided by a render node.", d ? `: ${d}` : "");
-    case "load-error": return tr("The online browser cannot run this card: error while loading{0}.", d ? `(${d})` : "");
+    case "load-error": return tr("The online browser cannot run this card: error while loading{0}.", d ? ` (${d})` : "");
     case "gpu": return tr("This device's graphics capability is not enough, so the picture of media effect cards is provided by a render node.");
     case "media": return tr("This device cannot decode this media clip, so the picture of media effect cards is provided by a render node.");
     case "runtime-error": return tr("This card failed to run in the online browser, so a render node provides the picture this time.");

@@ -328,9 +328,9 @@ test("OCE-T-08 run states: spread onto cards; order on the editor page side; pan
   assert.equal(msg({ state: "ready" }), null);
   assert.equal(msg({ state: "loading" }), null);
   assert.equal(msg(undefined), null);
-  assert.equal(msg({ state: "unsupported-syntax", detail: "namespace (line 3)", file: `${U}x.tsx` }), "The online browser cannot run this card: it uses syntax the online page does not support(namespace (line 3),x.tsx). The picture is provided by a render node.");
+  assert.equal(msg({ state: "unsupported-syntax", detail: "namespace (line 3)", file: `${U}x.tsx` }), "The online browser cannot run this card: it uses syntax the online page does not support (namespace (line 3), x.tsx). The picture is provided by a render node.");
   assert.equal(msg({ state: "missing-module", detail: "lodash" }), "The online browser cannot run this card: it references a module that is not available on the online page: lodash. The picture is provided by a render node.");
-  assert.equal(msg({ state: "load-error", detail: "炸了" }), "The online browser cannot run this card: error while loading(炸了).");
+  assert.equal(msg({ state: "load-error", detail: "炸了" }), "The online browser cannot run this card: error while loading (炸了).");
   assert.equal(msg({ state: "gpu" }), "This device's graphics capability is not enough, so the picture of media effect cards is provided by a render node.");
   assert.equal(msg({ state: "media" }), "This device cannot decode this media clip, so the picture of media effect cards is provided by a render node.");
   assert.equal(msg({ state: "runtime-error" }), "This card failed to run in the online browser, so a render node provides the picture this time.");

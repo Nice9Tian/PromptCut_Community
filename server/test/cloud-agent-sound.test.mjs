@@ -226,7 +226,7 @@ test('CA-SND-02 幂等、取消、过期、只读、上限', { timeout: 120_000 
   // 疑似产品问题:server/agent/service/hosted-sound.mjs 第 123 行用 /已改变|已切换/ 判断提交回调抛的是「旧结果过期」,
   // 而 src/store/actions/sound.ts:30 抛的已是英文 "The original typing clip has changed, ..."(tr),认不出,状态落成 failed 而不是 stale。
   // 修好后去掉 todo。
-  await t.test('过期的状态是 stale(旧结果不应用)', { todo: '服务端中文正则认不出英文错误' }, async () => {
+  await t.test('过期的状态是 stale(旧结果不应用)', async () => {
     const a = instance('p-stale-state');
     a.beforeCommit = () => {
       a.project = { ...a.project, tracks: a.project.tracks.map((tr) => ({ ...tr, clips: tr.clips.map((c) => (c.id === 'typing' ? { ...c, params: { ...c.params, text: '改了' } } : c)) })) };

@@ -56,7 +56,7 @@ test("文字为空时用进度报告代替:只拼非空的组,带阶段名", () 
     a("agy", "", { parts: [report({ final: true, stage: "铺字幕", done: ["加了 3 段字幕"], todo: [], problems: ["第 2 段有底噪"] })] }),
   ];
   const s = buildHandoff(h, "claude", false);
-  assert.match(s, /Assistant \(Antigravity\): \[铺字幕\] Done: 加了 3 段字幕;Issues: 第 2 段有底噪/);
+  assert.match(s, /Assistant \(Antigravity\): \[铺字幕\] Done: 加了 3 段字幕; Issues: 第 2 段有底噪/);
   assert.doesNotMatch(s, /To do/, "空的组不拼");
 });
 
