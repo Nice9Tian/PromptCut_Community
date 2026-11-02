@@ -40,7 +40,7 @@ test("没 path 的裸文件名标缺失;反复打开不会叠「(缺失)」", ()
   assert.equal(twice[0].name, "(missing) c.jpg");
 });
 
-test("老项目里已有的中文标记「(缺失) 」也不会再叠一层", { todo: "mediaUrls.ts 的标记前缀只认当前界面语言那一种(见 work/i18n/AGENT-i18n-tests.md)" }, () => {
+test("老项目里已有的中文标记「(缺失) 」也不会再叠一层", () => {
   const once = restoreMediaUrls([{ id: "c", kind: "image", name: "(缺失) c.jpg", url: "c.jpg" }]).media;
   assert.equal(once[0].name, "(缺失) c.jpg");
 });

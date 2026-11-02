@@ -210,8 +210,7 @@ test("MP-M6 标过「(缺失)」的带哈希素材,内容库里有了之后去�
 });
 
 // 老项目(中文界面存下的)里的标记是「(缺失) 」;现在的代码只认 tr("(missing) ") 写的那一种,认不出老标记。
-// 产品问题,见 work/i18n/AGENT-i18n-tests.md;修好之前用 todo 记着,不挡测试运行。
-test("MP-M4b 老项目里的中文标记「(缺失) 」也能去掉", { todo: "mediaUpload.ts 的标记前缀只认当前界面语言那一种" }, async () => {
+test("MP-M4b 老项目里的中文标记「(缺失) 」也能去掉", async () => {
   actions.newProject("回到原机器-老标记");
   const p = "D:/pc/media/voice-back.mp3";
   const m = actions.addMedia({ kind: "audio", name: "(缺失) voice-back.mp3", path: p, url: fileUrl(p) });
@@ -220,7 +219,7 @@ test("MP-M4b 老项目里的中文标记「(缺失) 」也能去掉", { todo: "m
   assert.equal(get(m.id).name, "voice-back.mp3");
 });
 
-test("MP-M6b 老项目里的中文标记「(缺失) 」带哈希素材找回后也去掉", { todo: "mediaUpload.ts 的标记前缀只认当前界面语言那一种" }, async () => {
+test("MP-M6b 老项目里的中文标记「(缺失) 」带哈希素材找回后也去掉", async () => {
   actions.newProject("带哈希-回来-老标记");
   const m = actions.addMedia({ kind: "audio", name: "(缺失) back.mp3", url: "", hash: H("f") });
   globalThis.fetch = async (url) => String(url).startsWith("/api/media/local?") ? Response.json({ ok: true, hashes: [H("f")] }) : new Response(null, { status: 404 });

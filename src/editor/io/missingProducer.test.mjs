@@ -137,8 +137,7 @@ test("旧版本只加了「(缺失) 」标记、清空了地址的文件:打开�
 
 // 占位上要显示原名、不带标记。标记是写进素材名字里的,现在由 tr("(missing) ") 写;
 // 而 src/audio/missingMaterialRecord.ts 的 missingMaterialLabel 还只认「(缺失) 」,所以占位上会带着 "(missing) "。
-// 产品问题,见 work/i18n/AGENT-i18n-tests.md;修好之前用 todo 记着。
-test("占位上显示原名,不带缺失标记", { todo: "missingMaterialLabel 只认中文标记" }, async () => {
+test("占位上显示原名,不带缺失标记", async () => {
   actions.newProject("占位原名");
   const hashed = actions.addMedia({ kind: "video", name: "场景:访谈(一).mp4", url: `/@media/${H("a")}`, hash: H("a"), path: "C:/A/media/x.mp4" });
   actions.addMedia({ kind: "audio", name: "旁白.wav", url: fileUrl("C:/A/media/旁白.wav"), path: "C:/A/media/旁白.wav" });
@@ -150,7 +149,7 @@ test("占位上显示原名,不带缺失标记", { todo: "missingMaterialLabel �
   assert.deepEqual(media.map(missingMaterialLabel), ["场景:访谈(一).mp4", "旁白.wav", "封面.png", "场景:访谈(一).mp4"]);
 });
 
-test("旧版本只加了中文「(缺失) 」标记、清空了地址的文件:打开后补上记录,标记不叠", { todo: "mediaUpload.ts 的标记前缀只认当前界面语言那一种" }, async () => {
+test("旧版本只加了中文「(缺失) 」标记、清空了地址的文件:打开后补上记录,标记不叠", async () => {
   actions.newProject("旧标记-中文");
   const m = actions.addMedia({ kind: "video", name: "(缺失) old.mp4", url: "", hash: H("a") });
   editor({});
