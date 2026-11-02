@@ -18,6 +18,7 @@ import ts from "typescript";
 const vo = await import("./io/viewOnly.ts");
 const core = await import("./readOnlyCore.ts");
 const i18n = await import("../i18n/index.ts");
+const i18nNames = await import("../i18n/names.ts");
 const WHY_MEMBER = "You can only view this project, you cannot change its content.";
 
 /** 在这个权限下跑 fn：'r' = 只读项目（游客），'rw' / null = 照旧，'observe' = ?observe=1 */
@@ -46,7 +47,7 @@ async function load(rel, mocks) {
     ...mocks,
   };
   const mod = { exports: {} };
-  new Function("require", "module", "exports", compiled)((id) => (Object.hasOwn(all, id) ? all[id] : /(^|\/)i18n\/index\.ts$/.test(id) ? i18n : actualRequire(id)), mod, mod.exports);
+  new Function("require", "module", "exports", compiled)((id) => (Object.hasOwn(all, id) ? all[id] : /(^|\/)i18n\/index\.ts$/.test(id) ? i18n : /(^|\/)i18n\/names\.ts$/.test(id) ? i18nNames : actualRequire(id)), mod, mod.exports);
   return mod.exports;
 }
 const html = (Comp, props) => renderToStaticMarkup(React.createElement(Comp, props));

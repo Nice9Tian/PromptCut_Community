@@ -17,7 +17,7 @@ import { test, mock, after } from "node:test";
 import assert from "node:assert/strict";
 
 globalThis.window = globalThis;
-globalThis.document = {};
+globalThis.document = { documentElement: {} };
 
 const runnerUrl = srcUrl("editor/probeRunner.ts");
 const hook = registerHooks({ load(url, context, next) {

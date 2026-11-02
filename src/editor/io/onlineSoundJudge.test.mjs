@@ -77,8 +77,8 @@ test('B10 在线页面里内置卡的 audio() 真的被执行,用户卡的被拦
     assert.equal(wav.frames, 4800);
     const u = clipOf('u-av', .1);
     evaluations = 0;
-    await assert.rejects(() => requestCardAudio({ project: u.project, nodeId: cardAudioNodeOf(u.project, u.clip), start: 0, count: 480, sampleRate: 48000 }), /在线浏览器模式暂不能执行/);
-    await assert.rejects(() => renderEmbeddedCardWav(u.project, u.clip, new AbortController().signal), /在线浏览器模式暂不能执行/);
+    await assert.rejects(() => requestCardAudio({ project: u.project, nodeId: cardAudioNodeOf(u.project, u.clip), start: 0, count: 480, sampleRate: 48000 }), /Online browser mode cannot yet run this card/);
+    await assert.rejects(() => renderEmbeddedCardWav(u.project, u.clip, new AbortController().signal), /Online browser mode cannot yet run this card/);
     assert.equal(evaluations, 0);
   } finally { delete globalThis.__pcOnlinePage; }
 });

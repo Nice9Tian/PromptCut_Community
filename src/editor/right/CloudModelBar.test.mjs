@@ -39,7 +39,7 @@ test('CMB1 节点报了档位:出思考强度下拉,「默认」在最前,标签
   const html = await render({ info: info({ efforts: ['low', 'medium', 'high'] }), effort: 'high', onEffort() {} });
   const effort = select(html, 'ai-cloud-effort');
   assert.ok(effort, '有思考强度下拉');
-  assert.deepEqual(options(effort), [['', 'Thinking 默认'], ['low', 'Thinking 低'], ['medium', 'Thinking 中'], ['high', 'Thinking 高']]);
+  assert.deepEqual(options(effort), [['', 'Thinking default'], ['low', 'Thinking Low'], ['medium', 'Thinking Medium'], ['high', 'Thinking High']]);
   assert.match(effort, /<option value="high" selected="">/, '选中存着的档位');
 });
 
