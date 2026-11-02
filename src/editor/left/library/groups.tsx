@@ -32,11 +32,11 @@ export interface GroupDef {
 
 /** 素材库:导入进来的素材 */
 export const LIBRARY_GROUPS: readonly GroupDef[] = [
-  { id: "videos", title: "Video", layout: "big_16_9", category: "visual", empty: "import" },
-  { id: "images", title: "Images", layout: "big_16_9", category: "visual", empty: "import" },
-  { id: "music", title: "audio", layout: "big_strip", category: "audio", empty: "import" },
+  { id: "videos", title: tr("Video"), layout: "big_16_9", category: "visual", empty: "import" },
+  { id: "images", title: tr("Images"), layout: "big_16_9", category: "visual", empty: "import" },
+  { id: "music", title: tr("Audio"), layout: "big_strip", category: "audio", empty: "import" },
   // 项目里的每条剪辑(2026-10-20 用户定:「剪辑应该也出现在素材库中」);单击在时间轴上打开,拖到序列上放剪辑段
-  { id: "cuts", title: "Cut", layout: "big_16_9", category: "visual", empty: "hint", hook: "lib-cuts", hint: "Click to open on the timeline, drag onto a track to place a cut segment that references it" },
+  { id: "cuts", title: tr("Cut"), layout: "big_16_9", category: "visual", empty: "hint", hook: "lib-cuts", hint: tr("Click to open on the timeline, drag onto a track to place a cut segment that references it") },
 ];
 
 /** 动画:各类卡片和部件,全是视觉类(GroupBrowser 据此不画分类胶囊行) */
@@ -49,8 +49,8 @@ export const ANIMATION_GROUPS: readonly GroupDef[] = [
     empty: "hide",
     hint: tr("Cards built on the spot by the AI or the user. Right-click = switch tier between \"Project media\" and \"Custom media\""),
   },
-  { id: "magicui", title: "Magic UI", layout: "middle_cube", category: "visual", empty: "hide" },
-  { id: "native", title: "Built-in cards", layout: "middle_cube", category: "visual", empty: "hide" },
+  { id: "magicui", title: tr("Magic UI"), layout: "middle_cube", category: "visual", empty: "hide" },
+  { id: "native", title: tr("Built-in cards"), layout: "middle_cube", category: "visual", empty: "hide" },
   {
     id: "parts",
     title: tr("Parts library"),
@@ -59,7 +59,7 @@ export const ANIMATION_GROUPS: readonly GroupDef[] = [
     empty: "hide",
     hint: tr("Parts for composite cards: click once to add to the selected composite card, or with none selected, create a new composite card at the playhead"),
   },
-  { id: "lottie", title: "Lottie animations", layout: "middle_cube", category: "visual", empty: "hide" },
+  { id: "lottie", title: tr("Lottie animations"), layout: "middle_cube", category: "visual", empty: "hide" },
   {
     id: "particles",
     title: tr("Particle background"),
@@ -71,12 +71,12 @@ export const ANIMATION_GROUPS: readonly GroupDef[] = [
 ];
 
 export const EFFECTS_GROUPS: readonly GroupDef[] = [
-  { id: "transitions", title: "Transition", layout: "middle_cube", category: "visual", empty: "hint" },
-  { id: "filters", title: "Filters", layout: "middle_cube", category: "visual", empty: "hint", hook: "filters" },
-  { id: "emphasis", title: "emphasis", layout: "middle_cube", category: "visual", empty: "hint" },
-  { id: "themes", title: "Global style", layout: "middle_cube", category: "visual", empty: "hint", hook: "theme-list" },
-  { id: "audiofx", title: "Audio effects", layout: "big_strip", category: "audio", empty: "hint", hook: "audiofx" },
-  { id: "audio-presets", title: "Audio presets", layout: "big_strip", category: "audio", empty: "hint", hint: "Click one = create from preset" },
+  { id: "transitions", title: tr("Transition"), layout: "middle_cube", category: "visual", empty: "hint" },
+  { id: "filters", title: tr("Filters"), layout: "middle_cube", category: "visual", empty: "hint", hook: "filters" },
+  { id: "emphasis", title: tr("Emphasis"), layout: "middle_cube", category: "visual", empty: "hint" },
+  { id: "themes", title: tr("Global style"), layout: "middle_cube", category: "visual", empty: "hint", hook: "theme-list" },
+  { id: "audiofx", title: tr("Audio effects"), layout: "big_strip", category: "audio", empty: "hint", hook: "audiofx" },
+  { id: "audio-presets", title: tr("Audio presets"), layout: "big_strip", category: "audio", empty: "hint", hint: tr("Click one = create from preset") },
 ];
 
 export const LIBRARY_GROUP_IDS = LIBRARY_GROUPS.map((g) => g.id);

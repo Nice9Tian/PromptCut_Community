@@ -199,10 +199,6 @@
   "zh": "(没给 filterId)",
   "ja": "（filterId が指定されていません）"
  },
- "(follows project)": {
-  "zh": "(跟项目)",
-  "ja": "（プロジェクトに従う）"
- },
  "(for 3D, turn on the perspective camera in the \"Parameters\" tab to get near-large/far-small depth, otherwise it is only a skew)": {
   "zh": "(三维要在「参数」页打开透视相机才有近大远小,否则只是斜切)",
   "ja": "（3D では「パラメーター」タブで透視カメラをオンにすると、近くが大きく遠くが小さい遠近感が出ます。オフのままだと斜めに歪むだけです）"
@@ -14114,5 +14110,113 @@
  "Part": {
   "zh": "部件",
   "ja": "パーツ"
+ },
+ "Login page left rail aurora": {
+  "zh": "登录页左栏极光",
+  "ja": "ログイン画面左側のオーロラ"
+ },
+ "The flowing aurora on the left of the login page. The picture is a function of the frame clock and loops back to the start after a full cycle, made specifically to be prerendered into a seamless looping video.": {
+  "zh": "登录页左边那块流动的极光。画面是帧时钟的函数，走满一圈回到起点，专门用来预渲染成无缝循环的视频。",
+  "ja": "ログイン画面の左側で流れるオーロラです。映像はフレームクロックの関数で、一周すると最初に戻ります。継ぎ目のないループ動画としてプリレンダリングするために作られています。"
+ },
+ "Base color": {
+  "zh": "底色",
+  "ja": "下地の色"
+ },
+ "Home page background glow": {
+  "zh": "首页背景光",
+  "ja": "ホーム画面の背景グロー"
+ },
+ "The two background glows on the website home page and the mobile app login. The picture is a function of the frame clock and loops back to the start after a full cycle, made specifically to be prerendered into a seamless looping video.": {
+  "zh": "官网首页与手机版登录的背景那两团光。画面是帧时钟的函数，走满一圈回到起点，专门用来预渲染成无缝循环的视频。",
+  "ja": "Web サイトのホーム画面とモバイルアプリのログイン画面の背景にある 2 つの光です。映像はフレームクロックの関数で、一周すると最初に戻ります。継ぎ目のないループ動画としてプリレンダリングするために作られています。"
+ },
+ "Typing": {
+  "zh": "打字",
+  "ja": "タイピング"
+ },
+ "Tagline": {
+  "zh": "标语",
+  "ja": "キャッチコピー"
+ },
+ "Checklist": {
+  "zh": "清单",
+  "ja": "チェックリスト"
+ },
+ "Frequency": {
+  "zh": "频率",
+  "ja": "周波数"
+ },
+ "Ding": {
+  "zh": "叮",
+  "ja": "チーン"
+ },
+ "Hello world": {
+  "zh": "你好世界",
+  "ja": "ハローワールド"
+ },
+ "Random seed": {
+  "zh": "随机种子",
+  "ja": "乱数シード"
+ },
+ "Show English": {
+  "zh": "显示英文",
+  "ja": "英語を表示"
+ },
+ "Stroke width": {
+  "zh": "描边宽度",
+  "ja": "縁取りの太さ"
+ },
+ "Value": {
+  "zh": "数值",
+  "ja": "数値"
+ },
+ "Unit": {
+  "zh": "单位",
+  "ja": "単位"
+ },
+ "Key points": {
+  "zh": "要点",
+  "ja": "要点"
+ },
+ "Stat proof": {
+  "zh": "数字实证",
+  "ja": "数字で裏付け"
+ },
+ "Number ticker": {
+  "zh": "数字滚动",
+  "ja": "数字カウンター"
+ },
+ "Pinboard key points": {
+  "zh": "钉板要点",
+  "ja": "ピンボードの要点"
+ },
+ "Parameters only": {
+  "zh": "只改参数",
+  "ja": "パラメーターのみ変更"
+ },
+ "Can edit code and expressions": {
+  "zh": "可改代码和表达式",
+  "ja": "コードと式を変更できる"
+ },
+ "Can create new cards and effects": {
+  "zh": "可新建卡片和效果",
+  "ja": "新しいカードとエフェクトを作成できる"
+ },
+ "Use only existing cards and effects, change only parameters; measure only with built-in methods": {
+  "zh": "只用已有的卡片和效果,只改参数;测量只用内置方法",
+  "ja": "既存のカードとエフェクトだけを使い、変更するのはパラメーターのみです。計測も内蔵の方法だけを使います。"
+ },
+ "May change the code or expressions of existing cards and effects, but not create new ones": {
+  "zh": "可以改已有卡片和效果的代码或表达式,但不新建",
+  "ja": "既存のカードとエフェクトのコードや式を変更できますが、新しく作成はできません。"
+ },
+ "May create any card and effect, and may write custom measurement code": {
+  "zh": "可以新建任意卡片和效果,可以写自定义测量代码",
+  "ja": "任意のカードとエフェクトを新しく作成でき、独自の計測コードも書けます。"
+ },
+ " (follows project)": {
+  "zh": "(跟项目)",
+  "ja": "（プロジェクトに従う）"
  }
 }

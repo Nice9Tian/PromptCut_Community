@@ -77,7 +77,7 @@ export function CloudModelBar(props: {
           aria-haspopup="true"
           aria-expanded={pop.open}
           aria-label={tr("Run options")}
-          title={tr("Run options · creativity {0}{1}", CREATIVITY_LABEL[creativityNow], tabCreativity ? "" : tr("(follows project)"))}
+          title={tr("Run options · creativity {0}{1}", tr(CREATIVITY_LABEL[creativityNow]), tabCreativity ? "" : tr(" (follows project)"))}
           onClick={pop.toggle}
         >
           <IconMore size={16} />
@@ -91,11 +91,11 @@ export function CloudModelBar(props: {
               data-pc="ai-creativity"
               value={tabCreativity ?? ""}
               disabled={disabled}
-              title={tr("Creativity level \"{0}\": {1}. Applies to this chat only; change the project's default level in project settings", CREATIVITY_LABEL[creativityNow], CREATIVITY_HINT[creativityNow])}
+              title={tr("Creativity level \"{0}\": {1}. Applies to this chat only; change the project's default level in project settings", tr(CREATIVITY_LABEL[creativityNow]), tr(CREATIVITY_HINT[creativityNow]))}
               onChange={(e) => setTabCreativity(tabId, normalizeCreativity(e.target.value))}
             >
-              <option value="">{tr("Follow project ({0})", CREATIVITY_LABEL[projectLevel])}</option>
-              {CREATIVITY_LEVELS.map((lv) => <option key={lv} value={lv}>{CREATIVITY_LABEL[lv]}</option>)}
+              <option value="">{tr("Follow project ({0})", tr(CREATIVITY_LABEL[projectLevel]))}</option>
+              {CREATIVITY_LEVELS.map((lv) => <option key={lv} value={lv}>{tr(CREATIVITY_LABEL[lv])}</option>)}
             </select>
           </label>
           <div className="ai-modelbar-toggles">

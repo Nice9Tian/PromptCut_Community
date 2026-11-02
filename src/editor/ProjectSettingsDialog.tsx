@@ -253,11 +253,11 @@ export function ProjectSettingsDialog({ open, onClose }: ProjectSettingsDialogPr
               data-pc="creativity-select"
               className="pc-dialog-select"
               value={creativity}
-              title={tr("{0}: {1}. Each chat in the AI panel uses this level by default and can override it; desktop app sessions follow it", CREATIVITY_LABEL[creativity], CREATIVITY_HINT[creativity])}
+              title={tr("{0}: {1}. Each chat in the AI panel uses this level by default and can override it; desktop app sessions follow it", tr(CREATIVITY_LABEL[creativity]), tr(CREATIVITY_HINT[creativity]))}
               onChange={(e) => setCreativity(normalizeCreativity(e.target.value) ?? DEFAULT_CREATIVITY)}
             >
               {CREATIVITY_LEVELS.map((lv) => (
-                <option key={lv} value={lv} title={CREATIVITY_HINT[lv]}>{CREATIVITY_LABEL[lv]} · {CREATIVITY_SHORT[lv]}</option>
+                <option key={lv} value={lv} title={tr(CREATIVITY_HINT[lv])}>{tr(CREATIVITY_LABEL[lv])} · {tr(CREATIVITY_SHORT[lv])}</option>
               ))}
             </select>
           </div>

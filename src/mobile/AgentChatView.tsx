@@ -102,8 +102,8 @@ export function AgentChatView(p: AgentChatViewProps) {
         <span>{tr("Creativity")}</span>
         <div className="level" data-pcm="creativity">
           {CREATIVITY_LEVELS.map((lv: CreativityLevel) => (
-            <button key={lv} type="button" className={lv === p.level ? "on" : undefined} data-l={CREATIVITY_LABEL[lv]} disabled={p.levelDisabled || ro.locked}
-              title={`${CREATIVITY_LABEL[lv]}:${CREATIVITY_HINT[lv]}`} onClick={() => p.onLevel(lv)}>{CREATIVITY_LABEL[lv]}</button>
+            <button key={lv} type="button" className={lv === p.level ? "on" : undefined} data-l={tr(CREATIVITY_LABEL[lv])} disabled={p.levelDisabled || ro.locked}
+              title={`${tr(CREATIVITY_LABEL[lv])}:${tr(CREATIVITY_HINT[lv])}`} onClick={() => p.onLevel(lv)}>{tr(CREATIVITY_LABEL[lv])}</button>
           ))}
         </div>
         <span className="spacer" />

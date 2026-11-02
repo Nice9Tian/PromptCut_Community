@@ -10,6 +10,7 @@ import type { GroupData, GroupItem } from "./groups";
 import { useReadOnly } from "../../readOnly";
 import "../../timeline/cut-tabs.css";
 import { tr } from "../../../i18n/index.ts";
+import { shownName } from "../../../i18n/names.ts";
 
 /**
  * 素材库的「剪辑」组(`workflow/materials.md`「素材库里的剪辑」,2026-10-20 用户定)。
@@ -75,7 +76,7 @@ export function useCutsGroup(q: string, flash: (text: string, ms?: number) => vo
     const off = ro.locked ? { disabled: true, title: ro.why } : null;
     return [
       { label: tr("Open on the timeline"), onClick: () => openCutInTimeline(id), ...off },
-      { label: tr("Renamed"), onClick: () => setRenaming(id), ...off },
+      { label: tr("Rename"), onClick: () => setRenaming(id), ...off },
       {
         label: tr("Delete cut"), danger: true, disabled: rows.length <= 1,
         title: rows.length <= 1 ? tr("This is the last cut and cannot be deleted") : undefined,
@@ -117,7 +118,7 @@ export function useCutsGroup(q: string, flash: (text: string, ms?: number) => vo
 function CutThumb({ row }: { row: Row }) {
   return (
     <div className={`pc-lib-cut${row.active ? " is-on" : ""}`} aria-hidden="true">
-      <span className="pc-lib-cut-name">{row.name}</span>
+      <span className="pc-lib-cut-name">{shownName(row.name)}</span>
       <span className="pc-lib-cut-meta">{fmtDur(row.duration)}</span>
     </div>
   );
@@ -145,7 +146,7 @@ function CutTile({ row, canDelete, renaming, locked, why, onRename, onRenamed, o
       tabIndex={0}
       draggable={!renaming && !locked}
       aria-disabled={locked || undefined}
-      title={locked ? `${row.name} · ${fmtDur(row.duration)}${refs}\n${why}` : tr("{0} · {1}{2}\nClick to open on the timeline, drag onto a track to place a cut segment", row.name, fmtDur(row.duration), refs)}
+      title={locked ? `${shownName(row.name)} · ${fmtDur(row.duration)}${refs}\n${why}` : tr("{0} · {1}{2}\nClick to open on the timeline, drag onto a track to place a cut segment", shownName(row.name), fmtDur(row.duration), refs)}
       onClick={() => { if (!renaming && !locked) openCutInTimeline(row.id); }}
       onKeyDown={(e) => { if (!locked && !renaming && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openCutInTimeline(row.id); } }}
       onContextMenu={onContextMenu}
@@ -164,19 +165,19 @@ function CutTile({ row, canDelete, renaming, locked, why, onRename, onRenamed, o
           onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") commit(); else if (e.key === "Escape") onRenamed(); }}
           onClick={(e) => e.stopPropagation()} />
       ) : (
-        <span className="pc-lib-cut-name">{row.name}</span>
+        <span className="pc-lib-cut-name">{shownName(row.name)}</span>
       )}
       <span className="pc-lib-cut-meta">
         {tr("{0} · {1} segments{2}{3}", fmtDur(row.duration), row.clipCount, row.active ? tr(" · current") : "", row.referencedBy.length ? tr(" · referenced {0}", row.referencedBy.length) : "")}
       </span>
       <span className="pc-lib-cut-acts">
-        <button type="button" className="pc-lib-cut-act" data-pc="lib-cut-rename" title={locked ? why : tr("Renamed")} aria-label={tr("Rename {0}", row.name)}
+        <button type="button" className="pc-lib-cut-act" data-pc="lib-cut-rename" title={locked ? why : tr("Rename")} aria-label={tr("Rename {0}", shownName(row.name))}
           disabled={locked}
           onClick={(e) => { e.stopPropagation(); onRename(); }}>
           <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true"><path d="M3 13l1-3.5L11 2.5l2.5 2.5L6.5 12z" /></svg>
         </button>
         <button type="button" className="pc-lib-cut-act" data-pc="lib-cut-delete" disabled={!canDelete || locked}
-          title={locked ? why : canDelete ? tr("Delete this cut") : tr("This is the last cut and cannot be deleted")} aria-label={tr("Delete {0}", row.name)}
+          title={locked ? why : canDelete ? tr("Delete this cut") : tr("This is the last cut and cannot be deleted")} aria-label={tr("Delete {0}", shownName(row.name))}
           onClick={(e) => { e.stopPropagation(); onDelete(); }}>
           <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5" /></svg>
         </button>

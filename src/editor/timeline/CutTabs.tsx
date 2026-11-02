@@ -121,7 +121,7 @@ function Tab({ id, name, active, canClose, locked, why, editing, onEdit, onDone,
         tabIndex={0}
         aria-selected={active}
         className="pc-tl-cut-main"
-        title={editing ? undefined : locked ? `${name}\n${why}` : tr("{0}\nClick to switch, double-click to rename", name)}
+        title={editing ? undefined : locked ? `${shownName(name)}\n${why}` : tr("{0}\nClick to switch, double-click to rename", shownName(name))}
         aria-disabled={locked && !active ? true : undefined}
         onClick={() => { if (!locked && !editing && !active) actions.switchCut(id); }}
         onDoubleClick={() => { if (!locked) onEdit(); }}
