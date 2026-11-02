@@ -287,6 +287,6 @@ test("T7-gate-1: block only when the original-size media used on the timeline ha
   assert.deepEqual(missingOriginals(project, [h("1"), h("3")]), []);
   const msg = awaitingUploaderMessage(missingOriginals(project, []));
   assert.match(msg, /Waiting for uploader/);
-  assert.match(msg, /intro\.mov, outro\.mp4/);
+  assert.match(msg, /开场\.mov, 结尾\.mp4/);
   assert.doesNotMatch(msg, /unused/);
 });

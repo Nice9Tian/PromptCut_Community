@@ -154,8 +154,8 @@ test('Quota exhaustion is translated into plain language, without naming which r
 
 test('No API Key, no API URL, or overlong text are all blocked before the request is sent', async () => {
   const f = fakeFetch();
-  await assert.rejects(synthesize({ baseUrl: 'https://gw.test', apiKey: '', fetch: f }, { provider: 'minimax', text: 'x', voiceId: 'a' }), /API Key/);
-  await assert.rejects(synthesize({ baseUrl: '', apiKey: 'sk-test', fetch: f }, { provider: 'minimax', text: 'x', voiceId: 'a' }), /API URL/);
+  await assert.rejects(synthesize({ baseUrl: 'https://gw.test', apiKey: '', fetch: f }, { provider: 'minimax', text: 'x', voiceId: 'a' }), /No API key for voiceover yet/);
+  await assert.rejects(synthesize({ baseUrl: '', apiKey: 'sk-test', fetch: f }, { provider: 'minimax', text: 'x', voiceId: 'a' }), /No API address/);
   await assert.rejects(synthesize(ctx(f), { provider: 'kling', text: 'x'.repeat(1001), voiceId: 'ai_kaiya' }), /1000/);
   assert.equal(f.calls.length, 0);
 });
@@ -164,7 +164,7 @@ test('No API Key, no API URL, or overlong text are all blocked before the reques
 test('A voice that has not been registered sends no request: this prevents being charged ¥9.9 on the first synthesis', async () => {
   const cfg = { ...readVoiceConfig(), apiKey: 'sk-test' };
   const f = fakeFetch();
-  await assert.rejects(generateVoice({ cfg, args: { text: 'Hello', voiceId: 'someoneElsesVoice01' }, outDir: dir, fetch: f }), /not in minimax's available list/);
+  await assert.rejects(generateVoice({ cfg, args: { text: 'Hello', voiceId: 'someoneElsesVoice01' }, outDir: dir, fetch: f }), /is not in the available list for minimax/);
   assert.equal(f.calls.length, 0);
   assert.throws(() => resolveOptions(cfg, { text: 'x', provider: 'kling', speed: 0.5 }), /0.8~2/);
 });

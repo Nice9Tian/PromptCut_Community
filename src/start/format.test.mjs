@@ -49,7 +49,7 @@ test('PNAME-05 still colliding after all attempts: throw the last error, do not 
 });
 
 test('PNAME-06 names generated from a single sentence take the same path (names are at most 24 characters, with the suffix they stay within the 64-character limit)', () => {
-  const long = 'One'.repeat(24);
+  const long = 'x'.repeat(24);
   assert.ok([...nextProjectName(long, 4)].length <= 64);
   assert.ok([...nextProjectName(long, 5)].length <= 64);
 });

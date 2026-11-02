@@ -63,17 +63,17 @@ test("addPart: the default frame comes from the part, params are merged with def
 
 test("Validation: plain-language errors, and if one spot fails the whole tree is rejected", () => {
   assert.throws(() => addPart([], { partId: "nope" }, lookup), /No part with id "nope"/);
-  assert.throws(() => addPart([], { partId: "text-title", params: { size: "big" } }, lookup), /must be a number/);
+  assert.throws(() => addPart([], { partId: "text-title", params: { size: "big" } }, lookup), /needs a number/);
   assert.throws(() => addPart([], { partId: "text-title", params: { text: "" } }, lookup), /required/);
   assert.throws(() => addPart([], { partId: "text-title", params: { nope: 1 } }, lookup), /is not a parameter of part text-title/);
-  assert.throws(() => addPart([], { partId: "text-title", frame: { x: 1 } }, lookup), /frame.x \/ frame.y must be numbers/);
+  assert.throws(() => addPart([], { partId: "text-title", frame: { x: 1 } }, lookup), /frame\.x \/ frame\.y of .+ must be numbers/);
   assert.throws(() => addPart([], { partId: "text-title", enterMs: -1 }, lookup), /non-negative/);
   const { tree } = addPart([], { partId: "text-title", id: "a" }, lookup);
   assert.throws(() => addPart(tree, { partId: "text-title", id: "a" }, lookup), /already exists/);
   assert.throws(() => movePart(tree, "a", { parentId: "a" }), /its own subtree/);
-  assert.throws(() => removePart(tree, "zzz"), /Part instance not found/);
+  assert.throws(() => removePart(tree, "zzz"), /Part instance zzz not found/);
   // 整棵校验:第二个坏了第一个也不算
-  assert.throws(() => validatePartTree([{ id: "a", partId: "text-title", params: { text: "x" } }, { id: "a", partId: "text-title", params: { text: "y" } }], lookup), /duplicate/);
+  assert.throws(() => validatePartTree([{ id: "a", partId: "text-title", params: { text: "x" } }, { id: "a", partId: "text-title", params: { text: "y" } }], lookup), /Duplicate/);
   assert.throws(() => validatePartTree("nope", lookup), /must be an array/);
   const ok = validatePartTree([{ id: "a", partId: "text-title", params: { text: "x" }, frame: { x: 1, y: 2 }, enterMs: 0, children: [{ id: "b", partId: "list-pins", params: {} }] }], lookup);
   assert.equal(ok[0].enterMs, undefined, "0 is not stored");
@@ -149,5 +149,5 @@ test("A part's frame: the in-plane fields are accepted as usual, and no extra ke
 });
 
 test("A part's frame: unrecognized keys are still rejected with the old wording", () => {
-  assert.throws(() => validatePartFrame({ x: 0, y: 0, wat: 1 }, "Part a"), /unrecognized "wat"/);
+  assert.throws(() => validatePartFrame({ x: 0, y: 0, wat: 1 }, "Part a"), /does not recognize "wat"/);
 });

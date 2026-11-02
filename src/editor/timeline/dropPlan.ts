@@ -82,7 +82,7 @@ export function planTransition(
   const span = side === "fadeIn"
     ? { start: chk.clip.start, end: chk.clip.start + chk.dur }
     : { start: chk.clip.end - chk.dur, end: chk.clip.end };
-  return { plan: { kind: side, aId: chk.clip.id, dur: chk.dur }, status: "ok", hint: `${TRANSITION_LABEL[side]} ${chk.dur.toFixed(1)}s`, span };
+  return { plan: { kind: side, aId: chk.clip.id, dur: chk.dur }, status: "ok", hint: `${tr(TRANSITION_LABEL[side])} ${chk.dur.toFixed(1)}s`, span };
 }
 
 export function planDrop(

@@ -62,13 +62,13 @@ test('Thumbnails shown to the model (see_frames) carry rects on every frame, the
   assert.equal(out.get(30).width, 960, 'Images unchanged (thumbnail)');
   assert.equal(notes.length, 1);
   const lines = notes[0].split('\n');
-  assert.match(lines[0], /Stage 1920×1080 pixel coordinates \[x, y, w, h\], image scaled to 960×540/);
-  assert.match(lines[0], /solid is null = this card has no solid pixels right now/);
+  assert.match(lines[0], /pixel coordinates \[x, y, w, h\] on the 1920×1080 stage, Image was scaled down to 960×540/);
+  assert.match(lines[0], /solid null = this card has no solid pixels right now/);
   assert.deepEqual(lines.slice(1), [
     't=1s:',
     'title box=[0, 0, 1920, 1080] solid=[640, 400, 640, 120]',
     'blank box=[0, 0, 1920, 1080] solid=null',
-    't=2s: no clips in the picture.',
+    't=2s: no clips on screen.',
   ]);
 });
 
@@ -101,13 +101,13 @@ test('Failing to measure does not affect the image: record one line, rects is nu
   const out = await renderFrames(OUT, '', project, [1], notes, 1, { post: { shrink: true } });
   assert.equal(out.get(30).buf.length > 0, true);
   assert.equal(out.get(30).rects, null);
-  assert.match(notes[0], /Solid rectangles could not be measured \(Chrome crashed\), images are not affected/);
+  assert.match(notes[0], /Could not measure the entity rectangle \(Chrome crashed\); the image is not affected/);
 
   fakeService({ rects: () => new Map([[30, null]]) });
   const notes2 = [];
   const out2 = await renderFrames(OUT, '', project, [1], notes2, 1, { post: { shrink: true } });
   assert.equal(out2.get(30).rects, null);
-  assert.match(notes2[0], /t=1s: not measured./);
+  assert.match(notes2[0], /t=1s: could not be measured\./);
 });
 
 test('If the caller cancels, rethrow instead of swallowing it into a one-line note', async () => {
@@ -118,7 +118,7 @@ test('If the caller cancels, rethrow instead of swallowing it into a one-line no
 
 test('entityRectsNote: if the image was not scaled, say it matches the image pixels', () => {
   const note = entityRectsNote({ width: 1280, height: 720 }, 25, [[25, [{ clipId: 'a', box: [1, 2, 3, 4], solid: null }]]], { width: 1280, height: 720 });
-  assert.match(note, /Stage 1280×720 pixel coordinates \[x, y, w, h\], same as the image pixels/);
+  assert.match(note, /pixel coordinates \[x, y, w, h\] on the 1280×720 stage, Matches the image pixels/);
   assert.match(note, /\nt=1s:\na box=\[1, 2, 3, 4\] solid=null$/);
 });
 

@@ -11,7 +11,7 @@ test('A round that called send_message(to user): the bubble lists only these mes
 });
 
 test('No calls at all, only text replies: the text is treated as one "what I\'m doing" line; adjacent text is merged into one line, text separated by a tool stays separate', () => {
-  const m = { text: '', parts: [{ kind: 'text', text: 'OK' }, { kind: 'thinking', text: 'hmm' }, { kind: 'text', text: 'K' },
+  const m = { text: '', parts: [{ kind: 'text', text: 'O' }, { kind: 'thinking', text: 'hmm' }, { kind: 'text', text: 'K' },
     { kind: 'tool', name: 'get_project', input: {} }, { kind: 'text', text: '  ' }, { kind: 'text', text: 'Done.' }] };
   assert.deepEqual(sayingsOf(m).map(s => s.text), ['OK', 'Done.']);
   assert.deepEqual(sayingsOf({ text: 'Old record', tools: [] }).map(s => s.text), ['Old record'], 'Old record without parts');

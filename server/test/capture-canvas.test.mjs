@@ -237,7 +237,7 @@ test('there are other elements outside the canvas (the screenshot has an extra p
   assert.equal(record.last.pass, false);
   assert.ok(record.last.bad > record.last.badLimit, 'the number of clearly different pixels exceeded the limit');
   assert.equal(notes.length, 1);
-  assert.match(notes[0], /canvas direct capture did not pass.*screenshots as before/);
+  assert.match(notes[0], /Direct canvas capture failed.*screenshots as before/);
   assert.deepEqual([record.segments, record.frames], [0, 0]);
 });
 

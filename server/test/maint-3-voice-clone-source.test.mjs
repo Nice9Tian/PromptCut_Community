@@ -38,14 +38,14 @@ test('MNT3-V-1 the clone source file is recognized only by asset identifier: an 
   const resolve = async (m) => { seen.push(m); return m.hash === 'ab'.repeat(32) ? `http://asset.test/@media/${m.hash}` : null; };
   const real = path.join(TMP, 'real.wav');
   fs.writeFileSync(real, 'x');
-  await assert.rejects(voice.resolveCloneSource({ path: real, consent: true }, resolve), (e) => e instanceof VoiceError && /asset identifier/.test(e.message));
+  await assert.rejects(voice.resolveCloneSource({ path: real, consent: true }, resolve), (e) => e instanceof VoiceError && /media id/.test(e.message));
   assert.deepEqual(seen, [], 'Without an identifier the resolver is not even asked');
   // media 里夹带 path 也不看
   const ok = await voice.resolveCloneSource({ media: { hash: 'ab'.repeat(32), name: '我的声音.m4a', path: real } }, resolve);
   assert.deepEqual(ok, { src: `http://asset.test/@media/${'ab'.repeat(32)}`, label: '我的声音.m4a' });
   assert.equal(seen[0].path, undefined, 'The identifier the resolver receives has no path');
   await assert.rejects(voice.resolveCloneSource({ media: { hash: 'cd'.repeat(32), name: '没入库.wav' } }, resolve),
-    (e) => e instanceof VoiceError && /素材服务上没有这份素材:没入库\.wav/.test(e.message));
+    (e) => e instanceof VoiceError && /This media is not on the asset service: 没入库\.wav/.test(e.message));
   const down = async () => { throw new AssetSourceError('Asset service unreachable (http://127.0.0.1:9): ECONNREFUSED'); };
   await assert.rejects(voice.resolveCloneSource({ media: { hash: 'ab'.repeat(32) } }, down), (e) => e instanceof AssetSourceError);
 });
@@ -91,7 +91,7 @@ test('MNT3-V-2 a real asset service (in this process) + real ffmpeg: bytes are f
     await assert.rejects(voice.resolveCloneSource({ media: { hash: 'ee'.repeat(32), name: '没入库.wav' } }, resolve), (e) => e instanceof VoiceError);
     // 地址读不到时 prepareCloneAudio 报「源文件转音频失败」,不留临时文件
     const before = fs.readdirSync(os.tmpdir()).filter(n => n.startsWith(`pc-voice-clone-${process.pid}-`)).length;
-    await assert.rejects(voice.prepareCloneAudio(`${svc.origin}/@media/${'ee'.repeat(32)}`, { ffmpeg: FFMPEG }), (e) => e instanceof VoiceError && /Failed to convert the source file to audio/.test(e.message));
+    await assert.rejects(voice.prepareCloneAudio(`${svc.origin}/@media/${'ee'.repeat(32)}`, { ffmpeg: FFMPEG }), (e) => e instanceof VoiceError && /Failed to convert source file to audio/.test(e.message));
     await new Promise(r2 => setTimeout(r2, 50));
     assert.equal(fs.readdirSync(os.tmpdir()).filter(n => n.startsWith(`pc-voice-clone-${process.pid}-`)).length, before);
   } finally {

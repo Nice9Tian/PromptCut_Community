@@ -71,8 +71,8 @@ test('A2 The manifest recognizes three cases, not generated, stale and missing, 
     const needs = await listExportSoundNeeds(signal());
     const by = Object.fromEntries(needs.map(n => [n.clipId, n]));
     assert.equal(needs.length, 3);
-    assert.equal(by[a.id].kind, 'card'); assert.equal(by[a.id].reason, 'ungenerated'); assert.match(by[a.id].detail, /not yet generated/);
-    assert.equal(by[b.id].reason, 'stale'); assert.match(by[b.id].detail, /stale/);
+    assert.equal(by[a.id].kind, 'card'); assert.equal(by[a.id].reason, 'ungenerated'); assert.match(by[a.id].detail, /not generated yet/);
+    assert.equal(by[b.id].reason, 'stale'); assert.match(by[b.id].detail, /out of date/);
     assert.equal(by[effectId].kind, 'effect'); assert.equal(by[effectId].reason, 'missing'); assert.match(by[effectId].detail, /The asset service has no file/);
     assert.ok(needs.every(n => typeof n.label === 'string' && n.label.length > 0));
     actions.setClipMuted(a.id, true);
@@ -281,10 +281,10 @@ test('C1 Cut segment: the manifest walks into the referenced cut, items outside 
   const f = service();
   try {
     const { child, inner, outside, seg } = await nestedProject();
-    assert.throws(() => assertProjectCardAudio(getState().project), new RegExp(`Card audio of ${inner.id} is not generated yet`), 'Before the change: export fails outright and names the original clip');
+    assert.throws(() => assertProjectCardAudio(getState().project), new RegExp(`Card audio for ${inner.id}: not generated yet`), 'Before the change: export fails outright and names the original clip');
     const needs = await listExportSoundNeeds(signal());
     assert.deepEqual(needs.map(n => [n.clipId, n.cutId, n.kind, n.reason]), [[inner.id, child.id, 'card', 'ungenerated']]);
-    assert.match(needs[0].label, /in cut "剪辑2"/);
+    assert.match(needs[0].label, /in cut "Cut 2"/);
     assert.ok(!needs.some(n => n.clipId === outside.id), 'A clip outside the cut segment\'s window makes no sound, so no generation is needed');
     const activeBefore = getState().project.tracks;
     const result = await prepareExportSounds({ signal: signal() });

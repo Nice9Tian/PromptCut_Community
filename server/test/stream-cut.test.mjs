@@ -167,16 +167,16 @@ test('The message saved with the code block and the status line, on a cut-off, s
     const store = createCodeCacheStore({ dir, writer: 't' });
     const s = salvageTruncation([{ name: 'create_card', args: HALF_ARGS }], store, { cause: 'cut' });
     assert.equal(s.progress, true);
-    assert.match(s.note, /connection was cut off midway by the gateway/);
-    assert.match(s.note, /unrelated to the per-call output limit/);
-    assert.match(s.note, /cut off by the gateway, this call was not executed/);
+    assert.match(s.note, /was cut off midway: the gateway closed the connection/);
+    assert.match(s.note, /unrelated to the per-output limit/);
+    assert.match(s.note, /cut off by the gateway at line \d+ \(\d+ chars\); this call was not executed/);
     assert.match(s.note, /@code_cache:cut_create_card_1/);
-    assert.match(s.status, /^The model's reply was cut off midway by the gateway, halfway through writing.*saved into code block cut_create_card_1, and it has been asked to continue writing\.$/);
-    assert.doesNotMatch(s.status, /per-call output limit/);
+    assert.match(s.status, /^The model's reply was cut off midway by the gateway \(the gateway limits the duration of a single request\); the half-written .* was saved into code block cut_create_card_1, and the model has been told to continue\.$/);
+    assert.doesNotMatch(s.status, /per-output limit/);
     const empty = salvageTruncation([], store, { cause: 'cut' });
-    assert.match(empty.status, /cut off midway by the gateway.*no actions were executed/);
+    assert.match(empty.status, /cut off midway by the gateway.*and no action was executed/);
     // 写到上限的那种照旧
-    assert.match(salvageTruncation([], store).status, /exceeded the per-call output limit and was truncated/);
+    assert.match(salvageTruncation([], store).status, /exceeded the per-output limit and was truncated/);
   } finally { rm(dir); }
 });
 
@@ -193,18 +193,18 @@ test('Agent: stream_cut saves a code block and has the model continue writing, s
     const events = [];
     const agent = new Agent({ provider: scripted([cut]), system: 's', tools: [{ name: 'create_card', inputSchema: { type: 'object' }, execute: async () => ({ ok: true }) }], codeCache, onEvent: (e) => events.push(e) });
     await assert.rejects(agent.run('Make a card'), (err) => {
-      assert.match(err.message, /^The model's replies were cut off midway by the gateway 7 times in a row \(the gateway has a time limit per request\), so this round could not be completed\. The part already written is saved in code block cut_create_card_1/);
-      assert.doesNotMatch(err.message, /raise the per-call output limit/);
+      assert.match(err.message, /^The model's reply was cut off midway by the gateway 7 times in a row \(the gateway has a time limit per request\), so this round could not finish\. The part already written is stored in code block cut_create_card_1/);
+      assert.doesNotMatch(err.message, /raise the single-output limit/);
       return true;
     });
     const statuses = events.filter((e) => e.type === 'status').map((e) => e.text);
     assert.equal(statuses.length, 6, 'the first 6 times it was told to continue writing');
-    assert.match(statuses[0], /cut off midway by the gateway \(the gateway has a time limit per request\); half-written create_card/);
+    assert.match(statuses[0], /cut off midway by the gateway \(the gateway limits the duration of a single request\); the half-written create_card/);
     const diag = events.filter((e) => e.type === 'diagnostic' && e.stage === 'truncated');
     assert.equal(diag[0].data.cause, 'cut');
     // 第一次掐断后交给模型的话
     const notes = agent.history.get().filter((m) => m.role === 'user').flatMap((m) => m.content).filter((b) => b.type === 'text').map((b) => b.text);
-    assert.ok(notes.some((t) => /connection was cut off midway by the gateway/.test(t)));
+    assert.ok(notes.some((t) => /was cut off midway: the gateway closed the connection/.test(t)));
   } finally { rm(dir); }
 });
 
@@ -215,7 +215,7 @@ test('Agent: when cut-offs and hitting the limit are mixed, the message mentions
     const turn = (reason) => [{ type: 'tool_use_partial', id: 'p', name: 'create_card', args: HALF_ARGS }, { type: 'stop', reason }];
     const agent = new Agent({ provider: scripted([turn('stream_cut'), turn('length'), turn('stream_cut'), turn('length'), turn('stream_cut'), turn('length'), turn('length')]), system: 's',
       tools: [{ name: 'create_card', inputSchema: { type: 'object' }, execute: async () => ({ ok: true }) }], codeCache });
-    await assert.rejects(agent.run('Make a card'), /truncated 7 times in a row \(exceeded the per-call output limit or cut off midway by the gateway\)/);
+    await assert.rejects(agent.run('Make a card'), /truncated 7 times in a row \(it exceeded the single-output limit or was cut off midway by the gateway\)/);
   } finally { rm(dir); }
 });
 
@@ -379,7 +379,7 @@ async function fakeGateway(mode) {
       if (n === 2) {
         // 「模型」看到提示,知道写到哪了:接着写剩下的
         const note = JSON.stringify(json.messages.at(-1));
-        const written = /written to line \d+ \((\d+) characters\)/.exec(note);
+        const written = /at line \d+ \((\d+) chars\)/.exec(note);
         const at = written ? Number(written[1]) : 0;
         res.end(call('code_cache_append', JSON.stringify({ name: 'cut_create_card_1', text: FULL_SOURCE.slice(at) })) + finish('tool_calls'));
         return;
@@ -422,7 +422,7 @@ for (const mode of ['error-event', 'socket']) {
       assert.equal(gw.requests[0].max_tokens, 10000);
       // 第二次请求里交给模型的话说的是被网关掐断
       const note = JSON.stringify(gw.requests[1].messages.at(-1));
-      assert.match(note, /connection was cut off midway by the gateway/);
+      assert.match(note, /was cut off midway: the gateway closed the connection/);
       assert.match(note, /cut_create_card_1/);
       // 掐断那次的文字留在历史里
       assert.match(JSON.stringify(gw.requests[1].messages), /Let me create this card\./);
@@ -430,8 +430,8 @@ for (const mode of ['error-event', 'socket']) {
       assert.equal(created.length, 1, 'The attempt that was cut off was not executed');
       assert.equal(created[0].args.source, FULL_SOURCE, 'Card source is complete');
       const status = events.filter((e) => e.type === 'status').map((e) => e.text);
-      assert.ok(status.some((t) => /Cut off midway by the gateway \(the gateway has a time limit per request\); half-written create_card \(\d+ chars\) saved to code block cut_create_card_1/.test(t)), status.join('\n'));
-      assert.ok(!status.some((t) => /exceeded the single-output limit/.test(t)));
+      assert.ok(status.some((t) => /cut off midway by the gateway \(the gateway limits the duration of a single request\); the half-written create_card \(\d+ chars\) was saved into code block cut_create_card_1/.test(t)), status.join('\n'));
+      assert.ok(!status.some((t) => /exceeded the per-output limit/.test(t)));
       assert.ok(events.some((e) => e.type === 'diagnostic' && e.stage === 'stream-cut' && e.data.how === (mode === 'socket' ? 'connection' : 'error-event')));
       assert.ok(events.some((e) => e.type === 'diagnostic' && e.stage === 'truncated' && e.data.cause === 'cut'));
       assert.equal(events.find((e) => e.type === 'done')?.outcome, 'completed');

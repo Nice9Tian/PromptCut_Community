@@ -146,15 +146,15 @@ test("The placeholder shows the original name, without the missing marker", asyn
   editor({});
   await ingestUnhashedMedia({ background: true, markMissing: true }); await checkHashedMedia();
   const media = reopen(true);
-  assert.deepEqual(media.map(missingMaterialLabel), ["Scene: Interview (1).mp4", "narration.wav", "cover.png", "Scene: Interview (1).mp4"]);
+  assert.deepEqual(media.map(missingMaterialLabel), ["Scene: Interview (1).mp4", "narration.wav", "封面.png", "Scene: Interview (1).mp4"]);
 });
 
 test("Files from old versions that only got the Chinese \"(缺失) \" marker and lost their address: the record is added on open and the marker is not stacked", async () => {
   actions.newProject("旧标记-中文");
-  const m = actions.addMedia({ kind: "video", name: "(missing) old.mp4", url: "", hash: H("a") });
+  const m = actions.addMedia({ kind: "video", name: "(缺失) old.mp4", url: "", hash: H("a") });
   editor({});
   await checkHashedMedia();
-  assert.equal(get(m.id).name, "(missing) old.mp4");
+  assert.equal(get(m.id).name, "(缺失) old.mp4");
 });
 
 test("After media is found again, the record is cleared (the placeholder disappears): it is in the content store now, it was put back at the original path, or an old media without a hash can be fetched", async () => {

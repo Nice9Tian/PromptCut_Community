@@ -30,8 +30,8 @@ test("Expressions: only the allowlist is accepted, the JS runtime cannot be reac
     assert.throws(() => compileExpr(bad), FilterExprError, bad);
   }
   assert.throws(() => compileExpr("sin(1, 2)"), /1 argument/);
-  assert.throws(() => compileExpr("1 +"), /incomplete/);
-  assert.throws(() => compileExpr("(1"), /missing "\)"/);
+  assert.throws(() => compileExpr("1 +"), /Incomplete expression/);
+  assert.throws(() => compileExpr("(1"), /Missing "\)"/);
   assert.throws(() => compileExpr("1".repeat(301)), /too long/);
   assert.throws(() => compileExpr("amount"), /declared in params/);
   assert.equal(compileExpr("amount*2", ["t", "d", "p", "amount"]).fn({ amount: 3 }), 6);
@@ -50,12 +50,12 @@ test("Definition validation: kinds, ranges, parameters, trial evaluation", () =>
   assert.equal(isAnimated({ ops: [{ kind: "blur", value: "d/2" }] }), false, "Using only d does not vary with time");
 
   assert.throws(() => normalizeFilterDef({ name: "x", ops: [] }), /at least one step/);
-  assert.throws(() => normalizeFilterDef({ name: "x", ops: [{ kind: "vignette", value: 1 }] }), /unrecognized/);
-  assert.throws(() => normalizeFilterDef({ name: "x", ops: [{ kind: "constructor", value: 1 }] }), /unrecognized/);
-  assert.throws(() => normalizeFilterDef({ name: "x", ops: [{ kind: "saturate", value: 3 }] }), /0~2/);
+  assert.throws(() => normalizeFilterDef({ name: "x", ops: [{ kind: "vignette", value: 1 }] }), /is not recognized/);
+  assert.throws(() => normalizeFilterDef({ name: "x", ops: [{ kind: "constructor", value: 1 }] }), /is not recognized/);
+  assert.throws(() => normalizeFilterDef({ name: "x", ops: [{ kind: "saturate", value: 3 }] }), /between 0 and 2/);
   assert.throws(() => normalizeFilterDef({ name: "x", ops: [{ kind: "blur", value: "log(t)" }] }), /-Infinity/);
-  assert.throws(() => normalizeFilterDef({ name: "x", params: { t: 1 }, ops: [{ kind: "blur", value: 1 }] }), /duplicate name/);
-  assert.throws(() => normalizeFilterDef({ name: "x", params: { k: { default: 5, max: 1 } }, ops: [{ kind: "blur", value: 1 }] }), /exceeds/);
+  assert.throws(() => normalizeFilterDef({ name: "x", params: { t: 1 }, ops: [{ kind: "blur", value: 1 }] }), /not collide with/);
+  assert.throws(() => normalizeFilterDef({ name: "x", params: { k: { default: 5, max: 1 } }, ops: [{ kind: "blur", value: 1 }] }), /outside min~max/);
   assert.throws(() => normalizeFilterDef({ ops: [{ kind: "blur", value: 1 }] }), /name/);
 
   assert.deepEqual(normalizeClipParams(def, { amount: 5 }), { amount: 1 });
@@ -199,11 +199,11 @@ test("sendcmd script: frames whose values did not change send no command", () =>
     const bad = (ops, re) => assert.throws(() => F.normalizeFilterDef({ name: "x", ops }), re);
     bad([{ kind: "curves" }], /at least/);
     bad([{ kind: "curves", rgb: [0.5] }], /2~33/);
-    bad([{ kind: "curves", rgb: [0, 1.2] }], /0~1/);
+    bad([{ kind: "curves", rgb: [0, 1.2] }], /between 0 and 1/);
     bad([{ kind: "curves", rgb: [0, 1], value: 1 }], /does not use value/);
     bad([{ kind: "matrix", values: [1, 0, 0] }], /9 numbers/);
-    bad([{ kind: "matrix", values: [9, 0, 0, 0, 1, 0, 0, 0, 1] }], /-4~4/);
-    bad([{ kind: "matrix", values: [1, 0, 0, 0, 1, 0, 0, 0, 1], offset: [2, 0, 0] }], /-1~1/);
+    bad([{ kind: "matrix", values: [9, 0, 0, 0, 1, 0, 0, 0, 1] }], /between -4 and 4/);
+    bad([{ kind: "matrix", values: [1, 0, 0, 0, 1, 0, 0, 0, 1], offset: [2, 0, 0] }], /between -1 and 1/);
     bad(Array.from({ length: 5 }, () => ({ kind: "curves", rgb: [0, 0.5, 1] })), /at most 4 steps/);
   });
   test("curves: the lutrgb expression is exactly that piecewise linear table, and contains no commas", () => {

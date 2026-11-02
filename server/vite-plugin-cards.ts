@@ -565,7 +565,7 @@ export function translateCardSource(source: string): { source: string; rewrites:
 function provenance(source: string): { declared: boolean; looksVendored: boolean; header: string } {
   const header = source.split('\n').slice(0, 40).join('\n');
   return {
-    declared: /(?:来源|[Ss]ource)\s*[:：]/.test(header) || /@source\b|Source:\s*https?:/i.test(header), // i18n-allow
+    declared: /^\s*(?:\/\/+|\/?\*+)\s*(?:来源|source)\s*[:：]/im.test(header) || /@source\b|Source:\s*https?:/i.test(header), // i18n-allow
     // 只认别名和站点/仓库名,不认路径片段 —— 本地的 ../magicui/vendor/cn 也含 "magicui",那是我们自己的
     looksVendored: /@\/lib\/utils|@\/components\/|magicui\.design|magicuidesign|shadcn|aceternity|react-bits/i.test(source),
     header,
@@ -761,8 +761,8 @@ export function checkCardSource(
   }
   // mu- 是 Magic UI 的命名空间。手写的卡不能占;翻译器从 magicui.design 搬来、
   // 文件头声明了来源的可以用 —— 这样 id 前缀仍然可信:mu- 就是「来自 MagicUI」,不论谁搬的。
-  if (id.startsWith('mu-') && !/(?:来源|source)\s*[:：][^\n]*magicui/i.test(source.split('\n').slice(0, 40).join('\n'))) { // i18n-allow
-    errors.push('mu- 前缀留给 Magic UI 适配卡,换一个 id。(从 magicui.design 搬来、文件头写了「来源: …magicui…」的可以用。)');
+  if (id.startsWith('mu-') && !/^\s*(?:\/\/+|\/?\*+)\s*(?:来源|source)\s*[:：][^\n]*magicui/im.test(source.split('\n').slice(0, 40).join('\n'))) { // i18n-allow
+    errors.push('The mu- prefix is reserved for Magic UI adapter cards, pick another id. (Cards ported from magicui.design whose file header says "Source: …magicui…" are allowed.)');
   }
   // lottie- / particles- 是素材封装卡(src/cards/assets,由素材目录构建时生成)的命名空间,手写的卡不能占
   if (/^(lottie|particles)-/.test(id)) {

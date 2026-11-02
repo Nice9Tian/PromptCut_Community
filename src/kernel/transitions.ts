@@ -102,7 +102,7 @@ function clipName(p: Project, clipId: string): string {
   return clipId;
 }
 
-const KIND_LABEL: Record<TransitionKind, string> = { crossfade: "crossfade", fadeIn: "Fade in", fadeOut: "Fade out" };
+const KIND_LABEL: Record<TransitionKind, string> = { crossfade: "Crossfade", fadeIn: "Fade in", fadeOut: "Fade out" };
 
 /**
  * 这个片段的时间关系被转场锁住了吗?锁住了就返回一句能直接回给 Agent 的说明。
@@ -185,12 +185,12 @@ export function checkFade(
   const hit = findClipIn(p, clipId);
   if (!hit) return { ok: false, error: `Clip ${clipId} not found` };
   const already = transitionsOfClip(p, clipId).find((tr) => tr.kind === kind && tr.aId === clipId);
-  if (already) return { ok: false, error: `This clip already has a ${KIND_LABEL[kind]} (transitionId ${already.id})` };
+  if (already) return { ok: false, error: `This clip already has a ${KIND_LABEL[kind].toLowerCase()} (transitionId ${already.id})` };
   // 淡入只能加在开头、淡出只能加在结尾 —— 这是它们的定义,不是可选项。
   // 已经参与交叉溶解的那一端不能再叠一个淡化:同一端两套淡化会互相打架。
   const owner = fadeOwner(p, clipId, kind);
   if (owner) {
-    return { ok: false, error: `The ${kind === "fadeIn" ? "Start" : "end"} of this clip is already taken by a crossfade (transitionId ${owner.id}), so a ${KIND_LABEL[kind]} cannot be added` };
+    return { ok: false, error: `The ${kind === "fadeIn" ? "start" : "end"} of this clip is already taken by a crossfade (transitionId ${owner.id}), so a ${KIND_LABEL[kind].toLowerCase()} cannot be added` };
   }
   const d = clampDur(dur);
   const len = hit.clip.end - hit.clip.start;
@@ -234,7 +234,7 @@ export function planTransitionDrop(
 /** 给界面看的一行说明 */
 export function describeTransition(p: Project, tr: Transition): string {
   if (tr.kind === "crossfade") return `${clipName(p, tr.aId)} → ${clipName(p, tr.bId ?? "")} crossfade ${tr.dur.toFixed(1)}s`;
-  return `${clipName(p, tr.aId)} ${KIND_LABEL[tr.kind]} ${tr.dur.toFixed(1)}s`;
+  return `${clipName(p, tr.aId)} ${KIND_LABEL[tr.kind].toLowerCase()} ${tr.dur.toFixed(1)}s`;
 }
 
 export { KIND_LABEL as TRANSITION_LABEL };

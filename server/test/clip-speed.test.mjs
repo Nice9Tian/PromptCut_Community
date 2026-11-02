@@ -28,12 +28,12 @@ const fixture = () => ({
   media: [{ id: 'v1', kind: 'video', url: '/@media/v1.mp4', hash: 'h-v1', duration: 20 }, { id: 'a1', kind: 'audio', url: '/@media/a1.mp3', duration: 30 }],
   cardNodes: [{ id: 'n1', adapter: 'card', cardId: 'fx-tint', kind: 'filter', params: {}, inputs: { source: '@clip/v-fx/source' } }],
   tracks: [
-    { id: 't1', name: 'Track 1', clips: [{ id: 'c1', cardId: 'punch-pill', start: 0, end: 2, params: { text: 'a' } }] },
-    { id: 't2', name: 'Track 2', clips: [
+    { id: 't1', name: '序列 1', clips: [{ id: 'c1', cardId: 'punch-pill', start: 0, end: 2, params: { text: 'a' } }] },
+    { id: 't2', name: '序列 2', clips: [
       { id: 'v-plain', cardId: '', mediaId: 'v1', mediaOffset: 1.5, start: 0, end: 4, params: {} },
       { id: 'v-fx', cardId: '', mediaId: 'v1', mediaOffset: 0.2, start: 4, end: 8, params: {}, nodeId: 'n1' },
     ] },
-    { id: 't3', name: 'Track 3', clips: [{ id: 'a-1', cardId: '', mediaId: 'a1', mediaOffset: 3, start: 0, end: 10, params: {} }] },
+    { id: 't3', name: '序列 3', clips: [{ id: 'a-1', cardId: '', mediaId: 'a1', mediaOffset: 3, start: 0, end: 10, params: {} }] },
   ],
 });
 const DEFS = { 'fx-tint': { id: 'fx-tint', kind: 'filter', defaults: {}, card() {} }, 'punch-pill': { id: 'punch-pill', defaults: { text: '' } } };
@@ -339,7 +339,7 @@ test('store.setClipSpeed with a transition attached: the fade follows the two en
   assert.deepEqual([clip('a').fadeOut, clip('b').fadeIn, clip('a').fadeIn], [0.99, 0.99, 0.5], 'Fades at both ends change along, the 0.5-second fade-in fits and stays');
   assert.equal(getState().project.transitions.find((t) => t.id === 'x').dur, 0.99);
   const { speedChangeNotes } = await import('../../src/kernel/clipTime.mjs');
-  assert.match(speedChangeNotes(r, 'a'), /Crossfade shortened accordingly: 1\.00 s → 0\.99 s/);
+  assert.match(speedChangeNotes(r, 'a'), /crossfade shortened accordingly: 1\.00 s → 0\.99 s/);
   actions.undo();
   assert.deepEqual([span('a'), span('b'), clip('a').fadeOut, getState().project.transitions.find((t) => t.id === 'x').dur], [[0, 4], [3, 7], 1, 1], 'One undo step, the transition comes back too');
 

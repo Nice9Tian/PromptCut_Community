@@ -95,7 +95,7 @@ export async function waitForSubjects(
       await cancelSubjectJob(jobId);
       throw new Error(
         tr("Subject detection did not finish within {0} minutes and was canceled.", Math.round(timeoutMs / 60000))
-        + tr("You can reduce the sampling points (pass times yourself), or first confirm the tier with subject_status: the full tier is an order of magnitude slower than light."),
+        + tr(" You can reduce the sampling points (pass times yourself), or first confirm the tier with subject_status: the full tier is an order of magnitude slower than light."),
       );
     }
     const job = await pollSubjectJob(jobId);

@@ -190,7 +190,7 @@ export async function handoff(inst, { reason = '', hide = false } = {}) {
     message: (shell
       ? `The browser is now shown in the main editor window${reason ? `(${reason})` : ''}.`
       : `The browser window has been moved onto the user's screen${reason ? `(${reason})` : ''}.`)
-      + 'Stop now and tell the user in Chinese what to do and what to say when done. **Do not keep calling tools**, '
+      + 'Stop now and tell the user, in their language, what to do and what to say when done. **Do not keep calling tools**, '
       + 'and after the user replies, run web_view to see the current state.',
   };
 }

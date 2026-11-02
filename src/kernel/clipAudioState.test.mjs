@@ -103,7 +103,7 @@ test("The mute badge is always present and accessible, a narrow clip still carri
   for (const compact of [false, true]) {
     const html = renderToStaticMarkup(React.createElement(ClipMuteBadge, { reason: "Clip muted", label: "Motion graphics", compact }));
     assert.match(html, /data-pc="clip-muted"/);
-    assert.match(html, /aria-label="动效: Clip muted"/);
+    assert.match(html, /aria-label="Motion graphics: Clip muted"/);
     assert.match(html, /<svg/);
     assert.match(html, /Muted/);
   }

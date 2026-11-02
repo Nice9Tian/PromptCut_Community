@@ -77,8 +77,8 @@ export function licenseFullText(spdxId) {
   const p = path.join(LICENSE_DIR, `${spdxId}.txt`);
   if (!fs.existsSync(p)) {
     throw new Error(`No full license text for ${spdxId} (cannot find ${p}):`
-      + `MIT / Apache-2.0 / BSD-3-Clause all require the full text to ship with the distribution; naming the license is not enough.`
-      + `When adding a license, name the full text by its SPDX identifier and put it in desktop/scripts/licenses/.`);
+      + ` MIT / Apache-2.0 / BSD-3-Clause all require the full text to ship with the distribution; naming the license is not enough.`
+      + ` When adding a license, name the full text by its SPDX identifier and put it in desktop/scripts/licenses/.`);
   }
   return fs.readFileSync(p, "utf-8").replace(/\r\n/g, "\n").trimEnd();
 }
@@ -114,7 +114,7 @@ export const MODEL_META = {
     // 上游 LICENSE 是未填写的 Apache-2.0 模板，版权行只出现在源码文件头，逐字如此
     copyright: "Copyright 2026 Google LLC",
     note: "The official checkpoint is included as is, with no conversion or retraining. The official statement says the checkpoints are under Apache 2.0, same as the code."
-      + "(CoTracker3 was considered, but its whole repository is CC-BY-NC, which forbids commercial use and so cannot ship with the package; this model was used instead.)",
+      + " (CoTracker3 was considered, but its whole repository is CC-BY-NC, which forbids commercial use and so cannot ship with the package; this model was used instead.)",
   },
   yunet: {
     file: "yunet.onnx",
@@ -133,7 +133,7 @@ export const MODEL_META = {
       copyright: "Copyright (c) 2022-2026, Shiqi Yu <shiqi.yu@gmail.com>",
     }],
     note: "The official ONNX (face_detection_yunet_2023mar.onnx) is included as is, with no conversion or retraining."
-      + "The license is the LICENSE inside the model directory = MIT; the training upstream of the weights, ShiqiYu/libfacedetection.train, is BSD-3-Clause,"
+      + " The license is the LICENSE inside the model directory = MIT; the training upstream of the weights, ShiqiYu/libfacedetection.train, is BSD-3-Clause,"
       + "and the full text of both ships with the package. The terms of the WIDER FACE training dataset are non-commercial; the industry generally still distributes under the model's own license, so please assess this yourself before distributing.",
   },
   rtdetr: {
@@ -201,7 +201,7 @@ export function makeExtensions(src = {}) {
     models: [...light.models, model("bootstapir", src.bootstapir), model("dino", src.dino)],
     note: "On top of the Light tier, adds: motion tracking uses BootsTAPIR for arbitrary point tracking, which can re-identify targets after they turn, deform, or are occluded;"
       + "subject detection gains an open-vocabulary tier (Grounding DINO), which can find targets from any text prompt (for example \"red cup\")."
-      + "Includes PyTorch, so the package is much larger.",
+      + " Includes PyTorch, so the package is much larger.",
   };
 
   return {

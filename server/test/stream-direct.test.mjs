@@ -201,7 +201,7 @@ test('A card with other elements outside the canvas: the runtime comparison find
   assert.equal(on.status.direct.failed, 'differs');
   assert.deepEqual([on.status.direct.segments, on.status.direct.frames], [0, 0]);
   assert.ok(on.status.direct.last.bad > on.status.direct.last.badLimit);
-  assert.ok(on.producer.log.some(l => /canvas direct capture did not pass\(differs/.test(l.message)), 'One entry was recorded in the diagnostics');
+  assert.ok(on.producer.log.some(l => /Direct canvas capture failed \(differs/.test(l.message)), 'One entry was recorded in the diagnostics');
   for (const n of [0, 1]) assert.equal(Buffer.compare(on.bytes[n], off.bytes[n]), 0, `Segment ${n}: after falling back to screenshots, the output is the same as before`);
 });
 

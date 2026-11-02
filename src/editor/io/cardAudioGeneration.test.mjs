@@ -32,7 +32,7 @@ test('Actually samples into a persistent WAV, the original clip keeps its pictur
   const f = service();
   try {
     const clip = fresh(); const before = getState().project;
-    assert.equal(clip.embeddedAudio, true); assert.throws(() => audioPlanOf(before), /not yet generated/);
+    assert.equal(clip.embeddedAudio, true); assert.throws(() => audioPlanOf(before), /not generated yet/);
     const result = await generateCardAudio(clip.id);
     const project = getState().project, now = findClip(project, clip.id).clip;
     assert.equal(now.mediaId, undefined); assert.equal(now.cardId, def.id); assert.equal(project.tracks.flatMap(t => t.clips).length, 1);
@@ -96,9 +96,9 @@ test('Source and parameter updates make results stale; a late upload after cance
   const immediate = service();
   try {
     const clip = fresh(); await generateCardAudio(clip.id);
-    sourceVersion = 'v2'; assert.throws(() => persistentCardAudio(getState().project, findClip(getState().project, clip.id).clip), /stale/);
+    sourceVersion = 'v2'; assert.throws(() => persistentCardAudio(getState().project, findClip(getState().project, clip.id).clip), /out of date/);
     sourceVersion = 'v1'; actions.setClipParams(clip.id, { value: .4 });
-    assert.throws(() => audioPlanOf(getState().project), /stale/);
+    assert.throws(() => audioPlanOf(getState().project), /out of date/);
   } finally { immediate.restore(); }
 });
 test('Online only reuses the WAV and never runs the user\'s audio; a missing persistent sound fails explicitly', async () => {
@@ -114,7 +114,7 @@ test('Online only reuses the WAV and never runs the user\'s audio; a missing per
     assert.equal(persistentCardAudio(p, c).media.kind, 'audio'); assert.equal(generatedCardAudioClipsAt(p, .1).length, 1);
     await assert.rejects(() => renderEmbeddedCardWav(p, c, new AbortController().signal), /Online browser mode cannot yet run this card/);
     assert.equal(evaluations, count);
-    assert.throws(() => persistentCardAudio(p, { ...c, cardAudio: undefined }), /not yet generated/);
+    assert.throws(() => persistentCardAudio(p, { ...c, cardAudio: undefined }), /not generated yet/);
   } finally { delete globalThis.__pcOnlinePage; f.restore(); configureCardAudio({ getCard: id => id === def.id ? def : undefined, sourceVersionOf: () => sourceVersion }); }
 });
 test('Switching cards clears the old audio capability, and a failed validation leaves no cancelled task behind', async () => {
@@ -168,9 +168,9 @@ test('Oversized parameters are rejected before generating and uploading, protect
 test('An audio-visual card wrongly declared as the audio-only kind is rejected before adding, switching cards and adding to a new track', () => {
   const clip = fresh(); const p = getState().project;
   registerCards([{ ...def, id: 'invalid-av', kind: 'audio' }]);
-  assert.throws(() => actions.addCardClip('invalid-av', 1), /Audio-visual card cannot use kind:audio/);
-  assert.throws(() => actions.addClipOnNewTrack({ cardId: 'invalid-av', start: 1 }), /Audio-visual card cannot use kind:audio/);
-  assert.throws(() => actions.setClipCard(clip.id, 'invalid-av'), /Audio-visual card cannot use kind:audio/);
+  assert.throws(() => actions.addCardClip('invalid-av', 1), /Audio-visual cards cannot use kind:audio/);
+  assert.throws(() => actions.addClipOnNewTrack({ cardId: 'invalid-av', start: 1 }), /Audio-visual cards cannot use kind:audio/);
+  assert.throws(() => actions.setClipCard(clip.id, 'invalid-av'), /Audio-visual cards cannot use kind:audio/);
   assert.equal(getState().project, p);
 });
 
@@ -189,7 +189,7 @@ test('A source change in the standalone user audio media effect card upstream of
     setSyncedUserCards([{ id: root.id, name: 'root', embeddedAudio: true, audioSourceVersion: 'v1' }, { id: up.id, name: 'upstream', audioSourceVersion: 'v1' }]);
     assert.equal(persistentCardAudio(p, c).media.id, 'wav');
     setSyncedUserCards([{ id: root.id, name: 'root', embeddedAudio: true, audioSourceVersion: 'v1' }, { id: up.id, name: 'upstream', audioSourceVersion: 'v2' }]);
-    assert.throws(() => persistentCardAudio(p, c), /stale/);
+    assert.throws(() => persistentCardAudio(p, c), /out of date/);
   } finally {
     delete globalThis.__pcOnlinePage; setSyncedUserCards([]);
     configureCardAudio({ getCard: id => id === def.id ? def : undefined, sourceVersionOf: () => sourceVersion });

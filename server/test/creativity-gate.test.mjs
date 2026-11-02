@@ -55,8 +55,8 @@ test('CR-1 page side: set_project_meta with undeclared fields via the route tabl
   host.setProject(before);
   // 页面 mcpExecutor 走的就是这张路由表 → editorApi(与 Agent 服务端同一份实现)
   await assert.rejects(() => host.callRoute('set_project_meta', { name: 'New name', tracks: [] }), (err) => {
-    assert.match(err.message, /does not recognize these fields: tracks/);
-    assert.match(err.message, /the entire call was not executed/);
+    assert.match(err.message, /does not accept these fields: tracks/);
+    assert.match(err.message, /This call was not executed at all/);
     return true;
   });
   assert.equal(core.getState().project, before, 'The project object must not be replaced when rejected');
@@ -117,7 +117,7 @@ test('CR-3 server side: the executor rejects set_project_meta with undeclared fi
   const { link, commits } = fakeLink(baseProject());
   const executor = createAgentExecutor({ link, loadHost: () => loadSsrHost(load), toolGroups });
   const def = toolDef('set_project_meta');
-  await assert.rejects(() => executor.execute('set_project_meta', { name: 'x', cuts: [] }, 'conv-A', def, {}), /does not recognize these fields: cuts/);
+  await assert.rejects(() => executor.execute('set_project_meta', { name: 'x', cuts: [] }, 'conv-A', def, {}), /does not accept these fields: cuts/);
   assert.equal(commits.length, 0, 'A rejected call must not commit');
   await executor.execute('set_project_meta', { name: 'Renamed on server' }, 'conv-A', def, {});
   assert.equal(commits.length, 1);
@@ -146,7 +146,7 @@ test('CR-5 the strict check at the entry point only covers set_project_meta; CR-
   // 别的工具带多余参数不归这里管
   assert.deepEqual(undeclaredArgs('add_clip', toolDef('add_clip'), { cardId: 'x', start: 0, extra: 1 }), []);
   const msg = undeclaredArgsError('set_project_meta', def, ['creativity']);
-  assert.match(msg, /Unrecognized fields: creativity/);
+  assert.match(msg, /does not accept these fields: creativity/);
   assert.match(msg, /Agent cannot write/);
   assert.match(msg, /name, width, height, fps, duration, themeId/);
 });
@@ -209,14 +209,14 @@ test('CR-8 the rejection error states the current level, the required level, and
   const r = checkCreativity('create_card', { id: 'new-card', source: 'x' }, 'low', { source: 'Follows the project\'s default level' });
   assert.equal(r.ok, false);
   assert.deepEqual(r.creativity, { current: 'low', required: 'high', tool: 'create_card' });
-  assert.match(r.error, /currently "Low"/);
-  assert.match(r.error, /creating a new card requires "high"/);
-  assert.match(r.error, /follow the project's default level/);
+  assert.match(r.error, /currently at "Low"/);
+  assert.match(r.error, /Create a new card requires "High"/);
+  assert.match(r.error, /Follows the project's default level/);
   assert.match(r.error, /project settings/);
   assert.match(r.error, /AI panel/);
-  assert.match(r.error, /stop and tell the user/);
+  assert.match(r.error, /Stop and tell the user/);
   const m = checkCreativity('edit_card', { cardId: 'x' }, 'low');
-  assert.match(m.error, /requires "medium"/);
+  assert.match(m.error, /requires "Medium"/);
 });
 
 /* ------------------------------------------------------------------ CR-9 登记表 */
@@ -228,7 +228,7 @@ test('CR-9 session registry: a chat override takes priority over the project def
   // 覆盖优先
   assert.equal(s.creativityOf('conv-A', 'high').level, 'low');
   assert.equal(s.creativityOf('conv-A', 'medium').level, 'low');
-  assert.match(s.creativityOf('conv-A', 'high').source, /set separately for this chat/);
+  assert.match(s.creativityOf('conv-A', 'high').source, /Set for this chat only/);
   // 跟项目
   assert.equal(s.creativityOf('conv-B', 'medium').level, 'medium');
   assert.equal(s.creativityOf('conv-B', 'low').level, 'low');
@@ -245,7 +245,7 @@ test('CR-9 session registry: a chat override takes priority over the project def
   const d = s.creativityOf('skill-xyz', 'low');
   assert.equal(d.level, 'low');
   assert.equal(d.entry.type, 'desktop');
-  assert.match(d.source, /desktop app/);
+  assert.match(d.source, /Desktop app/);
   assert.equal(s.list().some((e) => e.id === 'skill-xyz'), false);
   // 桌面 APP 会话不收覆盖值
   s.register('desk', { type: 'desktop', vendor: 'claude', creativity: 'high' });
@@ -285,10 +285,10 @@ test('CR-11 measure_audio_js is allowed only at "high"; the low and medium tiers
     assert.equal(r.ok, false, level);
     assert.deepEqual(r.creativity, { current: level, required: 'high', tool: 'measure_audio_js' });
     assert.match(r.error, /measure_audio_js was not executed/);
-    assert.match(r.error, /writing custom measurement code requires "High"/);
-    assert.match(r.error, /stop and tell the user/);
+    assert.match(r.error, /Write custom measurement code requires "High"/);
+    assert.match(r.error, /Stop and tell the user/);
   }
-  assert.match(checkCreativity('measure_audio_js', args, 'low').error, /measurement uses built-in methods only/);
+  assert.match(checkCreativity('measure_audio_js', args, 'low').error, /measure only with built-in methods/);
   assert.equal(checkCreativity('measure_audio_js', args, 'high').ok, true);
   for (const level of CREATIVITY_LEVELS) assert.equal(checkCreativity('measure_audio', { clipId: 'c1' }, level).ok, true, `measure_audio @${level}`);
   assert.equal(toolDef('measure_audio_js')?.side, 'agent');

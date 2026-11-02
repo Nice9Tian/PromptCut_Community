@@ -141,5 +141,5 @@ test('generate fails or has a bad format: start throws a readable message', asyn
   await assert.rejects(createQrLogin({ fetchImpl: bad }).start(), /Request blocked/);
   const http = async () => ({ ok: false, status: 503, headers: new Headers(), json: async () => ({}) });
   await assert.rejects(createQrLogin({ fetchImpl: http }).start(), /HTTP 503/);
-  await assert.rejects(createQrLogin({ fetchImpl: bad }).start('youtube'), /no QR login/);
+  await assert.rejects(createQrLogin({ fetchImpl: bad }).start('youtube'), /no QR code login/);
 });

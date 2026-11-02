@@ -65,7 +65,7 @@ test('CL-1 cutLookView: without cutId it returns as is; with a parked cut it swa
   // 老项目(没有 cuts):只有剪辑1
   const old = { ...project(), cuts: undefined, activeCutId: undefined };
   assert.deepEqual(cutLookView(old).cut, { id: 'cut-1', name: 'Cut 1' });
-  assert.throws(() => cutLookView(old, 'cut-2'), /cannot find cut/);
+  assert.throws(() => cutLookView(old, 'cut-2'), /Cut "cut-2" not found/);
 });
 
 /** 执行器要的最小项目副本(只读工具用到的那几样) */
@@ -118,7 +118,7 @@ test('CL-2 executor see_frames: with cutId it renders the view of that cut witho
   assert.deepEqual(r1.cut, { id: 'cut-1', name: 'Cut 1' });
 
   posts.length = 0;
-  await assert.rejects(() => exec.execute('see_frames', { source: 'timeline', cutId: 'nope' }, 'a1', def), /cannot find cut "nope"/);
+  await assert.rejects(() => exec.execute('see_frames', { source: 'timeline', cutId: 'nope' }, 'a1', def), /Cut "nope" not found/);
   assert.equal(posts.length, 0, 'Nothing is rendered when the id does not exist');
 });
 
@@ -150,7 +150,7 @@ test('CL-3 the mirror path (no replica bound): with cutId it renders the view of
   assert.equal(posts[1].body.project, p);
   assert.equal(posts[1].body.t, 1);
   assert.deepEqual(r1.cut, { id: 'cut-1', name: 'Cut 1' });
-  await assert.rejects(() => inst.callTool('see_frames', { source: 'timeline', cutId: 'zz' }, 'a1'), /cannot find cut/);
+  await assert.rejects(() => inst.callTool('see_frames', { source: 'timeline', cutId: 'zz' }, 'a1'), /Cut "zz" not found/);
 });
 
 // 读的是闭源侧的 cloud/agent/account-runner.mjs；社区版没有 cloud/，这条跳过
@@ -210,7 +210,7 @@ test('CL-5 tool rename: the manifest has only the new name; the entry point acce
   await control.call('pause', {}, { projectId: 'p' });
   assert.deepEqual(sent.map((r) => [r.tool, r.args]), [['seek', { t: 2 }], ['pause', {}]]);
   const bad = await control.call('user_interface_seek', {}, { projectId: 'p' });
-  assert.match(bad.error, /user_interface_seek requires t/);
+  assert.match(bad.error, /user_interface_seek needs t/);
 
   // 本机:SSE 发给页面的 call 里是旧名;入口新旧名都认
   const { inst, routes } = await makeInstance();
@@ -250,13 +250,13 @@ test('CL-5 tool rename: the manifest has only the new name; the entry point acce
 test('CL-6 add_cut only creates and does not switch; set_cut_segment does not accept cutId; the playhead table for switching cuts is updated accordingly', () => {
   const addCut = tools.find((t) => t.name === 'add_cut');
   assert.equal('switch' in addCut.inputSchema.properties, false, 'add_cut drops the switch parameter');
-  assert.match(addCut.description, /creates but does not switch/);
+  assert.match(addCut.description, /Create only, no switch/);
   const setSeg = tools.find((t) => t.name === 'set_cut_segment');
   assert.deepEqual(Object.keys(setSeg.inputSchema.properties).sort(), ['clipId', 'cutOffset']);
-  assert.match(setSeg.description, /the referenced cut cannot be changed/);
+  assert.match(setSeg.description, /Which cut a cut segment references cannot be changed/);
   assert.deepEqual(Object.keys(PAGE_STATE_TOOLS).sort(), ['attach_clip_motion', 'remove_cut', 'user_interface_switch_cut']);
   assert.deepEqual([...CLOUD_PLAYHEAD_TOOLS].sort(), ['remove_cut', 'user_interface_switch_cut']);
   const switchCut = tools.find((t) => t.name === 'user_interface_switch_cut');
-  assert.match(switchCut.description, /changes the user's interface/);
-  assert.match(switchCut.description, /see_frames with cutId/);
+  assert.match(switchCut.description, /Acts on the user's interface/);
+  assert.match(switchCut.description, /pass cutId to see_frames/);
 });

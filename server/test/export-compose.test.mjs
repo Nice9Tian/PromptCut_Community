@@ -181,7 +181,7 @@ test("buildComposeArgs: emphasis on opaque media is not composited (it is croppe
   const layers = composeLayers(project).map((l) => ({ ...l, src: l.clip.id === "c2" ? null : `/m/${l.media.name}`, hasAlpha: false, colorSpace: "unknown" }));
   const { graph, notes, used } = buildComposeArgs({ width: 1920, height: 1080, fps: 30, startFrame: 0, endFrame: 1799, cardsPattern: "f/%06d.png", layers, out: "o.mp4" });
   assert.ok(!graph.includes("lutrgb"), "without alpha, no shadow is computed");
-  assert.ok(notes.some((n) => /emphasis of c4 was not composited/.test(n)));
+  assert.ok(notes.some((n) => /Emphasis of clip c4 was not composited/.test(n)));
   assert.ok(notes.some((n) => /b\.mp4.*no picture/.test(n)));
   assert.deepEqual(used.map((u) => u.clipId), ["c1", "c4"]);
   // 没标色彩空间的视频按 bt709 解
@@ -210,7 +210,7 @@ test("buildComposeArgs: an explicit confirmed-missing goes through the text prox
   assert.match(graph, /colorchannelmixer=aa=0\.6/);
   assert.match(graph, /fade=t=in/); assert.match(graph, /fade=t=out/);
   assert.deepEqual(used.map((x) => x.clipId), ["lost"]);
-  assert.deepEqual(sidecars, [{ file: "tmp/missing-2.txt", text: "找不到素材采访.mp4" }]);
+  assert.deepEqual(sidecars, [{ file: "tmp/missing-2.txt", text: "Media not found: 采访.mp4" }]);
   assert.deepEqual(notes, []);
 });
 

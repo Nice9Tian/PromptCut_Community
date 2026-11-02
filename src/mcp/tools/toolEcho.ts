@@ -150,7 +150,7 @@ export function createClipGuard(opts: ClipGuardOptions = {}) {
       if (b !== undefined && seq - b < freshWindow) {
         throw new Error(
           `clip ${args.clipId} was just created by you with add_clip (only ${seq - b} changes since then).` +
-            `To change it (parameters, time range, swapping the card) use update_clip; do not delete and recreate it, because recreating loses details not mentioned this time, ` +
+            ` To change it (parameters, time range, swapping the card) use update_clip; do not delete and recreate it, because recreating loses details not mentioned this time, ` +
             `and also invalidates the clipId you hold. If you really need to delete it, pass force:true and explain in reason.`,
         );
       }

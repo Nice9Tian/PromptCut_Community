@@ -176,8 +176,8 @@ test('CA-COL-02 outbound traffic goes only through the egress gate\'s proxy: loo
   assert.equal(a.imported.length, 0);
   const before = k.spawned.length;
   for (const url of ['file:///etc/passwd', 'ftp://example.com/a', '--exec=calc', '-o /tmp/x', 'javascript:alert(1)', '', 'http://a b', 'x'.repeat(3000)]) {
-    await assert.rejects(a.tools.collect_probe({ url }), /url must be http/, url);
-    await assert.rejects(a.tools.collect_download({ url }), /url must be http/, url);
+    await assert.rejects(a.tools.collect_probe({ url }), /url must be a web link starting with http/, url);
+    await assert.rejects(a.tools.collect_download({ url }), /url must be a web link starting with http/, url);
   }
   assert.equal(k.spawned.length, before, 'No subprocess was started for the invalid address');
 });
@@ -187,7 +187,7 @@ test('CA-COL-03 limits and cancellation: size, duration, wall clock; one member 
   const a = big.conversation('p-col', 'c3');
   const j1 = await a.tools.collect_download({ url: `${big.src}/slow` });
   // 同时只跑一个
-  await assert.rejects(a.tools.collect_download({ url: `${big.src}/clip.mp4` }), /already 1 download running/);
+  await assert.rejects(a.tools.collect_download({ url: `${big.src}/clip.mp4` }), /1 downloads are already running/);
   const r1 = await waitJob(a.tools, j1.jobId);
   assert.equal(r1.status, 'error');
   assert.match(r1.message, /exceeds the 0 MB limit|exceeds.*limit/);
@@ -199,7 +199,7 @@ test('CA-COL-03 limits and cancellation: size, duration, wall clock; one member 
   const long = await a.tools.collect_download({ url: `${big.src}/long` });
   const r2 = await waitJob(a.tools, long.jobId);
   assert.equal(r2.status, 'error');
-  assert.match(r2.message, /exceeds 2 hours/);
+  assert.match(r2.message, /longer than 2 hours/);
   assert.equal(a.imported.length, 0);
   const lp = await a.tools.collect_probe({ url: `${big.src}/long` });
   assert.equal(lp.tooLong, true);
@@ -224,14 +224,14 @@ test('CA-COL-04 / 05 when not installed on the node, each returns a clear reason
   const a = none.conversation('p-col', 'c6');
   const st = await a.tools.collect_status({});
   assert.deepEqual([st.ok, st.ready, st.ytdlp.installed], [true, false, false]);
-  assert.match(st.hint, /This cloud node does not have the collection tools installed/);
+  assert.match(st.hint, /This cloud node has no collection tool \(yt-dlp\) installed/);
   const inst = await a.tools.collect_install({});
   assert.deepEqual([inst.ok, inst.cloudUnavailable], [false, true]);
-  assert.match(inst.error, /Agent cannot install anything on the node/);
+  assert.match(inst.error, /The cloud does not let the Agent install anything on the node/);
   const dl = await a.tools.collect_download({ url: `${none.src}/clip.mp4` });
   assert.deepEqual([dl.ok, dl.cloudUnavailable], [false, true]);
-  await assert.rejects(a.tools.collect_probe({ url: `${none.src}/clip.mp4` }), /does not have the collection tools installed/);
-  await assert.rejects(a.tools.collect_search({ query: 'x' }), /does not have the collection tools installed/);
+  await assert.rejects(a.tools.collect_probe({ url: `${none.src}/clip.mp4` }), /has no collection tool \(yt-dlp\) installed/);
+  await assert.rejects(a.tools.collect_search({ query: 'x' }), /has no collection tool \(yt-dlp\) installed/);
   assert.equal(none.spawned.length, 0);
   assert.equal(none.collect.available, false);
 
@@ -247,7 +247,7 @@ test('CA-COL-06 / 07 the job table is split per instance; after a restart, "inte
   const a = k.conversation('p-a', 'c8');
   const other = k.conversation('p-b', 'c8');
   const j = await a.tools.collect_download({ url: `${k.src}/clip.mp4` });
-  await assert.rejects(other.tools.collect_job({ jobId: j.jobId }), /Cannot find this download job/, 'Another project\'s instance cannot look it up');
+  await assert.rejects(other.tools.collect_job({ jobId: j.jobId }), /This download job was not found/, 'Another project\'s instance cannot look it up');
   assert.equal((await waitJob(a.tools, j.jobId)).status, 'done');
   // 下载器报了作业目录以外的文件:不认、不入库
   fs.mkdirSync(path.join(a.ws.dir(), 'attachments'), { recursive: true });
@@ -266,8 +266,8 @@ test('CA-COL-06 / 07 the job table is split per instance; after a restart, "inte
   assert.equal((await again.tools.collect_job({ jobId: j.jobId })).status, 'done');
   const lost = await again.tools.collect_job({ jobId: 'collect-aaaaaaaaaaaa' });
   assert.deepEqual([lost.ok, lost.status], [false, 'error']);
-  assert.match(lost.message, /restarted, so this download was interrupted/);
-  await assert.rejects(again.tools.collect_job({ jobId: 'collect-ffffffffffff' }), /Cannot find/);
+  assert.match(lost.message, /restarted and this download was interrupted/);
+  await assert.rejects(again.tools.collect_job({ jobId: 'collect-ffffffffffff' }), /This download job was not found/);
 
   // CA-COL-07
   assert.equal(readCollectConfig({}, { root: ROOT }), null);

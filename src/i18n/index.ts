@@ -118,3 +118,13 @@ export function translate(target: Locale, source: string, args: ReadonlyArray<un
 export function tr(source: string, ...args: ReadonlyArray<unknown>): string {
   return translate(locale, source, args);
 }
+
+/*
+ * Server modules that also run in the page (server/auth/client.mjs, server/render-node/) translate
+ * through server/i18n.mjs: share this page's language and the table with it, through a global so
+ * the page does not import from server/. In Node the language here is English; requests bring their own.
+ */
+const shared = ((globalThis as Record<symbol, any>)[Symbol.for("promptcut.i18n")] ??= { translate: null, known: new Set(["en"]), locale: "en" });
+shared.translate = translate;
+shared.known = new Set(LOCALES.map((l) => l.id));
+shared.locale = locale;

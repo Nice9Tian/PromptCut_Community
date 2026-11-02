@@ -107,7 +107,7 @@ test("renameCut: trims whitespace, rejects an empty name", () => {
   const p = renameCut(normalizeCuts(three()), "cut-2", " Extras ");
   assert.equal(p.cuts[1].name, "Extras");
   assert.throws(() => renameCut(p, "cut-2", "  "), /cannot be empty/);
-  assert.throws(() => renameCut(p, "nope", "x"), /cannot find cut/);
+  assert.throws(() => renameCut(p, "nope", "x"), /Cut not found/);
 });
 
 test("resolveCut: by id or name, lists the existing ones when not found", () => {

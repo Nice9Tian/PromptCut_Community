@@ -752,7 +752,7 @@ function viewTrack(s: { ready: boolean; engine: "bootstapir" | "template" | null
     return {
       headline: tr("Not installed"),
       note: tr("Currently using numpy template matching as a fallback, which can still track: rigid, clearly textured targets are tracked very accurately;")
-        + tr("The target is lost if it turns, zooms, or stays blocked for long. Installing the extension is much more stable, but it downloads about 400 MB"),
+        + tr(" The target is lost if it turns, zooms, or stays blocked for long. Installing the extension is much more stable, but it downloads about 400 MB"),
       tone: "muted",
       offerInstall: true,
     };

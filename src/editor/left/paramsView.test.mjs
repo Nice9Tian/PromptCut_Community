@@ -61,11 +61,11 @@ test("PV-05 unrecognized controls are explained one by one: which one and why; o
   assert.equal(V.paramsSkippedText({ ...base }), null, "Old pages have no per-item records");
   assert.equal(V.paramsSkippedText({ ...base, controlsIncomplete: false, skippedControls: [{ reason: "x" }] }), null);
   const one = V.paramsSkippedText({ ...base, skippedControls: [{ key: "side", label: "Position", type: "select", reason: "dropdown is missing choices (options)" }] });
-  assert.equal(one, 'Unrecognized parameters: "Position" (side):下拉缺选项(options)');
+  assert.equal(one, 'Unrecognized parameters: "Position" (side):dropdown is missing choices (options)');
   const mixed = V.paramsSkippedText({ ...base, skippedControls: [{ key: "k", reason: "r1" }, { label: "Label only", reason: "r2" }, { reason: "spread X could not be fetched: the content store has no ./x file" }] });
-  assert.equal(mixed, 'Unrecognized parameters: k:r1;"只有标签":r2;a control:展开的 X 取不到:内容库里没有 ./x 这个文件');
+  assert.equal(mixed, 'Unrecognized parameters: k:r1;"Label only":r2;a control:spread X could not be fetched: the content store has no ./x file');
   const many = V.paramsSkippedText({ ...base, skippedControls: Array.from({ length: 7 }, (_, i) => ({ key: `k${i}`, reason: "r" })) });
-  assert.match(many, /k4:r; and 7 more$/);
+  assert.match(many, /k4:r; 7 in total$/);
   assert.ok(!many.includes("k5"));
   // 一个都没认出时,空白文案照旧,逐条说明另起一行(ParamsForm 画在它下面)
   assert.equal(V.paramsEmptyText({ ...base, controls: [], skippedControls: [{ reason: "r" }] }), PU.onlineUnsupported("changing this card's parameters"));

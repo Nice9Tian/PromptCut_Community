@@ -52,7 +52,7 @@ export function salvageTruncation(partials, store, { cause = 'length' } = {}) {
         saved.push({ tool, block, key: s.key, chars: s.text.length, lines: r.lines });
         lines.push(`In your call to ${tool}, parameter ${s.key} was ${cutWord} at line ${r.lines} (${s.text.length} chars); this call was not executed. The ${s.key} already written was saved in code block ${block}, ending with:\n${tailLines(s.text)}\n` +
           `To continue: use code_cache_append (name set to "${block}") to write the remaining part from where it broke off, and do not repeat what was already written; keep each append short (within a few hundred lines), since anything too long will be truncated too.` +
-          `After everything is written, call ${tool} again with parameter ${s.key} set to "${CODE_CACHE_REF}${block}"${rest}. If something is wrong, use code_cache_read / code_cache_replace to view and fix it.`);
+          ` After everything is written, call ${tool} again with parameter ${s.key} set to "${CODE_CACHE_REF}${block}"${rest}. If something is wrong, use code_cache_read / code_cache_replace to view and fix it.`);
         continue;
       }
       lines.push(`Your call to ${tool} was not finished, was not executed, and left no content that could be kept.`);

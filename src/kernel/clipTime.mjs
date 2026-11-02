@@ -200,7 +200,7 @@ export function withMediaRates(project, graph) {
   }) };
 }
 
-const TRANSITION_NAME = { crossfade: "crossfade", fadeIn: "Fade in", fadeOut: "Fade out" };
+const TRANSITION_NAME = { crossfade: "Crossfade", fadeIn: "Fade in", fadeOut: "Fade out" };
 
 /**
  * 改速度之后的那句说明(桌面编辑分区的提示与手机版的气泡共用):转场跟着缩了几秒、谁跟着挪了、后面推开了几段。

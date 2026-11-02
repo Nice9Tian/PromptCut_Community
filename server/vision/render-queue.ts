@@ -130,7 +130,7 @@ export function enqueue<T>(job: () => Promise<T>, priority = 0, queueTimeoutMs =
         renderWaiting.splice(at, 1);
         fail(new Error(
           `Waited more than ${Math.round(queueTimeoutMs / 1000)} seconds in the render queue without getting a turn (${renderRunning} still rendering ahead).`
-          + `This is not a problem with this card: look again in a while, or wait for the current export / prerender to finish.`,
+          + ` This is not a problem with this card: look again in a while, or wait for the current export / prerender to finish.`,
         ));
       }, queueTimeoutMs);
     }

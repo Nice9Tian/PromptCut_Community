@@ -34,7 +34,7 @@ function hostedWallNote(walls) {
   const names = { login: 'login form', captcha: 'verification code', qrcode: 'QR code login', consent: 'cookie consent bar' };
   return `This page has ${walls.map((w) => names[w] || w).join(', ')}.`
     + 'Do not handle logins, captchas or QR code scans yourself, and do not try to get around them: the Cloud Agent does not fill in passwords, captchas or any account credentials on your behalf.'
-    + 'When it can be handed to the user, use user_interface_web_handoff (it tells you explicitly if the initiator is offline); otherwise tell the user what happened and continue with a source that does not require login.'
+    + ' When it can be handed to the user, use user_interface_web_handoff (it tells you explicitly if the initiator is offline); otherwise tell the user what happened and continue with a source that does not require login.'
     + (walls.includes('captcha') ? 'A captcha must be clicked by the user.' : '');
 }
 

@@ -72,7 +72,7 @@ test("Page seePreview with cutId: sends the view of that cut without touching th
   assert.deepEqual(r1.cut, { id: "A", name: "Cut 1" });
 
   sent.length = 0;
-  await assert.rejects(() => visionHandlers.seePreview({ cutId: "Z" }), /Cannot find cut "Z"/);
+  await assert.rejects(() => visionHandlers.seePreview({ cutId: "Z" }), /Cut "Z" not found/);
   assert.equal(sent.length, 0);
 });
 
@@ -83,7 +83,7 @@ test("add_cut only creates and does not switch: the active cut and the interface
   assert.equal(getState().project.activeCutId, "A", "Not switched");
   assert.equal(r.activeCutId, "A");
   assert.ok(getState().project.cuts.some((c) => c.id === r.cut.id && c.name === "Cut 3"));
-  assert.match(r.note, /did not switch over/);
+  assert.match(r.note, /without switching to it/);
   const r2 = effectsHandlers.addCut({ name: "Cut 4", switch: true });
   assert.equal(getState().project.activeCutId, "A", "The old parameter switch:true no longer switches either");
   assert.ok(r2.cut.id);

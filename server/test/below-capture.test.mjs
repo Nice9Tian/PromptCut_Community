@@ -257,7 +257,7 @@ test('BD-crop hand out only one region: byte-for-byte identical to computing the
   for (let y = 0; y < crop.h; y++) whole.rgba.copy(expected, y * crop.w * 4, ((y + crop.y) * W + crop.x) * 4, ((y + crop.y) * W + crop.x + crop.w) * 4);
   assert.equal(Buffer.compare(part.rgba, expected), 0);
   assert.deepEqual([part.width, part.height], [12, 10]);
-  assert.throws(() => diffLayer(upper, lower, W, H, { crop: { x: 20, y: 0, w: 8, h: 4 } }), /not in the frame/);
+  assert.throws(() => diffLayer(upper, lower, W, H, { crop: { x: 20, y: 0, w: 8, h: 4 } }), /outside the frame/);
   assert.throws(() => diffLayer(upper.subarray(0, 100), lower, W, H), /smaller than the frame/);
 });
 
@@ -469,7 +469,7 @@ test('BD-stale the first screenshot after hiding shows the stale frame: the real
   assert.equal(record.primeLower, true);
   assert.equal(record.failed, null, 'Do not mark this stream as dead');
   assert.deepEqual(record.last, { frame: 0, lowerStable: false, upperStable: true });
-  assert.ok(notes.some(m => /two consecutive screenshots differ/.test(m)));
+  assert.ok(notes.some(m => /two consecutive captures differ/.test(m)));
   assert.equal(bakery.log.filter(op => op.startsWith('hide:')).length, bakery.log.filter(op => op.startsWith('show:')).length, 'Unhidden even on failure');
   // 重来:每张下张先丢一张,实测通过,交出来的那一层是对的
   const again = fakeBakery({ stale: true });
@@ -523,7 +523,7 @@ test('BD-rect the handed-out rectangle is smaller than the screenshot rectangle:
   });
   assert.equal(record.overflows, 1);
   assert.equal(record.failed, null);
-  assert.throws(() => belowSegmentCapture(fakeBakery(), { clipId: 'target', view: rect, rect: VIEW }), /not in the screenshot rectangle/);
+  assert.throws(() => belowSegmentCapture(fakeBakery(), { clipId: 'target', view: rect, rect: VIEW }), /not inside the screenshot rectangle/);
 });
 
 /* ------------------------------------------------------------ 接到生产者上 */

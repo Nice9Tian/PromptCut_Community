@@ -209,8 +209,8 @@ test('RH1 config parsing: single entry, array, missing fields throw an error; ma
 test('RH1 render-host: argument parsing and child process environment variables (contract section 2)', () => {
   assert.deepEqual(parseArgs(['--config', 'h.json']), { port: 5400, config: 'h.json', data: null, maxConcurrent: null, streams: false, verbose: false, cwd: null }, 'Default port 5400; --cwd (an isolated worker process uses its own checkout copy) is not given by default');
   assert.equal(parseArgs(['--port', '5403', '--max-concurrent', '2', '--streams']).port, 5403);
-  assert.throws(() => parseArgs(['--max-concurrent', '5']), /1-4/);
-  assert.throws(() => parseArgs(['--nope']), /unrecognized/);
+  assert.throws(() => parseArgs(['--max-concurrent', '5']), /1 to 4/);
+  assert.throws(() => parseArgs(['--nope']), /Unknown argument/);
   const env = hostEnv({ PATH: 'x', PROMPTCUT_CLUSTER_TOKEN: 'tok', PROMPTCUT_DOCSERVICE_URL: 'ws://x', PROMPTCUT_HEADLESS: '1', PROMPTCUT_PUSH: '0', PROMPTCUT_ROLE: 'prerender' },
     { config: 'cfg/host.json', data: path.resolve('d'), streams: false, maxConcurrent: 2 });
   assert.equal(env.PROMPTCUT_QUEUE_NODE, '1');

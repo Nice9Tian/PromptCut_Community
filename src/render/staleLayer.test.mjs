@@ -93,7 +93,7 @@ test("SL-1 parameter change: the old layer is removed immediately, shows an hour
   // 同步撤掉:不等下一轮轮询
   assert.deepEqual(layerOf(index, "a", "html"), { clipId: "a", kind: "html", key: "KA1", ranges: [] }, "Old layer removed (ready sends empty)");
   assert.deepEqual(layerOf(index, "b", "html").ranges, [[0, 59]], "Unchanged clips are still applied");
-  await assert.rejects(src.fetchSnapshot("html", "KA1", 3), /no such frame/, "Bytes of the old layer are no longer served");
+  await assert.rejects(src.fetchSnapshot("html", "KA1", 3), /No small-size prerender for this frame/, "Bytes of the old layer are no longer served");
   assert.equal(src.frameConfirmedMissing("a", 10), false, "New result in transit: unconfirmed (hourglass)");
   assert.equal(src.coverage("a"), "unknown", "The timeline shows no badge");
   assert.ok(coverageCalls() > before, "Coverage subscriber is called (parent page recomputes the icon)");
@@ -156,7 +156,7 @@ test("SL-4 fetching the original size (v 3 candidate) is likewise withdrawn; lay
   const p1 = { ...p0, tracks: p0.tracks.map((tr) => ({ ...tr, clips: tr.clips.map((c) => (c.id === "b" ? { ...c, params: { k: 2 } } : c)) })) };
   src.setInputs(p1);
   assert.deepEqual(layerOf(index, "b", "html").ranges, [], "built-in heavy card had parameters changed: old layer withdrawn (playback placeholder, live render paused)");
-  await assert.rejects(src.fetchSnapshot("html", "KB1", 0), /no prerender original size for this frame/);
+  await assert.rejects(src.fetchSnapshot("html", "KB1", 0), /No full-size prerender for this frame/);
 
   const table = { v: 3, kind: "layer-map", projectId: "p1", fps: 30, span: 60, layers: [layer("b", "KB1", sigB)] };
   assert.equal(layerRefOf(table, "b", { inputSig: sigB })?.key, "KB1");

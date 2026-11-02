@@ -177,7 +177,7 @@ test('SM-4 port discovery: arguments / environment variables take priority; a mi
   assert.match(dead.message, /not running.*424242.*5881/);
   const bad = path.join(TMP, 'bad-port.json');
   fs.writeFileSync(bad, '{ broken');
-  assert.match(discoverEditor({ env: { PROMPTCUT_PORT_FILE: bad }, argv: [] }).message, /cannot be read/);
+  assert.match(discoverEditor({ env: { PROMPTCUT_PORT_FILE: bad }, argv: [] }).message, /Cannot read PromptCut's port file/);
   const live = discoverEditor({ env: { PROMPTCUT_PORT_FILE: portFile(5882) }, argv: [] });
   assert.deepEqual([live.ok, live.port, live.hosts[0]], [true, 5882, '127.0.0.1']);
   assert.equal(discoverEditor({ env: { PROMPTCUT_PORT: '5883', PROMPTCUT_PORT_FILE: portFile(5882) }, argv: [] }).port, 5883, 'The port from the environment variable takes priority over the port file');
@@ -253,7 +253,7 @@ test('SM-6 an entry with the same name already exists: registering overwrites it
   fs.writeFileSync(file, JSON.stringify(doc));
   const refused = reg.unregister('claude-code', WANT, opts);
   assert.equal(refused.ok, false);
-  assert.match(refused.error, /has already been modified/);
+  assert.match(refused.error, /has been modified/);
   // 原文件不存在
   const fresh = path.join(dir, 'fresh', '.claude.json');
   const o2 = { configPath: fresh, stateDir: path.join(dir, 'state2') };
@@ -314,7 +314,7 @@ test('SM-7 registering with Codex (TOML): touches only the [mcp_servers.promptcu
   // 别的写法
   const odd = path.join(dir, 'odd.toml');
   fs.writeFileSync(odd, '[mcp_servers]\npromptcut = { command = "x" }\n');
-  assert.throws(() => reg.register('codex', WANT, { configPath: odd, stateDir: path.join(dir, 's3') }), /other forms/);
+  assert.throws(() => reg.register('codex', WANT, { configPath: odd, stateDir: path.join(dir, 's3') }), /in another form/);
 
   // 默认路径:环境变量覆盖;测试进程里指的是临时目录
   assert.equal(reg.configPathOf('codex'), process.env.PROMPTCUT_CODEX_CONFIG);
@@ -335,7 +335,7 @@ test('SM-8 the creativity level of a desktop session follows the project: the ov
   assert.deepEqual([e.type, e.vendor, e.label, e.client.name, e.override], ['desktop', 'claude-code', 'Claude Code', 'claude-code', null]);
   const low = s.creativityOf('desk-A', 'low');
   assert.equal(low.level, 'low');
-  assert.match(low.source, /desktop app sessions follow the project/);
+  assert.match(low.source, /Desktop app sessions follow the project/);
   assert.equal(checkCreativity('create_card', { id: 'new-card', tsx: 'x' }, low.level, { cardExists: () => false }).ok, false);
   assert.equal(checkCreativity('create_card', { id: 'new-card', tsx: 'x' }, s.creativityOf('desk-A', 'high').level, { cardExists: () => false }).ok, true);
   assert.equal(s.creativityOf('desk-A', 'medium').level, 'medium', 'When the project changes its level, the desktop session changes with it');
@@ -363,9 +363,9 @@ test('SM-9 the A3 notice appears in the desktop session result: another desktop 
     b.noteCommit({ rev: 2, opId: 'op1', actor: { role: 'agent', session: 'agent:desk-B' }, before: p0, after: p1 });
     return { ok: true, id: 'x' };
   });
-  assert.match(w.notice, /This write falls within a scope another Agent is editing: Agent desk-A\(Claude Code\)/);
+  assert.match(w.notice, /This write falls within a scope another Agent is editing: "Cut 1->Track 2" that Agent desk-A\(Claude Code\)/);
   const a = await r.ma.wrap('desk-A', 'get_clip', async () => ({ ok: true }));
-  assert.match(a.notice, /Someone is editing the scope you declared: Agent desk-B\(Codex\) used add_clip to change cut1->track2/);
+  assert.match(a.notice, /Someone else is editing a scope you declared: Agent desk-B\(Codex\) using add_clip changed Cut 1->Track 2/);
   // 消息:没有页签可投,带在它下一次工具结果里
   b.deliver({ from: 'desk-B', to: 'desk-A', text: 'I\'ll edit track2' });
   const m = await r.ma.wrap('desk-A', 'get_project', async () => ({ ok: true }));
@@ -381,7 +381,7 @@ test('SM-10 the A2 "user is editing" notice appears in the desktop session resul
   const cur = editing.current();
   const out = annotateResult({ ok: true }, { userEditing: userEditingFor({ tool: 'update_clip', args: { clipId: 'c1' }, editing: cur }) });
   assert.equal(out.userEditing[0].clipId, 'c1');
-  assert.match(out.notice, /user is editing/);
+  assert.match(out.notice, /User is editing/);
   const whole = annotateResult({ ok: true }, { userEditing: userEditingFor({ tool: 'get_project', args: {}, editing: cur }) });
   assert.equal(whole.userEditing.length, 1);
   const other = annotateResult({ ok: true }, { userEditing: userEditingFor({ tool: 'update_clip', args: { clipId: 'c9' }, editing: cur }) });

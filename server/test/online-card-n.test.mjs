@@ -36,7 +36,9 @@ const USER = 'zoe@devA';
 /* ================================================================== OCN-01 */
 
 test('OCN-01 splitting and result keys of built-in cards are unchanged to the last character: for the eleven split outputs, the task count, digest and each result key match the literal values from before the change one by one', () => {
-  const golden = JSON.parse(fs.readFileSync(new URL('./online-card-n-golden.json', import.meta.url), 'utf8'));
+  const labelMap = { '无浏览器': 'no browser', '浏览器指纹(docservice 给的)': 'browser fingerprint (given by docservice)', '浏览器指纹等于自己': 'browser fingerprint equals its own', 'browser 对象写法': 'browser object form', '锁在第三种环境': 'locked to a third environment', '锁在第三种环境并接手': 'locked to a third environment, with takeover', '预渲染重试档': 'prerender retry lane', '改过源码的内置卡': 'builtinCardWithModifiedSource', '含本地素材': 'includes local media', '有流': 'has streams', '指纹函数': 'fingerprint function' }; // i18n-allow
+  const rawGolden = JSON.parse(fs.readFileSync(new URL('./online-card-n-golden.json', import.meta.url), 'utf8'));
+  const golden = Object.fromEntries(Object.entries(rawGolden).map(([k, v]) => [labelMap[k] ?? k, v]));
   const now = runBattery();
   assert.deepEqual(Object.keys(now).sort(), Object.keys(golden).sort(), 'the labels of the comparison cases are complete');
   let keys = 0;

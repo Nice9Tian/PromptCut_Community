@@ -204,7 +204,7 @@ test('RLY-01 relay: send over HMR, fulfill when the page hands the ticket back; 
 
   const q = relay.request('P1');
   relay.answer({ reqId: sent[1].reqId, error: 'This page is not connected to this shared project' });
-  await assert.rejects(q, (e) => e.code === 'page-refused' && /did not issue/.test(e.message));
+  await assert.rejects(q, (e) => e.code === 'page-refused' && /Page failed to sign a ticket/.test(e.message));
   const r = relay.request('P1');
   relay.answer({ reqId: sent[2].reqId, ticket: 'has space' });
   await assert.rejects(r, (e) => e.code === 'page-refused');

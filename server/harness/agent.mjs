@@ -156,7 +156,7 @@ export class Agent {
       lastRound = round;
       const summarizing = !!summaryReason;
       // 上一轮刚放完 tool_result(那是一条 user),这里直接 append 就又是两条连着的 user
-      if (summarizing) this.history.appendUserText(`Execution paused: ${summaryReason}. Do not call any more tools; in Chinese only, describe what is done, what is not done, the blockers and the next steps. Never describe an unfinished task as successful.`);
+      if (summarizing) this.history.appendUserText(`Execution paused: ${summaryReason}. Do not call any more tools; in the user's language, describe what is done, what is not done, the blockers and the next steps. Never describe an unfinished task as successful.`);
       // 进度这一行只给屏幕看,不进模型上下文。不限轮次时不写分母,省得出现「第 3/Infinity 轮」
       const roundText = Number.isFinite(this.maxIterations) ? `Round ${round}/${this.maxIterations}` : `Round ${round}`;
       progress(round, summarizing ? 'summarizing' : 'requesting', summarizing ? 'Summarizing results and unfinished items…' : `${roundText}: waiting for the model response…`);
@@ -372,7 +372,7 @@ export class Agent {
           if (mark === 'quarter') budgetSent.add('half');
           budgetNote = mark === 'half'
             ? `${left} model round trips left (one round = one reply from you, no matter how many tools it calls).`
-              + 'From now on, first land the smallest deliverable version in the project (create the card → add_clip onto the timeline → take a look), then come back to polish; '
+              + ' From now on, first land the smallest deliverable version in the project (create the card → add_clip onto the timeline → take a look), then come back to polish; '
               + 'Anything written in a code block and not yet handed to a tool does not count as delivered. Write what you run out of time for into the todo of report_progress.'
             : `Only ${left} model round trips left. Immediately submit what you have already written (card source in a code block → create_card → add_clip), `
               + 'Do not start any new large piece of work; after submitting, call report_progress with final set to true to wrap up, and list everything unfinished one by one in todo.';

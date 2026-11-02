@@ -55,8 +55,8 @@ test("blocked: implies final; when false / omitted, this flag does not appear at
 
 test("In the recap summary of blocked, \"waiting for the user\" must be kept, otherwise after a model switch it will assume it can carry on by itself", () => {
   assert.equal(reportText({ final: true, blocked: true, done: [], todo: ["Do this step on the computer"], problems: ["The cloud cannot read the media"] }),
-    "To do: 到电脑上做这一步; Issues: 云端读不了素材 (stopped, waiting for the user to reply)");
-  assert.equal(reportText({ final: true, done: ["Added captions"], todo: [], problems: [] }), "Done: 加了字幕");
+    "To do: Do this step on the computer; Issues: The cloud cannot read the media (stopped, waiting for the user to reply)");
+  assert.equal(reportText({ final: true, done: ["Added captions"], todo: [], problems: [] }), "Done: Added captions");
   assert.equal(reportText({ final: true, blocked: true, done: [], todo: [], problems: [] }), "", "An empty report must not leave behind just a parenthetical remark");
 });
 
@@ -70,8 +70,8 @@ test("Tool names: the bare name and each provider's prefix are accepted, near-mi
 });
 
 test("Parsing: both objects and JSON strings work, entries are trimmed and empty strings dropped", () => {
-  const input = { final: true, stage: " Place captions ", has_done: true, done: [" Added captions ", ""], todo: [], problems: ["Background noise"] };
-  const want = { final: true, stage: "Place captions", done: ["Added captions"], todo: [], problems: ["Background noise"] };
+  const input = { final: true, stage: " Captions ", has_done: true, done: [" Added captions ", ""], todo: [], problems: ["Background noise"] };
+  const want = { final: true, stage: "Captions", done: ["Added captions"], todo: [], problems: ["Background noise"] };
   assert.deepEqual(parseProgressReport(input), want);
   assert.deepEqual(parseProgressReport(JSON.stringify(input)), want);
 });
@@ -99,7 +99,7 @@ test("reportsOf: in parts order, skipping other tools; when there are no parts, 
 test("reportText: join only the non-empty groups, include the stage name when there is one", () => {
   assert.equal(
     reportText({ final: true, stage: "Background music", done: ["Added background music", "Lowered the vocals"], todo: [], problems: ["The ending is too abrupt"] }),
-    "[配乐] Done: 加了配乐, 压了人声; Issues: 结尾太突兀",
+    "[Background music] Done: Added background music, Lowered the vocals; Issues: The ending is too abrupt",
   );
   assert.equal(reportText({ final: true, done: [], todo: [], problems: [] }), "");
 });

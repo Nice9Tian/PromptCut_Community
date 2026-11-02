@@ -137,7 +137,7 @@ export function createCollect({ config = null, egress, limits: limitsIn = {}, lo
     const ev = [...events].reverse().find((e) => e.event === 'error');
     if (typeof ev?.message === 'string' && ev.message) return ev.message.slice(0, 300);
     const useful = [...stderrTail].reverse().find((l) => /error|失败|找不到|failed|cannot find|not found|refused|forbidden/i.test(l)); // i18n-allow
-    return (useful || `采集进程退出码 ${code}`).slice(0, 300);
+    return (useful || `Collection process exit code ${code}`).slice(0, 300);
   };
 
   /**

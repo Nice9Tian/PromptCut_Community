@@ -173,7 +173,7 @@ test("throw if the patch does not match the baseline (so the mirror turns it int
   assert.throws(() => applyProjectPatch(a, { kind: "tracks", order: null, tracks: [{ id: "nope", props: {} }] }), /nonexistent track/);
   assert.throws(() => applyProjectPatch(a, { kind: "tracks", order: ["nope"], tracks: [] }), /nonexistent track/);
   assert.throws(() => applyProjectPatch(a, { kind: "tracks", order: null, tracks: [{ id: "t1", clipOrder: ["nope"] }] }), /nonexistent clip/);
-  assert.throws(() => applyProjectPatch(a, { kind: "weird" }), /unknown patch type/);
+  assert.throws(() => applyProjectPatch(a, { kind: "weird" }), /Unknown patch type/);
   assert.equal(applyProjectPatch(a, null), a);
 });
 

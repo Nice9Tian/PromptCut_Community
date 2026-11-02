@@ -135,7 +135,7 @@ test('expect does not match: echo expect back verbatim so the model knows what i
     ok: false, reason: 'expect_mismatch', expect: 'Log in',
     cands: [{ u: 'e1', n: 'Sign up', t: 'a', b: [0, 0, 10, 10], d: 4 }],
   });
-  assert.match(msg, /login|logged in/);
+  assert.match(msg, /Log in/);
   assert.match(msg, /Sign up/);
 });
 
@@ -206,7 +206,7 @@ test('web_handoff moves the window into view and explicitly requires the agent t
   assert.equal(r.ok, true);
   assert.equal(r.visible, true);
   assert.match(r.message, /Bilibili QR code login/);
-  assert.match(r.message, /not continue calling tools/, 'The agent must stop and wait for a person, and must not keep clicking on its own');
+  assert.match(r.message, /Do not keep calling tools/, 'The agent must stop and wait for a person, and must not keep clicking on its own');
 
   // 实测 Windows 上直接挪回屏幕内窗口仍是隐藏的:必须先 minimized 再 normal(见 showWindow 注释)
   assert.equal(calls[0].s, 'minimized', 'The first step must be minimized, otherwise the window cannot be seen even if its position is right');
@@ -393,7 +393,7 @@ test('In shell mode handoff carries the shell flag, and the wording no longer sa
   const r = await session.handoff(inst, { reason: 'Log in' });
   assert.equal(r.shell, true);
   assert.equal(r.visible, true);
-  assert.match(r.message, /in the main window/);
+  assert.match(r.message, /in the main editor window/);
   const h = await session.handoff(inst, { hide: true });
   assert.equal(h.shell, true);
   assert.equal(h.visible, false);

@@ -219,15 +219,15 @@ test('code block tools: write, append, read by line / by character, replace, lis
     assert.equal((await t.code_cache_read.execute({ name: 'card', start: 6, end: 11 })).text, 'line2');
     const rep = await t.code_cache_replace.execute({ name: 'card', old: 'line3', new: 'LINE-3' });
     assert.equal(rep.replaced, 1);
-    await assert.rejects(t.code_cache_replace.execute({ name: 'card', old: 'line', new: 'x' }), /appears 3 times/);
+    await assert.rejects(t.code_cache_replace.execute({ name: 'card', old: 'line', new: 'x' }), /occurs 3 times/);
     assert.equal((await t.code_cache_replace.execute({ name: 'card', old: 'line', new: 'L', all: true })).replaced, 3);
-    await assert.rejects(t.code_cache_replace.execute({ name: 'card', old: 'nope', new: 'x' }), /not found/);
+    await assert.rejects(t.code_cache_replace.execute({ name: 'card', old: 'nope', new: 'x' }), /Could not find the original text old/);
     const list = await t.code_cache_list.execute({});
     assert.equal(list.blocks.length, 1); assert.equal(list.blocks[0].name, 'card'); assert.equal(list.blocks[0].by, 'conv-1');
-    await assert.rejects(t.code_cache_write.execute({ name: '../x', text: 'a' }), /invalid name/);
+    await assert.rejects(t.code_cache_write.execute({ name: '../x', text: 'a' }), /Invalid code block name/);
     await assert.rejects(t.code_cache_read.execute({ name: 'missing' }), /does not exist/);
     const small = createCodeCacheStore({ dir, limits: { blockBytes: 10 } });
-    assert.throws(() => small.write('big', 'x'.repeat(11)), /exceeds the limit of one block/);
+    assert.throws(() => small.write('big', 'x'.repeat(11)), /over the per-block limit/);
     await t.code_cache_delete.execute({ name: 'card' });
     assert.equal((await t.code_cache_list.execute({})).blocks.length, 0);
     // 读的时候一次最多交回 readChars 字,告诉下一段从哪开始
@@ -365,13 +365,13 @@ test('end to end: when the truncation count exceeds the limit it still says plai
     const { events, calls } = await runMock(Array(10).fill(step), { codeCacheDir: dir, sessionId: sid });
     const err = events.find((e) => e.type === 'error');
     assert.ok(err, 'it must end with an error');
-    assert.match(err.message, /exceeded the per-response output limit and was truncated, so this round could not be completed/);
-    assert.match(err.message, /the part already written is in code block cut_create_card_1/);
+    assert.match(err.message, /exceeded the single-output limit and was truncated 7 times in a row, so this round could not finish/);
+    assert.match(err.message, /The part already written is stored in code block cut_create_card_1/);
     assert.equal(calls.filter((c) => c.name === 'create_card').length, 0);
     // 一次都没留下内容的截断:连续 3 次就停
     const sid2 = `${sid}-b`;
     const r2 = await runMock(Array(10).fill({ truncate: { say: 'Draft…' } }), { codeCacheDir: dir, sessionId: sid2 });
-    assert.match(r2.events.find((e) => e.type === 'error')?.message ?? '', /exceeded the single-response output limit and was truncated 3 times in a row/);
+    assert.match(r2.events.find((e) => e.type === 'error')?.message ?? '', /exceeded the single-output limit and was truncated 3 times in a row/);
     try { fs.unlinkSync(historyOf(sid2)); } catch { /* 清理 */ }
   } finally { rm(dir); try { fs.unlinkSync(historyOf(sid)); } catch { /* 清理 */ } }
 });

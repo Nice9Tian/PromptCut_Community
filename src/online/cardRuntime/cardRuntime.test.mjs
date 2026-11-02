@@ -219,7 +219,7 @@ export const second = { id: "a2", name: "第二张", defaults: {}, controls: [],
   const React = require("react");
   const { renderToStaticMarkup } = require("react-dom/server");
   const html = renderToStaticMarkup(React.createElement(loader.cards()[0].Component, { params: { text: "online" } }));
-  assert.equal(html, `<div class="a-look">〔在线〕<b>42</b></div>`, "The page's own React renders it; relative imports, cycles and the page's built-in modules are all wired up");
+  assert.equal(html, `<div class="a-look">〔online〕<b>42</b></div>`, "The page's own React renders it; relative imports, cycles and the page's built-in modules are all wired up");
   assert.equal(L.isCardDef({ id: "x", name: "n", defaults: {}, controls: [] }), false, "Without Component / card / audio it does not count");
   assert.equal(L.isCardDef({ id: "x", name: "n", defaults: {}, controls: [], card: () => ({}) }), true);
 });
@@ -330,7 +330,7 @@ test("OCE-T-08 run states: spread onto cards; order on the editor page side; pan
   assert.equal(msg(undefined), null);
   assert.equal(msg({ state: "unsupported-syntax", detail: "namespace (line 3)", file: `${U}x.tsx` }), "The online browser cannot run this card: it uses syntax the online page does not support (namespace (line 3), x.tsx). The picture is provided by a render node.");
   assert.equal(msg({ state: "missing-module", detail: "lodash" }), "The online browser cannot run this card: it references a module that is not available on the online page: lodash. The picture is provided by a render node.");
-  assert.equal(msg({ state: "load-error", detail: "boom" }), "The online browser cannot run this card: error while loading (炸了).");
+  assert.equal(msg({ state: "load-error", detail: "boom" }), "The online browser cannot run this card: error while loading (boom).");
   assert.equal(msg({ state: "gpu" }), "This device's graphics capability is not enough, so the picture of media effect cards is provided by a render node.");
   assert.equal(msg({ state: "media" }), "This device cannot decode this media clip, so the picture of media effect cards is provided by a render node.");
   assert.equal(msg({ state: "runtime-error" }), "This card failed to run in the online browser, so a render node provides the picture this time.");
@@ -456,9 +456,9 @@ test("OCE-T-12 registry: cards loaded at runtime and their run state", () => {
   const off = R.onRuntimeCardsChanged(() => { notified++; });
   const a = def("rt-a"), clash = def("built", { name: "Pretends to be a built-in card" });
   assert.equal(R.setRuntimeCards([a, clash]), true);
-  assert.equal(R.getCard("rt-a").name, "name-rt-a");
+  assert.equal(R.getCard("rt-a").name, "Name-rt-a");
   assert.equal(typeof R.getCard("rt-a").need_prerendering, "boolean", "Like registering a built-in card, capabilities are overlaid from the review table (entries missing from the table get defaults)");
-  assert.equal(R.getCard("built").name, "name-built", "Id clash with a build-time card: the build-time one wins");
+  assert.equal(R.getCard("built").name, "Name-built", "Id clash with a build-time card: the build-time one wins");
   assert.equal(R.isRuntimeCard("rt-a"), true);
   assert.equal(R.isRuntimeCard("built"), false);
   assert.deepEqual(R.allCards().map((c) => c.id), ["built"], "allCards does not include runtime-loaded cards");

@@ -90,7 +90,7 @@ test('PK-1 request body → asset identifier: path is never used; no identifier 
   assert.match(noRef.error, /no longer accept/);
   const miss = await resolveMediaSource({ media: { name: 'missing.mp4', hash: 'missing' } }, resolver);
   assert.equal(miss.status, 404);
-  assert.match(miss.error, /no such asset on the asset service: missing\.mp4/);
+  assert.match(miss.error, /This media is not on the asset service: missing\.mp4/);
   const ok = await resolveMediaSource({ media: { hash: 'fine' }, path: 'D:\\secret.mp4' }, resolver);
   assert.deepEqual([ok.ok, ok.src], [true, `${svc.origin}/@media/fine`]);
   assert.deepEqual(seen, ['/@media/missing', '/@media/fine'], 'The call without an identifier sent no request at all');
@@ -100,7 +100,7 @@ test('PK-1 request body → asset identifier: path is never used; no identifier 
   const down = await resolveMediaSource({ media: { hash: 'x' } }, createAssetSourceResolver({ origin: () => gone, toUrl: (m, o) => `${o}/@media/${m.hash}` }));
   assert.equal(down.status, 502);
   assert.equal(down.kind, 'asset-service');
-  assert.ok(down.error.includes(`asset service unreachable (${gone})`), down.error);
+  assert.ok(down.error.includes(`Asset service unreachable (${gone})`), down.error);
 });
 
 /**
@@ -147,7 +147,7 @@ test('PK-3 Input for Python: if it accepts URLs, pass the URL; otherwise stream 
   assert.deepEqual(fs.readdirSync(root), [], 'No temp directory is left behind on failure either');
   await closeServer(svc.server);
   const gone = await closedOrigin();
-  await assert.rejects(pythonInput({ src: `${gone}/x`, ref: {}, python: 'py', env: {}, pkg: 'x', spawnPython: fakePython('0'), tmpRoot: root }), (e) => e instanceof AssetSourceError && /failed to fetch bytes/.test(e.message));
+  await assert.rejects(pythonInput({ src: `${gone}/x`, ref: {}, python: 'py', env: {}, pkg: 'x', spawnPython: fakePython('0'), tmpRoot: root }), (e) => e instanceof AssetSourceError && /Failed to fetch bytes/.test(e.message));
   assert.deepEqual(fs.readdirSync(root), []);
   // 地址以外的输入原样递(解析器只拼 http 地址,这条只是兜底),也不去问 Python
   const passthrough = await pythonInput({ src: 'C:\\x.mp4', ref: {}, python: 'none', env: {}, pkg: 'x', spawnPython: () => { throw new Error('Should not have asked'); } });
@@ -320,7 +320,7 @@ test('PK-5 Three endpoints: an arbitrary path is never read; no identifier gives
 
     const missing = await post(srv.origin, url, { mediaId: 'm-x', media: { id: 'm-x', name: 'missing.mp4', hash: 'fe'.repeat(32) }, path: realFile, ...extra });
     assert.equal(missing.status, 404, `${url} not on the asset service:` + JSON.stringify(missing.json));
-    assert.match(missing.json.error, /no such asset on the asset service: missing\.mp4/);
+    assert.match(missing.json.error, /This media is not on the asset service: missing\.mp4/);
     assert.equal(missing.json.jobId, undefined, 'Even when path points at a real file, it is not used as a substitute');
   }
   // 素材服务不可达
@@ -331,7 +331,7 @@ test('PK-5 Three endpoints: an arbitrary path is never read; no identifier gives
       const down = await post(srv.origin, url, { mediaId: 'm-cuts', media: refOf('cuts'), path: realFile, ...extra });
       assert.equal(down.status, 502, `${url} unreachable:` + JSON.stringify(down.json));
       assert.equal(down.json.kind, 'asset-service');
-      assert.ok(down.json.error.includes(`asset service unreachable (${gone})`), down.json.error);
+      assert.ok(down.json.error.includes(`Asset service unreachable (${gone})`), down.json.error);
     }
   } finally {
     process.env.PROMPTCUT_EDITOR_URL = service.origin;
@@ -360,9 +360,9 @@ test('MI-1 Ingest: bytes go into the content store, the hash is the sha256 of th
 test('MI-2 Ingest failures can be told apart: cannot get the address / cannot connect / rejected → AssetSourceError; file missing → plain error', async () => {
   const file = path.join(TMP, 'mi2.wav');
   fs.writeFileSync(file, 'RIFF');
-  await assert.rejects(ingestFile({ file, origin: () => null }), (e) => e instanceof AssetSourceError && /cannot get the asset service address/.test(e.message));
+  await assert.rejects(ingestFile({ file, origin: () => null }), (e) => e instanceof AssetSourceError && /could not get the asset service address/.test(e.message));
   const gone = await closedOrigin();
-  await assert.rejects(ingestFile({ file, origin: () => gone }), (e) => e instanceof AssetSourceError && e.message.includes(`asset service unreachable (${gone})`));
+  await assert.rejects(ingestFile({ file, origin: () => gone }), (e) => e instanceof AssetSourceError && e.message.includes(`Asset service unreachable (${gone})`));
   const bad = await listen((req, res) => { req.resume(); req.on('end', () => { res.statusCode = 500; res.end('disk full'); }); });
   await assert.rejects(ingestFile({ file, origin: () => bad.origin }), (e) => e instanceof AssetSourceError && /rejected the ingest.*HTTP 500.*disk full/.test(e.message));
   await closeServer(bad.server);
@@ -447,7 +447,7 @@ test('MI-4 Asset service unreachable during voiceover: returns 502 and kind asse
         const r = await post(srv.origin, '/api/voice/generate', { text: 'Hello' });
         assert.equal(r.status, 502, JSON.stringify(r.json));
         assert.equal(r.json.kind, 'asset-service');
-        assert.ok(r.json.error.includes(`asset service unreachable (${gone})`), r.json.error);
+        assert.ok(r.json.error.includes(`Asset service unreachable (${gone})`), r.json.error);
       });
       await waitEmpty(tmp, 'pc-voice-');
     });

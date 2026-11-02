@@ -90,20 +90,20 @@ test('CA-HT-02 attachments: go only into the chat workspace and return a work: a
     { url: a.url }, { url: v.url }, { url: 'work:attachments/secret.txt' }, { url: 'work:attachments/../../c2/attachments/secret.txt' },
     { url: 'work:../c2/attachments/secret.txt' }, { url: '/etc/passwd' }, { url: 42 }, null,
   ]);
-  assert.match(text, /字幕\.srt · 地址 work:attachments\/字幕\.srt/);
+  assert.match(text, /字幕\.srt · URL work:attachments\/字幕\.srt/);
   assert.match(text, /你好/);
-  assert.match(text, /\[video\] clip\.mp4/);
+  assert.match(text, /\[Video\] clip\.mp4/);
   assert.equal(text.includes('FAKE-CREDENTIAL'), false);
   assert.equal(text.includes('secret.txt'), false);
   assert.equal(text.includes(ws.root), false, 'No disk path is given');
   assert.equal(attachmentsPrompt(w, []), '');
   // 页面发送时已放进素材库的(2026-10-18 用户定):写明是哪一条、叫它别再 import_media;放不进去的写原因
   const lib = attachmentsPrompt(w, [{ url: v.url, library: { mediaId: 'm-abc', url: '/@media/abc.mp4' } }]);
-  assert.match(lib, /clip\.mp4 · address work:attachments\/clip\.mp4 · already in media library: mediaId m-abc · cardUrl \/@media\/abc\.mp4\(use this one directly, do not call import_media again\)/);
-  assert.match(lib, /^\n\nAttachments \(the page has already put them in the media library/);
+  assert.match(lib, /clip\.mp4 · URL work:attachments\/clip\.mp4 · Already in the media library: mediaId m-abc · cardUrl \/@media\/abc\.mp4 \(use this one directly, do not import_media again\)/);
+  assert.match(lib, /^\n\nAttachment \(the page has put it into the media library/);
   const mixed = attachmentsPrompt(w, [{ url: v.url, library: { mediaId: 'm-abc', url: '/@media/abc.mp4' } }, { url: a.url, libraryError: 'upload timed out' }]);
-  assert.match(mixed, /for those marked "already in media library", use that one directly/);
-  assert.match(mixed, /字幕\.srt · 地址 work:attachments\/字幕\.srt · 页面没能把它放进素材库:上传超时/);
+  assert.match(mixed, /for those marked "Already in the media library", use that entry directly/);
+  assert.match(mixed, /字幕\.srt · URL work:attachments\/字幕\.srt · The page could not put it into the media library: upload timed out/);
 });
 
 const CARD = (id, marker = '') => [
@@ -189,9 +189,9 @@ test('CA-HT-03 / CA-HT-04 / CA-HT-05 preconditions for creating and editing card
     // 每条规矩的违规样例:云端这条路同样拒绝,报错带行号,源码不进内容库
     const cases = [
       ['random.tsx', 'Math.random()', /unseeded randomness/], ['real-time.tsx', 'performance.now()', /real time/], ['timer.tsx', 'setTimeout(', /timer/],
-      ['frame-callback.tsx', 'requestAnimationFrame(', /per-frame callback/], ['motion.tsx', '<motion.div', /Motion/], ['presence.tsx', '<AnimatePresence>', /entrance\/exit component/],
-      ['css-animation.tsx', 'transition: "opacity', /CSS animations and transitions/], ['state.tsx', 'useState(0)', /lives longer than one frame/], ['top-level.tsx', 'let frames = 0', /declares let at the top level/],
-      ['import.tsx', 'from "lottie-web"', /only framework imports are allowed/],
+      ['frame-callback.tsx', 'requestAnimationFrame(', /per-frame callback/], ['motion.tsx', '<motion.div', /Motion/], ['presence.tsx', '<AnimatePresence>', /presence components/],
+      ['css-animation.tsx', 'transition: "opacity', /CSS animations and transitions/], ['state.tsx', 'useState(0)', /outlives a single frame/], ['top-level.tsx', 'let frames = 0', /Top level contains let/],
+      ['import.tsx', 'from "lottie-web"', /remotion-style cards may only import the framework/],
     ];
     for (const [file, needle, says] of cases) {
       const source = fixture(`violations/${file}`);
@@ -199,7 +199,7 @@ test('CA-HT-03 / CA-HT-04 / CA-HT-05 preconditions for creating and editing card
       const r = await call('create_card', { id, source });
       assert.equal(r.ok, false, file);
       const text = String(r.error ?? '');
-      assert.match(text, new RegExp(`\\[remotion style\\] line ${lineOf(source, needle)}:`), `${file}: ${text.slice(0, 400)}`);
+      assert.match(text, new RegExp(`\\[remotion-style\\] Line ${lineOf(source, needle)}:`), `${file}: ${text.slice(0, 400)}`);
       assert.match(text, says, file);
       assert.doesNotMatch(text, /hand off to motion|use motion\/react|switch to motion|initial \+ animate/, file);
       const stored = await call('get_card_source', { cardId: id });
@@ -218,8 +218,8 @@ test('CA-HT-03 / CA-HT-04 / CA-HT-05 preconditions for creating and editing card
     // 改卡:往合规的卡里新加一条违规,被拒并指出行号;改文案照常
     const edit = await call('edit_card', { cardId: 'rs-bar-race', find: '  const count = Math.max(', replace: '  const jitter = Math.random();\n  const count = Math.max(' });
     assert.equal(edit.ok, false);
-    assert.match(String(edit.error), /\[remotion style\] line \d+: uses unseeded randomness \(Math\.random\)/);
-    const rename = await call('edit_card', { cardId: 'rs-bar-race', find: 'name: "Random bar fluctuation"', replace: 'name: "Random bars"' });
+    assert.match(String(edit.error), /\[remotion-style\] Line \d+: Used unseeded randomness \(Math\.random\)/);
+    const rename = await call('edit_card', { cardId: 'rs-bar-race', find: 'name: "Random bar rise and fall"', replace: 'name: "Random bars"' });
     assert.equal(rename.ok, true, String(rename.error ?? ''));
     assert.equal(fs.existsSync(path.join(kit.vite.config.root, 'src/cards/user/rs-bar-race.tsx')), false, 'The checkout directory has no extra files');
     svc.abort(A, 'c-rs');
@@ -243,7 +243,7 @@ test('CA-HT-03 / CA-HT-04 / CA-HT-05 preconditions for creating and editing card
     // 这套单测的服务没配素材服务:导入在最前面就明说
     const none = await inst.callTool('import_media', { url: 'https://example.com/a.png' }, 'c-net').catch((err) => ({ ok: false, error: err.message }));
     assert.equal(none.ok, false);
-    assert.match(none.error, /No asset service configured/);
+    assert.match(none.error, /has no asset service address configured/);
     svc.abort(A, 'c-net');
   });
 });

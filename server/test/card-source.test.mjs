@@ -68,7 +68,7 @@ test('sharing count: the definition file of each card is counted at least once, 
 test('syntax errors are rejected, with line numbers', () => {
   const r = checkSourceEdit('src/parts/lib/x.tsx', 'const a = 1;\n', 'const a = 1;\nconst b = ;\n');
   assert.equal(r.ok, false);
-  assert.match(r.errors.join('\n'), /syntax error \(line 2\)/);
+  assert.match(r.errors.join('\n'), /Syntax error \(line 2\)/);
 });
 
 test('no new Date.now allowed; existing ones are not flagged', () => {
@@ -83,7 +83,7 @@ test('the CardDef export and id must not be changed', () => {
   const before = 'export const c: CardDef<P> = { id: "a-card", name: "x" };\n';
   const r1 = checkSourceEdit('src/cards/native/a.tsx', before, before.replace('"a-card"', '"b-card"'));
   assert.equal(r1.ok, false);
-  assert.match(r1.errors.join('\n'), /id changed from "a-card" to "b-card"/);
+  assert.match(r1.errors.join('\n'), /The id of CardDef changed from "a-card" to "b-card"/);
   const r2 = checkSourceEdit('src/cards/native/a.tsx', before, 'const c = { id: "a-card" };\n');
   assert.equal(r2.ok, false);
   assert.match(r2.errors.join('\n'), /CardDef/);
@@ -118,8 +118,8 @@ test('list items mark "the same source line generated N sibling nodes", and thos
   ];
   const out = formatDomTree(nodes, 0, 1);
   assert.match(out, /\[ref_0\].*collapsed 6 wrapper layers/);
-  assert.match(out, /\[ref_1\].*"First item".*the same source line generated 2 sibling nodes/);
-  assert.match(out, /\[ref_1\].*1 more descendant, pass ref:1 to look further down/);
+  assert.match(out, /\[ref_1\].*"First item".*the same source line produced 2 sibling nodes/);
+  assert.match(out, /\[ref_1\].*1 more descendants, pass ref:1 to look further down/);
   assert.doesNotMatch(out, /\[ref_3\]/, 'nodes beyond the depth limit are not expanded');
   assert.match(formatDomTree(nodes, 1, 1), /^\[ref_1\][\s\S]*\n  \[ref_3\]/, 'look further down from a ref');
 });

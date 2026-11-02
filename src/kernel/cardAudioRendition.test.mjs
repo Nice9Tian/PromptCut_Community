@@ -30,7 +30,7 @@ test('fresh AV apply creates one visual clip and a server-readable marker; empty
   const clip = r.project.tracks[0].clips[0];
   assert.equal(clip.cardId, 'av'); assert.equal(clip.embeddedAudio, true); assert.equal(r.project.tracks[0].clips.length, 1);
   assert.deepEqual(r.project.cardNodes[0].inputs, {});
-  assert.throws(() => audioPlanOf(r.project), /not yet generated/);
+  assert.throws(() => audioPlanOf(r.project), /not generated yet/);
   assert.equal(projectCardGraph(r.project, hooks.getCard).nodes.find(n => n.id === 'n').embeddedAudio, true);
 });
 test('persistent AV reopens, emits one audio source, and respects independent mute', () => {
@@ -49,15 +49,15 @@ test('WAV range subtracts origin once and stays usable after split, trim and clo
   assert.equal(resolveCardAudioRendition(project, clip, hooks).offset, 1);
   clip.cardAudio.sourceOffset = .5; clip.cardAudio.frames = 72000;
   assert.equal(resolveCardAudioRendition(project, clip, hooks).offset, .5);
-  clip.end = 4.1; assert.throws(() => resolveCardAudioRendition(project, clip, hooks), /not covered/);
+  clip.end = 4.1; assert.throws(() => resolveCardAudioRendition(project, clip, hooks), /does not cover/);
 });
 test('all parameters/events/source code/input changes invalidate; missing bytes metadata never falls back', () => {
   const { project, clip } = fixture();
-  assert.throws(() => resolveCardAudioRendition(project, clip, { ...hooks, sourceVersionOf: () => 'v2' }), /stale/);
-  clip.params = { events: [0, .3] }; assert.throws(() => resolveCardAudioRendition(project, clip, hooks), /stale/);
-  clip.params = {}; project.media[0].url = ''; assert.throws(() => audioPlanOf(project), /media missing/);
-  project.media[0].url = `blob:invalid`; assert.throws(() => audioPlanOf(project), /media missing/);
-  delete clip.cardAudio; assert.throws(() => buildAudioPlan(project, '', () => true, () => '/wav'), /not yet generated/);
+  assert.throws(() => resolveCardAudioRendition(project, clip, { ...hooks, sourceVersionOf: () => 'v2' }), /out of date/);
+  clip.params = { events: [0, .3] }; assert.throws(() => resolveCardAudioRendition(project, clip, hooks), /out of date/);
+  clip.params = {}; project.media[0].url = ''; assert.throws(() => audioPlanOf(project), /media is missing/);
+  project.media[0].url = `blob:invalid`; assert.throws(() => audioPlanOf(project), /media is missing/);
+  delete clip.cardAudio; assert.throws(() => buildAudioPlan(project, '', () => true, () => '/wav'), /not generated yet/);
 });
 test('explicit own-media offsets survive graph normalization and split identity', () => {
   const { project, clip } = fixture();
@@ -81,7 +81,7 @@ test('When an audio-visual card wrongly declares the audio-only type, apply reje
   const p = { duration: 2, media: [], tracks: [{ id: 't', clips: [] }] };
   for (const visual of [{ Component() {} }, { card() {} }]) {
     const bad = { ...def, Component: undefined, ...visual, kind: 'audio' };
-    assert.throws(() => applyCardDefinition(p, { cardId: 'av', trackId: 't', start: 0, end: 1 }, () => bad), /Audio-visual card cannot use kind:audio/);
+    assert.throws(() => applyCardDefinition(p, { cardId: 'av', trackId: 't', start: 0, end: 1 }, () => bad), /Audio-visual cards cannot use kind:audio/);
     assert.deepEqual(p.tracks[0].clips, []); assert.equal(p.cardNodes, undefined);
   }
 });
@@ -104,7 +104,7 @@ test('Cards with audio expanded from a cut segment: verify identity against the 
   assert.equal(plan[0].offset, 1, 'WAV starts at second 1 (the trimmed-off portion)');
   // 被引用剪辑里改了参数:展开出来的同样判过期,报的是原片段 id
   const stale = structuredClone(root); stale.cuts[1].tracks[0].clips[1].params = { gain: .9 };
-  assert.throws(() => audioPlanOf(stale), /^Error: c's card audio has expired|c's card audio has expired/);
+  assert.throws(() => audioPlanOf(stale), /Card audio for c: out of date/);
 });
 
 /*

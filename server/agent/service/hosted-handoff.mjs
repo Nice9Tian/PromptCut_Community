@@ -28,7 +28,7 @@ export const HANDOFF_TOOL_NAMES = Object.freeze(['user_interface_web_handoff']);
 /** 给模型看的工具结果(草稿,见报告「要用户定的事」)。宿主可以用 `texts` 整体或逐条替换 */
 export const HANDOFF_TEXT = Object.freeze({
   shown: (reason) => `The delegator has been asked to handle this on their own computer${reason ? `(${reason})` : ''}. Login information stays on their computer and is not available to the cloud.`
-    + 'Stop now and tell the user in Chinese what to do and what to say when done. **Do not keep calling tools**; after the user replies, use web_view to check the current state.',
+    + ' Stop now and tell the user, in their language, what to do and what to say when done. **Do not keep calling tools**; after the user replies, use web_view to check the current state.',
   hidden: 'The browser on the delegator\'s computer has been taken back.',
   noPage: 'The cloud browser has not opened a web page yet, so there is no page to hand to the user. Use web_open first to open the page to work on.',
   unmounted: 'Cloud web actions are not connected yet, so user_interface_web_handoff is unavailable. Continue based on the project content, and if needed tell the user to do this step themselves in PromptCut on their computer.',

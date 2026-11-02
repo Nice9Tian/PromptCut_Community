@@ -17,7 +17,7 @@ function manualTimers() {
 
 test('Consecutive text coalesces into one event; when another event arrives, the accumulated text is emitted first, order unchanged', () => {
   const w = fakeWriter(), t = manualTimers(), c = coalesceRunEvents(w, t);
-  for (const d of ['你', 'OK', '世界']) assert.equal(c.emit({ type: 'text', delta: d }), undefined);
+  for (const d of ['你', '好', '世界']) assert.equal(c.emit({ type: 'text', delta: d }), undefined);
   assert.deepEqual(w.emitted, [], 'Still accumulating');
   assert.equal(c.emit({ type: 'tool_call', name: 'x' }), 'e2');
   assert.deepEqual(w.emitted, [{ type: 'text', delta: '你好世界' }, { type: 'tool_call', name: 'x' }]);

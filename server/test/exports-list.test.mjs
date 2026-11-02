@@ -209,7 +209,8 @@ async function loadPlugin() {
   const OUT = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-exports-plugin-'));
   const src = fs.readFileSync(path.join(ROOT, 'server', 'vite-plugin-exports-list.ts'), 'utf8')
     .split('from "./render-pool-state.mjs"').join(`from "${pathToFileURL(path.join(ROOT, 'server', 'render-pool-state.mjs')).href}"`)
-    .split('from "./exports-list.mjs"').join(`from "${pathToFileURL(path.join(ROOT, 'server', 'exports-list.mjs')).href}"`);
+    .split('from "./exports-list.mjs"').join(`from "${pathToFileURL(path.join(ROOT, 'server', 'exports-list.mjs')).href}"`)
+    .split('from "./i18n.mjs"').join(`from "${pathToFileURL(path.join(ROOT, 'server', 'i18n.mjs')).href}"`);
   const js = ts.transpileModule(src, { compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext } }).outputText;
   const file = path.join(OUT, 'plugin.mjs');
   fs.writeFileSync(file, js);

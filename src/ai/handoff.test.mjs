@@ -18,17 +18,17 @@ test("New model has no session: excerpt the whole chat, leaving out none of the 
   const s = buildHandoff(h, "claude", false);
   assert.match(s, /^\[Background:/);
   assert.match(s, /\[\/Background\]$/);
-  assert.match(s, /User: 做个东京旅游宣传片/);
-  assert.match(s, /User: 根本没有视频和图片/);
-  assert.match(s, /Assistant \(Antigravity\): 我去找图/);
+  assert.match(s, /User: Make a Tokyo travel promo video/);
+  assert.match(s, /User: There are no videos or images at all/);
+  assert.match(s, /Assistant \(Antigravity\): I'll go look for images/);
 });
 
 test("With a session: excerpt only the rounds that other providers spoke after this provider's last reply", () => {
   const h = [u("One"), a("claude", "C1"), u("Two"), a("agy", "G1"), u("three")];
   const s = buildHandoff(h, "claude", true);
-  assert.doesNotMatch(s, /User: 一/, "What claude itself has already seen is not repeated");
+  assert.doesNotMatch(s, /User: One/, "What claude itself has already seen is not repeated");
   assert.doesNotMatch(s, /C1/);
-  assert.match(s, /User: 二/);
+  assert.match(s, /User: Two/);
   assert.match(s, /G1/);
 });
 
@@ -53,10 +53,10 @@ const report = (input, name = "mcp__promptcut__report_progress") => ({ kind: "to
 test("When the text is empty, use the progress report instead: join only the non-empty groups, with the stage name", () => {
   const h = [
     u("Add captions to the narration"),
-    a("agy", "", { parts: [report({ final: true, stage: "Place captions", done: ["Added 3 caption segments"], todo: [], problems: ["Segment 2 has background noise"] })] }),
+    a("agy", "", { parts: [report({ final: true, stage: "Captions", done: ["Added 3 caption segments"], todo: [], problems: ["Segment 2 has background noise"] })] }),
   ];
   const s = buildHandoff(h, "claude", false);
-  assert.match(s, /Assistant \(Antigravity\): \[铺字幕\] Done: 加了 3 段字幕; Issues: 第 2 段有底噪/);
+  assert.match(s, /Assistant \(Antigravity\): \[Captions\] Done: Added 3 caption segments; Issues: Segment 2 has background noise/);
   assert.doesNotMatch(s, /To do/, "Empty groups are not joined");
 });
 
@@ -65,7 +65,7 @@ test("A reply that only delivered a report also counts as having spoken: anySpok
   assert.notEqual(buildHandoff(onlyReport, "claude", false), "", "anySpoke");
   const h = [u("One"), a("claude", "C1"), u("Two"), a("agy", "  ", { parts: [report({ final: true, todo: ["Background music"] })] })];
   const s = buildHandoff(h, "claude", true);
-  assert.match(s, /To do: 配乐/, "othersSpoke");
+  assert.match(s, /To do: Background music/, "othersSpoke");
   assert.doesNotMatch(s, /C1/);
 });
 
@@ -76,10 +76,10 @@ test("When the text is non-empty, use the text as before; when old history has n
   assert.doesNotMatch(s1, /Should not appear/);
 
   const legacy = [u("One"), a("agy", "", { tools: [{ name: "report_progress", input: { final: true, done: ["From old history"] } }] })];
-  assert.match(buildHandoff(legacy, "claude", false), /Done: 旧历史里的/);
+  assert.match(buildHandoff(legacy, "claude", false), /Done: From old history/);
 
   const two = [u("One"), a("agy", "", { parts: [report({ final: false, done: ["First segment"] }), report({ final: true, done: ["Second segment"] })] })];
-  assert.match(buildHandoff(two, "claude", false), /Done: 第一段 \/ Done: 第二段/);
+  assert.match(buildHandoff(two, "claude", false), /Done: First segment \/ Done: Second segment/);
 });
 
 test("A report that is empty (or not from the report tool) still counts as not having spoken", () => {

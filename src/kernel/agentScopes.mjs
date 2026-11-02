@@ -114,7 +114,7 @@ export const CUTS_INDEX_LIMITS = Object.freeze({ maxClips: 60, perCutMax: 30, la
 export const PARKED_EDIT_NOTE =
   "These are clips in cuts that are not active. To edit them, do not use user_interface_switch_cut: pass the clipId directly to update_clip / set_clip / get_clip / " +
   "set_position / set_rect / align / nudge / set_emphasis / set_clip_volume / set_clip_muted, which edit the clips in that cut in place." +
-  "To view their frames, pass cutId to see_frames, no switch needed either. The active cut is shared by all members, and user_interface_switch_cut flips everyone's UI at once, so switch only when you need to add / delete / split / duplicate clips in another cut." +
+  " To view their frames, pass cutId to see_frames, no switch needed either. The active cut is shared by all members, and user_interface_switch_cut flips everyone's UI at once, so switch only when you need to add / delete / split / duplicate clips in another cut." +
   "trackId must be the id of that cut's own track (each clip below carries it).";
 
 const round2 = (n) => Math.round(n * 100) / 100;

@@ -23,7 +23,7 @@ test("pixel map supports shorthand colors, transparent and continuous sequence a
 });
 
 test("unsafe expressions and malformed stages are rejected", () => {
-  assert.throws(() => normalizePixelMapDef({ name: "x", where: "window.alert(1)", to: "#fff" }), /expression has a problem/);
+  assert.throws(() => normalizePixelMapDef({ name: "x", where: "window.alert(1)", to: "#fff" }), /has an invalid expression/);
   assert.throws(() => normalizePixelMapDef({ name: "x", where: "1", to: { kind: "color", value: "#fff" }, source: { stage: "shader" } }), /stage/);
 });
 
@@ -100,7 +100,7 @@ test("classify B: color keying, by position, by time, transparent, asset, step, 
 test("classify C: powers whose base may be negative and whose exponent is not an integer constant", () => {
   const c = classifyPixelMap(pm({ name: "Bad", where: "(r-g)^0.5", to: "#ffffff" }));
   assert.equal(c.kind, "C");
-  assert.match(c.reason, /pow is undefined when the base is negative/);
+  assert.match(c.reason, /pow is undefined for a negative base/);
   const c2 = classifyPixelMap(pm({ name: "Bad2", where: "1", to: { kind: "expr", r: "pow(r-g, luma)", g: "g", b: "b", a: "a" } }));
   assert.equal(c2.kind, "C");
   // 底数包进 abs 或指数写成整数常量就能翻译

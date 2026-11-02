@@ -32,7 +32,7 @@ test('Nobody answers on the port: within the timeout it returns an isError reply
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'get_project', arguments: {} } }) + '\n');
     const res = await reply;
     assert.equal(res.result.isError, true);
-    assert.match(res.result.content[0].text, new RegExp(`${port}.*did not respond`));
+    assert.match(res.result.content[0].text, new RegExp(`did not respond on 127\\.0\\.0\\.1:${port}`));
     assert.ok(Date.now() - started < 8000, 'Should return around the timeout');
   } finally {
     child.kill();

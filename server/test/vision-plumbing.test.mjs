@@ -155,7 +155,7 @@ test('The tool_result event forwarded to the interface carries no base64, so the
   const { events } = await runWithTool({ ok: true, __image: { mime: 'image/png', base64: B64 } });
   const ev = events.find((e) => e.type === 'tool_result');
   assert.ok(!JSON.stringify(ev).includes(B64.slice(0, 50)), 'base64 leaked into the event');
-  assert.match(ev.output.image, /picture/, 'One sentence must be left saying where the picture is');
+  assert.match(ev.output.image, /See the image at the end of this message for the frame/, 'One sentence must be left saying where the picture is');
 });
 
 test('Ordinary tools (without __image) take the original path, with not a single character changed', async () => {
@@ -189,7 +189,7 @@ test('Keep only the most recent screenshots, replace earlier ones with a one-sen
   h.pruneImages(2);
   const kinds = h.get().map((m) => m.content[0].type);
   assert.deepEqual(kinds, ['text', 'image', 'image'], 'The earliest one should be replaced, the two most recent ones are kept');
-  assert.match(h.get()[0].content[0].text, /removed from context/);
+  assert.match(h.get()[0].content[0].text, /removed from the context/);
 });
 
 test('pruneImages leaves messages without images alone', () => {

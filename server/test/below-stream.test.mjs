@@ -385,11 +385,11 @@ test('BL-key-other the key also carries: aspect ratio, frame rate, code version,
   assert.notEqual(id(), cardStreamIdentity({ kind: 'group', fps: 30, stage: { width: 1280, height: 720 }, codeVersion: 'c', members: [{ key: 'T', sampling, count: 90 }] }), 'Never equal to the key of a group stream');
   assert.throws(() => id({ members: [] }), /only the target card/);
   assert.throws(() => id({ members: [{ key: 'T' }, { key: 'U' }] }), /only the target card/);
-  assert.throws(() => id({ below: null }), /keys for the lower layers/);
-  assert.throws(() => id({ below: { layers: [{ key: '' }] } }), /a layer has no key/);
-  assert.throws(() => id({ below: { layers: [{}] } }), /a layer has no key/);
-  assert.throws(() => id({ below: { scene: '' } }), /whole-project key is invalid/);
-  assert.throws(() => id({ members: [{ key: undefined }] }), /a layer has no key/);
+  assert.throws(() => id({ below: null }), /keys of the lower layers/);
+  assert.throws(() => id({ below: { layers: [{ key: '' }] } }), /one layer has no key/);
+  assert.throws(() => id({ below: { layers: [{}] } }), /one layer has no key/);
+  assert.throws(() => id({ below: { scene: '' } }), /the key for the whole project is invalid/);
+  assert.throws(() => id({ members: [{ key: undefined }] }), /one layer has no key/);
   // 另外两种流的摘要不受新参数影响
   const card = over => cardStreamIdentity({ kind: 'card', fps: 30, stage: { width: 1280, height: 720 }, codeVersion: 'c', members: [{ key: 'T', sampling, count: 90 }], ...over });
   assert.equal(card(), card({ below: { layers: [{ key: 'L1' }] } }), 'A single-card stream ignores below');
@@ -544,7 +544,7 @@ test('BL-isolated isolated project: the target card and all layers and media bel
   // 藏起来的序列改名时不和已有的撞
   const clash = edit((x) => { x.tracks.push({ id: '__pc_source_t-glass', clips: [] }); trackOf(x, 't-glass').clips.push({ id: 'post', cardId: 'caption-track', start: 4, end: 5, params: {} }); });
   assert.ok(isolatedBelowProject(clash, belowOf(clash)).tracks.some(t => t.id === '__pc_source_t-glass_1'));
-  assert.throws(() => isolatedBelowProject(p, { kind: 'below', topClipId: 'nope', clipIds: ['nope'] }), /No clip nope/);
+  assert.throws(() => isolatedBelowProject(p, { kind: 'below', topClipId: 'nope', clipIds: ['nope'] }), /no clip nope/);
 });
 
 test('BL-isolated-old the isolated project for single-card and group streams is unchanged: all non-members are hidden', () => {

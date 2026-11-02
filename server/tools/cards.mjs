@@ -13,7 +13,7 @@ export const cardsTools = [
   },
   {
     name: "card_authoring_guide",
-    description: "Get the full text of the card-building rules (two styles, remotion style / motion style, and the rules of each, the CardDef contract, control types, hard constraints, available dependencies, complete examples). New cards are written only in these two styles, declared with the required frameMode: \"direct\" is remotion style, \"stateful\" is motion style, with no preference for either. **You must call it first** before using create_card to create a new card; do not write from memory.",
+    description: "Get the full text of the card-building rules (two styles, remotion-style / motion-style, and the rules of each, the CardDef contract, control types, hard constraints, available dependencies, complete examples). New cards are written only in these two styles, declared with the required frameMode: \"direct\" is remotion style, \"stateful\" is motion style, with no preference for either. **You must call it first** before using create_card to create a new card; do not write from memory.",
     inputSchema: { type: "object", properties: {} },
     side: "agent"
   },
@@ -102,10 +102,10 @@ export const cardsTools = [
       "\n\n" +
       "Two looks, decided by `bg`, **fixed at render time**:" +
       "Without bg = transparent background; the object is also see-through wherever the card is not drawn, so the content looks like it floats in space (good for logos and signs);" +
-      "With bg = flattened to opaque, giving a solid object with this card printed on its surface: most of the time, this is what \"stick the card on a cube\" calls for." +
+      " With bg = flattened to opaque, giving a solid object with this card printed on its surface: most of the time, this is what \"stick the card on a cube\" calls for." +
       "\n\n" +
       "The aspect ratio is changed to a square before rendering (when applied to a 3D surface, 16:9 would be stretched and distorted); cards are responsive by design, so this is a reflow, not a crop." +
-      "A media clip (video / image) does not need rendering; it is already a bitmap, so just use its URL directly as the texture.",
+      " A media clip (video / image) does not need rendering; it is already a bitmap, so just use its URL directly as the texture.",
     inputSchema: {
       type: "object",
       properties: {

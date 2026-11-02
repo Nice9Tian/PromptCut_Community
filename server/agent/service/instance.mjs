@@ -895,7 +895,7 @@ export function createAgentInstance(env) {
           if (role) {
             systemPrompt += `\n\n## Your role: ${role.name}\n\nYou are a sub-Agent spawned by Agent ${sess.parent} with spawn_agent, chat ID ${agentId}.` +
               'Do only the part it handed to you; start with declare_scope, report back with report_progress when done, then use send_message to tell the Agent that spawned you the result.' +
-              `You cannot spawn other Agents.\n\n${role.prompt}`;
+              ` You cannot spawn other Agents.\n\n${role.prompt}`;
           }
         }
         const agentNotes = agentId ? board().consumeNotes(agentId) : '';

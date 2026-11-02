@@ -177,7 +177,7 @@ export const collectHandlers = {
     return {
       ok: true, site, method, opened: true,
       hint: method === "qr"
-        ? "The login dialog has popped up in the editor, with a QR code in it. **Stop now** and tell the user in Chinese: scan the QR code in the dialog with the mobile app and confirm; to use account and password instead, click \"Account password / SMS\" in the dialog. Reply with one line once logged in, then call collect_login_check. Do not enter the user's account, password or verification code for them."
+        ? "The login dialog has popped up in the editor, with a QR code in it. **Stop now** and tell the user, in their language: scan the QR code in the dialog with the mobile app and confirm; to use account and password instead, click \"Account password / SMS\" in the dialog. Reply with one line once logged in, then call collect_login_check. Do not enter the user's account, password or verification code for them."
         : "The login dialog has popped up; after the user clicks \"Open login page\", the site's own login page will appear. **Stop now** and tell the user to log in there (account password / SMS / QR scan all work). Reply with one line once logged in, then call collect_login_check. Do not enter the user's account, password or verification code for them.",
     };
   },

@@ -170,7 +170,7 @@ test("backups: kept in memory only and not downloaded automatically, downloaded 
     assert.equal(store.list().length, 2);
     assert.equal(store.download(1), true);
     assert.equal(downloads.length, 1);
-    assert.match(downloads[0].name, /^我的_项目-backup-discarded offline-\d{8}-\d{6}-2\.json$/);
+    assert.match(downloads[0].name, /^My_project-backup-discarded offline-\d{8}-\d{6}-2\.json$/);
     const body = JSON.parse(downloads[0].text);
     assert.deepEqual(body.backup, discard);
     assert.equal(body.projectName, "My/project");

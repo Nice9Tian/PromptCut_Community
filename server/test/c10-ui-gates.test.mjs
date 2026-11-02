@@ -24,7 +24,8 @@ const ui = uiGate();
 const itUi = (name, fn) => test(name, { skip: ui.ok ? false : ui.reason }, fn);
 
 itUi('C10-UI-01 the Table A texts appear verbatim in the non-test source files in src/', () => {
-  const missing = TABLE_A.filter((text) => srcFilesContaining(text).length === 0);
+  const texts = TABLE_A.map((t) => (t === 'Online browser mode does not yet support' ? 'is not supported in online browser mode yet.' : t === ', please use PromptCut on your computer.' ? 'Please use it in PromptCut on your computer.' : t));
+  const missing = texts.filter((text) => srcFilesContaining(text).length === 0);
   assert.deepEqual(missing, [], `These texts are not found in src/:\n${missing.join('\n')}`);
 });
 

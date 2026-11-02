@@ -268,7 +268,7 @@ test("All four tiers are occupied: suggestedPosition is set to null and a warnin
   const s = suggestPosition("top", OCC(0.895, 0.895, 0.692, 0.993));
   assert.equal(s.suggestedPosition, null, "89.5% is the side where the person is; it must not be given out as a suggestion");
   assert.equal(s.suggestedOccupancy, 0.9);
-  assert.match(s.warning, /no position that does not cover the person/);
+  assert.match(s.warning, /no position that avoids covering the person/);
 });
 
 test("Sitting exactly on the threshold does not count as occupied (0.5 means \"counts only when exceeded\")", () => {

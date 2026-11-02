@@ -241,7 +241,7 @@ export async function getBrowser({ dataDir, puppeteer, executablePath } = {}) {
       if (/already running for/i.test(String(e.message))) {
         throw new Error(
           'The browser is already in use by another PromptCut instance (they share the same login state and cannot be open at the same time).'
-          + 'Close the other window, or call web_close there first and try again.',
+          + ' Close the other window, or call web_close there first and try again.',
         );
       }
       throw e;

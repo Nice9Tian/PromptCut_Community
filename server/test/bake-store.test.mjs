@@ -170,7 +170,7 @@ test('BKA-4 asset service unreachable / rejecting: return a clear error (stating
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'aaaaaaaaaaaa.json'), JSON.stringify({ key: 'aaaaaaaaaaaa', hash: 'ab'.repeat(32), bytes: 5 }));
   const down2 = createBakeStore({ indexDir: dir, origin: () => closed, remote: () => null, retries: 0, timeoutMs: 3000 });
-  await assert.rejects(down2.lookup('aaaaaaaaaaaa'), (e) => e instanceof BakeStoreError && /asset service unreachable/.test(e.message));
+  await assert.rejects(down2.lookup('aaaaaaaaaaaa'), (e) => e instanceof BakeStoreError && /Asset service unreachable/.test(e.message));
   assert.ok(fs.existsSync(path.join(dir, 'aaaaaaaaaaaa.json')), 'The index is not deleted when the connection fails');
 
   // 拒绝(非本机、没票据 → 401)

@@ -32,7 +32,7 @@ test('Duplicate lessons are not stacked, a lesson that reappears moves to the en
   s.add(['One', 'Two']);
   s.add(['One']);
   assert.deepEqual(s.read(), ['Two', 'One']);
-  s.add(Array.from({ length: 40 }, (_, i) => `Lessons ${i}`));
+  s.add(Array.from({ length: 40 }, (_, i) => `Lesson ${i}`));
   const all = s.read();
   assert.equal(all.length, 30);
   assert.equal(all.at(-1), 'Lesson 39');

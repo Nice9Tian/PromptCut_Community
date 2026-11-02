@@ -227,7 +227,7 @@ test('MI-6 download: when the asset service is unreachable the job reports an er
     const r = await call(fn, 'POST', '/api/collect/download', { url: 'BV1FAKE00030' });
     const job = await waitJob(fn, r.json.jobId);
     assert.equal(job.status, 'error', JSON.stringify(job));
-    assert.ok(job.message.includes(`asset service unreachable (${gone})`), job.message);
+    assert.ok(job.message.includes(`Asset service unreachable (${gone})`), job.message);
     assert.equal(job.items.length, 0);
   } finally {
     Object.assign(process.env, { PROMPTCUT_EDITOR_URL: saved.url, TEMP: saved.TEMP, TMP: saved.TMP });

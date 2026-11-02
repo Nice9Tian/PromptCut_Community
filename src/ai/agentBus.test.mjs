@@ -32,10 +32,10 @@ test("MA-P1 diffScopes: only reports tracks whose clips array changed reference,
   const a = [track("t1", "Track 1", []), track("t2", "Track 2", [])];
   const before = project(a);
   const after = project([a[0], { ...a[1], clips: [{ id: "x" }] }]);
-  assert.deepEqual(bus.diffScopes(before, after), ["cut 1->track 2"]);
+  assert.deepEqual(bus.diffScopes(before, after), ["Cut 1->Track 2"]);
   assert.deepEqual(bus.diffScopes(before, project(a, "c2")), ["Cut 2"]);
-  assert.deepEqual(bus.diffScopes(before, project([a[0]])), ["cut 1->track 2 (deleted)"]);
-  assert.deepEqual(bus.diffScopes(before, project([a[1], a[0]])), ["cut 1->track order"]);
+  assert.deepEqual(bus.diffScopes(before, project([a[0]])), ["Cut 1->Track 2(deleted)"]);
+  assert.deepEqual(bus.diffScopes(before, project([a[1], a[0]])), ["Cut 1->track order"]);
   assert.deepEqual(bus.diffScopes(before, before), []);
 });
 
@@ -70,9 +70,9 @@ test("MA-P3 agent.spawn: opens a tab with the role name, the chat ID is given by
   assert.deepEqual(posted.find((p) => p.url === "/api/agent/spawned")?.body, { reqId: "s1", ok: true });
   // 同角色第二个编号;声明范围后页签名是「角色 · 范围」
   await bus.handleSpawn({ reqId: "s2", conversationId: "sub-def", role: "director", roleName: "Editing director", parent: "conv-main", provider: "claude", creativity: "high" });
-  assert.equal(tabs.findTabByConversation("sub-def").title, "Cut director 2");
+  assert.equal(tabs.findTabByConversation("sub-def").title, "Editing director 2");
   tabs.setScopeByConversation("sub-abc", "Cut 1->Track 1");
-  assert.equal(tabs.findTabByConversation("sub-abc").title, "Cut director · cut 1->track 1");
+  assert.equal(tabs.findTabByConversation("sub-abc").title, "Editing director · Cut 1->Track 1");
   tabs.setScopeByConversation("sub-abc", null);
   assert.equal(tabs.findTabByConversation("sub-abc").title, "Editing director");
   // 对话 ID 不合法:回话 ok:false
@@ -82,7 +82,7 @@ test("MA-P3 agent.spawn: opens a tab with the role name, the chat ID is given by
 
 test("MA-P4 formatInbound: each message is labeled with who sent it", () => {
   const text = bus.formatInbound([{ from: "conv-a", text: "I'll take Track 2", hops: 1 }, { from: null, fromLabel: "Agent x (on member bob's side)", text: "OK", hops: 1 }]);
-  assert.equal(text, "[Message from Agent conv-a]\n序列2 我来\n\n[Message from Agent x(成员 bob 那边)]\n好");
+  assert.equal(text, "[Message from Agent conv-a]\nI'll take Track 2\n\n[Message from Agent x (on member bob's side)]\nOK");
 });
 
 test("MA-P5 taken away and then busy again: the stash is put back on the page side and delivered first next time", async () => {
@@ -98,7 +98,7 @@ test("MA-P1b diffScopes: without switching cuts, modifying a track in a parked c
   const pk = [track("p1", "Track A", []), track("p2", "Track B", [])];
   const mk = (parked) => ({ ...project(act), cuts: [{ id: "c1", name: "Cut 1" }, { id: "c2", name: "Cut 2", tracks: parked, duration: 5 }], activeCutId: "c1" });
   const before = mk(pk);
-  assert.deepEqual(bus.diffScopes(before, mk([pk[0], { ...pk[1], clips: [{ id: "y" }] }])), ["cut 2->track B"]);
-  assert.deepEqual(bus.diffScopes(before, mk([pk[0]])), ["cut 2->track B (deleted)"]);
+  assert.deepEqual(bus.diffScopes(before, mk([pk[0], { ...pk[1], clips: [{ id: "y" }] }])), ["Cut 2->Track B"]);
+  assert.deepEqual(bus.diffScopes(before, mk([pk[0]])), ["Cut 2->Track B(deleted)"]);
   assert.deepEqual(bus.diffScopes(before, mk(pk)), []);
 });

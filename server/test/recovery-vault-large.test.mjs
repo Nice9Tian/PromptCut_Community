@@ -20,13 +20,13 @@ test('RVL-01 a large project\'s offline edit log can be written to the protected
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-vault-large-'));
   try {
     const descriptor = { version: 1, roomId: 'sp_aaaaaaaaaaaaaaaaaaaaaaaaaa', service: 'http://127.0.0.1:1', where: 'lan' };
-    const project = { id: 'content', name: 'Large text', tracks: [], media: [], note: 'body'.repeat(800_000) };
+    const project = { id: 'content', name: 'Large text', tracks: [], media: [], note: 'body'.repeat(1_200_000) };
     const journal = { version: 1, projectId: descriptor.roomId, project, rev: 7, offlineRev: null, pending: [] };
     assert.ok(Buffer.byteLength(JSON.stringify(journal)) > 4 * 1024 * 1024, 'the record itself is larger than 4 MiB');
     openRecoveryVault({ dir }).journal(descriptor, 'content', journal);
     const back = openRecoveryVault({ dir }).select(descriptor, 'content').journal;
     assert.equal(back.rev, 7);
-    assert.equal(back.project.note.length, 1_600_000);
+    assert.equal(back.project.note.length, 4_800_000);
     assert.deepEqual(back, journal);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

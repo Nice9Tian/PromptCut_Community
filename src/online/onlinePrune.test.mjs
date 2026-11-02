@@ -51,7 +51,7 @@ test("PRUNE-03 online page cloud projects do not prompt about unsaved changes (i
   const topBar = fs.readFileSync(path.join(ROOT, "src/editor/TopBar.tsx"), "utf8");
   const statusBar = fs.readFileSync(path.join(ROOT, "src/editor/StatusBar.tsx"), "utf8");
   assert.match(topBar, /useStore\(\(s\)\s*=>\s*!ONLINE_BUILD\s*&&\s*s\.dirty\)/, "TopBar should not mark a cloud project as having unsaved changes in the online build");
-  assert.doesNotMatch(topBar, /Switching to Vibe mode will discard them\. Continue\?/, "TopBar switching back to Vibe mode should not show the web version's unsaved-changes confirmation");
+  assert.doesNotMatch(topBar, /The current project has unsaved changes, and switching to Vibe mode will discard them\. Continue\?/, "TopBar switching back to Vibe mode should not show the web version's unsaved-changes confirmation");
   assert.match(statusBar, /useStore\(\(s\)\s*=>\s*!ONLINE_BUILD\s*&&\s*s\.dirty\)/, "StatusBar should not subscribe to the local draft dirty flag in the online build");
 });
 

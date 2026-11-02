@@ -92,8 +92,8 @@ test("RS-T-03 Interpolation: endpoints, segments, outside the range, easing; wro
   assert.equal(F.interpolate(1, [0, 1, 2], [0, 100, 0]), 100, "Landing exactly on a middle time point gives that value");
   assert.equal(F.interpolate(0.5, [0, 1], [0, 100], { easing: F.Easing.quad }), 25);
   assert.equal(F.interpolate(1.5, [0, 1, 2], [0, 100, 0], { easing: [F.Easing.linear, F.Easing.quad] }), 75, "One easing per segment");
-  assert.throws(() => F.interpolate(0, [0, 1], [1]), /must have the same number of items/);
-  assert.throws(() => F.interpolate(0, [1, 1], [0, 1]), /each larger than the previous/);
+  assert.throws(() => F.interpolate(0, [0, 1], [1]), /needs the same number of time points and values/);
+  assert.throws(() => F.interpolate(0, [1, 1], [0, 1]), /must be strictly increasing/);
   assert.throws(() => F.interpolate(0, [0], [0]), /at least two/);
   assert.throws(() => F.interpolate(0, [0, NaN], [0, 1]), /finite number/);
 
@@ -101,7 +101,7 @@ test("RS-T-03 Interpolation: endpoints, segments, outside the range, easing; wro
   assert.equal(F.interpolateColors(0.5, [0, 1], ["#f00", "#00f"]), "rgba(128, 0, 128, 1)");
   assert.equal(F.interpolateColors(1, [0, 1], ["#ff000080", "rgba(0, 0, 255, 0.25)"]), "rgba(0, 0, 255, 0.25)");
   assert.equal(F.interpolateColors(0.5, [0, 1], ["rgb(0 0 0)", "rgb(100% 50% 0% / 50%)"]), "rgba(128, 64, 0, 0.75)");
-  assert.throws(() => F.interpolateColors(0, [0, 1], ["red", "#00f"]), /cannot recognize this color/);
+  assert.throws(() => F.interpolateColors(0, [0, 1], ["red", "#00f"]), /does not recognize this color/);
 
   assert.equal(F.tween(0, { duration: 1 }), 0);
   assert.equal(F.tween(1, { duration: 1 }), 1);
@@ -162,9 +162,9 @@ test("RS-T-03 The four easing aliases: circle, exp and the original names are th
   }
   assert.equal(F.Easing.poly(1)(0.3), 0.3);
   assert.equal(F.Easing.poly(0.5)(0.25), 0.5);
-  for (const bad of [undefined, null, "4", NaN, Infinity, {}]) assert.throws(() => F.Easing.poly(bad), /Easing\.poly exponent must be a number, received .+\. Syntax: `Easing\.poly\(4\)`, equals `Easing\.quart`\./);
-  assert.throws(() => F.Easing.poly("4"), /received "4"/);
-  assert.throws(() => F.Easing.poly(), /received undefined/);
+  for (const bad of [undefined, null, "4", NaN, Infinity, {}]) assert.throws(() => F.Easing.poly(bad), /Easing\.poly exponent must be a number, got .+\. Usage: `Easing\.poly\(4\)`, which equals `Easing\.quart`\./);
+  assert.throws(() => F.Easing.poly("4"), /got "4"/);
+  assert.throws(() => F.Easing.poly(), /got undefined/);
 });
 
 test("RS-T-03 Spring: the analytic solution matches the trajectory integrated in many small steps (underdamped, critically damped, overdamped)", () => {
@@ -214,18 +214,18 @@ test("RS-T-03 Spring: the analytic solution matches the trajectory integrated in
 test("RS-T-03 Spring: writing it the Remotion way throws an error and no longer silently returns the start point", () => {
   // 第一种：第一个参数不是数
   assert.throws(() => F.spring({ frame: 12, fps: 30, config: { damping: 200 } }),
-    { message: "spring's first argument must be a time in seconds, received object. The syntax here is `spring(t, { stiffness, damping, mass, from, to, delay })`, where `t` is clip-local seconds; it is not Remotion's `spring({ frame, fps, config })`. Change it to: `spring(t, { stiffness: 100, damping: 10 })`." });
-  assert.throws(() => F.spring(undefined, { stiffness: 100 }), /first argument must be a time in seconds, received undefined\./);
-  assert.throws(() => F.spring("0.5"), /received string\./);
-  assert.throws(() => F.spring(NaN), /received NaN\./);
-  assert.throws(() => F.spring(null), /received null\./);
+    { message: "The first argument of spring must be a time (in seconds), got object. The syntax here is `spring(t, { stiffness, damping, mass, from, to, delay })`, where `t` is clip-local seconds; it is not Remotion's `spring({ frame, fps, config })`. Change it to: `spring(t, { stiffness: 100, damping: 10 })`." });
+  assert.throws(() => F.spring(undefined, { stiffness: 100 }), /first argument of spring must be a time \(in seconds\), got undefined\./);
+  assert.throws(() => F.spring("0.5"), /got string\./);
+  assert.throws(() => F.spring(NaN), /got NaN\./);
+  assert.throws(() => F.spring(null), /got null\./);
   // 第二种：第二个参数里有 Remotion 的键
   assert.throws(() => F.spring(0.4, { fps: 30, stiffness: 100 }),
-    { message: "spring's arguments contain fps: that is Remotion's syntax. Here time is given in seconds as the first argument, not as a frame number and frame rate; write `stiffness`, `damping` and `mass` directly in the second argument, and do not wrap them in another layer of `config`. Syntax: `spring(t, { stiffness: 100, damping: 10, mass: 1 })`." });
-  assert.throws(() => F.spring(0.4, { config: { stiffness: 100, damping: 10 } }), /spring's arguments contain config: that is Remotion's syntax\./);
-  assert.throws(() => F.spring(0.4, { frame: 12 }), /spring's arguments contain frame:/);
-  assert.throws(() => F.springDuration({ config: { damping: 200 } }), /spring's arguments contain config:/);
-  assert.throws(() => F.springDuration({ fps: 30 }), /spring's arguments contain fps:/);
+    { message: "spring arguments contain fps: this is Remotion syntax. Here time is in seconds and passed as the first argument, not frame number and frame rate; write `stiffness`, `damping`, `mass` directly in the second argument, without wrapping them in `config`. Usage: `spring(t, { stiffness: 100, damping: 10, mass: 1 })`." });
+  assert.throws(() => F.spring(0.4, { config: { stiffness: 100, damping: 10 } }), /spring arguments contain config: this is Remotion syntax\./);
+  assert.throws(() => F.spring(0.4, { frame: 12 }), /spring arguments contain frame:/);
+  assert.throws(() => F.springDuration({ config: { damping: 200 } }), /spring arguments contain config:/);
+  assert.throws(() => F.springDuration({ fps: 30 }), /spring arguments contain fps:/);
   // 合法的调用照旧：负数、0、无穷大都是数
   assert.equal(F.spring(-1), 0);
   assert.equal(F.spring(0, { from: 2 }), 2);

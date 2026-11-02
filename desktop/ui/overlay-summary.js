@@ -16,6 +16,7 @@
     return /^zh/i.test(l) ? 1 : /^ja/i.test(l) ? 2 : 0;
   })();
 
+  // i18n-allow-start: the overlay brings its own Chinese and Japanese
   /** English → [Chinese, Japanese]; {0} {1} are filled in by t() */
   var TEXT = {
     'PromptCut is running in background mode': ['PromptCut 在后台运行', 'PromptCut はバックグラウンドで動作中'],
@@ -36,6 +37,7 @@
     'Last step': ['上一步', '前回のステップ'],
     'Starting PromptCut…': ['正在启动 PromptCut…', 'PromptCut を起動しています…'],
   };
+  // i18n-allow-end
 
   function t(en) {
     var row = TEXT[en];
@@ -45,6 +47,7 @@
   }
 
   // 工具名 → 人话。没列到的照原名显示。
+  // i18n-allow-start
   // [English, Chinese, Japanese] by tool name
   var TOOL_NAMES = {
     add_clip: ['Add card', '加卡片', 'カードを追加'],
@@ -91,6 +94,7 @@
     report_progress: ['Report progress', '交进度', '進捗を報告'],
     get_skill_guide: ['Read guide', '读说明', 'ガイドを読む'],
   };
+  // i18n-allow-end
 
   function toolName(name) {
     return (name && TOOL_NAMES[name] && TOOL_NAMES[name][LANG]) || name || t('Action');

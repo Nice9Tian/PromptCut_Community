@@ -23,7 +23,7 @@ test("parseCaptions: both newlines and // can separate entries, and bad lines ar
     lines.map((l) => [l.start, l.end, l.zh, l.en]),
     [
       [0, 2, "第一句", "first"],
-      [2, 4, "SecondSentence", ""],
+      [2, 4, "第二句", ""],
     ],
   );
   assert.deepEqual(parseCaptions(undefined), []);
@@ -32,14 +32,14 @@ test("parseCaptions: both newlines and // can separate entries, and bad lines ar
 
 test("parseCaptions: out-of-order lines are sorted by start time when read in", () => {
   const lines = parseCaptions("4|6|后|\n0|2|前|");
-  assert.deepEqual(lines.map((l) => l.zh), ["前", "Then"]);
+  assert.deepEqual(lines.map((l) => l.zh), ["前", "后"]);
 });
 
 test("formatCaptions: the format matches what fill_captions generates, and pipes and newlines are scrubbed out", () => {
-  const out = formatCaptions([L(0, 2.005, "带|竖线\n和换行"), L(2, 4, "SecondSentence", "second")]);
+  const out = formatCaptions([L(0, 2.005, "带|竖线\n和换行"), L(2, 4, "第二句", "second")]);
   assert.equal(out, "0.00|2.01|带 竖线 和换行|\n2.00|4.00|第二句|second");
   // 转一圈回来还是同一份数据
-  assert.deepEqual(parseCaptions(out).map((l) => l.zh), ["带 竖线 和换行", "SecondSentence"]);
+  assert.deepEqual(parseCaptions(out).map((l) => l.zh), ["带 竖线 和换行", "第二句"]);
 });
 
 test("captionSpans: seconds are converted to absolute timeline positions, and the parts outside the card are cut off", () => {
@@ -48,9 +48,9 @@ test("captionSpans: seconds are converted to absolute timeline positions, and th
   assert.deepEqual(
     spans.map((s) => [s.index, s.from, s.to, s.zh]),
     [
-      [0, 10, 12, "A"],
+      [0, 10, 12, "甲"],
       // 乙 越过了卡片末尾,裁到 14
-      [1, 13, 14, "B"],
+      [1, 13, 14, "乙"],
       // 丙 整条都在卡外,不画
     ],
   );
@@ -126,7 +126,7 @@ test("captionsFromTranscript: paragraphs follow the media's position on the time
   const segments = [
     { start: 2, end: 4, text: "被修掉了" },
     { start: 8, end: 10, text: "第一句" },
-    { start: 11, end: 13, text: "SecondSentence" },
+    { start: 11, end: 13, text: "第二句" },
   ];
   const r = captionsFromTranscript(clips, "m1", segments);
   assert.deepEqual([r.from, r.to], [30, 35]);
@@ -134,13 +134,13 @@ test("captionsFromTranscript: paragraphs follow the media's position on the time
     r.lines.map((l) => [l.start, l.end, l.zh]),
     [
       [0, 2, "第一句"],
-      [3, 5, "SecondSentence"],
+      [3, 5, "第二句"],
     ],
   );
 
   // 指定范围时超出的部分裁掉
   const clipped = captionsFromTranscript(clips, "m1", segments, { from: 30, to: 34 });
-  assert.deepEqual(clipped.lines.map((l) => [l.start, l.end, l.zh]), [[0, 2, "第一句"], [3, 4, "SecondSentence"]]);
+  assert.deepEqual(clipped.lines.map((l) => [l.start, l.end, l.zh]), [[0, 2, "第一句"], [3, 4, "第二句"]]);
 
   // 素材根本没放上时间轴:没有行,也不炸
   assert.deepEqual(captionsFromTranscript([], "m1", segments).lines, []);

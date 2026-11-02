@@ -235,7 +235,7 @@ test("MI-12 undo conflicts (0.7.20) use the same shape: two entries from differe
   assert.deepEqual(table.map((t) => t.key).sort(), ["offline:clip:c1", "undo:clip:c2"]);
   const cloud = edit(base, (p) => { clipIn(p, "c2").label = "Edited by Agent"; });
   const rows = M.mergeRows(cloud, table);
-  assert.equal(rows.find((r) => r.source === "undo").props[0].text, 'Name "Agent 改的" → "c2" (The cloud is now "Agent 改的")');
+  assert.equal(rows.find((r) => r.source === "undo").props[0].text, 'Name "Edited by Agent" → "c2" (The cloud is now "Edited by Agent")');
   const r = M.applyMerge(cloud, table, all(rows));
   assert.equal(clipIn(r.project, "c2").label, "c2");
   assert.equal(clipIn(r.project, "c1").opacity, 0.8);

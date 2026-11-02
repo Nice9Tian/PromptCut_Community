@@ -93,7 +93,7 @@ test('select value not among the options → reject and list the allowed values'
 });
 
 test('number received a string → reject', () => {
-  assert.throws(() => validateCardParams('demo-card', { lines: 'x', size: '20' }), /must be a number/);
+  assert.throws(() => validateCardParams('demo-card', { lines: 'x', size: '20' }), /needs a number/);
 });
 
 test('Changing a secondary parameter of an existing clip must not be rejected just because this call omitted the required field', () => {
@@ -176,7 +176,7 @@ test('Syntax error → reject and give the line number', () => {
 
 test('Missing controls field → reject', () => {
   const src = GOOD.replace('  controls: [{ key: "text", label: "Text", type: "text" }],\n', '');
-  assert.match(checkCardSource('price-tag', src, [], { mode: 'author' }).errors.join('\n'), /Missing controls/);
+  assert.match(checkCardSource('price-tag', src, [], { mode: 'author' }).errors.join('\n'), /missing the controls field/);
 });
 
 // ── A0:审阅表是 independent 的唯一权威 + frameMode 必填 ──────────────
@@ -188,7 +188,7 @@ test("A0: user card edit_card adds compositing: independent → reject", () => {
   const after = GOOD.replace('  defaults:', INDEPENDENT + '  defaults:');
   const r = checkCardSource('price-tag', after, [], { mode: 'author', before: GOOD });
   assert.equal(r.ok, false);
-  assert.match(r.errors.join('\n'), /review table/);
+  assert.match(r.errors.join('\n'), /review sheet/);
 });
 
 test("A0: user card edit_card changes copy only → pass", () => {
@@ -220,7 +220,7 @@ test("A0: built-in card edit_card (checkSourceEdit) adds independent → reject"
 
 test("A0: author mode missing frameMode → reject; install mode accepts it as is", () => {
   const src = GOOD.replace('  frameMode: "stateful",\n', '');
-  assert.match(checkCardSource('price-tag', src, [], { mode: 'author' }).errors.join('\n'), /Missing frameMode/);
+  assert.match(checkCardSource('price-tag', src, [], { mode: 'author' }).errors.join('\n'), /missing the frameMode field/);
   const installed = checkCardSource('price-tag', src, [], { mode: 'install' });
   assert.equal(installed.ok, true, installed.errors.join('\n'));
 });
@@ -229,7 +229,7 @@ test("A0: built-in CardDef file loses frameMode after the edit → reject", () =
   const after = GOOD.replace('  frameMode: "stateful",\n', '');
   const r = checkSourceEdit('src/cards/native/price-tag.tsx', GOOD, after);
   assert.equal(r.ok, false);
-  assert.match(r.errors.join('\n'), /Missing frameMode/);
+  assert.match(r.errors.join('\n'), /The frameMode field is missing in CardDef/);
 });
 
 test("A0: a CardDef<any>[] aggregate file can be edited even without frameMode", () => {
@@ -321,7 +321,7 @@ test('checkCardSource merges review findings into errors, with tier labels', () 
   const src = GOOD.replace('return <motion', 'renderer.setAnimationLoop((ms) => draw(ms));\n  return <motion');
   const r = checkCardSource('price-tag', src, [], { mode: 'author' });
   assert.equal(r.ok, false);
-  assert.match(r.errors.join('\n'), /\[Tier 2 · not yet supported by the pipeline\] own frame loop/);
+  assert.match(r.errors.join('\n'), /\[Tier 2·pipeline not supported yet\] Own frame loop/);
   assert.equal(r.findings.length, 1);
 });
 
@@ -378,7 +378,7 @@ test('No match at all → error pointing to get_card_source', () => {
 test('Multiple matches without replaceAll → error stating how many occurrences matched', () => {
   const r = applyCardPatch('p p p', 'p', 'q');
   assert.equal(r.ok, false);
-  assert.match(r.error, /matched 3 occurrences/);
+  assert.match(r.error, /matched 3 places/);
 });
 
 test('With replaceAll, replace all and report truthfully how many occurrences were replaced', () => {

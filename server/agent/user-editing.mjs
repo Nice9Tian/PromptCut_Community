@@ -247,8 +247,8 @@ export function userEditingNotice(list, limits = USER_EDITING_DEFAULTS) {
     if (!groups.has(who)) groups.set(who, []);
     groups.get(who).push(`clip ${e.clipId} (${KIND_TEXT[e.kind] ?? e.kind})`);
   }
-  const parts = [...groups].map(([who, items]) => `${who ? `User ${who} ` : 'User'} is editing ${items.join(', ')}`);
-  return `${parts.join(';')}${more}. This is a hint, not a prohibition: the user may be giving you instructions right here; before changing anything, make sure you will not overwrite the user's edits, and if unsure, stop and ask the user.`;
+  const parts = [...groups].map(([who, items]) => `${who ? `User ${who}` : 'User'} is editing ${items.join(', ')}`);
+  return `${parts.join('; ')}${more}. This is a hint, not a prohibition: the user may be giving you instructions right here; before changing anything, make sure you will not overwrite the user's edits, and if unsure, stop and ask the user.`;
 }
 
 /**

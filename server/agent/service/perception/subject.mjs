@@ -67,9 +67,9 @@ export class SubjectToolError extends Error {
 }
 
 const NOT_CONFIGURED = 'This cloud node has no subject detection configured (the Python interpreter and model weights are provided by the deployer, and the Cloud Agent cannot install them on the node).'
-  + 'For position and occlusion judgments, fall back to see_frames and look at the real frames, and do not guess "the person is on the left"; or ask the user to contact the host, or to run detection in PromptCut on their computer.';
+  + ' For position and occlusion judgments, fall back to see_frames and look at the real frames, and do not guess "the person is on the left"; or ask the user to contact the host, or to run detection in PromptCut on their computer.';
 const NO_ENGINE = 'Neither subject detection tier works on this cloud node (dependencies or weights are not installed properly), and there is no fallback tier.'
-  + 'For position and occlusion judgments, fall back to see_frames and look at the real frames, and do not pretend detection was run; ask the user to contact the host to install it.';
+  + ' For position and occlusion judgments, fall back to see_frames and look at the real frames, and do not pretend detection was run; ask the user to contact the host to install it.';
 const INSTALL_OFF = 'The Cloud Agent cannot install subject detection on this node: the node has no "controlled install" configuration (a version-pinned dependency manifest and install directory), '
   + 'and the model cannot specify pip arguments itself. Tell the user to contact the host, or to install it in PromptCut on their computer.';
 
@@ -461,7 +461,7 @@ export function createSubjectTools({
       hint: 'Subject detection has started in background mode, poll that mediaId with list_subjects; '
         + `Estimated about ${etaSeconds} seconds (engine=${engine}, measured: light about 0.5 s/frame, full about 3 s/frame).`
         + `${engine === 'full' ? 'the full tier is slow, asking once every 10 seconds is enough' : 'asking once every 3 seconds is enough'}, do not ask every second.`
-        + 'After it finishes, each shot from list_shots will carry subject and suggestedPosition.',
+        + ' After it finishes, each shot from list_shots will carry subject and suggestedPosition.',
     };
     if (started.state !== 'queued' || live.has(started.jobId)) {
       // 同一 requestId 的重试:作业已经开了,不再开第二个
@@ -728,7 +728,7 @@ export function createSubjectTools({
     return {
       jobId: started.jobId, started: true,
       hint: 'The subject detection light tier is being installed in controlled mode (it only installs the onnxruntime manifest locked by the deployer and accepts no pip arguments). Use subject_status to see whether engine has become light; do not start it again.'
-        + 'After installing, weight files (yunet.onnx / rtdetr_r18vd.onnx) may still be missing; the deployer puts them in the node\'s weights directory, and the response will say so.',
+        + ' After installing, weight files (yunet.onnx / rtdetr_r18vd.onnx) may still be missing; the deployer puts them in the node\'s weights directory, and the response will say so.',
     };
   }
 

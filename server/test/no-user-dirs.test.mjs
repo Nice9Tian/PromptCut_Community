@@ -139,7 +139,7 @@ test('export-e2e asset mirror: a real directory + hard links, newly written file
   assert.equal(fs.readFileSync(path.join(src, 'sub', 'bb.png'), 'utf8'), 'png-bytes');
   assert.equal(fs.statSync(path.join(src, 'aa.mp4')).nlink, 1);
 
-  assert.throws(() => mirrorMediaLibrary(path.join(base, 'nope'), path.join(base, 'm2')), /asset catalog does not exist/);
+  assert.throws(() => mirrorMediaLibrary(path.join(base, 'nope'), path.join(base, 'm2')), /Asset directory does not exist/);
   fs.mkdirSync(path.join(base, 'exists'));
   assert.throws(() => mirrorMediaLibrary(src, path.join(base, 'exists')), /already exists/);
 });

@@ -82,7 +82,7 @@ export function validatePartFrame(raw: unknown, where: string): ClipFrame | unde
       throw new Error(
         `frame of ${where} does not support ${k} yet: 3D can only be applied to the whole card (rotateX / rotateY / translateZ of set_position),` +
         `the part layer has no perspective, so setting it only gives an affine skew, and if the card has a fade in/out or emphasis, even the skew will look different.` +
-        `To make this part 3D, make it a separate card and position that.`,
+        ` To make this part 3D, make it a separate card and position that.`,
       );
     }
     throw new Error(`frame of ${where} does not recognize "${k}", only x / y / w / h / anchor / scale / rotate`);

@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { startCliLoop, parseSubmission, submitFormat } from '../runners/cli-loop.mjs';
 
 const block = (name, obj) => `OK.\n\`\`\`${name}\n${JSON.stringify(obj)}\n\`\`\``;
-const roleOf = (sys) => sys.startsWith('You are the judger for this video') ? 'judger' : sys.startsWith('You are the reviewer') ? 'reviewer' : 'worker';
+const roleOf = (sys) => sys.startsWith('You are the judger (judge) of this video') ? 'judger' : sys.startsWith('You are the reviewer') ? 'reviewer' : 'worker';
 
 /** 假 runner:按角色弹台词;每次调用都发 session、text、done,就像 agy */
 function fakeCli(lines, calls) {
@@ -53,9 +53,9 @@ test('Conclusion block: take the last valid one; broken JSON or missing required
 
 test('The instructions for submitting a conclusion state "not a tool" clearly and give the fields', () => {
   const s = submitFormat(['request_revision']);
-  assert.match(s, /not a tool/);
+  assert.match(s, /not tools/);
   assert.match(s, /rulings/);
-  assert.match(s, /accept \/ reject \/ downgrade/);
+  assert.match(s, /Accept \/ Reject \/ downgrade/);
 });
 
 test('Full loop run: the judger/reviewer turns take the read-only lock, the worker turn unlocks, and it always unlocks at the end; inner done/session do not leak out', async () => {
@@ -87,7 +87,7 @@ test('judger submitted no conclusion: nudge it once in its own session', async (
   const judgerCalls = calls.filter((c) => c.role === 'judger');
   assert.equal(judgerCalls.length, 3);
   assert.ok(judgerCalls[2].sessionId, 'The nudge must carry the session id');
-  assert.match(judgerCalls[2].prompt, /not yet submitted the conclusion as required/);
+  assert.match(judgerCalls[2].prompt, /not submitted your conclusion as required/);
   assert.equal(events.find((e) => e.type === 'done').outcome, 'passed');
 });
 
@@ -119,9 +119,9 @@ test('worker still interrupted after retries are used up: the loop is not voided
   });
   assert.ok(!events.some((e) => e.type === 'error'), 'Must not end with an error');
   assert.equal(events.find((e) => e.type === 'done').outcome, 'passed');
-  assert.ok(events.some((e) => e.type === 'status' && /still interrupted after retries are used up/.test(e.text)));
+  assert.ok(events.some((e) => e.type === 'status' && /still interrupted after using up its retries/.test(e.text)));
   const reviewer = calls.find((c) => c.role === 'reviewer');
-  assert.match(reviewer.prompt, /interrupted for technical reasons[\s\S]*GrepSearch/, 'The reviewer must know this delivery was interrupted, and why');
+  assert.match(reviewer.prompt, /interrupted by technical causes[\s\S]*GrepSearch/, 'The reviewer must know this delivery was interrupted, and why');
   const workers = calls.filter((c) => c.role === 'worker');
   assert.equal(workers.length, 4, 'Three attempts + one new attempt in the next round');
   assert.ok(!workers[3].sessionId, 'The next round\'s worker is a new session');
@@ -135,7 +135,7 @@ test('worker interrupted two rounds in a row: stop and wrap up normally (not as 
   });
   assert.ok(!events.some((e) => e.type === 'error'));
   assert.equal(events.find((e) => e.type === 'done').outcome, 'interrupted');
-  assert.ok(events.some((e) => e.type === 'text' && /interrupted for technical reasons in 2 consecutive rounds[\s\S]*GrepSearch/.test(e.delta)));
+  assert.ok(events.some((e) => e.type === 'text' && /interrupted by technical causes for 2 rounds in a row[\s\S]*GrepSearch/.test(e.delta)));
 });
 
 test('reviewer still interrupted after retries are used up: the judger is told to verify on its own, rather than treating it as "no opinions"', async () => {

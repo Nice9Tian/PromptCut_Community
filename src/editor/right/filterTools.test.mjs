@@ -50,7 +50,7 @@ test("Filter library: create, attach, edit, delete; gate, undo, cross-cut cleanu
     // 挂到第二段、换参数、摘掉
     assert.equal(ft.applyFilter({ clipId: "c2", filterId: fid }).filterId, fid);
     assert.throws(() => ft.applyFilter({ clipId: "c2", filterId: fid, params: { nope: 1 } }), /no parameter nope/);
-    assert.throws(() => ft.applyFilter({ clipId: "c2", filterId: "fx-none" }), /No fx-none in the filter library.*呼吸/);
+    assert.throws(() => ft.applyFilter({ clipId: "c2", filterId: "fx-none" }), /No fx-none in the filter library.*Breathing/);
     assert.equal(ft.listFilters().filters[0].usedBy.length, 2);
     assert.equal(ft.applyFilter({ clipId: "c2", filterId: "" }).removed, true);
     assert.equal("filter" in getState().project.tracks[0].clips[1], false, "Detaching must remove the field entirely");
@@ -61,7 +61,7 @@ test("Filter library: create, attach, edit, delete; gate, undo, cross-cut cleanu
     const upd = ft.updateFilter({ filterId: fid, params: {}, ops: [{ kind: "grayscale", value: "p" }] });
     assert.match(upd.note, /The 2 clips using it/);
     assert.match(upd.warning, /c1/);
-    assert.throws(() => ft.updateFilter({ filterId: fid, ops: [{ kind: "saturate", value: 9 }] }), /0~2/);
+    assert.throws(() => ft.updateFilter({ filterId: fid, ops: [{ kind: "saturate", value: 9 }] }), /between 0 and 2/);
 
     // 删:挂着要 force + reason;停放剪辑里挂着的也要摘
     const other = actions.addCut("Cut backup", { switchTo: false });
@@ -71,7 +71,7 @@ test("Filter library: create, attach, edit, delete; gate, undo, cross-cut cleanu
       cuts: q.cuts.map((c) => (c.id === other.id ? { ...c, tracks: [{ id: "tp", name: "p", clips: [{ id: "cp", cardId: "", params: {}, mediaId: "v", start: 0, end: 3, filter: { id: fid } }] }] } : c)),
     });
     assert.equal(ft.listFilters().filters[0].usedBy.length, 3);
-    assert.throws(() => ft.removeFilter({ filterId: fid }), /is still attached to 3 clips.*cp of 剪辑备份/);
+    assert.throws(() => ft.removeFilter({ filterId: fid }), /is still attached to 3 clips.*cp of Cut backup/);
     assert.throws(() => ft.removeFilter({ filterId: fid, force: true }), /reason/);
     const rm = ft.removeFilter({ filterId: fid, force: true, reason: "The user no longer wants it" });
     assert.equal(rm.detached.length, 3);

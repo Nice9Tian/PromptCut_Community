@@ -37,7 +37,7 @@ test('Cloud replica: add_cut_segment / set_cut_segment connect directly to their
     assert.deepEqual([added.segment.cutId, added.segment.start, added.segment.end, added.segment.cutOffset], ['B', 1, 6, 1]);
     const placed = host.getProject().tracks[0].clips.find((c) => c.id === added.segment.clipId);
     assert.deepEqual([placed.cutId, placed.cutOffset], ['B', 1], 'The cut segment was really placed into the replica\'s project');
-    await assert.rejects(() => host.callRoute('add_cut_segment', { cutId: 'A', start: 0 }), /into itself/);
+    await assert.rejects(() => host.callRoute('add_cut_segment', { cutId: 'A', start: 0 }), /inside itself/);
     const set = await host.callRoute('set_cut_segment', { clipId: added.segment.clipId, cutOffset: 3 });
     assert.deepEqual([set.segment.cutOffset, set.segment.end], [3, 4], 'The offset changed, and the out point is clamped to the length remaining in the referenced cut');
     await assert.rejects(() => host.callRoute('set_cut_segment', { clipId: added.segment.clipId, cutOffset: 9 }), /exceeds the total duration/);

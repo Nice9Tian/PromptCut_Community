@@ -12,31 +12,31 @@ import { addQuote, isUserBubble, ordinals, quoteToken, roundView, splitQuotes, w
 
 test('AV1 quote: a sent message is written as "@card name(clip id) text", and the leading quote string can be recognized again', () => {
   const q = [{ id: 'c-1', label: 'beach-run.mp4' }, { id: 'tr-2', label: 'Transition crossfade' }];
-  assert.equal(quoteToken(q[0]), '@card Beach running.mp4(c-1)');
+  assert.equal(quoteToken(q[0]), '@卡片 beach-run.mp4(c-1)');
   const text = withQuotes('  Cut it a bit shorter  ', q);
-  assert.equal(text, '@card Beach running.mp4(c-1) @card Transition crossfade(tr-2) Cut it a bit shorter');
+  assert.equal(text, '@卡片 beach-run.mp4(c-1) @卡片 Transition crossfade(tr-2) Cut it a bit shorter');
   const back = splitQuotes(text);
   assert.deepEqual(back.quotes, q);
   assert.equal(back.rest, 'Cut it a bit shorter');
   assert.equal(withQuotes('Hello', []), 'Hello');
   assert.deepEqual(splitQuotes('Text with no quote'), { quotes: [], rest: 'Text with no quote' });
   // 名字里带括号:只认最后一对括号当片段 id
-  assert.deepEqual(splitQuotes('@card Title(replica)(c-9) Enlarge').quotes, [{ label: 'Title(replica)', id: 'c-9' }]);
+  assert.deepEqual(splitQuotes('@卡片 Title(replica)(c-9) Enlarge').quotes, [{ label: 'Title(replica)', id: 'c-9' }]);
   // 桌面「引用到 AI」插进输入框的写法(引用后一个空格、再写话)
-  assert.deepEqual(splitQuotes('@card Rolling number(c-3) Make the font size a bit larger'), { quotes: [{ label: 'Number ticker', id: 'c-3' }], rest: 'Make the font size a bit larger' });
+  assert.deepEqual(splitQuotes('@卡片 Number ticker(c-3) Make the font size a bit larger'), { quotes: [{ label: 'Number ticker', id: 'c-3' }], rest: 'Make the font size a bit larger' });
   // 只有引用、没有话
-  assert.deepEqual(splitQuotes('@card a(b)'), { quotes: [{ label: 'a', id: 'b' }], rest: '' });
+  assert.deepEqual(splitQuotes('@卡片 a(b)'), { quotes: [{ label: 'a', id: 'b' }], rest: '' });
   // 引用不在开头的不认(那是用户自己写的)
-  assert.deepEqual(splitQuotes('Please look at @card a(b) this one').quotes, []);
+  assert.deepEqual(splitQuotes('Please look at @卡片 a(b) this one').quotes, []);
 });
 
 test('AV1b A quote of a single overlay card is written as "@overlay card name(clip id#kind:definition id)", and the quote bar carries the level all the way to sending', () => {
-  const q = { id: 'c1#filter:f1', label: 'Darken', kind: 'Overlay card' };
+  const q = { id: 'c1#filter:f1', label: 'Darken', kind: '叠加卡' };
   const list = addQuote([], q);
   assert.deepEqual(list, [q], 'addQuote must keep kind as well, otherwise sending would write "@card" again');
-  assert.equal(withQuotes('Make it a bit lighter', list), '@overlay card Darken(c1#filter:f1) Make it a bit lighter');
+  assert.equal(withQuotes('Make it a bit lighter', list), '@叠加卡 Darken(c1#filter:f1) Make it a bit lighter');
   // 不写 kind 的还是整段那一级,和以前一字不差
-  assert.equal(withQuotes('Make it shorter', [{ id: 'c1', label: 'Front door' }]), '@card Front door(c1) Make it shorter');
+  assert.equal(withQuotes('Make it shorter', [{ id: 'c1', label: 'Front door' }]), '@卡片 Front door(c1) Make it shorter');
 });
 
 test('AV2 The same id is not added twice in the quote bar', () => {

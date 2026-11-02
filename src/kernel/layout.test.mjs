@@ -152,7 +152,7 @@ test("rectToFrame: the order of the diagonal points does not matter; align decid
 test("rectToFrame: a bad rectangle and a bad mode are rejected outright", () => {
   assert.throws(() => rectToFrame({ x1: 10, y1: 10, x2: 10, y2: 500 }, {}, undefined, STAGE), /positive width and height/);
   assert.throws(() => rectToFrame({ x1: "a", y1: 0, x2: 1, y2: 1 }, {}, undefined, STAGE), /x1 must be a finite number/);
-  assert.throws(() => rectToFrame({ x1: 0, y1: 0, x2: 1, y2: 1 }, { mode: "stretch" }, undefined, STAGE), /mode can only be/);
+  assert.throws(() => rectToFrame({ x1: 0, y1: 0, x2: 1, y2: 1 }, { mode: "stretch" }, undefined, STAGE), /mode must be/);
 });
 
 /* ---------- align ---------- */
@@ -183,7 +183,7 @@ test("alignToFrame: when a scaled card is snapped to an edge, the visible frame 
 
 test("alignToFrame: passing nothing / passing garbage is rejected", () => {
   assert.throws(() => alignToFrame(undefined, undefined, 0, undefined, STAGE), /at least/);
-  assert.throws(() => alignToFrame("middle", undefined, 0, undefined, STAGE), /h can only be/);
+  assert.throws(() => alignToFrame("middle", undefined, 0, undefined, STAGE), /h must be/);
   assert.throws(() => alignToFrame("left", undefined, NaN, undefined, STAGE), /margin must be a finite number/);
 });
 
@@ -241,7 +241,7 @@ test("rectForSafeSide: left/right is a half screen, top/bottom is a 1/3 band, wi
   assert.deepEqual(rectForSafeSide("right", STAGE, 40), { x1: 1000, y1: 40, x2: 1880, y2: 1040 });
   assert.deepEqual(rectForSafeSide("top", STAGE, 40), { x1: 40, y1: 40, x2: 1880, y2: 320 });
   assert.deepEqual(rectForSafeSide("bottom", STAGE, 40), { x1: 40, y1: 760, x2: 1880, y2: 1040 });
-  assert.throws(() => rectForSafeSide("middle", STAGE), /safeSide can only be/);
+  assert.throws(() => rectForSafeSide("middle", STAGE), /safeSide must be/);
 });
 
 test("The rectangle from rectForSafeSide fed to rectToFrame puts the visible frame on that side", () => {

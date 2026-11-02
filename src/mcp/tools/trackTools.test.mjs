@@ -47,9 +47,9 @@ test("Track tools: list, delete, edit, move, gates and undo", async () => {
     // 门槛:有内容要 force+reason;锁定不删;不认识的 id 报出现有的;不能删光
     assert.throws(() => tt.removeTrack({ trackId: "t-v" }), /still has content.*force:true/);
     assert.throws(() => tt.removeTrack({ trackId: "t-v", force: true }), /reason/);
-    assert.throws(() => tt.removeTrack({ trackId: "t-lock" }), /is locked/);
-    assert.throws(() => tt.removeTrack({ trackId: "nope" }), /No track nope.*t-cap "Captions track"/);
-    assert.throws(() => tt.removeTrack({ trackIds: ["t-cap", "t-v", "t-e1", "t-e2", "t-lock"] }), /at least one must remain/);
+    assert.throws(() => tt.removeTrack({ trackId: "t-lock" }), /locked by the user/);
+    assert.throws(() => tt.removeTrack({ trackId: "nope" }), /no track nope.*t-cap "Captions track"/);
+    assert.throws(() => tt.removeTrack({ trackIds: ["t-cap", "t-v", "t-e1", "t-e2", "t-lock"] }), /At least one track must remain/);
     assert.throws(() => tt.removeTrack({}), /trackId/);
     assert.equal(getState().project.tracks.length, 5);
 
@@ -59,7 +59,7 @@ test("Track tools: list, delete, edit, move, gates and undo", async () => {
     actions.select(["a"]);
     const forced = tt.removeTrack({ trackId: "t-v", force: true, reason: "The user asked to clear this one" });
     assert.equal(forced.reason, "The user asked to clear this one");
-    assert.match(forced.note, /1 place/);
+    assert.match(forced.note, /1 transitions/);
     const allIds = new Set(getState().project.tracks.flatMap((t) => t.clips.map((c) => c.id)));
     for (const tr of getState().project.transitions ?? []) {
       assert.ok(allIds.has(tr.aId) && (!tr.bId || allIds.has(tr.bId)), "After deleting a track, no transition may be left pointing to a nonexistent clip");
@@ -72,19 +72,19 @@ test("Track tools: list, delete, edit, move, gates and undo", async () => {
     const u = tt.updateTrack({ trackId: "t-e1", name: "  Ambient sound ", hidden: true });
     assert.equal(u.track.name, "Ambient sound");
     assert.equal(u.track.hidden, true);
-    assert.match(u.note, /does not appear in the preview and export/);
+    assert.match(u.note, /does not appear in preview or export/);
     assert.deepEqual(diffScopes(before, getState().project), ["Cut 1->Ambient sound"]);
     assert.throws(() => tt.updateTrack({ trackId: "t-e1", hidden: "yes" }), /true or false/);
     assert.throws(() => tt.updateTrack({ trackId: "t-e1", name: "   " }), /cannot be empty/);
-    assert.throws(() => tt.updateTrack({ trackId: "t-e1" }), /provide at least one/);
+    assert.throws(() => tt.updateTrack({ trackId: "t-e1" }), /Provide at least one/);
 
     // move_track:挪到最上面;只调顺序也要让别的 Agent 知道
     const beforeMove = getState().project;
     const m = tt.moveTrack({ trackId: "t-lock", index: 0 });
     assert.equal(m.tracks[0].trackId, "t-lock");
-    assert.deepEqual(diffScopes(beforeMove, getState().project), ["Cut 1->Track order"]);
-    assert.throws(() => tt.moveTrack({ trackId: "t-lock", index: 5 }), /0~4/);
-    assert.throws(() => tt.moveTrack({ trackId: "t-lock", index: 1.5 }), /0~4/);
+    assert.deepEqual(diffScopes(beforeMove, getState().project), ["Cut 1->track order"]);
+    assert.throws(() => tt.moveTrack({ trackId: "t-lock", index: 5 }), /0 to 4/);
+    assert.throws(() => tt.moveTrack({ trackId: "t-lock", index: 1.5 }), /0 to 4/);
 
     // add_track 带 index 插在指定位置
     const added = tt.addTrack({ name: "Background music", index: 1 });

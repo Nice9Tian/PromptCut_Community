@@ -96,24 +96,24 @@ test('UE-S4 which clips are touched: named in parameters, paths written to (incl
 
 test('UE-S5 how the notice is worded and placed: for an object result the notice comes first and the fields are kept; an array is wrapped in one layer; with nothing to report the result is returned as is; an error gets one more sentence appended', () => {
   const ue = [{ clipId: 'c1', kind: 'drag' }, { clipId: 'c2', kind: 'text' }, { clipId: 'c3', kind: 'recent' }];
-  assert.equal(userEditingNotice(ue).startsWith('The user is editing clip c1 (dragging), clip c2 (editing text), clip c3 (just touched). This is a notice, not a prohibition'), true);
+  assert.equal(userEditingNotice(ue).startsWith('User is editing clip c1 (dragging), clip c2 (editing text), clip c3 (just modified). This is a hint, not a prohibition'), true);
   const r = annotateResult({ ok: true, id: 'c1', rev: 3 }, { userEditing: ue.slice(0, 1) });
   assert.deepEqual(Object.keys(r), ['notice', 'userEditing', 'ok', 'id', 'rev']);
-  assert.ok(r.notice.startsWith('The user is editing clip c1 (dragging)'), r.notice);
+  assert.ok(r.notice.startsWith('User is editing clip c1 (dragging)'), r.notice);
   const plain = { ok: true };
   assert.equal(annotateResult(plain, { userEditing: [] }), plain, 'Returned as is when there is nothing to report (the same object)');
   const arr = annotateResult([1, 2], { userEditing: ue.slice(0, 1) });
   assert.deepEqual(arr.result, [1, 2]);
-  assert.match(arr.notice, /user is editing/);
+  assert.match(arr.notice, /User is editing/);
   // 先有 overwrote(执行器放的)再补 userEditing(入口放的):两个字段都在,两句都在
-  const ov = [{ entity: '/tracks/@t1/clips/@c1', clipId: 'c1', by: 'user', who: 'User', label: 'user just edited', rev: 2, agoMs: 3000 }];
+  const ov = [{ entity: '/tracks/@t1/clips/@c1', clipId: 'c1', by: 'user', who: 'User', label: 'User just edited', rev: 2, agoMs: 3000 }];
   const both = annotateResult(annotateResult({ ok: true }, { overwrote: ov }), { userEditing: ue.slice(0, 1) });
   assert.deepEqual(both.overwrote, ov);
   assert.deepEqual(both.userEditing, ue.slice(0, 1));
-  assert.ok(both.notice.startsWith('The user is editing clip c1'), both.notice);
-  assert.ok(both.notice.includes('\nThis write overwrote content someone else just wrote: clip c1 (user just edited, rev 2, 3 seconds ago)'), both.notice);
+  assert.ok(both.notice.startsWith('User is editing clip c1'), both.notice);
+  assert.ok(both.notice.includes('\nThis write overwrote content someone else just wrote: clip c1(User just edited,rev 2, 3 s ago)'), both.notice);
   const err = annotateError(new Error('Rejected'), ue.slice(0, 1));
-  assert.match(err.message, /^Rejected\nThe user is editing clip c1/);
+  assert.match(err.message, /^Rejected\nUser is editing clip c1/);
 });
 
 test('UE-S6 how the writer is labeled: local page = user; other members in a shared project carry a name; an Agent carries its chat id and vendor', () => {
@@ -124,7 +124,7 @@ test('UE-S6 how the writer is labeled: local page = user; other members in a sha
   assert.equal(writerOf({ role: 'agent', conversation: 5 }).who, 'Agent chat 5');
   const v = overwroteView([{ entity: '/tracks/@t1/clips/@c1', by: { role: 'page', userId: 'local' }, rev: 4, at: 1000 }, { entity: '/meta/name', by: { role: 'agent', session: 'agent:x' }, rev: 5, at: 2000 }], { now: 5000 });
   assert.deepEqual(v, [
-    { entity: '/tracks/@t1/clips/@c1', clipId: 'c1', by: 'user', who: 'User', label: 'user just edited', rev: 4, agoMs: 4000 },
+    { entity: '/tracks/@t1/clips/@c1', clipId: 'c1', by: 'user', who: 'User', label: 'User just edited', rev: 4, agoMs: 4000 },
     { entity: '/meta/name', by: 'agent', who: 'Agent x', label: 'Agent x just edited', rev: 5, agoMs: 3000 },
   ]);
 });
@@ -209,7 +209,7 @@ test('UE-S7~S10 end to end: userEditing of the read / write tools; overwriting w
     const s = env.side(pid, board);
     const r1 = await s.callTool('get_clip', { clipId: 'c1' }, { agent: 'conv-A' });
     assert.deepEqual(r1.userEditing, [{ clipId: 'c1', kind: 'drag' }]);
-    assert.ok(r1.notice.startsWith('The user is editing clip c1 (dragging). This is a notice, not a prohibition'), r1.notice);
+    assert.ok(r1.notice.startsWith('User is editing clip c1 (dragging). This is a hint, not a prohibition'), r1.notice);
     assert.equal(r1.rev, 1, 'The original fields stay as they were');
     const r2 = await s.callTool('get_clip', { clipId: 'c2' }, { agent: 'conv-A' });
     assert.equal(r2.userEditing, undefined);
@@ -230,7 +230,7 @@ test('UE-S7~S10 end to end: userEditing of the read / write tools; overwriting w
     assert.equal(w.ok, true, JSON.stringify(w));
     assert.equal(w.rev, 2, 'The write landed');
     assert.deepEqual(w.userEditing, [{ clipId: 'c2', kind: 'recent' }]);
-    assert.ok(w.notice.startsWith('The user is editing clip c2 (just touched)'), w.notice);
+    assert.ok(w.notice.startsWith('User is editing clip c2 (just modified)'), w.notice);
     assert.equal(w.notice.includes('This write overwrote'), false, 'The seed is written in full starting from an empty project, so it does not count as overwriting');
   });
 
@@ -249,9 +249,9 @@ test('UE-S7~S10 end to end: userEditing of the read / write tools; overwriting w
     assert.equal(w.overwrote.length, 1, JSON.stringify(w.overwrote));
     const o = w.overwrote[0];
     assert.deepEqual({ entity: o.entity, clipId: o.clipId, by: o.by, who: o.who, label: o.label, rev: o.rev },
-      { entity: '/tracks/@t1/clips/@c1', clipId: 'c1', by: 'user', who: 'User', label: 'user just edited', rev: 2 });
+      { entity: '/tracks/@t1/clips/@c1', clipId: 'c1', by: 'user', who: 'User', label: 'User just edited', rev: 2 });
     assert.ok(o.agoMs >= 0 && o.agoMs < 60_000);
-    assert.match(w.notice, /^This write overwrote content someone else just wrote: clip c1 \(user just edited, rev 2, \d+ seconds ago\). What the user just edited was overwritten by this write of yours/);
+    assert.match(w.notice, /^This write overwrote content someone else just wrote: clip c1\(User just edited,rev 2, \d+ s ago\)\. Something the user just edited was overwritten by this write/);
     // 同一个对话紧接着再写 c1:上一次写入者就是自己,不再提示
     const again = await s.callTool('update_clip', { clipId: 'c1', opacity: 0.4 }, { agent: 'conv-A' });
     assert.equal(again.overwrote, undefined);
@@ -273,6 +273,6 @@ test('UE-S7~S10 end to end: userEditing of the read / write tools; overwriting w
     assert.equal(a.overwrote.length, 1);
     assert.deepEqual({ clipId: a.overwrote[0].clipId, by: a.overwrote[0].by, who: a.overwrote[0].who, label: a.overwrote[0].label, rev: a.overwrote[0].rev },
       { clipId: 'c2', by: 'agent', who: 'Agent conv-B(claude)', label: 'Agent conv-B(claude) just edited', rev: 2 });
-    assert.match(a.notice, /What another Agent just edited was overwritten by this write of yours/);
+    assert.match(a.notice, /Something another Agent just edited was overwritten by this write/);
   });
 });

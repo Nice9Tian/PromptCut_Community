@@ -71,11 +71,11 @@ test('Response shape: cards use the measured entity box, media clips use project
   assert.equal(clips['card-a'].contentNote, undefined);
   // 这一刻不在画面上:null + 说明,别被当成「没内容」
   assert.equal(clips['card-b'].contentBox, null);
-  assert.match(clips['card-b'].contentNote, /not in frame/);
+  assert.match(clips['card-b'].contentNote, /not on screen/);
   // 素材段:不进快照,等于它的 frameCss 框
   assert.deepEqual(clips['media-a'].contentBox, { left: 200, top: 100, width: 800, height: 450 });
   assert.equal(clips['nope'].contentBox, null);
-  assert.match(clips['nope'].contentNote, /Cannot find clip nope/);
+  assert.match(clips['nope'].contentNote, /clip nope not found/);
 });
 
 test('When the entity extent cannot be measured, fall back to the wrapper layer\'s outer box; without clipIds, return all clips (cards + media clips)', () => {

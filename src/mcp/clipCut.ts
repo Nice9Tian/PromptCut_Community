@@ -43,7 +43,7 @@ function annotate(result: unknown, cut: { cutId: string; cutName: string }): unk
     ...(timeline && typeof timeline === "object" ? { timeline: timelineRest } : null),
     cut: { id: cut.cutId, name: cut.cutName, active: false },
     cutNote: `This card is in the inactive cut "${cut.cutName}" and was handled in place without switching cuts (other people's editors are unchanged); the timeline in the reply belongs to that cut.` +
-      `To see its frames, call see_frames with cutId: "${cut.cutId}" (no switch needed); get_layout / get_gif only see the active cut.`,
+      ` To see its frames, call see_frames with cutId: "${cut.cutId}" (no switch needed); get_layout / get_gif only see the active cut.`,
   };
 }
 

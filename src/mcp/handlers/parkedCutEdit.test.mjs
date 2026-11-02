@@ -175,7 +175,7 @@ test("update_clip moving to another track: a track in B works, a track in A does
   fresh();
   call("update_clip", { clipId: "b2", trackId: "tb2", start: 7, end: 8 });
   assert.equal(cutB().tracks.find((t) => t.id === "tb2").clips.some((c) => c.id === "b2"), true);
-  assert.throws(() => call("update_clip", { clipId: "b1", trackId: "ta2" }), /Cannot find track ta2/);
+  assert.throws(() => call("update_clip", { clipId: "b1", trackId: "ta2" }), /Track ta2 not found/);
 });
 
 test("The total duration of a parked cut follows its content (the same rule as the active cut)", () => {
@@ -203,8 +203,8 @@ test("Delete / duplicate / split find a clip inside a parked cut: say which cut 
     assert.throws(() => call(tool, args), /it is in cut "Cut B" \(B\).*user_interface_switch_cut/, tool);
   }
   assert.equal(getState().project, before, "Nothing was written");
-  assert.throws(() => call("update_clip", { clipId: "no-such", params: { size: 1 } }), (e) => e.message === "Cannot find clip no-such");
-  assert.throws(() => call("get_clip", { clipId: "no-such" }), (e) => e.message === "Cannot find clip no-such");
+  assert.throws(() => call("update_clip", { clipId: "no-such", params: { size: 1 } }), (e) => e.message === "clip no-such not found");
+  assert.throws(() => call("get_clip", { clipId: "no-such" }), (e) => e.message === "clip no-such not found");
 });
 
 test("Error inside the scope: the project returns to its real shape, and later calls work as usual", () => {
@@ -267,18 +267,18 @@ test("list_cuts with cutId: additionally returns that cut's timeline, so clip id
   assert.deepEqual(r.timeline.tracks.map((t) => [t.trackId, t.clips.map((c) => c.id)]), [["tb1", ["b1", "b2"]], ["tb2", ["bm"]]]);
   assert.equal(r.timeline.duration, 6);
   assert.equal(getState().project.activeCutId, "A", "Read-only, not switched");
-  assert.throws(() => call("list_cuts", { cutId: "nope" }), /cannot find cut/);
+  assert.throws(() => call("list_cuts", { cutId: "nope" }), /Cut not found/);
 });
 
 test("Tool descriptions: list_cuts / user_interface_switch_cut / update_clip state that editing existing clips in other cuts needs no switch", async () => {
   const { tools } = await import("../../../server/mcp-tools.mjs");
   const d = (n) => tools.find((t) => t.name === n).description;
-  assert.match(d("list_cuts"), /no need to use user_interface_switch_cut/);
+  assert.match(d("list_cuts"), /does not need user_interface_switch_cut/);
   assert.match(d("list_cuts"), /without switching the active cut/);
-  assert.match(d("list_cuts"), /see_frames with cutId/);
-  assert.match(d("user_interface_switch_cut"), /changes the user's interface/);
-  assert.match(d("user_interface_switch_cut"), /shared active cut/);
-  assert.match(d("update_clip"), /no need to use user_interface_switch_cut/);
+  assert.match(d("list_cuts"), /pass cutId to see_frames/);
+  assert.match(d("user_interface_switch_cut"), /Acts on the user's interface/);
+  assert.match(d("user_interface_switch_cut"), /active cut shared by all members/);
+  assert.match(d("update_clip"), /no need for user_interface_switch_cut/);
   assert.equal(tools.some((t) => t.name === "switch_cut"), false, "The old name no longer appears in the tool list");
   assert.ok(tools.find((t) => t.name === "list_cuts").inputSchema.properties.cutId, "list_cuts accepts cutId");
 });

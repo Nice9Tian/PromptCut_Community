@@ -27,7 +27,7 @@ test("when the directory does not exist, reports a plain-language sentence inste
   const r = inspectSessionStore(missing);
   assert.equal(r.exists, false);
   assert.equal(r.files, 0);
-  assert.match(r.note, /directory does not exist/);
+  assert.match(r.note, /Directory does not exist/);
 });
 
 test("reports how many entries each history has and which roles: this is the hard evidence for \"the interface is empty but the backend continues the old chat\"", () => {
@@ -81,7 +81,7 @@ test("when there are too many files, inspect only the newest ones in detail, and
   const r = inspectSessionStore(dir);
   assert.equal(r.files, 25, "the total is still reported");
   assert.equal(r.recent.length, 20);
-  assert.match(r.note, /25 files in total/);
+  assert.match(r.note, /25 in total/);
 });
 
 test("the default directory must be the same one that runners/api.mjs reads and writes", () => {

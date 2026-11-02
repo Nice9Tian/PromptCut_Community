@@ -623,7 +623,7 @@ export function createTrackTools({
       return {
         ok: false, cloudUnavailable: true, code: 'TRACK_INSTALL_DISABLED', started: false,
         error: 'The cloud motion tracking extension is installed centrally on the node by the host and cannot be installed by the Agent (the model cannot supply pip arguments, and downloads do not go through you).'
-          + 'Fallback tracking with template matching already works; for the more stable BootsTAPIR, tell the user to contact the host. Use track_status to see which tier the node is on now.',
+          + ' Fallback tracking with template matching already works; for the more stable BootsTAPIR, tell the user to contact the host. Use track_status to see which tier the node is on now.',
       };
     }
     if (!python?.executable) throw new TrackToolError('TRACK_UNCONFIGURED', 'This cloud node has no Python runtime configured for motion tracking. Tell the user to contact the host.');

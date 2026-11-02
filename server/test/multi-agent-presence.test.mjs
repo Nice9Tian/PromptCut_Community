@@ -211,14 +211,14 @@ test('MA-X2 to X4, two members sharing one document service: editing status, sco
   await t.test('MA-X4 B\'s Agent sends a message to A\'s Agent: it goes into A\'s mailbox, marked as coming from member bob\'s side', async () => {
       const s = await B.call('send_message', { to: 'conv-a', text: 'You take Track 2, I\'ll edit Track 1' }, 'conv-b');
       assert.equal(s.ok, true, JSON.stringify(s));
-      assert.match(s.note, /forwarded via the document service/);
+      assert.match(s.note, /forwarded through the document service/);
       await waitFor(() => A.board().checkMessages('conv-a').messages.length === 1, 20_000, 'A\'s mailbox received it');
       const m = A.board().checkMessages('conv-a').messages[0];
       assert.equal(m.text, 'You take Track 2, I\'ll edit Track 1');
-      assert.match(m.fromLabel, /^Agent conv-b\(codex, member bob's side\)$/);
+      assert.match(m.fromLabel, /^Agent conv-b\(codex,on member bob's side\)$/);
       // A 的 Agent 下一次工具结果里带上
       const r = await A.call('get_clip', { clipId: 'c1' }, 'conv-a');
-      assert.match(r.notice, /\[Agent conv-b\(codex, member bob's side\)\] You take Track 2, I'll edit Track 1/);
+      assert.match(r.notice, /\[Agent conv-b\(codex,on member bob's side\)\] You take Track 2, I'll edit Track 1/);
   });
 });
 

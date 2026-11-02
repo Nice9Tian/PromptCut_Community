@@ -66,11 +66,11 @@ test("Synthesized WAV start, duration and trim offset keep sample accuracy; spli
 
 test("Fails explicitly when a referenced synthesized media item is missing; muted and hidden tracks still do not request sound", () => {
   const p = { media: [], tracks: [{ id: "t", clips: [{ id: "lost", mediaId: "gone", soundEffect: { reuseKey: "r" }, start: 0, end: 1 }] }] };
-  assert.throws(() => audioPlanOf(p), /lost.*synthesized sound effect media missing/);
+  assert.throws(() => audioPlanOf(p), /The synthesized sound effect media for lost is missing/);
   assert.deepEqual(audioPlanOf({ ...p, tracks: [{ ...p.tracks[0], muted: true }] }), []);
   assert.deepEqual(audioPlanOf({ ...p, tracks: [{ ...p.tracks[0], hidden: true }] }), []);
   assert.deepEqual(audioPlanOf({ ...p, tracks: [{ ...p.tracks[0], clips: [{ ...p.tracks[0].clips[0], audioMuted: true }] }] }), []);
-  assert.throws(() => audioPlanOf({ ...p, media: [{ id: "gone", kind: "audio", url: "", soundEffect: {} }] }), /media missing/);
+  assert.throws(() => audioPlanOf({ ...p, media: [{ id: "gone", kind: "audio", url: "", soundEffect: {} }] }), /media for lost is missing/);
 });
 
 // 导出的淡入淡出包络:和 ffmpeg 两条 afade(线性)相乘一样。重叠、比片段还长这两种以前会出错

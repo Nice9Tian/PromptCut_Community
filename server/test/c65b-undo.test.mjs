@@ -162,12 +162,12 @@ test('C65B-U-05 Ctrl+Y and Ctrl+Shift+Z have the same effect on the page: both r
     await A.settled();
     await run(keyEvent('z', { ctrl: true }));
     await A.settled();
-    assert.equal(clipOf((await stateOf(env)).project, 'c1').label, 'Clip1');
+    assert.equal(clipOf((await stateOf(env)).project, 'c1').label, 'Clip 1');
     const r = await run(redoKey);
     assert.ok(r, `${redoKey.key} triggered redo`);
     await A.settled();
     assert.equal(clipOf((await stateOf(env)).project, 'c1').label, `Press ${redoKey.key}`);
-    A.edit((p) => { clipOf(p, 'c1').label = 'Clip1'; });
+    A.edit((p) => { clipOf(p, 'c1').label = 'Clip 1'; });
     await A.settled();
   }
 });

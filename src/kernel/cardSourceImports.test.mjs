@@ -121,7 +121,7 @@ export const NAME = "Meta";
 export const DESC = \`Description\`;
 ` };
   const [m] = parse(files2);
-  assert.deepEqual([m.id, m.name, m.description], ["meta-card", "Meta", "notes"]);
+  assert.deepEqual([m.id, m.name, m.description], ["meta-card", "Meta", "Description"]);
 });
 
 test("CSI-04 Circular references do not loop forever", () => {
@@ -158,18 +158,18 @@ test("CSI-05 Files that cannot be reached still produce a notice that says which
   assert.equal(reasons.length, 4, JSON.stringify(reasons));
   assert.match(reasons[0], /spread MISSING could not be resolved: the content store has no file \.\/nope/);
   assert.match(reasons[1], /spread PKG could not be resolved: imported from some-package/);
-  assert.match(reasons[2], /spread HUD could not be resolved: \.\.\/native\/nowhere is not a built-in module known to the online page/);
+  assert.match(reasons[2], /spread HUD could not be resolved: \.\.\/native\/nowhere is not a built-in module the online page recognizes/);
   assert.match(reasons[3], /OPT could not be resolved: not a literal/);
   // 整个控件表是引进来的、又取不到
   const files2 = { [`${U}card.tsx`]: card(`defaults: {}, controls: CTRL`, `import { CTRL } from "./gone";`) };
   const [w] = parse(files2);
   assert.deepEqual(w.controls, []);
-  assert.match(w.skippedControls[0].reason, /entire control table CTRL could not be resolved: the content store has no \.\/gone/);
+  assert.match(w.skippedControls[0].reason, /the whole controls table CTRL could not be resolved: the content store has no file \.\/gone/);
   // 简写 `controls,` 也一样
   const files3 = { [`${U}card.tsx`]: `import { controls } from "./gone";
 export const c = { id: "s", name: "Shorthand", defaults: {}, controls, Component: () => null };
 ` };
-  assert.match(parse(files3)[0].skippedControls[0].reason, /entire control table controls could not be resolved/);
+  assert.match(parse(files3)[0].skippedControls[0].reason, /the whole controls table controls could not be resolved/);
 });
 
 test("CSI-06 Built-in modules: values the page itself carries; pure functions called with literal arguments", () => {
@@ -195,8 +195,8 @@ test("CSI-06 Built-in modules: values the page itself carries; pure functions ca
   assert.deepEqual(c.controls[1].options, [{ value: "/catalog/lottie/a.json", label: "a" }]);
   assert.deepEqual(calls, ["lottie"]);
   const reasons = c.skippedControls.map((s) => s.reason);
-  assert.match(reasons[0], /notData is not pure data/);
-  assert.match(reasons[1], /fn is not pure data/);
+  assert.match(reasons[0], /notData of built-in module \.\.\/native\/hud is not plain data/);
+  assert.match(reasons[1], /fn of built-in module \.\.\/native\/hud is not plain data/);
   // 页面里的值被改也不影响内置模块那一份(交出去的是拷贝)
   c.controls[0].options.push({ value: "x", label: "x" });
   assert.equal(builtins("src/cards/native/hud.ts").hudControls[0].options.length, 1);
@@ -223,15 +223,15 @@ test("CSI-07 Several ways a select can be missing fields", () => {
   assert.deepEqual(c.controls, [
     { key: "b", label: "String array", type: "select", options: [{ value: "x", label: "x" }, { value: "y", label: "y" }] },
     { key: "c", label: "Missing label", type: "select", options: [{ value: "p", label: "p" }, { value: "q", label: "Q" }] },
-    { key: "d", label: "Target", type: "select", options: [{ value: "l", label: "Left" }, { value: "r", label: "Right" }] },
+    { key: "d", label: "Object", type: "select", options: [{ value: "l", label: "Left" }, { value: "r", label: "Right" }] },
   ]);
   assert.equal(c.controlsIncomplete, true);
   assert.deepEqual(c.skippedControls, [
-    { key: "a", label: "Missing options", type: "select", reason: "dropdown is missing choices (options)" },
-    { key: "e", label: "Options not a literal", type: "select", reason: "Dropdown options (options) are not a literal" },
+    { key: "a", label: "Missing options", type: "select", reason: "dropdown: missing options (options)" },
+    { key: "e", label: "Options not a literal", type: "select", reason: "dropdown: options (options) is not a literal" },
     { key: "f", label: "Notation not recognized", type: "select", reason: "Can't recognize how the dropdown options (options) are written" },
-    { key: "g", label: "empty object", type: "select", reason: "Can't recognize how the dropdown options (options) are written" },
-    { label: "Missing key", type: "select", reason: "Missing key" },
+    { key: "g", label: "Empty object", type: "select", reason: "Can't recognize how the dropdown options (options) are written" },
+    { label: "Missing key", type: "select", reason: "missing key" },
   ]);
 });
 
@@ -252,10 +252,10 @@ test("CSI-08 Several ways an asset can be missing fields", () => {
     { key: "o", label: "Missing options", type: "asset", kind: "particles", options: [] },
   ]);
   assert.deepEqual(c.skippedControls.map((s) => [s.key, s.reason]), [
-    ["m", "The media control has no kind (kind), and it cannot be inferred whether it is lottie or particles"],
-    ["n", "The media control has no kind (kind), and it cannot be inferred whether it is lottie or particles"],
-    ["k", "The media control kind (kind) is not a literal, and it cannot be inferred whether it is lottie or particles"],
-    ["z", "Media kind (kind) is not recognized (video)"],
+    ["m", "media control: missing kind (kind); also cannot infer whether it is lottie or particles"],
+    ["n", "media control: missing kind (kind); also cannot infer whether it is lottie or particles"],
+    ["k", "media control: kind (kind) is not a literal; also cannot infer whether it is lottie or particles"],
+    ["z", "unknown media kind (kind) (video)"],
   ]);
   // controlFix 单独用:默认值给推断
   assert.equal(controlFix({ key: "s", label: "s", type: "asset" }, { defaultValue: "/catalog/lottie/q.json" }).control.kind, "lottie");

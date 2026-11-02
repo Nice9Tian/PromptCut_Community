@@ -111,7 +111,7 @@ test('OS3 fetch bytes: pull only px/<hash> (small size), with a read-only ticket
   assert.ok(w.fetches.every((f) => f.auth === 'Bearer RT'));
   const htmlCached = await src.fetchSnapshot('html', 'K', 1);
   assert.equal(w.fetches.length, 1, 'cache hit');
-  await assert.rejects(src.fetchSnapshot('html', 'K', 5), /no prerendered small size for this frame/);
+  await assert.rejects(src.fetchSnapshot('html', 'K', 5), /No small-size prerender for this frame/);
   assert.ok(src.cacheBytes > 0);
   src.clearCache();
   assert.equal(src.cacheBytes, 0, 'release the small-size cache before export');
@@ -222,7 +222,7 @@ test('OS9 after one small bitmap request hangs forever, the queue is released an
   } });
   src.setProject('p1');
   await src.tickNow();
-  await assert.rejects(src.fetchSnapshot('html', 'K', 0), /media request timed out/);
+  await assert.rejects(src.fetchSnapshot('html', 'K', 0), /Asset request timed out/);
   assert.match(await src.fetchSnapshot('html', 'K', 0), /data:image\/webp;base64,/);
   assert.equal(calls, 2);
   src.stop();
@@ -249,7 +249,7 @@ test('OS10 manifest is missing a few small-size frames (Aliyun 2026-09-27: 295/3
   assert.equal(pick(30), 27, 'A missing frame falls back to the nearest frame in the same range');
   assert.equal(pick(90), 90);
   assert.match(await src.fetchSnapshot('html', 'K', 5), /data:image\/webp;base64,/);
-  await assert.rejects(src.fetchSnapshot('html', 'K', 0), /no prerendered small size for this frame/);
+  await assert.rejects(src.fetchSnapshot('html', 'K', 0), /No small-size prerender for this frame/);
   // 渲染节点补上那几张之后(清单换成满的),下一轮就绪区间补齐,段首也贴得上
   w.manifest('R', 0, 59, all(0, 59));
   src.stop();

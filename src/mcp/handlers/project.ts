@@ -25,7 +25,7 @@ export function projectMetaRejection(unknown: string[]): string {
     ? "Creativity level can only be changed by the user in project settings or the AI panel; the Agent cannot write it."
     : "";
   return `set_project_meta does not accept these fields: ${unknown.join(", ")}. This call was not executed at all, no field was written.` +
-    `It only accepts ${SET_PROJECT_META_FIELDS.join(", ")}. ${creativity}` +
+    ` It only accepts ${SET_PROJECT_META_FIELDS.join(", ")}. ${creativity}` +
     "Use set_camera3d for 3D perspective; change other project content with the matching tool, it cannot be written directly through set_project_meta.";
 }
 

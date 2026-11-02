@@ -75,7 +75,7 @@ export function paramsSkippedText(view: ParamsCardView | undefined): string | nu
   const list = view?.controlsIncomplete && Array.isArray(view.skippedControls) ? view.skippedControls : [];
   if (!list.length) return null;
   const shown = list.slice(0, SKIPPED_LIST_MAX).map((s) => `${skippedName(s)}:${s.reason}`);
-  const more = list.length > SKIPPED_LIST_MAX ? tr("; and {0} more", list.length) : "";
+  const more = list.length > SKIPPED_LIST_MAX ? tr("; {0} in total", list.length) : "";
   return tr("Unrecognized parameters: {0}{1}", shown.join(";"), more);
 }
 

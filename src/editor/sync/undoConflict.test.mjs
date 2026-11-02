@@ -109,6 +109,6 @@ test("UC-04 A rollback triggered by sign-out after a password change reaches the
   assert.equal(clip(A.ds.project, "c1").opacity, 0.1);
   const kinds = A.notices.slice(before).map((n) => n.kind);
   assert.deepEqual(kinds, ["remote"]);
-  assert.equal(rolledBackText("Xiao Wang"), "小王 undid content");
+  assert.equal(rolledBackText("Xiao Wang"), "Xiao Wang undid content");
   assert.equal(rolledBackText(null), "A member undid content");
 });

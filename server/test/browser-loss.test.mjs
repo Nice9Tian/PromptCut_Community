@@ -60,7 +60,7 @@ test('the final error names the shard and the exit code and keeps the cause', as
   const lost = Object.assign(targetClosed(), { browserExit: 'exit code 0xC0000409' });
   await assert.rejects(
     retryOnBrowserLoss(async () => { calls++; throw lost; }, { attempts: 2, label: 'shard 100-199', log: () => {} }),
-    (e) => /shard 100-199/.test(e.message) && /0xC0000409/.test(e.message) && /retried 1 time/.test(e.message) && e.cause === lost,
+    (e) => /shard 100-199/.test(e.message) && /0xC0000409/.test(e.message) && /retrying with a fresh Chrome 1 times/.test(e.message) && e.cause === lost,
   );
   assert.equal(calls, 2);
 });

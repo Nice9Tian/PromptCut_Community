@@ -304,29 +304,29 @@ test('Card-parameter anyOf branches that have been through compat mode can still
 test('The update_clip tool description states that params is an incremental patch: pass only the keys to change, keys not passed stay as they are, do not bring the full set back from memory', () => {
   const desc = mcpTools.find((t) => t.name === 'update_clip').description;
   assert.match(desc, /params is an incremental patch/);
-  assert.match(desc, /pass only the keys you want to change this time/);
-  assert.match(desc, /keys not passed keep their current value/);
-  assert.match(desc, /do not bring the full parameter set you read earlier back from memory/);
+  assert.match(desc, /pass only the keys you are changing this time/);
+  assert.match(desc, /keys you omit keep their current values/);
+  assert.match(desc, /do not bring back a whole params object from memory of an earlier read/);
   assert.match(desc, /get_clip/, 'What to do if you need to know the current value');
   assert.match(desc, /changedParams/, 'Which keys in the response actually changed');
 });
 
 test('The static schema of update_clip.params also carries the patch description, while add_clip.params does not', () => {
   const upd = mcpTools.find((t) => t.name === 'update_clip').inputSchema.properties.params;
-  assert.match(upd.description, /incremental patch/);
-  assert.match(upd.description, /keys left out keep the current value/);
+  assert.match(upd.description, /Incremental patch/);
+  assert.match(upd.description, /keys not written keep their current values/);
   const add = mcpTools.find((t) => t.name === 'add_clip').inputSchema.properties.params;
-  assert.doesNotMatch(add.description ?? '', /incremental patch/);
+  assert.doesNotMatch(add.description ?? '', /Incremental patch/i);
 });
 
 test('After the real schema is injected, the update_clip.params the model receives is still the patch description with no required; add_clip is unchanged', () => {
   const sent = sentToModel(CARDS);
   const upd = sent.update_clip.properties.params;
-  assert.match(upd.description, /incremental patch/);
-  assert.match(upd.description, /do not bring the old full parameter set back from memory/);
+  assert.match(upd.description, /Incremental patch/);
+  assert.match(upd.description, /do not bring back the whole old set of parameters from memory/);
   for (const branch of upd.anyOf) assert.equal(branch.required, undefined, `${branch.title}: a patch must not require any field`);
   const add = sent.add_clip.properties.params;
-  assert.doesNotMatch(add.description, /incremental patch/);
+  assert.doesNotMatch(add.description, /Incremental patch/i);
   assert.deepEqual(add.anyOf.find((b) => b.title === 'caption-track').required, ['lines'], 'add_clip still requires the required fields');
 });
 
@@ -338,6 +338,6 @@ test('The patch-version schema\'s fields correspond one-to-one with the full ver
 
 test('The set_clip description states that the params section is a full replacement, as distinct from update_clip\'s patch', () => {
   const desc = mcpTools.find((t) => t.name === 'set_clip').description;
-  assert.match(desc, /full replacement/);
+  assert.match(desc, /whole replacement/);
   assert.match(desc, /update_clip/);
 });

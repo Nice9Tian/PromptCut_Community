@@ -49,14 +49,14 @@ test("A new project or an old file with no cuts has only Cut 1; one with cuts is
 });
 
 test("Circular reference: self, direct and indirect are all rejected, with the reason stated", () => {
-  assert.match(cutCycleReason(proj(), "A", "A"), /into itself/);
+  assert.match(cutCycleReason(proj(), "A", "A"), /inside itself/);
   const ab = proj({ b: [seg("s1", "A", 0, 5)] });
   assert.match(cutCycleReason(ab, "A", "B"), /already references "Cut A"/);
   const abc = proj({ b: [seg("s1", "C", 0, 5)], c: [seg("s2", "A", 0, 5)] });
   assert.match(cutCycleReason(abc, "A", "B"), /indirectly references "Cut A"/);
   assert.equal(cutCycleReason(proj({ b: [seg("s1", "C", 0, 5)] }), "A", "B"), null);
   assert.throws(() => placeCutSegment(ab, "B", 0), /circular reference/);
-  assert.throws(() => placeCutSegment(proj(), "A", 0), /into itself/);
+  assert.throws(() => placeCutSegment(proj(), "A", 0), /inside itself/);
 });
 
 test("Placing a cut segment: the default length = the remaining length of the referenced cut and cannot exceed it; overlap is rejected", () => {
@@ -69,7 +69,7 @@ test("Placing a cut segment: the default length = the remaining length of the re
   assert.equal(r2.clip.end - r2.clip.start, 5, "Only 5 seconds remain from second 3");
   assert.equal(r2.clip.cutOffset, 3);
   assert.throws(() => placeCutSegment(r.project, "C", 3), /already has a clip/);
-  assert.throws(() => placeCutSegment(p, "Z", 0), /cannot find cut/);
+  assert.throws(() => placeCutSegment(p, "Z", 0), /Cut not found/);
 });
 
 test("list_cuts includes the reference relations", () => {

@@ -255,7 +255,7 @@ test('no frames can be sent after cancel; errors immediately when the browser ca
   enc.abort();
   await assert.rejects(enc.add({ name: 1 }), /already closed/);
   assert.equal(f.state.closed, 1);
-  await assert.rejects(openStreamEncoder({ width: 320, height: 160, fps: 30, env: fakeEnv({ unsupported: true }).env, onInit() {}, onSegment() {} }), /cannot compress/);
+  await assert.rejects(openStreamEncoder({ width: 320, height: 160, fps: 30, env: fakeEnv({ unsupported: true }).env, onInit() {}, onSegment() {} }), /cannot encode/);
 });
 
 test('each frame is closed as soon as it is used (no GPU memory held)', async () => {

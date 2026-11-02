@@ -49,9 +49,9 @@ test('SG-3 the explanation on rejection: names the tool, says the project was no
   const { message } = gate.checkGate('update_clip', 'desktop');
   assert.match(message, /not in SKILL mode/);
   assert.match(message, /update_clip/);
-  assert.match(message, /has \*\*no changes/);
+  assert.match(message, /was \*\*not\*\* changed at all/);
   assert.match(message, /Do not retry/);
-  assert.match(message, /switch to SKILL/);
+  assert.match(message, /switch "Classic mode \/ SKILL" to SKILL/);
 });
 
 test('SG-4 a corrupted state file is treated as off (desktop sessions are rejected by default)', () => {

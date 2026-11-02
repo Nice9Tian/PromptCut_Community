@@ -46,15 +46,15 @@ test('CM-1 normalization of sample rate and window', () => {
   assert.deepEqual(windowOf({ baseOffset: 3, baseDuration: 10, start: 8, duration: 4 }), { offset: 11, duration: 2 });
   assert.deepEqual(windowOf({ start: 1 }), { offset: 1, duration: undefined });
   assert.deepEqual(windowOf({ start: 1, duration: 2 }), { offset: 1, duration: 2 });
-  assert.throws(() => windowOf({ baseDuration: 5, start: 5 }), /exceeds the length of this audio/);
+  assert.throws(() => windowOf({ baseDuration: 5, start: 5 }), /beyond the length of this audio/);
 });
 
 test('CM-2 sample count budget: when exceeded, nothing is decoded first, and the error states the maximum number of seconds and how to shorten the range', () => {
   assert.equal(sampleBudgetError({ duration: undefined, sampleRate: 16000, channels: 2 }), null);
   assert.equal(sampleBudgetError({ duration: 60, sampleRate: 16000, channels: 2 }), null);
   const msg = sampleBudgetError({ duration: 600, sampleRate: 48000, channels: 2 });
-  assert.match(msg, /exceeds the limit of 12000000/);
-  assert.match(msg, /at most 125 seconds/);
+  assert.match(msg, /over the limit of 12000000/);
+  assert.match(msg, /at most 125 s/);
   assert.match(msg, /mono: true/);
   assert.match(msg, /start \/ duration/);
 });
@@ -104,7 +104,7 @@ test('CM-5 the pre-checks of measureJs neither decode nor enter the sandbox', as
   const r3 = await measureJs({ ...base, body: { scope: 'clip', media: {}, code: 'return 1' }, resolveFile: () => 'x', probeChannels: () => 0 });
   assert.equal(r3.body.kind, 'no-audio');
   const r4 = await measureJs({ ...base, body: { scope: 'nope', code: 'return 1' }, resolveFile: () => 'x' });
-  assert.match(r4.body.error, /invalid scope/);
+  assert.match(r4.body.error, /Invalid scope/);
   const r5 = await measureJs({ ...base, body: { scope: 'clip', media: {}, offset: 0, duration: 900, sampleRate: 48000, code: 'return 1' }, resolveFile: () => 'x', probeChannels: () => 2 });
   assert.equal(r5.body.kind, 'too-many-samples');
   const r6 = await measureJs({ ...base, body: { scope: 'timeline', entries: [{ media: { name: 'A' } }], code: 'return 1' }, resolveFile: () => null });
@@ -126,7 +126,7 @@ test('CM-14 time limit normalization, code length limit, queue limit', async () 
   };
   const sb = createAudioSandbox({ launch: fakeLaunch, limits: { maxQueue: 2 } });
   const pcm = [new Float32Array(4)];
-  assert.match((await sb.run({ code: 'x'.repeat(SANDBOX_LIMITS.maxCodeChars + 1), channels: pcm, sampleRate: 8000 })).error, /exceeds the limit/);
+  assert.match((await sb.run({ code: 'x'.repeat(SANDBOX_LIMITS.maxCodeChars + 1), channels: pcm, sampleRate: 8000 })).error, /over the limit/);
   assert.equal((await sb.run({ code: '', channels: pcm, sampleRate: 8000 })).kind, 'invalid');
   const a = sb.run({ code: 'return 1', channels: pcm, sampleRate: 8000 });
   const b = sb.run({ code: 'return 2', channels: pcm, sampleRate: 8000 });
@@ -206,7 +206,7 @@ test('CM-6 normal measurement: the RMS and peak of a sine wave match the theoret
   assert.equal(t.body.value.channels.length, 2);
   const HALF = RMS + 20 * Math.log10(0.5) + 20 * Math.log10(Math.SQRT1_2);
   assert.ok(Math.abs(t.body.value.channels[0].rmsDb - HALF) < 0.1, `mix RMS ${t.body.value.channels[0].rmsDb} vs ${HALF}`);
-  assert.ok(t.body.notes.some((n) => /3 dB lower per channel/.test(n)), JSON.stringify(t.body.notes));
+  assert.ok(t.body.notes.some((n) => /each 3 dB lower/.test(n)), JSON.stringify(t.body.notes));
   // 同一段混音要单声道:两路相同,按平均混,响度不变
   const tm = await run({
     scope: 'timeline', total: 3, start: 1, length: 2, mono: true,
@@ -226,7 +226,7 @@ test('CM-7 an infinite loop is terminated within the time limit, and this proces
   clearInterval(iv);
   assert.equal(r.body.ok, false);
   assert.equal(r.body.kind, 'timeout');
-  assert.match(r.body.error, /exceeded 1\.5 seconds, terminated/);
+  assert.match(r.body.error, /ran longer than 1\.5 s and was terminated/);
   assert.ok(ms < 1500 + 8000, `the infinite loop took ${ms} ms to return`);
   assert.ok(ticks >= Math.floor(ms / 50) * 0.5, `The event loop was blocked: only ${ticks} iterations in ${ms} ms`);
   // 沙箱之后照常可用
@@ -273,7 +273,7 @@ test('CM-9 network access attempts fail; the HTTP service on the local loopback 
       const r = await run({ scope: 'media', media: media(SINE_MONO), sampleRate: 8000, code });
       assert.equal(r.body.ok, false, `${name} unexpectedly succeeded: ${JSON.stringify(r.body)}`);
       assert.ok(r.body.error.length > 0, name);
-      if (name !== 'dynamicImport') assert.match(r.body.error, /cannot access the network in the sandbox/, `${name}:${r.body.error}`);
+      if (name !== 'dynamicImport') assert.match(r.body.error, /No network access in the sandbox/, `${name}:${r.body.error}`);
     }
     // 代码自己吞掉错误、回报「失败」:照样连不出去
     const swallowed = await run({ scope: 'media', media: media(SINE_MONO), sampleRate: 8000, code: `try { await fetch(${JSON.stringify(url)}); return 'leaked'; } catch (e) { return 'blocked: ' + e.message; }` });
@@ -288,7 +288,7 @@ test('CM-10 a thrown exception carries the error text and line number; a syntax 
   const r = await run({ scope: 'media', media: media(SINE_MONO), sampleRate: 8000, code: 'const a = 1;\nthrow new Error("cannot measure:" + a);' });
   assert.equal(r.body.ok, false);
   assert.equal(r.body.kind, 'exception');
-  assert.match(r.body.error, /code threw an error at runtime: Error: cannot measure:1/);
+  assert.match(r.body.error, /The code threw while running: Error: cannot measure:1/);
   assert.match(r.body.error, /line 2/);
   const t = await run({ scope: 'media', media: media(SINE_MONO), sampleRate: 8000, code: 'return input.nope.deeper;' });
   assert.match(t.body.error, /TypeError/);
@@ -303,8 +303,8 @@ test('CM-11 an oversized result is rejected', { skip, timeout: 60_000 }, async (
   const r = await run({ scope: 'media', media: media(SINE_MONO), sampleRate: 8000, code: 'return Array.from(input.channels[0]);' });
   assert.equal(r.body.ok, false);
   assert.equal(r.body.kind, 'too-large');
-  assert.match(r.body.error, /exceeds the limit of 262144/);
-  assert.match(r.body.error, /do not return raw samples/);
+  assert.match(r.body.error, /over the limit of 262144/);
+  assert.match(r.body.error, /not the raw samples/);
 });
 
 test('CM-12 a result that cannot be serialized is rejected', { skip, timeout: 60_000 }, async () => {
@@ -325,5 +325,5 @@ test('CM-13 no access to Node capabilities, and forging a result via postMessage
   assert.deepEqual(r.body.value, ['undefined', 'undefined', 'undefined', 'undefined', 'undefined', 'undefined']);
   const f = await run({ scope: 'media', media: media(SINE_MONO), sampleRate: 8000, code: 'postMessage({ ok: true, json: "\\"forged\\"" }); return "real";' });
   assert.equal(f.body.ok, false);
-  assert.match(f.body.error, /use return to return the result/);
+  assert.match(f.body.error, /Return the result with return/);
 });

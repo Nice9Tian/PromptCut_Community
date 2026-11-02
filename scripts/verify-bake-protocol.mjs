@@ -33,8 +33,8 @@ export const SCANNED_FILES = [
 export const DOC = 'docs/guides/bake-page-protocol.md';
 
 const SECTIONS = [
-  { heading: 'Required for the HTML path', key: 'html' },
-  { heading: 'PNG path / puppeteer only', key: 'png' },
+  { heading: 'HTML 路必需', key: 'html' }, // i18n-allow: section titles of the Chinese doc
+  { heading: 'PNG 路 / puppeteer 专用', key: 'png' }, // i18n-allow
 ];
 
 /** 文件里出现的全部 `window.__xxx`,连它出现在哪个文件一起记 */
@@ -98,8 +98,8 @@ export function verifyBakeProtocol() {
     if (!/createSnapshot\s*\(/.test(text)) problems.push(`${page} does not call createSnapshot()`);
     if (!/\[data-pc-scene\]/.test(text)) problems.push(`${page} calls generate snapshots without going through the [data-pc-scene] scene root`);
   }
-  if (!/Stage page also provides\s*`__pcCreateSnapshot`/.test(fs.readFileSync(path.join(root, DOC), 'utf8'))) {
-    problems.push(`${DOC} is missing the line "Stage page also provides \`__pcCreateSnapshot\`"`);
+  if (!/舞台页也提供\s*`__pcCreateSnapshot`/.test(fs.readFileSync(path.join(root, DOC), 'utf8'))) { // i18n-allow: matches the Chinese doc
+    problems.push(`${DOC} is missing the line "舞台页也提供 \`__pcCreateSnapshot\`"`); // i18n-allow: quotes the Chinese doc
   }
   return { problems, usage, lists };
 }

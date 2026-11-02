@@ -81,8 +81,8 @@ export const effectsHandlers = {
     return {
       ok: true, activeCutId: p.activeCutId, cuts: listCuts(p), timeline: timelineDigest(p),
       note: `Switched to "${cut.name}". Switching changes the shared active cut and flips every member's interface together; it is not needed when you only want to edit clips that already exist in another cut:` +
-        "Pass the clipId (found in list_cuts' cutId parameter / get_project's parkedCuts) directly to update_clip etc. to edit in place; to see another cut's picture, use see_frames' cutId." +
-        "The timeline above is now this cut's; the previously active one is parked, and the clips inside it can likewise be edited directly.",
+        " Pass the clipId (found in list_cuts' cutId parameter / get_project's parkedCuts) directly to update_clip etc. to edit in place; to see another cut's picture, use see_frames' cutId." +
+        " The timeline above is now this cut's; the previously active one is parked, and the clips inside it can likewise be edited directly.",
     };
   },
   // 只建不切(2026-10-21 用户定):切换激活剪辑会动所有成员的界面,要切另调 user_interface_switch_cut

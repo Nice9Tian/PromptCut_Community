@@ -96,7 +96,7 @@ test('MA-S3 depth limit: a subagent spawning again is rejected, and the error sa
   const again = await r.ma.handle('spawn_agent', { role: 'director', task: 'Spawn another one' }, c.conversationId);
   assert.equal(again.ok, false);
   assert.equal(again.code, 'depth');
-  assert.match(again.error, /subagent \(spawned by conv-main\), cannot spawn again/);
+  assert.match(again.error, /sub-Agent \(spawned by conv-main\) and cannot spawn other Agents/);
   assert.equal(r.opened.length, 1, 'no second page was opened');
 });
 
@@ -114,7 +114,7 @@ test('MA-S4 concurrency limit: the same lead Agent can have at most 4 subagents 
   assert.equal(fifth.ok, false);
   assert.equal(fifth.code, 'too-many');
   assert.deepEqual(fifth.children.sort(), [...kids].sort());
-  assert.match(fifth.error, /there are already 4 \(limit 4\)/);
+  assert.match(fifth.error, /already have 4 sub-Agents open at once \(limit 4\)/);
   assert.equal((await r.ma.handle('spawn_agent', { role: 'director', task: 'Someone else\'s' }, 'conv-other')).ok, true, 'counted separately per lead Agent');
   // 用户关掉第一个子 Agent 的页签
   r.board().setTabs(r.board().listRaw('').filter((a) => a.id !== kids[0]).map((a) => ({ conversationId: a.id, title: a.title, busy: false })));
@@ -144,7 +144,7 @@ test('MA-S6 subagent creativity level: takes the level currently in effect on th
   r.sessions.register(c.conversationId, { type: 'cli', vendor: 'claude', creativity: 'high' });
   const up = r.sessions.creativityOf(c.conversationId, 'high');
   assert.equal(up.level, 'medium');
-  assert.match(up.source, /no higher than conv-main, the chat that spawned it/);
+  assert.match(up.source, /not higher than the chat conv-main that launched it/);
   // 父对话降到「低」:子跟着降
   r.sessions.register('conv-main', { type: 'cli', vendor: 'claude', creativity: 'low' });
   assert.equal(r.sessions.creativityOf(c.conversationId, 'high').level, 'low');
@@ -180,15 +180,15 @@ test('MA-S8 message delivery: idle ones are picked up by the page (only those wh
   // 空闲:可自动投递
   const s1 = b.sendMessage('conv-a', { to: 'conv-b', text: 'I\'ll take Track 2' });
   assert.deepEqual(s1.delivered, ['conv-b']);
-  assert.match(s1.note, /the other side is idle/);
+  assert.match(s1.note, /The recipient is idle/);
   assert.equal(b.hasAutoDeliverable('conv-b'), true);
   assert.deepEqual(b.takeInbox('conv-b', true).map((m) => m.text), ['I\'ll take Track 2']);
   // 忙:B 正在跑一轮
   b.beginRun('conv-b', 0);
   const s2 = b.sendMessage('conv-a', { to: 'conv-b', text: 'I finished editing Track 3' });
-  assert.match(s2.note, /is running, the message will be carried in the result of its next tool call/);
+  assert.match(s2.note, /is running; the message will be included in the result of its next tool call/);
   const res = await r.ma.wrap('conv-b', 'get_project', async () => ({ ok: true, rev: 3 }));
-  assert.ok(res.notice.startsWith('Message for you from another Agent (attached by the system, not said by the user): [Agent conv-a] I finished editing Track 3'), res.notice);
+  assert.ok(res.notice.startsWith('Message from another Agent (attached by the system, not something the user said): [Agent conv-a] I finished editing Track 3'), res.notice);
   assert.deepEqual(res.messages.map((m) => [m.from, m.text]), [['conv-a', 'I finished editing Track 3']]);
   assert.equal(res.rev, 3, 'the original result fields stay as before');
   assert.equal(b.hasAutoDeliverable('conv-b'), false, 'once carried out it counts as delivered, and it is not delivered again after the run finishes');
@@ -198,10 +198,10 @@ test('MA-S8 message delivery: idle ones are picked up by the page (only those wh
   // 连锁封顶:B 在第 2 层自动投递里跑,它发给 A 的是第 3 层,不再自动触发
   b.beginRun('conv-b', 2);
   const s3 = b.sendMessage('conv-b', { to: 'conv-a', text: 'OK' });
-  assert.match(s3.note, /sent back and forth for several rounds in a row/);
+  assert.match(s3.note, /messaged each other for several rounds in a row/);
   assert.equal(b.hasAutoDeliverable('conv-a'), false);
   const notes = b.consumeNotes('conv-a');
-  assert.match(notes, /Message for you from Agent conv-b: OK/, 'carried along the next time the user talks to A');
+  assert.match(notes, /Message to you from Agent conv-b \d\d:\d\d:\d\d: OK/, 'carried along the next time the user talks to A');
   b.endRun('conv-b');
   // 发给不存在的 / all
   assert.throws(() => b.sendMessage('conv-a', { to: 'nobody', text: 'x' }), /No such Agent/);
@@ -223,18 +223,18 @@ test('MA-S9 writing into a scope declared by someone else: the writer is notifie
     return { ok: true, id: 'x' };
   });
   assert.deepEqual(w.scopeClash, [{ agent: 'conv-a', who: 'Agent conv-a', scope: 'Cut 1->Track 2', written: ['Cut 1->Track 2'] }]);
-  assert.match(w.notice, /^This write falls inside the scope another Agent is editing: Agent conv-a declared it is editing "Cut 1->Track 2"/);
+  assert.match(w.notice, /^This write falls within a scope another Agent is editing: "Cut 1->Track 2" that Agent conv-a declared it is editing/);
   assert.equal(b._changes().at(-1).tool, 'add_clip', 'the commit stream record carries the tool name');
   const a1 = await r.ma.wrap('conv-a', 'get_clip', async () => ({ ok: true }));
   assert.equal(a1.scopeChanges.length, 1);
-  assert.match(a1.notice, /^Someone else is editing the scope you declared: Agent conv-b used add_clip to change Cut 1->Track 2/);
+  assert.match(a1.notice, /^Someone else is editing a scope you declared: Agent conv-b using add_clip changed Cut 1->Track 2/);
   const a2 = await r.ma.wrap('conv-a', 'get_clip', async () => ({ ok: true }));
   assert.equal(a2.scopeChanges, undefined, 'the same entry is notified only once');
   // 用户在页面上改了 A 的范围
   const p2 = { ...p1, tracks: [{ ...p1.tracks[0], clips: [] }] };
   b.noteCommit({ rev: 3, actor: { role: 'page', userId: 'local' }, before: p1, after: p2 });
   const a3 = await r.ma.wrap('conv-a', 'get_clip', async () => ({ ok: true }));
-  assert.match(a3.notice, /Someone else is editing the scope you declared: User changed Cut 1->Track 2/);
+  assert.match(a3.notice, /Someone else is editing a scope you declared: User changed Cut 1->Track 2/);
   // 这些提示不重复出现在下一轮的「其他 Agent 的动态」里
   const notes = b.consumeNotes('conv-a');
   assert.equal(notes.includes('changed Cut 1->Track 2'), false, notes);
@@ -249,7 +249,7 @@ test('MA-S10 annotateBoard places things the same way as A2: the notice goes fir
   assert.equal(annotateBoard(plain, {}), plain);
   const r = annotateBoard({ ok: true, notice: 'User is editing clip c1 (dragging).', rev: 2 }, { overwrittenBy: [{ entity: '/tracks/@t1/clips/@c1', who: 'Agent conv-a(claude)', by: 'agent', rev: 5 }] });
   assert.deepEqual(Object.keys(r).slice(0, 2), ['notice', 'overwrittenBy']);
-  assert.equal(r.notice, 'Your write to clip c1 (overwritten by Agent conv-a(claude), rev 5). Re-read to confirm the current content first, coordinate with the other side if needed, and do not simply change it back.\nUser is editing clip c1 (dragging).');
+  assert.equal(r.notice, 'You wrote clip c1 (overwritten by Agent conv-a(claude),rev 5). Re-read to confirm the current content, coordinate with them if needed, and do not simply revert it.\nUser is editing clip c1 (dragging).');
   assert.equal(r.rev, 2);
   const arr = annotateBoard([1], { messages: [{ from: 'x', text: 'y' }] });
   assert.deepEqual(arr.result, [1]);
@@ -364,7 +364,7 @@ test('MA-S11 to S13 end to end: spawned identities are isolated, the bulletin bo
     const ch = g.board()._changes().filter((c) => c.kind === 'change');
     assert.deepEqual(ch.map((c) => [c.by.agent, c.tool, c.scopes.join()]), [['conv-main', 'update_clip', 'Cut 1->Track 1'], [kid, 'update_clip', 'Cut 1->Track 2'], ['conv-main', 'update_clip', 'Cut 1->Track 1']]);
     // 注意:没重读就写仍按文档服务的期望版本拒(product/document-service.md「Agent 的写操作带期望版本」)
-    await assert.rejects(g.call('update_clip', { clipId: 'c2', opacity: 0.1 }, kid), /stale|outdated|since|re-read/);
+    await assert.rejects(g.call('update_clip', { clipId: 'c2', opacity: 0.1 }, kid), /changed after your last read|Re-read/);
   });
 
   await t.test('MA-S12 the bulletin board sees writes from the page and both Agents (the document service\'s commit stream), and writes from other members are labeled by writer identity', async () => {
@@ -386,10 +386,10 @@ test('MA-S11 to S13 end to end: spawned identities are isolated, the bulletin bo
     const p = g.side.link.replica.project;
     g.board().noteCommit({ rev: 99, actor: { role: 'page', userId: 'bob' }, before: p, after: { ...p, tracks: [p.tracks[0], { ...p.tracks[1], clips: [] }] } });
     const notes = g.board().consumeNotes('conv-a');
-    assert.match(notes, /Agent conv-b used update_clip to change Cut 1->Track 2/);
+    assert.match(notes, /Agent conv-b using update_clip changed Cut 1->Track 2/);
     assert.match(notes, /User changed Cut 1->Track 2/);
     assert.match(notes, /User bob changed Cut 1->Track 2/);
-    assert.equal(notes.includes('conv-a used'), false, 'one\'s own changes do not appear in one\'s own activity feed');
+    assert.equal(notes.includes('conv-a using'), false, 'one\'s own changes do not appear in one\'s own activity feed');
   });
 
   await t.test('MA-S13 the overwritten side learns in its next tool result: the c2 written by conv-b is overwritten by conv-a, and conv-b\'s next call carries "Your write to … overwritten by Agent conv-a(codex)"', async () => {
@@ -408,7 +408,7 @@ test('MA-S11 to S13 end to end: spawned identities are isolated, the bulletin bo
     const b2 = await g.call('get_clip', { clipId: 'c1' }, 'conv-b');
     assert.equal(b2.overwrittenBy?.length, 1, JSON.stringify(b2));
     assert.deepEqual({ entity: b2.overwrittenBy[0].entity, who: b2.overwrittenBy[0].who, by: b2.overwrittenBy[0].by, rev: b2.overwrittenBy[0].rev }, { entity: '/tracks/@t2/clips/@c2', who: 'Agent conv-a(codex)', by: 'agent', rev: a1.rev });
-    assert.match(b2.notice, /^Your write to clip c2 \(overwritten by Agent conv-a\(codex\), rev \d+\)/);
+    assert.match(b2.notice, /^You wrote clip c2 \(overwritten by Agent conv-a\(codex\),rev \d+\)/);
     const b3 = await g.call('get_clip', { clipId: 'c1' }, 'conv-b');
     assert.equal(b3.overwrittenBy, undefined, 'told only once');
     // 页面(用户)覆盖了 Agent 写的

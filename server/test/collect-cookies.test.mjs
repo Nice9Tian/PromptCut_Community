@@ -53,7 +53,7 @@ test('assessLogin: not logged in once a key cookie has expired', () => {
 });
 
 test('assessLogin: an unknown site throws directly', () => {
-  assert.throws(() => assessLogin('nope', [], NOW), /no site named nope/);
+  assert.throws(() => assessLogin('nope', [], NOW), /No site named nope/);
 });
 
 test('toNetscape / parseNetscape round-trip consistently, session cookies are written as 0, domains including subdomains use TRUE', () => {

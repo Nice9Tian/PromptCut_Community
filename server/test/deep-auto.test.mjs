@@ -51,14 +51,14 @@ const userText = (history) => history
 test('Normal mode: when the limit is reached, explicitly tell the model "the limit of N rounds has been reached"', async () => {
   const { out, history } = await runTo({ maxIterations: 3 });
   assert.equal(out.outcome, 'round_limit');
-  assert.match(userText(history), /reached the limit of 3 model round trips/);
+  assert.match(userText(history), /Reached the limit of 3 model round trips/);
 });
 
 test('Deep autonomy: it still wraps up at the limit, but the message does not mention the number of rounds', async () => {
   const { out, history } = await runTo({ maxIterations: 3, deepAuto: true });
   assert.equal(out.outcome, 'round_limit', 'It must still stop and let the model summarize, not silently return an empty result');
   const text = userText(history);
-  assert.match(text, /this run has reached its limit/);
+  assert.match(text, /This run has reached its limit/);
   assert.doesNotMatch(text, /round/, 'No mention of rounds should appear in the model context');
   assert.doesNotMatch(text, /3/, 'The specific limit number certainly must not be disclosed to it');
 });
@@ -136,9 +136,9 @@ test('Autonomous rounds: 0 is valid (meaning unlimited), negative numbers and hu
     assert.equal(publicConfig().deepAutoRounds, 0);
     writeConfig({ deepAutoRounds: 1000 });
     assert.equal(publicConfig().deepAutoRounds, 1000);
-    assert.throws(() => writeConfig({ deepAutoRounds: -1 }), /0~100000/);
-    assert.throws(() => writeConfig({ deepAutoRounds: 100001 }), /0~100000/);
-    assert.throws(() => writeConfig({ deepAutoRounds: 'many' }), /0~100000/);
+    assert.throws(() => writeConfig({ deepAutoRounds: -1 }), /0 to 100000/);
+    assert.throws(() => writeConfig({ deepAutoRounds: 100001 }), /0 to 100000/);
+    assert.throws(() => writeConfig({ deepAutoRounds: 'many' }), /0 to 100000/);
     assert.equal(publicConfig().deepAutoRounds, 1000, 'An invalid value must not overwrite the stored one');
   });
 });

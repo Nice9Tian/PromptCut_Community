@@ -13,7 +13,7 @@ const video = {
 test("soundAssetFrom: same file, extension removed and \"· Sound\" added, aspect ratio not carried over", () => {
   const s = soundAssetFrom(video, "m2");
   assert.equal(s.kind, "audio");
-  assert.equal(s.name, "Interview original · Sound");
+  assert.equal(s.name, "Interview original · Audio");
   assert.equal(s.url, video.url);
   assert.equal(s.path, video.path);
   assert.equal(s.duration, 12.5);
@@ -27,7 +27,7 @@ test("soundAssetFrom: same file, extension removed and \"· Sound\" added, aspec
 
 test("soundAssetFrom: an asset without path / duration / transcript does not gain these keys out of thin air", () => {
   const s = soundAssetFrom({ id: "m9", kind: "video", name: "No extension", url: "blob:x" }, "m10");
-  assert.equal(s.name, "No extension · Sound");
+  assert.equal(s.name, "No extension · Audio");
   assert.equal("path" in s, false);
   assert.equal("duration" in s, false);
   assert.equal("transcript" in s, false);

@@ -71,9 +71,9 @@ test('gate: the first call checks before letting through; under the threshold le
   const hot = createQuotaGuard({ probe: fakeProbe([85]).probe });
   await assert.rejects(() => hot.gate('codex', { thresholdPercent: 80 }), (e) => {
     assert.ok(e instanceof QuotaExceededError);
-    assert.match(e.message, /Codex quota 85% used/);
-    assert.match(e.message, /threshold 80%/);
-    assert.match(e.message, /resets at 12:00/);
+    assert.match(e.message, /Codex quota used 85%/);
+    assert.match(e.message, /over the 80% threshold/);
+    assert.match(e.message, /resets 12:00/);
     return true;
   });
 });

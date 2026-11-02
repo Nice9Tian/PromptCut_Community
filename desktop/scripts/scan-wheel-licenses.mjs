@@ -148,7 +148,7 @@ async function main() {
         + "state the reason in section 9 of desktop/THIRD-PARTY-LICENSES.md.");
     } else {
       console.log("No packages with GPL / AGPL / LGPL / SSPL / non-commercial licenses."
-        + "MPL-2.0 (certifi, tqdm) is not suspicious, but MPL §3.2 requires telling users how to get the source; this is already written in THIRD-PARTY-LICENSES.txt inside the package.");
+        + " MPL-2.0 (certifi, tqdm) is not suspicious, but MPL §3.2 requires telling users how to get the source; this is already written in THIRD-PARTY-LICENSES.txt inside the package.");
     }
   }
   process.exit(flagged.length ? 1 : 0);

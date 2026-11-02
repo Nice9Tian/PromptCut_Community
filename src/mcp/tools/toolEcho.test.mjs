@@ -48,7 +48,7 @@ test("Stop at the Nth consecutive deletion: this is the shape of round 2 deletin
     g.checkRemove({ clipId: id });
     g.noteRemoved(id);
   }
-  assert.throws(() => g.checkRemove({ clipId: "d" }), /deleted 3 cards in a row/);
+  assert.throws(() => g.checkRemove({ clipId: "d" }), /3 cards have been deleted in a row/);
   // 中间做了别的改动就重新计数
   g.noteMutation();
   assert.deepEqual(g.checkRemove({ clipId: "d" }), {});
@@ -62,7 +62,7 @@ test("After deleting, re-creating the same id counts as newly created", () => {
   g.checkRemove({ clipId: "x" });
   g.noteRemoved("x");
   g.noteCreated("x");
-  assert.throws(() => g.checkRemove({ clipId: "x" }), /just created with add_clip/);
+  assert.throws(() => g.checkRemove({ clipId: "x" }), /just created by you with add_clip/);
 });
 
 test("timelineDigest carries only id / card or asset / start and end, without params, and seconds keep two decimals", () => {
@@ -116,5 +116,5 @@ test("lookHint is a ready-made see_frames call", () => {
   const h = lookHint("c9");
   assert.equal(h.tool, "see_frames");
   assert.deepEqual(h.args, { source: "timeline", clipId: "c9" });
-  assert.match(h.why, /real picture/);
+  assert.match(h.why, /actual frame/);
 });

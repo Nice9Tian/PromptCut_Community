@@ -87,7 +87,7 @@ test("A card with no input cannot be detached: it is the content of this clip it
     tracks: [{ id: "t1", clips: [{ id: "c1", start: 0, end: 5, cardId: "intro", nodeId: "n-intro", params: {} }] }],
     cardNodes: [{ id: "n-intro", adapter: "card", cardId: "intro", kind: "animation", params: {}, inputs: {} }],
   };
-  assert.throws(() => detachCardNode(p, "c1", getCard), /is the content of this clip itself/);
+  assert.throws(() => detachCardNode(p, "c1", getCard), /is the content of this segment itself/);
 });
 
 test("When nothing is attached to this clip at all, say so clearly instead of silently doing nothing", () => {

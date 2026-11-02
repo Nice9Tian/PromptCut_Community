@@ -89,14 +89,14 @@ test("If everything fits, show it all, with no +N", () => {
 });
 
 test("What does not fit collapses into +N, and the height does not grow with the count", () => {
-  const plan = planBand(chips(["Darken", "blur", "Vignette"]), 130);
+  const plan = planBand(chips(["Darken", "blur", "Vignette"]), 200);
   assert.equal(plan.shown.length, 2);
   assert.equal(plan.hidden, 1);
 });
 
 test("When the selected one gets squeezed into +N, it is swapped into the last slot", () => {
   const items = chips(["Darken", "blur", "Vignette"]);
-  const plan = planBand(items, 130, 2);
+  const plan = planBand(items, 200, 2);
   assert.equal(plan.hidden, 1);
   assert.equal(plan.shown[plan.shown.length - 1].name, "Vignette");
 });

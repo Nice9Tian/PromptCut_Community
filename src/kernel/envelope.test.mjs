@@ -76,8 +76,8 @@ test("Read: parts carry only their own params, params is the full set, lifecycle
   assert.deepEqual(env.parts[1].params, { subtitle: "核心要点总结", accent: "" });
   assert.equal(Object.keys(env.params).length, 6);
   assert.equal(env.missingParams, undefined);
-  assert.match(describeLifecycle(env), /1\.1s settle/);
-  assert.match(describeLifecycle(env), /1\.9s is static/);
+  assert.match(describeLifecycle(env), /settles in about 1\.1s/);
+  assert.match(describeLifecycle(env), /is static for 1\.9s/);
 });
 
 test("Read: a card that declares no parts is one root part and all params belong to it; params missing on an old clip are listed in missingParams", () => {
@@ -153,10 +153,10 @@ test("Write: if any part is invalid, nothing is written, and errors are in plain
   const clip = clipOf();
   const bad = [
     [{ time: { end: 1 } }, /end > start/],
-    [{ frame: { local: { x: 1 } } }, /x and y must be numbers/],
-    [{ frame: { local: { x: 1, y: 1, foo: 2 } } }, /unrecognized "foo"/],
+    [{ frame: { local: { x: 1 } } }, /x and y of frame\.local must be numbers/],
+    [{ frame: { local: { x: 1, y: 1, foo: 2 } } }, /does not recognize "foo"/],
     [{ blend: { opacity: 2 } }, /0~1/],
-    [{ card: { id: "nope" } }, /no such card/],
+    [{ card: { id: "nope" } }, /No such card/],
     [{ params: { position: "top" } }, /can only be left \/ center/],
     [{ params: { nope: 1 } }, /is not a parameter of pin-board/],
     [{ blend: { fadeIn: -1 }, time: { end: 9 } }, /cannot be negative/],
@@ -247,7 +247,7 @@ test("Composite card: parts is an instance tree with partId / on-screen position
   // 坏树整份拒
   const bad = JSON.parse(JSON.stringify(env));
   bad.parts.push({ id: "a", partId: "text-title", params: {} });
-  assert.throws(() => applyEnvelope(project(clip), "c1", bad, compositeCard, STAGE, recorder().writer, () => compositeCard, lookup), /duplicate/);
+  assert.throws(() => applyEnvelope(project(clip), "c1", bad, compositeCard, STAGE, recorder().writer, () => compositeCard, lookup), /Duplicate/);
 });
 
 test("Composite card: writing a nested part tree back unchanged does not count as a change (enterMs stays relative to the parent), enterAtMs is an absolute time; in a scaled composite card, a part's on-screen position is computed from the scaled frame", () => {
@@ -339,7 +339,7 @@ test("Media clip: set_clip also cannot put 3D into frame", () => {
   const edited = { ...env, frame: { ...env.frame, local: { ...env.frame.local, rotateY: 35 } } };
   assert.throws(
     () => applyEnvelope(proj, "m1", edited, undefined, STAGE, r.writer, () => undefined),
-    /only applies to cards/,
+    /only works on cards/,
   );
   // 拦下来就一个字都不该写
   assert.equal(r.calls.length, 0);

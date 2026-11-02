@@ -150,7 +150,7 @@ test('CA-SND-02 idempotency, cancel, stale, read-only, limit', { timeout: 120_00
     assert.deepEqual(again.result, first.result);
     assert.equal(a.puts.length, 1);
     assert.equal(clipsOf(a.project).filter((c) => c.soundEffect).length, 1);
-    await assert.rejects(a.tools.sound_generate({ preset: 'notification', start: 1, requestId: 'r1', params: { frequency: 990 } }), /requestId already used for a different recipe/);
+    await assert.rejects(a.tools.sound_generate({ preset: 'notification', start: 1, requestId: 'r1', params: { frequency: 990 } }), /requestId was already used for a different recipe/);
     await assert.rejects(a.tools.sound_generate({ preset: 'notification', start: 1 }), /requestId/);
     await assert.rejects(a.tools.sound_generate({ preset: 'keyboard', requestId: 'k0' }), /Keyboard sound requires/);
     await assert.rejects(a.tools.sound_generate({ preset: 'notification', start: 99, requestId: 'far' }), /start must be within the project time range/);
@@ -242,7 +242,7 @@ test('CA-SND-02 idempotency, cancel, stale, read-only, limit', { timeout: 120_00
     const a = instance('p-queue', { renderHook: async (recipe, o, real) => { await hold; return real(recipe, o); } });
     const running = [0, 1, 2, 3].map((i) => a.tools.sound_generate({ preset: 'notification', requestId: `q${i}`, params: { frequency: 400 + i } }));
     await new Promise((r) => setTimeout(r, 50));
-    await assert.rejects(a.tools.sound_generate({ preset: 'notification', requestId: 'q4', params: { frequency: 500 } }), /Queue is full/);
+    await assert.rejects(a.tools.sound_generate({ preset: 'notification', requestId: 'q4', params: { frequency: 500 } }), /The sound effect queue is full/);
     gate.open();
     assert.deepEqual((await Promise.all(running)).map((r) => r.state), ['succeeded', 'succeeded', 'succeeded', 'succeeded']);
 

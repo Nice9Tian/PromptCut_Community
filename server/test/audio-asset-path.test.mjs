@@ -54,11 +54,11 @@ test('AR-1 resolver: unreachable, refused, 404 and 2xx are told apart', async ()
   const gone = await listen(() => {});
   await closeServer(gone.server);
   const refused = createAssetSourceResolver({ origin: () => gone.origin, toUrl });
-  await assert.rejects(refused({ hash: 'a' }), (e) => e instanceof AssetSourceError && e.message.includes(`asset service unreachable (${gone.origin})`));
+  await assert.rejects(refused({ hash: 'a' }), (e) => e instanceof AssetSourceError && e.message.includes(`Asset service unreachable (${gone.origin})`));
   // 超时
   const hang = await listen(() => { /* 不答 */ });
   const slow = createAssetSourceResolver({ origin: () => hang.origin, toUrl, timeoutMs: 300 });
-  await assert.rejects(slow({ hash: 'a' }), (e) => e instanceof AssetSourceError && /no response/.test(e.message));
+  await assert.rejects(slow({ hash: 'a' }), (e) => e instanceof AssetSourceError && /No response/.test(e.message));
   await closeServer(hang.server);
   // 404 / 401 / 206
   const seen = [];
@@ -284,7 +284,7 @@ test('AR-6 asset service unreachable: respond with an error that states the caus
   const m = await measureLoudness({ body: { scope: 'media', media: mediaOf('wav') }, resolveSource: resolve, ffmpeg: FFMPEG, ffprobe: FFPROBE });
   assert.equal(m.status, 502);
   assert.equal(m.body.ok, false);
-  assert.ok(m.body.error.includes(`asset service unreachable (${gone.origin})`), m.body.error);
+  assert.ok(m.body.error.includes(`Asset service unreachable (${gone.origin})`), m.body.error);
   const t = await measureLoudness({ body: { scope: 'timeline', duration: 3, entries: [{ clipId: 'c1', media: mediaOf('wav'), start: 0, dur: 3, offset: 0, volume: 1, fadeIn: 0, fadeOut: 0 }] }, resolveSource: resolve, ffmpeg: FFMPEG, ffprobe: FFPROBE });
   assert.equal(t.status, 502, 'the timeline tier is not treated as "skipped"');
   let ran = 0;
@@ -292,7 +292,7 @@ test('AR-6 asset service unreachable: respond with an error that states the caus
   const j = await measureJs({ body: { scope: 'media', media: mediaOf('wav'), code: 'return 1' }, resolveSource: resolve, ffmpeg: FFMPEG, ffprobe: FFPROBE, sandbox });
   assert.equal(j.body.ok, false);
   assert.equal(j.body.kind, 'asset-service');
-  assert.match(j.body.error, /asset service unreachable/);
+  assert.match(j.body.error, /Asset service unreachable/);
   const noOrigin = createAssetSourceResolver({ origin: () => null, toUrl: () => 'x' });
   const k = await measureJs({ body: { scope: 'timeline', entries: [{ media: mediaOf('wav') }], code: 'return 1' }, resolveSource: noOrigin, ffmpeg: FFMPEG, ffprobe: FFPROBE, sandbox });
   assert.equal(k.body.kind, 'asset-service');

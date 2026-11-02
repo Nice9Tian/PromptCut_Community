@@ -56,7 +56,7 @@ async function run({ judger, worker, reviewer, lessons = [], signal }) {
 test('Passes on the first try: judger opens → worker → reviewer → judger rules phase_done', async () => {
   const { out, first } = await run({ judger: [plan(), done], worker: [deliver()], reviewer: [review()] });
   assert.equal(out.outcome, 'passed');
-  assert.match(out.text, /all four are backed by evidence/);
+  assert.match(out.text, /All four are backed by evidence/);
   const w = first('worker')[0];
   assert.match(JSON.stringify(w.messages), new RegExp(USER), 'The worker must be able to see the user\'s original words');
   assert.match(JSON.stringify(w.messages), /Requirement A/, 'The worker must be able to see the judger\'s requirements');
@@ -130,7 +130,7 @@ test('Chat panel display: rulings become status lines listed one by one, reviewe
     input: { rulings: [{ opinion: 'Card 3 is repetitive', verdict: 'Accept', reason: 'holds' }, { opinion: 'Swap the score', verdict: 'Reject', reason: 'can\'t be changed' }] } });
   assert.equal(st.type, 'status');
   assert.match(st.text, /1 accepted, 0 downgraded, 1 rejected/);
-  assert.match(st.text, /\[rejected\] Swap the score: can't be changed/);
+  assert.match(st.text, /\[Reject\] Swap the score —— can't be changed/);
   assert.equal(presentLoopEvent({ type: 'text', role: 'judger', delta: 'Let me take a look' })[0].type, 'thinking');
   assert.equal(presentLoopEvent({ type: 'text', role: 'worker', delta: 'Delivery' })[0].type, 'text');
   assert.match(presentLoopEvent({ type: 'progress', role: 'reviewer', text: 'Round 1' })[0].text, /^reviewer · Round 1/);
@@ -138,7 +138,7 @@ test('Chat panel display: rulings become status lines listed one by one, reviewe
   // 实跑见过:没有逐条裁定、judger 自己核对后要求返工 —— 要把要求摆出来,不能只写「采纳 0 条」
   const [own] = presentLoopEvent({ type: 'loop', stage: 'verdict', role: 'judger', verdict: 'request_revision',
     input: { rulings: [], requirements: 'worker must actually call tools to carry out the fixes\n1. Remove all redundant cards' } });
-  assert.match(own.text, /after its own check, it requests rework/);
+  assert.match(own.text, /checked on its own and requested rework/);
   assert.match(own.text, /worker must actually call tools to carry out the fixes/);
   assert.equal(presentLoopEvent({ type: 'loop', stage: 'judging', role: 'judger' })[0].text, 'judger is ruling on the reviewer\'s opinions one by one');
 });
@@ -162,7 +162,7 @@ test('Gateway timeout: retry on the same history without voiding the whole loop;
   });
   assert.equal(out.outcome, 'passed', 'Should keep running to completion after one timeout');
   assert.ok(events.some((e) => e.type === 'loop' && e.stage === 'retry' && e.role === 'worker'));
-  assert.match(presentLoopEvent({ type: 'loop', stage: 'retry', role: 'worker', attempt: 1 })[0].text, /Gateway timeout/);
+  assert.match(presentLoopEvent({ type: 'loop', stage: 'retry', role: 'worker', attempt: 1 })[0].text, /the request gateway timed out/);
 
   await assert.rejects(() => runReviewLoop({
     providers: { judger: flaky(scripted('judger', [plan()], []), 5) },

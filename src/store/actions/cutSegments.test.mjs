@@ -26,8 +26,8 @@ test("Placement: default length = total length of the referenced cut; circular r
   load();
   const c = actions.addCutSegment("B", 2, { trackId: "ta" });
   assert.deepEqual([c.start, c.end, c.cutId, c.cardId], [2, 10, "B", ""]);
-  assert.throws(() => actions.addCutSegment("A", 0, { trackId: "ta2" }), /into itself/);
-  assert.equal(actions.cutCycleReason("A"), "Cannot put cut \"Cut A\" into itself");
+  assert.throws(() => actions.addCutSegment("A", 0, { trackId: "ta2" }), /inside itself/);
+  assert.equal(actions.cutCycleReason("A"), "Cannot place cut \"Cut A\" inside itself");
 });
 
 test("Trim head: the offset follows, cannot go back past the start of the referenced cut; the out point cannot exceed the remaining length", () => {

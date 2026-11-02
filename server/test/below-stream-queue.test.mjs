@@ -313,7 +313,7 @@ test('BLQ-foreign a task of this kind split out by another node (with the featur
     const err = await executor.render(view(task), { signal: signalNone(), progress: () => {} }).then(() => null, (e) => e);
     assert.equal(err?.code, 'plan-mismatch');
     assert.equal(err?.retryable, false);
-    assert.match(err.message, /below-dependent stream/);
+    assert.match(err.message, /stream that depends on the lower layer/);
     assert.equal(streamBakes.length, mark);
   });
 });

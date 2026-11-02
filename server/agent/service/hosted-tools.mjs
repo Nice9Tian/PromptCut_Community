@@ -46,7 +46,7 @@ export const HOSTED_TOOL_DEFAULTS = Object.freeze({
 
 /** 运行素材没开时给模型的话：不要重试，告诉它素材从哪儿来 */
 export const RUN_ASSETS_OFF_TEXT = 'This cloud version cannot let the Agent add files to the media library (run assets is off); retrying will not help, do not retry.' +
-  'Images, videos and audio the user sent in the chat were already added to the media library when the page sent them; find that item with list_media and use it directly; ' +
+  ' Images, videos and audio the user sent in the chat were already added to the media library when the page sent them; find that item with list_media and use it directly; ' +
   'for other files, tell the user to click "Import media" in the media library on the left to add them.';
 
 export class HostedToolError extends Error {

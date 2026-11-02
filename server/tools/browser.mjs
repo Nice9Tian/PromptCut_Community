@@ -67,7 +67,7 @@ export const browserTools = [
   },
   {
     name: "user_interface_web_handoff",
-    description: "**Touches the user's interface**: moves the browser window from off-screen to in front of the user, handing it over for the user to operate. **Use this when you hit a login, captcha, QR code scan, cookie consent or paywall**: these things should not and cannot be done by you, and a captcha in particular must be clicked by a human. After calling it, **stop**: tell the user in Chinese what to do now and how to reply to you once done, and do not keep calling tools. After the user replies, use web_view to see the current state. To hide the window again once done, pass hide:true.",
+    description: "**Touches the user's interface**: moves the browser window from off-screen to in front of the user, handing it over for the user to operate. **Use this when you hit a login, captcha, QR code scan, cookie consent or paywall**: these things should not and cannot be done by you, and a captcha in particular must be clicked by a human. After calling it, **stop**: tell the user, in their language, what to do now and how to reply to you once done, and do not keep calling tools. After the user replies, use web_view to see the current state. To hide the window again once done, pass hide:true.",
     inputSchema: {
       type: "object",
       properties: {

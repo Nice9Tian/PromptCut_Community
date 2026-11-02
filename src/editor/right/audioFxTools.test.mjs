@@ -56,7 +56,7 @@ test("Audio effects library: create, attach, edit, delete; gate, undo, cross-cut
     assert.match(at.applyAudioFx({ clipId: "s1", fxId: fid }).warning, /is currently muted/);
     assert.equal(at.applyAudioFx({ clipId: "c2", fxId: fid }).fxId, fid);
     assert.throws(() => at.applyAudioFx({ clipId: "c2", fxId: fid, params: { nope: 1 } }), /no parameter nope/);
-    assert.throws(() => at.applyAudioFx({ clipId: "c2", fxId: "afx-none" }), /The audio effects library has no afx-none.*压低/);
+    assert.throws(() => at.applyAudioFx({ clipId: "c2", fxId: "afx-none" }), /The audio effects library has no afx-none.*Lower/);
     assert.equal(at.listAudioFx().effects[0].usedBy.length, 3);
     assert.equal(at.applyAudioFx({ clipId: "c2", fxId: "" }).removed, true);
     assert.equal("audioFx" in getState().project.tracks[0].clips[1], false, "Detaching must remove the field entirely");
@@ -83,7 +83,7 @@ test("Audio effects library: create, attach, edit, delete; gate, undo, cross-cut
       ...q,
       cuts: q.cuts.map((c) => (c.id === other.id ? { ...c, tracks: [{ id: "tp", name: "p", clips: [{ id: "cp", cardId: "", params: {}, mediaId: "v", start: 0, end: 3, audioFx: { id: fid } }] }] } : c)),
     });
-    assert.throws(() => at.removeAudioFx({ fxId: fid }), /is still attached to \d clips.*cp of 剪辑备份/);
+    assert.throws(() => at.removeAudioFx({ fxId: fid }), /is still attached to \d clips.*cp of Cut backup/);
     assert.throws(() => at.removeAudioFx({ fxId: fid, force: true }), /reason/);
     const rm = at.removeAudioFx({ fxId: fid, force: true, reason: "The user no longer wants it" });
     assert.ok(rm.detached.length >= 4);

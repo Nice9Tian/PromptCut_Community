@@ -29,7 +29,7 @@ const it = (name, opts, fn) => test(name, { skip, ...opts }, fn);
 
 /** 契约第 2 节「判定模块」的原文（两行） */
 const MODE_TS = [
-  '/** Online browser mode: turned on by the online build (c10a-contract.md section 2). Desktop runtime environments (desktop app, local dev server) are always false. */',
+  '/** 在线浏览器模式：由在线构建打开（c10a-contract.md 第 2 节）。桌面运行环境（桌面版、本机 dev server）恒为 false。 */', // i18n-allow
   'export const ONLINE: boolean = import.meta.env.VITE_PC_ONLINE === "1";',
 ];
 

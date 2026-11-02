@@ -406,8 +406,8 @@ function _startRun(opts) {
                   childController.finish({
                     type: 'error',
                     message: tr("Antigravity gave up this turn after rejecting its own built-in tools ({0}), and produced no result.", deniedNames)
-                      + tr("In unattended mode it cannot pop up a window to ask for consent, so reading files, reading web pages and running commands outside the workspace are always rejected automatically.")
-                      + tr("PromptCut's tools are unaffected: {0}.", tips.join(';')),
+                      + tr(" In unattended mode it cannot pop up a window to ask for consent, so reading files, reading web pages and running commands outside the workspace are always rejected automatically.")
+                      + tr(" PromptCut's tools are unaffected: {0}.", tips.join('; ')),
                     /*
                      * 这一类中断是「接着说就有可能成」的:上下文都还在(--conversation 会把
                      * 整段对话带回来),缺的只是让它知道刚才为什么停、以及换哪条路。

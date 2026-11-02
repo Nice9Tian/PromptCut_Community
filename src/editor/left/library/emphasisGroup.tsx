@@ -94,23 +94,23 @@ export function useEmphasisGroup(q: string, flash: (text: string, ms?: number) =
   const clickKind = (kind: EmphasisKind) => {
     const clipId = selection[0];
     if (!clipId) {
-      flash(trText("First select a clip on the timeline, then click {0}; or drag the card straight onto that clip", EMPHASIS_LABEL[kind]));
+      flash(trText("First select a clip on the timeline, then click {0}; or drag the card straight onto that clip", trText(EMPHASIS_LABEL[kind])));
       return;
     }
     const r = actions.setClipEmphasis(clipId, buildEmphasis(kind));
-    flash(r.ok ? trText("Added {0}: {1}", EMPHASIS_LABEL[kind], describeEmphasis(r.emphasis)) : (r.error ?? trText("Can't add")));
+    flash(r.ok ? trText("Added {0}: {1}", trText(EMPHASIS_LABEL[kind]), describeEmphasis(r.emphasis)) : (r.error ?? trText("Can't add")));
   };
 
   const drag = (kind: EmphasisKind) => (e: React.DragEvent) => {
     e.dataTransfer.setData(MIME_EMPHASIS, kind);
     e.dataTransfer.effectAllowed = "copy";
-    setDragPayload({ kind: "emphasis", emphasis: buildEmphasis(kind), name: EMPHASIS_LABEL[kind], duration: 0 });
+    setDragPayload({ kind: "emphasis", emphasis: buildEmphasis(kind), name: trText(EMPHASIS_LABEL[kind]), duration: 0 });
   };
 
   const nameOf = (c: TrackClip) =>
     c.label || project.media.find((m) => m.id === c.mediaId)?.name || c.cardId || c.id;
 
-  const kinds = KINDS.filter((k) => !q || EMPHASIS_LABEL[k].toLowerCase().includes(q));
+  const kinds = KINDS.filter((k) => !q || trText(EMPHASIS_LABEL[k]).toLowerCase().includes(q));
   const px = (kind: EmphasisKind) => (kind === "shadow" ? size.shadow : size.outline);
 
   const items: GroupItem[] = kinds.map((kind) => ({
@@ -119,7 +119,7 @@ export function useEmphasisGroup(q: string, flash: (text: string, ms?: number) =
     node: (
       <PreviewCard
         attrs={{ "data-pc-emphasis": kind }}
-        title={EMPHASIS_LABEL[kind]}
+        title={trText(EMPHASIS_LABEL[kind])}
         subtitle={`${px(kind)}px · ${color.label}`}
         preview={<EmphasisGlyph kind={kind} color={color.css} size={px(kind)} />}
         draggable
@@ -135,7 +135,7 @@ export function useEmphasisGroup(q: string, flash: (text: string, ms?: number) =
 
   const thumbs: GroupItem[] = kinds.map((kind) => ({
     id: kind,
-    node: <ThumbTile title={EMPHASIS_LABEL[kind]} preview={<EmphasisGlyph kind={kind} color={color.css} size={px(kind)} />} />,
+    node: <ThumbTile title={trText(EMPHASIS_LABEL[kind])} preview={<EmphasisGlyph kind={kind} color={color.css} size={px(kind)} />} />,
   }));
 
   const detailTop = (

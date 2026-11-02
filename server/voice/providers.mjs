@@ -23,7 +23,7 @@ export class VoiceError extends Error {
 /** API 报错翻成人话。额度用完是最常见的,单独说清楚 */
 function apiError(status, text) {
   const quotaGone = /quota exhausted|quota|额度/i.test(text); // i18n-allow: the provider's reply may be Chinese
-  if (quotaGone) return new VoiceError('API Key 的额度用完了（API 返回 401）。去 API 后台充值后再试。', { status, detail: text });
+  if (quotaGone) return new VoiceError(tr("The API key has run out of quota (API returned 401). Top up in the API console and try again."), { status, detail: text });
   if (status === 401 || status === 403) return new VoiceError(tr("The API key is invalid or does not have access to this model (HTTP {0}). Check the API key in \"Voiceover settings\".", status), { status, detail: text });
   if (status === 429) return new VoiceError(tr("Too many requests, rate limited (HTTP 429). Wait a minute or two and try again."), { status, detail: text });
   return new VoiceError(tr("API returned HTTP {0}: {1}", status, text.slice(0, 200)), { status, detail: text });

@@ -85,12 +85,12 @@ export const layoutTools = [
     name: "set_camera3d",
     description:
       "Turn 3D perspective on / off, and adjust its strength. **This is the only 3D switch**, one tier per project, not per card." +
-      "While it is off, rotateX / rotateY / translateZ in set_position only produce an affine stretch: the card is skewed but with no near-large far-small effect, so it looks like a sticker rather than standing in space." +
-      "Once on, the stage becomes a perspective space: the screen plane is z=0, positive translateZ comes toward the viewer (larger), negative goes inward (smaller)." +
+      " While it is off, rotateX / rotateY / translateZ in set_position only produce an affine stretch: the card is skewed but with no near-large far-small effect, so it looks like a sticker rather than standing in space." +
+      " Once on, the stage becomes a perspective space: the screen plane is z=0, positive translateZ comes toward the viewer (larger), negative goes inward (smaller)." +
       "\n\n" +
       "Strength is adjusted with fovDeg (field of view), **there is no \"camera distance\" parameter**: the distance is derived from fov and canvas height (d = H / (2·tan(fov/2)))." +
-      "It is designed this way because a portrait project has a canvas height of 1920 and a landscape one 1080, so the same distance gives completely different perspective strength in the two aspect ratios, while fov is directly \"how strong the perspective is\" and needs no retuning when the aspect ratio changes." +
-      "Tiers: **30° restrained** (close to orthographic, suits tidy information layouts), **40° default**, **50~60° noticeable** (a card has depth as soon as it turns), **80° and above is fisheye**, with exaggerated distortion at the corners." +
+      " It is designed this way because a portrait project has a canvas height of 1920 and a landscape one 1080, so the same distance gives completely different perspective strength in the two aspect ratios, while fov is directly \"how strong the perspective is\" and needs no retuning when the aspect ratio changes." +
+      " Tiers: **30° restrained** (close to orthographic, suits tidy information layouts), **40° default**, **50~60° noticeable** (a card has depth as soon as it turns), **80° and above is fisheye**, with exaggerated distortion at the corners." +
       "\n\n" +
       "After changing it, always check the real frames with see_frames: perspective strength can only be judged by eye, not calculated.",
     inputSchema: {

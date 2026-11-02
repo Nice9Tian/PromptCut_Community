@@ -50,11 +50,11 @@ test("checkCrossfade: reversed arguments are sorted automatically; non-adjacent,
   assert.equal(ok.b.id, "b");
 
   const far = proj([clip("a", 0, 3), clip("b", 5, 8)]);
-  assert.match(checkCrossfade(far, "a", "b", 0.5).error, /left empty for 2.0 seconds/);
+  assert.match(checkCrossfade(far, "a", "b", 0.5).error, /There is a 2\.0s gap/);
 
   assert.match(checkCrossfade(p, "a", "b", 5).error, /longer than one of the clips/);
   assert.match(checkCrossfade(p, "a", "a", 0.5).error, /two different clips/);
-  assert.match(checkCrossfade(p, "a", "zz", 0.5).error, /Cannot find clip zz/);
+  assert.match(checkCrossfade(p, "a", "zz", 0.5).error, /Clip zz not found/);
 
   const dup = proj([clip("a", 0, 3), clip("b", 3, 6), clip("c", 6, 9)], [{ id: "t1", kind: "crossfade", aId: "a", bId: "b", dur: 0.5 }]);
   assert.match(checkCrossfade(dup, "b", "c", 0.5).error, /already has a crossfade/);
@@ -66,12 +66,12 @@ test("checkFade: adding twice, longer than the clip, and an end occupied by a cr
   assert.match(checkFade(p, "a", "fadeIn", 9).error, /longer than the clip itself/);
 
   const withFade = proj([clip("a", 0, 3)], [{ id: "t1", kind: "fadeIn", aId: "a", dur: 0.5 }]);
-  assert.match(checkFade(withFade, "a", "fadeIn", 0.5).error, /already has a fade-in/);
+  assert.match(checkFade(withFade, "a", "fadeIn", 0.5).error, /already has a Fade in/);
   // 同一段的淡出没被占,还能加
   assert.equal(checkFade(withFade, "a", "fadeOut", 0.5).ok, true);
 
   const xf = proj([clip("a", 0, 3), clip("b", 3, 6)], [{ id: "t1", kind: "crossfade", aId: "a", bId: "b", dur: 0.5 }]);
-  assert.match(checkFade(xf, "b", "fadeIn", 0.5).error, /occupied by a crossfade/);
+  assert.match(checkFade(xf, "b", "fadeIn", 0.5).error, /already taken by a crossfade/);
   // 交叉溶解占的是 b 的开头,b 的结尾还能淡出
   assert.equal(checkFade(xf, "b", "fadeOut", 0.5).ok, true);
 });

@@ -97,7 +97,7 @@ export function createTrackTools(store: TrackStore) {
       if (locked.length) {
         throw new Error(
           `${locked.map((t) => `"${t.name}"`).join(", ")} locked: locked by the user for protection, so not deleted.` +
-            "Only when the user explicitly says to delete it, first unlock with update_track({ trackId, locked: false }) and then delete.",
+            " Only when the user explicitly says to delete it, first unlock with update_track({ trackId, locked: false }) and then delete.",
         );
       }
       const reason = typeof args?.reason === "string" ? args.reason.trim() : "";
@@ -105,7 +105,7 @@ export function createTrackTools(store: TrackStore) {
       if (full.length && !args?.force) {
         throw new Error(
           `${full.map((t) => `"${t.name}" (${t.clips.length} clips)`).join(", ")} still has content; deleting a track also deletes its clips.` +
-            "If you really need to delete, pass force:true and state the reason in reason (the user will see it); if you only want to clear empty tracks, remove these from trackIds.",
+            " If you really need to delete, pass force:true and state the reason in reason (the user will see it); if you only want to clear empty tracks, remove these from trackIds.",
         );
       }
       if (args?.force && !reason) throw new Error("A force delete must state the reason in reason; the user will see this sentence");

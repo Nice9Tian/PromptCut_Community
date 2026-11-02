@@ -245,7 +245,7 @@ test('queue messages reply queue-unavailable and no role is recorded when no que
   const unmount = service.mountRenderQueue(fake);
   const connId = service.describe().conns[0].connId;
   assert.deepEqual(calls[0], ['connect', connId, { userId: 'u1', tenantId: 't1' }]);
-  assert.throws(() => service.mountRenderQueue(fake), /already mounted/);
+  assert.throws(() => service.mountRenderQueue(fake), /already attached/);
 
   c.send({ type: 'node.hello', reqId: 'b', nodeId: 'n1', profile: 'pc' });
   assert.equal((await c.next(byReq('b'))).type, 'fake.ack');

@@ -152,20 +152,20 @@ export function useTransitionsGroup(q: string, flash: (text: string, ms?: number
     }
     const clipId = selection[0];
     if (!clipId) {
-      flash(trText("First select a clip on the timeline, then click {0}; or drag the card straight to the clip's {1}", TRANSITION_LABEL[kind], kind === "fadeIn" ? trText("Start") : trText("end")));
+      flash(trText("First select a clip on the timeline, then click {0}; or drag the card straight to the clip's {1}", trText(TRANSITION_LABEL[kind]), kind === "fadeIn" ? trText("Start") : trText("end")));
       return;
     }
     const r = actions.addTransition({ kind, clipId, dur });
-    flash(r.ok ? trText("Added {0}s {1}", dur, TRANSITION_LABEL[kind]) : r.error);
+    flash(r.ok ? trText("Added {0}s {1}", dur, trText(TRANSITION_LABEL[kind])) : r.error);
   };
 
   const drag = (kind: TransitionKind) => (e: React.DragEvent) => {
     e.dataTransfer.setData(MIME_TRANSITION, kind);
     e.dataTransfer.effectAllowed = "copy";
-    setDragPayload({ kind: "transition", transition: kind, name: TRANSITION_LABEL[kind], duration: dur });
+    setDragPayload({ kind: "transition", transition: kind, name: trText(TRANSITION_LABEL[kind]), duration: dur });
   };
 
-  const kinds = KINDS.filter((k) => !q || TRANSITION_LABEL[k].toLowerCase().includes(q) || KIND_HINT[k].includes(q));
+  const kinds = KINDS.filter((k) => !q || trText(TRANSITION_LABEL[k]).toLowerCase().includes(q) || KIND_HINT[k].includes(q));
 
   const items: GroupItem[] = kinds.map((kind) => ({
     id: kind,
@@ -173,7 +173,7 @@ export function useTransitionsGroup(q: string, flash: (text: string, ms?: number
     node: (
       <PreviewCard
         attrs={{ "data-pc-transition": kind }}
-        title={TRANSITION_LABEL[kind]}
+        title={trText(TRANSITION_LABEL[kind])}
         subtitle={`${dur}s`}
         preview={<TransitionGlyph kind={kind} />}
         draggable
@@ -189,7 +189,7 @@ export function useTransitionsGroup(q: string, flash: (text: string, ms?: number
 
   const thumbs: GroupItem[] = kinds.map((kind) => ({
     id: kind,
-    node: <ThumbTile title={TRANSITION_LABEL[kind]} preview={<TransitionGlyph kind={kind} />} />,
+    node: <ThumbTile title={trText(TRANSITION_LABEL[kind])} preview={<TransitionGlyph kind={kind} />} />,
   }));
 
   const detailTop = (

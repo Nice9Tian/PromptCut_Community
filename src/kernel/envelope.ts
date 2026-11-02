@@ -292,7 +292,7 @@ export function assertNo3dOnMedia(clip: TrackClip, frame: ClipFrame | undefined)
   if (!used.length) return;
   throw new Error(
     `${used.join(" / ")} only works on cards; this clip is a media clip (video / image).` +
-    `The default Chrome preview, export and see_frames share the same pipeline, but the compatibility bypass with explicit --media=ffmpeg still does not support media 3D.` +
+    ` The default Chrome preview, export and see_frames share the same pipeline, but the compatibility bypass with explicit --media=ffmpeg still does not support media 3D.` +
     `To make media look 3D, put it inside a card and arrange it there, or export it as an image asset first. Position / size / flat rotation are fully supported for media.`,
   );
 }

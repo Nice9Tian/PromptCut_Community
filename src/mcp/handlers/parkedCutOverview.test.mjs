@@ -62,7 +62,7 @@ test("get_project: parkedCuts comes first and lists the clips of parked cuts (wi
     { id: "b1", trackId: "tb1", cardId: "particles-pk", cardName: "Particle background", label: "Particle background", start: 0, end: 6 },
     { id: "b2", trackId: "tb1", cardId: "particles-pk", cardName: "Particle background", start: 1, end: 2 },
   ]);
-  assert.match(r.parkedCuts.note, /no need to use user_interface_switch_cut/);
+  assert.match(r.parkedCuts.note, /do not use user_interface_switch_cut/);
   assert.deepEqual(r.tracks.map((t) => t.id), ["ta1"], "tracks is still the active cut's");
   assert.equal(getState().project.activeCutId, "A", "read-only");
 });
@@ -87,7 +87,7 @@ test("timeline in tool responses: carries otherCuts when other cuts have content
   fresh();
   const a = call("update_clip", { clipId: "a1", opacity: 0.8 });
   assert.deepEqual(a.timeline.otherCuts.cuts, [{ cutId: "B", name: "Cut 2", clipCount: 2 }]);
-  assert.match(a.timeline.otherCuts.hint, /no need to use user_interface_switch_cut/);
+  assert.match(a.timeline.otherCuts.hint, /do not use user_interface_switch_cut/);
   const b = call("update_clip", { clipId: "b1", opacity: 0.8 });
   assert.equal(b.cut.id, "B");
   assert.equal("otherCuts" in b.timeline, false);
@@ -101,8 +101,8 @@ test("The response of switch_cut carries a note: switching flips the interface o
   const r = call("user_interface_switch_cut", { cutId: "B" });
   assert.equal(r.activeCutId, "B");
   assert.match(r.note, /Switched to "Cut 2"/);
-  assert.match(r.note, /all members' views flip together/);
-  assert.match(r.note, /do not need it/);
+  assert.match(r.note, /flips every member's interface together/);
+  assert.match(r.note, /it is not needed/);
   assert.match(r.note, /parkedCuts/);
 });
 
@@ -110,17 +110,17 @@ test("Tool descriptions: get_project / list_cuts / switch_cut point to parkedCut
   const { tools } = await import("../../../server/mcp-tools.mjs");
   const d = (n) => tools.find((t) => t.name === n).description;
   assert.match(d("get_project"), /parkedCuts/);
-  assert.match(d("get_project"), /no need to use user_interface_switch_cut/);
+  assert.match(d("get_project"), /do not need user_interface_switch_cut/);
   assert.match(d("list_cuts"), /parkedCuts/);
-  assert.match(d("list_cuts"), /do not use user_interface_switch_cut/);
-  assert.match(d("user_interface_switch_cut"), /do not use it/);
-  assert.match(d("user_interface_switch_cut"), /the interface of all members/);
+  assert.match(d("list_cuts"), /do not user_interface_switch_cut/);
+  assert.match(d("user_interface_switch_cut"), /Do not use it/);
+  assert.match(d("user_interface_switch_cut"), /every member's interface/);
 });
 
 test("System prompt: the multi-cut section opens by saying not to use switch_cut and points to parkedCuts", async () => {
   const fs = await import("node:fs");
   const text = fs.readFileSync(new URL("../../../server/ai-system-prompt.md", import.meta.url), "utf8");
-  const line = text.split(/\r?\n/).find((l) => l.includes("A project can have multiple cuts"));
+  const line = text.split(/\r?\n/).find((l) => l.includes("A project can have several cuts"));
   assert.ok(line);
   assert.ok(line.indexOf("do not use `user_interface_switch_cut`") >= 0 && line.indexOf("do not use `user_interface_switch_cut`") < line.indexOf("add_clip, track"), "The \"do not switch\" part comes first");
   assert.match(line, /see_frames\(\{ cutId/, "To see the frames of other cuts, use the cutId of see_frames");

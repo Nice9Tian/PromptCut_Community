@@ -46,8 +46,8 @@ export const cutsTools = [
     description: "**Acts on the user's interface**: switches the active cut shared by all members to another one (by cutId or name, pick one); every member's interface flips over together, the playhead returns to where it was when this cut was last left, and the selection is cleared." +
       "**Use only when the user explicitly says \"switch to / open such-and-such cut\", or when you need to add / delete / split / duplicate clips in another cut.**" +
       "Do not use it just to change existing clips in other cuts (the clipId is in list_cuts or in the parkedCuts of get_project; hand it straight to update_clip etc. to edit in place);" +
-      "Do not use it just to view the frames of other cuts either (pass cutId to see_frames). Switching over and back is two redundant writes, and it also interrupts the timeline others are watching." +
-      "After switching, what get_project / add_clip / update_clip etc. see and change is this cut's content. Returns the cuts list after switching and a summary of this cut's timeline.",
+      " Do not use it just to view the frames of other cuts either (pass cutId to see_frames). Switching over and back is two redundant writes, and it also interrupts the timeline others are watching." +
+      " After switching, what get_project / add_clip / update_clip etc. see and change is this cut's content. Returns the cuts list after switching and a summary of this cut's timeline.",
     inputSchema: {
       type: "object",
       properties: {
@@ -60,7 +60,7 @@ export const cutsTools = [
   {
     name: "add_cut",
     description: "Create a new cut (default name Cut N), with two empty tracks and a duration of 30 seconds. **Create only, no switch**: the active cut stays the same and nobody's interface moves; returns the new cut's id." +
-      "To put things into it: to add clips you must first user_interface_switch_cut to it (this moves every member's interface, use it only when the user explicitly asks to switch or it is unavoidable);" +
+      " To put things into it: to add clips you must first user_interface_switch_cut to it (this moves every member's interface, use it only when the user explicitly asks to switch or it is unavoidable);" +
       "or place it into the current cut as a cut segment (add_cut_segment). When the user says \"start another timeline / make another version\", this is it.",
     inputSchema: {
       type: "object",

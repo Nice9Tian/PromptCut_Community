@@ -83,7 +83,7 @@ test('PromptCut\'s own tools were denied: retry via the text protocol', async ()
   try {
     const { events, spawnCount } = await run();
     assert.equal(spawnCount, 2);
-    assert.ok(events.some((e) => e.type === 'status' && /retrying with the text protocol/.test(e.text)));
+    assert.ok(events.some((e) => e.type === 'status' && /retrying with text protocol/.test(e.text)));
     assert.equal(events.filter((e) => e.type === 'done').length, 1, 'The first round\'s done is swallowed, only the retry round\'s remains');
   } finally { resultExtra = {}; }
 });

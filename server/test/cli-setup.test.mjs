@@ -282,7 +282,7 @@ test('malformed codes are refused before anything is written to the child', asyn
   ];
   for (const code of bad) {
     let message = '';
-    assert.throws(() => service.submitCode('claude', code), error => { message = error.message; return /Authorization code format is invalid/.test(message); });
+    assert.throws(() => service.submitCode('claude', code), error => { message = error.message; return /Invalid authorization code format/.test(message); });
     assert.ok(!message.includes(FAKE_CODE.slice(0, 20)), 'the error must not echo the input');
   }
   assert.equal(calls[0].child.stdin.written, '');
@@ -292,17 +292,17 @@ test('malformed codes are refused before anything is written to the child', asyn
 
 test('code is refused when no login job is waiting for it', async () => {
   const { service, calls } = fakeService();
-  assert.throws(() => service.submitCode('claude', FAKE_CODE), /not waiting for an authorization code/);
-  assert.throws(() => service.submitCode('__proto__', FAKE_CODE), /not waiting for an authorization code/);
+  assert.throws(() => service.submitCode('claude', FAKE_CODE), /No login task is currently waiting for an authorization code/);
+  assert.throws(() => service.submitCode('__proto__', FAKE_CODE), /No login task is currently waiting for an authorization code/);
   service.start('codex', 'login'); await until(() => calls.length === 1);
-  assert.throws(() => service.submitCode('codex', FAKE_CODE), /not waiting for an authorization code/, 'codex login has no stdin pipe');
+  assert.throws(() => service.submitCode('codex', FAKE_CODE), /No login task is currently waiting for an authorization code/, 'codex login has no stdin pipe');
   service.start('claude', 'install'); await until(() => calls.length === 2);
-  assert.throws(() => service.submitCode('claude', FAKE_CODE), /not waiting for an authorization code/, 'install jobs never accept a code');
+  assert.throws(() => service.submitCode('claude', FAKE_CODE), /No login task is currently waiting for an authorization code/, 'install jobs never accept a code');
   calls[1].child.emit('close', 0);
   await until(() => service.list().find(j => j.provider === 'claude').state === 'succeeded');
   service.start('claude', 'login'); await until(() => calls.length === 3);
   service.cancel('claude');
-  assert.throws(() => service.submitCode('claude', FAKE_CODE), /not waiting for an authorization code/, 'a cancelled login no longer accepts a code');
+  assert.throws(() => service.submitCode('claude', FAKE_CODE), /No login task is currently waiting for an authorization code/, 'a cancelled login no longer accepts a code');
   await until(() => service.list().find(j => j.provider === 'claude').state === 'failed');
   service.dispose(); await tick();
 });
@@ -320,7 +320,7 @@ test('stdin is closed when the login finishes, fails, times out, is cancelled, o
     await until(() => service.list()[0].state !== 'running');
     assert.equal(child.stdin.destroyed, true, how + ': stdin destroyed');
     assert.equal(service.list()[0].acceptsCode, false, how + ': no longer accepts a code');
-    assert.throws(() => service.submitCode('claude', FAKE_CODE), /not waiting for an authorization code/, how);
+    assert.throws(() => service.submitCode('claude', FAKE_CODE), /No login task is currently waiting for an authorization code/, how);
     service.dispose(); await tick();
   }
 });
@@ -346,7 +346,7 @@ test('code submissions per login are capped', async () => {
   const { service, calls } = fakeService();
   service.start('claude', 'login'); await until(() => calls.length === 1);
   for (let i = 0; i < 5; i++) service.submitCode('claude', FAKE_CODE);
-  assert.throws(() => service.submitCode('claude', FAKE_CODE), /too many attempts/);
+  assert.throws(() => service.submitCode('claude', FAKE_CODE), /Too many authorization code submissions/);
   assert.equal(calls[0].child.stdin.written, (FAKE_CODE + '\n').repeat(5));
   service.dispose(); await tick();
 });

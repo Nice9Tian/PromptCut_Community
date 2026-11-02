@@ -146,7 +146,7 @@ export default { id: "default-card", name: \`Default\`, defaults: {}, controls: 
     { id: "spread-card", name: "Spread card" },
     { id: "alias-card", name: "Alias export" },
     { id: "base-card", name: "Base card" },
-    { id: "default-card", name: "default" },
+    { id: "default-card", name: "Default" },
   ]));
 });
 
@@ -231,7 +231,7 @@ export const fourth = { id: "fourth", name: "Fourth card", defaults: { a: "x" },
   assert.equal(lit.description, "Constant description", "Description accepts a file-level constant");
   assert.deepEqual(lit.defaults, {
     size: 12, color: "#000", text: "hi", tpl: "template", width: 200, neg: -3.5, minus: -0.25, plus: 2, hex: 16, big: 1000, exp: 1000,
-    on: true, off: false, nil: null, list: [1, "Two", [3]], nested: { a: [1, { b: "c" }], "quoted-key": 1, 7: "seven" }, paren: 5, cast: "x",
+    on: true, off: false, nil: null, list: [1, "two", [3]], nested: { a: [1, { b: "c" }], "quoted-key": 1, 7: "seven" }, paren: 5, cast: "x",
   }, "Unrecognized keys are dropped; spread goes first, later writes override");
   assert.deepEqual(lit.controls, [
     { key: "text", label: "Text", type: "text" },
@@ -239,7 +239,7 @@ export const fourth = { id: "fourth", name: "Fourth card", defaults: { a: "x" },
     { key: "mode", label: "Mode", type: "select", options: [{ value: "a", label: "A" }, { value: "b", label: "B" }] },
     { key: "c", label: "Color", type: "color", required: true },
     { key: "l", label: "Animation", type: "asset", kind: "lottie", options: [] },
-    { key: "p", label: "particles", type: "asset", kind: "particles", options: [{ value: "/a.json", label: "A" }] },
+    { key: "p", label: "Particles", type: "asset", kind: "particles", options: [{ value: "/a.json", label: "A" }] },
     { key: "n2", label: "min is not a literal", type: "number", max: 9 },
   ], "Per control: skip those whose key/type/label is unrecognized; if an individual field is unrecognized, drop that field");
   assert.equal(lit.controlsIncomplete, true);

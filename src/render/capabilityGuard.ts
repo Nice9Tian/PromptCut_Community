@@ -75,7 +75,7 @@ export function guardCompositing(
     if (!usesBackdropFilter(el, options.readStyle)) continue;
     if (degradeCard(clip.cardId, "backdrop-filter")) {
       warn(`[card capability] "${clip.cardId}" is independent in the review table, but backdrop-filter was measured on screen.` +
-        `This session treats it as belowDependent (not put into the independent cache). Fix the review table src/cards/capabilities.json or change the card source.`);
+        ` This session treats it as belowDependent (not put into the independent cache). Fix the review table src/cards/capabilities.json or change the card source.`);
       degraded.push(clip.cardId);
     }
   }

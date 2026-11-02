@@ -237,7 +237,7 @@ function main() {
   if (gen(MIN_SHELL_VERSION) !== gen(shellVersion)) {
     fail(
       `MIN_SHELL_VERSION(${MIN_SHELL_VERSION}) and this shell (${shellVersion}) are not the same generation.` +
-        `When the shell generation changes, move it to the start of the new generation too.`
+        ` When the shell generation changes, move it to the start of the new generation too.`
     );
   }
 

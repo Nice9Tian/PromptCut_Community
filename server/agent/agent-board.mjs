@@ -121,8 +121,8 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
     if (key === '' || key === null || key === undefined) return 'An Agent without a chat ID';
     const a = agents.get(key);
     const vendor = a?.remote?.vendor ?? label(key);
-    const member = a?.remote?.member ? `, on member ${a.remote.member}'s side` : '';
-    return `Agent ${key}${vendor || member ? `(${[vendor, member.slice(1)].filter(Boolean).join(',')})` : ''}`;
+    const member = a?.remote?.member ? `on member ${a.remote.member}'s side` : '';
+    return `Agent ${key}${vendor || member ? ` (${[vendor, member].filter(Boolean).join(', ')})` : ''}`;
   }
 
   function byText(by) {

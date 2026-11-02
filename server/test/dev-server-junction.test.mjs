@@ -73,6 +73,6 @@ test('Link left behind after a forced kill: cleaned up if the process that creat
 
 test('When a port is specified, the user\'s resident ports 5190~5192 are refused', async () => {
   assert.deepEqual(portTriple(5188), [5188, 5189, 5190]);
-  await assert.rejects(startDevServer({ port: 5188, logFile: path.join(os.tmpdir(), 'never.log') }), /user's resident/);
-  await assert.rejects(startDevServer({ port: 5191, logFile: path.join(os.tmpdir(), 'never.log') }), /user's resident/);
+  await assert.rejects(startDevServer({ port: 5188, logFile: path.join(os.tmpdir(), 'never.log') }), /user's long-running/);
+  await assert.rejects(startDevServer({ port: 5191, logFile: path.join(os.tmpdir(), 'never.log') }), /user's long-running/);
 });

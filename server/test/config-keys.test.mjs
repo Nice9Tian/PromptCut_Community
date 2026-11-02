@@ -47,7 +47,7 @@ test("An old call without kind equals custom (compatibility)", () => {
   const c = sealKey(CUSTOM);
   assert.ok(c.startsWith("PCENC1."));
   assert.equal(openKey(c), CUSTOM);
-  assert.throws(() => sealKey(sealKey(ROUTER, "router"), "custom"), /other source/);
+  assert.throws(() => sealKey(sealKey(ROUTER, "router"), "custom"), /other path/);
   assert.throws(() => sealKey(CUSTOM, "nope"), /Unknown key type/);
 });
 
@@ -122,7 +122,7 @@ test("Clear key: deletes that source's file; deleting the active source falls ba
     clearKey("custom");
     assert.ok(!fs.existsSync(keyFilePath("custom")));
     assert.equal(readConfig().api.apiKey, "");
-    assert.throws(() => clearKey("nope"), /key type/);
+    assert.throws(() => clearKey("nope"), /Key type/);
   });
 });
 

@@ -291,7 +291,7 @@ async function newSession(browser, url) {
   const waitNet = (ms = 30000) => (inflight.size === 0 ? Promise.resolve() : new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(
       `${inflight.size} network requests have not returned after ${ms / 1000} seconds: the page may have requests that never finish.`
-      + `First few: ${[...inflight.values()].slice(0, 3).join(' | ')}`
+      + ` First few: ${[...inflight.values()].slice(0, 3).join(' | ')}`
     )), ms);
     waiters.push(() => { clearTimeout(timer); resolve(); });
   }));
@@ -416,7 +416,7 @@ export async function openBakery(opts = {}) {
     } catch (e2) {
       throw new Error(
         'Export needs chrome-headless-shell, which was not found, and the automatic install also failed (' + (e2?.message || e2) + ').' +
-        'For the desktop app, reinstall using the full installer; on a dev machine, run `npx puppeteer browsers install chrome-headless-shell`. Original error:' + e.message,
+        ' For the desktop app, reinstall using the full installer; on a dev machine, run `npx puppeteer browsers install chrome-headless-shell`. Original error:' + e.message,
       );
     }
     browser = await launchHealthyChrome({ launch });

@@ -43,8 +43,8 @@ test("The index lists only the non-active cuts; a clip carries id / trackId / ca
   assert.equal("params" in b.clips[0], false, "No params, saves tokens");
   assert.deepEqual(idx.cuts[1].clips, [], "Empty cuts are listed too, with empty clips");
   assert.equal(idx.cuts[1].duration, 30, "A parked cut missing duration uses the fallback 30");
-  assert.match(idx.note, /no need to use user_interface_switch_cut/);
-  assert.match(idx.note, /see_frames with cutId/);
+  assert.match(idx.note, /do not use user_interface_switch_cut/);
+  assert.match(idx.note, /pass cutId to see_frames/);
   assert.equal(idx.note, PARKED_EDIT_NOTE);
 });
 
@@ -57,10 +57,10 @@ test("When cutB is active, cutA and cutC are listed (activeCutId decides, fallin
 
 test("cardName: the side that has a registry can additionally carry the card display name; long labels are truncated", () => {
   const p = proj();
-  p.cuts[1].tracks[0].clips[0].label = "One".repeat(40);
+  p.cuts[1].tracks[0].clips[0].label = "x".repeat(40);
   const idx = parkedCutsIndex(p, { cardName: (id) => (id === "particles" ? "particles" : undefined) });
   assert.equal(idx.cuts[0].clips[0].cardName, "particles");
-  assert.equal(idx.cuts[0].clips[0].label, `${"One".repeat(CUTS_INDEX_LIMITS.labelMax)}…`);
+  assert.equal(idx.cuts[0].clips[0].label, `${"x".repeat(CUTS_INDEX_LIMITS.labelMax)}…`);
   assert.equal("cardName" in idx.cuts[0].clips[1], false, "A media clip has no cardName");
 });
 
@@ -95,7 +95,7 @@ test("Bad data does not throw: a parked entry without tracks, a track without cl
 test("otherCutsHint: lists only the counts of other cuts that have content, not their clips; null when no other cut has content", () => {
   const h = otherCutsHint(proj());
   assert.deepEqual(h.cuts, [{ cutId: "cutB", name: "Cut 2", clipCount: 3 }]);
-  assert.match(h.hint, /no need to use user_interface_switch_cut/);
+  assert.match(h.hint, /do not use user_interface_switch_cut/);
   assert.match(h.hint, /parkedCuts/);
   const empty = proj();
   empty.cuts[1].tracks = [];

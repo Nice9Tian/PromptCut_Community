@@ -16,7 +16,7 @@ test("Definition: unfilled parameters take default; out-of-range numbers / unkno
   const def = normalizeAudioFxDef({ name: "Test", ops: [{ kind: "highpass", freq: 100 }] });
   assert.deepEqual(def.ops, [{ kind: "highpass", freq: 100, q: 0.707 }]);
   assert.throws(() => normalizeAudioFxDef({ name: "x", ops: [{ kind: "gain", db: 40 }] }), /-60~24/);
-  assert.throws(() => normalizeAudioFxDef({ name: "x", ops: [{ kind: "wah" }] }), /unrecognized/);
+  assert.throws(() => normalizeAudioFxDef({ name: "x", ops: [{ kind: "wah" }] }), /is not recognized/);
   assert.throws(() => normalizeAudioFxDef({ name: "x", ops: [{ kind: "gain", freq: 3 }] }), /no parameter freq/);
   assert.throws(() => normalizeAudioFxDef({ name: "x", ops: [] }), /at least one step/);
   assert.throws(() => normalizeAudioFxDef({ name: "", ops: [{ kind: "gain" }] }), /name is required/);
@@ -37,9 +37,9 @@ test("Expressions: custom parameters go into expressions; a parameter name canno
   assert.equal(resolveAudioOps(def, undefined, 0, 4)[0].values.db, -18);
   assert.equal(resolveAudioOps(def, undefined, 2, 4)[0].values.db, 0);
   assert.equal(resolveAudioOps(def, { from: -6 }, 0, 4)[0].values.db, -6);
-  assert.throws(() => normalizeAudioFxDef({ name: "x", params: { freq: 1 }, ops: [{ kind: "gain" }] }), /parameter name "freq" is not allowed/);
-  assert.throws(() => normalizeAudioFxDef({ name: "x", ops: [{ kind: "gain", db: "log(0)" }] }), /evaluated to/);
-  assert.throws(() => normalizeAudioFxDef({ name: "x", ops: [{ kind: "gain", db: "nope" }] }), /unknown "nope"/);
+  assert.throws(() => normalizeAudioFxDef({ name: "x", params: { freq: 1 }, ops: [{ kind: "gain" }] }), /Parameter name "freq" is invalid/);
+  assert.throws(() => normalizeAudioFxDef({ name: "x", ops: [{ kind: "gain", db: "log(0)" }] }), /evaluates to/);
+  assert.throws(() => normalizeAudioFxDef({ name: "x", ops: [{ kind: "gain", db: "nope" }] }), /Unknown "nope"/);
 });
 
 test("Evaluation: out-of-range values are clamped, clip overrides only accept declared keys, neutral check", () => {
@@ -60,7 +60,7 @@ test("Animation check and description", () => {
   const anim = normalizeAudioFxDef({ name: "a", ops: [{ kind: "lowpass", freq: "lerp(400, 8000, p)" }] });
   assert.equal(isAudioFxAnimated(still), false);
   assert.equal(isAudioFxAnimated(anim), true);
-  assert.equal(describeAudioFx(still), "Low-pass (cutoff frequency 3400Hz) · Gain (decibels 3dB)");
+  assert.equal(describeAudioFx(still), "Low-pass(Cutoff frequency 3400Hz) · Gain(Decibels 3dB)");
   assert.match(describeAudioFx(anim), /lerp/);
   assert.equal(describeAudioFx(normalizeAudioFxDef({ name: "d", ops: [{ kind: "compressor" }] })), "Compressor", "All defaults: report only the kind");
 });

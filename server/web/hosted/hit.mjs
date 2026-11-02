@@ -184,5 +184,5 @@ export function explainPick(res) {
 export function explainSecret(kind) {
   const what = { password: 'password', code: 'verification code', card: 'bank card details' }[kind] ?? 'account credentials';
   return `This is an input field for ${what}. The Cloud Agent does not fill in passwords, verification codes or any account credentials, so nothing was entered.`
-    + 'When it can be handed to the user, use user_interface_web_handoff (it tells you explicitly if the initiator is offline); otherwise tell the user what happened and continue with a source that does not require login.';
+    + ' When it can be handed to the user, use user_interface_web_handoff (it tells you explicitly if the initiator is offline); otherwise tell the user what happened and continue with a source that does not require login.';
 }

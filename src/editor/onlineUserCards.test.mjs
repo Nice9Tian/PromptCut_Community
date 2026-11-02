@@ -205,7 +205,7 @@ test("OU-03 timeline: label; no more \"Needs local PC render assistance\" badge 
   try {
     assert.equal(B.clipCardLabel(R.knownCardName("mine")), "Build-time user card");
     assert.equal(B.clipCardLabel(R.knownCardName("synced-card")), "Probe synced card");
-    assert.equal(B.clipCardLabel(R.knownCardName("builtin")), "name-builtin", "A colliding synced entry is ignored");
+    assert.equal(B.clipCardLabel(R.knownCardName("builtin")), "Name-builtin", "A colliding synced entry is ignored");
     assert.equal(B.clipCardLabel(R.knownCardName("nobody")), "Unknown card");
     assert.equal(B.showLocalPcBadge, undefined, "The badge decision was removed");
   } finally {
@@ -321,7 +321,7 @@ export const opaque: CardDef = { id: "synced-o", name: "Control not recognized",
     await sources.sync();
     const v = R.syncedCardView("synced-p");
     assert.equal(v.name, "Synced card with parameters");
-    assert.equal(v.description, "notes");
+    assert.equal(v.description, "Description");
     assert.deepEqual(v.defaults, { text: "hi", size: 48, side: "l", tint: "#ff0000" });
     assert.deepEqual(v.controls.map((c) => c.type), ["text", "number", "select", "color"]);
     assert.deepEqual(v.controls[2].options, [{ value: "l", label: "Left" }, { value: "r", label: "Right" }]);
@@ -368,7 +368,7 @@ export const MORE = [{ key: "side", label: "Position", type: "select", options: 
     assert.deepEqual(v.controls[1].options, [{ value: "l", label: "l" }, { value: "r", label: "r" }]);
     assert.equal(v.controlsIncomplete, true);
     assert.equal(v.skippedControls.length, 1);
-    assert.match(v.skippedControls[0].reason, /spread GONE could not be fetched: the content store has no \.\/gone file/);
+    assert.match(v.skippedControls[0].reason, /spread GONE could not be resolved: the content store has no file \.\/gone/);
     assert.deepEqual(sources.debug().deps, ["src/cards/user/lib/more.ts", "src/cards/user/shared.ts"]);
     // 再来一轮:都没变,不取
     await sources.sync();
@@ -378,7 +378,7 @@ export const MORE = [{ key: "side", label: "Position", type: "select", options: 
 `);
     await sources.sync();
     assert.deepEqual(gets().slice(3), ["src/cards/user/shared.ts"]);
-    assert.deepEqual(R.syncedCardView("synced-i").controls.map((c) => c.label), ["Text changed", "数", "Position", "Primary color"]);
+    assert.deepEqual(R.syncedCardView("synced-i").controls.map((c) => c.label), ["Text changed", "Number", "Position", "Primary color"]);
     // 缺的文件后来同步上来了:取到、补上,提示撤掉
     content.store.set("src/cards/user/gone.ts", `export const GONE = [];\n`);
     await sources.sync();
@@ -389,7 +389,7 @@ export const MORE = [{ key: "side", label: "Position", type: "select", options: 
     await sources.sync();
     const v2 = R.syncedCardView("synced-i");
     assert.deepEqual(v2.controls.map((c) => c.key), ["text", "n", "accent"]);
-    assert.match(v2.skippedControls[0].reason, /MORE could not be fetched/);
+    assert.match(v2.skippedControls[0].reason, /MORE could not be resolved/);
   } finally {
     sources.stop();
     R.setSyncedUserCards([]);

@@ -138,19 +138,19 @@ function cardWith({ imports = '', top = '', body = '', jsx = '<div style={{ opac
  * 指南里加一行、改一行的措辞，这里要跟着改，对照表就是这样钉住的。
  */
 const REJECTED = [
-  { guide: 'Importing modules outside the list (including helper files in the same directory `./xxx`, style files, third-party libraries not on the list), dynamic `import()`, `require()`', rule: 'import', source: cardWith({ imports: 'import lottie from "lottie-web";' }) },
+  { guide: 'Importing modules outside the list (including helper files in the same directory such as `./xxx`, style files, and third-party libraries not on the list), dynamic `import()`, `require()`', rule: 'import', source: cardWith({ imports: 'import lottie from "lottie-web";' }) },
   { guide: '`motion` / `motion/react`, `<motion.div>`, and interaction props such as `whileHover`', rule: 'motion', source: cardWith({ imports: 'import { motion } from "motion/react";', jsx: '<motion.div animate={{ opacity: 1 }} />' }) },
   { guide: '`<AnimatePresence>`', rule: 'presence', source: cardWith({ jsx: '<AnimatePresence><div /></AnimatePresence>' }) },
-  { guide: 'CSS animations and transitions: `animation*` and `transition*` in styles; `@keyframes` in style text; class names `animate-*` and `transition*`; an element\'s `.animate()`; SVG `<animate>`', rule: 'css-animation', source: cardWith({ jsx: '<div style={{ transition: "opacity 1s" }} />' }) },
+  { guide: 'CSS animations and transitions: `animation*` and `transition*` in styles; `@keyframes` in style text; class names `animate-*` and `transition*`; an element\'s `.animate()`; SVG\'s `<animate>`', rule: 'css-animation', source: cardWith({ jsx: '<div style={{ transition: "opacity 1s" }} />' }) },
   { guide: '`Date.now()`, `new Date()` without arguments, `performance`', rule: 'real-time', source: cardWith({ body: '  const n = Date.now();' }) },
   { guide: '`setTimeout`, `setInterval`, `setImmediate`, `requestIdleCallback`', rule: 'timer', source: cardWith({ body: '  setTimeout(() => {}, 10);' }) },
   { guide: '`requestAnimationFrame`, `cancelAnimationFrame`, `setAnimationLoop`, `requestVideoFrameCallback`', rule: 'frame-callback', source: cardWith({ body: '  requestAnimationFrame(() => {});' }) },
   { guide: '`Math.random`, `crypto`', rule: 'random', source: cardWith({ body: '  const r = Math.random();' }) },
-  { guide: '`useState` and other hooks that keep state', rule: 'state', source: cardWith({ imports: 'import { useState } from "react";', body: '  const [n] = useState(0);' }) },
-  { guide: '`useRef(initial value)`, writing to `.current`', rule: 'state', source: cardWith({ body: '  const r = useRef(0);' }) },
-  { guide: 'Writing to top-level names or imported things (assignment, increment, `delete`, mutating methods such as `push`, `Object.assign`)', rule: 'state', source: cardWith({ top: 'const BOX = { n: 0 };', body: '  BOX.n += 1;' }) },
-  { guide: 'Global objects such as `window`, `globalThis`, `self`, `localStorage`, plus `eval`, `Function()`', rule: 'state', source: cardWith({ body: '  const w = window;' }) },
-  { guide: 'Top-level `let` / `var` / `class` / `enum`, directly executed statements, and `new`, `await`, assignments in top-level initializers', rule: 'top-level', source: cardWith({ top: 'let n = 0;' }) },
+  { guide: 'State-holding hooks such as `useState`', rule: 'state', source: cardWith({ imports: 'import { useState } from "react";', body: '  const [n] = useState(0);' }) },
+  { guide: '`useRef(initial value)`, writing into `.current`', rule: 'state', source: cardWith({ body: '  const r = useRef(0);' }) },
+  { guide: 'Writing into names at the top level of the file or into imported things (assignment, increment, `delete`, mutating methods such as `push`, `Object.assign`)', rule: 'state', source: cardWith({ top: 'const BOX = { n: 0 };', body: '  BOX.n += 1;' }) },
+  { guide: 'Global objects such as `window`, `globalThis`, `self`, `localStorage`, plus `eval` and `Function()`', rule: 'state', source: cardWith({ body: '  const w = window;' }) },
+  { guide: 'Top-level `let` / `var` / `class` / `enum`, directly executed statements, and `new`, `await` or assignment in top-level initializers', rule: 'top-level', source: cardWith({ top: 'let n = 0;' }) },
   { guide: '`IntersectionObserver`', rule: 'viewport', source: cardWith({ body: '  const o = new IntersectionObserver(() => {});' }) },
   { guide: '`frameMode` written as a variable or a computed value', rule: 'frame-mode', source: cardWith({ top: 'const MODES = ["direct"] as const;', mode: 'MODES[0]' }) },
   { guide: 'No import statement that references the framework (a type-only `import type …` does not count)', rule: 'framework', source: cardWith({ framework: false }) },
@@ -172,7 +172,7 @@ test('GA-02 each row in section 2.4 of the guide corresponds to a rule code of t
     assert.equal(r.ok, false, `the sample for "${guide}" should be rejected by card creation`);
     for (const v of hit) {
       assert.ok(v.line >= 1);
-      assert.ok(r.errors.some((e) => e.startsWith(`[Remotion-style] line ${v.line}:`)), `the error for "${guide}" must point out line ${v.line}`);
+      assert.ok(r.errors.some((e) => e.startsWith(`[remotion-style] Line ${v.line}:`)), `the error for "${guide}" must point out line ${v.line}`);
     }
   }
 });
@@ -266,8 +266,8 @@ test('GA-04b the defaults and example numbers written in the guide agree with th
   assert.equal(F.tween(-1, { duration: 0 }), 0);
   assert.ok(Math.abs(F.staggerDuration(3, { each: 0.1, delay: 0.5 }, 0) - 0.7) < 1e-9, 'staggerDuration includes the delay');
   assert.equal(F.interpolate(5, [0, 1], [0, 1], { extrapolateRight: 'clamp' }), 1);
-  assert.throws(() => F.interpolateColors(0, [0, 1], ['red', '#000']), /cannot recognize/, 'interpolateColors throws on color names it cannot recognize');
-  assert.throws(() => F.interpolateColors(0, [0, 1], ['hsl(0, 0%, 0%)', '#000']), /cannot recognize/);
+  assert.throws(() => F.interpolateColors(0, [0, 1], ['red', '#000']), /does not recognize/, 'interpolateColors throws on color names it cannot recognize');
+  assert.throws(() => F.interpolateColors(0, [0, 1], ['hsl(0, 0%, 0%)', '#000']), /does not recognize/);
   // 颜色
   assert.equal(F.interpolateColors(0, [0, 1], ['#ff0000', '#0000ff']), 'rgba(255, 0, 0, 1)');
   assert.equal(F.interpolateColors(1, [0, 1], ['#ff0000', '#0000ff']), 'rgba(0, 0, 255, 1)');
@@ -279,7 +279,7 @@ test('GA-05 the beginFrameWork snippet in the guide passes the card-creation che
   const block = [...GUIDE.matchAll(/```tsx\n([\s\S]*?)\n```/g)].map((m) => m[1]).find((b) => b.includes('beginFrameWork("'));
   assert.ok(block, 'the guide should have a beginFrameWork snippet');
   const importLine = block.split('\n').find((l) => l.startsWith('import '));
-  const body = block.split('\n').slice(block.split('\n').findIndex((l) => l.includes('// in the component')) + 1).join('\n');
+  const body = block.split('\n').slice(block.split('\n').findIndex((l) => l.includes('// inside the component')) + 1).join('\n');
   const source = [
     'import "../../kernel/remotionStyle";',
     'import { useLayoutEffect, useMemo } from "react";',
@@ -313,22 +313,22 @@ test('GA-06 the guide no longer says outdated things', () => {
   // 旧值都按 motion 式读
   assert.equal(normalizeFrameMode('react'), 'stateful');
   assert.equal(normalizeFrameMode('non-react'), 'stateful');
-  assert.match(GUIDE, /old values `"react"` and `"non-react"` \*\*are both read as motion-style\*\*/);
+  assert.match(GUIDE, /old values `"react"` and `"non-react"` that can be found in old projects are \*\*both read as motion-style\*\*/);
   assert.doesNotMatch(GUIDE, /original `frameMode: "react"` is read as `"direct"`/);
   // 不规定优先用哪一种
   assert.doesNotMatch(GUIDE, /prefer (to )?(use|using|choose|choosing)[^.\n]*(direct|remotion|motion)/i);
-  assert.match(GUIDE, /neither is more recommended/);
+  assert.match(GUIDE, /neither is recommended over the other/);
   // 中性：不暗示偏向，两个方向的改写都说到
   assert.doesNotMatch(GUIDE, /does not require rewriting as remotion-style/);
   assert.doesNotMatch(GUIDE, /the same at whichever frame you jump to", use remotion-style/);
-  assert.match(GUIDE, /change a motion-style card into remotion-style[^.]*change a remotion-style card into motion-style/);
-  assert.match(GUIDE, /built-in cards include both styles, neither needs rewriting/);
+  assert.match(GUIDE, /changing a motion-style card to remotion-style[^.]*changing a remotion-style card to motion-style/);
+  assert.match(GUIDE, /built-in cards include both styles, and neither needs to be rewritten/);
   assert.doesNotMatch(GUIDE, /2D motion cards in PromptCut have only two styles/);
   // 必填参数的默认值：校验的是合并之后的结果，所以带非空默认值的 required 没有作用；例子里不能出现这种写法
-  assert.match(GUIDE, /marking a parameter with a non-empty default as `required` has no effect/);
+  assert.match(GUIDE, /marking `required` on a parameter with a non-empty default has no effect/);
   for (const ex of FULL) assert.doesNotMatch(ex, /required: true[^\n]*\n/, `example ${idOf(ex)} should not contain "required with a non-empty default"`);
   // 旧名词（「地图卡」「示意图卡」不是旧名词）
-  assert.doesNotMatch(GUIDE.replace(/map card|diagram card/g, ''), /image card/, 'the guide no longer contains the old term "image card"');
+  assert.doesNotMatch(GUIDE.replace(/map card|diagram card|the image of an image card/g, ''), /image card/, 'the guide no longer contains the old term "image card"');
   // 补渲、烘焙、冻结
   assert.doesNotMatch(GUIDE, /bak(e|ed|ing)|freez(e|ing)|frozen|catch-up render/);
   // 不再一律劝人「动画交给 motion/react」：出现在 motion 式的语境里
@@ -337,7 +337,7 @@ test('GA-06 the guide no longer says outdated things', () => {
     assert.match(before, /motion-style/, '"leave animation to motion/react" may only appear where motion-style is discussed');
   }
   // compositing：只有 independent 会被拒
-  assert.match(GUIDE, /do not write `compositing: 'independent'` in the source code/);
+  assert.match(GUIDE, /Do not write `compositing: 'independent'` in the source/);
   // get_card_source 内置卡也能读
   assert.doesNotMatch(GUIDE, /get_card_source` will report an error for them/);
 });
@@ -383,11 +383,11 @@ test('GA-08 references in the guide such as "section N.M" and "section N" all po
 test('GA-09 every "section N.M" reference in the guide matches the content of its heading (spot-checking a few key references)', () => {
   const titleOf = (n) => new RegExp(`^#{2,3} ${n.replace('.', '\\.')}[ .]([^\\n]*)`, 'm').exec(GUIDE)?.[1] ?? '';
   assert.match(titleOf('4.3'), /media effect card route/);
-  assert.match(titleOf('4.2'), /default value rules/);
-  assert.match(titleOf('4.4'), /part tree and lifecycle/);
-  assert.match(titleOf('4.6'), /media wrapper card/);
+  assert.match(titleOf('4.2'), /Default value rules/);
+  assert.match(titleOf('4.4'), /Part tree and lifecycle/);
+  assert.match(titleOf('4.6'), /Media wrapper card/);
   assert.match(titleOf('2.4'), /rejected on the spot/);
-  assert.match(titleOf('2.5'), /modules that can be imported/);
-  assert.match(GUIDE, /Lottie in the asset catalog is already a ready-made card, see section 4\.6/);
+  assert.match(titleOf('2.5'), /Modules a remotion-style card may import/);
+  assert.match(GUIDE, /the Lottie files in the asset catalog are already ready-made cards, see section 4\.6/);
   assert.match(GUIDE, /media effect card route|section 4\.3/);
 });

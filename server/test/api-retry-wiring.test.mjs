@@ -184,7 +184,7 @@ test('c. When an SSE stream has already emitted part of its text_delta and then 
   });
   assert.equal(bodies1.length, 3, 'Each time is a new round (it stops after 3 consecutive times that leave no content), not a resend by the retry layer');
   assert.equal(new Set(bodies1).size, 3, 'The three requests differ in content: each later one carries the cut-off hint');
-  assert.match(bodies1[1], /cut off midway by the gateway/);
+  assert.match(bodies1[1], /cut off midway: the gateway closed the connection/);
   const text1 = events1.filter((e) => e.type === 'text').map((e) => e.delta).join('');
   assert.equal(text1, 'Already said half of it'.repeat(3));
   const err1 = events1.find((e) => e.type === 'error');

@@ -85,7 +85,7 @@ test('rejected: segment not starting with a keyframe, empty segment, empty sampl
   assert.throws(() => buildStreamSegment({ sequence: 1, baseDecodeTime: -1, samples: [ok] }), /baseDecodeTime/);
   assert.throws(() => buildStreamInit({ width: 320, height: 656, fps: 30, avcC: new Uint8Array([0, 1, 2]) }), /avcC/);
   assert.throws(() => buildStreamInit({ width: 0, height: 656, fps: 30, avcC: AVCC }), /width/);
-  assert.throws(() => buildStreamInit({ width: 70000, height: 656, fps: 30, avcC: AVCC }), /width and height/);
+  assert.throws(() => buildStreamInit({ width: 70000, height: 656, fps: 30, avcC: AVCC }), /width\/height/);
 });
 
 /* ---------------------------------------------------------------- 真的 H.264:ffmpeg 造、ffprobe 读 */

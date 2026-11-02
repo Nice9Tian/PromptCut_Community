@@ -1062,9 +1062,9 @@ export function controlFix(v, { dropped = [], defaultValue } = {}) {
   if (!isPlainObject(v)) return { reason: "not a literal" };
   const miss = (f, what) => (dropped.includes(f) ? `${what} is not a literal` : `missing ${what}`);
   const { key, type, label } = v;
-  if (typeof key !== "string" || !key) return { reason: miss("key", " key") };
-  if (typeof label !== "string") return { reason: miss("label", " label") };
-  if (typeof type !== "string") return { reason: miss("type", " type") };
+  if (typeof key !== "string" || !key) return { reason: miss("key", "key") };
+  if (typeof label !== "string") return { reason: miss("label", "label") };
+  if (typeof type !== "string") return { reason: miss("type", "type") };
   if (!CONTROL_TYPES.has(type)) return { reason: `unknown type (${type})` };
   const c = { key, label, type };
   if (typeof v.required === "boolean") c.required = v.required;

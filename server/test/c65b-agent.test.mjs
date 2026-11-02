@@ -244,7 +244,7 @@ test('C65B-D2-03 the page commits inverse + undoOf from the event: the entity is
   assert.equal(res?.done, true, `undoing this step succeeds: ${JSON.stringify(res)}`);
   assert.deepEqual(res.skipped ?? [], []);
   await A.settled();
-  assert.equal(clipOf((await stateOf(env)).project, 'c1').label, 'Clip1', 'the clip is restored in the document service');
+  assert.equal(clipOf((await stateOf(env)).project, 'c1').label, 'Clip 1', 'the clip is restored in the document service');
 
   await waitFor(() => w.ops().some((m) => m.undoOf === info.opId), 3000, 'the broadcast carries undoOf');
   const undoOp = w.ops().find((m) => m.undoOf === info.opId);
@@ -294,7 +294,7 @@ test('C65B-D2-05 a step that is not the latest can also be undone: the Agent cha
   assert.equal(res?.done, true, JSON.stringify(res));
   await A.settled();
   const st = await stateOf(env);
-  assert.equal(clipOf(st.project, 'c1').label, 'Clip1');
+  assert.equal(clipOf(st.project, 'c1').label, 'Clip 1');
   assert.equal(clipOf(st.project, 'c2').label, 'Two', 'the later step is unaffected');
   await sleep(50);
 });

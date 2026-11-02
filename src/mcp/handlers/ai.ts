@@ -117,7 +117,7 @@ export const aiHandlers = {
                   subjectFailedCount: media.subjects.failedCount ?? 0,
                   subjectHint: `Subject detection finished, but none of the ${media.subjects.samples.length} samples in this batch is usable`
                     + " (all frame extractions failed, see subjectFailedCount), so every subject is null. This does not mean \"there is nobody in the frame\"."
-                    + "Re-measure with detect_subjects by passing different times, or fall back to see_frames({ source: 'timeline', t }) and look at the image.",
+                    + " Re-measure with detect_subjects by passing different times, or fall back to see_frames({ source: 'timeline', t }) and look at the image.",
                 }
               : {
                   subjectEngine: media.subjects.engine,
@@ -135,7 +135,7 @@ export const aiHandlers = {
                     + "(it is only ever left / right / bottom, never center); boxes are the people's boxes in original video pixels."
                     + "suggestedPosition being null means all four slots are occupied by people (see suggestedOccupancy and warning),"
                     + "that shot has no position that avoids covering people, so don't force a fill."
-                    + "Whether it can be filled is decided by the controls of list_cards({cardId}); if the card doesn't support this value, switch to another card,"
+                    + " Whether it can be filled is decided by the controls of list_cards({cardId}); if the card doesn't support this value, switch to another card,"
                     + "and don't fall back to the default center: center is exactly where the face is.",
                 }),
     };
@@ -239,7 +239,7 @@ export const aiHandlers = {
         ? "Extension installed, using BootsTAPIR."
         : s.engine === "template"
           ? "Extension not installed, using the template matching fallback: it can track, but loses the target when it turns, deforms or is occluded for a long time."
-            + "If the user wants more stable results, install the extension with track_install (about 400 MB)."
+            + " If the user wants more stable results, install the extension with track_install (about 400 MB)."
           : "Neither tier is usable (usually Python can't be found), so tracking is not possible on this machine.",
     };
   },
@@ -267,7 +267,7 @@ export const aiHandlers = {
     return {
       jobId, started: true,
       hint: "The motion tracking extension is installing in the background (torch + weights, about 400 MB, takes a few minutes)."
-        + "Check this jobId with background_job_status, or use track_status to see whether engine has become bootstapir. Do not start it again.",
+        + " Check this jobId with background_job_status, or use track_status to see whether engine has become bootstapir. Do not start it again.",
     };
   },
 
@@ -426,7 +426,7 @@ export const aiHandlers = {
         + "where each shot has already folded these samples together. suggestedPosition can be filled directly into the card's params.position"
         + "(it is only ever left / right / bottom, never center); null means all four slots are occupied by people,"
         + "see suggestedOccupancy and warning; at that moment there is no position that avoids covering people."
-        + "A sample with failed set to true is a frame extraction failure, not \"no person in this frame\"; don't draw conclusions from it.",
+        + " A sample with failed set to true is a frame extraction failure, not \"no person in this frame\"; don't draw conclusions from it.",
     };
   },
 
@@ -438,11 +438,11 @@ export const aiHandlers = {
         ? "full tier: YuNet + RT-DETR + Grounding DINO, can find targets from any text prompt (prompt takes effect)."
         : s.engine === "light"
           ? "light tier: YuNet (face) + RT-DETR (body), only recognizes person and face, prompt has no effect."
-            + "To find targets by arbitrary words (cat, phone, red car), you need to install the full tier extension pack."
+            + " To find targets by arbitrary words (cat, phone, red car), you need to install the full tier extension pack."
           // 这里没有兜底档,和运动追踪不一样 —— 不能让模型以为还有个降级引擎在跑。
           : "Neither tier is usable, so subject detection is not possible on this machine."
-            + "For position and occlusion judgments, fall back to looking at the images with see_frames; don't guess \"the person is on the left\" out of thin air."
-            + "If the user wants it, install the light tier with subject_install (about 30 MB).",
+            + " For position and occlusion judgments, fall back to looking at the images with see_frames; don't guess \"the person is on the left\" out of thin air."
+            + " If the user wants it, install the light tier with subject_install (about 30 MB).",
     };
   },
 
@@ -470,8 +470,8 @@ export const aiHandlers = {
     return {
       jobId, started: true,
       hint: "Subject detection light tier is installing in the background (onnxruntime, about 30 MB)."
-        + "Check this jobId with background_job_status, or use subject_status to see whether engine has become light. Do not start it again."
-        + "After installing, the weight files (yunet.onnx / rtdetr_r18vd.onnx) may still be missing; those only come from running the extension pack's .exe.",
+        + " Check this jobId with background_job_status, or use subject_status to see whether engine has become light. Do not start it again."
+        + " After installing, the weight files (yunet.onnx / rtdetr_r18vd.onnx) may still be missing; those only come from running the extension pack's .exe.",
     };
   },
 

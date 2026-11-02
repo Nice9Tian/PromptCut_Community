@@ -90,11 +90,11 @@ test('validateProgressReport missing fields', () => {
   // 什么都没给:不是一份报告
   const res3 = validateProgressReport({ has_done: false, has_todo: false, has_problem: false });
   assert.equal(res3.ok, false);
-  assert.match(res3.error, /Report is empty/);
+  assert.match(res3.error, /The report is empty/);
 
   const res4 = validateProgressReport({ final: false, done: 'a' });
   assert.equal(res4.ok, false);
-  assert.match(res4.error, /Field done should be an array of strings.*got string/);
+  assert.match(res4.error, /Field done must be an array of strings.*got string/);
 });
 
 test('validateProgressReport wrong type', () => {
@@ -108,11 +108,11 @@ test('validateProgressReport wrong type', () => {
     problems: []
   });
   assert.equal(res.ok, false);
-  assert.match(res.error, /should be a boolean.*got string/);
+  assert.match(res.error, /must be a boolean.*got string/);
 
   const res2 = validateProgressReport(null);
   assert.equal(res2.ok, false);
-  assert.match(res2.error, /Arguments should be an object/);
+  assert.match(res2.error, /Arguments must be an object/);
 });
 
 test('validateProgressReport wrong array element type', () => {
@@ -127,7 +127,7 @@ test('validateProgressReport wrong array element type', () => {
   };
   const res = validateProgressReport(input);
   assert.equal(res.ok, false);
-  assert.match(res.error, /Item 2 of field done should be a string.*number/);
+  assert.match(res.error, /Item 2 of field done must be a string.*number/);
 });
 
 test('validateProgressReport truncation of over-long entries and of more than 8 entries', () => {

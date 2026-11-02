@@ -93,7 +93,7 @@ export async function retryOnBrowserLoss(run, { attempts = 3, label = '', log = 
       const exit = error.browserExit ? `,${error.browserExit}` : '';
       if (attempt + 1 >= attempts) {
         throw new Error(`The export Chrome exited midway while rendering ${label}${exit}, and retrying with a fresh Chrome ${attempts - 1} times still failed.`
-          + 'You can reduce the number of parallel shards or close memory-hungry programs, then export again.', { cause: error });
+          + ' You can reduce the number of parallel shards or close memory-hungry programs, then export again.', { cause: error });
       }
       log(`[export] Chrome exited midway while rendering ${label}${exit}, re-rendering this segment with a fresh Chrome (attempt ${attempt + 2}/${attempts})`);
     }

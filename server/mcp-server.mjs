@@ -115,12 +115,12 @@ async function callBridge(tool, args, callId, pair, meta, { schemaOnly = false }
       }
       if (err?.name === 'TimeoutError') {
         throw new Error(`PromptCut did not respond on ${host}:${port} within ${Math.round(bridgeTimeoutMs(tool) / 1000)} seconds (${tool}).`
-          + 'The port may be in use by another program, or the editor may be stuck; this call did not finish, and you can retry later.');
+          + ' The port may be in use by another program, or the editor may be stuck; this call did not finish, and you can retry later.');
       }
       if (isFetchFailure(err)) {
         const detail = err.cause?.code || err.cause?.message || err.message;
         throw Object.assign(new Error(`PromptCut failed to connect to the preview service: the connection was closed while calling ${tool} (${detail}).`
-          + 'The prerender process or Chrome may be restarting, please retry later.'), { code: 'BRIDGE_UNAVAILABLE', retryable: true, cause: err });
+          + ' The prerender process or Chrome may be restarting, please retry later.'), { code: 'BRIDGE_UNAVAILABLE', retryable: true, cause: err });
       }
       throw err;
     }

@@ -44,7 +44,7 @@ test("Pixel map tools: A is rejected with equivalent ops returned, B is accepted
       assert.match(err.message, /whole-frame color grading/);
       assert.equal(s.project.pixelMaps.length, 0, "A rejected definition must not be stored");
 
-      const tail = err.message.slice(err.message.indexOf("create_filter ") + "create_filter ".length);
+      const tail = err.message.slice(err.message.indexOf("\ncreate_filter ") + "\ncreate_filter ".length);
       const def = normalizeFilterDef(JSON.parse(tail.slice(0, tail.indexOf("\n"))));
       assert.equal(def.name, "Brighten");
       const pm = normalizePixelMapDef(raw);
@@ -72,7 +72,7 @@ test("Pixel map tools: A is rejected with equivalent ops returned, B is accepted
     /* --- C 翻译不了 --- */
     {
       const { s, tools } = toolsOf();
-      assert.throws(() => tools.createPixelMap({ name: "Bad", where: "(r-g)^0.5", to: "transparent" }), /cannot be translated into a shader[\s\S]*pow is undefined when the base is negative/);
+      assert.throws(() => tools.createPixelMap({ name: "Bad", where: "(r-g)^0.5", to: "transparent" }), /cannot be translated into a shader[\s\S]*pow is undefined for a negative base/);
       assert.equal(s.project.pixelMaps.length, 0);
     }
 

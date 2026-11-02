@@ -482,7 +482,7 @@ export function createShotsTools({
       ...(etaSeconds ? { etaSeconds } : null),
       hint: 'Shot detection has started in the background; poll that mediaId with list_shots; '
         + `${engine === 'transnetv2' ? 'measured: about 36 seconds for 5 minutes of media' : 'scdet is faster than the model tier'}; wait between polls with the wait tool, do not ask every second.`
-        + 'For long media or if the model fails midway, it switches to scdet; the tier finally used is whatever engine list_shots returns.',
+        + ' For long media or if the model fails midway, it switches to scdet; the tier finally used is whatever engine list_shots returns.',
     };
     if (started.state !== 'queued' || live.has(started.jobId)) {
       // 同一 requestId 的重试:作业已经开了,不再开第二个
@@ -914,7 +914,7 @@ export function createShotsTools({
         subjectFailedCount: media.subjects.failedCount ?? 0,
         subjectHint: `Subject detection finished, but none of the ${media.subjects.samples.length} samples in this batch is usable`
           + ' (all frame extractions failed, see subjectFailedCount), so every subject is null. This does not mean "there is nobody in the frame".'
-          + "Re-measure with detect_subjects by passing different times, or fall back to see_frames({ source: 'timeline', t }) and look at the image.",
+          + " Re-measure with detect_subjects by passing different times, or fall back to see_frames({ source: 'timeline', t }) and look at the image.",
       };
     }
     return {
@@ -929,7 +929,7 @@ export function createShotsTools({
         : null),
       subjectHint: 'Each shot\'s subject.suggestedPosition can be filled directly into the card\'s params.position (it is only ever left / right / bottom, never center); boxes are person boxes in original video pixels.'
         + 'suggestedPosition being null means all four tiers are occupied by people (see suggestedOccupancy and warning); that shot has no position that avoids people, so do not force one.'
-        + 'Whether it can be filled is determined by the controls of list_cards({cardId}); if the card does not support the value, switch to another card, and do not fall back to the default center, which is exactly where the face is.',
+        + ' Whether it can be filled is determined by the controls of list_cards({cardId}); if the card does not support the value, switch to another card, and do not fall back to the default center, which is exactly where the face is.',
     };
   }
 

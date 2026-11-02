@@ -107,7 +107,7 @@ test('CA-AUD-01 three tiers: media, clip, timeline; the media is fetched into th
   const clip = await audio.measure_audio({ clipId: 'a2' });
   assert.equal(clip.scope, 'clip');
   assert.ok(Math.abs(clip.integrated - quiet.integrated) < 0.5);
-  assert.ok(clip.notes.some((n) => /original audio/.test(n)));
+  assert.ok(clip.notes.some((n) => /original sound/.test(n)));
 
   const tl = await audio.measure_audio({ scope: 'timeline' });
   assert.equal(tl.scope, 'timeline');
@@ -141,17 +141,17 @@ test('CA-AUD-01 three tiers: media, clip, timeline; the media is fetched into th
 test('CA-AUD-02 unreadable and not-allowed-to-read cases each return a clear reason and leave no files; a playlist cannot make ffmpeg connect outward', { timeout: 120_000, skip: !HAVE }, async (t) => {
   const { audio, st, ws, assets, dataDir } = await setup(t);
   const left = () => ws.list().filter((f) => f.path.startsWith('measure/'));
-  await assert.rejects(audio.measure_audio({ mediaId: 'm-gone' }), /asset file does not exist/);
-  await assert.rejects(audio.measure_audio({ mediaId: 'm-legacy' }), /asset file does not exist/, 'Media not registered by content hash cannot be read in the cloud');
-  await assert.rejects(audio.measure_audio({ mediaId: 'm-img' }), /is an image with no sound/);
-  await assert.rejects(audio.measure_audio({ mediaId: 'no-such' }), /Cannot find media/);
-  await assert.rejects(audio.measure_audio({ clipId: 'k1' }), /card has no sound/);
-  await assert.rejects(audio.measure_audio({ mediaId: '../../etc/passwd' }), /Cannot find media/, 'Only media ids from the project\'s media table are recognized');
+  await assert.rejects(audio.measure_audio({ mediaId: 'm-gone' }), /Media file does not exist/);
+  await assert.rejects(audio.measure_audio({ mediaId: 'm-legacy' }), /Media file does not exist/, 'Media not registered by content hash cannot be read in the cloud');
+  await assert.rejects(audio.measure_audio({ mediaId: 'm-img' }), /is an image and has no sound/);
+  await assert.rejects(audio.measure_audio({ mediaId: 'no-such' }), /Asset no-such not found/);
+  await assert.rejects(audio.measure_audio({ clipId: 'k1' }), /Cards have no sound/);
+  await assert.rejects(audio.measure_audio({ mediaId: '../../etc/passwd' }), /Asset \.\.\/\.\.\/etc\/passwd not found/, 'Only media ids from the project\'s media table are recognized');
   st.status = 403;
-  await assert.rejects(audio.measure_audio({ mediaId: 'm-loud' }), (err) => err.code === 'forbidden' && /denied reading/.test(err.message));
+  await assert.rejects(audio.measure_audio({ mediaId: 'm-loud' }), (err) => err.code === 'forbidden' && /refused the read/.test(err.message));
   st.status = null;
   st.tamper = true;
-  await assert.rejects(audio.measure_audio({ mediaId: 'm-loud' }), /content hash mismatch/);
+  await assert.rejects(audio.measure_audio({ mediaId: 'm-loud' }), /does not match its content hash/);
   st.tamper = false;
   assert.deepEqual(left(), []);
 
@@ -179,7 +179,7 @@ test('CA-AUD-02 unreadable and not-allowed-to-read cases each return a clear rea
 
 test('CA-AUD-03 returns a clear reason when ffmpeg is missing; only one measurement runs at a time in the process', { timeout: 120_000 }, async (t) => {
   const none = await setup(t, { tools: () => null });
-  await assert.rejects(none.audio.measure_audio({ mediaId: 'm-loud' }), (err) => err.code === 'no-ffmpeg' && /ffmpeg is not installed/.test(err.message));
+  await assert.rejects(none.audio.measure_audio({ mediaId: 'm-loud' }), (err) => err.code === 'no-ffmpeg' && /no ffmpeg \/ ffprobe installed/.test(err.message));
   assert.deepEqual(none.st.fetches, [], 'Without ffmpeg, no media is fetched');
   // 没有会出声的片段:不取素材、不起子进程
   none.st.project = { ...none.st.project, tracks: [] };

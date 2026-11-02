@@ -143,19 +143,19 @@ test('CA-LOOK-04 tool table: the four frame-viewing tools fall under "run on the
   // 提示词:配了写「照常用但慢」与「没看成不要反复重试」;没配写「看不了画面」
   const on = cloudSystemNote({ look: true });
   const off = cloudSystemNote({ look: false });
-  assert.match(on, /viewing frames works as usual, but is slower than on this machine/);
-  assert.match(on, /Look failed this time/);
-  assert.equal(/cannot view frames|not handed to you/.test(on), false);
-  assert.match(off, /This cloud node cannot view frames/);
+  assert.match(on, /Viewing frames works as usual, but slower than on this machine/);
+  assert.match(on, /Could not view this time/);
+  assert.equal(/Frames cannot be viewed|not handed to you/.test(on), false);
+  assert.match(off, /Frames cannot be viewed on this cloud node/);
   assert.match(off, /not handed to you/);
   assert.equal(off, CLOUD_SYSTEM_NOTE);
-  for (const note of [on, off]) for (const must of ['the initiator is offline', 'import_media', 'create_card', 'the host\'s voiceover service']) assert.ok(note.includes(must), must);
+  for (const note of [on, off]) for (const must of ['initiator offline', 'import_media', 'create_card', 'the host\'s voiceover service']) assert.ok(note.includes(must), must);
   assert.equal(on.split('\n').length, off.split('\n').length, 'The only difference is the frame-viewing section');
   // 云端的结果:不带页面取不到的 visualId 与动图地址;get_gif 的说明照实
   assert.deepEqual(cloudLookResult('see_frames', { visualId: 'v-1', ok: true, t: 1, __image: { mime: 'image/png', base64: 'x' } }), { ok: true, t: 1, __image: { mime: 'image/png', base64: 'x' } });
   const gif = cloudLookResult('get_gif', { visualId: 'v-2', ok: true, clipId: 'c', times: [0], gif: '/api/ai/visual/gif/0123.gif', note: 'The user can open this step in the chat panel to see the GIF.' });
   assert.deepEqual(Object.keys(gif).sort(), ['clipId', 'note', 'ok', 'times']);
-  assert.match(gif.note, /the user cannot see the GIF in the chat panel/);
+  assert.match(gif.note, /the user cannot see the animated image in the chat panel/);
   assert.deepEqual(cloudLookResult('see_frames', { ok: false, error: 'x' }), { ok: false, error: 'x' });
   assert.equal(lookUnavailable('see_frames').cloudUnavailable, true);
 });

@@ -837,7 +837,7 @@ test('S-4 Invariants under a random operation sequence (fixed seed, 3000 steps):
   // 覆盖面：这些情形在这个种子下都出现过，否则随机序列没测到点子上
   for (const k of ['transition open>claimed', 'transition claimed>open', 'transition claimed>done', 'transition claimed>failed', 'TTL delete', 'delete open',
     'claim rejected taken', 'claim rejected stale', 'claim rejected gone', 'claim rejected forbidden', 'resumed', 'resume lost', 'grace period record delete',
-    'accept progress', 'accept complete', 'accept release', 'accept fail', 'Reject complete', 'token spoofing', 'Delete claimed']) {
+    'accept progress', 'accept complete', 'accept release', 'accept fail', 'reject complete', 'token spoofing', 'delete claimed']) {
     assert.ok((stats[k] ?? 0) > 0, `Random sequence did not cover "${k}"; stats: ${JSON.stringify(stats)}`);
   }
 });

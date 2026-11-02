@@ -35,7 +35,7 @@ test("add_cut_segment: places a cut segment by name; placing a cut in itself is 
   const r = call("add_cut_segment", { name: "Cut B", start: 1 });
   assert.equal(r.ok, true);
   assert.deepEqual([r.segment.cutId, r.segment.start, r.segment.end, r.segment.cutOffset], ["B", 1, 7, 0]);
-  assert.throws(() => call("add_cut_segment", { cutId: "A", start: 0 }), /into itself/);
+  assert.throws(() => call("add_cut_segment", { cutId: "A", start: 0 }), /inside itself/);
   const list = call("list_cuts");
   assert.deepEqual(list.cuts.find((c) => c.id === "B").referencedBy.map((x) => x.cutId), ["A"]);
   assert.deepEqual(list.cuts.find((c) => c.id === "A").references, ["B"]);
@@ -58,7 +58,7 @@ test("A→B→A is rejected; set_cut_segment changes the offset and shortens the
 test("remove_cut: a referenced cut is rejected without force and the references are listed; with force + reason it is deleted together with its cut segments", () => {
   load();
   call("add_cut_segment", { cutId: "B", start: 0 });
-  assert.throws(() => call("remove_cut", { cutId: "B" }), /currently referenced by these cuts: "Cut A"/);
+  assert.throws(() => call("remove_cut", { cutId: "B" }), /is referenced by these cuts: "Cut A"/);
   assert.throws(() => call("remove_cut", { cutId: "B", force: true }), /reason/);
   const r = call("remove_cut", { cutId: "B", force: true, reason: "User wants it deleted" });
   assert.equal(r.ok, true);

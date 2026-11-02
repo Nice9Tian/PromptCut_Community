@@ -22,5 +22,5 @@ export function undeclaredArgsError(tool, toolDef, unknown) {
   const declared = Object.keys(toolDef?.inputSchema?.properties ?? {});
   const creativity = unknown.includes('creativity') ? 'Creativity level can only be changed by the user in project settings or the AI panel; the Agent cannot write it.' : '';
   return `${tool} does not accept these fields: ${unknown.join(', ')}. This call was not executed at all, and no field was written.` +
-    `It only accepts ${declared.join(', ')}. ${creativity}Use the matching tool to change other project content.`;
+    ` It only accepts ${declared.join(', ')}. ${creativity}Use the matching tool to change other project content.`;
 }
