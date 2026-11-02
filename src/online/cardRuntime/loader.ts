@@ -17,7 +17,6 @@
  */
 import type { CardDef } from "../../kernel/types.ts";
 import type { CardBundle, CardModule, CardRunState, LoadResult, ResolvedImport } from "./protocol.ts";
-import { tr } from "../../i18n/index.ts";
 
 /** 页面自带模块的表(舞台用 `hostModules.ts` 的那一张;声音线程用带占位的那一张) */
 export interface HostModules {
@@ -119,11 +118,11 @@ export function createCardLoader(opts: CardLoaderOptions): CardLoader {
       instances.set(m.key, inst);
       const require = (spec: string): unknown => {
         const r = Object.hasOwn(m.imports, spec) ? m.imports[spec] : undefined;
-        if (!r) throw new Error(tr("The online page has no such module: {0}", String(spec).slice(0, 80)));
+        if (!r) throw new Error(`The online page has no such module: ${String(spec).slice(0, 80)}`);
         if (r.kind === "style") return {};
         if (r.kind === "synced") {
           const dep = byKey.get(r.key);
-          if (!dep) throw new Error(tr("Bundle is missing {0}", r.key));
+          if (!dep) throw new Error(`Bundle is missing ${r.key}`);
           return run(dep);
         }
         return hostCache.get(hostKey(r)!);
@@ -133,7 +132,7 @@ export function createCardLoader(opts: CardLoaderOptions): CardLoader {
       return inst.module.exports;
     };
     const entry = bundle.modules[0];
-    if (!entry || entry.key !== bundle.entry) return { state: { state: "load-error", detail: tr("Bundle has no entry file"), file: bundle.entry } };
+    if (!entry || entry.key !== bundle.entry) return { state: { state: "load-error", detail: "Bundle has no entry file", file: bundle.entry } };
     let exports: unknown;
     try {
       exports = run(entry);
@@ -148,7 +147,7 @@ export function createCardLoader(opts: CardLoaderOptions): CardLoader {
         if (isCardDef(v) && !seen.has(v.id)) { seen.add(v.id); defs.push(v); }
       }
     }
-    if (!defs.length) return { state: { state: "load-error", detail: tr("This file does not export a card definition"), file: bundle.entry } };
+    if (!defs.length) return { state: { state: "load-error", detail: "This file does not export a card definition", file: bundle.entry } };
     return { defs };
   }
 
@@ -183,7 +182,7 @@ export function createCardLoader(opts: CardLoaderOptions): CardLoader {
       };
       // 换代:旧一代先撤,新一代整张卡重新执行
       loaded.delete(entry);
-      if (bundle.runtime !== opts.runtime) { fail({ state: "load-error", detail: tr("Runtime version mismatch (page {0}, this environment {1})", bundle.runtime, opts.runtime), file: entry }); continue; }
+      if (bundle.runtime !== opts.runtime) { fail({ state: "load-error", detail: `Runtime version mismatch (page ${bundle.runtime}, this environment ${opts.runtime})`, file: entry }); continue; }
       const miss = await preload(bundle);
       if (miss) { fail({ state: "missing-module", detail: miss.missing, file: miss.file }); continue; }
       // 样式先于执行注入:卡片第一次挂上去时样式已经在了

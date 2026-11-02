@@ -11,7 +11,6 @@
  * 本模块属于 render 这一层(`src/online/`):只引 kernel。
  */
 import type { CardDef } from "../kernel/types";
-import { tr } from "../i18n/index.ts";
 
 type AudioCard = Pick<CardDef<any>, "source" | "audio">;
 
@@ -29,4 +28,4 @@ export function onlineCardAudioRunnable(def: AudioCard | undefined | null): bool
   return true;
 }
 
-export const ONLINE_CARD_AUDIO_BLOCKED = tr("Online browser mode cannot yet run this card's sound code (sound from user cards and media effect cards must be generated on the local PC and then synced)");
+export const ONLINE_CARD_AUDIO_BLOCKED = "Online browser mode cannot yet run this card's sound code (sound from user cards and media effect cards must be generated on the local PC and then synced)";

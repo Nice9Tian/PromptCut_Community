@@ -11,7 +11,6 @@ import { projectCardGraph, cardJson } from "../kernel/cardGraph.mjs";
 import { clipHasEmbeddedAudio, cardAudioIdentity, resolveCardAudioRendition, assertAudiovisualCardKind } from "../kernel/cardAudioRendition.mjs";
 import { audioProjectOf } from "../kernel/cutAudio.mjs";
 import { speedMutesSource, withMediaRates } from "../kernel/clipTime.mjs";
-import { tr } from "../i18n/index.ts";
 
 export const CARD_AUDIO_SAMPLE_RATE = 48000 as const;
 export const CARD_AUDIO_MAX_BLOCK_FRAMES = 1_048_576;
@@ -89,10 +88,10 @@ export function setIsolatedCardAudioHost(host: IsolatedCardAudioHost | null): vo
 }
 export function isolatedCardAudioHost(): IsolatedCardAudioHost | null { return isolatedHost; }
 
-export const SYNCED_AUDIO_NOT_HERE = tr("Audio code of synced cards does not run in the editor");
-export const ONLINE_AUDIO_NEEDS_MEDIA = tr("This card reads audio samples from media, which the online page cannot access. It uses the already generated audio (or the render node provides it if there is none)");
-export const ONLINE_AUDIO_NO_THREAD = tr("This page has no isolated audio thread. Audio for user cards and media effect cards uses the already generated audio (or the render node provides it if there is none)");
-export const ONLINE_AUDIO_MIXED = tr("Audio chained across synced cards and built-in cards cannot be synthesized online. It uses the already generated audio (or the render node provides it if there is none)");
+export const SYNCED_AUDIO_NOT_HERE = "Audio code of synced cards does not run in the editor";
+export const ONLINE_AUDIO_NEEDS_MEDIA = "This card reads audio samples from media, which the online page cannot access. It uses the already generated audio (or the render node provides it if there is none)";
+export const ONLINE_AUDIO_NO_THREAD = "This page has no isolated audio thread. Audio for user cards and media effect cards uses the already generated audio (or the render node provides it if there is none)";
+export const ONLINE_AUDIO_MIXED = "Audio chained across synced cards and built-in cards cannot be synthesized online. It uses the already generated audio (or the render node provides it if there is none)";
 
 /**
  * 同步来的有声用户卡在编辑页面里的替身:只给「把项目摊成图、算身份」用(要有 `audio` 才会合成素材效果卡节点,要有默认参数才算得出身份)。
@@ -177,8 +176,8 @@ export function cardAudioRoute(project: unknown, nodeId: string): CardAudioRoute
 
 /** 声音线程回来的采样块当不可信输入:形状不对、带非有限值的一律不要 */
 function checkedIsolatedBlock(samples: unknown, count: number): Float32Array {
-  if (!(samples instanceof Float32Array) || samples.length < 1 || samples.length % count !== 0 || samples.length / count > 8) throw new CardAudioError("invalid-reply", tr("Sample chunk returned by the audio thread has the wrong shape"));
-  for (let i = 0; i < samples.length; i++) if (!Number.isFinite(samples[i])) throw new CardAudioError("invalid-reply", tr("Sample chunk returned by the audio thread contains invalid values"));
+  if (!(samples instanceof Float32Array) || samples.length < 1 || samples.length % count !== 0 || samples.length / count > 8) throw new CardAudioError("invalid-reply", "Sample chunk returned by the audio thread has the wrong shape");
+  for (let i = 0; i < samples.length; i++) if (!Number.isFinite(samples[i])) throw new CardAudioError("invalid-reply", "Sample chunk returned by the audio thread contains invalid values");
   return samples;
 }
 
@@ -424,11 +423,11 @@ export async function renderEmbeddedCardWav(project: Project, clip: TrackClip, s
   requireCardAudioHooks();
   const nodeId = cardAudioNodeOf(project, clip);
   if (onlinePage() && !(nodeId && onlineCardAudioSynthesizable(project, nodeId))) throw new Error((nodeId && onlineCardAudioBlocker(project, nodeId)) || ONLINE_CARD_AUDIO_BLOCKED);
-  if (!nodeId || !clipHasEmbeddedAudio(project, clip, cardAudioGraphCard)) throw new Error(tr("This card has no embedded audio"));
+  if (!nodeId || !clipHasEmbeddedAudio(project, clip, cardAudioGraphCard)) throw new Error("This card has no embedded audio");
   assertAudiovisualCardKind(cardAudioGraphCard(clip.cardId));
   cardAudioIdentity(project, clip, cardAudioIdentityHooks());
   const frames = Math.round((clip.end - clip.start) * CARD_AUDIO_SAMPLE_RATE);
-  if (!Number.isSafeInteger(frames) || frames < 1 || frames > 60 * CARD_AUDIO_SAMPLE_RATE) throw new Error(tr("Card audio generation range must be between 1 sample and 60 seconds"));
+  if (!Number.isSafeInteger(frames) || frames < 1 || frames > 60 * CARD_AUDIO_SAMPLE_RATE) throw new Error("Card audio generation range must be between 1 sample and 60 seconds");
   let channels = 0, output: Uint8Array | undefined, view: DataView | undefined;
   const block = cardAudioBlockRenderer(project, nodeId, signal);
   for (let start = 0; start < frames; start += 8192) {
@@ -444,7 +443,7 @@ export async function renderEmbeddedCardWav(project: Project, clip: TrackClip, s
       view.setUint32(16, 16, true); view.setUint16(20, 3, true); view.setUint16(22, channels, true);
       view.setUint32(24, CARD_AUDIO_SAMPLE_RATE, true); view.setUint32(28, CARD_AUDIO_SAMPLE_RATE * channels * 4, true);
       view.setUint16(32, channels * 4, true); view.setUint16(34, 32, true); put(36, "data"); view.setUint32(40, frames * channels * 4, true);
-    } else if (blockChannels !== channels) throw new Error(tr("The channel count of card audio cannot change during generation"));
+    } else if (blockChannels !== channels) throw new Error("The channel count of card audio cannot change during generation");
     for (let i = 0; i < samples.length; i++) view!.setFloat32(44 + (start * channels + i) * 4, samples[i], true);
     onProgress?.(start + count, frames);
     await new Promise(resolve => setTimeout(resolve, 0));

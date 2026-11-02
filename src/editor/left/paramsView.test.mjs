@@ -14,6 +14,7 @@ import assert from "node:assert/strict";
 
 const V = await import(srcUrl("editor/left/paramsView.ts"));
 const P = await import(srcUrl("online/pageFlag.ts"));
+const PU = await import(srcUrl("online/onlineUnsupported.ts"));
 
 test("PV-01 先查定义,没有再用同步视图", () => {
   const built = { id: "b", name: "内置", defaults: {}, controls: [], Component: () => null };
@@ -26,7 +27,7 @@ test("PV-01 先查定义,没有再用同步视图", () => {
 });
 
 test("PV-02 画不出控件时的文案", () => {
-  const unsupported = P.onlineUnsupported("changing this card's parameters");
+  const unsupported = PU.onlineUnsupported("changing this card's parameters");
   assert.ok(unsupported.includes("changing this card's parameters"), unsupported); // 前后缀来自 src/online/pageFlag.ts(还是中文)
   assert.equal(V.paramsEmptyText({ name: "s", defaults: {}, controls: [], controlsIncomplete: true }), unsupported, "源码有控件、一个都没认出来");
   assert.equal(V.paramsEmptyText({ name: "s", defaults: {}, controls: [], controlsIncomplete: false }), V.NO_PARAMS_TEXT);
@@ -46,7 +47,7 @@ test("PV-03 副标题", () => {
 
 test("PV-04 只认出一部分控件:照常画认出的,下面一行提示其余参数在线改不了", () => {
   const partial = { name: "s", defaults: {}, controls: [{ key: "t", label: "t", type: "text" }], controlsIncomplete: true };
-  assert.equal(V.paramsPartialText(partial), P.onlineUnsupported("changing this card's remaining parameters"));
+  assert.equal(V.paramsPartialText(partial), PU.onlineUnsupported("changing this card's remaining parameters"));
   assert.ok(V.paramsPartialText(partial).includes("changing this card's remaining parameters"));
   assert.equal(V.paramsEmptyText(partial), null, "认出的照常画");
   assert.equal(V.paramsPartialText({ ...partial, controlsIncomplete: false }), null, "全认出:不提示");
@@ -67,5 +68,5 @@ test("PV-05 没认出的控件逐条说明:哪一条、为什么;超过 5 条说
   assert.match(many, /k4:r; and 7 more$/);
   assert.ok(!many.includes("k5"));
   // 一个都没认出时,空白文案照旧,逐条说明另起一行(ParamsForm 画在它下面)
-  assert.equal(V.paramsEmptyText({ ...base, controls: [], skippedControls: [{ reason: "r" }] }), P.onlineUnsupported("changing this card's parameters"));
+  assert.equal(V.paramsEmptyText({ ...base, controls: [], skippedControls: [{ reason: "r" }] }), PU.onlineUnsupported("changing this card's parameters"));
 });

@@ -18,7 +18,6 @@ import { createCardLoader, type CardLoaderOptions, type HostModules } from "./lo
 import type { CardBundle, LoadResult } from "./protocol.ts";
 import { createSoundEngine, type SoundEngine } from "./soundEngine.ts";
 import { isSoundStubError } from "./soundStub.ts";
-import { tr } from "../../i18n/index.ts";
 
 export type SoundThreadIn =
   | { t: "load"; seq: number; bundles: CardBundle[] }
@@ -65,7 +64,7 @@ export function createSoundThread(opts: SoundThreadOptions): { handle(message: S
         for (const r of results) {
           if (r.ok) continue;
           const detail = r.state.detail ?? r.state.state;
-          blocked[r.entry] = r.state.state === "missing-module" ? tr("The sound thread has no module {0}", detail) : isSoundStubError(detail) ? detail : tr("Error while loading ({0})", detail);
+          blocked[r.entry] = r.state.state === "missing-module" ? `The sound thread has no module ${detail}` : isSoundStubError(detail) ? detail : `Error while loading (${detail})`;
         }
         const audioCards = [...cards.values()].filter((d) => typeof d.audio === "function").map((d) => d.id).sort();
         opts.post({ t: "loaded", seq: message.seq, results, audioCards, blocked });

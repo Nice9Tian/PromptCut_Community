@@ -2,7 +2,8 @@ import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useStore, getState } from "../../store/project";
 import { importVideoFiles } from "../io";
-import { onlinePage, onlineUnsupported } from "../../online/pageFlag";
+import { onlinePage } from "../../online/pageFlag";
+import { onlineUnsupported } from "../../online/onlineUnsupported";
 import { tr } from "../../i18n/index.ts";
 
 export interface SpeakerPickerProps {

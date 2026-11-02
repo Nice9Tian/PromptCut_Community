@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { JSX, MouseEvent as ReactMouseEvent } from "react";
-import { onlineUnsupported } from "../online/pageFlag";
+import { onlineUnsupported } from "../online/onlineUnsupported";
 import "./WindowTitleBar.css";
 import { tr } from "../i18n/index.ts";
 

@@ -6,7 +6,7 @@
  */
 import type { CardDef, Control } from "../../kernel/types";
 import type { SkippedControl, SyncedCardView } from "../../kernel/registry";
-import { onlineUnsupported } from "../../online/pageFlag";
+import { onlineUnsupported } from "../../online/onlineUnsupported";
 import { tr } from "../../i18n/index.ts";
 
 /** 面板要的那几样:能跑的定义与同步来的视图都满足 */

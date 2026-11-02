@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import type { TranscriptSegment } from "../../kernel/project";
 import { sttStatus, sttInstall, transcribeMedia, type SttStatus } from "../io/stt";
-import { onlinePage, onlineUnsupported } from "../../online/pageFlag";
+import { onlinePage } from "../../online/pageFlag";
+import { onlineUnsupported } from "../../online/onlineUnsupported";
 import { tr } from "../../i18n/index.ts";
 
 interface TranscribePanelProps {

@@ -1,7 +1,7 @@
 import type { Transcript, TranscriptSegment } from "../../kernel/project";
 import { getMediaFile } from "./index";
 import { actions } from "../../store/project";
-import { onlineUnsupported } from "../../online/pageFlag";
+import { onlineUnsupported } from "../../online/onlineUnsupported";
 import { tr } from "../../i18n/index.ts";
 
 /**

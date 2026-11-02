@@ -45,7 +45,7 @@ import { SyncChips } from "./sync/SyncChips";
 import { BackupsDialog } from "./sync/BackupsDialog";
 import { hasSharedResume, useSync, whenSaved } from "./sync/syncManager";
 import { unsentAtRisk, UNSENT_LEAVE_TEXT } from "./sync/onlineStatus";
-import { onlineUnsupported } from "../online/pageFlag";
+import { onlineUnsupported } from "../online/onlineUnsupported";
 import "../ui/toolbar.css";
 
 /** 在线浏览器模式里置灰的项目菜单项:都要编辑器进程(草稿、另存、本地备份),C10a 不提供(契约第 2 节) */

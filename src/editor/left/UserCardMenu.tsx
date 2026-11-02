@@ -1,7 +1,8 @@
 import { useEffect } from "react";
 import { setCardScope, type CardScope, type ScopeEntry } from "../cardScope";
 import { getState } from "../../store/project";
-import { onlinePage, onlineUnsupported } from "../../online/pageFlag";
+import { onlinePage } from "../../online/pageFlag";
+import { onlineUnsupported } from "../../online/onlineUnsupported";
 import { tr } from "../../i18n/index.ts";
 
 /**

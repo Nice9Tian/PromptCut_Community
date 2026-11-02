@@ -14,7 +14,6 @@ import type { CardDef } from "../../kernel/types.ts";
 import { projectCardGraph } from "../../kernel/cardGraph.mjs";
 import { withMediaRates } from "../../kernel/clipTime.mjs";
 import { evaluateCardAudio, type AudioSourceContext } from "../../render/cards/audioSources.ts";
-import { tr } from "../../i18n/index.ts";
 
 export interface SoundRenderRequest {
   /** 项目(时间轴、素材表、卡片图);同一个 `projectKey` 只传一次 */
@@ -27,7 +26,7 @@ export interface SoundRenderRequest {
 
 /** 一次最多求多少帧(同编辑页面 `CARD_AUDIO_MAX_BLOCK_FRAMES`) */
 export const SOUND_MAX_BLOCK_FRAMES = 1_048_576;
-export const SOUND_NEEDS_MEDIA = tr("This card needs to read the media's audio samples, which the online page cannot get");
+export const SOUND_NEEDS_MEDIA = "This card needs to read the media's audio samples, which the online page cannot get";
 
 interface GraphNode { id: string; adapter?: string; cardId?: string; inputs?: Record<string, unknown> }
 
@@ -39,10 +38,10 @@ export function soundBlocker(nodes: readonly GraphNode[], nodeId: string, getCar
     if (seen.has(id)) return null;
     seen.add(id);
     const node = byId.get(id);
-    if (!node) return tr("Node {0} not found", id);
+    if (!node) return `Node ${id} not found`;
     if (node.adapter !== "card") return SOUND_NEEDS_MEDIA;
     const def = typeof node.cardId === "string" ? getCard(node.cardId) : undefined;
-    if (typeof def?.audio !== "function") return tr("The sound thread has no sound code for {0}", node.cardId ?? id);
+    if (typeof def?.audio !== "function") return `The sound thread has no sound code for ${node.cardId ?? id}`;
     for (const ref of Object.values(node.inputs ?? {})) {
       const next = typeof ref === "string" ? ref : (ref as { nodeId?: unknown; clipId?: unknown } | null)?.nodeId;
       if (typeof next !== "string") return SOUND_NEEDS_MEDIA;

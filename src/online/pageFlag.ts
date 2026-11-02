@@ -1,4 +1,3 @@
-import { tr } from "../i18n/index.ts";
 /**
  * 在线浏览器模式的**运行期**标记(C10a 集成返工)。
  *
@@ -29,11 +28,3 @@ export function markOnlinePage(): void {
   (globalThis as Record<string, unknown>)[KEY] = true;
 }
 
-/**
- * 在线浏览器模式里置灰的入口悬停时的说明(C10 契约第 10 节、第 17 节表 A):
- * 「在线浏览器模式暂不支持{入口名}，请在电脑上的 PromptCut 里使用。」
- * 入口名用用户在界面上看到的叫法(「导入媒体」「语音识别」「配音」……)。
- */
-export function onlineUnsupported(entry: string): string {
-  return tr("{0} is not supported in online browser mode yet. Please use it in PromptCut on your computer.", entry);
-}

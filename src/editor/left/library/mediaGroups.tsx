@@ -11,7 +11,8 @@ import { useMediaTierPolicy, usePreviewMediaUrl } from "../../media/previewUrl";
 import { mediaTierPolicy, originalMediaUrl, previewMediaUrl } from "../../../render/mediaTier";
 import { ThumbTile } from "./ThumbTile";
 import type { GroupData, GroupItem } from "./groups";
-import { onlinePage, onlineUnsupported } from "../../../online/pageFlag";
+import { onlinePage } from "../../../online/pageFlag";
+import { onlineUnsupported } from "../../../online/onlineUnsupported";
 import { useReadOnly } from "../../readOnly";
 import { tr } from "../../../i18n/index.ts";
 

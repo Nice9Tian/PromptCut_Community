@@ -1,4 +1,3 @@
-import { tr } from "../../i18n/index.ts";
 /**
  * 声音线程里的占位模块(`docs/plan/online-card-exec-contract.md` 3.5)。纯逻辑,单测直接载入。
  *
@@ -9,7 +8,7 @@ import { tr } from "../../i18n/index.ts";
  */
 
 /** 占位被调用时抛的错;声音线程据它把原因报回去 */
-export const SOUND_STUB_PREFIX = tr("Sound code cannot use ");
+export const SOUND_STUB_PREFIX = "Sound code cannot use ";
 
 export function soundStubMessage(name: string): string {
   return `${SOUND_STUB_PREFIX}${name}`;

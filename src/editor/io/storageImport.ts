@@ -1,7 +1,7 @@
 import { actions, getState } from "../../store/project";
 import type { MediaAsset } from "../../kernel/project";
 import { applyUploadedMedia, type UploadedMedia } from "./mediaUpload";
-import { onlineUnsupported } from "../../online/pageFlag";
+import { onlineUnsupported } from "../../online/onlineUnsupported";
 import { tr } from "../../i18n/index.ts";
 
 /**
