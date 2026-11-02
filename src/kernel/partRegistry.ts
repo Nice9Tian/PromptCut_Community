@@ -12,7 +12,7 @@ const map = new Map<string, PartDef<any>>();
 export function registerParts(defs: PartDef<any>[]) {
   const seen = new Set<string>();
   for (const d of defs) {
-    if (seen.has(d.id)) throw new Error(`part id 重复: ${d.id}`);
+    if (seen.has(d.id)) throw new Error(`Duplicate part id: ${d.id}`);
     seen.add(d.id);
     map.set(d.id, d);
   }

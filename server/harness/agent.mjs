@@ -19,7 +19,7 @@ const MAX_TRUNCATIONS = 2;
  * 足够写完任何一张卡的源码；再多多半是模型每次都写得太长、自己在追着截断跑。
  */
 const MAX_SALVAGED_TRUNCATIONS = 6;
-const checkAbort = signal => { if (signal?.aborted) throw Object.assign(new Error('已停止'), { name: 'AbortError' }); };
+const checkAbort = signal => { if (signal?.aborted) throw Object.assign(new Error('Stopped'), { name: 'AbortError' }); };
 /** 交给用户看的进度汇报工具（各家前缀不同，只认以它结尾的名字，规则同 src/ai/progressReport.ts 的 isReportTool） */
 const isReportTool = name => typeof name === 'string' && (name === 'report_progress' || /(?:__|[.:/])report_progress$/.test(name));
 /**
@@ -37,11 +37,11 @@ const SECRET_KEY = /token|secret|password|passwd|authorization|cookie|ticket|cre
 /** 值本身像凭证的:Bearer 头、sk- 形状的 Key、票据(v1.xxx.yyy)、JWT */
 const SECRET_VALUE = /Bearer\s+[A-Za-z0-9._~+/=-]+|\bsk-[A-Za-z0-9_-]{12,}|\bv1\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_.-]+|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+/g;
 function redact(value, depth = 0) {
-  if (typeof value === 'string') return value.replace(SECRET_VALUE, '[已隐去]');
+  if (typeof value === 'string') return value.replace(SECRET_VALUE, '[redacted]');
   if (!value || typeof value !== 'object') return value;
-  if (depth > 6) return '[层数太深,省略]';
+  if (depth > 6) return '[too deep, omitted]';
   if (Array.isArray(value)) return value.slice(0, 50).map(v => redact(v, depth + 1));
-  return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, SECRET_KEY.test(k) ? '[已隐去]' : redact(v, depth + 1)]));
+  return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, SECRET_KEY.test(k) ? '[redacted]' : redact(v, depth + 1)]));
 }
 /**
  * 工具抛错时交给模型的结果:原因(message)之外,工具附带的错误码(code)与调试信息(debug)一并给。
@@ -55,7 +55,7 @@ export function toolErrorResult(err) {
     if (err.debug !== undefined && err.debug !== null) {
       let text;
       try { text = typeof err.debug === 'string' ? redact(err.debug) : JSON.stringify(redact(err.debug)); } catch { text = String(err.debug); }
-      if (typeof text === 'string' && text) result.debug = text.length > TOOL_DEBUG_CHARS ? `${text.slice(0, TOOL_DEBUG_CHARS)}……(调试信息较长,已截断)` : text;
+      if (typeof text === 'string' && text) result.debug = text.length > TOOL_DEBUG_CHARS ? `${text.slice(0, TOOL_DEBUG_CHARS)}... (debug info is long, truncated)` : text;
     }
   }
   return result;
@@ -120,12 +120,12 @@ export class Agent {
     const started = Date.now();
     const progress = (round, phase, text) => this.onEvent({ type: 'progress', round, maxRounds: this.maxIterations, phase, completed, failed, elapsedMs: Date.now() - started, text });
     const speak = this.canSpeak
-      ? '每组操作前调用 send_message（to 填 "user"）用一两句话告诉用户接下来要做什么，做完一组再用它说一句做好了什么；它和这一组的工具调用放在同一次回复里，不要单独占一轮；收尾仍调 final 为 true 的 report_progress'
-      : '每组操作前用一句简短的话说明将做什么';
+      ? 'Before each group of operations, call send_message (set to to "user") with one or two sentences telling the user what you are about to do, and after each group use it again to say what was done. Put it in the same reply as that group\'s tool calls; do not spend a separate turn on it. Still finish by calling report_progress with final set to true'
+      : 'Before each group of operations, say in one short sentence what you will do';
     const cacheRule = this.codeCache
-      ? `单次回复有输出上限：要写很长的源码或文本（几百行以上）时，先分几次写进代码块（code_cache_write 写开头、code_cache_append 接着写），最后在工具参数里整个写成 "${CODE_CACHE_REF}名字" 交给工具；回复被截断时按系统消息的提示接着写。`
+      ? `A single reply has an output limit: when you need to write very long source code or text (several hundred lines or more), first write it in several parts into code blocks (code_cache_write for the start, code_cache_append to continue), then pass the whole thing to the tool as "${CODE_CACHE_REF}name" in the tool arguments. When a reply is truncated, continue as the system message instructs.`
       : '';
-    const system = this.system + `\n\n执行规则：${speak}；需要做多件事时，在同一次回复里一次返回多个工具调用，它们会在同一轮内依次执行。依赖上一步返回值的操作留到下一轮。后台作业由工具自动等待，请勿反复启动或紧密轮询。遇到重复错误应改变方法或说明阻碍；某个能力这次拿不到（工具明说用不了、重试没用），而它又是用户这次要求的硬前提时，说明阻碍后停下，不要当它不存在继续做。工具返回成功后核对一次即可，完成后向用户总结结果。${cacheRule}`;
+    const system = this.system + `\n\nExecution rules: ${speak}. When you need to do several things, return multiple tool calls in the same reply; they run in order within the same round. Leave operations that depend on a previous result for the next round. Background jobs are awaited automatically by the tools, so do not restart them repeatedly or poll them tightly. On repeated errors, change your approach or explain the blocker. If a capability is unavailable this time (the tool says it cannot be used and retrying will not help) and it is a hard prerequisite of what the user asked for, explain the blocker and stop; do not carry on as if it did not exist. After a tool returns success, verify once; when done, summarize the result for the user.${cacheRule}`;
     // truncations：连续几次截断没留下内容；salvaged：这一轮里有几次截断留下了内容；truncTotal：这一轮一共截断几次；cutBlocks：截断时存进的代码块
     // cutCount：truncTotal 里有几次是被网关中途掐断（其余是写到上限），停下时的话按它说
     let summaryReason = '', truncations = 0, salvaged = 0, truncTotal = 0, cutCount = 0;
@@ -156,10 +156,10 @@ export class Agent {
       lastRound = round;
       const summarizing = !!summaryReason;
       // 上一轮刚放完 tool_result(那是一条 user),这里直接 append 就又是两条连着的 user
-      if (summarizing) this.history.appendUserText(`执行已暂停：${summaryReason}。不要再调用工具，只用中文说明已完成的部分、未完成的部分、阻碍和下一步。不得把未完成任务说成成功。`);
+      if (summarizing) this.history.appendUserText(`Execution paused: ${summaryReason}. Do not call any more tools; in Chinese only, describe what is done, what is not done, the blockers and the next steps. Never describe an unfinished task as successful.`);
       // 进度这一行只给屏幕看,不进模型上下文。不限轮次时不写分母,省得出现「第 3/Infinity 轮」
-      const roundText = Number.isFinite(this.maxIterations) ? `第 ${round}/${this.maxIterations} 轮` : `第 ${round} 轮`;
-      progress(round, summarizing ? 'summarizing' : 'requesting', summarizing ? '正在整理执行结果和未完成事项…' : `${roundText}：正在等待模型响应…`);
+      const roundText = Number.isFinite(this.maxIterations) ? `Round ${round}/${this.maxIterations}` : `Round ${round}`;
+      progress(round, summarizing ? 'summarizing' : 'requesting', summarizing ? 'Summarizing results and unfinished items…' : `${roundText}: waiting for the model response…`);
       this.onEvent({ type: 'diagnostic', stage: 'request', data: { round, summaryOnly: summarizing, messages: this.history.get().length, tools: summarizing ? 0 : this.tools.length } });
       const content = [], calls = [], partials = [];
       let text = '', current = '', lastInput = 0, stopReason = null;
@@ -171,7 +171,7 @@ export class Agent {
       const callStarted = Date.now();
       const callUsage = { input: 0, output: 0, cacheRead: 0 };
       let callOk = false;
-      const heartbeat = setInterval(() => progress(round, summarizing ? 'summarizing' : 'requesting', `仍在等待模型响应，已用时 ${Math.floor((Date.now() - started) / 1000)} 秒；可以随时停止。`), 10000);
+      const heartbeat = setInterval(() => progress(round, summarizing ? 'summarizing' : 'requesting', `Still waiting for the model response, ${Math.floor((Date.now() - started) / 1000)} s elapsed; you can stop at any time.`), 10000);
       try {
         for await (const ev of this.provider.stream(this.history.get(), summarizing ? [] : this.tools, system, this.signal)) {
           checkAbort(this.signal);
@@ -193,8 +193,8 @@ export class Agent {
              */
             const validName = typeof ev.name === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(ev.name);
             const call = { ...ev, name: validName ? ev.name : 'invalid_tool_name', id: ev.id || `round-${round}-call-${calls.length + 1}` };
-            if (!validName) call.inputError = `工具名 ${JSON.stringify(ev.name ?? '')} 不合法(为空或带非法字符),这次调用没有执行。请用工具清单里的名字重新调用。`;
-            if (calls.some(c => c.id === call.id)) throw new Error('API 返回了重复的工具调用 ID，已停止以免重复执行。');
+            if (!validName) call.inputError = `Tool name ${JSON.stringify(ev.name ?? '')} is invalid (empty or contains illegal characters); this call was not executed. Call again using a name from the tool manifest.`;
+            if (calls.some(c => c.id === call.id)) throw new Error('The API returned a duplicate tool call ID; stopped to avoid running it twice.');
             calls.push(call);
             content.push({ type: 'tool_use', id: call.id, name: call.name, input: call.input });
           } else if (ev.type === 'tool_use_partial') {
@@ -217,7 +217,7 @@ export class Agent {
         callOk = true;
       } catch (err) {
         if (!summarizing || this.signal?.aborted) throw err;
-        this.onEvent({ type: 'status', text: `结果摘要请求失败：${err.message}` });
+        this.onEvent({ type: 'status', text: `Result summary request failed: ${err.message}` });
       } finally {
         clearInterval(heartbeat);
         if (this.onModelCall) {
@@ -227,7 +227,7 @@ export class Agent {
       flush();
       lastText = text;
       if (summarizing) {
-        const note = `\n\n本次执行已暂停：${summaryReason}。已成功执行 ${completed} 次操作，失败 ${failed} 次。已完成的修改会保留；可以补充要求后继续，或复制本次对话进行排查。`;
+        const note = `\n\nThis run was paused: ${summaryReason}. ${completed} operations succeeded and ${failed} failed. Changes already made are kept; you can add requirements and continue, or copy this chat to investigate.`;
         this.onEvent({ type: 'text', delta: note });
         /*
          * 收尾这句要**并进当轮那条 assistant**,不能另起一条。
@@ -262,12 +262,12 @@ export class Agent {
         if (s.progress) { salvaged++; truncations = 0; } else truncations++;
         this.onEvent({ type: 'diagnostic', stage: 'truncated', data: { round, stopReason, cause, partials: partials.map((p) => p.name), saved: s.saved, salvaged, stalled: truncations } });
         if (truncations > MAX_TRUNCATIONS || salvaged > MAX_SALVAGED_TRUNCATIONS || round >= this.maxIterations) {
-          const kept = cutBlocks.size ? `已经写出的部分存在代码块 ${[...cutBlocks].join('、')} 里，下一条消息可以让它接着写。` : '';
-          const times = truncTotal > 1 ? `模型的回复连续 ${truncTotal} 次` : '模型的回复';
+          const kept = cutBlocks.size ? `The part already written is stored in code block ${[...cutBlocks].join(', ')}; the next message can ask it to continue.` : '';
+          const times = truncTotal > 1 ? `The model's reply was cut off ${truncTotal} times in a row` : 'The model\'s reply';
           // 全是被网关掐断的不说「调大单次输出上限」：那不是上限的事，调大只会更容易撞上网关的时长上限
-          if (cutCount === truncTotal) throw new Error(`${times}被网关中途掐断（网关对单次请求有时长上限），这一轮没能完成。${kept}可以把要求拆小一点再发。`);
-          if (cutCount === 0) throw new Error(`${times}超过单次输出上限被截断，这一轮没能完成。${kept}可以把要求拆小一点再发，或请管理员调大单次输出上限。`);
-          throw new Error(`${times}被截断（超过单次输出上限或被网关中途掐断），这一轮没能完成。${kept}可以把要求拆小一点再发。`);
+          if (cutCount === truncTotal) throw new Error(`${times} was cut off midway by the gateway (the gateway has a time limit per request), so this round could not finish. ${kept}Try splitting the request into smaller ones.`);
+          if (cutCount === 0) throw new Error(`${times} exceeded the single-output limit and was truncated, so this round could not finish. ${kept}Try splitting the request into smaller ones, or ask the administrator to raise the single-output limit.`);
+          throw new Error(`${times} was truncated (exceeded the single-output limit or was cut off midway by the gateway), so this round could not finish. ${kept}Try splitting the request into smaller ones.`);
         }
         this.onEvent({ type: 'status', text: s.status });
         if (!calls.length) {
@@ -278,11 +278,11 @@ export class Agent {
       }
       if (!calls.length) {
         // 已经交过收尾汇报、或用 send_message 对用户说过话,最后这次没说话也算说完了
-        if (!text.trim() && !reported && !spoke) throw new Error('API 没有返回文字或工具调用，请检查模型和接口协议设置。');
+        if (!text.trim() && !reported && !spoke) throw new Error('The API returned no text or tool calls; check the model and API protocol settings.');
         break;
       }
       if (!truncationNote) { truncations = 0; truncTotal = 0; cutCount = 0; }
-      progress(round, 'executing', `本轮收到 ${calls.length} 个工具调用，正在执行…`);
+      progress(round, 'executing', `Received ${calls.length} tool calls this round, executing…`);
       const results = [];
       // 工具返回的图片不留在 tool_result 里，改挂到同一条 user 消息的末尾。
       // 原因是可移植性：Anthropic 的 tool_result 装得下图片块，OpenAI 的 role:"tool"
@@ -299,14 +299,14 @@ export class Agent {
         const tool = this.tools.find(t => t.name === call.name) ?? this.tools.find(t => t.name === modelToolName(call.name));
         const begin = Date.now();
         this.onEvent({ type: 'tool_call', callId: call.id, round, name: call.name, input: call.input });
-        const toolHeartbeat = setInterval(() => progress(round, 'executing', `正在执行 ${call.name}，已等待 ${Math.floor((Date.now() - begin) / 1000)} 秒…`), 5000);
+        const toolHeartbeat = setInterval(() => progress(round, 'executing', `Running ${call.name}, waited ${Math.floor((Date.now() - begin) / 1000)} s…`), 5000);
         let result, ok = true;
         try {
           // 先报参数/名字本身的问题:空工具名换成的占位名一定是「未知工具」,那句话会盖掉真正的原因
           if (call.inputError) throw new Error(call.inputError);
-          if (!tool) throw new Error(`未知工具 ${call.name}，请使用已提供的工具名称。`);
-          if (!call.input || typeof call.input !== 'object' || Array.isArray(call.input)) throw new Error('工具参数必须是 JSON 对象。');
-          for (const key of tool.inputSchema?.required || []) if (call.input[key] === undefined) throw new Error(`缺少必填参数 ${key}。`);
+          if (!tool) throw new Error(`Unknown tool ${call.name}; use one of the provided tool names.`);
+          if (!call.input || typeof call.input !== 'object' || Array.isArray(call.input)) throw new Error('Tool arguments must be a JSON object.');
+          for (const key of tool.inputSchema?.required || []) if (call.input[key] === undefined) throw new Error(`Missing required argument ${key}.`);
           // 参数里整个写成 `@code_cache:名字` 的字符串换成代码块的内容再交给工具;历史和事件里留的还是引用,不撑大
           const input = this.codeCache ? resolveCodeCacheRefs(call.input, this.codeCache) : call.input;
           result = await tool.execute(input, { signal: this.signal, callId: call.id, round });
@@ -322,14 +322,14 @@ export class Agent {
         if (ok && result && typeof result === 'object' && result.__image?.base64) {
           images.push({ ...result.__image, name: call.name });
           const { __image, ...rest } = result;
-          result = { ...rest, image: '画面见本条消息末尾的图片' };
+          result = { ...rest, image: 'See the image at the end of this message for the frame' };
         }
         // see_frames 素材模式(source: "media")一页多张:每张标上镜头序号,模型看图时能和 scenes 对上
         if (ok && result && typeof result === 'object' && Array.isArray(result.__images)) {
           // 每张图带 label(比如 times 多帧的「t=3.2s」)就用它,否则按镜头序号
-          for (const im of result.__images) if (im?.base64) images.push({ ...im, name: `${call.name} ${im.label ?? `镜头 ${im.sceneIndex ?? '?'}`}` });
+          for (const im of result.__images) if (im?.base64) images.push({ ...im, name: `${call.name} ${im.label ?? `Shot ${im.sceneIndex ?? '?'}`}` });
           const { __images, ...rest } = result;
-          result = { ...rest, images: `${result.__images.length} 张图见本条消息末尾,按顺序排列` };
+          result = { ...rest, images: `${result.__images.length} images are at the end of this message, in order` };
         }
         const output = typeof result === 'string' ? result : JSON.stringify(result ?? null);
         ok ? completed++ : failed++;
@@ -353,9 +353,9 @@ export class Agent {
       const worstStreak = streaked.reduce((max, s) => Math.max(max, s.n), 0);
       // 第 2 次:一句硬提示,点名这个能力这次用不了,并指回提示词里那张决策表。第 3 次在下面直接停
       const streakNote = worstStreak === 2
-        ? `${streaked.filter(s => s.n === 2).map(s => s.tool).join('、')} 带着同一个错误连续失败 2 次了：${streaked.find(s => s.n === 2).text}\n`
-          + '不要再用同样的参数调第 3 次。这一次拿不到这个能力：要么换一条路并在收尾汇报里写明这一步没做成，'
-          + '要么——如果它是用户这次要求的硬前提——现在就调 final 为 true 的 report_progress 把阻碍写进 problems、把用户能做的事写进 todo，然后停下。'
+        ? `${streaked.filter(s => s.n === 2).map(s => s.tool).join(', ')} failed 2 times in a row with the same error: ${streaked.find(s => s.n === 2).text}\n`
+          + 'Do not call it a 3rd time with the same arguments. This capability is unavailable this time: either take another route and state in the closing report that this step was not completed, '
+          + 'or, if it is a hard prerequisite of what the user asked for this time, call report_progress with final set to true right now, write the blocker into problems and what the user can do into todo, then stop.'
         : '';
       this.onEvent({ type: 'diagnostic', stage: 'fail-streak', data: { round, streaks: streaked.map(s => ({ tool: s.tool, times: s.n })) } });
       /*
@@ -371,11 +371,11 @@ export class Agent {
           // 过半那条也补发一次标记,免得一步跨过两道线时收到两条
           if (mark === 'quarter') budgetSent.add('half');
           budgetNote = mark === 'half'
-            ? `还剩 ${left} 轮模型往返（一轮 = 你的一次回复，里面调几个工具都算一轮）。`
-              + '从现在起先把能交付的最小版本真正落到项目里（建卡 → add_clip 上时间轴 → 看一眼），再回来打磨；'
-              + '写在代码块里、还没交给工具的东西不算交付。来不及的写进 report_progress 的 todo。'
-            : `只剩 ${left} 轮模型往返了。立刻把手上已经写好的东西提交掉（代码块里的卡片源码 → create_card → add_clip），`
-              + '不要再开新的大块工作；提交完调 final 为 true 的 report_progress 收尾，没做完的逐条写进 todo。';
+            ? `${left} model round trips left (one round = one reply from you, no matter how many tools it calls).`
+              + 'From now on, first land the smallest deliverable version in the project (create the card → add_clip onto the timeline → take a look), then come back to polish; '
+              + 'Anything written in a code block and not yet handed to a tool does not count as delivered. Write what you run out of time for into the todo of report_progress.'
+            : `Only ${left} model round trips left. Immediately submit what you have already written (card source in a code block → create_card → add_clip), `
+              + 'Do not start any new large piece of work; after submitting, call report_progress with final set to true to wrap up, and list everything unfinished one by one in todo.';
         }
       }
       // 图片跟工具结果放在同一条 user 消息里、排在所有 tool_result 之后。
@@ -385,7 +385,7 @@ export class Agent {
         ...results,
         ...(images.length ? [
           ...images.map(im => ({ type: 'image', mime: im.mime || 'image/png', data: im.base64 })),
-          { type: 'text', text: `以上是 ${images.map(i => i.name).join('、')} 截到的画面。照着画面判断，不要凭源码想象效果。` },
+          { type: 'text', text: `Above are the frames captured from ${images.map(i => i.name).join(', ')}. Judge by the frames, do not imagine the result from the source code.` },
         ] : []),
         // 这一次回复里还有没写完的工具调用(截断):怎么接着写的那段话跟在工具结果后面,同一条消息里
         ...(truncationNote ? [{ type: 'text', text: truncationNote }] : []),
@@ -399,19 +399,19 @@ export class Agent {
       if (worstStreak >= 3) {
         const worst = streaked.find(s => s.n === worstStreak);
         outcome = 'stalled';
-        summaryReason = `${worst.tool} 带着同一个错误连续失败 ${worstStreak} 次，已停止无效重试`;
+        summaryReason = `${worst.tool} failed ${worstStreak} times in a row with the same error; stopped useless retries`;
       } else if (repeats >= 3) {
-        outcome = 'stalled'; summaryReason = '连续出现重复操作且结果没有变化，已停止无效循环';
+        outcome = 'stalled'; summaryReason = 'Repeated actions with no change in results; stopped the useless loop';
       } else if (round === this.maxIterations) {
         // 深度自主下不报轮数:这句会作为 user 消息进模型上下文(见循环开头的 summarizing 分支)
         outcome = 'round_limit';
-        summaryReason = this.deepAuto ? '本次运行已到上限' : `已达到 ${this.maxIterations} 轮模型往返上限`;
+        summaryReason = this.deepAuto ? 'This run has reached its limit' : `Reached the limit of ${this.maxIterations} model round trips`;
       }
       this.history.pruneImages();
       if (this.maxInputTokens > 0 && lastInput > 0) this.history.fitTokens(lastInput, this.maxInputTokens);
       else this.history.truncate();
     }
-    progress(lastRound, outcome === 'completed' ? 'completed' : 'paused', outcome === 'completed' ? `本次完成：${completed} 次成功，${failed} 次失败。` : summaryReason);
+    progress(lastRound, outcome === 'completed' ? 'completed' : 'paused', outcome === 'completed' ? `Done this time: ${completed} succeeded, ${failed} failed.` : summaryReason);
     return { text: lastText, history: this.history, usage, outcome, completed, failed };
   }
 }

@@ -37,24 +37,24 @@ const READ = ["GET", "HEAD"];
  */
 export const STAGE_ALLOW = [
   // —— 舞台页面自己(开发服务器给的页面与模块;打包后的桌面版跑的也是这台开发服务器)——
-  { methods: READ, exact: "/", who: "舞台 iframe", why: "舞台文档 `/?stage=1&id=…`;热更新客户端探活也打这一条" },
-  { methods: READ, prefix: "/src/", who: "舞台 iframe", why: "页面脚本、样式、卡片与部件的源码(含改动层里的用户卡,它们映射在 /src/cards/user/ 下)" },
-  { methods: READ, prefix: "/server/", who: "舞台 iframe", why: "页面脚本引用的几份两端共用的模块和动效素材目录的索引(都是随包发出去的代码,没有数据)" },
-  { methods: READ, prefix: "/node_modules/", who: "舞台 iframe", why: "预构建好的依赖(React、粒子、Lottie 等)" },
-  { methods: READ, prefix: "/@fs/", test: (raw) => raw.split("?")[0].includes("/node_modules/"), who: "舞台 iframe",
-    why: "不在项目根下的依赖(依赖向上解析时走这个前缀);只放行路径里带 /node_modules/ 的,别的文件一概不给" },
-  { methods: READ, prefix: "/@vite/", who: "舞台 iframe", why: "开发服务器的热更新客户端" },
-  { methods: READ, exact: "/@id/__x00__vite/dynamic-import-helper.js", who: "舞台 iframe", why: "开发服务器动态 import 的运行时辅助模块" },
-  { methods: READ, exact: "/@react-refresh", who: "舞台 iframe", why: "React 热更新的运行时" },
+  { methods: READ, exact: "/", who: "stage iframe", why: "Stage document `/?stage=1&id=…`; the hot-reload client liveness probe also hits this one" },
+  { methods: READ, prefix: "/src/", who: "stage iframe", why: "Source code of page scripts, styles, cards and parts (including user cards in the overlay layer, which are mapped under /src/cards/user/)" },
+  { methods: READ, prefix: "/server/", who: "stage iframe", why: "Index of a few modules shared by both sides and the motion graphics asset catalog that page scripts reference (all code shipped with the package, no data)" },
+  { methods: READ, prefix: "/node_modules/", who: "stage iframe", why: "Prebuilt dependencies (React, particles, Lottie, etc.)" },
+  { methods: READ, prefix: "/@fs/", test: (raw) => raw.split("?")[0].includes("/node_modules/"), who: "stage iframe",
+    why: "Dependencies outside the project root (this prefix is used when dependencies resolve upward); only paths containing /node_modules/ are allowed, no other files are served" },
+  { methods: READ, prefix: "/@vite/", who: "stage iframe", why: "Hot-reload client of the dev server" },
+  { methods: READ, exact: "/@id/__x00__vite/dynamic-import-helper.js", who: "stage iframe", why: "Runtime helper module for the dev server's dynamic import" },
+  { methods: READ, exact: "/@react-refresh", who: "stage iframe", why: "React hot-reload runtime" },
   { upgrade: true, methods: ["GET"], exact: "/", test: (_raw, headers) => /(^|,)\s*vite-(hmr|ping)\s*(,|$)/.test(String(headers["sec-websocket-protocol"] ?? "")),
-    who: "舞台 iframe", why: "热更新的 WebSocket(改卡之后舞台跟着换);只认开发服务器自己的子协议,文档服务等别的升级不放行" },
+    who: "stage iframe", why: "Hot-reload WebSocket (the stage follows after a card is edited); only the dev server's own subprotocol is accepted, other upgrades such as the document service are not allowed" },
   // —— 素材 ——
-  { methods: READ, prefix: "/@media/", who: "舞台里的 <video>、<img>、音频素材效果卡、素材效果卡", why: "本机内容库里的素材字节(按哈希或文件名,分段取);含 `/@media/<哈希>/pcm`" },
-  { methods: READ, exact: "/api/media/file", who: "舞台里的 <video>、<img>", why: "迁移期的老项目按路径取素材;接口自己只给素材目录里的文件" },
-  { methods: READ, prefix: "/catalog/", who: "Lottie 卡、粒子卡", why: "动效素材目录里登记过的 JSON(接口只认登记过的名字)" },
+  { methods: READ, prefix: "/@media/", who: "<video>, <img>, audio media effect cards and media effect cards in the stage", why: "Asset bytes in the local content store (by hash or file name, fetched in segments); includes `/@media/<hash>/pcm`" },
+  { methods: READ, exact: "/api/media/file", who: "<video> and <img> in the stage", why: "Legacy projects in the migration period fetch assets by path; the endpoint itself only serves files in the asset directory" },
+  { methods: READ, prefix: "/catalog/", who: "Lottie cards, particle cards", why: "JSON registered in the motion graphics asset catalog (the endpoint only accepts registered names)" },
   // —— 两条只读接口 ——
-  { methods: READ, exact: "/api/cards/scopes", who: "舞台里的卡片注册表", why: "定制卡的归属表(哪张卡属于哪个项目),只读;改档位的 POST 不放行" },
-  { methods: READ, exact: "/api/prerender/info", who: "舞台里取生成快照与轨道流的那一层", why: "问预渲染进程在哪个端口,只读(预渲染进程侧由 prerender-gate 拦死除流与快照字节外的一切请求)" },
+  { methods: READ, exact: "/api/cards/scopes", who: "Card registry in the stage", why: "Ownership table of custom cards (which card belongs to which project), read-only; the POST that changes tiers is not allowed" },
+  { methods: READ, exact: "/api/prerender/info", who: "The layer in the stage that fetches generate snapshots and track streams", why: "Asks which port the prerender process is on, read-only (on the prerender process side, prerender-gate blocks every request except streams and snapshot bytes)" },
 ];
 
 const EXTRA_ALLOW = Symbol.for("promptcut.stage-allow");
@@ -123,7 +123,7 @@ export function stageRequestAllowed(method, url, opts = {}) {
 }
 
 /** 拒绝时回的内容(代理和编辑器进程那一侧回的是同一句) */
-export const STAGE_DENY_BODY = JSON.stringify({ ok: false, error: "舞台端口不提供这个接口" });
+export const STAGE_DENY_BODY = JSON.stringify({ ok: false, error: "The stage port does not provide this endpoint" });
 
 /**
  * 排障和探针用的流水:设了 `PROMPTCUT_STAGE_PORT_LOG=<文件>` 时,舞台端口每来一个请求追加一行

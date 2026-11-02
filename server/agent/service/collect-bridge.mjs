@@ -204,29 +204,29 @@ const siteNamesSet = () => new Set(siteNames());
 export const COLLECT_BRIDGE_TEXT = Object.freeze({
   /** 退回匿名时写进作业 notes 的那一句:原因 + 画质差别 */
   fallback: Object.freeze({
-    'initiator-offline': '这个站点登录后才有更高的画质,但发起人现在不在线,用不了他电脑上的登录态',
-    'page-without-local-collect': '这个站点登录后才有更高的画质,但发起人现在用的是网页版(没有本机的采集与登录态)',
-    'not-logged-in': '发起人的电脑上还没有这个站点的登录态(需要的话先 user_interface_collect_login,让他在自己的电脑上登录)',
-    'local-not-ready': '发起人电脑上的采集工具没有就绪(没有装 yt-dlp 或缺 ffmpeg)',
-    'local-busy': '发起人的电脑正在替这个对话下载另一条链接',
-    'local-download-failed': '发起人的电脑用登录态下载这条链接没有成功',
-    'upload-failed': '发起人的电脑下载好了,但没能把文件传进这个项目的素材库',
-    'timeout': '发起人的电脑没有在时限内下载并上传完',
-    'receipt-invalid': '发起人的电脑交回的回执不合规矩,没有采用',
-    'asset-unverified': '素材服务里核不到发起人电脑说已经传好的那份文件,没有采用',
-    failed: '委托发起人的电脑下载没有成功',
+    'initiator-offline': 'This site offers higher quality after login, but the initiator is offline now, so the login state on their computer can\'t be used',
+    'page-without-local-collect': 'This site offers higher quality after login, but the initiator is currently using the web version (no local collection or login state)',
+    'not-logged-in': 'The initiator\'s computer has no login state for this site yet (if needed, run user_interface_collect_login first so they can log in on their own computer)',
+    'local-not-ready': 'The collection tools on the initiator\'s computer are not ready (yt-dlp is not installed or ffmpeg is missing)',
+    'local-busy': 'The initiator\'s computer is downloading another link for this chat',
+    'local-download-failed': 'The initiator\'s computer failed to download this link using its login state',
+    'upload-failed': 'The initiator\'s computer finished downloading, but could not upload the file to this project\'s media library',
+    'timeout': 'The initiator\'s computer did not finish downloading and uploading in time',
+    'receipt-invalid': 'The receipt returned by the initiator\'s computer is invalid and was not used',
+    'asset-unverified': 'The asset service cannot find the file that the initiator\'s computer reported as uploaded, so it was not used',
+    failed: 'Delegated download on the initiator\'s computer failed',
   }),
-  fallbackTail: ';已改为云端按未登录的画质下载,画质可能低于登录后的。',
-  delegated: '这条链接由发起人自己的电脑用他本机的登录态下载,文件由他的电脑直接传进这个项目的素材库;登录信息没有离开他的电脑。',
-  revoked: '这条任务已经被停止,或者不再有往这个项目里写素材的权限;发起人电脑交回的文件没有登记进项目。',
-  registerFailed: '发起人的电脑已经把文件传进素材库,但没能登记进项目',
-  loginOpened: '登录框已经在发起人自己的电脑上弹出来了。登录只能由他本人在自己的电脑上完成,登录态只留在他的电脑上,云端拿不到。**现在停下来**,用中文告诉用户「登录框已经在你的电脑上弹出来了,扫码或切到账号密码登录,登录完回我一句」,**不要继续调工具**;用户回话之后再调 collect_login_check。',
-  loginAlready: '发起人的电脑上已经有这个站点没过期的登录态,不用再登录。之后 collect_download 这个站点的链接时,会由他的电脑带着登录态下载(他在线的时候)。',
-  loginChecked: '发起人的电脑上已经登录。登录态只留在他的电脑上;之后 collect_download 这个站点的链接时,会由他的电脑带着登录态下载(他在线的时候)。',
-  loginMissing: '发起人的电脑上还没有登录态。请他在自己电脑上弹出的登录框里完成登录后再查一次;不要连着轮询,等用户回话。',
-  loginExpired: '发起人电脑上的登录态已经过期。请重新 user_interface_collect_login,让他在自己的电脑上再登录一次。',
-  webPage: (tool) => `${tool} 只能在发起人自己的电脑上操作,而他现在用的是网页版(没有本机的登录窗口)。请告诉用户到电脑上的 PromptCut 里登录;云端照常按未登录的画质采集。`,
-  loginFailed: (tool) => `${tool} 在发起人的电脑上没有做成。请告诉用户在电脑上的 PromptCut 里自己登录一次;云端照常按未登录的画质采集。`,
+  fallbackTail: '; switched to a cloud download at logged-out quality, which may be lower than the logged-in quality.',
+  delegated: 'This link was downloaded by the initiator\'s own computer using the login state on their machine, and the file was uploaded straight from their computer to this project\'s media library; the login information never left their computer.',
+  revoked: 'This task was stopped, or no longer has permission to write media into this project; the file returned by the initiator\'s computer was not registered in the project.',
+  registerFailed: 'The initiator\'s computer uploaded the file to the media library, but it could not be registered in the project',
+  loginOpened: 'The login window has opened on the initiator\'s own computer. Login can only be completed by them on their own computer; the login state stays on their computer and the cloud cannot get it. **Stop now** and tell the user "The login window has opened on your computer. Scan the QR code or switch to account and password login, then tell me when you are done", **do not keep calling tools**; after the user replies, call collect_login_check.',
+  loginAlready: 'The initiator\'s computer already has an unexpired login state for this site, so no login is needed. Later, when collect_download is called for a link on this site, their computer will download it with the login state (while they are online).',
+  loginChecked: 'Already logged in on the initiator\'s computer. The login state stays on their computer only; later, when collect_download is called for a link on this site, their computer will download it with the login state (while they are online).',
+  loginMissing: 'The initiator\'s computer has no login state yet. Ask them to finish logging in in the login window that opened on their computer, then check again; do not poll repeatedly, wait for the user to reply.',
+  loginExpired: 'The login state on the initiator\'s computer has expired. Call user_interface_collect_login again so they can log in once more on their own computer.',
+  webPage: (tool) => `${tool} can only be used on the initiator's own computer, and they are currently using the web version (no local login window). Tell the user to log in from PromptCut on their computer; the cloud will keep collecting at logged-out quality as usual.`,
+  loginFailed: (tool) => `${tool} did not succeed on the initiator's computer. Tell the user to log in once themselves from PromptCut on their computer; the cloud will keep collecting at logged-out quality as usual.`,
 });
 
 function openLedger(databasePath, now, retainMs) {
@@ -392,7 +392,7 @@ export function createCollectBridge({ bridge, databasePath, assets, authorize, r
           const denied = error?.status === 403 || error?.status === 401 || error?.code === 'forbidden';
           mark(id, 'rejected', denied ? 'run-revoked' : 'register-failed', { refs, media });
           say('agent.collect.delegate', { projectId: context.projectId, runId: context.runId, state: 'rejected', why: denied ? 'run-revoked' : 'register-failed' });
-          return stopped(denied ? 'run-revoked' : 'register-failed', denied ? COLLECT_BRIDGE_TEXT.revoked : `${COLLECT_BRIDGE_TEXT.registerFailed}。`);
+          return stopped(denied ? 'run-revoked' : 'register-failed', denied ? COLLECT_BRIDGE_TEXT.revoked : `${COLLECT_BRIDGE_TEXT.registerFailed}.`);
         }
       }
       mark(id, 'done', null, { receiptDigest: digest, refs, media });
@@ -449,7 +449,7 @@ export function createCollectBridge({ bridge, databasePath, assets, authorize, r
         if (revoked(error)) return end('cancelled', 'run-revoked', stopped('run-revoked', COLLECT_BRIDGE_TEXT.revoked));
         return end('fallback', 'initiator-offline', notDelegated('initiator-offline'));
       }
-      if (local.aborted) { await cancelPage(); return end('cancelled', 'run-cancelled', stopped('run-cancelled', '已取消')); }
+      if (local.aborted) { await cancelPage(); return end('cancelled', 'run-cancelled', stopped('run-cancelled', 'Cancelled')); }
       if (!out.delivered) return end('fallback', 'initiator-offline', notDelegated('initiator-offline'));
       if (out.answer.ok !== true) {
         const why = out.answer.code === 'unsupported' ? 'page-without-local-collect' : 'failed';
@@ -466,8 +466,8 @@ export function createCollectBridge({ bridge, databasePath, assets, authorize, r
       let lastSeen = started;
       for (;;) {
         await pause(limits.pollMs, local);
-        if (closed) return stopped('host-close', '云端 Agent 服务正在关闭,这次下载中断了。');
-        if (local.aborted) { await cancelPage(); return end('cancelled', 'run-cancelled', stopped('run-cancelled', '已取消')); }
+        if (closed) return stopped('host-close', 'The Cloud Agent service is shutting down, so this download was interrupted.');
+        if (local.aborted) { await cancelPage(); return end('cancelled', 'run-cancelled', stopped('run-cancelled', 'Cancelled')); }
         if (Number(now()) - started > limits.delegateMs) { await cancelPage(); return end('fallback', 'timeout', notDelegated('timeout')); }
         let poll;
         try { poll = await ask(context, 'collect_delegate_poll', { delegationId: id }, `${id}-p${seq++}`, local); } catch (error) {
@@ -475,7 +475,7 @@ export function createCollectBridge({ bridge, databasePath, assets, authorize, r
           poll = { delivered: false, offline: true, why: 'authority-unavailable', state: 'offline' };
         }
         if (!poll.delivered) {
-          if (local.aborted || poll.state === 'cancelled') { if (local.aborted) await cancelPage(); return end('cancelled', 'run-cancelled', stopped('run-cancelled', '已取消')); }
+          if (local.aborted || poll.state === 'cancelled') { if (local.aborted) await cancelPage(); return end('cancelled', 'run-cancelled', stopped('run-cancelled', 'Cancelled')); }
           // 交回时被拒(对话转私有、被停止、发起人被踢出、授权换了栅栏、答案不合规矩):这一次委托到此为止,晚到的回执不登记
           if (poll.state === 'rejected') {
             await cancelPage();

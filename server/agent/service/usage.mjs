@@ -199,7 +199,7 @@ export function createUsageLog({ dir = null, now = () => Date.now(), flushMs = 3
         for (const [name, bytes] of Object.entries(saved.files)) {
           let size = -1;
           try { size = fs.statSync(path.join(dir, name)).size; } catch { /* 文件没了 */ }
-          if (!Number.isSafeInteger(bytes) || bytes > size) throw new Error('检查点比流水新');
+          if (!Number.isSafeInteger(bytes) || bytes > size) throw new Error('Checkpoint is newer than the log');
           offsets[name] = bytes;
         }
         for (const [id, p] of Object.entries(saved.projects)) {

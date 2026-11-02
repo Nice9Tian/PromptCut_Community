@@ -41,12 +41,12 @@ const sha256Hex = (buf) => crypto.createHash('sha256').update(buf).digest('hex')
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function checkNs(ns) {
-  if (!ASSET_CLIENT_NAMESPACES.includes(ns)) throw new TypeError(`素材服务客户端：不认识的命名空间 ${JSON.stringify(ns)}`);
+  if (!ASSET_CLIENT_NAMESPACES.includes(ns)) throw new TypeError(`Asset service client: unknown namespace ${JSON.stringify(ns)}`);
 }
 
 function checkHash(hash) {
   const key = String(hash ?? '').toLowerCase();
-  if (!HASH.test(key)) throw new TypeError('素材服务客户端：hash 必须是 64 位十六进制 sha256');
+  if (!HASH.test(key)) throw new TypeError('Asset service client: hash must be a 64-character hex sha256');
   return key;
 }
 
@@ -72,13 +72,13 @@ function parseBody(buf, contentType) {
 export function createAssetClient({
   base, ticket = null, token, fetch = globalThis.fetch, chunkSize = 8 * 1024 * 1024, retries = 3, timeoutMs = 30000,
 } = /** @type {any} */ ({})) {
-  if (token !== undefined && token !== null) throw new TypeError('createAssetClient：集群令牌不再用于素材服务，改给 ticket()');
-  if (ticket !== null && typeof ticket !== 'function') throw new TypeError('createAssetClient：ticket 必须是函数');
-  if (typeof base !== 'string' || !/^https?:\/\//i.test(base)) throw new TypeError('createAssetClient：base 必须是 http(s) 地址');
-  if (typeof fetch !== 'function') throw new TypeError('createAssetClient：没有可用的 fetch');
-  if (!Number.isSafeInteger(chunkSize) || chunkSize <= 0) throw new TypeError('createAssetClient：chunkSize 必须是正整数');
-  if (!Number.isSafeInteger(retries) || retries < 0) throw new TypeError('createAssetClient：retries 必须是非负整数');
-  if (typeof timeoutMs !== 'number' || !(timeoutMs > 0)) throw new TypeError('createAssetClient：timeoutMs 必须是正数');
+  if (token !== undefined && token !== null) throw new TypeError('createAssetClient: the cluster token is no longer used for the asset service, pass ticket() instead');
+  if (ticket !== null && typeof ticket !== 'function') throw new TypeError('createAssetClient: ticket must be a function');
+  if (typeof base !== 'string' || !/^https?:\/\//i.test(base)) throw new TypeError('createAssetClient: base must be an http(s) address');
+  if (typeof fetch !== 'function') throw new TypeError('createAssetClient: no fetch available');
+  if (!Number.isSafeInteger(chunkSize) || chunkSize <= 0) throw new TypeError('createAssetClient: chunkSize must be a positive integer');
+  if (!Number.isSafeInteger(retries) || retries < 0) throw new TypeError('createAssetClient: retries must be a non-negative integer');
+  if (typeof timeoutMs !== 'number' || !(timeoutMs > 0)) throw new TypeError('createAssetClient: timeoutMs must be a positive number');
   const root = base.replace(/\/+$/, '');
   /** 用过的票据：异常信息里出现就抹掉 */
   const secrets = new Set();
@@ -101,7 +101,7 @@ export function createAssetClient({
 
   function httpError(what, status, body) {
     const detail = body && typeof body === 'object' && 'error' in body ? String(body.error) : (typeof body === 'string' ? body.slice(0, 200) : '');
-    const err = new Error(scrub(`素材服务 ${what} 回 ${status}${detail ? `：${detail}` : ''}`));
+    const err = new Error(scrub(`Asset service ${what} returned ${status}${detail ? `: ${detail}` : ''}`));
     /** @type {any} */ (err).status = status;
     /** @type {any} */ (err).body = body;
     return err;
@@ -111,15 +111,15 @@ export function createAssetClient({
     const name = cause && typeof cause === 'object' && 'name' in cause ? String(cause.name) : 'Error';
     const code = cause && typeof cause === 'object' ? (cause.code ?? cause.cause?.code) : undefined;
     const msg = cause instanceof Error ? cause.message : String(cause);
-    const inner = cause && typeof cause === 'object' && cause.cause instanceof Error ? `（${cause.cause.message}）` : '';
-    const err = new Error(scrub(`素材服务 ${what} 网络错误：${name}: ${msg}${inner}`));
+    const inner = cause && typeof cause === 'object' && cause.cause instanceof Error ? ` (${cause.cause.message})` : '';
+    const err = new Error(scrub(`Asset service ${what} network error: ${name}: ${msg}${inner}`));
     /** @type {any} */ (err).code = 'network';
     if (code !== undefined) /** @type {any} */ (err).cause = { name, code: scrub(code) };
     return err;
   }
 
   function timeoutError(what) {
-    const err = new Error(scrub(`素材服务 ${what} 超时（${timeoutMs} ms 没有完成）`));
+    const err = new Error(scrub(`Asset service ${what} timed out (not completed within ${timeoutMs} ms)`));
     /** @type {any} */ (err).code = 'timeout';
     return err;
   }
@@ -220,14 +220,14 @@ export function createAssetClient({
      */
     async put(ns, bytes, { ext } = {}) {
       checkNs(ns);
-      if (!(bytes instanceof Uint8Array)) throw new TypeError('素材服务客户端：put 的 bytes 必须是 Buffer / Uint8Array');
+      if (!(bytes instanceof Uint8Array)) throw new TypeError('Asset service client: bytes for put must be Buffer / Uint8Array');
       const buf = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
       const size = buf.length;
-      if (size === 0) throw new RangeError('素材服务客户端：不能上传空内容（服务端要求 X-Media-Size 为正整数）');
+      if (size === 0) throw new RangeError('Asset service client: cannot upload empty content (the server requires X-Media-Size to be a positive integer)');
       let extName = '';
       if (ext !== undefined && ext !== null && ext !== '') {
         extName = String(ext).trim().toLowerCase().replace(/^\./, '');
-        if (!EXT.test(extName)) throw new TypeError(`素材服务客户端：扩展名不合法 ${JSON.stringify(ext)}`);
+        if (!EXT.test(extName)) throw new TypeError(`Asset service client: invalid extension ${JSON.stringify(ext)}`);
       }
       const hash = sha256Hex(buf);
 
@@ -270,16 +270,16 @@ export function createAssetClient({
       const key = checkHash(hash);
       const { open, stat } = await import('node:fs/promises');
       const size = (await stat(filePath)).size;
-      if (size === 0) throw new RangeError('素材服务客户端：不能上传空内容（服务端要求 X-Media-Size 为正整数）');
+      if (size === 0) throw new RangeError('Asset service client: cannot upload empty content (the server requires X-Media-Size to be a positive integer)');
       let extName = '';
       if (ext !== undefined && ext !== null && ext !== '') {
         extName = String(ext).trim().toLowerCase().replace(/^\./, '');
-        if (!EXT.test(extName)) throw new TypeError(`素材服务客户端：扩展名不合法 ${JSON.stringify(ext)}`);
+        if (!EXT.test(extName)) throw new TypeError(`Asset service client: invalid extension ${JSON.stringify(ext)}`);
       }
       const st = await chunkState(ns, key);
       if (st.complete) return { hash: key, size, uploaded: false, sent: [] };
       if (st.size !== null && st.size !== size) {
-        const err = new Error(`素材服务 ${ns}/${key}：服务端登记的大小 ${st.size} 与本地文件 ${size} 不符`);
+        const err = new Error(`Asset service ${ns}/${key}: size registered on the server ${st.size} does not match local file ${size}`);
         /** @type {any} */ (err).code = 'size-mismatch';
         throw err;
       }
@@ -298,7 +298,7 @@ export function createAssetClient({
           let read = 0;
           while (read < length) {
             const r = await fh.read(part, read, length - read, start + read);
-            if (r.bytesRead === 0) throw new Error(`素材服务客户端：读 ${filePath} 第 ${n} 片时文件变短了`);
+            if (r.bytesRead === 0) throw new Error(`Asset service client: file became shorter while reading chunk ${n} of ${filePath}`);
             read += r.bytesRead;
           }
           const release = typeof beforeChunk === 'function' ? await beforeChunk(n) : null;
@@ -344,7 +344,7 @@ export function createAssetClient({
       ensureOk(`GET ${rel}`, r);
       const actual = sha256Hex(r.raw);
       if (actual !== key) {
-        const err = new Error(`素材服务 GET ${rel}：取回的字节 sha256 不符（实际 ${actual}）`);
+        const err = new Error(`Asset service GET ${rel}: sha256 of fetched bytes does not match (actual ${actual})`);
         /** @type {any} */ (err).code = 'hash-mismatch';
         /** @type {any} */ (err).actual = actual;
         throw err;

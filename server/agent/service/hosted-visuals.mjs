@@ -61,12 +61,12 @@ const sha256Hex = (buf) => crypto.createHash('sha256').update(buf).digest('hex')
  * `<dataDir>/tenants/<projectId>/conversations/<conversationId>/visuals`
  */
 export function conversationVisualsDir(dataDir, projectId, conversationId) {
-  if (typeof dataDir !== 'string' || !dataDir) throw new VisualsToolError('缺少 dataDir', 'visuals-unconfigured');
+  if (typeof dataDir !== 'string' || !dataDir) throw new VisualsToolError('Missing dataDir', 'visuals-unconfigured');
   if (!SAFE_SEG_RE.test(String(projectId)) || /^\.+$/.test(String(projectId))) {
-    throw new VisualsToolError('非法的 projectId', 'bad-project-id', 400);
+    throw new VisualsToolError('Invalid projectId', 'bad-project-id', 400);
   }
   if (!SAFE_SEG_RE.test(String(conversationId)) || /^\.+$/.test(String(conversationId))) {
-    throw new VisualsToolError('非法的 conversationId', 'bad-conversation-id', 400);
+    throw new VisualsToolError('Invalid conversationId', 'bad-conversation-id', 400);
   }
   return path.join(path.resolve(dataDir), 'tenants', String(projectId), 'conversations', String(conversationId), 'visuals');
 }
@@ -87,7 +87,7 @@ export function visualFileUrl(conversationId, visualId, fileName, aclRevision = 
  */
 export function createVisualsStore({ dataDir = null, workspace = null, now = Date.now } = {}) {
   if (!dataDir && !workspace) {
-    throw new VisualsToolError('createVisualsStore 需要 dataDir 或 workspace', 'visuals-unconfigured');
+    throw new VisualsToolError('createVisualsStore requires dataDir or workspace', 'visuals-unconfigured');
   }
 
   async function resolveDirs(scope) {
@@ -243,7 +243,7 @@ export function createVisualsTools({
   const authProvider = resources && typeof resources.authorize === 'function'
     ? resources
     : (contextAccess && typeof contextAccess.authorize === 'function' ? contextAccess : null);
-  if (!authProvider) throw new VisualsToolError('可视记录工具缺少依赖:resources/contextAccess', 'visuals-unconfigured');
+  if (!authProvider) throw new VisualsToolError('Visuals tool is missing a dependency: resources/contextAccess', 'visuals-unconfigured');
   const store = createVisualsStore({ dataDir, workspace, now });
   const say = (event, fields = {}) => { try { log(event, fields); } catch {} };
 
@@ -251,18 +251,18 @@ export function createVisualsTools({
   const inFlight = new Set();
 
   async function authorize(context, action = 'read') {
-    if (closing) throw new VisualsToolError('云端 Agent 服务正在关闭,不再接新活。', 'visuals-closing', 503);
+    if (closing) throw new VisualsToolError('The Cloud Agent service is shutting down and no longer accepts new work.', 'visuals-closing', 503);
     if (!context || typeof context !== 'object' || typeof context.projectId !== 'string' || typeof context.runGrantId !== 'string') {
-      throw new VisualsToolError('缺少可信的运行上下文', 'tool-context-untrusted', 403);
+      throw new VisualsToolError('Missing trusted run context', 'tool-context-untrusted', 403);
     }
     try {
       return await authProvider.authorize(context, action);
     } catch (error) {
       if (error instanceof VisualsToolError) throw error;
       if (['run-authority-unavailable', 'tool-instance-unavailable', 'fence-unavailable', 'authorization-unavailable'].includes(error?.code)) {
-        throw new VisualsToolError('文档服务暂时联系不上,没法确认这一轮的权限。稍后再试。', 'authority-unavailable', 503);
+        throw new VisualsToolError('The document service is temporarily unreachable, so permissions for this turn cannot be confirmed. Try again later.', 'authority-unavailable', 503);
       }
-      throw new VisualsToolError('这一轮没有读项目的权限(被停止、转私有或权限已撤)。', 'visuals-forbidden', 403);
+      throw new VisualsToolError('This turn has no permission to read the project (stopped, made private, or permission revoked).', 'visuals-forbidden', 403);
     }
   }
 
@@ -307,7 +307,7 @@ export function createVisualsTools({
         const ext = im?.mime === 'image/jpeg' ? 'jpg' : im?.mime === 'image/gif' ? 'gif' : im?.mime === 'image/webp' ? 'webp' : 'png';
         const saved = await store.saveFile(scope, raw, ext);
         const url = visualFileUrl(context.conversationId, visualId, saved.name, aclRevision);
-        savedImages.push({ file: saved.name, url, label: String(im?.label ?? `画面 ${idx + 1}`) });
+        savedImages.push({ file: saved.name, url, label: String(im?.label ?? `Frame ${idx + 1}`) });
         savedFrames.push({ index: idx, t: im?.t ?? null, file: saved.name, size: saved.size });
       }
     }
@@ -362,13 +362,13 @@ export function createVisualsTools({
     const auth = await authorize(context, 'read');
     const clipId = typeof args?.clipId === 'string' ? args.clipId.trim() : '';
     if (!clipId) {
-      throw new VisualsToolError('clipId 必填,是要看的卡片片段 id', 'bad-args', 400);
+      throw new VisualsToolError('clipId is required: the id of the card clip to view', 'bad-args', 400);
     }
 
     const { project: proj, rev: sourceRev } = await readProjectSnapshot(context);
     const iso = isolateClip(proj, clipId, { preserveContext: true });
     if (!iso) {
-      throw new VisualsToolError(`时间轴上没有 id 为 ${clipId} 的片段。`, 'clip-not-found', 404);
+      throw new VisualsToolError(`No clip with id ${clipId} on the timeline.`, 'clip-not-found', 404);
     }
 
     const times = sampleTimes(iso.clip, GIF_FRAMES);
@@ -443,7 +443,7 @@ export function createVisualsTools({
         size: savedGif.size,
         file: savedGif.name,
       },
-      images: [{ file: savedGrid.name, url: gridUrl, label: '4×2 拼图' }],
+      images: [{ file: savedGrid.name, url: gridUrl, label: '4×2 grid' }],
       after: { file: savedGif.name, gif: gifUrl },
     });
 
@@ -457,7 +457,7 @@ export function createVisualsTools({
       gif: gifUrl,
       sourceRev,
       aclRevision,
-      note: '动图已生成(8 帧,聊天栏里也会显示)。下面是同 8 帧的 4×2 拼图,第 k 格对应 times 的第 k 个时刻。',
+      note: 'GIF generated (8 frames, also shown in the chat panel). Below is a 4×2 grid of the same 8 frames; cell k corresponds to the k-th time in times.',
       __image: { mime: 'image/png', base64: gridBuf.toString('base64') },
     };
   }
@@ -468,7 +468,7 @@ export function createVisualsTools({
     recordVisual,
     call(name, args, context, _options = {}) {
       if (name !== 'get_gif') {
-        return Promise.reject(new VisualsToolError(`可视记录工具不处理 ${String(name).slice(0, 60)}`, 'unknown-tool'));
+        return Promise.reject(new VisualsToolError(`Visuals tool does not handle ${String(name).slice(0, 60)}`, 'unknown-tool'));
       }
       const p = Promise.resolve().then(() => handleGetGif(context, args ?? {}));
       inFlight.add(p);

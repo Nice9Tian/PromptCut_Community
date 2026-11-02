@@ -58,28 +58,28 @@ export class WebTargetError extends Error {
  */
 export function normalizeWebTarget(input) {
   const raw = String(input ?? '').trim();
-  if (!raw) throw new WebTargetError('empty', '要给 url');
-  if (raw.length > 4096) throw new WebTargetError('too-long', '地址太长');
-  if (/[\u0000-\u001f\u007f]/.test(raw)) throw new WebTargetError('protocol', '地址里有非法字符');
+  if (!raw) throw new WebTargetError('empty', 'url is required');
+  if (raw.length > 4096) throw new WebTargetError('too-long', 'Address too long');
+  if (/[\u0000-\u001f\u007f]/.test(raw)) throw new WebTargetError('protocol', 'Address contains invalid characters');
   if (/^https?:\/\//i.test(raw)) return raw;
   // 「名字:端口/路径」不是协议:名字里有点(或就是 localhost)、冒号后面紧跟数字。`tel:123` 这类不算。其余带「协议:」前缀的都不是 http(s)
   const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(raw);
   if (scheme && !/^([^/:]+\.[^/:]+|localhost):\d{1,5}(\/|$|\?|#)/i.test(raw)) {
-    throw new WebTargetError('protocol', `云端 Agent 的浏览器只打开 http / https 地址,不打开 ${scheme[1].toLowerCase()}: 地址。`);
+    throw new WebTargetError('protocol', `The Cloud Agent's browser only opens http / https addresses, not ${scheme[1].toLowerCase()}: addresses.`);
   }
-  if (raw.startsWith('//') || raw.startsWith('\\\\')) throw new WebTargetError('protocol', '云端 Agent 的浏览器只打开 http / https 地址。');
+  if (raw.startsWith('//') || raw.startsWith('\\\\')) throw new WebTargetError('protocol', 'The Cloud Agent\'s browser only opens http / https addresses.');
   return `https://${raw}`;
 }
 
 /** 出网闸的原因码 → 给模型看的一句话 */
 export function egressRefusalText(code) {
   switch (code) {
-    case 'blocked-address': return '这个地址指向云节点本机、内网或保留地址,云端 Agent 的浏览器不许访问。';
-    case 'port': return '云端 Agent 的浏览器只许访问 80、443、8080、8443 端口。';
-    case 'protocol': return '云端 Agent 的浏览器只打开 http / https 地址。';
-    case 'credentials': return '地址里不许带用户名口令。';
-    case 'unresolved': return '这个主机名解析不了。';
-    default: return '这个地址被云端的出网限制拒绝了。';
+    case 'blocked-address': return 'This address points to the cloud node itself, the internal network or a reserved address, and the Cloud Agent\'s browser is not allowed to access it.';
+    case 'port': return 'The Cloud Agent\'s browser may only access ports 80, 443, 8080 and 8443.';
+    case 'protocol': return 'The Cloud Agent\'s browser only opens http / https addresses.';
+    case 'credentials': return 'The address must not contain a username or password.';
+    case 'unresolved': return 'This host name cannot be resolved.';
+    default: return 'This address was rejected by the cloud\'s egress restrictions.';
   }
 }
 
@@ -91,7 +91,7 @@ export async function admitWebTarget(gate, input) {
   let target;
   try { target = normalizeWebTarget(input); } catch (err) {
     if (!(err instanceof WebTargetError)) throw err;
-    return { ok: false, result: { ok: false, error: err.code === 'empty' ? err.message : `没有打开:${err.message}`, refused: err.code } };
+    return { ok: false, result: { ok: false, error: err.code === 'empty' ? err.message : `Not opened: ${err.message}`, refused: err.code } };
   }
   try {
     // 交给浏览器的是出网闸解析、规范化之后的那个地址(主机名小写、十进制 IP 还原成点分等),不是模型给的原字符串:核的和开的是同一个
@@ -99,7 +99,7 @@ export async function admitWebTarget(gate, input) {
     return { ok: true, target: url.href };
   } catch (err) {
     if (!err?.egress) throw err;
-    return { ok: false, result: { ok: false, error: `没有打开:${egressRefusalText(err.code)}`, egress: err.code } };
+    return { ok: false, result: { ok: false, error: `Not opened: ${egressRefusalText(err.code)}`, egress: err.code } };
   }
 }
 

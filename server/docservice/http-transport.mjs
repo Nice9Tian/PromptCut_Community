@@ -144,8 +144,8 @@ export function createHttpTransport({
   now = Date.now,
   log = () => {},
 } = /** @type {any} */ ({})) {
-  if (!sessions || typeof sessions.openSession !== 'function') throw new TypeError('createHttpTransport: 要给会话层 sessions');
-  if (typeof authenticate !== 'function') throw new TypeError('createHttpTransport: authenticate 必须是函数');
+  if (!sessions || typeof sessions.openSession !== 'function') throw new TypeError('createHttpTransport: the session layer `sessions` is required');
+  if (typeof authenticate !== 'function') throw new TypeError('createHttpTransport: authenticate must be a function');
   const base = String(prefix).replace(/\/+$/, '');
   const lpRoot = `${base}/lp/`;
   const waitCap = Math.min(positive(waitMs, HTTP_TRANSPORT_DEFAULTS.WAIT_MS), HTTP_TRANSPORT_DEFAULTS.MAX_WAIT_MS);

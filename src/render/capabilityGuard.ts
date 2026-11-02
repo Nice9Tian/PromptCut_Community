@@ -74,8 +74,8 @@ export function guardCompositing(
     SCANNED.add(clip.cardId);
     if (!usesBackdropFilter(el, options.readStyle)) continue;
     if (degradeCard(clip.cardId, "backdrop-filter")) {
-      warn(`[卡片能力] "${clip.cardId}" 在审阅表里是 independent，但画面上量到 backdrop-filter。` +
-        `本次会话按 belowDependent 处理（不进独立缓存）。请修审阅表 src/cards/capabilities.json 或改卡片源码。`);
+      warn(`[card capability] "${clip.cardId}" is independent in the review table, but backdrop-filter was measured on screen.` +
+        `This session treats it as belowDependent (not put into the independent cache). Fix the review table src/cards/capabilities.json or change the card source.`);
       degraded.push(clip.cardId);
     }
   }

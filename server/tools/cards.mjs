@@ -1,30 +1,30 @@
 export const cardsTools = [
   {
     name: "list_cards",
-    description: "列出可用卡片。不带参数返回摘要（id、name、description、useWhen 什么时候用这张卡、tags、参数名列表，带 * 的是必填），一次就能扫完所有卡并选定用哪张。选定之后带 cardId 再调一次拿这张卡的完整 controls 和 defaults，然后才 add_clip。",
+    description: "List available cards. Without arguments it returns a summary (id, name, description, useWhen for when to use the card, tags, and a list of parameter names, where those marked * are required), so you can scan all cards in one call and pick one. After picking, call again with cardId to get that card's full controls and defaults, and only then add_clip.",
     inputSchema: {
       type: "object",
       properties: {
-        cardId: { type: "string", description: "只要这一张卡的完整 schema" },
-        detail: { type: "string", enum: ["summary", "full"], description: "full 表示所有卡都要完整 schema，通常不需要" }
+        cardId: { type: "string", description: "Only the full schema of this one card" },
+        detail: { type: "string", enum: ["summary", "full"], description: "full means the full schema for all cards, usually not needed" }
       }
     },
     side: "page"
   },
   {
     name: "card_authoring_guide",
-    description: "取建卡规则全文（两种写法 remotion 式 / motion 式及各自的规矩、CardDef 契约、控件类型、硬性约束、可用依赖、完整示例）。新卡只按这两种写法写，用必填的 frameMode 声明：\"direct\" 是 remotion 式，\"stateful\" 是 motion 式，不规定优先用哪一种。要用 create_card 新建卡片前**必须先调它**，不要凭印象写。",
+    description: "Get the full text of the card-building rules (two styles, remotion style / motion style, and the rules of each, the CardDef contract, control types, hard constraints, available dependencies, complete examples). New cards are written only in these two styles, declared with the required frameMode: \"direct\" is remotion style, \"stateful\" is motion style, with no preference for either. **You must call it first** before using create_card to create a new card; do not write from memory.",
     inputSchema: { type: "object", properties: {} },
     side: "agent"
   },
   {
     name: "get_card_source",
-    description: "读回一张卡片的原始源码。用户卡和内置卡都能读。返回定义文件的源码，外加 files：这张卡一路用到的卡片 / 部件文件，每个带 sharedBy（被几张卡共用）。传 file 读其中某一个——inspect_card_dom 标出的源码位置常常落在共用部件或 vendor 文件里。**要改已有的卡之前必须先调它**：不读回来就改，等于凭记忆重写整张卡，没提到的地方每改一轮就会漂一点。",
+    description: "Read back the original source of a card. Both user cards and built-in cards can be read. Returns the source of the definition file, plus files: the card / part files this card uses throughout, each with sharedBy (how many cards share it). Pass file to read one of them: the source locations marked by inspect_card_dom often land in shared parts or vendor files. **You must call it before modifying an existing card**: modifying without reading back amounts to rewriting the whole card from memory, and anything not mentioned drifts a little with every round.",
     inputSchema: {
       type: "object",
       properties: {
-        cardId: { type: "string", description: "卡片 id" },
-        file: { type: "string", description: "要读的文件相对路径，必须在这张卡的 files 列表里；不传就是卡片定义文件" }
+        cardId: { type: "string", description: "card id" },
+        file: { type: "string", description: "Relative path of the file to read; must be in this card's files list; if omitted, reads the card definition file" }
       },
       required: ["cardId"]
     },
@@ -32,15 +32,15 @@ export const cardsTools = [
   },
   {
     name: "edit_card",
-    description: "改一张卡的源码（用户卡和内置卡都行）：把源码里的 find 这一段替换成 replace，只动这一处，别的地方原样不变。**这是修改已有卡片的唯一正确方式**，不要用 create_card + overwrite 整篇重写。用法：先 get_card_source 读回源码，照着它原样复制要改的那几行当 find（缩进空格都要一致），写上改完的样子当 replace。find 必须在源码里唯一命中：命中 0 次说明你手上的版本旧了，命中多次就把 find 写长一点带上周围几行。带 file 可以改这张卡用到的部件 / vendor 文件（必须在 get_card_source 返回的 files 里）；sharedBy > 1 的文件被多张卡共用，改了它们都会跟着变。**只能改源码，不能改 HTML**：舞台上的 DOM 是源码渲染出来的，直接改 DOM 下一帧就被盖掉。内置文件改之前会自动备份到 out/card-edits/。落盘前会做语法检查，并拒绝新引入 Date.now / setTimeout / setAnimationLoop 这类不跟帧走的写法；声明成 remotion 式（frameMode: \"direct\"）的卡还会按 remotion 式的规矩逐条检查，违规的指出行号。",
+    description: "Edit a card's source (works for user cards and built-in cards): replace the `find` segment in the source with `replace`, touching only this one spot and leaving everything else unchanged. **This is the only correct way to modify an existing card**; do not rewrite the whole file with create_card + overwrite. Usage: first read the source back with get_card_source, copy the lines to change verbatim as `find` (indentation and spaces must match), and write the edited version as `replace`. `find` must match exactly once in the source: 0 matches means your copy is stale, and multiple matches mean you should make `find` longer to include the surrounding lines. With `file`, you can edit the parts / vendor files this card uses (they must be in the files returned by get_card_source); files with sharedBy > 1 are shared by several cards, and editing them changes all of those cards. **Only the source can be edited, not the HTML**: the DOM on the stage is rendered from the source, so editing the DOM directly gets overwritten on the next frame. Built-in files are backed up automatically to out/card-edits/ before editing. A syntax check runs before saving, and newly introduced Date.now / setTimeout / setAnimationLoop and similar patterns that do not follow the frame are rejected; cards declared as remotion-style (frameMode: \"direct\") are also checked item by item against the remotion-style rules, and violations are reported with line numbers.",
     inputSchema: {
       type: "object",
       properties: {
         cardId: { type: "string" },
-        file: { type: "string", description: "要改的文件相对路径，必须在 get_card_source 返回的 files 里；不传就改卡片定义文件" },
-        find: { type: "string", description: "要被替换掉的原文，逐字照抄源码" },
-        replace: { type: "string", description: "替换成的新内容" },
-        replaceAll: { type: "boolean", description: "find 有意匹配多处且都要改时传 true" }
+        file: { type: "string", description: "Relative path of the file to edit; must be in the files returned by get_card_source; if omitted, edits the card definition file" },
+        find: { type: "string", description: "The original text to be replaced, copied verbatim from the source" },
+        replace: { type: "string", description: "The new content to replace it with" },
+        replaceAll: { type: "boolean", description: "Pass true when `find` intentionally matches multiple places and all of them should be changed" }
       },
       required: ["cardId", "find", "replace"]
     },
@@ -48,14 +48,14 @@ export const cardsTools = [
   },
   {
     name: "inspect_card_dom",
-    description: "只读地看一张卡某一刻渲染出来的 HTML（DOM 树），每个节点标出是哪个组件、源码哪一行渲染的。用来在「画面上这一块」和「源码里那一行」之间对上号，再用 get_card_source + edit_card 去改那一行。**只能看，不能改**：HTML 是源码渲染出来的，要改就改源码。只有一个子节点、自己又没字的包装层会被折叠掉；默认往下 3 层，超出的节点标「…还有 N 个后代，传 ref:N 往下看」，把那个数字传给 ref 就从那个节点继续展开（同一时刻的树有缓存，往下看不用重新渲染）。同一行源码生成多个兄弟节点（列表）时会标出来——改那一行它们一起变。用的是导出同一条渲染管线，看到的就是成片那一帧的结构；第一次调要起一个渲染进程，几秒。",
+    description: "Read-only view of the HTML (DOM tree) a card renders at a given moment, with each node marked with the component and the source line that rendered it. Use it to match \"this block on screen\" to \"that line in the source\", then use get_card_source + edit_card to change that line. **View only, no editing**: the HTML is rendered from the source, so to change it, edit the source. Wrapper layers that have a single child and no text of their own are collapsed; it expands 3 levels down by default, and nodes beyond that are marked \"…N more descendants, pass ref:N to look deeper\"; pass that number as ref to continue expanding from that node (the tree for the same moment is cached, so looking deeper needs no re-render). When one source line generates multiple sibling nodes (a list), this is marked: change that line and they all change together. It uses the same render pipeline as export, so what you see is the structure of that frame in the final video; the first call has to start a render process, which takes a few seconds.",
     inputSchema: {
       type: "object",
       properties: {
-        clipId: { type: "string", description: "要看的片段 id" },
-        t: { type: "number", description: "时间轴第几秒；不传取这个片段的中点" },
-        ref: { type: "number", description: "从这个节点往下展开（上一次返回里的 ref 数字）；不传从最外层开始" },
-        depth: { type: "number", description: "往下展开几层，默认 3，最多 8" }
+        clipId: { type: "string", description: "ID of the clip to view" },
+        t: { type: "number", description: "Which second on the timeline; if omitted, uses the midpoint of this clip" },
+        ref: { type: "number", description: "Expand downward from this node (the ref number from the previous return); if omitted, starts from the outermost level" },
+        depth: { type: "number", description: "How many levels to expand downward, default 3, max 8" }
       },
       required: ["clipId"]
     },
@@ -65,13 +65,13 @@ export const cardsTools = [
   },
   {
     name: "create_card",
-    description: "创建可复用卡片定义：TSX `CardDef`；要多输入或 GPU 滤镜、转场、音频时写 `kind` / `inputs` / `card` / `audio`，先读 `card_authoring_guide`。必须写 `frameMode`：\"direct\"（remotion 式，画面只由 t、参数、输入素材决定，只许用框架 remotionStyle 和 react 写，违规的逐条带行号被拒）或 \"stateful\"（motion 式，可用 Motion、CSS 动画等）。建完用 apply_card 把它应用到片段。改现有源码用 get_card_source 和 edit_card，不要用 create_card + overwrite 整篇重写。",
+    description: "Create a reusable card definition: TSX `CardDef`; for multiple inputs or GPU filters, transitions, or audio, write `kind` / `inputs` / `card` / `audio`, and read `card_authoring_guide` first. `frameMode` is required: \"direct\" (remotion-style, the picture is determined only by t, params, and input media, written only with the framework's remotionStyle and react, violations are rejected item by item with line numbers) or \"stateful\" (motion-style, may use Motion, CSS animations, etc.). After creating it, use apply_card to apply it to a clip. To change existing source, use get_card_source and edit_card, not create_card + overwrite to rewrite the whole file.",
     inputSchema: {
       type: "object",
       properties: {
-        id: { type: "string", description: "小写 kebab-case，全局唯一，例如 price-tag" },
-        source: { type: "string", description: "完整 TSX CardDef 源码" },
-        overwrite: { type: "boolean", description: "只在确实要把同名卡整篇换掉时传 true；改细节请用 edit_card" }
+        id: { type: "string", description: "Lowercase kebab-case, globally unique, e.g. price-tag" },
+        source: { type: "string", description: "Complete TSX CardDef source" },
+        overwrite: { type: "boolean", description: "Pass true only when you really need to replace the whole card of the same name; use edit_card for small changes" }
       },
       required: ["id", "source"]
     },
@@ -79,7 +79,7 @@ export const cardsTools = [
   },
   {
     name: "apply_card",
-    description: "把一张素材效果卡定义应用为实例。同一定义可用于多段素材。clipId为已有片段；或trackId/start/end创建新动画或音频片段。inputs以名称映射到{clipId}（指素材段 = 该素材，指素材效果卡片段 = 那张素材效果卡的输出）或{nodeId}另一卡输出，可加offset秒和rate倍率；不传inputs时：片段上已有素材效果卡就接它的输出，否则接目标clip的原始素材。多输入转场常用A/B。params作为实例参数传入。nodeId不传自动生成，传当前clip.nodeId可编辑该实例参数和输入。",
+    description: "Apply a media effect card definition as an instance. The same definition can be used on multiple media clips. clipId is an existing clip; or trackId/start/end creates a new animation or audio clip. inputs maps names to {clipId} (pointing to a media clip = that media, pointing to a media effect card clip = the output of that media effect card) or {nodeId} for another card's output, and can add offset (seconds) and rate (multiplier); when inputs is omitted: if the clip already has a media effect card, it connects to that card's output, otherwise it connects to the target clip's original media. Multi-input transitions commonly use A/B. params are passed in as instance parameters. nodeId is generated automatically if omitted; pass the current clip.nodeId to edit that instance's parameters and inputs.",
     inputSchema: { type: "object", properties: {
       cardId: { type: "string" }, clipId: { type: "string" }, trackId: { type: "string" }, start: { type: "number" }, end: { type: "number" },
       nodeId: { type: "string" }, params: { type: "object" }, frame: { type: "object" },
@@ -91,28 +91,28 @@ export const cardsTools = [
   {
     name: "bake_card",
     description:
-      "把一张卡**渲染成一张图片**存进素材库,返回它的 URL。目前唯一的用处是给 `scene-3d` 当贴图 —— " +
-      "把 URL 填进那张卡的 `texture` 参数,就得到「立体物件表面印着这张卡」。" +
+      "Render a card **into an image** and save it to the media library, returning its URL. Currently its only use is as a texture for `scene-3d`: " +
+      "fill the URL into that card's `texture` parameter, and you get \"a 3D object with this card printed on its surface\"." +
       "\n\n" +
-      "画这张图的是**导出成片的那个渲染器**(和 see_frames 同一条管线),所以贴上去之后预览和成片长得一样。" +
+      "The image is drawn by **the renderer that exports the final video** (the same pipeline as see_frames), so after it is applied, the preview and the final video look the same." +
       "\n\n" +
-      "**它是一张 PNG 快照,不是活的**:卡片的动画会定格在 `t` 那一帧;之后你改了这张卡的参数,贴图**不会**跟着变," +
-      "要重新渲染一次再把新 URL 填回去。所以顺序是「先把卡调好,再渲染」" +
-      "(在 3D 视图与导出中贴图会跟着播放动,不再定格在 `t`;bake_card 产出的是指定时刻 `t` 的 PNG 快照)。" +
+      "**It is a PNG snapshot, not live**: the card's animation freezes at frame `t`; if you change the card's parameters afterwards, the texture **will not** follow," +
+      "so you need to render again and fill the new URL back in. So the order is \"tune the card first, then render\"" +
+      "(In the 3D view and in export, the texture now plays along with playback and no longer freezes at `t`; what bake_card produces is a PNG snapshot at the specified moment `t`)." +
       "\n\n" +
-      "两种观感,由 `bg` 决定,**渲染的时候就定死**:" +
-      "不传 bg = 透明底,物体在卡片没画的地方也透空,内容像浮在空间里(适合标志、招牌);" +
-      "传了 bg = 压平成不透明,得到实心物体表面印着这张卡 —— 大多数时候说「把卡贴到立方体上」要的是这个。" +
+      "Two looks, decided by `bg`, **fixed at render time**:" +
+      "Without bg = transparent background; the object is also see-through wherever the card is not drawn, so the content looks like it floats in space (good for logos and signs);" +
+      "With bg = flattened to opaque, giving a solid object with this card printed on its surface: most of the time, this is what \"stick the card on a cube\" calls for." +
       "\n\n" +
-      "画幅会被改成正方形再渲(贴到立体表面上,16:9 会被拉变形);卡片本来就是响应式的,所以这是重排不是裁切。" +
-      "素材段(视频 / 图片)不用渲染,它本来就是位图,直接拿它的 URL 当贴图即可。",
+      "The aspect ratio is changed to a square before rendering (when applied to a 3D surface, 16:9 would be stretched and distorted); cards are responsive by design, so this is a reflow, not a crop." +
+      "A media clip (video / image) does not need rendering; it is already a bitmap, so just use its URL directly as the texture.",
     inputSchema: {
       type: "object",
       properties: {
-        clipId: { type: "string", description: "要渲染哪一张卡(时间轴上的片段 id)" },
-        t: { type: "number", description: "渲染哪一刻的样子(秒,时间轴绝对时间)。不传取这一段的中点 —— 起止两端常卡在进出场动画上,渲染出来是个半透明的中间态" },
-        size: { type: "number", description: "贴图边长(像素,正方形),256~2048,默认 1024。要贴的物件在画面里很小就调小,省内存" },
-        bg: { type: "string", description: "底色,六位十六进制如 \"#0b0f17\"。不传 = 透明底(挖空观感);传了 = 实心观感" },
+        clipId: { type: "string", description: "Which card to render (clip ID on the timeline)" },
+        t: { type: "number", description: "Which moment to render (seconds, absolute timeline time). If omitted, uses the midpoint of this clip: the start and end are often caught in entrance and exit animations, which render as a semi-transparent intermediate state" },
+        size: { type: "number", description: "Texture edge length (pixels, square), 256~2048, default 1024. If the object to be textured is small on screen, lower it to save memory" },
+        bg: { type: "string", description: "Background color, six-digit hex such as \"#0b0f17\". If omitted = transparent background (cut-out look); if passed = solid look" },
       },
       required: ["clipId"],
     },

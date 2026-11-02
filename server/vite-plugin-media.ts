@@ -197,7 +197,7 @@ export async function writeMediaIndex(root: string, hash: string, entry: MediaIn
     await fs.mkdir(mediaDir(root), { recursive: true });
     await fs.writeFile(indexPath(root), JSON.stringify({ version: 1, items: index }, null, 2));
   } catch (err) {
-    console.warn("[media] 写索引失败", err);
+    console.warn("[media] Failed to write index", err);
   }
 }
 
@@ -209,7 +209,7 @@ export async function forgetMediaIndex(root: string, hash: string): Promise<void
   try {
     await fs.writeFile(indexPath(root), JSON.stringify({ version: 1, items: index }, null, 2));
   } catch (err) {
-    console.warn("[media] 写索引失败", err);
+    console.warn("[media] Failed to write index", err);
   }
 }
 
@@ -1195,10 +1195,10 @@ export function mediaPlugin(): Plugin {
               },
             });
             httpServer.once("close", () => {
-              try { handle.stop(); } catch (err) { console.warn("[asset-announce] 撤回失败", err instanceof Error ? err.message : String(err)); }
+              try { handle.stop(); } catch (err) { console.warn("[asset-announce] Withdraw failed", err instanceof Error ? err.message : String(err)); }
             });
           } catch (err) {
-            console.warn("[asset-announce] 地址登记没有启动", err instanceof Error ? err.message : String(err));
+            console.warn("[asset-announce] Address registration did not start", err instanceof Error ? err.message : String(err));
           }
         };
         if (httpServer.listening) void announce();

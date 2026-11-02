@@ -23,6 +23,7 @@ import type { Plugin } from "vite";
 import type { AddressInfo } from "net";
 import http from "http";
 import https from "https";
+import { tr } from "./i18n.mjs";
 
 const ORIGIN_KEY = Symbol.for("promptcut.asset-service.local-origin");
 type Holder = { [ORIGIN_KEY]?: string | null };
@@ -247,7 +248,7 @@ export function assetProxyPlugin(origin: string): Plugin {
           });
           upstream.on("error", (err) => {
             if (res.headersSent) return void res.destroy();
-            fallback({ status: 502, headers: { "content-type": "text/plain; charset=utf-8" }, body: `素材服务不可达(${origin}):${err.message}` });
+            fallback({ status: 502, headers: { "content-type": "text/plain; charset=utf-8" }, body: tr("Asset service unreachable ({0}): {1}", origin, err.message) });
           });
           res.on("close", () => { if (!res.writableFinished) upstream.destroy(); });
           req.pipe(upstream);
@@ -264,7 +265,7 @@ export function assetProxyPlugin(origin: string): Plugin {
           if (!res.headersSent) {
             res.statusCode = 502;
             res.setHeader("Content-Type", "text/plain; charset=utf-8");
-            res.end(`素材服务不可达(${origin}):${err.message}`);
+            res.end(tr("Asset service unreachable ({0}): {1}", origin, err.message));
           } else res.destroy();
         });
         // 页面那边中途不要了(拖动进度条换 Range 是常事),上游那一条也立刻收掉

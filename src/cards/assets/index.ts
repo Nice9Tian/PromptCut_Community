@@ -39,8 +39,8 @@ function lottieCardOf(a: CatalogAsset): CardDef<any> {
     id: `lottie-${a.name}`,
     name: `Lottie · ${a.name}`,
     description: describe(a),
-    useWhen: `${whenToUse(a)}动画本身 ${a.seconds ?? "?"}s(${a.w}×${a.h});clip 给到这个时长就完整播一遍,更长就停在最后一帧或循环。`,
-    tags: ["lottie", "素材", ...a.tags],
+    useWhen: `${whenToUse(a)}The animation itself runs ${a.seconds ?? "?"}s (${a.w}×${a.h}); if the clip is given this duration it plays through once in full, and if longer it holds on the last frame or loops.`,
+    tags: ["lottie", "media", ...a.tags],
     source: "asset",
     // 帧模式:remotion 式(渲染重构「癸」)。LottieView 不让播放器自己走,每一帧把 t 换算成帧号直接跳过去;
     // 随机数和属性值留旧数那几处在 loadLottie 里固定住了(见 native/lottie.tsx 文件头),任何参数下都是 direct。
@@ -48,9 +48,9 @@ function lottieCardOf(a: CatalogAsset): CardDef<any> {
     frameMode: "direct",
     defaults: { speed: 1, loop: "no", fit: "contain" },
     controls: [
-      { key: "speed", label: "速度倍率", type: "number", min: 0.1, max: 8, step: 0.1 },
-      { key: "loop", label: "到头后", type: "select", options: [{ value: "no", label: "停在最后一帧" }, { value: "yes", label: "循环" }] },
-      { key: "fit", label: "适配", type: "select", options: [{ value: "contain", label: "完整显示" }, { value: "cover", label: "铺满裁切" }] },
+      { key: "speed", label: "Speed multiplier", type: "number", min: 0.1, max: 8, step: 0.1 },
+      { key: "loop", label: "At the end", type: "select", options: [{ value: "no", label: "Hold last frame" }, { value: "yes", label: "Loop" }] },
+      { key: "fit", label: "Fit", type: "select", options: [{ value: "contain", label: "Show in full" }, { value: "cover", label: "Fill and crop" }] },
     ],
     parts: [{ id: "animation", label: a.name, role: "media", params: ["speed", "loop", "fit"], enterMs: 0, ...(settleMs ? { settleMs } : {}) }],
     lifecycle: { ...(settleMs ? { settleMs } : {}), after: "hold", exit: ["fade"] },
@@ -79,17 +79,17 @@ function particlesCardOf(a: CatalogAsset): CardDef<any> | null {
   };
   return {
     id: `particles-${a.name}`,
-    name: `粒子 · ${a.name}`,
+    name: `Particles · ${a.name}`,
     description: describe(a),
-    useWhen: `${whenToUse(a)}它是背景,通常放最底层、盖住整段时长;粒子位置由 seed 决定,同一个 seed 每次导出都一样。`,
-    tags: ["粒子", "背景", "素材", ...a.tags],
+    useWhen: `${whenToUse(a)}It is a background, usually placed on the bottom track and covering the whole duration; particle positions are determined by seed, and the same seed gives the same result on every export.`,
+    tags: ["particles", "background", "media", ...a.tags],
     source: "asset",
     // 帧模式:审计固化(A0.1)。tsParticles 逐帧积分位置,任何参数下都是 stateful。
     frameMode: "stateful",
     defaults: { ...knobs.defaults, seed: 1 },
     controls: [
       ...knobs.controls,
-      { key: "seed", label: "随机种子", type: "number", min: 1, max: 99999, step: 1, hint: "换一个数就换一种排布;同一个数每次导出都一样" },
+      { key: "seed", label: "Random seed", type: "number", min: 1, max: 99999, step: 1, hint: "A different number gives a different layout; the same number gives the same result on every export" },
     ],
     parts: [{ id: "particles", label: a.name, role: "media", params: [...knobs.controls.map((c) => c.key), "seed"] }],
     lifecycle: { after: "evolve", exit: ["fade"] },

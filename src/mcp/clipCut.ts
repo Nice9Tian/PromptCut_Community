@@ -18,10 +18,10 @@ import { findClip, type Project } from "../kernel/project";
 /** 「找不到 clip」的报错:片段在别的剪辑里时点明在哪、该怎么办 */
 export function clipMissingMessage(p: Project, clipId: string): string {
   const parked = parkedCutOfClip(p, clipId);
-  if (!parked) return `找不到 clip ${clipId}`;
+  if (!parked) return `clip ${clipId} not found`;
   const active = (p.cuts ?? []).find((c) => c.id === activeCutIdOf(p));
-  return `找不到 clip ${clipId}:当前激活的剪辑${active ? `「${active.name}」` : ""}里没有它,它在剪辑「${parked.cutName}」(${parked.cutId})里;` +
-    "这个工具只改激活剪辑里的片段,先 user_interface_switch_cut 切到那条再操作(会动所有成员的界面;update_clip / set_clip / get_clip / set_position / set_rect / align / nudge / set_emphasis / set_clip_volume / set_clip_muted 不用切)";
+  return `Clip ${clipId} not found: it is not in the active cut${active ? `"${active.name}"` : ""}; it is in cut "${parked.cutName}" (${parked.cutId}); ` +
+    "This tool only changes clips in the active cut. First use user_interface_switch_cut to switch to that cut, then retry (this affects the editor of all members; update_clip / set_clip / get_clip / set_position / set_rect / align / nudge / set_emphasis / set_clip_volume / set_clip_muted need no switch)";
 }
 
 export function clipMissingError(clipId: string): Error {
@@ -42,8 +42,8 @@ function annotate(result: unknown, cut: { cutId: string; cutName: string }): unk
     ...(look ? { look } : null),
     ...(timeline && typeof timeline === "object" ? { timeline: timelineRest } : null),
     cut: { id: cut.cutId, name: cut.cutName, active: false },
-    cutNote: `这张卡在没有激活的剪辑「${cut.cutName}」里,已就地处理,没有切换剪辑(别人的界面不动);回包里的 timeline 是这条剪辑的。` +
-      `看它的画面用 see_frames 传 cutId: "${cut.cutId}"(不用切换);get_layout / get_gif 只看激活的剪辑。`,
+    cutNote: `This card is in the inactive cut "${cut.cutName}" and was handled in place without switching cuts (other people's editors are unchanged); the timeline in the reply belongs to that cut.` +
+      `To see its frames, call see_frames with cutId: "${cut.cutId}" (no switch needed); get_layout / get_gif only see the active cut.`,
   };
 }
 

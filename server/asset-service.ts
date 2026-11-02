@@ -320,7 +320,7 @@ async function handlePutChunk(req: IncomingMessage, res: ServerResponse, store: 
   if (!/^(0|[1-9]\d*)$/.test(rawN)) return reject(req, res, 400, { ok: false, error: "bad-chunk-number" });
   const n = Number(rawN);
   const sizeHeader = String(req.headers["x-media-size"] || "").trim();
-  if (!/^[1-9]\d*$/.test(sizeHeader)) return reject(req, res, 400, { ok: false, error: "missing-size", detail: "每一片都要带 X-Media-Size(全件字节数)" });
+  if (!/^[1-9]\d*$/.test(sizeHeader)) return reject(req, res, 400, { ok: false, error: "missing-size", detail: "Every piece must carry X-Media-Size (the total size in bytes)" });
   const size = Number(sizeHeader);
   if (!Number.isSafeInteger(size) || size > ASSET_MAX_SIZE) return reject(req, res, 413, { ok: false, error: "too-large" });
   const count = chunkCount(size, store.chunkSize);

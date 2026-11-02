@@ -51,7 +51,7 @@ export class CardFrameCache {
     // 等于把画面写到「哪种环境都认」的位置,正是 M4 要消灭的混用。现有调用点都包在 try 里,
     // 抛出按「没有 plan」处理。
     const fp = typeof this.envFingerprint === 'function' ? this.envFingerprint() : this.envFingerprint;
-    if (typeof fp !== 'string' || !fp) throw new Error('CardFrameCache.plan():还没有环境指纹,不产预渲染键');
+    if (typeof fp !== 'string' || !fp) throw new Error('CardFrameCache.plan(): no environment fingerprint yet, not producing a prerender key');
     const graph = value?.graph || value;
     if (!graph?.nodes || !graph?.outputs) return [];
     const nodes = new Map(graph.nodes.map(node => [node.id, node]));

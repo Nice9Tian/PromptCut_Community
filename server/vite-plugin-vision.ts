@@ -41,7 +41,7 @@ export function visionPlugin(): Plugin {
        * 每重启一次漏两个 Chrome。
        */
       server.httpServer?.on("close", () => {
-        for (const w of [...renderWorkers]) killWorker(w, new Error("服务已关闭"));
+        for (const w of [...renderWorkers]) killWorker(w, new Error("Service shut down"));
       });
 
       if (!isPrerender) {

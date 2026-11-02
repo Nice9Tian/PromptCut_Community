@@ -32,14 +32,14 @@
 /* ------------------------------------------------------------------ 种类 */
 
 export const FILTER_KINDS = {
-  brightness: { label: "亮度", min: 0, max: 3, neutral: 1, hint: "1 = 原样,<1 变暗,>1 变亮(乘法)" },
-  contrast: { label: "对比度", min: 0, max: 3, neutral: 1, hint: "1 = 原样,>1 拉开明暗,<1 压向中灰" },
-  saturate: { label: "饱和度", min: 0, max: 2, neutral: 1, hint: "0 = 无色,1 = 原样,2 = 两倍" },
-  hue: { label: "色相", min: -180, max: 180, neutral: 0, unit: "°", hint: "色相旋转角度" },
-  grayscale: { label: "黑白", min: 0, max: 1, neutral: 0, hint: "0~1,1 = 完全黑白" },
-  sepia: { label: "复古", min: 0, max: 1, neutral: 0, hint: "0~1,老照片的褐色调" },
-  invert: { label: "反色", min: 0, max: 1, neutral: 0, hint: "0~1,1 = 负片" },
-  blur: { label: "模糊", min: 0, max: 40, neutral: 0, unit: "px", hint: "高斯模糊,单位是片段框内的像素(框缩小了模糊也跟着缩;铺满画面的段就是画布像素)" },
+  brightness: { label: "Brightness", min: 0, max: 3, neutral: 1, hint: "1 = unchanged, <1 darker, >1 brighter (multiplicative)" },
+  contrast: { label: "Contrast", min: 0, max: 3, neutral: 1, hint: "1 = unchanged, >1 widens light and dark, <1 pulls toward mid-gray" },
+  saturate: { label: "Saturation", min: 0, max: 2, neutral: 1, hint: "0 = colorless, 1 = unchanged, 2 = double" },
+  hue: { label: "Hue", min: -180, max: 180, neutral: 0, unit: "°", hint: "Hue rotation angle" },
+  grayscale: { label: "Black and white", min: 0, max: 1, neutral: 0, hint: "0~1, 1 = fully black and white" },
+  sepia: { label: "Vintage", min: 0, max: 1, neutral: 0, hint: "0~1, brown tone of old photos" },
+  invert: { label: "Invert colors", min: 0, max: 1, neutral: 0, hint: "0~1, 1 = negative" },
+  blur: { label: "blur", min: 0, max: 40, neutral: 0, unit: "px", hint: "Gaussian blur, in pixels within the clip frame (if the frame shrinks the blur shrinks with it; a clip filling the screen uses canvas pixels)" },
 };
 
 /**
@@ -56,8 +56,8 @@ export const FILTER_KINDS = {
  *       在混色**截断之后**再加(两边后端同一顺序)。
  */
 export const TABLE_KINDS = {
-  curves: { label: "曲线", hint: "每通道一张 0~1 的取样表(2~33 点,线性插值);rgb 是三通道共用的简写" },
-  matrix: { label: "颜色矩阵", hint: "values 是行优先 3×3 混色矩阵(-4~4),offset 是混色之后每通道再加的量(-1~1)" },
+  curves: { label: "Curve", hint: "One 0~1 sample table per channel (2~33 points, linear interpolation); rgb is a shorthand shared by all three channels" },
+  matrix: { label: "Color matrix", hint: "values is a row-major 3×3 color mixing matrix (-4~4), offset is the amount added to each channel after mixing (-1~1)" },
 };
 export const MAX_TABLE_POINTS = 33;
 /** 一个滤镜里最多几步 curves:导出时每步是三条 lutrgb 表达式,太多会把 ffmpeg 的滤镜串撑得很长 */
@@ -67,16 +67,16 @@ const IDENTITY_MATRIX = [1, 0, 0, 0, 1, 0, 0, 0, 1];
 export const isTableKind = (kind) => Object.hasOwn(TABLE_KINDS, kind);
 
 function tableOf(raw, label) {
-  if (!Array.isArray(raw) || raw.length < 2 || raw.length > MAX_TABLE_POINTS) throw new FilterExprError(`${label} 要是 2~${MAX_TABLE_POINTS} 个 0~1 的数`);
+  if (!Array.isArray(raw) || raw.length < 2 || raw.length > MAX_TABLE_POINTS) throw new FilterExprError(`${label} must be 2~${MAX_TABLE_POINTS} numbers in 0~1`);
   return raw.map((v, k) => {
-    if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 1) throw new FilterExprError(`${label}[${k}] 要在 0~1 之间,收到 ${v}`);
+    if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 1) throw new FilterExprError(`${label}[${k}] must be between 0 and 1, got ${v}`);
     return round6(v);
   });
 }
 
 /** 校验并补齐一步查表 / 矩阵(存进工程的就是补齐后的形状) */
 function normalizeTableOp(op, i) {
-  if (op.value !== undefined) throw new FilterExprError(`ops[${i}] ${op.kind} 不用 value:curves 给 rgb / r / g / b 表,matrix 给 values(和 offset)`);
+  if (op.value !== undefined) throw new FilterExprError(`ops[${i}] ${op.kind} does not use value: curves takes an rgb / r / g / b table, matrix takes values (and offset)`);
   if (op.kind === "curves") {
     const shared = op.rgb === undefined ? null : tableOf(op.rgb, `ops[${i}].rgb`);
     const out = { kind: "curves" };
@@ -85,19 +85,19 @@ function normalizeTableOp(op, i) {
       if (op[ch] !== undefined) { out[ch] = tableOf(op[ch], `ops[${i}].${ch}`); any = true; }
       else out[ch] = shared ? [...shared] : [...IDENTITY_TABLE];
     }
-    if (!any) throw new FilterExprError(`ops[${i}] curves 至少给 rgb / r / g / b 里的一张表,例:{ "kind": "curves", "rgb": [0, 0.2, 0.55, 0.85, 1] }`);
+    if (!any) throw new FilterExprError(`ops[${i}] curves needs at least one table among rgb / r / g / b, e.g. { "kind": "curves", "rgb": [0, 0.2, 0.55, 0.85, 1] }`);
     return out;
   }
-  if (!Array.isArray(op.values) || op.values.length !== 9) throw new FilterExprError(`ops[${i}] matrix 的 values 要是 9 个数(行优先 3×3),原样是 [1,0,0, 0,1,0, 0,0,1]`);
+  if (!Array.isArray(op.values) || op.values.length !== 9) throw new FilterExprError(`ops[${i}] matrix values must be 9 numbers (row-major 3×3); the identity is [1,0,0, 0,1,0, 0,0,1]`);
   const values = op.values.map((v, k) => {
-    if (typeof v !== "number" || !Number.isFinite(v) || v < -4 || v > 4) throw new FilterExprError(`ops[${i}].values[${k}] 要在 -4~4 之间,收到 ${v}`);
+    if (typeof v !== "number" || !Number.isFinite(v) || v < -4 || v > 4) throw new FilterExprError(`ops[${i}].values[${k}] must be between -4 and 4, got ${v}`);
     return round6(v);
   });
   let offset = [0, 0, 0];
   if (op.offset !== undefined) {
-    if (!Array.isArray(op.offset) || op.offset.length !== 3) throw new FilterExprError(`ops[${i}].offset 要是 3 个数 [r, g, b]`);
+    if (!Array.isArray(op.offset) || op.offset.length !== 3) throw new FilterExprError(`ops[${i}].offset must be 3 numbers [r, g, b]`);
     offset = op.offset.map((v, k) => {
-      if (typeof v !== "number" || !Number.isFinite(v) || v < -1 || v > 1) throw new FilterExprError(`ops[${i}].offset[${k}] 要在 -1~1 之间,收到 ${v}`);
+      if (typeof v !== "number" || !Number.isFinite(v) || v < -1 || v > 1) throw new FilterExprError(`ops[${i}].offset[${k}] must be between -1 and 1, got ${v}`);
       return round6(v);
     });
   }
@@ -173,11 +173,11 @@ export const BASE_VARS = ["t", "d", "p"];
 export const RESERVED = new Set([...BASE_VARS, ...Object.keys(CONSTS), ...Object.keys(FUNCS)]);
 
 export const EXPR_HELP =
-  "参数可以写数字,或一段随时间变化的表达式字符串。变量:t = 片段内秒数(从片段开头算),d = 片段时长,p = t/d(0~1 进度)," +
-  "以及你在 params 里声明的参数名。运算:+ - * / % ^ 和括号。函数:sin cos tan abs sqrt exp log floor ceil round sign " +
-  "min max pow mod clamp(x,lo,hi) lerp(a,b,x) step(edge,x) smoothstep(e0,e1,x)。常量 PI、E。" +
-  "例:\"1 + 0.2*sin(t*2*PI)\"(亮度每秒呼吸一次)、\"lerp(0, 8, smoothstep(0, 1, t))\"(模糊在第一秒内慢慢起来)、" +
-  "\"p\"(配 grayscale:整段从彩色慢慢褪成黑白)。";
+  "Parameters can be numbers, or an expression string that varies over time. Variables: t = seconds within the clip (counted from the clip start), d = clip duration, p = t/d (progress, 0~1)," +
+  "and the parameter names you declare in params. Operators: + - * / % ^ and parentheses. Functions: sin cos tan abs sqrt exp log floor ceil round sign " +
+  "min max pow mod clamp(x,lo,hi) lerp(a,b,x) step(edge,x) smoothstep(e0,e1,x). Constants PI, E." +
+  "Examples: \"1 + 0.2*sin(t*2*PI)\" (brightness pulses once per second), \"lerp(0, 8, smoothstep(0, 1, t))\" (blur ramps up slowly over the first second)," +
+  "\"p\" (with grayscale: the whole clip slowly fades from color to black and white).";
 
 export class FilterExprError extends Error {}
 
@@ -192,7 +192,7 @@ function tokenize(src) {
     const id = /^[A-Za-z_][A-Za-z0-9_]*/.exec(src.slice(i));
     if (id) { out.push({ k: "id", v: id[0], at: i }); i += id[0].length; continue; }
     if ("+-*/%^(),".includes(c)) { out.push({ k: c, at: i }); i++; continue; }
-    throw new FilterExprError(`第 ${i + 1} 个字符「${c}」不认识`);
+    throw new FilterExprError(`Unrecognized character ${c} at position ${i + 1}`);
   }
   return out;
 }
@@ -209,8 +209,8 @@ function tokenize(src) {
  *   { t: "call", name, args }           白名单函数
  */
 export function parseExpr(src, vars = BASE_VARS) {
-  if (typeof src !== "string") throw new FilterExprError("表达式要是字符串");
-  if (src.length > MAX_EXPR_LEN) throw new FilterExprError(`表达式太长(上限 ${MAX_EXPR_LEN} 字符)`);
+  if (typeof src !== "string") throw new FilterExprError("The expression must be a string");
+  if (src.length > MAX_EXPR_LEN) throw new FilterExprError(`Expression too long (limit ${MAX_EXPR_LEN} characters)`);
   const allowed = new Set(vars);
   const toks = tokenize(src);
   let pos = 0;
@@ -219,12 +219,12 @@ export function parseExpr(src, vars = BASE_VARS) {
   const peek = () => toks[pos];
   const eat = (k) => {
     const tk = toks[pos];
-    if (!tk || tk.k !== k) throw new FilterExprError(`第 ${tk ? tk.at + 1 : src.length + 1} 个字符附近缺少「${k}」`);
+    if (!tk || tk.k !== k) throw new FilterExprError(`Missing "${k}" near character ${tk ? tk.at + 1 : src.length + 1}`);
     pos++;
     return tk;
   };
   const node = (n) => {
-    if (++nodes > MAX_NODES) throw new FilterExprError("表达式太复杂了");
+    if (++nodes > MAX_NODES) throw new FilterExprError("Expression too complex");
     return n;
   };
 
@@ -262,7 +262,7 @@ export function parseExpr(src, vars = BASE_VARS) {
   };
   const atom = () => {
     const tk = peek();
-    if (!tk) throw new FilterExprError("表达式不完整");
+    if (!tk) throw new FilterExprError("Incomplete expression");
     if (tk.k === "num") { pos++; return node({ t: "num", v: tk.v }); }
     if (tk.k === "(") { pos++; const inner = add(); eat(")"); return inner; }
     if (tk.k === "id") {
@@ -271,7 +271,7 @@ export function parseExpr(src, vars = BASE_VARS) {
       // 一律 Object.hasOwn:`name in CONSTS` 会认下 __proto__ / constructor 这类从 Object 继承来的名字
       if (peek() && peek().k === "(") {
         const spec = Object.hasOwn(FUNCS, name) ? FUNCS[name] : null;
-        if (!spec) throw new FilterExprError(`没有函数 ${name}(能用的:${Object.keys(FUNCS).join(" ")})`);
+        if (!spec) throw new FilterExprError(`No function ${name} (available: ${Object.keys(FUNCS).join(" ")})`);
         pos++;
         const args = [];
         if (!(peek() && peek().k === ")")) {
@@ -280,22 +280,22 @@ export function parseExpr(src, vars = BASE_VARS) {
         }
         eat(")");
         const arity = spec[0];
-        if (arity > 0 && args.length !== arity) throw new FilterExprError(`${name} 要 ${arity} 个参数,给了 ${args.length} 个`);
-        if (arity < 0 && args.length < -arity) throw new FilterExprError(`${name} 至少要 ${-arity} 个参数`);
+        if (arity > 0 && args.length !== arity) throw new FilterExprError(`${name} takes ${arity} arguments, got ${args.length}`);
+        if (arity < 0 && args.length < -arity) throw new FilterExprError(`${name} needs at least ${-arity} arguments`);
         return node({ t: "call", name, args });
       }
       if (Object.hasOwn(CONSTS, name)) return node({ t: "num", v: CONSTS[name] });
       if (!allowed.has(name)) {
-        throw new FilterExprError(`不认识「${name}」。能用的变量:${[...allowed].join(" ")}(参数名要先在 params 里声明)`);
+        throw new FilterExprError(`Unknown "${name}". Available variables: ${[...allowed].join(" ")} (parameter names must be declared in params first)`);
       }
       uses.add(name);
       return node({ t: "var", name });
     }
-    throw new FilterExprError(`第 ${tk.at + 1} 个字符「${tk.k}」放错了地方`);
+    throw new FilterExprError(`Character ${tk.k} at position ${tk.at + 1} is misplaced`);
   };
 
   const ast = add();
-  if (pos < toks.length) throw new FilterExprError(`第 ${toks[pos].at + 1} 个字符开始多出来了`);
+  if (pos < toks.length) throw new FilterExprError(`Extra content starting at character ${toks[pos].at + 1}`);
   return { ast, uses };
 }
 
@@ -359,18 +359,18 @@ export function normalizeParamDecls(rawParams, extraReserved = RESERVED) {
   const params = {};
   const raw = rawParams && typeof rawParams === "object" ? rawParams : {};
   const keys = Object.keys(raw);
-  if (keys.length > MAX_PARAMS) throw new FilterExprError(`params 最多 ${MAX_PARAMS} 个`);
+  if (keys.length > MAX_PARAMS) throw new FilterExprError(`params allows at most ${MAX_PARAMS}`);
   for (const key of keys) {
     if (!PARAM_NAME.test(key) || extraReserved.has(key)) {
-      throw new FilterExprError(`参数名「${key}」不行:小写字母开头、只含字母数字下划线,且不能和 ${[...extraReserved].join(" ")} 重名`);
+      throw new FilterExprError(`Parameter name "${key}" is invalid: it must start with a lowercase letter, contain only letters, digits and underscores, and not collide with ${[...extraReserved].join(" ")}`);
     }
     const r = raw[key];
     const spec = typeof r === "number" ? { default: r } : r && typeof r === "object" ? r : null;
-    if (!spec || typeof spec.default !== "number" || !Number.isFinite(spec.default)) throw new FilterExprError(`参数 ${key} 要有数字 default`);
+    if (!spec || typeof spec.default !== "number" || !Number.isFinite(spec.default)) throw new FilterExprError(`Parameter ${key} needs a numeric default`);
     const min = typeof spec.min === "number" && Number.isFinite(spec.min) ? spec.min : undefined;
     const max = typeof spec.max === "number" && Number.isFinite(spec.max) ? spec.max : undefined;
-    if (min !== undefined && max !== undefined && min > max) throw new FilterExprError(`参数 ${key} 的 min 大于 max`);
-    if ((min !== undefined && spec.default < min) || (max !== undefined && spec.default > max)) throw new FilterExprError(`参数 ${key} 的 default 超出了 min~max`);
+    if (min !== undefined && max !== undefined && min > max) throw new FilterExprError(`Parameter ${key} has min greater than max`);
+    if ((min !== undefined && spec.default < min) || (max !== undefined && spec.default > max)) throw new FilterExprError(`Parameter ${key} has a default outside min~max`);
     params[key] = {
       default: spec.default,
       ...(min !== undefined ? { min } : null),
@@ -386,38 +386,38 @@ export function normalizeParamDecls(rawParams, extraReserved = RESERVED) {
  * 返回 { name, description?, params?, ops }(id / createdAt 由调用方加)。
  */
 export function normalizeFilterDef(input) {
-  if (!input || typeof input !== "object") throw new FilterExprError("滤镜定义要是一个对象");
+  if (!input || typeof input !== "object") throw new FilterExprError("The filter definition must be an object");
   const name = typeof input.name === "string" ? input.name.trim() : "";
-  if (!name || name.length > 30) throw new FilterExprError("name 必填,30 字以内(素材库里显示这个名字)");
+  if (!name || name.length > 30) throw new FilterExprError("name is required, max 30 characters (this name is shown in the media library)");
   const description = typeof input.description === "string" && input.description.trim() ? input.description.trim().slice(0, 200) : undefined;
 
   const params = normalizeParamDecls(input.params, RESERVED);
   const keys = Object.keys(params);
   const vars = [...BASE_VARS, ...keys];
 
-  if (!Array.isArray(input.ops) || input.ops.length === 0) throw new FilterExprError(`ops 至少一步,例:[{ "kind": "brightness", "value": 1.2 }]`);
-  if (input.ops.length > MAX_OPS) throw new FilterExprError(`ops 最多 ${MAX_OPS} 步`);
+  if (!Array.isArray(input.ops) || input.ops.length === 0) throw new FilterExprError(`ops needs at least one step, e.g. [{ "kind": "brightness", "value": 1.2 }]`);
+  if (input.ops.length > MAX_OPS) throw new FilterExprError(`ops allows at most ${MAX_OPS} steps`);
   const ops = input.ops.map((op, i) => {
     const kind = op && op.kind;
     if (isTableKind(kind)) return normalizeTableOp(op, i);
     const spec = Object.hasOwn(FILTER_KINDS, kind) ? FILTER_KINDS[kind] : null;
-    if (!spec) throw new FilterExprError(`ops[${i}].kind「${kind}」不认识,只有:${[...Object.keys(FILTER_KINDS), ...Object.keys(TABLE_KINDS)].join(" / ")}`);
+    if (!spec) throw new FilterExprError(`ops[${i}].kind "${kind}" is not recognized, only: ${[...Object.keys(FILTER_KINDS), ...Object.keys(TABLE_KINDS)].join(" / ")}`);
     const value = op.value;
     if (typeof value === "number") {
-      if (!Number.isFinite(value)) throw new FilterExprError(`ops[${i}].value 不是有限数字`);
-      if (value < spec.min || value > spec.max) throw new FilterExprError(`ops[${i}] ${kind} 要在 ${spec.min}~${spec.max} 之间,收到 ${value}`);
+      if (!Number.isFinite(value)) throw new FilterExprError(`ops[${i}].value is not a finite number`);
+      if (value < spec.min || value > spec.max) throw new FilterExprError(`ops[${i}] ${kind} must be between ${spec.min} and ${spec.max}, got ${value}`);
       return { kind, value };
     }
-    if (typeof value !== "string" || !value.trim()) throw new FilterExprError(`ops[${i}].value 要是数字或表达式字符串`);
+    if (typeof value !== "string" || !value.trim()) throw new FilterExprError(`ops[${i}].value must be a number or an expression string`);
     try {
       compileExpr(value.trim(), vars);
     } catch (e) {
-      throw new FilterExprError(`ops[${i}] ${kind} 的表达式有问题:${e.message}`);
+      throw new FilterExprError(`ops[${i}] ${kind} has an invalid expression: ${e.message}`);
     }
     return { kind, value: value.trim() };
   });
 
-  if (ops.filter((op) => op.kind === "curves").length > MAX_CURVES_OPS) throw new FilterExprError(`curves 最多 ${MAX_CURVES_OPS} 步(几条曲线先合成一张表再给)`);
+  if (ops.filter((op) => op.kind === "curves").length > MAX_CURVES_OPS) throw new FilterExprError(`curves allows at most ${MAX_CURVES_OPS} steps (merge several curves into one table first)`);
   const def = { name, ...(description ? { description } : null), ...(keys.length ? { params } : null), ops };
   // 抽几个时刻试算一遍:算出 NaN / 无穷(比如 log(0)、除以 0)当场说,别等到导出
   for (const d of [1, 10]) {
@@ -425,7 +425,7 @@ export function normalizeFilterDef(input) {
       for (const [i, op] of def.ops.entries()) {
         if (typeof op.value !== "string") continue;
         const v = compiledOf(op.value, vars).fn(envOf(def, undefined, t, d));
-        if (!Number.isFinite(v)) throw new FilterExprError(`ops[${i}] ${op.kind} 在 t=${round6(t)}、d=${d} 时算出了 ${v},换个写法(注意除以 0、log(0))`);
+        if (!Number.isFinite(v)) throw new FilterExprError(`ops[${i}] ${op.kind} evaluated to ${v} at t=${round6(t)}, d=${d}; rewrite it (watch for division by 0, log(0))`);
       }
     }
   }
@@ -435,12 +435,12 @@ export function normalizeFilterDef(input) {
 /** 片段上的参数覆盖:只留声明过的键,夹进 min~max。不合法的键直接报错 */
 export function normalizeClipParams(def, input) {
   if (input === undefined || input === null) return undefined;
-  if (typeof input !== "object") throw new FilterExprError("params 要是对象");
+  if (typeof input !== "object") throw new FilterExprError("params must be an object");
   const out = {};
   for (const [k, v] of Object.entries(input)) {
     const spec = def.params && Object.hasOwn(def.params, k) ? def.params[k] : null;
-    if (!spec) throw new FilterExprError(`滤镜「${def.name}」没有参数 ${k}${def.params ? `(有:${Object.keys(def.params).join(" ")})` : "(它没声明参数)"}`);
-    if (typeof v !== "number" || !Number.isFinite(v)) throw new FilterExprError(`参数 ${k} 要是数字`);
+    if (!spec) throw new FilterExprError(`Filter "${def.name}" has no parameter ${k}${def.params ? `(available: ${Object.keys(def.params).join(" ")})` : "(it declares no parameters)"}`);
+    if (typeof v !== "number" || !Number.isFinite(v)) throw new FilterExprError(`Parameter ${k} must be a number`);
     out[k] = clamp(v, spec.min ?? -Infinity, spec.max ?? Infinity);
   }
   return Object.keys(out).length ? out : undefined;
@@ -504,8 +504,8 @@ export function isAnimated(def) {
 export function describeFilter(def) {
   return def.ops
     .map((op) => {
-      if (op.kind === "curves") return `${TABLE_KINDS.curves.label} ${["r", "g", "b"].map((ch) => `${ch}:${(op[ch] ?? IDENTITY_TABLE).length}点`).join(" ")}`;
-      if (op.kind === "matrix") return `${TABLE_KINDS.matrix.label}${(op.offset ?? []).some((v) => v !== 0) ? " + 偏移" : ""}`;
+      if (op.kind === "curves") return `${TABLE_KINDS.curves.label} ${["r", "g", "b"].map((ch) => `${ch}: ${(op[ch] ?? IDENTITY_TABLE).length} points`).join(" ")}`;
+      if (op.kind === "matrix") return `${TABLE_KINDS.matrix.label}${(op.offset ?? []).some((v) => v !== 0) ? " + offset" : ""}`;
       const spec = FILTER_KINDS[op.kind];
       return `${spec.label} ${typeof op.value === "number" ? `${op.value}${spec.unit ?? ""}` : op.value}`;
     })

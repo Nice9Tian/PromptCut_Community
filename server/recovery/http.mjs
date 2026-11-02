@@ -6,6 +6,7 @@ import { parseCollaboration } from './descriptor.mjs';
 import { roomUnavailableReason } from './relocation.mjs';
 import { fileNameOf } from '../docservice/store/index.mjs';
 import { fromLocalClient, guard } from '../http-guard.mjs';
+import { tr } from "../i18n.mjs";
 
 const TASK_ENDPOINTS = ['/cancel-host', '/activate-host', '/restore-host'];
 
@@ -91,7 +92,7 @@ export function recoveryHttp({ dir, dataDir, store, device, baseOf, assetBaseOf,
       reply(res, 503, { ok: false, error: failure.error, ...(retryable ? { retryAfter: 1 } : {}), storageDiagnostic: {
         phase: recoveryPhase, storagePhase: failure.storagePhase, code: failure.code,
         elapsedMs: Date.now() - began,
-      }, message: retryable ? '协作恢复信息暂时无法读取或保存；原数据已保留，将自动重试。' : '无法可靠读取或保存协作恢复信息；原数据已保留，请从备份恢复或重新认证。' });
+      }, message: retryable ? tr("Collaboration recovery info is temporarily unreadable or cannot be saved; the original data is kept and will be retried automatically.") : tr("Cannot reliably read or save collaboration recovery info; the original data is kept, restore from backup or re-authenticate.") });
     }
   };
 }

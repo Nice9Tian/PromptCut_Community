@@ -191,7 +191,7 @@ export class HttpSnapshotSource implements SnapshotSource {
     const work = (async () => {
       const base = await this.base();
       const res = await fetch(base + snapshotPath(kind, key, localFrame), { signal, cache: "force-cache" });
-      if (!res.ok) throw Object.assign(new Error(`快照还没就绪:${id}`), { status: res.status });
+      if (!res.ok) throw Object.assign(new Error(`Snapshot is not ready yet: ${id}`), { status: res.status });
       const html = await res.text();
       this.cache.set(id, html);
       return html;
@@ -1024,13 +1024,13 @@ export class OnlineSnapshotSource implements SnapshotSource {
     if (this.storeWait) await this.storeWait;
     if (this.tier === "original") {
       const hit = this.frameOf(kind, key, localFrame);
-      if (!hit) throw Object.assign(new Error(`没有这一帧的预渲染原尺寸:${kind}/${key}/${localFrame}`), { status: 404 });
+      if (!hit) throw Object.assign(new Error(`No full-size prerender for this frame: ${kind}/${key}/${localFrame}`), { status: 404 });
       const cached = this.cache.get(`snap/${hit.hash}`);
       if (cached !== undefined) return cached;
       return this.fetchOriginal(hit.hash, hit.layer, localFrame, signal);
     }
     const hash = this.smallHashOf(kind, key, localFrame);
-    if (!hash) throw Object.assign(new Error(`没有这一帧的预渲染小尺寸:${kind}/${key}/${localFrame}`), { status: 404 });
+    if (!hash) throw Object.assign(new Error(`No small-size prerender for this frame: ${kind}/${key}/${localFrame}`), { status: 404 });
     const hit = this.cache.get(hash);
     if (hit !== undefined) return smallSnapshotHtml(hit);
     return smallSnapshotHtml(await this.fetchSmall(hash, signal));
@@ -1521,7 +1521,7 @@ export class OnlineSnapshotSource implements SnapshotSource {
       this.queue.push(async () => {
         try {
           const block = await this.fetchAsset("px", hash);
-          if (!(await bytesMatchHash(block.bytes, hash))) throw new Error(`流字节与哈希对不上:${hash}`);
+          if (!(await bytesMatchHash(block.bytes, hash))) throw new Error(`Stream bytes do not match the hash: ${hash}`);
           if (this.stopped) return;
           this.stats.streamFetches++;
           this.stats.streamBytes += block.bytes.length;
@@ -1582,7 +1582,7 @@ export class OnlineSnapshotSource implements SnapshotSource {
     let timer: ReturnType<typeof setTimeout>;
     return Promise.race([
       this.deps.request(msg, ms),
-      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("内容库请求超时")), ms); }),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Content store request timed out")), ms); }),
     ]).finally(() => clearTimeout(timer));
   }
 
@@ -1753,17 +1753,17 @@ export class OnlineSnapshotSource implements SnapshotSource {
       return await Promise.race([
         (async () => {
           const base = this.deps.assetBase();
-          if (!base) throw new Error("还没有远程素材服务");
+          if (!base) throw new Error("There is no remote asset service yet");
           const headers = await this.deps.authHeaders();
           const f = this.deps.fetch ?? fetch;
           const res = await f(`${base.replace(/\/+$/, "")}/${ns}/${hash}`, { headers, signal: controller.signal, cache: "force-cache" });
-          if (!res.ok) throw Object.assign(new Error(`取不到 ${ns}/${hash}:${res.status}`), { status: res.status });
+          if (!res.ok) throw Object.assign(new Error(`Could not fetch ${ns}/${hash}: ${res.status}`), { status: res.status });
           const bytes = new Uint8Array(await res.arrayBuffer());
           const fallback = ns === "px" ? "image/webp" : "text/html";
           const type = (res.headers.get("content-type") || fallback).split(";")[0].trim() || fallback;
           return { bytes, type };
         })(),
-        new Promise<never>((_, reject) => { deadline = setTimeout(() => { controller.abort(); reject(new Error("素材请求超时")); }, ms); }),
+        new Promise<never>((_, reject) => { deadline = setTimeout(() => { controller.abort(); reject(new Error("Asset request timed out")); }, ms); }),
       ]);
     } finally {
       if (deadline !== null) clearTimeout(deadline);

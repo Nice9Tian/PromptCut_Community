@@ -5,20 +5,20 @@
 import path from 'node:path';
 
 const NTSTATUS = new Map([
-  [0xC0000005, 'STATUS_ACCESS_VIOLATION（访问违例）'],
-  [0xC0000142, 'STATUS_DLL_INIT_FAILED（DLL 初始化失败）'],
-  [0xC0000409, 'STATUS_STACK_BUFFER_OVERRUN（栈缓冲区越界）'],
-  [0xC000001D, 'STATUS_ILLEGAL_INSTRUCTION（非法指令）'],
+  [0xC0000005, 'STATUS_ACCESS_VIOLATION (access violation)'],
+  [0xC0000142, 'STATUS_DLL_INIT_FAILED (DLL initialization failed)'],
+  [0xC0000409, 'STATUS_STACK_BUFFER_OVERRUN (stack buffer overrun)'],
+  [0xC000001D, 'STATUS_ILLEGAL_INSTRUCTION (illegal instruction)'],
 ]);
 
 const keyOf = (file, cwd) => path.normalize(path.resolve(cwd, file)).toLowerCase();
 const lineCount = (message) => message ? (message.match(/\n/g)?.length ?? 0) + Number(!message.endsWith('\n')) : 0;
 
 export function exitDescription(code) {
-  if (typeof code !== 'number') return '退出码未知';
+  if (typeof code !== 'number') return 'Exit code unknown';
   const unsigned = code >>> 0;
   if (unsigned >= 0xC0000000) {
-    return `0x${unsigned.toString(16).toUpperCase().padStart(8, '0')} ${NTSTATUS.get(unsigned) ?? 'Windows 原生异常'}`;
+    return `0x${unsigned.toString(16).toUpperCase().padStart(8, '0')} ${NTSTATUS.get(unsigned) ?? 'Windows native exception'}`;
   }
   return String(code);
 }

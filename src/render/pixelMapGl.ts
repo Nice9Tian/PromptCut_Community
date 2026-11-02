@@ -84,7 +84,7 @@ function ensure(): WebGL2RenderingContext {
   if (gl && !gl.isContextLost()) return gl;
   if (gl) dropContext();
   if (typeof OffscreenCanvas === "undefined") {
-    throw new PixelMapGlError("这个运行环境没有 OffscreenCanvas,画不了像素映射(需要 Chrome / WebView2)");
+    throw new PixelMapGlError("This runtime has no OffscreenCanvas, so pixel maps cannot be drawn (requires Chrome / WebView2)");
   }
   const c = new OffscreenCanvas(1, 1);
   const g = c.getContext("webgl2", {
@@ -97,7 +97,7 @@ function ensure(): WebGL2RenderingContext {
     preserveDrawingBuffer: false,
     desynchronized: false,
   }) as WebGL2RenderingContext | null;
-  if (!g) throw new PixelMapGlError("拿不到 WebGL2 上下文,画不了像素映射");
+  if (!g) throw new PixelMapGlError("Could not get a WebGL2 context, so pixel maps cannot be drawn");
   // 丢上下文时别让浏览器直接放弃:preventDefault 之后才有机会重建
   (c as unknown as EventTarget).addEventListener("webglcontextlost", (e) => { e.preventDefault(); dropContext(); });
   g.disable(g.BLEND);
@@ -121,7 +121,7 @@ function compileShader(g: WebGL2RenderingContext, type: number, src: string): We
   if (!g.getShaderParameter(sh, g.COMPILE_STATUS)) {
     const log = g.getShaderInfoLog(sh);
     g.deleteShader(sh);
-    throw new PixelMapGlError(`着色器编译失败:${log}`);
+    throw new PixelMapGlError(`Shader compile failed: ${log}`);
   }
   return sh;
 }
@@ -141,7 +141,7 @@ function programOf(g: WebGL2RenderingContext, def: PixelMapDef): Prog {
   if (!g.getProgramParameter(program, g.LINK_STATUS)) {
     const log = g.getProgramInfoLog(program);
     g.deleteProgram(program);
-    throw new PixelMapGlError(`着色器链接失败:${log}`);
+    throw new PixelMapGlError(`Shader link failed: ${log}`);
   }
   const prog: Prog = {
     program,
@@ -195,7 +195,7 @@ function render(opts: PixelMapDrawOpts): WebGL2RenderingContext {
 export function drawPixelMap(out: HTMLCanvasElement, opts: PixelMapDrawOpts): void {
   render(opts);
   const ctx = out.getContext("bitmaprenderer");
-  if (!ctx) throw new PixelMapGlError("素材层的画布拿不到 bitmaprenderer 上下文(这个画布上已经有别的上下文了?)");
+  if (!ctx) throw new PixelMapGlError("Could not get a bitmaprenderer context for the media layer canvas (does this canvas already have another context?)");
   ctx.transferFromImageBitmap(canvas!.transferToImageBitmap());
 }
 

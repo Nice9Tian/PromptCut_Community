@@ -52,11 +52,11 @@ export const RENDER_REQUEST_DEFAULTS = Object.freeze({
 /** 素材片段的卡片 id:它们不预渲染,不进清单 */
 export const MEDIA_CARD_IDS = Object.freeze(new Set(['video', 'image', 'audio']));
 
-export const STALL_REASON = '渲染节点 10 分钟没有进展';
+export const STALL_REASON = 'Render node made no progress for 10 minutes';
 /** 发布通道开不了、而且不是暂时性的(文档服务明确不给发布票据):这些原因直接记失败,不悄悄重试 */
 export const PERMANENT_OPEN_REASONS = Object.freeze(new Set(['no-project', 'forbidden', 'service-disabled', 'service-revoked', 'relocated', 'not-listed', 'banned']));
 /** 带用户卡的项目(隔离工作进程渲,要排队)放弃时的原因 */
-export const USER_CARD_STALL_REASON = '渲染节点 30 分钟没有进展(带用户卡的项目要排队渲)';
+export const USER_CARD_STALL_REASON = 'Render node made no progress for 30 minutes (projects with user cards must be queued for rendering)';
 
 /** 从项目里挑出这些 id 中要预渲染的片段(还在项目里、不是素材片段) */
 export function renderableClips(project, clipIds) {
@@ -190,7 +190,7 @@ export function createRenderRequests({ publisher = null, store, now = () => Date
     const plan = job?.plans.get(id);
     if (!plan) return;
     forgetPlan(job, id);
-    report(job, { state: 'failed', clips: Array.isArray(clips) && clips.length ? clips.map(String) : plan.clips, reason: typeof reason === 'string' && reason ? reason.slice(0, 200) : '渲染失败' });
+    report(job, { state: 'failed', clips: Array.isArray(clips) && clips.length ? clips.map(String) : plan.clips, reason: typeof reason === 'string' && reason ? reason.slice(0, 200) : 'Render failed' });
     say('agent.render.failed', { projectId: job.projectId, clips: plan.clips.length });
     persist(job);
     closeChannelIfIdle(job.projectId);
@@ -279,7 +279,7 @@ export function createRenderRequests({ publisher = null, store, now = () => Date
         if (PERMANENT_OPEN_REASONS.has(err?.reason)) {
           // 文档服务明确不给这个项目发预渲染计划:记失败并说原因,不无限重试
           for (const p of old) forgetPlan(job, p.id);
-          report(job, { state: 'failed', clips, reason: `云端渲染服务不接这个项目的预渲染(${err.reason})` });
+          report(job, { state: 'failed', clips, reason: `The cloud render service does not accept this project's prerender (${err.reason})` });
           say('agent.render.open-refused', { projectId: job.projectId, reason: err.reason });
           persist(job);
           closeChannelIfIdle(job.projectId);
@@ -328,7 +328,7 @@ export function createRenderRequests({ publisher = null, store, now = () => Date
         const tooLong = at - plan.publishedAt >= limits.maxMs;
         if (!stalled && !tooLong) continue;
         void withdraw(job, plan.id);
-        report(job, { state: 'failed', clips: plan.clips, reason: stalled ? (job.userCards ? USER_CARD_STALL_REASON : STALL_REASON) : '渲染超过了 12 小时的上限' });
+        report(job, { state: 'failed', clips: plan.clips, reason: stalled ? (job.userCards ? USER_CARD_STALL_REASON : STALL_REASON) : 'Render exceeded the 12-hour limit' });
         say('agent.render.gave-up', { projectId: job.projectId, clips: plan.clips.length, why: stalled ? 'stalled' : 'max' });
         persist(job);
         closeChannelIfIdle(job.projectId);

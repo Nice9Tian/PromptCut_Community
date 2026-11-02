@@ -51,7 +51,7 @@ export function newChildId() {
  * @param {() => string} [o.newId]
  */
 export function createMultiAgent({ sessions, board, openTab, projectCreativity = () => 'high', newId = newChildId, limits: limitsIn = {} } = {}) {
-  if (!sessions || typeof board !== 'function' || typeof openTab !== 'function') throw new TypeError('createMultiAgent: 要 sessions、board、openTab');
+  if (!sessions || typeof board !== 'function' || typeof openTab !== 'function') throw new TypeError('createMultiAgent: requires sessions, board, openTab');
   const L = { ...SPAWN_LIMITS, ...limitsIn };
 
   /** 这个主 Agent 此刻开着的子 Agent(页签没关过的) */
@@ -63,23 +63,23 @@ export function createMultiAgent({ sessions, board, openTab, projectCreativity =
   async function spawn(parentKey, args) {
     const role = typeof args?.role === 'string' ? args.role.trim() : '';
     const task = typeof args?.task === 'string' ? args.task.trim() : '';
-    if (!SPAWN_ROLE_IDS.includes(role)) return fail(`role 只能是 ${SPAWN_ROLE_IDS.join(' / ')}`, { code: 'bad-role' });
-    if (!task) return fail('task 必填:交给子 Agent 的任务', { code: 'bad-task' });
-    if (task.length > L.taskMax) return fail(`task 太长(${task.length} 字符,上限 ${L.taskMax}),写要点,细节让它自己读项目`, { code: 'bad-task' });
-    if (!parentKey) return fail('这条调用没带 Agent 对话 ID(可能是外部命令行调的),拉不起子 Agent:子 Agent 要挂在一个对话下面', { code: 'no-parent' });
+    if (!SPAWN_ROLE_IDS.includes(role)) return fail(`role must be one of ${SPAWN_ROLE_IDS.join(' / ')}`, { code: 'bad-role' });
+    if (!task) return fail('task is required: the task to hand to the sub-Agent', { code: 'bad-task' });
+    if (task.length > L.taskMax) return fail(`task is too long (${task.length} characters, limit ${L.taskMax}); write the key points and let it read the project for details`, { code: 'bad-task' });
+    if (!parentKey) return fail('This call carries no Agent chat ID (it may have come from an external command line), so a sub-Agent cannot be spawned: a sub-Agent must hang under a chat', { code: 'no-parent' });
     const parent = sessions.get(parentKey);
     if (parent.type === 'desktop') {
-      return fail('你是桌面 APP 的会话(或没在 AI 栏登记过的对话),没有页签可开,不能拉起子 Agent。需要分工时请用户在编辑界面的 AI 栏开新页签。', { code: 'no-tab' });
+      return fail('You are a desktop app session (or a chat not registered in the AI panel), so there is no tab to open and you cannot spawn a sub-Agent. When work needs to be split, ask the user to open a new tab in the AI panel of the editor.', { code: 'no-tab' });
     }
     if (parent.parent) {
-      return fail(`你是子 Agent(由 ${parent.parent} 拉起),不能再拉起别的 Agent(深度上限 ${L.maxDepth})。需要帮手就用 send_message 告诉拉起你的 Agent。`, { code: 'depth' });
+      return fail(`You are a sub-Agent (spawned by ${parent.parent}) and cannot spawn other Agents (depth limit ${L.maxDepth}). If you need help, use send_message to tell the Agent that spawned you.`, { code: 'depth' });
     }
     const live = liveChildren(parentKey);
     if (live.length >= L.maxChildren) {
-      return fail(`你同时开着的子 Agent 已经有 ${live.length} 个(上限 ${L.maxChildren}):${live.map((c) => c.id).join('、')}。用 send_message 把活派给它们,或等用户关掉用不着的页签。`, { code: 'too-many', children: live.map((c) => c.id) });
+      return fail(`You already have ${live.length} sub-Agents open at once (limit ${L.maxChildren}): ${live.map((c) => c.id).join(', ')}. Use send_message to hand work to them, or wait for the user to close unneeded tabs.`, { code: 'too-many', children: live.map((c) => c.id) });
     }
     const def = loadRole(role);
-    if (!def) return fail(`角色 ${role} 的提示词读不到(src/ai/roles/${role}.md)`, { code: 'bad-role' });
+    if (!def) return fail(`Cannot read the prompt for role ${role} (src/ai/roles/${role}.md)`, { code: 'bad-role' });
     const level = sessions.creativityOf(parentKey, projectCreativity()).level;
     const id = newId();
     const provider = parent.type === 'api' ? 'api' : parent.vendor;
@@ -94,7 +94,7 @@ export function createMultiAgent({ sessions, board, openTab, projectCreativity =
     } catch (err) {
       sessions.unregister(id);
       b.takeInbox(id, false);
-      return fail(`开不出子 Agent 的页签:${err?.message ?? err}`, { code: 'no-tab' });
+      return fail(`Cannot open a tab for the sub-Agent: ${err?.message ?? err}`, { code: 'no-tab' });
     }
     return {
       ok: true,
@@ -104,7 +104,7 @@ export function createMultiAgent({ sessions, board, openTab, projectCreativity =
       parent: parentKey,
       provider,
       creativity: level,
-      note: `已开新页签「${def.name}」,任务作为它的第一条消息发出。它的对话 ID 是 ${id}:用 send_message 和它协调,用 list_agents 看它忙不忙;它写的内容以它自己的身份提交。`,
+      note: `Opened new tab "${def.name}"; the task was sent as its first message. Its chat ID is ${id}: use send_message to coordinate with it and list_agents to see whether it is busy; what it writes is submitted under its own identity.`,
     };
   }
 

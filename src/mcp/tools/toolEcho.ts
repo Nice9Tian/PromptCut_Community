@@ -94,7 +94,7 @@ export function lookHint(clipId: string) {
   return {
     tool: "see_frames",
     args: { source: "timeline", clipId },
-    why: "先确认真实画面再下结论：这张卡会不会压到人物、文字会不会被别的卡盖住。要看整屏就不传 clipId、传 t。",
+    why: "Confirm the actual frame before concluding: whether this card covers a person, and whether the text is covered by other cards. To view the whole screen, omit clipId and pass t.",
   };
 }
 
@@ -143,21 +143,21 @@ export function createClipGuard(opts: ClipGuardOptions = {}) {
     checkRemove(args: RemoveArgs): { reason?: string } {
       const reason = typeof args.reason === "string" ? args.reason.trim() : "";
       if (args.force) {
-        if (!reason) throw new Error("传了 force:true 就必须在 reason 里写明为什么要删这张卡，用户会看到这句话。");
+        if (!reason) throw new Error("If force:true is passed, you must state in reason why this card is being deleted; the user will see this sentence.");
         return { reason };
       }
       const b = born.get(args.clipId);
       if (b !== undefined && seq - b < freshWindow) {
         throw new Error(
-          `clip ${args.clipId} 是你刚用 add_clip 建的（之后只过了 ${seq - b} 次改动）。` +
-            `要改它（参数、时段、换卡）用 update_clip，不要删了重建——重建会丢掉这次没提到的细节，` +
-            `也会让你手里的 clipId 失效。确实要删就传 force:true 并在 reason 里说明。`,
+          `clip ${args.clipId} was just created by you with add_clip (only ${seq - b} changes since then).` +
+            `To change it (parameters, time range, swapping the card) use update_clip; do not delete and recreate it, because recreating loses details not mentioned this time, ` +
+            `and also invalidates the clipId you hold. If you really need to delete it, pass force:true and explain in reason.`,
         );
       }
       if (deleteStreak >= deleteStreakMax) {
         throw new Error(
-          `已经连续删了 ${deleteStreak} 张。先停一下：用 get_project 看清现在还剩什么、哪些才是用户说的冗余；` +
-            `确实要继续删就传 force:true 并在 reason 里逐条说明。`,
+          `${deleteStreak} cards have been deleted in a row. Stop for a moment: use get_project to see what remains and which ones the user actually called redundant; ` +
+            `If you really need to keep deleting, pass force:true and explain each one in reason.`,
         );
       }
       return {};
@@ -184,10 +184,10 @@ const ECHO_VALUE_MAX = 80;
 const ECHO_PARAMS_MAX = 2000;
 
 function briefValue(v: unknown): unknown {
-  if (typeof v === "string") return v.length > ECHO_VALUE_MAX ? `${v.slice(0, ECHO_VALUE_MAX)}…(共 ${v.length} 字)` : v;
+  if (typeof v === "string") return v.length > ECHO_VALUE_MAX ? `${v.slice(0, ECHO_VALUE_MAX)}… (${v.length} characters in total)` : v;
   if (v === null || typeof v !== "object") return v;
   const text = JSON.stringify(v);
-  return text.length > ECHO_VALUE_MAX ? `${text.slice(0, ECHO_VALUE_MAX)}…(共 ${text.length} 字)` : v;
+  return text.length > ECHO_VALUE_MAX ? `${text.slice(0, ECHO_VALUE_MAX)}… (${text.length} characters in total)` : v;
 }
 
 export function paramsEcho(before: Record<string, unknown> | undefined, after: Record<string, unknown> | undefined) {
@@ -201,6 +201,6 @@ export function paramsEcho(before: Record<string, unknown> | undefined, after: R
   const whole = JSON.stringify(a);
   return {
     changedParams,
-    ...(whole.length <= ECHO_PARAMS_MAX ? { params: a } : { paramKeys: Object.keys(a), paramsNote: "参数太长没有全部回显,用 get_clip 读" }),
+    ...(whole.length <= ECHO_PARAMS_MAX ? { params: a } : { paramKeys: Object.keys(a), paramsNote: "Parameters are too long to echo in full; read them with get_clip" }),
   };
 }

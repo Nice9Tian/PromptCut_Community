@@ -28,11 +28,11 @@ export function lerp(a: number, b: number, p: number): number {
 }
 
 function checkRanges(name: string, input: readonly number[], outputLength: number): void {
-  if (!Array.isArray(input) || input.length < 2) throw new Error(`${name} 的时间点至少要两个`);
-  if (input.length !== outputLength) throw new Error(`${name} 的时间点和取值个数要一样多（${input.length} 对 ${outputLength}）`);
+  if (!Array.isArray(input) || input.length < 2) throw new Error(`${name} needs at least two time points`);
+  if (input.length !== outputLength) throw new Error(`${name} needs the same number of time points and values (${input.length} vs ${outputLength})`);
   for (let i = 0; i < input.length; i++) {
-    if (!Number.isFinite(input[i])) throw new Error(`${name} 的时间点要是有限的数，第 ${i + 1} 个是 ${input[i]}`);
-    if (i > 0 && !(input[i] > input[i - 1])) throw new Error(`${name} 的时间点要一个比一个大，第 ${i + 1} 个（${input[i]}）不比前一个（${input[i - 1]}）大`);
+    if (!Number.isFinite(input[i])) throw new Error(`${name} time points must be finite numbers, number ${i + 1} is ${input[i]}`);
+    if (i > 0 && !(input[i] > input[i - 1])) throw new Error(`${name} time points must be strictly increasing, number ${i + 1} (${input[i]}) is not greater than the previous one (${input[i - 1]})`);
   }
 }
 
@@ -144,7 +144,7 @@ function parseColor(color: string): Rgba {
       if (out.every(Number.isFinite)) return out;
     }
   }
-  throw new Error(`interpolateColors 认不出这个颜色：${String(color).slice(0, 40)}（只认 #rgb、#rrggbb、#rrggbbaa、rgb()、rgba()）`);
+  throw new Error(`interpolateColors does not recognize this color: ${String(color).slice(0, 40)} (only #rgb, #rrggbb, #rrggbbaa, rgb(), rgba() are supported)`);
 }
 
 /**

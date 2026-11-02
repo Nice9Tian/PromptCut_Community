@@ -125,16 +125,16 @@ export async function resolveAt(page, ix, iy, { expect = null, radius = DEFAULT_
 export function explain(res) {
   if (res.ok) return null;
   if (res.reason === 'no_snapshot') {
-    return '这一页还没有截过屏,坐标没有参照。先调 web_view 拿到图和 clickable 清单,再按图上的坐标点。';
+    return 'No screenshot has been taken of this page yet, so the coordinates have no reference. Call web_view first to get the image and the clickable manifest, then click using the coordinates in the image.';
   }
   if (res.reason === 'empty') {
-    return `那个位置没有可点的东西${res.saw ? `(看到的是文字「${res.saw}」)` : ''}。对照图重新定位,或者用 u 直接指定清单里的元素。`;
+    return `Nothing clickable at that position${res.saw ? ` (saw the text "${res.saw}")` : ''}. Re-locate it using the image, or use u to specify an element from the manifest directly.`;
   }
   const lines = res.cands.map((c, i) =>
-    `  ${i + 1}. u="${c.u}" «${c.n || '(无文字)'}» <${c.t}> b=[${c.b.join(',')}] 距${c.d}px`
-    + (c.stacked ? ' ⚠被上层盖住,可能要先关掉上面那层' : ''));
+    `  ${i + 1}. u="${c.u}" «${c.n || '(no text)'}» <${c.t}> b=[${c.b.join(',')}] ${c.d}px away`
+    + (c.stacked ? ' ⚠ covered by a layer above, you may need to close that layer first' : ''));
   const head = res.reason === 'expect_mismatch'
-    ? `那个位置附近没有叫「${res.expect}」的元素。可能是你看错了位置,也可能这一页变了。附近有:`
-    : '那个位置附近有多个可点元素,没法确定你要哪个。请用 web_click({u:"..."}) 指定:';
+    ? `No element named "${res.expect}" near that position. You may have misjudged the position, or the page has changed. Nearby:`
+    : 'Multiple clickable elements near that position, cannot tell which one you want. Specify one with web_click({u:"..."}):';
   return `${head}\n${lines.join('\n')}`;
 }

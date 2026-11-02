@@ -60,7 +60,7 @@ const typeName = (v: object): string => {
 };
 
 function refuse(file: string, path: string, what: string): never {
-  throw new TypeError(`remotion 式的卡 ${file}：${what}。顶层的 ${path} 已经锁成只读——这一帧的画面只许用时间 t 和参数算出来，不能把东西存到下一帧。`);
+  throw new TypeError(`remotion-style card ${file}: ${what}. Top-level ${path} is locked read-only: a frame must be computed only from time t and parameters, and cannot store anything for the next frame.`);
 }
 
 const MAP_MUTATORS = ["set", "delete", "clear"] as const;
@@ -69,7 +69,7 @@ const SET_MUTATORS = ["add", "delete", "clear"] as const;
 function lockCollection(target: object, methods: readonly string[], file: string, path: string): void {
   for (const m of methods) {
     Object.defineProperty(target, m, {
-      value: () => refuse(file, path, `往顶层的 ${path} 里写（${m}）`),
+      value: () => refuse(file, path, `writing to top-level ${path} (${m})`),
       writable: false, enumerable: false, configurable: false,
     });
   }
@@ -87,13 +87,13 @@ function deepLock(value: unknown, path: string, file: string, foreign: WeakSet<o
     return;
   }
   if (value instanceof Map) {
-    for (const [k, v] of value) { deepLock(k, `${path} 的键`, file, foreign, seen, depth + 1); deepLock(v, `${path} 的值`, file, foreign, seen, depth + 1); }
+    for (const [k, v] of value) { deepLock(k, `key of ${path}`, file, foreign, seen, depth + 1); deepLock(v, `value of ${path}`, file, foreign, seen, depth + 1); }
     lockCollection(value, MAP_MUTATORS, file, path);
     Object.freeze(value);
     return;
   }
   if (value instanceof Set) {
-    for (const v of value) deepLock(v, `${path} 的成员`, file, foreign, seen, depth + 1);
+    for (const v of value) deepLock(v, `member of ${path}`, file, foreign, seen, depth + 1);
     lockCollection(value, SET_MUTATORS, file, path);
     Object.freeze(value);
     return;
@@ -107,7 +107,7 @@ function deepLock(value: unknown, path: string, file: string, foreign: WeakSet<o
     Object.freeze(value);
     return;
   }
-  throw new TypeError(`remotion 式的卡 ${file}：顶层的 ${path} 是 ${typeName(value)}，锁不成只读。卡片文件顶层只放数字、字符串、普通对象、数组和函数；别的东西放进函数里现算。`);
+  throw new TypeError(`remotion-style card ${file}: top-level ${path} is ${typeName(value)} and cannot be locked read-only. Only numbers, strings, plain objects, arrays and functions belong at the top level of a card file; compute anything else inside a function.`);
 }
 
 /**

@@ -9,6 +9,7 @@
  *     转发只是兜底,别把它当成主路。
  */
 import http from "node:http";
+import { tr } from "./i18n.mjs";
 
 const state = { url: null, ready: false, error: null, restarts: 0 };
 
@@ -26,10 +27,10 @@ function fetchFailure(pathname, error) {
   const snapshot = prerenderState();
   const cause = error?.cause;
   const detail = cause?.code || cause?.message || error?.message || String(error);
-  const where = snapshot.url || "预渲染地址未知";
-  const message = `连接预渲染服务失败：请求 ${pathname} 时连接被关闭（${detail}）。` +
-    ` 预渲染状态：${snapshot.ready ? "ready" : "未就绪"}，地址：${where}，重启次数：${snapshot.restarts}。` +
-    " 可能是预渲染进程或 Chrome 崩溃/被回收，请稍后重试。";
+  const where = snapshot.url || tr("prerender address unknown");
+  const message = tr("Failed to connect to the prerender service: the connection was closed while requesting {0} ({1}).", pathname, detail) +
+    tr(" Prerender state: {0}, address: {1}, restarts: {2}.", snapshot.ready ? "ready" : tr("not ready"), where, snapshot.restarts) +
+    tr(" The prerender process or Chrome may have crashed or been reclaimed. Please retry later.");
   return Object.assign(new Error(message, { cause: error }), {
     code: "PRERENDER_UNAVAILABLE",
     status: 503,
@@ -42,7 +43,7 @@ export async function whenPrerenderReady(timeoutMs = 60000) {
   const t0 = Date.now();
   while (!state.ready) {
     if (Date.now() - t0 > timeoutMs) {
-      throw new Error(`预渲染进程 ${Math.round(timeoutMs / 1000)} 秒内没有就绪${state.error ? `(${state.error})` : ""}`);
+      throw new Error(tr("The prerender process was not ready within {0} seconds{1}", Math.round(timeoutMs / 1000), state.error ? `(${state.error})` : ""));
     }
     await new Promise((r) => setTimeout(r, 200));
   }
@@ -68,13 +69,13 @@ export async function prerenderPost(pathname, body, { timeoutMs = 180000, signal
   } catch (error) {
     if (signal?.aborted) throw error;
     if (error?.name === "TimeoutError") {
-      throw Object.assign(new Error(`预渲染请求 ${pathname} 超过 ${Math.round(timeoutMs / 1000)} 秒没有回应。`), {
+      throw Object.assign(new Error(tr("Prerender request {0} got no response after {1} seconds.", pathname, Math.round(timeoutMs / 1000))), {
         code: "PRERENDER_TIMEOUT", status: 504, retryable: true, cause: error,
       });
     }
     throw fetchFailure(pathname, error);
   }
-  const data = await res.json().catch(() => ({ ok: false, error: `预渲染返回了非 JSON(HTTP ${res.status})` }));
+  const data = await res.json().catch(() => ({ ok: false, error: tr("Prerender returned non-JSON (HTTP {0})", res.status) }));
   if (!res.ok && data && data.ok !== false) data.ok = false;
   return data;
 }
@@ -94,7 +95,7 @@ export function proxyToPrerender(req, res, { unavailable = null, waitMs = 30000 
     res.statusCode = unavailable?.status ?? status;
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.end(JSON.stringify({ ok: false, code: unavailable?.code ?? "PRERENDER_UNAVAILABLE", retryable: true,
-      error: unavailable?.error ? `${unavailable.error}（${error}）` : error }));
+      error: unavailable?.error ? tr("{0} ({1})", unavailable.error, error) : error }));
   };
   whenPrerenderReady(waitMs).then((base) => {
     const target = new URL(req.originalUrl || req.url, base);
@@ -104,9 +105,9 @@ export function proxyToPrerender(req, res, { unavailable = null, waitMs = 30000 
       res.writeHead(r.statusCode || 502, r.headers);
       r.pipe(res);
     });
-    up.on("error", (e) => fail(502, `连接预渲染服务失败：转发 ${target.pathname} 时连接被关闭（${e.code || e.message}）。请稍后重试。`));
+    up.on("error", (e) => fail(502, tr("Failed to connect to the prerender service: the connection was closed while forwarding {0} ({1}). Please retry later.", target.pathname, e.code || e.message)));
     // 用户那边断了就别让预渲染接着干:断开会传过去,预渲染按断开摘掉排队的活
     res.on("close", () => { if (!res.writableEnded) up.destroy(); });
     req.pipe(up);
-  }, (e) => fail(503, `连接预渲染服务失败：${e.message || e}`));
+  }, (e) => fail(503, tr("Failed to connect to the prerender service: {0}", e.message || e)));
 }

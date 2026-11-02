@@ -63,7 +63,7 @@ export async function pickPort(tries = 50) {
     const port = 20000 + Math.floor(Math.random() * 40000);
     if (await tripleFree(port)) return port;
   }
-  throw new Error('找不到三个连号都空着的端口');
+  throw new Error('Could not find three consecutive free ports');
 }
 
 export async function waitHttp(url, pred, timeoutMs, label) {
@@ -78,7 +78,7 @@ export async function waitHttp(url, pred, timeoutMs, label) {
     } catch {}
     await sleep(400);
   }
-  throw new Error(`${label} 超时(${Math.round(timeoutMs / 1000)}s)`);
+  throw new Error(`${label} timed out (${Math.round(timeoutMs / 1000)}s)`);
 }
 
 /** 连子进程一起杀(vite 下面还挂着预渲染进程和 Chrome)。同步执行,退出钩子里也能用 */
@@ -109,18 +109,18 @@ export async function startDevServer({ env = {}, online = false, logFile, port, 
   const startEnv = online ? { VITE_PC_ONLINE: '1', ...env } : env;
   if (port) {
     const clash = portTriple(port).filter((p) => RESERVED.has(p));
-    if (clash.length) throw new Error(`端口 ${clash.join('、')} 是用户常驻 dev server 的,换一个`);
+    if (clash.length) throw new Error(`Port ${clash.join(', ')} belongs to the user's long-running dev server, pick another`);
   }
   const attempts = port ? 1 : 3;
   let lastError = null;
   for (let i = 0; i < attempts; i++) {
     const p = port || (await pickPort());
-    if (port && !(await tripleFree(p))) throw new Error(`端口 ${portTriple(p).join(' / ')} 没有全空着`);
+    if (port && !(await tripleFree(p))) throw new Error(`Ports ${portTriple(p).join(' / ')} are not all free`);
     try {
       return await startOnce(p, startEnv, logFile, log);
     } catch (e) {
       lastError = e;
-      log(`端口 ${p} 没起成:${e.message}`);
+      log(`Port ${p} failed to start: ${e.message}`);
     }
   }
   throw lastError;
@@ -143,7 +143,7 @@ async function startOnce(port, env, logFile, log) {
     // 测量期间有人改了 server/*.ts 或 vite.config.ts,vite 会整台重启:页面断线、跑到一半的对话被掐断
     const text = chunk.toString();
     const n = (text.match(/server restarted/gi) || []).length;
-    if (n) { restarts += n; log(`⚠ dev server 重启了(累计 ${restarts} 次)—— 多半是有人改了 server/ 或 vite.config.ts`); }
+    if (n) { restarts += n; log(`⚠ dev server restarted (${restarts} times in total): most likely someone changed server/ or vite.config.ts`); }
   };
   child.stdout.on('data', onData);
   child.stderr.on('data', onData);
@@ -154,13 +154,13 @@ async function startOnce(port, env, logFile, log) {
   };
   try {
     await Promise.race([
-      waitHttp(`${origin}/api/mcp/status`, (d) => d && typeof d.port === 'number', 120000, '等 dev server 起来'),
-      new Promise((_, reject) => child.once('exit', (code) => reject(new Error(`vite 提前退出(code ${code}),看 ${logFile}`)))),
+      waitHttp(`${origin}/api/mcp/status`, (d) => d && typeof d.port === 'number', 120000, 'waiting for dev server to start'),
+      new Promise((_, reject) => child.once('exit', (code) => reject(new Error(`vite exited early (code ${code}), see ${logFile}`)))),
     ]);
     const stage = await fetch(`${origin}/api/stage/ports`).then((r) => r.json());
     const stagePorts = Array.isArray(stage?.ports) ? stage.ports : [];
     if (stagePorts.length < (stage?.count ?? 2)) {
-      throw new Error(`舞台端口只起来 ${stagePorts.length} 个(${portTriple(port).slice(1).join(' / ')} 有被占的),页面会退回同源单舞台`);
+      throw new Error(`Only ${stagePorts.length} stage ports came up (${portTriple(port).slice(1).join(' / ')} has some in use), the page will fall back to a single same-origin stage`);
     }
     return { port, origin, stagePorts, pid: child.pid, restarts: () => restarts, exited: () => exited, stop };
   } catch (e) {
@@ -189,8 +189,8 @@ const samePath = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toL
 export function createJunction(link, target) {
   const abs = path.resolve(target);
   const st = lstatOrNull(abs);
-  if (!st || !st.isDirectory()) throw new Error(`素材目录不存在:${abs}`);
-  if (lstatOrNull(link)) throw new Error(`${link} 已经存在,不在它上面建 junction`);
+  if (!st || !st.isDirectory()) throw new Error(`Asset directory does not exist: ${abs}`);
+  if (lstatOrNull(link)) throw new Error(`${link} already exists, not creating a junction over it`);
   fs.symlinkSync(abs, link, 'junction');
   fs.writeFileSync(path.join(path.dirname(link), MARKER), JSON.stringify({ link: path.resolve(link), target: abs, pid: process.pid, createdAt: new Date().toISOString() }, null, 2));
 }
@@ -208,12 +208,12 @@ export function createJunction(link, target) {
 export function removeJunction(link, expectTarget) {
   const st = lstatOrNull(link);
   if (!st) return false;
-  if (!st.isSymbolicLink()) throw new Error(`${link} 不是链接,不动它`);
+  if (!st.isSymbolicLink()) throw new Error(`${link} is not a link, leaving it alone`);
   const target = fs.readlinkSync(link);
-  if (expectTarget && !samePath(target, expectTarget)) throw new Error(`${link} 指向 ${target},不是 ${expectTarget},不动它`);
+  if (expectTarget && !samePath(target, expectTarget)) throw new Error(`${link} points to ${target}, not ${expectTarget}, leaving it alone`);
   fs.unlinkSync(link);
-  if (lstatOrNull(link)) throw new Error(`${link} 拆完还在`);
-  if (!lstatOrNull(target)) throw new Error(`拆完链接后目标 ${target} 不见了`);
+  if (lstatOrNull(link)) throw new Error(`${link} still exists after teardown`);
+  if (!lstatOrNull(target)) throw new Error(`Target ${target} is gone after removing the link`);
   return true;
 }
 
@@ -278,8 +278,8 @@ const COPY_NOT_LINK = (name) => name === 'index.json' || name.startsWith('.');
 export function mirrorMediaLibrary(src, dest) {
   const from = path.resolve(src);
   const st = lstatOrNull(from);
-  if (!st || !st.isDirectory()) throw new Error(`素材目录不存在:${from}`);
-  if (lstatOrNull(dest)) throw new Error(`${dest} 已经存在,不在它上面建镜像`);
+  if (!st || !st.isDirectory()) throw new Error(`Asset directory does not exist: ${from}`);
+  if (lstatOrNull(dest)) throw new Error(`${dest} already exists, not creating a mirror over it`);
   const counts = { linked: 0, copied: 0, skipped: 0 };
   const walk = (a, b) => {
     fs.mkdirSync(b, { recursive: true });
@@ -294,7 +294,7 @@ export function mirrorMediaLibrary(src, dest) {
         fs.linkSync(s, d);
         counts.linked++;
       } catch (err) {
-        if (err.code === 'EXDEV') throw new Error(`硬链接要求导出目录和素材目录在同一个盘:${from} → ${dest}。用 --work 把导出目录指到素材所在的盘上`);
+        if (err.code === 'EXDEV') throw new Error(`Hard links require the export directory and asset directory to be on the same drive: ${from} → ${dest}. Use --work to point the export directory at the drive holding the assets`);
         throw err;
       }
     }

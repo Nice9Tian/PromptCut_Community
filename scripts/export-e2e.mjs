@@ -63,7 +63,7 @@ function parseArgs(argv) {
   for (let i = 0; i < own.length; i++) {
     const a = own[i];
     const next = () => {
-      if (i + 1 >= own.length) throw new Error(`${a} 后面要跟一个值`);
+      if (i + 1 >= own.length) throw new Error(`${a} must be followed by a value`);
       return own[++i];
     };
     if (a === '--project') o.project = next();
@@ -74,11 +74,11 @@ function parseArgs(argv) {
     else if (a === '--media-lib') o.mediaLib = own[i + 1] && !own[i + 1].startsWith('--') ? own[++i] : DEFAULT_MEDIA;
     else if (a === '--work') o.work = next();
     else if (a === '--port') o.port = Number(next());
-    else throw new Error(`不认识的参数 ${a}(要交给 export-frames 的参数放在 -- 后面)`);
+    else throw new Error(`Unknown argument ${a} (arguments meant for export-frames go after --)`);
   }
-  if (!o.project) throw new Error('要给 --project <project.json>');
-  if (!/^[A-Za-z0-9_-]+$/.test(o.id)) throw new Error('--id 只能用字母、数字、_ 和 -');
-  if (o.port !== undefined && !(Number.isInteger(o.port) && o.port > 0 && o.port < 65534)) throw new Error('--port 要是一个端口号');
+  if (!o.project) throw new Error('--project <project.json> is required');
+  if (!/^[A-Za-z0-9_-]+$/.test(o.id)) throw new Error('--id may only contain letters, digits, _ and -');
+  if (o.port !== undefined && !(Number.isInteger(o.port) && o.port > 0 && o.port < 65534)) throw new Error('--port must be a port number');
   return o;
 }
 
@@ -86,7 +86,7 @@ let opts;
 try {
   opts = parseArgs(process.argv.slice(2));
 } catch (e) {
-  console.error(`${e.message}\n用法见 scripts/export-e2e.mjs 文件头`);
+  console.error(`${e.message}\nUsage: see the header of scripts/export-e2e.mjs`);
   process.exit(2);
 }
 
@@ -105,12 +105,12 @@ function cleanup() {
   cleaned = true;
   // 先停用着素材的进程,再拆它们脚下的链接
   for (const c of children) if (c.exitCode === null) killTree(c.pid);
-  if (server) { server.stop(); log('已关 dev server'); }
+  if (server) { server.stop(); log('dev server stopped'); }
 }
 
 process.on('exit', cleanup);
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) {
-  process.on(sig, () => { log(`收到 ${sig},收工`); cleanup(); process.exit(130); });
+  process.on(sig, () => { log(`Received ${sig}, wrapping up`); cleanup(); process.exit(130); });
 }
 process.on('uncaughtException', (e) => { console.error(e); cleanup(); process.exit(1); });
 
@@ -142,53 +142,53 @@ const countFrames = (dir) => {
 async function main() {
   const project = JSON.parse(fs.readFileSync(opts.project, 'utf8'));
   if (!Array.isArray(project?.tracks)) {
-    const hint = Array.isArray(project?.project?.tracks) ? '看起来是 .proc,把它的 project 字段另存成一份 JSON 再给' : '顶层没有 tracks 数组';
-    throw new Error(`${opts.project} 不是 Timeline / Project 形状:${hint}`);
+    const hint = Array.isArray(project?.project?.tracks) ? 'Looks like a .proc; save its project field as a separate JSON and pass that instead' : 'no tracks array at the top level';
+    throw new Error(`${opts.project} is not a Timeline / Project shape: ${hint}`);
   }
   const libraryRefs = JSON.stringify(project).match(/"\/@media\//g)?.length || 0;
-  if (libraryRefs && !opts.mediaLib) log(`⚠ 项目引用了 ${libraryRefs} 处 /@media/ 素材,没带 --media-lib,这些素材取不到`);
+  if (libraryRefs && !opts.mediaLib) log(`⚠ the project references ${libraryRefs} /@media/ assets but --media-lib was not given, so these assets can't be fetched`);
 
   // 默认根目录,加上自定的 --work 所在的那一层(同一个 --work 反复用时,上次的链接就在这里)
   for (const root of new Set([DEFAULT_ROOT, path.dirname(work)])) {
-    for (const link of sweepStaleJunctions(root)) log(`清掉上次被强杀留下的 junction:${link}`);
+    for (const link of sweepStaleJunctions(root)) log(`Removed junctions left behind by the last forced kill: ${link}`);
   }
   fs.mkdirSync(outDir, { recursive: true });
   fs.writeFileSync(path.join(outDir, 'project.json'), JSON.stringify(project));
-  log(`导出目录 ${work}`);
+  log(`Export directory ${work}`);
 
   if (opts.mediaLib) {
     const n = mirrorMediaLibrary(opts.mediaLib, mediaMirror);
-    log(`media ← ${path.resolve(opts.mediaLib)}(硬链接 ${n.linked} 个、复制 ${n.copied} 个元数据${n.skipped ? `、跳过 ${n.skipped} 个链接` : ''};素材目录只读)`);
+    log(`media ← ${path.resolve(opts.mediaLib)} (${n.linked} hard-linked, ${n.copied} metadata copied${n.skipped ? `, ${n.skipped} links skipped` : ''}; asset directory read-only)`);
   }
 
   const env = { PROMPTCUT_EXPORT_DIR: work };
-  assertNoUserExportDir(env, 'export-e2e 的导出目录');
+  assertNoUserExportDir(env, 'export directory of export-e2e');
   const started = Date.now();
   server = await startDevServer({ env, logFile: path.join(work, 'vite.log'), port: opts.port, log });
-  log(`dev server 就绪 ${server.origin}(舞台 ${server.stagePorts.join(' / ')},${((Date.now() - started) / 1000).toFixed(1)}s)`);
+  log(`dev server ready ${server.origin} (stages ${server.stagePorts.join(' / ')}, ${((Date.now() - started) / 1000).toFixed(1)}s)`);
 
   const url = `${server.origin}/?export=1&timeline=/@export/${opts.id}/project.json`;
   const frames = opts.frames ? ['--frames', opts.frames] : [];
   const exportArgs = [path.join(REPO, 'scripts', 'export-frames.mjs'), '--url', url, '--out', outDir, ...frames,
     ...(opts.video ? [] : ['--no-video']), ...opts.passthrough];
-  log(`导出:node scripts/export-frames.mjs ${exportArgs.slice(1).join(' ')}`);
+  log(`Export: node scripts/export-frames.mjs ${exportArgs.slice(1).join(' ')}`);
 
   const jobs = [run('export', exportArgs, { cwd: REPO, env, logFile: path.join(outDir, 'export.log') })];
   if (opts.determinism) {
     const detDir = path.join(work, 'determinism');
     fs.mkdirSync(detDir, { recursive: true });
-    log('确定性:node scripts/verify-determinism.mjs(并行,输出在 determinism/out/)');
+    log('Determinism: node scripts/verify-determinism.mjs (parallel, output in determinism/out/)');
     jobs.push(run('determinism', [path.join(REPO, 'scripts', 'verify-determinism.mjs'), '--url', url, ...frames],
       { cwd: detDir, env, logFile: path.join(detDir, 'determinism.log') }));
   }
   const [exportCode, detCode] = await Promise.all(jobs);
 
   const restarts = server.restarts();
-  log('—— 结果 ——');
-  log(`导出:${exportCode === 0 ? '完成' : `失败(退出码 ${exportCode})`},${countFrames(path.join(outDir, 'frames'))} 帧 → ${path.join(outDir, 'frames')}`);
-  if (opts.video && exportCode === 0) log(`成片:${path.join(outDir, 'preview.mp4')}`);
-  if (opts.determinism) log(`确定性:${detCode === 0 ? '两趟逐像素相同' : `没过(退出码 ${detCode}),明细见上面 [determinism] 的输出`}`);
-  if (restarts) log(`⚠ 期间 dev server 重启过 ${restarts} 次,结果可能不可信`);
+  log('-- Result --');
+  log(`Export: ${exportCode === 0 ? 'done' : `failed (exit code ${exportCode})`}, ${countFrames(path.join(outDir, 'frames'))} frames → ${path.join(outDir, 'frames')}`);
+  if (opts.video && exportCode === 0) log(`Final video: ${path.join(outDir, 'preview.mp4')}`);
+  if (opts.determinism) log(`Determinism: ${detCode === 0 ? 'two passes pixel-identical' : `failed (exit code ${detCode}), see the [determinism] output above for details`}`);
+  if (restarts) log(`⚠ dev server restarted ${restarts} times during the run, results may be unreliable`);
   return exportCode === 0 && (!opts.determinism || detCode === 0) ? 0 : 1;
 }
 

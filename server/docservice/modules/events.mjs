@@ -51,25 +51,25 @@ class Refused extends Error {
 }
 
 function checkProjectId(v) {
-  if (typeof v !== 'string' || !PROJECT_ID_RE.test(v)) bad('projectId 不合法');
+  if (typeof v !== 'string' || !PROJECT_ID_RE.test(v)) bad('projectId is invalid');
   return v;
 }
 
 function checkEventId(v) {
-  if (typeof v !== 'string' || !EVENT_ID_RE.test(v)) bad('eventId 必须是 1～128 个 [A-Za-z0-9._:-] 字符');
+  if (typeof v !== 'string' || !EVENT_ID_RE.test(v)) bad('eventId must be 1-128 characters from [A-Za-z0-9._:-]');
   return v;
 }
 
 /** 可选的短文本：没给（或 null）记 null；给了就得是不超过 max 个字符的字符串 */
 function optText(v, name, max) {
   if (v === undefined || v === null) return null;
-  if (typeof v !== 'string' || v.length > max) bad(`${name} 必须是不超过 ${max} 个字符的字符串`);
+  if (typeof v !== 'string' || v.length > max) bad(`${name} must be a string of at most ${max} characters`);
   return v;
 }
 
 function checkSession(v) {
   if (v === undefined || v === null) return null;
-  if (typeof v !== 'string' || v.length < 1 || v.length > 128) bad('session 必须是 1～128 个字符的字符串');
+  if (typeof v !== 'string' || v.length < 1 || v.length > 128) bad('session must be a string of 1-128 characters');
   return v;
 }
 
@@ -85,7 +85,7 @@ export const eventDetailKey = (projectId, eventId) => `${projectId}/${eventId}`;
  * @param {() => number} [options.now] 缺省用 `ctx.now()`
  */
 export function eventsModule({ project, content = null, now } = {}) {
-  if (!project || typeof project.publishToProject !== 'function') throw new TypeError('eventsModule: project 必须是带 publishToProject 的项目模块');
+  if (!project || typeof project.publishToProject !== 'function') throw new TypeError('eventsModule: project must be a project module with publishToProject');
   /** connId → principal */
   const principals = new Map();
   /** projectId → Map<eventId, 记录>（插入序，超过上限丢最早的） */
@@ -114,7 +114,7 @@ export function eventsModule({ project, content = null, now } = {}) {
     const eventId = checkEventId(msg.eventId);
     const session = checkSession(msg.session);
     const principal = principals.get(connId);
-    if (principal?.role === 'render') throw new Refused('forbidden', '渲染节点的连接不能发工具调用事件');
+    if (principal?.role === 'render') throw new Refused('forbidden', 'Render node connections cannot send tool call events');
     return { projectId, eventId, actor: actorOf(principal, session) };
   }
 
@@ -124,7 +124,7 @@ export function eventsModule({ project, content = null, now } = {}) {
 
   function create(ctx, connId, msg, reqId) {
     const { projectId, eventId, actor } = common(connId, msg);
-    if (typeof msg.tool !== 'string' || msg.tool.length < 1 || msg.tool.length > EVENTS_LIMITS.TOOL) bad(`tool 必须是 1～${EVENTS_LIMITS.TOOL} 个字符的字符串`);
+    if (typeof msg.tool !== 'string' || msg.tool.length < 1 || msg.tool.length > EVENTS_LIMITS.TOOL) bad(`tool must be a string of 1-${EVENTS_LIMITS.TOOL} characters`);
     const icon = optText(msg.icon, 'icon', EVENTS_LIMITS.ICON);
     const target = optText(msg.target, 'target', EVENTS_LIMITS.TARGET);
     const args = optText(msg.args, 'args', EVENTS_LIMITS.ARGS);
@@ -132,12 +132,12 @@ export function eventsModule({ project, content = null, now } = {}) {
     const at = clock(ctx);
     let detailKey = null;
     if (msg.detail !== undefined) {
-      if (!content || typeof content.putFromModule !== 'function') throw new Refused('unsupported', '没有内容库，存不了事件详情');
+      if (!content || typeof content.putFromModule !== 'function') throw new Refused('unsupported', 'No content store, cannot save event details');
       detailKey = eventDetailKey(projectId, eventId);
       try {
         content.putFromModule({ kind: 'event-detail', key: detailKey, body: msg.detail, actor });
       } catch (err) {
-        if (err?.reason === 'too-large') throw new Refused('too-large', '事件详情超过内容库的上限');
+        if (err?.reason === 'too-large') throw new Refused('too-large', 'Event details exceed the content store limit');
         throw err;
       }
       stats.details += 1;
@@ -152,41 +152,41 @@ export function eventsModule({ project, content = null, now } = {}) {
 
   function complete(ctx, connId, msg, reqId) {
     const { projectId, eventId, actor } = common(connId, msg);
-    if (!EVENT_STATUSES.includes(msg.status)) bad(`status 只能是 ${EVENT_STATUSES.join(' / ')}`);
+    if (!EVENT_STATUSES.includes(msg.status)) bad(`status must be one of ${EVENT_STATUSES.join(' / ')}`);
     const summary = optText(msg.summary, 'summary', EVENTS_LIMITS.SUMMARY);
     const callId = optText(msg.callId, 'callId', EVENTS_LIMITS.CALL_ID);
     const call = callId ? { callId } : {};
     let durationMs = null;
     if (msg.durationMs !== undefined && msg.durationMs !== null) {
-      if (typeof msg.durationMs !== 'number' || !Number.isFinite(msg.durationMs) || msg.durationMs < 0) bad('durationMs 必须是非负数');
+      if (typeof msg.durationMs !== 'number' || !Number.isFinite(msg.durationMs) || msg.durationMs < 0) bad('durationMs must be a non-negative number');
       durationMs = msg.durationMs;
     }
     // 这次调用写了项目时（c65-agent，主会话裁定）：透传这次写入的 `opId`、落地的 `rev` 与逆操作 `inverse`，
     // 页面 AI 栏「撤销这一步」据此以页面自己的身份提交逆操作、带 `undoOf`。读工具与被拒的写入不带
     const write = {};
     if (msg.opId !== undefined && msg.opId !== null) {
-      if (typeof msg.opId !== 'string' || msg.opId.length < 1 || msg.opId.length > 128) bad('opId 必须是 1～128 个字符的字符串');
+      if (typeof msg.opId !== 'string' || msg.opId.length < 1 || msg.opId.length > 128) bad('opId must be a string of 1-128 characters');
       write.opId = msg.opId;
     }
     if (msg.rev !== undefined && msg.rev !== null) {
-      if (!Number.isSafeInteger(msg.rev) || msg.rev < 1) bad('rev 必须是正整数');
+      if (!Number.isSafeInteger(msg.rev) || msg.rev < 1) bad('rev must be a positive integer');
       write.rev = msg.rev;
     }
     if (msg.inverse !== undefined && msg.inverse !== null) {
-      if (write.opId === undefined) bad('带 inverse 时必须带 opId');
-      if (!Array.isArray(msg.inverse)) bad('inverse 必须是操作数组');
-      if (Buffer.byteLength(JSON.stringify(msg.inverse), 'utf8') > EVENTS_LIMITS.INVERSE) bad(`inverse 序列化后不能超过 ${EVENTS_LIMITS.INVERSE} 字节`);
+      if (write.opId === undefined) bad('opId is required when inverse is present');
+      if (!Array.isArray(msg.inverse)) bad('inverse must be an array of operations');
+      if (Buffer.byteLength(JSON.stringify(msg.inverse), 'utf8') > EVENTS_LIMITS.INVERSE) bad(`inverse cannot exceed ${EVENTS_LIMITS.INVERSE} bytes when serialized`);
       write.inverse = msg.inverse;
     }
     // 完成时把 event-detail 补写一次（含结果摘要与上面的写入信息），页面展开这一条时一次拿全
     let detailKey;
     if (msg.detail !== undefined) {
-      if (!content || typeof content.putFromModule !== 'function') throw new Refused('unsupported', '没有内容库，存不了事件详情');
+      if (!content || typeof content.putFromModule !== 'function') throw new Refused('unsupported', 'No content store, cannot save event details');
       detailKey = eventDetailKey(projectId, eventId);
       try {
         content.putFromModule({ kind: 'event-detail', key: detailKey, body: msg.detail, actor });
       } catch (err) {
-        if (err?.reason === 'too-large') throw new Refused('too-large', '事件详情超过内容库的上限');
+        if (err?.reason === 'too-large') throw new Refused('too-large', 'Event details exceed the content store limit');
         throw err;
       }
       stats.details += 1;
@@ -200,7 +200,7 @@ export function eventsModule({ project, content = null, now } = {}) {
 
   function text(ctx, connId, msg, reqId) {
     const { projectId, eventId, actor } = common(connId, msg);
-    if (typeof msg.text !== 'string' || msg.text.length > EVENTS_LIMITS.TEXT) bad(`text 必须是不超过 ${EVENTS_LIMITS.TEXT} 个字符的字符串`);
+    if (typeof msg.text !== 'string' || msg.text.length > EVENTS_LIMITS.TEXT) bad(`text must be a string of at most ${EVENTS_LIMITS.TEXT} characters`);
     const at = clock(ctx);
     remember(projectId, eventId, { text: msg.text, actor, createdAt: at, completedAt: at, status: 'ok', tool: null });
     stats.texts += 1;
@@ -231,7 +231,7 @@ export function eventsModule({ project, content = null, now } = {}) {
     handle(ctx, connId, msg) {
       const reqId = isReqId(msg.reqId) ? msg.reqId : undefined;
       const fn = HANDLERS[msg.type];
-      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: '事件模块不支持这种消息' }, reqId);
+      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: 'The events module does not support this message' }, reqId);
       try {
         fn(ctx, connId, msg, reqId);
       } catch (err) {

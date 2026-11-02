@@ -14,6 +14,7 @@ import * as readline from 'node:readline';
 import { tools } from './mcp-tools.mjs';
 import { injectCardParams, injectPartParams } from './card-params-schema.mjs';
 import { GUIDE_TOOL, SKILL_INSTRUCTIONS, desktopSessionKey, discoverEditor, newProcessSession, skillGuide, threadOf, vendorOf } from './agent/desktop-mcp.mjs';
+import { tr } from "./i18n.mjs";
 
 /** 这个进程是 AI 栏的命令行工具起的(否则就是桌面 APP 的会话) */
 const CLI_CALLER = process.env.PROMPTCUT_CALLER === 'cli' || !!process.env.PROMPTCUT_AGENT;
@@ -113,13 +114,13 @@ async function callBridge(tool, args, callId, pair, meta, { schemaOnly = false }
         continue;
       }
       if (err?.name === 'TimeoutError') {
-        throw new Error(`PromptCut 在 ${host}:${port} 上 ${Math.round(bridgeTimeoutMs(tool) / 1000)} 秒没有回应(${tool})。`
-          + '可能是这个端口被别的程序占着、或者编辑台卡住了;这次调用没有执行完,可以稍后重试。');
+        throw new Error(`PromptCut did not respond on ${host}:${port} within ${Math.round(bridgeTimeoutMs(tool) / 1000)} seconds (${tool}).`
+          + 'The port may be in use by another program, or the editor may be stuck; this call did not finish, and you can retry later.');
       }
       if (isFetchFailure(err)) {
         const detail = err.cause?.code || err.cause?.message || err.message;
-        throw Object.assign(new Error(`PromptCut 连接预览服务失败：调用 ${tool} 时连接被关闭（${detail}）。`
-          + '可能是预渲染进程或 Chrome 正在重启，请稍后重试。'), { code: 'BRIDGE_UNAVAILABLE', retryable: true, cause: err });
+        throw Object.assign(new Error(`PromptCut failed to connect to the preview service: the connection was closed while calling ${tool} (${detail}).`
+          + 'The prerender process or Chrome may be restarting, please retry later.'), { code: 'BRIDGE_UNAVAILABLE', retryable: true, cause: err });
       }
       throw err;
     }
@@ -250,7 +251,7 @@ async function handleMessage(line) {
     } catch (e) {
       if (e.allRefused || isConnRefused(e)) {
         sendResponse(req.id, {
-          content: [{ type: "text", text: `PromptCut 没在运行(端口 ${e.port} 没有服务)。请先打开 PromptCut,再回来重试;不要反复重试。` }],
+          content: [{ type: "text", text: tr("PromptCut is not running (no service on port {0}). Open PromptCut first, then come back and retry; do not retry repeatedly.", e.port) }],
           isError: true
         });
       } else {
@@ -286,7 +287,7 @@ async function handleMessage(line) {
       if (image?.base64) content.push({ type: "image", data: image.base64, mimeType: image.mime || "image/png" });
       for (const im of images) {
         if (!im?.base64) continue;
-        content.push({ type: "text", text: `${im.label ?? `镜头 ${im.sceneIndex ?? "?"}`}:` });
+        content.push({ type: "text", text: `${im.label ?? `Shot ${im.sceneIndex ?? "?"}`}:` });
         content.push({ type: "image", data: im.base64, mimeType: im.mime || "image/jpeg" });
       }
       sendResponse(req.id, { content });

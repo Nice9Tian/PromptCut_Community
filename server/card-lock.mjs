@@ -29,10 +29,10 @@ const isContentKey = value => typeof value === 'string' && CONTENT_KEY.test(valu
 const isFingerprint = value => typeof value === 'string' && value.length > 0;
 
 function checkKey(contentKey) {
-  if (!isContentKey(contentKey)) throw new TypeError(`卡片锁的内容键必须是 64 位小写十六进制:${JSON.stringify(contentKey)}`);
+  if (!isContentKey(contentKey)) throw new TypeError(`The content key of a card lock must be 64 lowercase hex characters: ${JSON.stringify(contentKey)}`);
 }
 function checkFingerprint(envFingerprint) {
-  if (!isFingerprint(envFingerprint)) throw new TypeError(`卡片锁的环境指纹必须是非空字符串:${JSON.stringify(envFingerprint)}`);
+  if (!isFingerprint(envFingerprint)) throw new TypeError(`The environment fingerprint of a card lock must be a non-empty string: ${JSON.stringify(envFingerprint)}`);
 }
 
 /** 盘上读回来的一把锁是否可用;不可用的文件整个跳过 */

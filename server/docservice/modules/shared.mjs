@@ -45,6 +45,7 @@ import { DELEGATION_AUDIENCES, isConversationId } from '../../auth/protocol.mjs'
 import { admissionOf, isLoopbackAddress } from '../../auth/handshake.mjs';
 import { parseList, isCred } from '../../auth/http.mjs';
 import { parseInviteOptions, issueInvite, inviteStatus } from '../../auth/invite.mjs';
+import { tr } from "../../i18n.mjs";
 
 export const SHARED_MODULE = 'shared';
 export const ADMIN_OPS = Object.freeze([
@@ -223,16 +224,16 @@ export function sharedModule({
 
   /** 这条连接是共享项目的成员（含本机声明），且项目还在 */
   function memberRecord(c) {
-    if (!c || c.principal.scope !== 'member') throw new Refused('forbidden', '只有共享项目的成员能做这件事');
+    if (!c || c.principal.scope !== 'member') throw new Refused('forbidden', tr("Only members of a shared project can do this"));
     const rec = storeOf()?.peek(c.space);
-    if (!rec) throw new Refused('forbidden', '项目不存在');
+    if (!rec) throw new Refused('forbidden', tr("Project does not exist"));
     return rec;
   }
 
   function checkBlocked(ctx, connId) {
     const remote = ctx.remote?.(connId) ?? null;
     const loop = isLoopbackRemote(remote);
-    if (!loop && limiter.blocked(remote)) throw new Refused('rate-limited', '口令错误太多，稍后再试');
+    if (!loop && limiter.blocked(remote)) throw new Refused('rate-limited', tr("Too many wrong passwords, try again later"));
     return { remote, loop };
   }
 
@@ -262,23 +263,23 @@ export function sharedModule({
   /** 托管方服务的连接要票据：只签素材票据，带 `sv` / `sk`；连接票据一律不签（那等于给自己换角色） */
   function serviceTicket(ctx, connId, c, msg, reqId) {
     const p = c.principal;
-    if (c.space === null) throw new Refused('forbidden', '控制连接要不到票据');
+    if (c.space === null) throw new Refused('forbidden', 'A control connection cannot get a ticket');
     const rec = storeOf()?.peek(c.space) ?? null;
     if (!rec) {
       const runtime = typeof accountRuntime === 'function' ? accountRuntime() : accountRuntime;
       if (runtime && typeof runtime.issueServiceAssetTicket === 'function') {
-        if (msg.kind !== 'asset') throw new Refused('forbidden', '服务身份只能要素材票据');
+        if (msg.kind !== 'asset') throw new Refused('forbidden', 'A service identity can only request asset tickets');
         const access = msg.access ?? 'r';
-        if (access !== 'r' && access !== 'rw') throw new Refused('bad-message', "access 只能是 'r' 或 'rw'");
+        if (access !== 'r' && access !== 'rw') throw new Refused('bad-message', "access must be 'r' or 'rw'");
         const out = runtime.issueServiceAssetTicket({ projectId: c.space, service: p.service, serviceKid: p.serviceKid, access });
         return reply(ctx, connId, { type: 'auth.ticket.ok', ticket: out.assetTicket ?? out.ticket, exp: out.expiresAt ?? out.exp }, reqId);
       }
     }
     const refused = serviceAdmission({ registry: registryOf(), record: rec, service: p.service, kid: p.serviceKid, role: p.role });
     if (refused) throw new Refused('forbidden', refused);
-    if (msg.kind !== 'asset') throw new Refused('forbidden', '服务身份只能要素材票据');
+    if (msg.kind !== 'asset') throw new Refused('forbidden', 'A service identity can only request asset tickets');
     const access = msg.access ?? 'r';
-    if (access !== 'r' && access !== 'rw') throw new Refused('bad-message', "access 只能是 'r' 或 'rw'");
+    if (access !== 'r' && access !== 'rw') throw new Refused('bad-message', "access must be 'r' or 'rw'");
     const out = signTicket(rec, { k: 'asset', u: p.userId, r: access, dn: p.deviceName, sv: p.service, sk: p.serviceKid }, clock(ctx));
     reply(ctx, connId, { type: 'auth.ticket.ok', ticket: out.ticket, exp: out.exp }, reqId);
   }
@@ -290,17 +291,17 @@ export function sharedModule({
    */
   function memberServiceAssetTicket(ctx, connId, c, msg, reqId) {
     const p = c.principal;
-    if (p.scope !== 'member' || c.space === null) throw new Refused('forbidden', '服务连接要不到这种票据');
-    if (msg.kind !== 'asset') throw new Refused('forbidden', '服务连接只能要素材票据');
+    if (p.scope !== 'member' || c.space === null) throw new Refused('forbidden', 'A service connection cannot request this kind of ticket');
+    if (msg.kind !== 'asset') throw new Refused('forbidden', 'A service connection can only request asset tickets');
     const rec = storeOf()?.peek(c.space) ?? null;
     const refused = serviceAdmission({ registry: registryOf(), record: rec, service: p.service, kid: p.serviceKid });
     if (refused) throw new Refused('forbidden', refused);
-    if (registryOf()?.get(p.service)?.actsFor !== 'member') throw new Refused('forbidden', '服务连接要不到这种票据');
+    if (registryOf()?.get(p.service)?.actsFor !== 'member') throw new Refused('forbidden', 'A service connection cannot request this kind of ticket');
     if (admissionOf(rec, { username: p.username, deviceId: p.deviceId, creator: p.creator === true })) throw new Refused('forbidden');
     const access = msg.access ?? 'r';
-    if (access !== 'r' && access !== 'rw') throw new Refused('bad-message', "access 只能是 'r' 或 'rw'");
+    if (access !== 'r' && access !== 'rw') throw new Refused('bad-message', "access must be 'r' or 'rw'");
     const mine = p.access === 'rw' && memberAccess(rec, p.username, p.creator === true) === 'rw' ? 'rw' : 'r';
-    if (access === 'rw' && mine !== 'rw') throw new Refused('forbidden', '只读成员的云端 Agent 要不到读写的素材票据');
+    if (access === 'rw' && mine !== 'rw') throw new Refused('forbidden', 'A read-only member\'s Cloud Agent cannot request a read-write asset ticket');
     const out = signTicket(rec, { k: 'asset', u: p.userId, r: access, dn: p.deviceName, cr: p.creator === true, sv: p.service, sk: p.serviceKid }, clock(ctx));
     ctx.log('shared.agent-asset-ticket', { connId, projectId: c.space, access });
     reply(ctx, connId, { type: 'auth.ticket.ok', ticket: out.ticket, exp: out.exp }, reqId);
@@ -318,25 +319,25 @@ export function sharedModule({
     const fields = { u: p.userId, dn: p.deviceName, cr: p.creator === true };
     if (msg.kind === 'asset') {
       const access = msg.access ?? 'r';
-      if (access !== 'r' && access !== 'rw') throw new Refused('bad-message', "access 只能是 'r' 或 'rw'");
+      if (access !== 'r' && access !== 'rw') throw new Refused('bad-message', "access must be 'r' or 'rw'");
       Object.assign(fields, { k: 'asset', r: access });
     } else if (msg.kind === 'conn') {
-      if (!isRole(msg.role)) throw new Refused('bad-message', `role 只能是 ${ROLES.join(' / ')}`);
+      if (!isRole(msg.role)) throw new Refused('bad-message', `role must be one of ${ROLES.join(' / ')}`);
       fields.k = 'conn';
       fields.r = msg.role;
       if (msg.role === 'agent') {
-        if (!isConversation(msg.conversation)) throw new Refused('bad-message', 'agent 连接要给对话号（正整数）');
+        if (!isConversation(msg.conversation)) throw new Refused('bad-message', 'An agent connection must provide a chat number (positive integer)');
         fields.c = msg.conversation;
       } else if (msg.conversation !== undefined && msg.conversation !== null) {
-        throw new Refused('bad-message', '只有 agent 连接带对话号');
+        throw new Refused('bad-message', 'Only agent connections carry a chat number');
       }
       if (msg.owner !== undefined && msg.owner !== null) {
         const owner = msg.role === 'render' ? normalizeOwner(msg.owner) : null;
-        if (!owner) throw new Refused('bad-message', "owner 只能给 render 连接，取 { kind: 'user' }、{ kind: 'agent', c } 或 { kind: 'browser' }");
+        if (!owner) throw new Refused('bad-message', "owner is only allowed on render connections, and must be { kind: 'user' }, { kind: 'agent', c } or { kind: 'browser' }");
         fields.o = owner;
       }
     } else {
-      throw new Refused('bad-message', "kind 只能是 'asset'、'conn' 或 'delegate'");
+      throw new Refused('bad-message', "kind must be 'asset', 'conn' or 'delegate'");
     }
     const out = signTicket(rec, fields, clock(ctx));
     reply(ctx, connId, { type: 'auth.ticket.ok', ticket: out.ticket, exp: out.exp }, reqId);
@@ -350,12 +351,12 @@ export function sharedModule({
    */
   function delegateTicket(ctx, connId, c, rec, msg, reqId) {
     const p = c.principal;
-    if (p.role !== 'page') throw new Refused('forbidden', '只有成员的页面连接能要委托');
-    if (!DELEGATION_AUDIENCES.includes(msg.audience)) throw new Refused('bad-message', `audience 只能是 ${DELEGATION_AUDIENCES.join(' / ')}`);
+    if (p.role !== 'page') throw new Refused('forbidden', 'Only a member\'s page connection can request a delegation');
+    if (!DELEGATION_AUDIENCES.includes(msg.audience)) throw new Refused('bad-message', `audience must be ${DELEGATION_AUDIENCES.join(' / ')}`);
     const grant = msg.conversation !== undefined && msg.conversation !== null;
-    if (grant && !isConversationId(msg.conversation)) throw new Refused('bad-message', 'conversation 要是对话 id（1～64 个 [A-Za-z0-9_-]）');
+    if (grant && !isConversationId(msg.conversation)) throw new Refused('bad-message', 'conversation must be a chat id (1-64 characters of [A-Za-z0-9_-])');
     if (!hostedServices || !registryOf()?.get(msg.audience) || rec.hosted?.[msg.audience]?.enabled === false) {
-      throw new Refused('service-disabled', '这个项目没有开云端 Agent');
+      throw new Refused('service-disabled', tr("This project does not have Cloud Agent enabled"));
     }
     const out = signDelegation(rec, {
       u: p.userId, dn: p.deviceName, cr: p.creator === true, aud: msg.audience,
@@ -377,9 +378,9 @@ export function sharedModule({
     const rec = memberRecord(c);
     const { remote, loop } = checkBlocked(ctx, connId);
     const proof = msg.proof;
-    if (!isObj(proof) || typeof proof.nonce !== 'string' || typeof proof.m !== 'string') throw new Refused('forbidden', '要创建者证明');
+    if (!isObj(proof) || typeof proof.nonce !== 'string' || typeof proof.m !== 'string') throw new Refused('forbidden', tr("Creator proof required"));
     const op = msg.op;
-    if (!ADMIN_OPS.includes(op)) throw new Refused('bad-message', `op 只能是 ${ADMIN_OPS.join(' / ')}`);
+    if (!ADMIN_OPS.includes(op)) throw new Refused('bad-message', `op must be one of ${ADMIN_OPS.join(' / ')}`);
     const nonceOk = challenges.consume(proof.nonce, ['admin', connId, c.space]);
     const given = b64urlDecode(proof.m);
     let ok = false;
@@ -392,14 +393,14 @@ export function sharedModule({
     if (!ok) {
       if (!loop) limiter.fail(remote);
       ctx.log('shared.admin.reject', { connId, remote, op, reason: nonceOk ? 'bad-proof' : 'nonce' });
-      throw new Refused('forbidden', '创建者证明不对');
+      throw new Refused('forbidden', tr("Creator proof is incorrect"));
     }
     const st = storeOf();
     const space = c.space;
     switch (op) {
       case 'set-password': {
-        if (rec.mode !== 'free') throw new Refused('bad-message', '限定进入没有项目口令，改名单用 set-list');
-        if (!isCred(msg.project)) throw new Refused('bad-message', 'project 要 { salt, key }');
+        if (rec.mode !== 'free') throw new Refused('bad-message', 'Restricted entry has no project password, use set-list to change the list');
+        if (!isCred(msg.project)) throw new Refused('bad-message', 'project requires { salt, key }');
         st.update(space, (d) => {
           d.project = { salt: msg.project.salt, key: msg.project.key };
           d.generation += 1;
@@ -410,7 +411,7 @@ export function sharedModule({
         break;
       }
       case 'set-creator-password': {
-        if (!isCred(msg.creator)) throw new Refused('bad-message', 'creator 要 { salt, key }');
+        if (!isCred(msg.creator)) throw new Refused('bad-message', 'creator requires { salt, key }');
         st.update(space, (d) => {
           d.creator = { ...d.creator, salt: msg.creator.salt, key: msg.creator.key };
         });
@@ -426,7 +427,7 @@ export function sharedModule({
         return;
       }
       case 'set-list': {
-        if (rec.mode !== 'restricted') throw new Refused('bad-message', '自由进入没有名单，改口令用 set-password');
+        if (rec.mode !== 'restricted') throw new Refused('bad-message', 'Open entry has no list, use set-password to change the password');
         // `{ username, keep: true }`:沿用名单里这个人现有的口令(界面「改名单」只增删、只改某几个人的密码时用;
         // 创建者拿不到别人的 K,也不该拿到)。名单里没有这个人时整批 bad-message
         const current = new Map((rec.list ?? []).map((e) => [e.username, e]));
@@ -436,7 +437,7 @@ export function sharedModule({
             : e))
           : msg.list;
         const list = parseList(given, rec.creator.username);
-        if (!list) throw new Refused('bad-message', 'list 要 [{ username, salt, key }]，用户名不重复、不含创建者');
+        if (!list) throw new Refused('bad-message', 'list requires [{ username, salt, key }], with unique usernames and not including the creator');
         const keep = new Set(list.map((e) => e.username));
         st.update(space, (d) => {
           d.list = list;
@@ -448,7 +449,7 @@ export function sharedModule({
       }
       case 'kick': {
         const { username, deviceId } = msg;
-        if (!isUsername(username) || !isDeviceId(deviceId)) throw new Refused('bad-message', '要 username 与 deviceId');
+        if (!isUsername(username) || !isDeviceId(deviceId)) throw new Refused('bad-message', 'username and deviceId are required');
         const userId = `${username}@${deviceId}`;
         st.update(space, (d) => {
           d.userGenerations = { ...(d.userGenerations ?? {}), [userId]: userGeneration(d, userId) + 1 };
@@ -460,9 +461,9 @@ export function sharedModule({
       }
       case 'set-hosted-service': {
         const name = msg.service;
-        if (!HOSTED_SERVICES.includes(name)) throw new Refused('bad-message', `service 只能是 ${HOSTED_SERVICES.join(' / ')}`);
-        if (!hostedServices || !registryOf()?.get(name)) throw new Refused('bad-message', '这台文档服务没有这个托管方服务');
-        if (typeof msg.enabled !== 'boolean') throw new Refused('bad-message', 'enabled 要是布尔值');
+        if (!HOSTED_SERVICES.includes(name)) throw new Refused('bad-message', `service must be ${HOSTED_SERVICES.join(' / ')}`);
+        if (!hostedServices || !registryOf()?.get(name)) throw new Refused('bad-message', 'This document service does not have this host\'s service');
+        if (typeof msg.enabled !== 'boolean') throw new Refused('bad-message', 'enabled must be a boolean');
         // 只改 enabled，同一个服务下别的字段（子选项，如 render.streams）保留，不整条换掉
         st.update(space, (d) => { d.hosted = { ...(d.hosted ?? {}), [name]: { ...(d.hosted?.[name] ?? {}), enabled: msg.enabled } }; });
         if (!msg.enabled) {
@@ -483,12 +484,12 @@ export function sharedModule({
       case 'set-hosted-option': {
         // 服务下面的子选项（现在只有 render 的 streams，缺省关）：只记下并通知，不断任何连接、不动认领
         const name = msg.service;
-        if (!HOSTED_SERVICES.includes(name)) throw new Refused('bad-message', `service 只能是 ${HOSTED_SERVICES.join(' / ')}`);
-        if (!hostedServices || !registryOf()?.get(name)) throw new Refused('bad-message', '这台文档服务没有这个托管方服务');
+        if (!HOSTED_SERVICES.includes(name)) throw new Refused('bad-message', `service must be ${HOSTED_SERVICES.join(' / ')}`);
+        if (!hostedServices || !registryOf()?.get(name)) throw new Refused('bad-message', 'This document service does not have this host\'s service');
         if (typeof msg.option !== 'string' || !HOSTED_OPTIONS[name].includes(msg.option)) {
-          throw new Refused('bad-message', `${name} 的 option 只能是 ${HOSTED_OPTIONS[name].join(' / ') || '（没有）'}`);
+          throw new Refused('bad-message', `option for ${name} must be ${HOSTED_OPTIONS[name].join(' / ') || '(none)'}`);
         }
-        if (typeof msg.enabled !== 'boolean') throw new Refused('bad-message', 'enabled 要是布尔值');
+        if (typeof msg.enabled !== 'boolean') throw new Refused('bad-message', 'enabled must be a boolean');
         const option = msg.option;
         st.update(space, (d) => { d.hosted = { ...(d.hosted ?? {}), [name]: { ...(d.hosted?.[name] ?? {}), [option]: msg.enabled } }; });
         for (const [other, oc] of connsIn(space)) {
@@ -500,7 +501,7 @@ export function sharedModule({
       }
       case 'invite-create': {
         const opts = parseInviteOptions(msg);
-        if (!opts) throw new Refused('bad-message', 'expiresInSec 要正整数秒，maxUses 要正整数或 null');
+        if (!opts) throw new Refused('bad-message', 'expiresInSec must be a positive integer in seconds, maxUses must be a positive integer or null');
         const { code, invite } = issueInvite(st.serverSecret, opts, clock(ctx));
         // 整条换掉：旧摘要随之从索引里拿掉，旧链接立刻失效（store.mjs 的邀请码索引）
         st.update(space, (d) => { d.invite = invite; delete d.inviteDigestSecret; });
@@ -522,7 +523,7 @@ export function sharedModule({
       }
       case 'unban': {
         const { username, deviceId } = msg;
-        if (!isUsername(username) || !isDeviceId(deviceId)) throw new Refused('bad-message', '要 username 与 deviceId');
+        if (!isUsername(username) || !isDeviceId(deviceId)) throw new Refused('bad-message', 'username and deviceId are required');
         st.update(space, (d) => {
           d.bans = (d.bans ?? []).filter((b) => !(b.username === username && b.deviceId === deviceId));
         });
@@ -577,7 +578,7 @@ export function sharedModule({
     handle(ctx, connId, msg) {
       const reqId = isReqId(msg.reqId) ? msg.reqId : undefined;
       const fn = HANDLERS[msg.type];
-      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: '共享项目模块不支持这种消息' }, reqId);
+      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: 'The shared project module does not support this message' }, reqId);
       try {
         fn(ctx, connId, msg, reqId);
       } catch (err) {

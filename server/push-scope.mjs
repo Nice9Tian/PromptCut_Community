@@ -31,8 +31,8 @@ const controlKeyOf = (control) => control?.contentKey ?? control?.snapshotKey ??
  * @param {() => (typeof ALL | string[] | null)} options.contentIds
  */
 export function createPushScope({ pipeline, contentIds }) {
-  if (!pipeline) throw new TypeError('createPushScope 要 pipeline');
-  if (typeof contentIds !== 'function') throw new TypeError('createPushScope 要 contentIds()');
+  if (!pipeline) throw new TypeError('createPushScope requires pipeline');
+  if (typeof contentIds !== 'function') throw new TypeError('createPushScope requires contentIds()');
   const ids = () => {
     let v;
     try { v = contentIds(); } catch { v = null; }

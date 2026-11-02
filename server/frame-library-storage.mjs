@@ -109,7 +109,7 @@ export function parseRel(rel) {
 /** 相对路径在盘上的位置（先过 `parseRel`，认不出抛） */
 export function relDir(root, rel) {
   const parsed = parseRel(rel);
-  if (!parsed) throw new Error(`不认得的键目录:${rel}`);
+  if (!parsed) throw new Error(`Unrecognized key directory: ${rel}`);
   return parsed.family === 'entry' ? path.join(root, parsed.key) : path.join(root, parsed.family, parsed.key);
 }
 
@@ -844,9 +844,9 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
       const diskBytes = await diskBytesOf(root);
       if (!validCap(bytes, diskBytes, minCapBytes)) {
         const range = capRange(diskBytes, minCapBytes);
-        throw Object.assign(new Error(`上限要在 ${range.min} 到 ${range.max} 字节之间`), { code: 'CAP_OUT_OF_RANGE', status: 400, min: range.min, max: range.max });
+        throw Object.assign(new Error(`The limit must be between ${range.min} and ${range.max} bytes`), { code: 'CAP_OUT_OF_RANGE', status: 400, min: range.min, max: range.max });
       }
-      if (!owner && !(await serial(() => becomeOwner()))) throw Object.assign(new Error('另一个 PromptCut 进程正在管理这个帧库'), { code: 'STORAGE_NOT_OWNER', status: 409 });
+      if (!owner && !(await serial(() => becomeOwner()))) throw Object.assign(new Error('Another PromptCut process is managing this frame store'), { code: 'STORAGE_NOT_OWNER', status: 409 });
       await writeStorageSettings(dataDir, { frameLibraryCapBytes: bytes });
       const pending = api.check({ force: true });
       pending.catch(() => {});
@@ -855,7 +855,7 @@ export function createFrameLibraryStorage({ root, dataDir, now = () => Date.now(
     /** 清理缓存：删 `clearKeepMs` 内没用过的全部单元（正在打开的项目不删） */
     clearCache() {
       return serial(async () => {
-        if (!(await becomeOwner())) throw Object.assign(new Error('另一个 PromptCut 进程正在管理这个帧库'), { code: 'STORAGE_NOT_OWNER', status: 409 });
+        if (!(await becomeOwner())) throw Object.assign(new Error('Another PromptCut process is managing this frame store'), { code: 'STORAGE_NOT_OWNER', status: 409 });
         if (!loaded) await rescan('missing-index');
         await sweepTrash();
         await sweepLeftoverFiles();

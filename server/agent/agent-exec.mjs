@@ -100,11 +100,11 @@ export class StaleWriteError extends Error {
 
 /** 写入身份 → 给人看的一句话 */
 export function describeActor(actor) {
-  if (!actor || typeof actor !== 'object') return '未知的写入方';
-  if (actor.role === 'agent') return `Agent 对话 ${actor.conversation ?? '?'}${actor.session ? `(${actor.session})` : ''}`;
-  if (actor.role === 'page') return `页面${actor.userId && actor.userId !== 'local' ? `(${actor.userId})` : ''}`;
-  if (actor.role === 'render') return '渲染节点';
-  return actor.userId ? `用户 ${actor.userId}` : '未知的写入方';
+  if (!actor || typeof actor !== 'object') return 'Unknown writer';
+  if (actor.role === 'agent') return `Agent chat ${actor.conversation ?? '?'}${actor.session ? `(${actor.session})` : ''}`;
+  if (actor.role === 'page') return `Page${actor.userId && actor.userId !== 'local' ? `(${actor.userId})` : ''}`;
+  if (actor.role === 'render') return 'Render node';
+  return actor.userId ? `User ${actor.userId}` : 'Unknown writer';
 }
 
 /** stale 回包 → 工具的报错文字(谁、改了哪些实体) */
@@ -112,15 +112,15 @@ export function staleMessage({ expectRev, currentRev, since = [], sinceComplete 
   const shown = since.slice(-limits.staleShowCommits);
   const lines = shown.map((s) => {
     const ents = Array.isArray(s.entities) && s.entities.length ? s.entities : (Array.isArray(s.paths) ? s.paths : []);
-    const list = ents.slice(0, limits.staleShowEntities).join('、') + (ents.length > limits.staleShowEntities ? ` 等 ${ents.length} 处` : '');
-    return `  rev ${s.rev}:${describeActor(s.actor)}${s.undoOf ? '(撤销)' : ''}改了 ${list || '(没有实体变化)'}`;
+    const list = ents.slice(0, limits.staleShowEntities).join(', ') + (ents.length > limits.staleShowEntities ? ` and ${ents.length} more` : '');
+    return `  rev ${s.rev}: ${describeActor(s.actor)}${s.undoOf ? '(undo)' : ''} changed ${list || '(no entity changes)'}`;
   });
   const omitted = since.length - shown.length;
   return [
-    `项目在你上次读取之后被改过:你读到的是 rev ${expectRev},现在是 rev ${currentRev}。这次写入没有落地。`,
-    ...(lines.length ? ['期间的改动:', ...lines] : []),
-    ...(omitted > 0 || !sinceComplete ? [`  (更早的还有 ${omitted > 0 ? omitted : '若干'} 次没列出)`] : []),
-    '请先重新读取(get_project、get_clip、get_layout 等)确认现状,再决定怎么改。',
+    `The project was changed after your last read: you read rev ${expectRev}, it is now rev ${currentRev}. This write was not applied.`,
+    ...(lines.length ? ['Changes in the meantime:', ...lines] : []),
+    ...(omitted > 0 || !sinceComplete ? [`  (and ${omitted > 0 ? omitted : 'a few'} earlier ones not listed)`] : []),
+    'Re-read the current state first (get_project, get_clip, get_layout, etc.) to confirm it, then decide how to change it.',
   ].join('\n');
 }
 
@@ -174,7 +174,7 @@ export function projectView(project) {
       transcript: {
         engine: m.transcript.engine, model: m.transcript.model, language: m.transcript.language,
         createdAt: m.transcript.createdAt, segments: m.transcript.segments?.length ?? 0,
-        hint: '完整文字稿请用 get_transcript',
+        hint: 'Use get_transcript for the full transcript',
       },
     } : m)),
   };
@@ -185,7 +185,7 @@ export function projectView(project) {
  * 回 `{ project, cut: { id, name }, active, parkedT }`。
  */
 export function seeFramesView(project, cutId) {
-  if (cutId !== undefined && cutId !== null && typeof cutId !== 'string') throw new Error('cutId 要是字符串(list_cuts 里的剪辑 id);不传就看当前激活的剪辑。');
+  if (cutId !== undefined && cutId !== null && typeof cutId !== 'string') throw new Error('cutId must be a string (the cut id from list_cuts); if omitted, the currently active cut is used.');
   return cutLookView(project, cutId);
 }
 
@@ -233,8 +233,8 @@ export function createAgentExecutor({
    */
   enterHost = null,
 } = {}) {
-  if (!link) throw new TypeError('createAgentExecutor: 要 link');
-  if (typeof loadHost !== 'function') throw new TypeError('createAgentExecutor: 要 loadHost');
+  if (!link) throw new TypeError('createAgentExecutor: link is required');
+  if (typeof loadHost !== 'function') throw new TypeError('createAgentExecutor: loadHost is required');
   const limits = { ...AGENT_EXEC_DEFAULTS, ...limitsIn };
   const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志失败不影响工具 */ } };
   const projectId = link.projectId;
@@ -274,7 +274,7 @@ export function createAgentExecutor({
     const t0 = Date.now();
     while (!r.hasBody && Date.now() - t0 < limits.bodyWaitMs) await r.waitRev(r.rev + 1, 250);
     if (!r.hasBody) {
-      throw Object.assign(new Error(`项目 ${projectId} 在文档服务里还没有内容(页面还没把项目写进去),稍后再试。`), { code: 'no-body' });
+      throw Object.assign(new Error(`Project ${projectId} has no content in the document service yet (the page has not written the project into it). Try again later.`), { code: 'no-body' });
     }
   }
 
@@ -319,7 +319,7 @@ export function createAgentExecutor({
         got = await Promise.race([
           // 第四个参数是要它的那个对话(托管档按对话找发消息时的页面状态;桌面只有一个页面,不看它)
           Promise.resolve(pageState(tool, args ?? {}, keys, agentKey)),
-          new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`页面 ${limits.pageStateTimeoutMs} ms 内没有回页面状态`)), limits.pageStateTimeoutMs); timer.unref?.(); }),
+          new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`The page did not return its page state within ${limits.pageStateTimeoutMs} ms`)), limits.pageStateTimeoutMs); timer.unref?.(); }),
         ]);
       } catch (err) {
         say('agent.page-state-failed', { tool, message: String(err?.message ?? err) });
@@ -334,7 +334,7 @@ export function createAgentExecutor({
     if (keys.includes('track')) {
       const mediaId = typeof args?.mediaId === 'string' ? args.mediaId : null;
       if (mediaId && (!got || typeof got !== 'object')) {
-        throw Object.assign(new Error('编辑台没有打开(或没有回应),读不到页面里的追踪结果;打开编辑台后再试。'), { code: 'no-page' });
+        throw Object.assign(new Error('The editor is not open (or not responding), so the tracking results in the page cannot be read. Open the editor and try again.'), { code: 'no-page' });
       }
       const tr = got?.track && typeof got.track === 'object' ? got.track : {};
       out.track = mediaId ? { mediaId, result: tr.result ?? null, running: tr.running === true } : null;
@@ -348,7 +348,7 @@ export function createAgentExecutor({
     const count = Math.ceil(text.length / limits.uploadPartChars);
     if (count > limits.uploadMaxParts) {
       stats.rejected += 1;
-      throw Object.assign(new Error(`这次改动太大(整份项目序列化后约 ${text.length} 个字符,超过分片上传的上限),文档服务不收。请拆成几次小的修改。`), { code: 'too-large' });
+      throw Object.assign(new Error(`This change is too large (the serialized project is about ${text.length} characters, over the chunked upload limit) and the document service will not accept it. Split it into several smaller changes.`), { code: 'too-large' });
     }
     const uploadId = `up.${opId}`.slice(0, 128);
     for (let index = 0; index < count; index += 1) {
@@ -358,7 +358,7 @@ export function createAgentExecutor({
       );
       if (reply.type === 'error') {
         stats.rejected += 1;
-        throw Object.assign(new Error(`分片上传被文档服务拒绝(${reply.reason ?? 'error'})${reply.detail ? `:${reply.detail}` : ''}`), { code: reply.reason ?? 'error' });
+        throw Object.assign(new Error(`Chunked upload was rejected by the document service (${reply.reason ?? 'error'})${reply.detail ? `:${reply.detail}` : ''}`), { code: reply.reason ?? 'error' });
       }
     }
     stats.uploads += 1;
@@ -388,7 +388,7 @@ export function createAgentExecutor({
   async function runRoute(tool, args, conv, ctx, apply = null) {
     await replicaReady();
     const host = await loadHost();
-    if (!apply && !host.routeOf(tool)) throw new Error(`未知工具: ${tool}`);
+    if (!apply && !host.routeOf(tool)) throw new Error(`Unknown tool: ${tool}`);
     const ps = apply ? null : await pageStateFor(tool, args, conv.key);
     const prepared = await serial(async () => {
       const replica = link.replica;
@@ -461,7 +461,7 @@ export function createAgentExecutor({
     stats.rejected += 1;
     const reason = reply.reason ?? 'error';
     const detail = reply.detail ? `:${reply.detail}` : '';
-    throw Object.assign(new Error(`文档服务没有接受这次写入(${reason})${detail}`), { code: reason });
+    throw Object.assign(new Error(`The document service did not accept this write (${reason})${detail}`), { code: reason });
   }
 
   /* ---------------- 读工具:读副本 ---------------- */
@@ -482,7 +482,7 @@ export function createAgentExecutor({
       host.setProject(snap.project);
       try {
         const all = (snap.project.tracks || []).flatMap((tr) => (tr.clips || []).map((c) => c.id));
-        if (args?.clipId && !all.includes(args.clipId)) throw new Error(`找不到 clip ${args.clipId}`);
+        if (args?.clipId && !all.includes(args.clipId)) throw new Error(`clip ${args.clipId} not found`);
         const ids = args?.clipId ? [args.clipId] : all;
         return { ids, stage: host.stageSize(), layout: Object.fromEntries(ids.map((id) => [id, host.frameLayoutOf(id)])) };
       } finally {
@@ -495,9 +495,9 @@ export function createAgentExecutor({
       try {
         const data = await prerenderPost('/api/cards/layout', { project: snap.project, t: playhead(), clipIds: frames.ids }, { timeoutMs: toolDef?.timeoutMs || 60_000 });
         if (data && data.ok !== false && isPlainObject(data.clips)) measured = data.clips;
-        else note = `预渲染没量出实体框:${data?.error ?? '没有结果'}`;
+        else note = `Prerender could not measure the entity box: ${data?.error ?? 'no result'}`;
       } catch (err) {
-        note = `预渲染没回应,量不到实体框:${err?.message ?? err}`;
+        note = `Prerender did not respond, cannot measure the entity box: ${err?.message ?? err}`;
       }
     }
     const clips = {};
@@ -521,7 +521,7 @@ export function createAgentExecutor({
       : { project: look.project, t: typeof rest.t === 'number' ? rest.t : (rest.clipId ? undefined : (look.active ? playhead() : look.parkedT)), clipId: rest.clipId };
     // cutLook:出图要按这份视图渲(账号模式据此不交给成员设备:成员页面按自己的项目渲,看不了别的剪辑)
     const data = await prerenderPost('/api/vision/snapshot', body, { timeoutMs: toolDef?.timeoutMs || 180_000, ...(look.active ? {} : { cutLook: true }) });
-    if (!data?.ok) throw new Error(data?.error || '渲染画面失败');
+    if (!data?.ok) throw new Error(data?.error || 'Failed to render the frame');
     let result = times.length ? { ok: true, frames: data.frames, note: data.note, __images: data.__images } : data;
     result = { ...result, cut: look.cut };
     const images = [];
@@ -538,13 +538,13 @@ export function createAgentExecutor({
     const snap = await readSnapshot(conv);
     const timeoutMs = toolDef?.timeoutMs || 180_000;
     const spec = await prerenderPost('/api/ai/visual', { tool: 'get_gif', clipId: args.clipId, after: snap.project }, { timeoutMs });
-    if (!spec?.ok) throw new Error(spec?.error || '做动图失败');
-    if (!spec.gifKey) throw new Error(`时间轴上没有 id 为 ${args.clipId} 的片段。`);
+    if (!spec?.ok) throw new Error(spec?.error || 'Failed to make the animated image');
+    if (!spec.gifKey) throw new Error(`No clip with id ${args.clipId} on the timeline.`);
     const data = await prerenderPost('/api/ai/visual/render', { key: spec.gifKey }, { timeoutMs });
-    if (!data?.ok) throw new Error(data?.error || '做动图失败');
+    if (!data?.ok) throw new Error(data?.error || 'Failed to make the animated image');
     return {
       visualId: spec.visualId, ok: true, clipId: args.clipId, times: data.times, gif: data.gifUrl,
-      note: '拼图 4×2,第 k 格对应 times 的第 k 个时刻(按行从左到右)。用户在聊天栏点开这一步能看到动图。',
+      note: 'Collage 4×2: cell k corresponds to the k-th time in times (row by row, left to right). The user can open this step in the chat panel to see the animated image.',
       ...(data.grid ? { __image: { mime: 'image/png', base64: data.grid } } : {}),
       rev: snap.rev,
     };
@@ -553,7 +553,7 @@ export function createAgentExecutor({
   async function bakeCard(args, conv, toolDef) {
     const snap = await readSnapshot(conv);
     const data = await prerenderPost('/api/vision/bake', { project: snap.project, clipId: args.clipId, t: args.t, size: args.size, bg: args.bg }, { timeoutMs: toolDef?.timeoutMs || 150_000 });
-    if (!data?.ok) throw new Error(data?.error || '渲染失败');
+    if (!data?.ok) throw new Error(data?.error || 'Render failed');
     return withRev(data, snap.rev);
   }
 
@@ -561,7 +561,7 @@ export function createAgentExecutor({
     const snap = await readSnapshot(conv);
     const ref = typeof args.ref === 'string' ? Number(String(args.ref).replace(/^ref_/, '')) : args.ref;
     const data = await prerenderPost('/api/cards/dom', { project: snap.project, clipId: args.clipId, t: args.t, ref, depth: args.depth }, { timeoutMs: toolDef?.timeoutMs || 60_000 });
-    if (!data?.ok) throw new Error(data?.error || '读不到 DOM 树');
+    if (!data?.ok) throw new Error(data?.error || 'Cannot read the DOM tree');
     return withRev(data, snap.rev);
   }
 
@@ -584,7 +584,7 @@ export function createAgentExecutor({
 
   function argsSummary(args) {
     let text;
-    try { text = JSON.stringify(args ?? {}); } catch { text = '(参数无法序列化)'; }
+    try { text = JSON.stringify(args ?? {}); } catch { text = '(arguments cannot be serialized)'; }
     return text.length > limits.eventArgsMax ? `${text.slice(0, limits.eventArgsMax - 1)}…` : text;
   }
 
@@ -633,7 +633,7 @@ export function createAgentExecutor({
       stats.executed += 1;
       const required = toolDef?.inputSchema?.required ?? [];
       const missing = required.filter((k) => args?.[k] === undefined || args?.[k] === null);
-      if (missing.length) throw new Error(`缺少必填参数：${missing.join('、')}。请补齐后重试。`);
+      if (missing.length) throw new Error(`Missing required parameters: ${missing.join(', ')}. Add them and try again.`);
       if (tool === 'get_project') {
         const snap = await readSnapshot(conv);
         return { ...projectView(snap.project), rev: snap.rev };

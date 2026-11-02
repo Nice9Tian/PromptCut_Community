@@ -21,8 +21,8 @@ const DEFAULT_CUT_DURATION = 30;
 
 function emptyTracks(): Track[] {
   return [
-    { id: newId("t"), name: "序列 1", clips: [] },
-    { id: newId("t"), name: "序列 2", clips: [] },
+    { id: newId("t"), name: "Track 1", clips: [] },
+    { id: newId("t"), name: "Track 2", clips: [] },
   ];
 }
 
@@ -33,7 +33,7 @@ export function nextCutName(cuts: Cut[]): string {
     const m = /^(?:剪辑|Cut)\s*(\d+)$/.exec(c.name.trim()); // i18n-allow
     if (m) max = Math.max(max, parseInt(m[1], 10));
   }
-  return `剪辑${max + 1}`;
+  return `Cut ${max + 1}`;
 }
 
 /**
@@ -50,9 +50,9 @@ export function normalizeCuts(p: Project): Project {
   let duration = p.duration;
 
   if (cuts.length === 0) {
-    cuts = [{ id: "cut-1", name: "剪辑1" }];
+    cuts = [{ id: "cut-1", name: "Cut 1" }];
     for (let i = 2; i <= DEFAULT_CUT_COUNT; i++) {
-      cuts.push({ id: `cut-${i}`, name: `剪辑${i}`, tracks: emptyTracks(), duration: DEFAULT_CUT_DURATION });
+      cuts.push({ id: `cut-${i}`, name: `Cut ${i}`, tracks: emptyTracks(), duration: DEFAULT_CUT_DURATION });
     }
   }
   let activeId = p.activeCutId;
@@ -118,8 +118,8 @@ export function resolveCut(p: Project, ref: { cutId?: string; name?: string }): 
     const hit = cuts.find((c) => c.name.trim() === want);
     if (hit) return hit;
   }
-  const names = cuts.map((c) => `${c.name}(${c.id})`).join("、");
-  throw new Error(`找不到剪辑 ${JSON.stringify(ref.cutId ?? ref.name ?? "")};现有的:${names}`);
+  const names = cuts.map((c) => `${c.name}(${c.id})`).join(", ");
+  throw new Error(`Cut not found ${JSON.stringify(ref.cutId ?? ref.name ?? "")}; existing: ${names}`);
 }
 
 /**
@@ -130,7 +130,7 @@ export function switchCut(p: Project, cutId: string, t: number): { project: Proj
   const q = normalizeCuts(p);
   if (cutId === q.activeCutId) return { project: q, t };
   const target = q.cuts!.find((c) => c.id === cutId);
-  if (!target) throw new Error(`找不到剪辑 ${cutId}`);
+  if (!target) throw new Error(`Cut not found ${cutId}`);
 
   const cuts = q.cuts!.map((c) => {
     if (c.id === q.activeCutId) return { ...c, tracks: q.tracks, duration: q.duration, transitions: q.transitions ?? [], t };
@@ -162,8 +162,8 @@ export function addCut(p: Project, name?: string): { project: Project; cut: Cut 
 export function renameCut(p: Project, cutId: string, name: string): Project {
   const q = normalizeCuts(p);
   const trimmed = name.trim();
-  if (!trimmed) throw new Error("剪辑名不能为空");
-  if (!q.cuts!.some((c) => c.id === cutId)) throw new Error(`找不到剪辑 ${cutId}`);
+  if (!trimmed) throw new Error("Cut name cannot be empty");
+  if (!q.cuts!.some((c) => c.id === cutId)) throw new Error(`Cut not found ${cutId}`);
   return { ...q, cuts: q.cuts!.map((c) => (c.id === cutId ? { ...c, name: trimmed } : c)) };
 }
 
@@ -178,8 +178,8 @@ export function renameCut(p: Project, cutId: string, name: string): Project {
 export function removeCut(p: Project, cutId: string, t: number): { project: Project; switchedTo: string | null; t: number; removedSegments: { cutId: string; name: string; clipIds: string[] }[] } {
   let q = normalizeCuts(p);
   const idx = q.cuts!.findIndex((c) => c.id === cutId);
-  if (idx < 0) throw new Error(`找不到剪辑 ${cutId}`);
-  if (q.cuts!.length <= 1) throw new Error("这是最后一条剪辑,不能删;要清空的话删掉里面的段就行");
+  if (idx < 0) throw new Error(`Cut not found ${cutId}`);
+  if (q.cuts!.length <= 1) throw new Error("This is the last cut and cannot be deleted; to clear it, delete the segments inside");
   const removedSegments = cutReferences(q, cutId).filter((r) => r.cutId !== cutId);
   q = stripCutReferences(q, cutId);
 
@@ -209,24 +209,24 @@ export function placeCutSegment(
 ): { project: Project; clip: import("./project.ts").TrackClip } {
   const q = normalizeCuts(p);
   const host = q.activeCutId!;
-  if (!q.cuts!.some((c) => c.id === childCutId)) throw new Error(`找不到剪辑 ${childCutId}`);
+  if (!q.cuts!.some((c) => c.id === childCutId)) throw new Error(`Cut not found ${childCutId}`);
   const reason = cutCycleReason(q, host, childCutId);
   if (reason) throw new Error(reason);
   const offset = Math.max(0, opts.offset ?? 0);
   const total = cutDuration(q, childCutId);
   const room = total - offset;
-  if (!(room > 0.05)) throw new Error(`剪辑「${q.cuts!.find((c) => c.id === childCutId)!.name}」从第 ${offset} 秒起已经没有内容可放(总时长 ${total} 秒)`);
+  if (!(room > 0.05)) throw new Error(`Cut "${q.cuts!.find((c) => c.id === childCutId)!.name}" has no content left to place from second ${offset} (total duration ${total} s)`);
   const dur = Math.min(opts.duration ?? room, room);
-  if (!(dur > 0)) throw new Error("剪辑段的长度要大于 0");
+  if (!(dur > 0)) throw new Error("Cut segment length must be greater than 0");
   const s = Math.max(0, start);
   const track = opts.trackId ? q.tracks.find((t) => t.id === opts.trackId) : q.tracks[0];
-  if (!track) throw new Error(`找不到序列 ${opts.trackId ?? ""}`);
-  if (track.locked) throw new Error(`序列「${track.name}」锁着`);
+  if (!track) throw new Error(`Track not found ${opts.trackId ?? ""}`);
+  if (track.locked) throw new Error(`Track "${track.name}" is locked`);
   const clip = {
     id: opts.id ?? newId("k"), cardId: "", cutId: childCutId, start: s, end: s + dur, params: {},
     ...(offset > 0 ? { cutOffset: offset } : {}),
   };
-  if (track.clips.some((c) => c.start < clip.end - 1e-9 && clip.start < c.end - 1e-9)) throw new Error(`序列「${track.name}」在 ${s} ~ ${s + dur} 秒已经有片段`);
+  if (track.clips.some((c) => c.start < clip.end - 1e-9 && clip.start < c.end - 1e-9)) throw new Error(`Track "${track.name}" already has a clip at ${s} ~ ${s + dur} s`);
   const tracks = q.tracks.map((t) => (t.id === track.id ? { ...t, clips: [...t.clips, clip].sort((a, b) => a.start - b.start) } : t));
   return { project: { ...q, tracks, duration: Math.max(q.duration, clip.end) }, clip };
 }

@@ -40,7 +40,7 @@ export function audioPlanOf(source) {
       const m = rendition?.media ?? (project.media || []).find((x) => x.id === c.mediaId);
       // 合成声音是已入库的项目内容；丢了引用不能悄悄导出无声片段。
       const generated = embedded || !!(c.soundEffect || m?.soundEffect);
-      if (generated && (!m || !m.url)) throw new Error(`${c.id} 的合成音效素材缺失，请重新生成或恢复素材`);
+      if (generated && (!m || !m.url)) throw new Error(`The synthesized sound effect media for ${c.id} is missing, please regenerate it or restore the media`);
       if (!c.mediaId && !embedded) continue;
       if (!m || !m.url || m.kind === "image") continue;
       // 普通旧素材保持既有口径；合成 WAV 的定位保留到采样，不能先舍入成毫秒。

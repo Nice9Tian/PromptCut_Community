@@ -1,3 +1,4 @@
+import { tr } from "../i18n.mjs";
 /**
  * 渲染任务队列的消息格式：入站校验、出站构造、任务 id。
  *
@@ -113,19 +114,19 @@ const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 const isReqId = (v) => typeof v === 'string' || isNum(v);
 
 function str(v, name) {
-  if (typeof v !== 'string') bad(`${name} 必须是字符串`);
+  if (typeof v !== 'string') bad(`${name} must be a string`);
   return v;
 }
 function nonEmpty(v, name) {
-  if (typeof v !== 'string' || v === '') bad(`${name} 必须是非空字符串`);
+  if (typeof v !== 'string' || v === '') bad(`${name} must be a non-empty string`);
   return v;
 }
 function int(v, name) {
-  if (!isInt(v)) bad(`${name} 必须是整数`);
+  if (!isInt(v)) bad(`${name} must be an integer`);
   return v;
 }
 function oneOf(v, set, name) {
-  if (!set.has(v)) bad(`${name} 必须是 ${[...set].join(' / ')} 之一`);
+  if (!set.has(v)) bad(`${name} must be one of ${[...set].join(' / ')}`);
   return v;
 }
 /** 可选字段：undefined 与 null 都算没给 */
@@ -134,30 +135,30 @@ function optStr(v, name) { return absent(v) ? null : str(v, name); }
 function optInt(v, name) { return absent(v) ? null : int(v, name); }
 /** 可选的布尔：只有 undefined 算没给，null 和其它类型都算格式错误（同 task.fail 的 retryable） */
 function optBool(v, name) {
-  if (v !== undefined && typeof v !== 'boolean') bad(`${name} 必须是布尔值`);
+  if (v !== undefined && typeof v !== 'boolean') bad(`${name} must be a boolean`);
   return v === true;
 }
 function optNumOrNull(v, name) {
   if (absent(v)) return null;
-  if (!isNum(v)) bad(`${name} 必须是数或 null`);
+  if (!isNum(v)) bad(`${name} must be a number or null`);
   return v;
 }
 function strArray(v, name) {
-  if (!Array.isArray(v) || v.some((x) => typeof x !== 'string')) bad(`${name} 必须是字符串数组`);
+  if (!Array.isArray(v) || v.some((x) => typeof x !== 'string')) bad(`${name} must be an array of strings`);
   return [...v];
 }
 /** 「原样保存」的对象：深拷贝一份，拷不了（函数、循环里的怪东西）就当格式错误 */
 function plainObject(v, name) {
-  if (!isObj(v)) bad(`${name} 必须是对象`);
-  try { return structuredClone(v); } catch { return bad(`${name} 无法复制`); }
+  if (!isObj(v)) bad(tr("{0} must be an object", name));
+  try { return structuredClone(v); } catch { return bad(`${name} cannot be cloned`); }
 }
 
 function parseRange(v, name) {
-  if (!isObj(v)) bad(`${name} 必须是对象`);
+  if (!isObj(v)) bad(tr("{0} must be an object", name));
   const unit = oneOf(v.unit, RANGE_UNITS, `${name}.unit`);
   const from = int(v.from, `${name}.from`);
   const to = int(v.to, `${name}.to`);
-  if (from < 0 || from > to) bad(`${name} 须满足 0 <= from <= to`);
+  if (from < 0 || from > to) bad(`${name} must satisfy 0 <= from <= to`);
   return { unit, from, to };
 }
 
@@ -171,13 +172,13 @@ function parseWeight(v, name) {
 
 function parseTaskInput(v, i) {
   const at = `tasks[${i}]`;
-  if (!isObj(v)) bad(`${at} 不是对象`);
+  if (!isObj(v)) bad(`${at} is not an object`);
   const id = nonEmpty(v.id, `${at}.id`);
   const kind = oneOf(v.kind, KINDS, `${at}.kind`);
   const resultKey = nonEmpty(v.resultKey, `${at}.resultKey`);
   // tier 只对 snapshot 有意义：snapshot 必填，其余忽略（不校验也不保存）
   const tier = kind === 'snapshot' ? oneOf(v.tier, TIERS, `${at}.tier`) : null;
-  if (!isObj(v.source)) bad(`${at}.source 必须是对象`);
+  if (!isObj(v.source)) bad(`${at}.source must be an object`);
   const projectId = nonEmpty(v.source.projectId, `${at}.source.projectId`);
   const projectRev = int(v.source.projectRev, `${at}.source.projectRev`);
   const derivedFrom = optStr(v.source.derivedFrom, `${at}.source.derivedFrom`);
@@ -185,17 +186,17 @@ function parseTaskInput(v, i) {
   const priority = parsePriority(v.priority, `${at}.priority`);
   let input = absent(v.input) ? {} : plainObject(v.input, `${at}.input`);
   if (kind === 'plan') {
-    if (!absent(v.range)) bad(`${at}.range：plan 任务没有范围，必须是 null`);
+    if (!absent(v.range)) bad(`${at}.range: plan tasks have no range, it must be null`);
     const base = `${projectId}@${projectRev}`;
     if (resultKey.startsWith(`${base}${BACKFILL_KEY_MARK}`)) {
       // 预渲染重试计划任务（c10a 契约第 17 节）：带片段清单、标 backfill；不同的清单是不同的结果键
-      if (!BACKFILL_SIG_RE.test(resultKey.slice(base.length + BACKFILL_KEY_MARK.length))) bad(`${at}.resultKey 的预渲染重试签名只能是 1～32 位小写字母与数字`);
-      if (priority !== 'backfill') bad(`${at}.priority：预渲染重试计划任务必须标 'backfill'`);
+      if (!BACKFILL_SIG_RE.test(resultKey.slice(base.length + BACKFILL_KEY_MARK.length))) bad(`${at}.resultKey prerender retry signature must be 1-32 lowercase letters and digits`);
+      if (priority !== 'backfill') bad(`${at}.priority: prerender retry plan tasks must be marked 'backfill'`);
       input = { ...input, clips: backfillClips(input.clips, `${at}.input.clips`) };
     } else if (resultKey.startsWith(`${base}${CLIPS_KEY_MARK}`)) {
       // 清单计划（C10 契约第 18 节第 9 条）：带片段清单、normal 档；预渲染重试档另用 #backfill: 的键
-      if (!BACKFILL_SIG_RE.test(resultKey.slice(base.length + CLIPS_KEY_MARK.length))) bad(`${at}.resultKey 的清单签名只能是 1～32 位小写字母与数字`);
-      if (priorityBand(priority) !== 'normal') bad(`${at}.priority：清单计划是 normal 档，预渲染重试用 #backfill: 的键`);
+      if (!BACKFILL_SIG_RE.test(resultKey.slice(base.length + CLIPS_KEY_MARK.length))) bad(`${at}.resultKey manifest signature must be 1-32 lowercase letters and digits`);
+      if (priorityBand(priority) !== 'normal') bad(`${at}.priority: the manifest plan is the normal tier; prerender retries use a #backfill: key`);
       input = { ...input, clips: backfillClips(input.clips, `${at}.input.clips`) };
       // 在线页面自报的用户卡、素材效果卡运行情况(块 N):只留合格的形状,不合格的整项去掉(任务照发,只是切分方不给浏览器出用户卡、素材效果卡的那一份)
       const browser = browserCardsOf(input.browser);
@@ -203,7 +204,7 @@ function parseTaskInput(v, i) {
       // 页面看到这个项目的「生成轨道流」开着(见 `clipsPlanTaskOf`):只认布尔 true,别的值去掉
       if (input.streams !== true) delete input.streams;
     } else if (resultKey !== base) {
-      bad(`${at}.resultKey 必须等于 source 的 projectId@projectRev`);
+      bad(`${at}.resultKey must equal the source's projectId@projectRev`);
     }
   } else {
     range = parseRange(v.range, `${at}.range`);
@@ -214,7 +215,7 @@ function parseTaskInput(v, i) {
     delete input.density;
   }
   const expected = taskIdOf({ kind, resultKey, range, density: input.density });
-  if (id !== expected) bad(`${at}.id 必须是 ${expected}`);
+  if (id !== expected) bad(`${at}.id must be ${expected}`);
   return {
     // takeover 只决定这一次发布怎么处理锁（F.1），不存进任务，TaskView 里也没有
     takeover: optBool(v.takeover, `${at}.takeover`),
@@ -264,8 +265,8 @@ export function browserCardsSig(cards) {
 
 /** 预渲染重试计划任务的片段清单：非空、去重、升序的非空字符串数组 */
 function backfillClips(v, name) {
-  if (!Array.isArray(v) || v.length === 0 || v.length > BACKFILL_MAX_CLIPS) bad(`${name} 必须是 1～${BACKFILL_MAX_CLIPS} 个片段 id`);
-  if (v.some((x) => typeof x !== 'string' || x === '')) bad(`${name} 的每一项都必须是非空字符串`);
+  if (!Array.isArray(v) || v.length === 0 || v.length > BACKFILL_MAX_CLIPS) bad(`${name} must be 1 to ${BACKFILL_MAX_CLIPS} clip ids`);
+  if (v.some((x) => typeof x !== 'string' || x === '')) bad(`Every item of ${name} must be a non-empty string`);
   return [...new Set(v)].sort();
 }
 
@@ -344,9 +345,9 @@ export function clipsPlanTaskOf({ projectId, projectRev, clips, codeVersion, bro
 
 function parseResume(v) {
   if (absent(v)) return [];
-  if (!Array.isArray(v)) bad('resume 必须是数组');
+  if (!Array.isArray(v)) bad('resume must be an array');
   return v.map((r, i) => {
-    if (!isObj(r)) bad(`resume[${i}] 不是对象`);
+    if (!isObj(r)) bad(`resume[${i}] is not an object`);
     return { id: str(r.id, `resume[${i}].id`), token: int(r.token, `resume[${i}].token`) };
   });
 }
@@ -370,16 +371,16 @@ const PARSERS = new Map([
   })],
   ['publisher.hello', (m) => ({ publisherId: nonEmpty(m.publisherId, 'publisherId') })],
   ['queue.watch', (m) => ({
-    projects: m.projects === 'all' ? 'all' : strArray(m.projects, "projects（或 'all'）"),
+    projects: m.projects === 'all' ? 'all' : strArray(m.projects, "projects (or 'all')"),
   })],
   ['task.publish', (m) => {
-    if (!Array.isArray(m.tasks) || m.tasks.length === 0) bad('tasks 必须是非空数组');
+    if (!Array.isArray(m.tasks) || m.tasks.length === 0) bad('tasks must be a non-empty array');
     return { tasks: m.tasks.map(parseTaskInput) };
   }],
   ['task.unsubscribe', (m) => {
     const byIds = m.ids !== undefined;
     const byProject = m.projectId !== undefined || m.projectRev !== undefined;
-    if (byIds === byProject) bad('ids 与 projectId(+projectRev) 二选一');
+    if (byIds === byProject) bad('Provide either ids or projectId(+projectRev), not both');
     if (byIds) return { ids: strArray(m.ids, 'ids'), projectId: null, projectRev: null };
     return { ids: null, projectId: nonEmpty(m.projectId, 'projectId'), projectRev: optInt(m.projectRev, 'projectRev') };
   }],
@@ -396,13 +397,13 @@ const PARSERS = new Map([
   ['task.complete', (m) => ({ ...tokenFields(m), result: absent(m.result) ? null : plainObject(m.result, 'result') })],
   ['task.release', (m) => ({ ...tokenFields(m), reason: optStr(m.reason, 'reason') })],
   ['task.fail', (m) => {
-    if (m.retryable !== undefined && typeof m.retryable !== 'boolean') bad('retryable 必须是布尔值');
+    if (m.retryable !== undefined && typeof m.retryable !== 'boolean') bad('retryable must be a boolean');
     return { ...tokenFields(m), error: optStr(m.error, 'error'), retryable: m.retryable !== false };
   }],
   // M7 D2 补充〔裁〕:节点还在、在忙(busy 只作诊断:页面报 'bake' / 'stage')
   ['node.active', (m) => {
     const busy = optStr(m.busy, 'busy');
-    if (busy !== null && busy.length > NODE_ACTIVE_BUSY_MAX) bad(`busy 不能超过 ${NODE_ACTIVE_BUSY_MAX} 个字符`);
+    if (busy !== null && busy.length > NODE_ACTIVE_BUSY_MAX) bad(`busy must not exceed ${NODE_ACTIVE_BUSY_MAX} characters`);
     return { busy };
   }],
 ]);
@@ -413,12 +414,12 @@ const PARSERS = new Map([
  * 失败：`{ ok: false, reqId, detail }`，`reqId` 只在它本身合法时带回。
  */
 export function parseInbound(message) {
-  if (!isObj(message)) return { ok: false, reqId: undefined, detail: '消息不是对象' };
+  if (!isObj(message)) return { ok: false, reqId: undefined, detail: 'Message is not an object' };
   const reqId = isReqId(message.reqId) ? message.reqId : undefined;
   try {
-    if (message.reqId !== undefined && reqId === undefined) bad('reqId 只能是字符串或数字');
+    if (message.reqId !== undefined && reqId === undefined) bad('reqId must be a string or a number');
     const parse = typeof message.type === 'string' ? PARSERS.get(message.type) : undefined;
-    if (!parse) bad(`未知的 type：${typeof message.type === 'string' ? message.type : `（${typeof message.type}）`}`);
+    if (!parse) bad(`Unknown type: ${typeof message.type === 'string' ? message.type : ` (${typeof message.type})`}`);
     return { ok: true, type: message.type, reqId, body: parse(message) };
   } catch (err) {
     if (err instanceof BadMessage) return { ok: false, reqId, detail: err.message };

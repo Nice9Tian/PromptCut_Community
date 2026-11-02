@@ -30,17 +30,17 @@ function hashString(s: string): number {
 
 function hashKey(key: RandomKey, what: string): number {
   if (typeof key === "number") {
-    if (!Number.isFinite(key)) throw new Error(`${what}要是有限的数或字符串，收到 ${key}`);
+    if (!Number.isFinite(key)) throw new Error(`${what} must be a finite number or a string, got ${key}`);
     // 32 位整数直接混；别的数（小数、大数）按它的十进制写法当字符串混，写法由语言规范唯一确定
     return Number.isInteger(key) && key >= -0x80000000 && key <= 0x7fffffff ? fmix32(key | 0) : hashString(`n:${key}`);
   }
   if (typeof key === "string") return hashString(`s:${key}`);
-  throw new Error(`${what}要是数或字符串，收到 ${key === null ? "null" : typeof key}`);
+  throw new Error(`${what} must be a number or a string, got ${key === null ? "null" : typeof key}`);
 }
 
 function hashOf(seed: RandomKey, keys: readonly RandomKey[]): number {
-  let h = hashKey(seed, "随机的种子");
-  for (let i = 0; i < keys.length; i++) h = fmix32(Math.imul(h ^ 0x9e3779b9, 0x01000193) ^ hashKey(keys[i], "随机的序号"));
+  let h = hashKey(seed, "random seed");
+  for (let i = 0; i < keys.length; i++) h = fmix32(Math.imul(h ^ 0x9e3779b9, 0x01000193) ^ hashKey(keys[i], "random index"));
   return h;
 }
 
@@ -66,7 +66,7 @@ export function randomInt(min: number, max: number, seed: RandomKey, ...keys: Ra
 
 /** 从数组里挑一个。例：`randomPick(["#f43", "#3af", "#fc3"], params.seed, i)` */
 export function randomPick<T>(items: readonly T[], seed: RandomKey, ...keys: RandomKey[]): T {
-  if (!items.length) throw new Error("randomPick 的数组是空的");
+  if (!items.length) throw new Error("randomPick array is empty");
   return items[Math.floor(items.length * random(seed, ...keys))];
 }
 
@@ -77,7 +77,7 @@ export function randomPick<T>(items: readonly T[], seed: RandomKey, ...keys: Ran
  * 例：`noise(t * 2, params.seed, i) * 12` —— 第 i 个元素每秒晃两下左右，幅度 12 像素。
  */
 export function noise(x: number, seed: RandomKey, ...keys: RandomKey[]): number {
-  if (!Number.isFinite(x)) throw new Error(`noise 的 x 要是有限的数，收到 ${x}`);
+  if (!Number.isFinite(x)) throw new Error(`noise x must be a finite number, got ${x}`);
   const base = Math.floor(x);
   const f = x - base;
   const a = random(seed, ...keys, base) * 2 - 1;

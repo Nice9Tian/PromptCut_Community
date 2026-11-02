@@ -189,7 +189,7 @@ function readBody(req: IncomingMessage, res: ServerResponse, limit: number, then
   req.on("data", (c: Buffer) => {
     if (over) return;
     size += c.length;
-    if (size > limit) { over = true; sendJson(res, 413, { ok: false, error: "推送体太大" }); req.destroy(); return; }
+    if (size > limit) { over = true; sendJson(res, 413, { ok: false, error: "Push body too large" }); req.destroy(); return; }
     body += c;
   });
   req.on("end", () => {
@@ -213,7 +213,7 @@ export function mirrorPlugin(): Plugin {
           const session = query(req, "session");
           const localRev = query(req, "localRev");
           const v = session ? getMirror(session, localRev) : latestMirror();
-          if (!v) return sendJson(res, 404, { ok: false, error: "还没有镜像:编辑器页面没打开过,或者这一版已经滑出窗口" });
+          if (!v) return sendJson(res, 404, { ok: false, error: "No mirror yet: the editor page has never been opened, or this version has already slid out of the window" });
           const head = latestPlayhead();
           // rev / t 是老字段名,留着给还没改口的调用方
           return sendJson(res, 200, { ok: true, session: v.session, localRev: v.localRev, rev: v.localRev, projectHash: v.hash, at: v.at, t: head?.t ?? 0, project: v.project });
@@ -248,7 +248,7 @@ export function mirrorPlugin(): Plugin {
             const session = String(d.session || "");
             const out = store.pushDiff({ session, fromLocalRev: d.fromLocalRev, toLocalRev: d.toLocalRev, hash: d.projectHash, patch: d.patch });
             if (out.status === "resync") {
-              return sendJson(res, 409, { ok: false, code: "MIRROR_RESYNC", reason: out.reason, localRev: out.localRev, error: `镜像对不上(${out.reason}),请整份重推` });
+              return sendJson(res, 409, { ok: false, code: "MIRROR_RESYNC", reason: out.reason, localRev: out.localRev, error: `Mirror mismatch (${out.reason}), push the whole project again` });
             }
             sendJson(res, 200, { ok: true, session, localRev: out.localRev, projectHash: out.hash, ...(out.status === "stale" ? { stale: true } : {}) });
             if (out.status === "ok") {
@@ -270,10 +270,10 @@ export function mirrorPlugin(): Plugin {
        */
       server.middlewares.use("/api/data/ready-session", (req, res) => {
         if (req.method !== "POST") return sendJson(res, 405, { ok: false, error: "POST only" });
-        if (isPrerender) return sendJson(res, 404, { ok: false, error: "会话版本只登记在编辑器进程" });
+        if (isPrerender) return sendJson(res, 404, { ok: false, error: "Session versions are only registered in the editor process" });
         readBody(req, res, 4 * 1024, (d) => {
           const session = typeof d.session === "string" ? d.session : "";
-          if (!session || session.length > 200) return sendJson(res, 400, { ok: false, error: "session 参数不合法" });
+          if (!session || session.length > 200) return sendJson(res, 400, { ok: false, error: "Invalid session parameter" });
           sendJson(res, 200, { ok: true, changed: readySessions.record(session, d.localRev) });
         });
       });
@@ -291,7 +291,7 @@ export function mirrorPlugin(): Plugin {
       server.middlewares.use("/api/data/playhead", (req, res) => {
         if (req.method === "GET") {
           const head = latestPlayhead();
-          return sendJson(res, head ? 200 : 404, head ? { ok: true, ...head } : { ok: false, error: "还没有播放头" });
+          return sendJson(res, head ? 200 : 404, head ? { ok: true, ...head } : { ok: false, error: "No playhead yet" });
         }
         if (req.method !== "POST") return sendJson(res, 405, { ok: false, error: "GET / POST only" });
         readBody(req, res, 64 * 1024, (d) => {

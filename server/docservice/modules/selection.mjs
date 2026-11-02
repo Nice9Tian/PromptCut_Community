@@ -1,3 +1,4 @@
+import { tr } from "../../i18n.mjs";
 /** Project-wide live selections. Only connection principals and an owner-supplied
  * authority callback can name members or authorize a run. Nothing here is durable.
  */
@@ -218,7 +219,7 @@ export function mountSelection({ project, checkAccess, authorizeQuery, now = Dat
       if (!member) {
         const username = nameOf(principal);
         member = { accountId, username, isInitiator: accountId === initiator,
-          displayName: accountId === initiator ? `${username}（当前用户）` : username, pages: [] };
+          displayName: accountId === initiator ? tr("{0} (current user)", username) : username, pages: [] };
         members.set(accountId, member);
       }
       member.pages.push({ pageId: entry.pageId, selection: clone(entry.selection),
@@ -230,9 +231,9 @@ export function mountSelection({ project, checkAccess, authorizeQuery, now = Dat
       const username = typeof finalGrant.grant.initiatorName === 'string' && finalGrant.grant.initiatorName.trim()
         ? finalGrant.grant.initiatorName.trim() : initiator;
       members.set(initiator, { accountId: initiator, username, isInitiator: true,
-        displayName: `${username}（当前用户）`, pages: [{ pageId: snapshot.pageId, selection,
+        displayName: tr("{0} (current user)", username), pages: [{ pageId: snapshot.pageId, selection,
           selectionRevision: null, items: itemsOf(selection), live: false, source: 'sent-snapshot',
-          sentAt: snapshot.sentAt, note: '发消息时的选区，非实时' }] });
+          sentAt: snapshot.sentAt, note: tr("Selection at the time the message was sent, not live") }] });
     }
     return { projectId, projectRev, presenceRevision: revisions.get(projectId) ?? 0,
       members: [...members.values()].sort((a, b) => a.accountId.localeCompare(b.accountId)), queriedAt: clock() };

@@ -39,24 +39,24 @@ const CARDS = {
     out: 'src/cards/user/login-art.tsx',
     exportName: 'loginArt',
     id: 'pc-login-art',
-    name: '登录页左栏极光',
-    description: '登录页左边那块流动的极光。画面是帧时钟的函数，走满一圈回到起点，专门用来预渲染成无缝循环的视频。',
-    useWhen: '只给「把登录页左栏渲成循环视频」这一件事用；别的场合要流动背景请另写一张。',
-    tags: ['背景', '极光', '着色器', '登录页'],
+    name: 'Login page left rail aurora',
+    description: 'The flowing aurora on the left of the login page. The picture is a function of the frame clock and loops back to the start after a full cycle, made specifically to be prerendered into a seamless looping video.',
+    useWhen: 'Only for rendering the login page left rail into a looping video; for a flowing background elsewhere, write another card.',
+    tags: ['background', 'aurora', 'shader', 'login page'],
     // 画幅要和 render-all.mjs 里那组 W/H 一致，否则画布被缩放、几何就对不上
     size: [Number(process.env.LOGIN_ART_W || 880), Number(process.env.LOGIN_ART_H || 1080)],
     sizeFromStage: false,
     require: ['loopSeconds', 'swirl'],
     colors: [
-      ['uCool', 'cool', '#26c6e6', '冷色', '冷色那一侧（屏幕上那一版取主题强调色；这里写死，导出要可重放）'],
-      ['uWarm', 'warm', '#e2731f', '暖色', '暖色那一侧'],
+      ['uCool', 'cool', '#26c6e6', 'Cool color', 'The cool side (the on-screen version takes the theme accent color; hardcoded here so the export is replayable)'],
+      ['uWarm', 'warm', '#e2731f', 'Warm color', 'The warm side'],
     ],
     // 这一块本来输出带 alpha（页面上要透出底下的遮罩），视频带不了 alpha，所以压平
     flatten: {
       param: 'bg',
       hex: '#111016',
-      label: '底色',
-      doc: '压平时垫在底下的颜色（登录页的 --bg-canvas）。视频带不了 alpha，底色必须先合进来',
+      label: 'Base color',
+      doc: 'Color laid underneath when flattening (the login page\'s --bg-canvas). Video cannot carry alpha, so the base color must be composited in first',
     },
   },
   'brand-glow': {
@@ -64,10 +64,10 @@ const CARDS = {
     out: 'src/cards/user/brand-glow.tsx',
     exportName: 'brandGlow',
     id: 'pc-brand-glow',
-    name: '首页背景光',
-    description: '官网首页与手机版登录的背景那两团光。画面是帧时钟的函数，走满一圈回到起点，专门用来预渲染成无缝循环的视频。',
-    useWhen: '只给「把首页／手机登录的背景光渲成循环视频」这一件事用；别的场合要背景光请另写一张。',
-    tags: ['背景', '光', '着色器', '首页'],
+    name: 'Home page background glow',
+    description: 'The two background glows on the website home page and the mobile app login. The picture is a function of the frame clock and loops back to the start after a full cycle, made specifically to be prerendered into a seamless looping video.',
+    useWhen: 'Only for rendering the home page / mobile login background glow into a looping video; for a background glow elsewhere, write another card.',
+    tags: ['background', 'glow', 'shader', 'home page'],
     /*
      * 这一张**跟着项目画幅走**（`sizeFromStage`）：这段着色器的两团光半径是固定 CSS 像素、
      * 构图以画面中心对齐（见 BrandGlow.tsx 的 refW / refH），所以在什么尺寸上渲，
@@ -79,9 +79,9 @@ const CARDS = {
     sizeFromStage: true,
     require: ['loopSeconds', 'drift'],
     colors: [
-      ['uBg', 'bg', '#111016', '底色', '底色（官网的 --bg、本仓库「流光」皮肤的 --ui-bg）'],
-      ['uColA', 'colA', '#00dbdb', '冷光', '第一团光的颜色（屏幕上那一版取 --ui-accent；这里写死，导出要可重放）'],
-      ['uColB', 'colB', '#FF7B00', '暖光', '第二团光的颜色'],
+      ['uBg', 'bg', '#111016', 'Base color', 'Base color (the website\'s --bg, the --ui-bg of this repo\'s "Flowing light" skin)'],
+      ['uColA', 'colA', '#00dbdb', 'Cool glow', 'Color of the first glow (the on-screen version takes --ui-accent; hardcoded here so the export is replayable)'],
+      ['uColB', 'colB', '#FF7B00', 'Warm glow', 'Color of the second glow'],
     ],
     // 这一块自己就输出不透明（底色由它画），不用压平
     flatten: null,
@@ -91,7 +91,7 @@ const CARDS = {
 const want = process.argv.slice(2).filter((a) => !a.startsWith('-'));
 const keys = want.length ? want : Object.keys(CARDS);
 for (const k of keys) {
-  if (!CARDS[k]) throw new Error(`没有这张卡：${k}（有 ${Object.keys(CARDS).join('、')}）`);
+  if (!CARDS[k]) throw new Error(`No such card: ${k} (available: ${Object.keys(CARDS).join(', ')})`);
 }
 for (const key of keys) build(key, CARDS[key]);
 
@@ -103,14 +103,14 @@ function build(key, cfg) {
 
   const grabTemplate = (name) => {
     const m = new RegExp('export const ' + name + ' = `(.*?)`;', 's').exec(text);
-    if (!m) throw new Error(`${cfg.src} 里没找到 export const ${name} = \`...\``);
+    if (!m) throw new Error(`Could not find export const ${name} = \`...\` in ${cfg.src}`);
     return m[1];
   };
   const VERT = grabTemplate('VERT');
   const FRAG = grabTemplate('FRAG');
 
   const lookBody = /export const LOOK = \{(.*?)\n\};/s.exec(text);
-  if (!lookBody) throw new Error(`${cfg.src} 里没找到 export const LOOK = { ... }`);
+  if (!lookBody) throw new Error(`Could not find export const LOOK = { ... } in ${cfg.src}`);
   /** LOOK 里的键（只认顶层两空格缩进那一层，注释和嵌套不算） */
   const lookKeys = [...new Set([...lookBody[1].matchAll(/^ {2}([A-Za-z][A-Za-z0-9]*)\s*:/gm)].map((m) => m[1]))];
 
@@ -128,12 +128,12 @@ function build(key, cfg) {
   const missing = uniforms
     .filter(([ty, n]) => ty === 'float' && !PER_FRAME.has(n) && !lookKeys.includes(lookNameOf(n)))
     .map(([, n]) => n);
-  if (missing.length) throw new Error(`${key}: 这些 uniform 在 LOOK 里找不到对应的键：${missing.join(', ')}`);
+  if (missing.length) throw new Error(`${key}: these uniforms have no matching key in LOOK: ${missing.join(', ')}`);
   for (const need of cfg.require) {
-    if (!lookKeys.includes(need)) throw new Error(`${key}: LOOK 里缺 ${need}：无缝循环要用它`);
+    if (!lookKeys.includes(need)) throw new Error(`${key}: LOOK is missing ${need}, which the seamless loop needs`);
   }
   const unmapped = uniforms.filter(([ty, n]) => ty === 'vec3' && !colorNames.has(n)).map(([, n]) => n);
-  if (unmapped.length) throw new Error(`${key}: 这些颜色 uniform 没登记进 colors：${unmapped.join(', ')}`);
+  if (unmapped.length) throw new Error(`${key}: these color uniforms are not registered in colors: ${unmapped.join(', ')}`);
 
   const floatUploads = uniforms
     .filter(([ty, n]) => ty === 'float' && !PER_FRAME.has(n))
@@ -155,7 +155,7 @@ function build(key, cfg) {
     .map(([u, p, hex]) => `    gl.uniform3f(at(${JSON.stringify(u)}), ...hexToRgb(params.${p}, ${rgbLit(hex)}));`)
     .join('\n');
   const flattenUploads = cfg.flatten
-    ? '\n    // 预渲染成视频:压平。底色合进来、alpha 给 1\n'
+    ? '\n    // Prerendered to video: flatten. Merge the background color in, set alpha to 1\n'
       + '    gl.uniform1f(at("uFlatten"), 1);\n'
       + `    gl.uniform3f(at("uBg"), ...hexToRgb(params.${cfg.flatten.param}, ${rgbLit(cfg.flatten.hex)}));`
     : '';
@@ -175,7 +175,7 @@ function build(key, cfg) {
    */
   const loopSeconds = (() => {
     const m = /^ {2}loopSeconds:\s*(\d+(?:\.\d+)?)/m.exec(lookBody[1]);
-    if (!m) throw new Error(`${key}: LOOK.loopSeconds 不是个数字字面量，没法写进 defaults`);
+    if (!m) throw new Error(`${key}: LOOK.loopSeconds is not a numeric literal, so it cannot be written into defaults`);
     return m[1];
   })();
 
@@ -184,27 +184,27 @@ function build(key, cfg) {
    * 不跟的那张直接用常量，省得生成出来的文件无谓地多两行。
    */
   const sizeLines = cfg.sizeFromStage
-    ? '  // 画幅跟着项目走（两团光的半径是固定像素，所以在什么尺寸上渲就是那个尺寸的构图）\n'
+    ? '  // The aspect ratio follows the project (the two glows have a fixed pixel radius, so the composition is that of whatever size it is rendered at)\n'
       + '  const w = Math.max(2, Math.round(stage?.width ?? WIDTH));\n'
       + '  const h = Math.max(2, Math.round(stage?.height ?? HEIGHT));'
     : '  const w = WIDTH;\n  const h = HEIGHT;';
   const sizeArg = cfg.sizeFromStage ? ', stage' : '';
   const sizeDeps = cfg.sizeFromStage ? ', w, h' : '';
 
-  const card = `/* 本文件由 scripts/login-art/make-card.mjs 生成，别手改。
- * 要改画面就去改 ${cfg.src}（屏幕上那一版），再重跑一次生成脚本，
- * 两边画的才是同一段 GLSL。生成时间不写进文件，免得每次重跑都产生无谓的 diff。
+  const card = `/* This file is generated by scripts/login-art/make-card.mjs, do not edit by hand.
+ * To change the visuals, edit ${cfg.src} (the on-screen version) and rerun the generator script,
+ * so both sides draw the same GLSL. The generation time is not written into the file, to avoid pointless diffs on every rerun.
  *
- * 这张卡只为一件事存在：让 PromptCut 自己的渲染器把它**预渲染成循环视频**（用户 2026-10-24 定）。
- * 画面写成帧时钟 t 的函数，不自己跑帧循环，符合 server/card-authoring-guide.md。
- * uLoop = (t / 循环秒数) 的小数部分，走满一圈逐字节回到起点，所以第一帧和最后一帧接得上。
+ * This card exists for one purpose: to let PromptCut's own renderer **prerender it into a looping video** (user decision, 2026-10-24).
+ * The visuals are written as a function of the frame clock t, with no frame loop of their own, in line with server/card-authoring-guide.md.
+ * uLoop = the fractional part of (t / loop seconds); after a full cycle it returns to the start byte for byte, so the first and last frames join up.
  */
 import { useLayoutEffect, useRef } from "react";
 import type { CardDef, CardProps } from "../../kernel/types";
 
 interface Params {
 ${params.map((p) => `  /** ${p.doc} */\n  ${p.key}: string;`).join('\n')}
-  /** 循环一圈多少秒 */
+  /** Seconds per loop */
   loopSeconds: number;
 }
 
@@ -219,7 +219,7 @@ const VERT = \`${esc(VERT)}\`;
 const FRAG = \`${esc(FRAG)}\`;
 
 function hexToRgb(hex: string, fallback: [number, number, number]): [number, number, number] {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  const m = /^#?([0-9a-f]${esc(FRAG)})$/i.exec(hex.trim());
   if (!m) return fallback;
   const n = parseInt(m[1], 16);
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
@@ -232,7 +232,7 @@ ${sizeLines}
     const canvas = ref.current;
     if (!canvas) return;
     const gl = canvas.getContext("webgl2", { alpha: true, premultipliedAlpha: true, antialias: false, preserveDrawingBuffer: true });
-    // WebGL2 起不来就画一块底色，别让整张卡炸掉
+    // If WebGL2 fails to start, draw a solid background color so the whole card doesn't blow up
     if (!gl) {
       const c2 = canvas.getContext("2d");
       if (c2) { c2.fillStyle = params.${fallbackParam} || "#111016"; c2.fillRect(0, 0, w, h); }
@@ -256,7 +256,7 @@ ${floatUploads}
 ${colorUploads}${flattenUploads}
     gl.uniform2f(at("uRes"), w, h);
     gl.uniform1f(at("uPxScale"), 1);
-    // 走满一圈回到起点：t 到了 loopSeconds 这一帧和 t = 0 那一帧算出来一样
+    // After a full cycle it returns to the start: at t = loopSeconds the frame computes the same as the frame at t = 0
     const secs = Math.max(0.001, params.loopSeconds);
     gl.uniform1f(at("uLoop"), ((t % secs) + secs) % secs / secs);
 
@@ -280,7 +280,7 @@ export const ${cfg.exportName}: CardDef<Params> = {
   defaults: { ${params.map((p) => `${p.key}: ${JSON.stringify(p.hex)}`).join(', ')}, loopSeconds: ${loopSeconds} },
   controls: [
 ${params.map((p) => `    { key: ${JSON.stringify(p.key)}, label: ${JSON.stringify(p.label)}, type: "color" },`).join('\n')}
-    { key: "loopSeconds", label: "循环秒数", type: "number", min: 4, max: 600, step: 1 },
+    { key: "loopSeconds", label: "Loop seconds", type: "number", min: 4, max: 600, step: 1 },
   ],
   Component: ${Comp},
 };
@@ -288,7 +288,7 @@ ${params.map((p) => `    { key: ${JSON.stringify(p.key)}, label: ${JSON.stringif
 
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
   fs.writeFileSync(OUT, card, 'utf8');
-  console.log(`写出 ${cfg.out}`);
-  console.log(`  GLSL ${FRAG.length} 字符，自动上传 ${floatUploads.split('\n').length} 个 float uniform、${cfg.colors.length} 个颜色`);
-  console.log(`  画布 ${W}×${H}，循环 ${/loopSeconds:\s*(\d+)/.exec(lookBody[1])?.[1] ?? '?'} 秒`);
+  console.log(`Wrote ${cfg.out}`);
+  console.log(`  GLSL ${FRAG.length} characters, ${floatUploads.split('\n').length} float uniforms and ${cfg.colors.length} colors uploaded automatically`);
+  console.log(`  Canvas ${W}×${H}, loop ${/loopSeconds:\s*(\d+)/.exec(lookBody[1])?.[1] ?? '?'} s`);
 }

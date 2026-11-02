@@ -127,212 +127,14 @@ const HOST_PATH = '/__probe-card-costs-host';
 
 // 同源的一张测试页:仓库里不留静态文件,由 puppeteer 请求拦截临时供给。
 // 技法照 scripts/probes/stage-rpc-probe.mjs(那一份已知对 5197 可用)。
-const hostHtml = `<!doctype html><html><head><meta charset="utf-8"><title>card cost probe host</title>
-<!-- @vitejs/plugin-react 的前导:index.html 由插件自动注入,这张手写的页要自己带,
-     否则任何 /src/**.tsx 一 import 就抛「can't detect preamble」。production 包里 /@react-refresh 不存在,
-     所以吞掉失败(那时候也不需要它)。 -->
-<script type="module">
-try {
-  const RefreshRuntime = await import('/@react-refresh');
-  RefreshRuntime.injectIntoGlobalHook(window);
-  window.$RefreshReg$ = () => {};
-  window.$RefreshSig$ = () => (type) => type;
-  window.__vite_plugin_react_preamble_installed__ = true;
-} catch { /* 产物包:没有 react-refresh,也不需要 */ }
-</script>
-</head>
-<body style="margin:0;background:#111">
-<iframe id="f" src="/?stage=1&id=B&prerender=1" style="width:1920px;height:1080px;border:0;display:block"></iframe>
-<script type="module">
-// 最小 RPC 客户端(和 src/render/stageRpc.ts 同一协议),内联着写是为了这张页也能打产物包
-function createStageRpc(target) {
-  let nextId = 1; const pending = new Map(); const listeners = new Set();
-  window.addEventListener('message', (e) => {
-    if (e.source !== target) return; const d = e.data;
-    if (d && d.type === 'pc-rpc-reply') { const p = pending.get(d.id); if (!p) return; pending.delete(d.id); d.ok ? p.resolve(d.result) : p.reject(new Error(d.error)); return; }
-    if (d && typeof d.type === 'string' && ['mediaReady','frame','ended','settled','probe','demote','probe-frame'].includes(d.type)) for (const l of listeners) l(d);
-  });
-  const call = (method) => (...args) => new Promise((resolve, reject) => { const id = nextId++; pending.set(id, { resolve, reject }); target.postMessage({ type: 'pc-rpc', id, method, args }, location.origin); });
-  const c = { onEvent: (l) => { listeners.add(l); return () => listeners.delete(l); } };
-  for (const m of ['setProject','setTime','render','hitTest','rectsWithBounds','size','setProxy','setRole','setPlan','play','pause','setSuppressed','setStreamPlanes','setScrubbing','setPlaying','setMediaT','setLocalHashes','setSnapshots']) c[m] = call(m);
-  return c;
-}
-
-const f = document.getElementById('f');
-window.__probeFrames = 0;
-window.__ready = new Promise((res, rej) => {
-  setTimeout(() => rej(new Error('stage ready timeout')), 180000);
-  window.addEventListener('message', (e) => {
-    if (e.source !== f.contentWindow || e.data?.type !== 'pc-stage-ready') return;
-    window.__caps = e.data.hostCapabilities;
-    window.__rpc = createStageRpc(f.contentWindow);
-    // probe-frame 只计数:逐帧 html 在这一侧没用,攒下来白占内存
-    window.__rpc.onEvent((ev) => { if (ev.type === 'probe-frame') window.__probeFrames++; });
-    res(true);
-  });
-});
-
-/* 卡片注册表 / 图 / 身份键。dev 模式下 /src/* 由 vite 现场变换,直接 import 即可。 */
-window.__kit = (async () => {
-  await import('/src/cards/index.ts');                       // 模块级 registerCards
-  const registry = await import('/src/kernel/registry.ts');
-  const { projectCardGraph } = await import('/src/kernel/cardGraph.mjs');
-  const { cardCostKey } = await import('/src/render/cardCostKey.mjs');
-  const { cardSourceVersion } = await import('/src/render/cardSourceVersion.mjs');
-  const { builtinCardSourceFiles } = await import('/src/render/cardSourceFiles.mjs');
-  const { cardFrameMode, reviewedCard } = await import('/src/kernel/frameMode.mjs');
-  const assets = await import('/src/cards/assets/index.ts');
-  // 源码版本照 ExportView.tsx:108-118 那份算法
-  const sourceVersionOf = (card) => {
-    const user = registry.userCardSources();
-    const file = user.fileOf[card.id];
-    return file && user.files[file] !== undefined
-      ? 'user:' + cardSourceVersion(card, { ...builtinCardSourceFiles, ...user.dependencies }, '/src/cards/user/' + file + '.tsx')
-      : 'builtin:' + cardSourceVersion(card, builtinCardSourceFiles);
-  };
-  return { ...registry, projectCardGraph, cardCostKey, cardFrameMode, reviewedCard, sourceVersionOf, featuredParticleIds: assets.featuredParticleIds };
-})();
-
-/* 本机身份(J4):UA + WebGL 渲染器 + compact(只有一个舞台;串里的字段名仍叫 lowMemory,见 costDevice.mjs)/ offscreenGl / glRoute。
-   一次性的丢弃上下文在**宿主页**里开,不碰舞台自己那个共享 WebGL 上下文。
-   读法和拼法都在 src/render/costDevice.mjs,常驻探针 import 的是同一份。 */
-window.__deviceParts = async () => {
-  const { readGpuRenderer, resolveGlRoute } = await import('/src/render/costDevice.mjs');
-  const caps = window.__caps || {};
-  const compact = !!caps.compact;
-  return { ua: navigator.userAgent, renderer: readGpuRenderer(document), compact,
-    offscreenGl: !!caps.offscreenGl, glRoute: resolveGlRoute(caps.glRoute ?? null, compact ? 'shared' : 'perDocument') };
-};
-
-/* 缩水项目:一条轨道一个 clip(形状同 FrameScene.tsx 的 legacyTimeline) */
-window.__mkProject = (cardId, fps, lenSec, params) => ({
-  version: 1, id: 'probe', name: 'probe', width: 1920, height: 1080, fps, duration: lenSec,
-  themeId: 'midnight', media: [],
-  tracks: [{ id: 'probe-track', clips: [{ id: 'c0', cardId, start: 0, end: lenSec, params: params || {} }] }],
-});
-
-/* 身份键 + 声明的帧模式。只算不测,给「跳过已测过的卡」用 */
-window.__identify = async (jobs) => {
-  const kit = await window.__kit;
-  return jobs.map((job) => {
-    const def = kit.getCard(job.cardId);
-    if (!def) return { ...job, error: '注册表里没有这张卡' };
-    try {
-      const project = window.__mkProject(job.cardId, job.fps, job.lenSec, job.params);
-      const node = kit.projectCardGraph(project, kit.getCard).nodes.find((n) => n.clipId === 'c0');
-      if (!node) return { ...job, error: '图里没有这个片段的节点' };
-      const durationFrames = Math.max(1, Math.round(job.lenSec * job.fps));
-      return { ...job, durationFrames,
-        identityKey: kit.cardCostKey(node, kit.sourceVersionOf(def), job.fps, durationFrames),
-        canvasHeavy: ['canvas2d', 'webgl'].includes(kit.reviewedCard(job.cardId)?.surface),
-        mode: kit.cardFrameMode(def, def.defaults) };
-    } catch (err) { return { ...job, error: String(err && err.message || err) }; }
-  });
-};
-
-/* 面板默认可见的那 62 张(inventory :19):非粒子卡全要 + 目录标了 featured 的粒子卡 */
-window.__highFrequencyIds = async () => {
-  const kit = await window.__kit;
-  return kit.allCards().map((c) => c.id).filter((id) => !id.startsWith('particles-') || kit.featuredParticleIds.has(id));
-};
-
-/* -------- 一张卡的实测。整趟都在页面里跑,免得每帧一次 puppeteer 往返。
-      **这里只负责量,不做统计** —— 分位数、外推、判重全在 Node 那一侧(见文件头)。 -------- */
-const seedOf = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
-const mulberry32 = (a) => () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
-
-window.__probeOne = async (job) => {
-  const rpc = window.__rpc;
-  const { cardId, fps, lenSec, params, mode, identityKey, durationFrames } = job;
-  const out = { cardId, identityKey, fps, mode, durationFrames };
-  const project = window.__mkProject(cardId, fps, lenSec, params);
-  await rpc.setRole('back', { job: 'probe' });
-  await rpc.setProject(project, { reset: true });
-  // 挂载那一下 React 要建树、Motion 要解析关键帧:给一个真任务边界再开测,
-  // 否则第一张卡的第一帧会把整个模块的首次求值算进去。canvas 卡(three.js / tsParticles)
-  // 还要等它异步把画布装起来,不然量的是一个空壳(实测 particles-basic 差 30 倍)。
-  await rpc.setTime(0);
-  await new Promise((r) => setTimeout(r, 150));
-  if (job.canvasHeavy) {
-    const w = document.getElementById('f').contentWindow;
-    for (let i = 0; i < 100; i++) {
-      const cv = w.document.querySelector('[data-pc-clip] canvas');
-      if (cv && cv.width > 1) { await new Promise((r) => setTimeout(r, 150)); break; }
-      await new Promise((r) => setTimeout(r, 50));
-    }
-  }
-
-  if (mode === 'direct') {
-    /*
-     * 固定随机抽本地帧(按 cardId 播种,复跑同一台机器结果可比)。
-     * **抽满 job.minSamples 帧**(任务书 K1:8 次不够 STEP_MIN_SAMPLES 就补抽);
-     * 片段比这还短的按帧数抽满、不重复。
-     */
-    const want = Math.max(8, Math.min(job.minSamples, durationFrames));
-    const rnd = mulberry32(seedOf(cardId));
-    const picks = new Set();
-    for (let i = 0; i < want * 64 && picks.size < Math.min(want, durationFrames); i++) picks.add(Math.floor(rnd() * durationFrames));
-    const frames = [...picks].sort((a, b) => a - b);
-    const steps = [], inline = [], raster = [], serialize = [];
-    for (const n of frames) {
-      const r = await rpc.setTime(n / fps, { probe: true });
-      // stepMs 是舞台在等那一次真 rAF **之前**取的,所以这里拿到的已经不含垂直同步(3.8 末条)
-      steps.push(Number(r?.stepMs) || 0);
-      inline.push(Number(r?.snapshot?.inlineMs) || 0);
-      raster.push(Number(r?.snapshot?.rasterMs) || 0);
-      serialize.push(Number(r?.snapshot?.serializeMs) || 0);
-    }
-    out.kind = 'random';
-    out.steps = steps;
-    out.inline = inline;
-    out.raster = raster;
-    out.serialize = serialize;
-    out.pushedFrames = steps.length;
-    out.totalFrames = durationFrames;
-    out.truncated = false;
-    return out;
-  }
-
-  /* ---- 计时趟:只推进、不生成快照,按 PROBE_MAX_* 封顶,回包带每帧耗时 ---- */
-  const target = Math.max(0, lenSec - 1 / fps);
-  const totalFrames = Math.max(1, Math.round(target * fps) + 1);
-  window.__probeFrames = 0;
-  const timePass = await rpc.render(target, { jump: true, probe: 'time', maxCatchUp: Infinity, maxFrames: job.maxProbeFrames });
-  out.kind = 'stepped';
-  out.steps = Array.isArray(timePass?.steps) ? timePass.steps.map(Number) : [];
-  out.pushedFrames = Number(timePass?.frames) || out.steps.length;
-  out.totalFrames = totalFrames;
-  out.runMs = Number(timePass?.elapsedMs) || 0;
-  out.truncated = !!timePass?.truncated;
-  // 计时趟一帧快照都不该生成,这个数应当恒为 0;不为 0 就是舞台那一侧的分支串了
-  out.timePassProbeFrames = window.__probeFrames;
-
-  /* ---- 快照趟:按 K3 的重挂载定位配方复位,再逐帧生成一次快照 ---- */
-  const n = Math.max(1, Math.min(totalFrames - 1, job.worstFrames));
-  out.snapN = n;
-  window.__probeFrames = 0;
-  await rpc.render(0, { jump: true, maxCatchUp: Infinity });   // 重挂载定位配方:复位到挂载帧
-  const inline = [], raster = [], serialize = [];
-  for (let k = 1; k <= n; k++) {
-    const r = await rpc.render(k / fps, { probe: 'snapshot', maxCatchUp: Infinity });
-    inline.push(Number(r?.snapshot?.inlineMs) || 0);
-    raster.push(Number(r?.snapshot?.rasterMs) || 0);
-    serialize.push(Number(r?.snapshot?.serializeMs) || 0);
-  }
-  out.inline = inline;
-  out.raster = raster;
-  out.serialize = serialize;
-  out.snapPassProbeFrames = window.__probeFrames;
-  return out;
-};
-</script></body></html>`;
+const hostHtml = `<!doctype html><html><head><meta charset=\\"utf-8\\"><title>card cost probe host</title>\\n<!-- Preamble for @vitejs/plugin-react: the plugin injects it into index.html automatically, but this hand-written page has to carry its own,\\n     otherwise any import of /src/**.tsx throws "can't detect preamble". /@react-refresh does not exist in the production bundle,\\n     so the failure is swallowed (it is not needed there anyway). -->\\n<script type=\\"module\\">\\ntry {\\n  const RefreshRuntime = await import('/@react-refresh');\\n  RefreshRuntime.injectIntoGlobalHook(window);\\n  window.$RefreshReg$ = () => {};\\n  window.$RefreshSig$ = () => (type) => type;\\n  window.__vite_plugin_react_preamble_installed__ = true;\\n} catch { /* built bundle: no react-refresh, and not needed */ }\\n</script>\\n</head>\\n<body style=\\"margin:0;background:#111\\">\\n<iframe id=\\"f\\" src=\\"/?stage=1&id=B&prerender=1\\" style=\\"width:1920px;height:1080px;border:0;display:block\\"></iframe>\\n<script type=\\"module\\">\\n// Minimal RPC client (same protocol as src/render/stageRpc.ts), written inline so this page can also run against the built bundle\\nfunction createStageRpc(target) {\\n  let nextId = 1; const pending = new Map(); const listeners = new Set();\\n  window.addEventListener('message', (e) => {\\n    if (e.source !== target) return; const d = e.data;\\n    if (d && d.type === 'pc-rpc-reply') { const p = pending.get(d.id); if (!p) return; pending.delete(d.id); d.ok ? p.resolve(d.result) : p.reject(new Error(d.error)); return; }\\n    if (d && typeof d.type === 'string' && ['mediaReady','frame','ended','settled','probe','demote','probe-frame'].includes(d.type)) for (const l of listeners) l(d);\\n  });\\n  const call = (method) => (...args) => new Promise((resolve, reject) => { const id = nextId++; pending.set(id, { resolve, reject }); target.postMessage({ type: 'pc-rpc', id, method, args }, location.origin); });\\n  const c = { onEvent: (l) => { listeners.add(l); return () => listeners.delete(l); } };\\n  for (const m of ['setProject','setTime','render','hitTest','rectsWithBounds','size','setProxy','setRole','setPlan','play','pause','setSuppressed','setStreamPlanes','setScrubbing','setPlaying','setMediaT','setLocalHashes','setSnapshots']) c[m] = call(m);\\n  return c;\\n}\\n\\nconst f = document.getElementById('f');\\nwindow.__probeFrames = 0;\\nwindow.__ready = new Promise((res, rej) => {\\n  setTimeout(() => rej(new Error('stage ready timeout')), 180000);\\n  window.addEventListener('message', (e) => {\\n    if (e.source !== f.contentWindow || e.data?.type !== 'pc-stage-ready') return;\\n    window.__caps = e.data.hostCapabilities;\\n    window.__rpc = createStageRpc(f.contentWindow);\\n    // probe-frame is only counted: per-frame html is useless on this side, and accumulating it just wastes memory\\n    window.__rpc.onEvent((ev) => { if (ev.type === 'probe-frame') window.__probeFrames++; });\\n    res(true);\\n  });\\n});\\n\\n/* Card registry / graph / identity key. In dev mode /src/* is transformed on the fly by vite, so a direct import works. */\\nwindow.__kit = (async () => {\\n  await import('/src/cards/index.ts');                       // module-level registerCards\\n  const registry = await import('/src/kernel/registry.ts');\\n  const { projectCardGraph } = await import('/src/kernel/cardGraph.mjs');\\n  const { cardCostKey } = await import('/src/render/cardCostKey.mjs');\\n  const { cardSourceVersion } = await import('/src/render/cardSourceVersion.mjs');\\n  const { builtinCardSourceFiles } = await import('/src/render/cardSourceFiles.mjs');\\n  const { cardFrameMode, reviewedCard } = await import('/src/kernel/frameMode.mjs');\\n  const assets = await import('/src/cards/assets/index.ts');\\n  // Source version follows the algorithm in ExportView.tsx:108-118\\n  const sourceVersionOf = (card) => {\\n    const user = registry.userCardSources();\\n    const file = user.fileOf[card.id];\\n    return file && user.files[file] !== undefined\\n      ? 'user:' + cardSourceVersion(card, { ...builtinCardSourceFiles, ...user.dependencies }, '/src/cards/user/' + file + '.tsx')\\n      : 'builtin:' + cardSourceVersion(card, builtinCardSourceFiles);\\n  };\\n  return { ...registry, projectCardGraph, cardCostKey, cardFrameMode, reviewedCard, sourceVersionOf, featuredParticleIds: assets.featuredParticleIds };\\n})();\\n\\n/* Local identity (J4): UA + WebGL renderer + compact (only one stage; the field name in the string is still called lowMemory, see costDevice.mjs) / offscreenGl / glRoute.\\n   The throwaway discarded context is opened in the **host page**, leaving the stage's own shared WebGL context alone.\\n   Both reading and assembling live in src/render/costDevice.mjs, and the resident probe imports the same copy. */\\nwindow.__deviceParts = async () => {\\n  const { readGpuRenderer, resolveGlRoute } = await import('/src/render/costDevice.mjs');\\n  const caps = window.__caps || {};\\n  const compact = !!caps.compact;\\n  return { ua: navigator.userAgent, renderer: readGpuRenderer(document), compact,\\n    offscreenGl: !!caps.offscreenGl, glRoute: resolveGlRoute(caps.glRoute ?? null, compact ? 'shared' : 'perDocument') };\\n};\\n\\n/* Shrunken project: one clip per track (same shape as legacyTimeline in FrameScene.tsx) */\\nwindow.__mkProject = (cardId, fps, lenSec, params) => ({\\n  version: 1, id: 'probe', name: 'probe', width: 1920, height: 1080, fps, duration: lenSec,\\n  themeId: 'midnight', media: [],\\n  tracks: [{ id: 'probe-track', clips: [{ id: 'c0', cardId, start: 0, end: lenSec, params: params || {} }] }],\\n});\\n\\n/* Identity key + declared frame mode. Compute only, no measuring; used to "skip cards that were already measured" */\\nwindow.__identify = async (jobs) => {\\n  const kit = await window.__kit;\\n  return jobs.map((job) => {\\n    const def = kit.getCard(job.cardId);\\n    if (!def) return { ...job, error: 'no such card in the registry' };\\n    try {\\n      const project = window.__mkProject(job.cardId, job.fps, job.lenSec, job.params);\\n      const node = kit.projectCardGraph(project, kit.getCard).nodes.find((n) => n.clipId === 'c0');\\n      if (!node) return { ...job, error: 'no node for this clip in the graph' };\\n      const durationFrames = Math.max(1, Math.round(job.lenSec * job.fps));\\n      return { ...job, durationFrames,\\n        identityKey: kit.cardCostKey(node, kit.sourceVersionOf(def), job.fps, durationFrames),\\n        canvasHeavy: ['canvas2d', 'webgl'].includes(kit.reviewedCard(job.cardId)?.surface),\\n        mode: kit.cardFrameMode(def, def.defaults) };\\n    } catch (err) { return { ...job, error: String(err && err.message || err) }; }\\n  });\\n};\\n\\n/* The 62 cards visible by default in the panel (inventory :19): all non-particle cards + particle cards the catalog marks as featured */\\nwindow.__highFrequencyIds = async () => {\\n  const kit = await window.__kit;\\n  return kit.allCards().map((c) => c.id).filter((id) => !id.startsWith('particles-') || kit.featuredParticleIds.has(id));\\n};\\n\\n/* -------- Measurement of one card. The whole run happens inside the page, to avoid one puppeteer round trip per frame.\\n      **This only measures, it does no statistics** — quantiles, extrapolation and dedup all live on the Node side (see the file header). -------- */\\nconst seedOf = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };\\nconst mulberry32 = (a) => () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };\\n\\nwindow.__probeOne = async (job) => {\\n  const rpc = window.__rpc;\\n  const { cardId, fps, lenSec, params, mode, identityKey, durationFrames } = job;\\n  const out = { cardId, identityKey, fps, mode, durationFrames };\\n  const project = window.__mkProject(cardId, fps, lenSec, params);\\n  await rpc.setRole('back', { job: 'probe' });\\n  await rpc.setProject(project, { reset: true });\\n  // On mount React has to build the tree and Motion has to resolve keyframes: give it a real task boundary before measuring,\\n  // otherwise the first frame of the first card absorbs the whole module's first evaluation. Canvas cards (three.js / tsParticles)\\n  // also have to wait for the canvas to be set up asynchronously, or we would measure an empty shell (measured: particles-basic was off by 30x).\\n  await rpc.setTime(0);\\n  await new Promise((r) => setTimeout(r, 150));\\n  if (job.canvasHeavy) {\\n    const w = document.getElementById('f').contentWindow;\\n    for (let i = 0; i < 100; i++) {\\n      const cv = w.document.querySelector('[data-pc-clip] canvas');\\n      if (cv && cv.width > 1) { await new Promise((r) => setTimeout(r, 150)); break; }\\n      await new Promise((r) => setTimeout(r, 50));\\n    }\\n  }\\n\\n  if (mode === 'direct') {\\n    /*\\n     * Fixed random sampling of local frames (seeded by cardId, so reruns on the same machine are comparable).\\n     * **Sample up to job.minSamples frames** (task spec K1: 8 is not enough for STEP_MIN_SAMPLES, so sample more);\\n     * clips shorter than that are sampled to the full frame count, without repeats.\\n     */\\n    const want = Math.max(8, Math.min(job.minSamples, durationFrames));\\n    const rnd = mulberry32(seedOf(cardId));\\n    const picks = new Set();\\n    for (let i = 0; i < want * 64 && picks.size < Math.min(want, durationFrames); i++) picks.add(Math.floor(rnd() * durationFrames));\\n    const frames = [...picks].sort((a, b) => a - b);\\n    const steps = [], inline = [], raster = [], serialize = [];\\n    for (const n of frames) {\\n      const r = await rpc.setTime(n / fps, { probe: true });\\n      // stepMs is taken by the stage **before** it waits for that one real rAF, so what we get here already excludes vertical sync (last item of 3.8)\\n      steps.push(Number(r?.stepMs) || 0);\\n      inline.push(Number(r?.snapshot?.inlineMs) || 0);\\n      raster.push(Number(r?.snapshot?.rasterMs) || 0);\\n      serialize.push(Number(r?.snapshot?.serializeMs) || 0);\\n    }\\n    out.kind = 'random';\\n    out.steps = steps;\\n    out.inline = inline;\\n    out.raster = raster;\\n    out.serialize = serialize;\\n    out.pushedFrames = steps.length;\\n    out.totalFrames = durationFrames;\\n    out.truncated = false;\\n    return out;\\n  }\\n\\n  /* ---- Timing pass: only advance, no snapshots, capped by PROBE_MAX_*, the reply carries per-frame durations ---- */\\n  const target = Math.max(0, lenSec - 1 / fps);\\n  const totalFrames = Math.max(1, Math.round(target * fps) + 1);\\n  window.__probeFrames = 0;\\n  const timePass = await rpc.render(target, { jump: true, probe: 'time', maxCatchUp: Infinity, maxFrames: job.maxProbeFrames });\\n  out.kind = 'stepped';\\n  out.steps = Array.isArray(timePass?.steps) ? timePass.steps.map(Number) : [];\\n  out.pushedFrames = Number(timePass?.frames) || out.steps.length;\\n  out.totalFrames = totalFrames;\\n  out.runMs = Number(timePass?.elapsedMs) || 0;\\n  out.truncated = !!timePass?.truncated;\\n  // The timing pass should not generate a single snapshot, so this number should always be 0; if it is not, a branch on the stage side has leaked\\n  out.timePassProbeFrames = window.__probeFrames;\\n\\n  /* ---- Snapshot pass: reset using K3's remount positioning recipe, then generate one snapshot per frame ---- */\\n  const n = Math.max(1, Math.min(totalFrames - 1, job.worstFrames));\\n  out.snapN = n;\\n  window.__probeFrames = 0;\\n  await rpc.render(0, { jump: true, maxCatchUp: Infinity });   // remount positioning recipe: reset to the mount frame\\n  const inline = [], raster = [], serialize = [];\\n  for (let k = 1; k <= n; k++) {\\n    const r = await rpc.render(k / fps, { probe: 'snapshot', maxCatchUp: Infinity });\\n    inline.push(Number(r?.snapshot?.inlineMs) || 0);\\n    raster.push(Number(r?.snapshot?.rasterMs) || 0);\\n    serialize.push(Number(r?.snapshot?.serializeMs) || 0);\\n  }\\n  out.inline = inline;\\n  out.raster = raster;\\n  out.serialize = serialize;\\n  out.snapPassProbeFrames = window.__probeFrames;\\n  return out;\\n};\\n</script></body></html>`;
 
 /* ------------------------------------------------------------------ 要测哪些卡 */
 
 function jobsFromProject(file, fps) {
   const raw = fs.readFileSync(file, 'utf8');
   let doc;
-  try { doc = JSON.parse(raw); } catch (e) { throw new Error(`${file} 不是 JSON 项目(${e.message})`); }
+  try { doc = JSON.parse(raw); } catch (e) { throw new Error(`${file} is not a JSON project (${e.message})`); }
   // .proc 是 { format, version, project: {...} };裸项目也收
   const proj = doc?.project ?? doc;
   const projFps = Number(proj.fps) || fps;
@@ -444,9 +246,9 @@ try {
    * 拼法住在 `src/render/costDevice.mjs`,常驻探针用的是同一个函数。
    */
   const device = costDeviceString({ ...parts, mode, tuning });
-  console.log(`mode: ${mode}（${origin}）`);
+  console.log(`mode: ${mode} (${origin})`);
   console.log(`tuning: COST_SCALE=${tuning.COST_SCALE} STEP_PERCENTILE=${tuning.STEP_PERCENTILE} STEP_MIN_SAMPLES=${tuning.STEP_MIN_SAMPLES}`
-    + (JSON.stringify(tuning) === JSON.stringify(DEFAULT_TUNING) ? '（缺省）' : '（out/pipeline-tuning.json 覆盖过）'));
+    + (JSON.stringify(tuning) === JSON.stringify(DEFAULT_TUNING) ? '(default)' : '(overridden by out/pipeline-tuning.json)'));
   console.log(`probe caps: PROBE_MAX_FRAMES=${PROBE_MAX_FRAMES} PROBE_MAX_MS=${PROBE_MAX_MS}`);
   console.log(`device: ${device}\n`);
 
@@ -463,10 +265,10 @@ try {
 
   const identified = await page.evaluate((j) => window.__identify(j), jobs);
   const broken = identified.filter((j) => j.error);
-  for (const j of broken) console.warn(`跳过 ${j.cardId}:${j.error}`);
+  for (const j of broken) console.warn(`Skipping ${j.cardId}: ${j.error}`);
 
   const existing = dryRun ? { missing: true, costs: [] } : await getCosts(device);
-  if (existing.missing) console.warn('GET /api/data/costs 回了 404 —— 插件还没挂上(或者在 --dry-run 里),这一趟不跳过任何卡。');
+  if (existing.missing) console.warn('GET /api/data/costs returned 404: the plugin is not mounted yet (or this is a --dry-run), so no cards are skipped this run.');
   const known = new Map(existing.costs.map((r) => [r.identityKey, r]));
   const todo = [], skipped = [];
   const seen = new Set();
@@ -478,7 +280,7 @@ try {
     if (!force && hit && hit.demoted !== true) { skipped.push({ ...j, hit }); continue; }
     todo.push({ ...j, worstFrames, minSamples: tuning.STEP_MIN_SAMPLES, maxProbeFrames: PROBE_MAX_FRAMES });
   }
-  console.log(`共 ${identified.length} 个片段 → ${todo.length} 张要测,${skipped.length} 张已有记录跳过,${broken.length} 张有问题。\n`);
+  console.log(`${identified.length} clips → ${todo.length} cards to measure, ${skipped.length} skipped (already recorded), ${broken.length} with problems.\n`);
 
   const B = budgetOf(fpsArg);
   const records = [], results = [];
@@ -488,7 +290,7 @@ try {
     try {
       raw = await page.evaluate((j) => window.__probeOne(j), job);
     } catch (err) {
-      console.log('失败');
+      console.log('failed');
       results.push({ ...job, error: String(err && err.message || err) });
       continue;
     }
@@ -554,34 +356,34 @@ try {
   const ok = results.filter((r) => !r.error);
   const byTier = new Map();
   for (const r of ok) byTier.set(r.tier, [...(byTier.get(r.tier) ?? []), r.cardId]);
-  console.log('\n按 K2 的档位分（离线不测 seekOk，所以长 CSS 卡也落在推帧那几档）：');
+  console.log('\nBy K2 tier (seekOk is not measured offline, so long CSS cards also land in the frame-push tiers):');
   for (const [tier, list] of [...byTier].sort((a, b) => b[1].length - a[1].length)) {
-    console.log(`  ${tier.padEnd(14)} ${String(list.length).padStart(3)} 张  ${list.join(', ')}`);
+    console.log(`  ${tier.padEnd(14)} ${String(list.length).padStart(3)} cards  ${list.join(', ')}`);
   }
   const steps = ok.map((r) => r.stepMs);
   console.log(`\nstepMs p50 / p90 / max = ${num(pct(steps, 0.5), 2)} / ${num(pct(steps, 0.9), 2)} / ${num(maxOf(steps), 2)} ms`);
   const cappedCards = ok.filter((r) => r.capped).map((r) => r.cardId);
-  console.log(`单帧越过 B 的（capped）：${cappedCards.length} 张${cappedCards.length ? ' —— ' + cappedCards.join(', ') : ''}`);
+  console.log(`Single frame over B (capped): ${cappedCards.length} cards${cappedCards.length ? ' —— ' + cappedCards.join(', ') : ''}`);
   const overCatchUp = ok.filter((r) => r.tier === 'over-catchup' && !r.capped).map((r) => r.cardId);
-  console.log(`被追帧上界判重的：${overCatchUp.length} 张${overCatchUp.length ? ' —— ' + overCatchUp.join(', ') : ''}`);
+  console.log(`Rejected by the frame catch-up upper bound: ${overCatchUp.length} cards${overCatchUp.length ? ' —— ' + overCatchUp.join(', ') : ''}`);
 
   const failed = results.filter((r) => r.error);
   if (failed.length) {
-    console.log('\n失败:');
+    console.log('\nFailed:');
     for (const f of failed) console.log(`  ${f.cardId}: ${f.error}`);
   }
-  if (skipped.length) console.log(`\n已有记录跳过:${skipped.map((s) => s.cardId).join(', ')}`);
+  if (skipped.length) console.log(`\nSkipped (already recorded): ${skipped.map((s) => s.cardId).join(', ')}`);
 
   if (!dryRun && records.length) {
     const put = await putCosts(records);
-    console.log(`\nPUT /api/data/costs → ok,存档共 ${put.count} 条(新增 ${put.added}、更新 ${put.updated})。`);
+    console.log(`\nPUT /api/data/costs → ok, ${put.count} records stored (${put.added} added, ${put.updated} updated).`);
     const back = await getCosts(device);
     const got = new Set(back.costs.map((r) => r.identityKey));
     const missing = records.filter((r) => !got.has(r.identityKey));
-    console.log(`GET /api/data/costs?device=… → ${back.costs.length} 条;本趟 ${records.length} 条里缺 ${missing.length} 条。`);
+    console.log(`GET /api/data/costs?device=… → ${back.costs.length} records; ${missing.length} of this run's ${records.length} records missing.`);
     if (missing.length) exitCode = 1;
   } else if (dryRun) {
-    console.log('\n--dry-run:没有写 /api/data/costs。');
+    console.log('\n--dry-run: nothing written to /api/data/costs.');
   }
 
   if (outJson) {
@@ -591,12 +393,12 @@ try {
       tuning, probeCaps: { PROBE_MAX_FRAMES, PROBE_MAX_MS },
       at: new Date().toISOString(), results, skipped: skipped.map((s) => s.cardId),
       broken: broken.map((b) => ({ cardId: b.cardId, error: b.error })) }, null, 2), 'utf8');
-    console.log(`\n原始数据写到 ${file}`);
+    console.log(`\nRaw data written to ${file}`);
   }
 
   const noise = errors.filter((e) => !/favicon|React DevTools|Failed to load resource/i.test(e));
   if (noise.length) {
-    console.log(`\n页面报错 ${noise.length} 条(前 5 条):`);
+    console.log(`\nPage errors: ${noise.length} (first 5):`);
     for (const e of noise.slice(0, 5)) console.log('  ' + e);
   }
 } catch (err) {

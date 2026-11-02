@@ -44,7 +44,7 @@ const only = (() => {
 const LOOP_SECONDS = (() => {
   const s = fs.readFileSync(path.join(ROOT, 'src/start/BrandGlow.tsx'), 'utf8');
   const m = /loopSeconds:\s*(\d+)/.exec(s);
-  if (!m) throw new Error('BrandGlow.tsx 里没读到 loopSeconds');
+  if (!m) throw new Error('Could not read loopSeconds in BrandGlow.tsx');
   return Number(m[1]);
 })();
 
@@ -68,10 +68,10 @@ function palettes() {
     const tail = s.slice(m.index + m[0].length, m.index + m[0].length + 1200);
     const accent = /dark:\s*\{[^}]*?accent:\s*"([^"]+)"/s.exec(tail);
     const bg = /dark:\s*\{[^}]*?surfaces:\s*\[\s*"([^"]+)"/s.exec(tail);
-    if (!accent) throw new Error(`${id} 没读到 dark.accent`);
+    if (!accent) throw new Error(`${id}: could not read dark.accent`);
     out.push({ id, name, accent: accent[1], bg: bg ? bg[1] : '#111016' });
   }
-  if (out.length === 0) throw new Error('一套皮肤都没读到，palettes.ts 的写法可能变了');
+  if (out.length === 0) throw new Error('No skin could be read, the format of palettes.ts may have changed');
   return out;
 }
 
@@ -92,7 +92,7 @@ function targets() {
    */
   const list = palettes().map((p) => ({
     key: p.id,
-    label: `${p.name}（竖版，手机登录）`,
+    label: `${p.name} (portrait, mobile login)`,
     out: `glow-${p.id}.mp4`, dir: ART, where: 'src/start/art',
     w: 560, h: 1290, outW: 540,
     bg: p.bg, colA: p.accent, colB: WARM,
@@ -100,7 +100,7 @@ function targets() {
   const studio = palettes().find((p) => p.id === 'studio');
   list.push({
     key: 'wide',
-    label: '横版（官网首页，固定「流光」）',
+    label: 'Landscape (website home page, fixed "Flowing light")',
     out: 'glow-wide.mp4', dir: OUT, where: 'scripts/login-art/out',
     w: 1600, h: 900, outW: 1280,
     bg: studio.bg, colA: studio.accent, colB: WARM,
@@ -120,31 +120,31 @@ const plan = targets();
  */
 const odd = plan.filter((t) => t.w % 2 || t.h % 2 || t.outW % 2);
 if (odd.length) {
-  throw new Error(`画幅必须是偶数（libx264 的硬要求），这几个不是：`
-    + odd.map((t) => `${t.key} ${t.w}×${t.h}→${t.outW}`).join('、'));
+  throw new Error(`The aspect ratio must be even (a hard requirement of libx264), these are not:`
+    + odd.map((t) => `${t.key} ${t.w}×${t.h}→${t.outW}`).join(', '));
 }
 
 for (const t of plan) {
   if (only && !only.has(t.key)) continue;
   const projPath = path.join(ROOT, `scripts/login-art/glow-${t.key}.json`);
   fs.writeFileSync(projPath, JSON.stringify({
-    version: 1, id: `glow-${t.key}`, name: `首页背景光 · ${t.label}`,
+    version: 1, id: `glow-${t.key}`, name: `Home page background glow · ${t.label}`,
     width: t.w, height: t.h, fps: FPS, duration: LOOP_SECONDS,
     themeId: 'midnight', media: [],
-    tracks: [{ id: 't-glow', name: '序列 1', clips: [{
+    tracks: [{ id: 't-glow', name: 'Track 1', clips: [{
       id: 'c-glow', cardId: 'pc-brand-glow', start: 0, end: LOOP_SECONDS,
       params: { bg: t.bg, colA: t.colA, colB: t.colB, loopSeconds: LOOP_SECONDS },
     }] }],
-    cuts: [{ id: 'cut-1', name: '剪辑1' }], activeCutId: 'cut-1',
+    cuts: [{ id: 'cut-1', name: 'Cut 1' }], activeCutId: 'cut-1',
   }, null, 1) + '\n', 'utf8');
 
-  console.log(`\n── ${t.label} ${t.w}×${t.h}，光 ${t.colA}，底 ${t.bg} ──`);
+  console.log(`\n── ${t.label} ${t.w}×${t.h}, glow ${t.colA}, background ${t.bg} ──`);
   const t0 = Date.now();
   const log = execFileSync(process.execPath, [
     'scripts/export-e2e.mjs', '--project', projPath, '--id', `glow-${t.key}`, '--video',
   ], { cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 26, windowsHide: true });
-  const mp4 = /成片:(.+preview\.mp4)/.exec(log)?.[1]?.trim();
-  if (!mp4 || !fs.existsSync(mp4)) throw new Error(`${t.key}: 没拿到 preview.mp4\n${log.slice(-600)}`);
+  const mp4 = /final video:(.+preview\.mp4)/.exec(log)?.[1]?.trim();
+  if (!mp4 || !fs.existsSync(mp4)) throw new Error(`${t.key}: did not get preview.mp4\n${log.slice(-600)}`);
 
   const dest = path.join(t.dir, t.out);
   execFileSync(FF, ['-hide_banner', '-loglevel', 'error', '-y', '-i', mp4, '-an',
@@ -152,10 +152,10 @@ for (const t of plan) {
     '-pix_fmt', 'yuv420p', '-movflags', '+faststart', dest], { stdio: 'inherit', windowsHide: true });
   const bytes = fs.statSync(dest).size;
   made.push({ ...t, bytes });
-  console.log(`   → ${t.where}/${t.out}  ${(bytes / 1024).toFixed(0)} KB  （${((Date.now() - t0) / 1000).toFixed(0)} 秒）`);
+  console.log(`   → ${t.where}/${t.out}  ${(bytes / 1024).toFixed(0)} KB  (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
 }
 
-console.log('\n── 全部做完 ──');
+console.log('\n── All done ──');
 for (const m of made) console.log(`  ${m.out.padEnd(22)} ${m.colA}  ${(m.bytes / 1024).toFixed(0)} KB`);
-console.log(`  合计 ${(made.reduce((s, m) => s + m.bytes, 0) / 1024 / 1024).toFixed(1)} MB`);
-console.log('  （手机登录只加载当前皮肤那一个；横版那个在 scripts/login-art/out/，拷进 VisuHive 仓库给官网首页用，不进在线产物）');
+console.log(`  Total ${(made.reduce((s, m) => s + m.bytes, 0) / 1024 / 1024).toFixed(1)} MB`);
+console.log('  (mobile login loads only the current skin; the landscape one is in scripts/login-art/out/, copy it into the VisuHive repo for the website home page, it does not go into the online build)');

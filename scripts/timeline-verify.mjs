@@ -7,7 +7,7 @@ import path from 'path';
 const urlArg = process.argv.indexOf('--url');
 const BASE = ((urlArg >= 0 ? process.argv[urlArg + 1] : '') || process.env.PROMPTCUT_BASE || '').replace(/\/+$/, '');
 if (!BASE || BASE.startsWith('--')) {
-  console.error('用法: node scripts/timeline-verify.mjs --url http://127.0.0.1:<自己起的 dev server 端口>\n  或设环境变量 PROMPTCUT_BASE。不给地址不跑:不缺省连用户常驻的编辑器。');
+  console.error('Usage: node scripts/timeline-verify.mjs --url http://127.0.0.1:<port of your own dev server>\n  or set the environment variable PROMPTCUT_BASE. It does not run without an address: it never defaults to the editor the user keeps running.');
   process.exit(2);
 }
 
@@ -43,7 +43,7 @@ async function run() {
     console.log('Found .ais-backdrop, dismissing...');
     await page.evaluate(() => {
       const btns = Array.from(document.querySelectorAll('button'));
-      const closeBtn = btns.find(b => b.textContent && b.textContent.includes('以后再说'));
+      const closeBtn = btns.find(b => b.textContent && b.textContent.includes('Maybe later'));
       if (closeBtn) {
         closeBtn.click();
       }
@@ -174,7 +174,7 @@ async function run() {
     // create a new track
     await page.evaluate(() => {
       const btns = Array.from(document.querySelectorAll('button'));
-      const btn = btns.find(b => b.textContent && b.textContent.includes('+ 动效轨'));
+      const btn = btns.find(b => b.textContent && b.textContent.includes('+ Motion graphics track'));
       if (btn) btn.click();
     });
     await new Promise(r => setTimeout(r, 500));
@@ -209,7 +209,7 @@ async function run() {
     await page.mouse.click(clipBox.x + 20, clipBox.y + 10, { button: 'right' });
     
     await page.evaluate(() => {
-       const items = Array.from(document.querySelectorAll('div')).filter(el => el.textContent === '在播放头处分割');
+       const items = Array.from(document.querySelectorAll('div')).filter(el => el.textContent === 'Split at playhead');
        if (items.length > 0) items[0].click();
     });
     await new Promise(r => setTimeout(r, 500));
@@ -239,7 +239,7 @@ async function run() {
     const trackCountBefore = state.tracks.length;
     // 序列统一后只剩一个「＋ 序列」按钮，点两次
     await page.evaluate(() => {
-      const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent && b.textContent.includes('序列'));
+      const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent && b.textContent.includes('track'));
       if (btn) { btn.click(); btn.click(); }
     });
     await new Promise(r => setTimeout(r, 500));
@@ -295,7 +295,7 @@ async function run() {
       const top = document.elementsFromPoint(x, y)[0];
       return { x, y, hit: top === el, hitCls: (top && top.className || '').toString().slice(0, 70) };
     });
-    if (!phPick.hit) throw new Error(`播放头落点 (${phPick.x}, ${phPick.y}) 命中的是别的元素: ${phPick.hitCls}`);
+    if (!phPick.hit) throw new Error(`Playhead landing point (${phPick.x}, ${phPick.y}) hit a different element: ${phPick.hitCls}`);
     await page.mouse.move(phPick.x, phPick.y);
     await page.mouse.down();
     // 往右拖 300px
@@ -367,7 +367,7 @@ async function run() {
     
     state = await getStoreState();
     const videoTrackAfter = state.tracks.find(t => t.id === videoTrack.id);
-    assert(videoTrackAfter.clips.length === videoClipsBefore, "锁定的序列不该接受落卡");
+    assert(videoTrackAfter.clips.length === videoClipsBefore, "A locked track should not accept a dropped card");
     await page.evaluate((id) => window.__pcStore.actions.updateTrack(id, { locked: false }), videoTrack.id);
     addSummary("Drop onto locked", img11, { count: videoClipsBefore }, { count: videoTrackAfter.clips.length }, true);
 
@@ -385,7 +385,7 @@ async function run() {
 
     state = await getStoreState();
     const perfTrack = state.tracks[0];
-    assert(perfTrack.clips.length >= 100, `性能用例需要 100+ clip，实际只有 ${perfTrack.clips.length}`);
+    assert(perfTrack.clips.length >= 100, `The performance case needs 100+ clips, but there are only ${perfTrack.clips.length}`);
     console.log(`Clips on track for perf test: ${perfTrack.clips.length}`);
     // 取中间偏后的一张，保证它左右都有空档
     const testClip = perfTrack.clips[perfTrack.clips.length - 5];

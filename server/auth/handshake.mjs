@@ -143,7 +143,7 @@ export function createHandshakeAuth({
 }) {
   const registryOf = typeof services === 'function' ? services : () => services;
   if (clusterToken !== undefined && clusterToken !== null && !checkTokenFormat(clusterToken)) {
-    throw new TypeError('createHandshakeAuth: 集群令牌格式不对（要 32～256 个 base64url 字符）');
+    throw new TypeError('createHandshakeAuth: invalid cluster token format (must be 32-256 base64url characters)');
   }
   const tokenDigest = acceptToken && clusterToken ? digest(clusterToken) : null;
   const storeOf = typeof store === 'function' ? store : () => store;

@@ -1,39 +1,39 @@
 export const tracksTools = [
   {
     name: "add_track",
-    description: "添加一条新的序列(序列不分种类,卡片段和素材段都能放)。不给 index 就加在最下面。",
+    description: "Add a new track (tracks have no type; card clips and media clips can both be placed on them). If index is not given, it is added at the bottom.",
     inputSchema: {
       type: "object",
       properties: {
         name: { type: "string" },
-        index: { type: "integer", description: "插在第几条(从 0 起,0 = 最上面、画在最上层)" }
+        index: { type: "integer", description: "Position to insert at (starting from 0, 0 = topmost, drawn on the top layer)" }
       }
     },
     side: "agent"
   },
   {
     name: "list_tracks",
-    description: "列出当前剪辑的全部序列(轨道),很轻:每条给 trackId、index(0 = 最上面、画在最上层)、name、clipCount、卡片 / 素材各几段、占用的时间范围,空序列标 empty:true,隐藏 / 静音 / 锁定的标出来。整理序列、找空序列、决定放哪一层时用它,不要为此去拉整个 get_project。",
+    description: "List all tracks of the current cut, very lightweight: for each one it gives trackId, index (0 = topmost, drawn on the top layer), name, clipCount, how many card / media clips, the time range occupied, marks empty tracks with empty:true, and flags hidden / muted / locked ones. Use it when organizing tracks, finding empty tracks, or deciding which layer to place on; do not pull the whole get_project for this.",
     inputSchema: { type: "object", properties: {} },
     side: "agent"
   },
   {
     name: "remove_track",
-    description: "删除序列,一次可删几条(trackIds),一步撤销。空序列直接删;上面还有片段的会被拒 —— 删序列会连片段一起删,确实要删就传 force:true 并在 reason 里写明理由(用户会看到)。锁定的序列不删;至少要留一条。被删片段上挂着的转场会一并撤掉。用户说「删掉空轨道 / 清理没用的序列」就是它:先 list_tracks 找出 empty:true 的,一次传进来。",
+    description: "Delete tracks, several at a time (trackIds), undoable in one step. Empty tracks are deleted directly; tracks that still have clips on them are rejected: deleting a track deletes its clips too, so if you really want to, pass force:true and state the reason in reason (the user will see it). Locked tracks are not deleted; at least one must remain. Transitions attached to deleted clips are removed as well. When the user says \"delete empty tracks / clean up unused tracks\", this is the tool: first use list_tracks to find those with empty:true, then pass them all in at once.",
     inputSchema: {
       type: "object",
       properties: {
-        trackId: { type: "string", description: "删一条" },
-        trackIds: { type: "array", items: { type: "string" }, description: "删几条,和 trackId 二选一" },
-        force: { type: "boolean", description: "序列上有片段时才需要" },
-        reason: { type: "string", description: "force 时必填" }
+        trackId: { type: "string", description: "Delete one" },
+        trackIds: { type: "array", items: { type: "string" }, description: "Delete several, alternative to trackId" },
+        force: { type: "boolean", description: "Only needed when the track has clips" },
+        reason: { type: "string", description: "Required with force" }
       }
     },
     side: "agent"
   },
   {
     name: "update_track",
-    description: "改一条序列的名字、隐藏、静音、锁定,给哪个改哪个。hidden:true 预览和导出里都看不见(不是删除);muted:true 只关声音;locked:true 之后上面的片段改不了、序列也删不了。用户说「把这条改名叫配乐」「先把字幕轨藏起来」「这条静音」就是它。锁定是用户用来保护内容的,没被要求就别去解锁。",
+    description: "Rename, hide, mute or lock a track; changes whichever one you specify. hidden:true makes it invisible in both preview and export (it is not deleted); muted:true only silences the audio; locked:true means the clips on it can no longer be changed and the track can no longer be deleted. This is the tool for requests like \"rename this track to Soundtrack\", \"hide the captions track for now\", \"mute this track\". Locking is how the user protects content, so do not unlock unless asked to.",
     inputSchema: {
       type: "object",
       properties: {
@@ -49,12 +49,12 @@ export const tracksTools = [
   },
   {
     name: "move_track",
-    description: "调整序列的上下顺序,把它挪到第 index 条(从 0 起)。时间轴上靠上的序列画在上层:字幕、卡片要压在画面之上就挪到上面。只改画面遮挡关系,不动任何片段的时间,声音不受影响。",
+    description: "Reorder a track vertically by moving it to position index (counting from 0). Tracks nearer the top of the timeline are drawn on top: to put captions or cards over the video, move them up. This only changes how visuals overlap; it does not touch any clip's timing, and audio is unaffected.",
     inputSchema: {
       type: "object",
       properties: {
         trackId: { type: "string" },
-        index: { type: "integer", description: "0 = 最上面" }
+        index: { type: "integer", description: "0 = topmost" }
       },
       required: ["trackId", "index"]
     },

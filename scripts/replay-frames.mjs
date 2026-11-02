@@ -74,7 +74,7 @@ export async function replayFrames(opts) {
     if (!opts.bakery) await bakery.close();
   }
   const elapsed = (Date.now() - t0) / 1000;
-  console.log(`Replayed ${frames.length} frames in ${elapsed.toFixed(1)}s (${(elapsed * 1000 / Math.max(1, frames.length)).toFixed(1)} ms/帧).`);
+  console.log(`Replayed ${frames.length} frames in ${elapsed.toFixed(1)}s (${(elapsed * 1000 / Math.max(1, frames.length)).toFixed(1)} ms/frame).`);
   return { frames, elapsed };
 }
 
@@ -89,6 +89,6 @@ if (isMain) {
     else if (args[i] === '--url') opts.url = args[++i];
     else if (args[i] === '--shuffle') opts.shuffle = true;
   }
-  if (!opts.cache) { console.error('用法:node scripts/replay-frames.mjs --cache <out>/dom --out <目录> [--frames a-b] [--shuffle]'); process.exit(2); }
+  if (!opts.cache) { console.error('Usage: node scripts/replay-frames.mjs --cache <out>/dom --out <dir> [--frames a-b] [--shuffle]'); process.exit(2); }
   replayFrames(opts).catch((e) => { console.error(e); process.exit(1); });
 }

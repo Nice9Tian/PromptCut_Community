@@ -54,14 +54,14 @@ import { makeMessage, parseInbound, lockKeyOf, priorityBand, prioritySummaryValu
 function resolveConstants(overrides) {
   const out = { ...QUEUE_DEFAULTS };
   if (overrides === undefined || overrides === null) return Object.freeze(out);
-  if (typeof overrides !== 'object') throw new TypeError('createRenderQueue: constants 必须是对象');
+  if (typeof overrides !== 'object') throw new TypeError('createRenderQueue: constants must be an object');
   for (const key of Object.keys(QUEUE_DEFAULTS)) {
     const v = overrides[key];
     if (v === undefined) continue;
     if (typeof QUEUE_DEFAULTS[key] === 'boolean') {
       // 开关（PREFILTER，契约 I.1）只收布尔
-      if (typeof v !== 'boolean') throw new TypeError(`createRenderQueue: constants.${key} 必须是布尔值`);
-    } else if (typeof v !== 'number' || !Number.isFinite(v)) throw new TypeError(`createRenderQueue: constants.${key} 必须是有限的数`);
+      if (typeof v !== 'boolean') throw new TypeError(`createRenderQueue: constants.${key} must be a boolean`);
+    } else if (typeof v !== 'number' || !Number.isFinite(v)) throw new TypeError(`createRenderQueue: constants.${key} must be a finite number`);
     out[key] = v;
   }
   return Object.freeze(out);
@@ -69,9 +69,9 @@ function resolveConstants(overrides) {
 
 export function createRenderQueue(options = {}) {
   const { now, send } = options;
-  if (typeof now !== 'function') throw new TypeError('createRenderQueue: now 必须是函数');
-  if (typeof send !== 'function') throw new TypeError('createRenderQueue: send 必须是函数');
-  if (options.epoch !== undefined && typeof options.epoch !== 'string') throw new TypeError('createRenderQueue: epoch 必须是字符串');
+  if (typeof now !== 'function') throw new TypeError('createRenderQueue: now must be a function');
+  if (typeof send !== 'function') throw new TypeError('createRenderQueue: send must be a function');
+  if (options.epoch !== undefined && typeof options.epoch !== 'string') throw new TypeError('createRenderQueue: epoch must be a string');
   const C = resolveConstants(options.constants);
   // 新实例 = 新 epoch：文档服务重启后，各方靠它认出旧认领已作废（设计第 5 节）
   const epoch = options.epoch ?? randomUUID();
@@ -603,7 +603,7 @@ export function createRenderQueue(options = {}) {
     // 接续它的认领，一律拒；这条连接原来的身份不动
     const bound = nodes.get(nodeId);
     if (bound && bound.userId !== conn.principal.userId) {
-      emit(conn, 'error', { reason: 'forbidden', detail: '这个 nodeId 属于别的用户' }, reqId);
+      emit(conn, 'error', { reason: 'forbidden', detail: 'This nodeId belongs to another user' }, reqId);
       return;
     }
     if (conn.nodeId !== null && conn.nodeId !== nodeId) detachNode(conn);
@@ -696,7 +696,7 @@ export function createRenderQueue(options = {}) {
   function onWatch(conn, body, reqId) {
     const node = nodeOf(conn);
     if (body.projects === 'all' && node.profile === 'browser') {
-      emit(conn, 'error', { reason: 'forbidden', detail: "纯浏览器节点不能 watch 'all'，请列出本人的项目" }, reqId);
+      emit(conn, 'error', { reason: 'forbidden', detail: "A browser-only node cannot watch 'all'; list your own projects" }, reqId);
       return;
     }
     if (body.projects === 'all' && node.profile === 'host') {
@@ -1109,7 +1109,7 @@ export function createRenderQueue(options = {}) {
 
   function connect(connId, principal) {
     if (principal === null || typeof principal !== 'object' || typeof principal.userId !== 'string') {
-      throw new TypeError('connect: principal.userId 必须是字符串');
+      throw new TypeError('connect: principal.userId must be a string');
     }
     at = now();
     // 同一 connId 重复 connect：先按断开处理旧的

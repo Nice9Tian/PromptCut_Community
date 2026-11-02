@@ -30,6 +30,7 @@
 
 import { ffmpegChain, ffmpegStages, ffmpegStaticChain, filterOfClip, isAnimated, resolveOps, sendcmdScript } from "../src/kernel/filters.mjs";
 import { clipSpeed, mediaTimeAt } from "../src/kernel/clipTime.mjs";
+import { tr as trText } from "./i18n.mjs";
 
 /** 和 ExportView / flattenOverlay 一个口径:从下到上所有画面素材段(视频 + 图片),不管时间 */
 export function composeLayers(project) {
@@ -194,7 +195,7 @@ export function emphasisOps(raw, scale = 1, notes = []) {
   if (n.size <= 0 || n.opacity <= 0) return [];
   let rgba = parseCssColor(n.color);
   if (!rgba) {
-    notes.push(`强调颜色「${n.color}」认不出来,按默认色 ${d.color} 合成`);
+    notes.push(trText("Emphasis color \"{0}\" not recognized, composited with default color {1}", n.color, d.color));
     rgba = parseCssColor(d.color);
   }
   // 和 emphasis.ts 的 tint 一样:不透明度取整到百分比,叠在颜色自己的 alpha 上
@@ -275,7 +276,7 @@ function emphasisChain(inLabel, outLabel, ops, w, h, k) {
 export function buildComposeArgs(opts) {
   const { width, height, fps, startFrame, endFrame, cardsPattern, out } = opts;
   const pixelLayer = (opts.layers || []).find((layer) => layer.pixelMap && !layer.missingMaterial);
-  if (pixelLayer) throw new Error(`片段 ${pixelLayer.clip?.id || "(未知)"} 使用了像素映射,请用默认的 Chrome 导出(--media chrome);ffmpeg 兼容旁路不支持像素级映射`);
+  if (pixelLayer) throw new Error(trText("Clip {0} uses a pixel map. Export with the default Chrome export (--media chrome); the ffmpeg compatibility bypass does not support pixel-level mapping", pixelLayer.clip?.id || trText("(unknown)")));
   const bg = opts.background || "#333333";
   const untagged = opts.untaggedMatrix || "bt709";
   const notes = [];
@@ -314,7 +315,7 @@ export function buildComposeArgs(opts) {
     const range = clipFrameRange(clip, fps, startFrame, endFrame);
     if (!range) continue;
     if (!layer.src && !layer.missingMaterial) {
-      notes.push(`素材「${media.name || media.id}」找不到文件,片段 ${clip.id} 这一层没有画面`);
+      notes.push(trText("File for media \"{0}\" not found, clip {1} has no picture on this layer", media.name || media.id, clip.id));
       continue;
     }
     const [a, b] = range;
@@ -334,7 +335,7 @@ export function buildComposeArgs(opts) {
     // 只要画面:素材自带的声音 / 字幕 / 数据流在解复用时就丢掉(声音由 mux-audio 另外混)
     args.push(...R, "-an", "-sn", "-dn");
     if (isMissing) {
-      if (!opts.fontFile) throw new Error("确认缺失素材需要显式中文字体文件，不能跳过文字代理。");
+      if (!opts.fontFile) throw new Error("Confirming missing media requires an explicit Chinese font file; the text proxy cannot be skipped.");
       const len = (b - a + 2) / fps;
       args.push(...R, "-f", "lavfi", "-i", `color=c=0x20242b:s=${p.w}x${p.h}:r=${fps}:d=${len}`);
       shift = ta;
@@ -371,7 +372,7 @@ export function buildComposeArgs(opts) {
         // 素材库里给缺失素材名字加的「(缺失) 」标记不上画面,只显示原来的名字(与 src/audio/missingMaterial.ts 的 missingMaterialLabel 一致)
         // 新名字带英文标记「(missing) 」,老项目里是中文的,两种都去掉
         .replace(/^\((?:missing|缺失)\) (?=.)/, "");
-      sidecars.push({ file, text: `找不到素材${name}` });
+      sidecars.push({ file, text: trText("Media not found: {0}", name) });
       const escapeFilterPath = (value) => String(value).replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "'\\''");
       const quoted = escapeFilterPath(file);
       const font = escapeFilterPath(opts.fontFile);
@@ -413,7 +414,7 @@ export function buildComposeArgs(opts) {
         lines.push(...emphasisChain(cur, `m${k}e`, ops, p.w, p.h, k));
         cur = `m${k}e`;
       } else {
-        notes.push(`片段 ${clip.id} 的强调没有合成:素材不透明,影子全在框外被裁掉,预览里同样看不见`);
+        notes.push(trText("Emphasis of clip {0} was not composited: the media is opaque and the shadow is entirely outside the frame and clipped, so it is also invisible in the preview", clip.id));
       }
     }
     const tail = [];

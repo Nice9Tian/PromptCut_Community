@@ -216,7 +216,7 @@ export function createTaskRunner({ nodeId, session, executor, sink, emit = () =>
       if (task.kind === 'plan') {
         enter(run, 'plan');
         if (typeof executePlan !== 'function') {
-          throw Object.assign(new Error('这个节点不切分 plan 任务'), { retryable: false });
+          throw Object.assign(new Error('This node does not split plan tasks'), { retryable: false });
         }
         await executePlan(run, task, ctx);
         return;

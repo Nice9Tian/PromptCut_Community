@@ -598,7 +598,7 @@ class Evaluator {
     let out;
     const at = this.constAt.get(name);
     if (at !== undefined) {
-      if (this.resolving.has(name)) return { ok: false, value: undefined, why: "循环引用" };
+      if (this.resolving.has(name)) return { ok: false, value: undefined, why: "circular reference" };
       this.resolving.add(name);
       const r = this.parse(at);
       this.resolving.delete(name);
@@ -606,7 +606,7 @@ class Evaluator {
     } else if (this.mod.imports.has(name)) {
       out = this.ctx.importValue(this.mod, this.mod.imports.get(name));
     } else {
-      out = { ok: false, value: undefined, why: "不是字面量" };
+      out = { ok: false, value: undefined, why: "not a literal" };
     }
     if (!out.ok && out.why) this.whys.set(name, out.why);
     this.cache.set(name, out);
@@ -722,7 +722,7 @@ class Evaluator {
           if (!r.ok) ok = false;
         } else {
           ok = false;
-          items.push({ ok: false, value: undefined, spread: true, name, why: (name && this.whys.get(name)) || r.why || "不是字面量" });
+          items.push({ ok: false, value: undefined, spread: true, name, why: (name && this.whys.get(name)) || r.why || "not a literal" });
         }
         k = Math.max(r.end, k + 1);
         continue;
@@ -730,7 +730,7 @@ class Evaluator {
       const name = this.nameAt(k);
       const r = this.parse(k);
       items.push({ ok: r.ok, value: r.value, ...(r.dropped ? { dropped: r.dropped } : {}), ...(name ? { name } : {}),
-        ...(!r.ok ? { why: (name && this.whys.get(name)) || r.why || "不是字面量" } : {}) });
+        ...(!r.ok ? { why: (name && this.whys.get(name)) || r.why || "not a literal" } : {}) });
       if (r.ok) value.push(r.value);
       else ok = false;
       k = Math.max(r.end, k + 1);
@@ -951,17 +951,17 @@ function createContext({ files, builtins } = {}) {
     /** 说明符 → `{ kind: 'file' | 'builtin', key }`;找不到回 `{ why }` */
     locate(fromKey, spec) {
       const cands = resolveSpecifier(fromKey, spec);
-      if (!cands) return { why: `引自 ${spec}(不是相对路径,在线页面读不到)` };
+      if (!cands) return { why: `imported from ${spec} (not a relative path, the online page cannot read it)` };
       for (const c of cands) if (fileOf(c) !== null) return { kind: "file", key: c };
       for (const c of cands) if (builtinOf(c)) return { kind: "builtin", key: c };
-      return { why: cands[0].startsWith("src/cards/user/") ? `内容库里没有 ${spec} 这个文件` : `${spec} 不是在线页面认得的内置模块` };
+      return { why: cands[0].startsWith("src/cards/user/") ? `the content store has no file ${spec}` : `${spec} is not a built-in module the online page recognizes` };
     },
     /** 一个文件的某个导出的值 */
     exportValue(key, name) {
       const mod = ctx.load(key);
-      if (!mod) return { ok: false, value: undefined, why: `${key} 读不出来` };
+      if (!mod) return { ok: false, value: undefined, why: `${key} cannot be read` };
       const guard = `${key}#${name}`;
-      if (resolving.has(guard)) return { ok: false, value: undefined, why: "循环引用" };
+      if (resolving.has(guard)) return { ok: false, value: undefined, why: "circular reference" };
       resolving.add(guard);
       try {
         if (name === "default" && mod.defaultAt !== undefined) return mod.ev.parse(mod.defaultAt);
@@ -976,7 +976,7 @@ function createContext({ files, builtins } = {}) {
             if (has) return ctx.importValue(mod, { spec, name });
           }
         }
-        return { ok: false, value: undefined, why: `${key.split("/").pop()} 没有导出 ${name}` };
+        return { ok: false, value: undefined, why: `${key.split("/").pop()} does not export ${name}` };
       } finally {
         resolving.delete(guard);
       }
@@ -1006,14 +1006,14 @@ function createContext({ files, builtins } = {}) {
     importValue(mod, binding) {
       const loc = ctx.locate(mod.key, binding.spec);
       if (!loc.key) return { ok: false, value: undefined, why: loc.why };
-      if (binding.name === "*") return { ok: false, value: undefined, why: `整个模块 ${binding.spec} 不能当值用` };
+      if (binding.name === "*") return { ok: false, value: undefined, why: `the whole module ${binding.spec} cannot be used as a value` };
       if (loc.kind === "file") return ctx.exportValue(loc.key, binding.name);
       const ns = builtinOf(loc.key);
-      if (!hasOwn(ns, binding.name)) return { ok: false, value: undefined, why: `内置模块 ${binding.spec} 里没有 ${binding.name}` };
+      if (!hasOwn(ns, binding.name)) return { ok: false, value: undefined, why: `built-in module ${binding.spec} has no ${binding.name}` };
       const raw = ns[binding.name];
-      if (isPureCall(raw)) return { ok: false, value: undefined, why: `${binding.name} 是函数,只认以字面量为参数的调用` };
+      if (isPureCall(raw)) return { ok: false, value: undefined, why: `${binding.name} is a function; only calls with literal arguments are supported` };
       const value = toPlain(raw);
-      if (value === undefined) return { ok: false, value: undefined, why: `内置模块 ${binding.spec} 的 ${binding.name} 不是纯数据` };
+      if (value === undefined) return { ok: false, value: undefined, why: `${binding.name} of built-in module ${binding.spec} is not plain data` };
       return { ok: true, value };
     },
   };
@@ -1059,13 +1059,13 @@ function kindOfUrl(u) {
  * 能推断的补上(见文件头),推断不了的给原因。
  */
 export function controlFix(v, { dropped = [], defaultValue } = {}) {
-  if (!isPlainObject(v)) return { reason: "不是字面量" };
-  const miss = (f, what) => (dropped.includes(f) ? `${what}不是字面量` : `缺${what}`);
+  if (!isPlainObject(v)) return { reason: "not a literal" };
+  const miss = (f, what) => (dropped.includes(f) ? `${what} is not a literal` : `missing ${what}`);
   const { key, type, label } = v;
   if (typeof key !== "string" || !key) return { reason: miss("key", " key") };
   if (typeof label !== "string") return { reason: miss("label", " label") };
   if (typeof type !== "string") return { reason: miss("type", " type") };
-  if (!CONTROL_TYPES.has(type)) return { reason: `type 不认识(${type})` };
+  if (!CONTROL_TYPES.has(type)) return { reason: `unknown type (${type})` };
   const c = { key, label, type };
   if (typeof v.required === "boolean") c.required = v.required;
   if (typeof v.hint === "string") c.hint = v.hint;
@@ -1073,9 +1073,9 @@ export function controlFix(v, { dropped = [], defaultValue } = {}) {
     for (const f of ["min", "max", "step"]) if (typeof v[f] === "number" && Number.isFinite(v[f])) c[f] = v[f];
   }
   if (type === "select") {
-    if (v.options === undefined) return { reason: `下拉${miss("options", "选项(options)")}` };
+    if (v.options === undefined) return { reason: `dropdown: ${miss("options", "options (options)")}` };
     const options = optionsOf(v.options);
-    if (!options) return { reason: "下拉选项(options)的写法认不出" };
+    if (!options) return { reason: "Can't recognize how the dropdown options (options) are written" };
     c.options = options;
   }
   if (type === "asset") {
@@ -1085,9 +1085,9 @@ export function controlFix(v, { dropped = [], defaultValue } = {}) {
       // 推断:选项的地址、默认值的地址都指向同一种素材目录
       const kinds = new Set([...options.map((o) => kindOfUrl(o.value)), kindOfUrl(defaultValue)].filter(Boolean));
       if (kinds.size === 1) kind = [...kinds][0];
-      else return { reason: `素材控件${miss("kind", "类别(kind)")},也推断不了是 lottie 还是 particles` };
+      else return { reason: `media control: ${miss("kind", "kind (kind)")}; also cannot infer whether it is lottie or particles` };
     }
-    if (!ASSET_KINDS.has(kind)) return { reason: `素材类别(kind)不认识(${String(kind)})` };
+    if (!ASSET_KINDS.has(kind)) return { reason: `unknown media kind (kind) (${String(kind)})` };
     c.kind = kind;
     c.options = options;
   }
@@ -1132,8 +1132,8 @@ function literalFields(mod, props) {
     for (const it of items) {
       if (!isPlainObject(it.value)) {
         out.controlsIncomplete = true;
-        const what = it.spread ? `展开的 ${it.name ?? "表达式"}` : it.name;
-        out.skippedControls.push(skippedOf(it, what ? `${what} 取不到:${it.why ?? "不是字面量"}` : "不是字面量"));
+        const what = it.spread ? `spread ${it.name ?? "expression"}` : it.name;
+        out.skippedControls.push(skippedOf(it, what ? `${what} could not be resolved: ${it.why ?? "not a literal"}` : "not a literal"));
         continue;
       }
       const key = typeof it.value.key === "string" ? it.value.key : undefined;
@@ -1141,13 +1141,13 @@ function literalFields(mod, props) {
       if (fix.control) out.controls.push(fix.control);
       else { out.controlsIncomplete = true; out.skippedControls.push(skippedOf(it, fix.reason)); }
     }
-    if (!r.ok && !out.controlsIncomplete) { out.controlsIncomplete = true; out.skippedControls.push({ reason: "控件表里有写法认不出" }); }
+    if (!r.ok && !out.controlsIncomplete) { out.controlsIncomplete = true; out.skippedControls.push({ reason: "the controls table has syntax that is not recognized" }); }
   } else {
     out.controlsIncomplete = true;
     const slice = props.get("controls");
     const name = slice === null ? "controls" : slice?.length === 1 && slice[0].t === "word" ? slice[0].v : null;
     const why = name ? ev.whys.get(name) : null;
-    out.skippedControls.push({ reason: why ? `整个控件表 ${name} 取不到:${why}` : "整个控件表(controls)不是字面量" });
+    out.skippedControls.push({ reason: why ? `the whole controls table ${name} could not be resolved: ${why}` : "the whole controls table (controls) is not a literal" });
   }
   const desc = valueOf("description");
   if (desc && desc.ok && typeof desc.value === "string") out.description = desc.value;
@@ -1200,7 +1200,7 @@ export function parseCardSource(source, opts = {}) {
     if (seen.has(id)) continue;
     seen.add(id);
     let fields;
-    try { fields = literalFields(mod, props); } catch { fields = { defaults: {}, controls: [], controlsIncomplete: true, skippedControls: [{ reason: "解析出错" }] }; }
+    try { fields = literalFields(mod, props); } catch { fields = { defaults: {}, controls: [], controlsIncomplete: true, skippedControls: [{ reason: "parse error" }] }; }
     const { description, defaults, controls, controlsIncomplete, skippedControls } = fields;
     out.push({ id, name, ...(props.has("audio") && (props.has("Component") || props.has("card")) ? { embeddedAudio: true } : {}), ...(description !== undefined ? { description } : {}), defaults, controls, controlsIncomplete, skippedControls });
   }

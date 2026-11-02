@@ -26,7 +26,7 @@ export function audioClipInput(entry) {
 export async function mixAudioInChrome({ ffmpegCmd, outDir, plan, project, pageUrl, durationSec }) {
   const u = new URL(pageUrl);
   const m = /^\/@export\/([^/]+)\/project\.json$/.exec(u.searchParams.get('timeline') || '');
-  if (!m) throw new Error('页面地址里没有 /@export/<id>/project.json,混音页取不到裁好的 wav');
+  if (!m) throw new Error('The page URL has no /@export/<id>/project.json, so the mix page cannot get the trimmed wav');
   const id = m[1];
   // 时间轴时长之后才开始的段不出声,不用裁(项目 duration 比内容短时 plan 里会有这种段)
   plan = plan.filter((e) => e.start < durationSec);
@@ -36,7 +36,7 @@ export async function mixAudioInChrome({ ffmpegCmd, outDir, plan, project, pageU
     const p = spawn(ffmpegCmd, args, { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
     let err = '';
     p.stderr.on('data', (d) => { err += d; });
-    p.on('close', (code) => (code === 0 ? resolve() : reject(new Error('ffmpeg 退出码 ' + code + ':' + err.trim().slice(-400)))));
+    p.on('close', (code) => (code === 0 ? resolve() : reject(new Error('ffmpeg exit code ' + code + ':' + err.trim().slice(-400)))));
     p.on('error', reject);
   });
   // 裁段:4 个并行,每段只解用到的那几秒
@@ -79,20 +79,20 @@ export async function mixAudioInChrome({ ffmpegCmd, outDir, plan, project, pageU
     const mixUrl = u.origin + '/?audioMix=1&plan=' + encodeURIComponent('/@export/' + id + '/audio/plan.json') + '&out=' + encodeURIComponent('/api/export/audio-mix/' + id);
     const resp = await page.goto(mixUrl, { waitUntil: 'load', timeout: 60000 });
     // 拿到的不是混音页(403 说明页、404)就当场失败,别等到超时才退回 ffmpeg
-    if (resp && !resp.ok()) throw new Error('混音页打不开:HTTP ' + resp.status());
+    if (resp && !resp.ok()) throw new Error('Mix page failed to open: HTTP ' + resp.status());
     const handle = await page.waitForFunction(() => window.__pcAudioMix, { timeout: 90000, polling: 200 }).catch(async (e) => {
       const title = await page.title().catch(() => '');
-      throw new Error('混音页 90 秒没有结果(页面标题「' + title + '」):' + e.message);
+      throw new Error('Mix page produced no result in 90 s (page title "' + title + '"): ' + e.message);
     });
     result = await handle.jsonValue();
   } finally {
     await browser.close().catch(() => {});
   }
-  if (!result?.ok) throw new Error(result?.error || '混音页没有返回结果');
-  for (const n of result.notes || []) console.warn('混音:', n);
+  if (!result?.ok) throw new Error(result?.error || 'Mix page returned no result');
+  for (const n of result.notes || []) console.warn('Mix: ', n);
   const mixWav = path.join(audioDir, 'mix.wav');
-  if (!fsSync.existsSync(mixWav)) throw new Error('mix.wav 没交回来');
+  if (!fsSync.existsSync(mixWav)) throw new Error('mix.wav was not returned');
   const peakDb = 20 * Math.log10(Math.max(result.peak || 0, 1e-9));
-  console.log('Chrome mix done in ' + ((result.renderMs || 0) / 1000).toFixed(2) + ' s, peak ' + peakDb.toFixed(1) + ' dBFS' + (peakDb > 0 ? '(削波!挂个 limiter 或压低音量)' : ''));
+  console.log('Chrome mix done in ' + ((result.renderMs || 0) / 1000).toFixed(2) + ' s, peak ' + peakDb.toFixed(1) + ' dBFS' + (peakDb > 0 ? '(clipping! add a limiter or lower the volume)' : ''));
   return { mixWav, clips: clips.length };
 }

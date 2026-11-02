@@ -70,7 +70,7 @@ export function translateParticlesConfig(config: Record<string, any>): ParticleK
   // 数量
   const count = get(config, [...P, "number", "value"]);
   if (typeof count === "number") {
-    controls.push({ key: "count", label: "数量", type: "number", min: 0, max: Math.max(400, count * 3), step: 5, hint: "原配置 " + count });
+    controls.push({ key: "count", label: "Count", type: "number", min: 0, max: Math.max(400, count * 3), step: 5, hint: "原配置 " + count });
     defaults.count = count;
     writers.push({ key: "count", fn: (cfg, p) => { if (typeof p.count === "number") set(cfg, [...P, "number", "value"], Math.max(0, p.count | 0)); } });
   }
@@ -79,7 +79,7 @@ export function translateParticlesConfig(config: Record<string, any>): ParticleK
   const speed = get(config, [...P, "move", "speed"]);
   if (typeof speed === "number" || isRange(speed)) {
     const v = numOf(speed, 1);
-    controls.push({ key: "speed", label: "速度", type: "number", min: 0, max: Math.max(10, v * 4), step: 0.1, hint: "原配置 " + v });
+    controls.push({ key: "speed", label: "Speed", type: "number", min: 0, max: Math.max(10, v * 4), step: 0.1, hint: "原配置 " + v });
     defaults.speed = v;
     writers.push({ key: "speed", fn: (cfg, p) => { if (typeof p.speed === "number") set(cfg, [...P, "move", "speed"], scaleTo(speed, Math.max(0, p.speed))); } });
   }
@@ -88,7 +88,7 @@ export function translateParticlesConfig(config: Record<string, any>): ParticleK
   const size = get(config, [...P, "size", "value"]);
   if (typeof size === "number" || isRange(size)) {
     const v = numOf(size, 3);
-    controls.push({ key: "size", label: "大小(px)", type: "number", min: 0.5, max: Math.max(20, v * 4), step: 0.5, hint: "原配置 " + v });
+    controls.push({ key: "size", label: "Size (px)", type: "number", min: 0.5, max: Math.max(20, v * 4), step: 0.5, hint: "原配置 " + v });
     defaults.size = v;
     writers.push({ key: "size", fn: (cfg, p) => { if (typeof p.size === "number") set(cfg, [...P, "size", "value"], scaleTo(size, Math.max(0.5, p.size))); } });
   }
@@ -97,7 +97,7 @@ export function translateParticlesConfig(config: Record<string, any>): ParticleK
   const colorRaw = get(config, [...P, "color", "value"]);
   const color = firstColor(colorRaw);
   if (color) {
-    controls.push({ key: "color", label: "颜色", type: "color", hint: "原配置 " + color + (Array.isArray(colorRaw) ? "(多色时只替换第一种)" : "") });
+    controls.push({ key: "color", label: "Color", type: "color", hint: "原配置 " + color + (Array.isArray(colorRaw) ? "(多色时只替换第一种)" : "") });
     defaults.color = color;
     writers.push({ key: "color", fn: (cfg, p) => {
       if (typeof p.color !== "string" || !p.color.trim()) return;
@@ -109,7 +109,7 @@ export function translateParticlesConfig(config: Record<string, any>): ParticleK
   const opacity = get(config, [...P, "opacity", "value"]);
   if (typeof opacity === "number" || isRange(opacity)) {
     const v = numOf(opacity, 1);
-    controls.push({ key: "opacity", label: "不透明度", type: "number", min: 0, max: 1, step: 0.05, hint: "原配置 " + v });
+    controls.push({ key: "opacity", label: "Opacity", type: "number", min: 0, max: 1, step: 0.05, hint: "原配置 " + v });
     defaults.opacity = v;
     writers.push({ key: "opacity", fn: (cfg, p) => { if (typeof p.opacity === "number") set(cfg, [...P, "opacity", "value"], scaleTo(opacity, Math.min(1, Math.max(0, p.opacity)))); } });
   }
@@ -118,7 +118,7 @@ export function translateParticlesConfig(config: Record<string, any>): ParticleK
   const links = get(config, [...P, "links"]);
   if (links && typeof links === "object") {
     const on = (links as any).enable !== false;
-    controls.push({ key: "links", label: "连线", type: "select", options: [{ value: "yes", label: "有" }, { value: "no", label: "无" }] });
+    controls.push({ key: "links", label: "Links", type: "select", options: [{ value: "yes", label: "present" }, { value: "no", label: "none" }] });
     defaults.links = on ? "yes" : "no";
     writers.push({ key: "links", fn: (cfg, p) => { if (p.links === "yes" || p.links === "no") set(cfg, [...P, "links", "enable"], p.links === "yes"); } });
   }

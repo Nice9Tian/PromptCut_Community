@@ -28,8 +28,8 @@ export const STREAM_HALF_PAD = 8;
 
 /** 编码画面的宽高 */
 export function packedSize(width: number, height: number): { width: number; height: number } {
-  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) throw new Error(`轨道流:宽高要是正整数,收到 ${width}×${height}`);
-  if (width % 2 || height % 2) throw new Error(`轨道流:宽高要是偶数(4:2:0 取样),收到 ${width}×${height}`);
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) throw new Error(`Track stream: width and height must be positive integers, got ${width}×${height}`);
+  if (width % 2 || height % 2) throw new Error(`Track stream: width and height must be even (4:2:0 sampling), got ${width}×${height}`);
   return { width, height: 2 * height + 2 * STREAM_HALF_PAD };
 }
 
@@ -195,7 +195,7 @@ export const askConfigSupportInWorker: ConfigSupportAsker = (configs) => {
 export async function probeStreamEncoder(o: { width: number; height: number; fps: number; hardwareAcceleration?: StreamEncoderOptions["hardwareAcceleration"]; env?: Partial<StreamEncodeEnv>;
   askOffThread?: ConfigSupportAsker | null }): Promise<{ supported: boolean; config?: Record<string, unknown>; mode?: "quantizer" | "variable"; reason?: string }> {
   const env = { ...defaultEnv(), ...o.env };
-  if (typeof env.VideoEncoder !== "function" || typeof env.VideoFrame !== "function") return { supported: false, reason: "这个浏览器没有 VideoEncoder" };
+  if (typeof env.VideoEncoder !== "function" || typeof env.VideoFrame !== "function") return { supported: false, reason: "This browser has no VideoEncoder" };
   const size = packedSize(o.width, o.height);
   const base = {
     codec: avcCodecFor(size.width, size.height),
@@ -208,7 +208,7 @@ export async function probeStreamEncoder(o: { width: number; height: number; fps
   };
   // 优先按固定量化压(画质不随内容复杂度掉);浏览器不认就退到按码率
   const modes = [["quantizer", { bitrateMode: "quantizer" }], ["variable", { bitrateMode: "variable", bitrate: streamBitrateFor(size.width, size.height, o.fps) }]] as const;
-  const unsupported = { supported: false, reason: `这个浏览器压不了 ${size.width}×${size.height} 的 H.264` };
+  const unsupported = { supported: false, reason: `This browser cannot encode H.264 at ${size.width}×${size.height}` };
   const ask = o.askOffThread === undefined ? (o.env?.VideoEncoder === undefined ? askConfigSupportInWorker : null) : o.askOffThread;
   if (ask) {
     let answers: boolean[] | null = null;
@@ -245,10 +245,10 @@ export interface StreamEncoder {
 export async function openStreamEncoder(opts: StreamEncoderOptions): Promise<StreamEncoder> {
   const env = { ...defaultEnv(), ...opts.env };
   const { width, height, fps } = opts;
-  if (!Number.isFinite(fps) || fps <= 0) throw new Error("轨道流:要帧率");
+  if (!Number.isFinite(fps) || fps <= 0) throw new Error("Track stream: frame rate required");
   const size = packedSize(width, height);
   const probe = await probeStreamEncoder({ width, height, fps, hardwareAcceleration: opts.hardwareAcceleration, env });
-  if (!probe.supported || !probe.config || !probe.mode) throw new Error(probe.reason ?? "轨道流:这个浏览器压不了");
+  if (!probe.supported || !probe.config || !probe.mode) throw new Error(probe.reason ?? "Track stream: this browser cannot encode");
   const mode = probe.mode;
   const quantizer = Number.isFinite(opts.quantizer) ? Math.max(0, Math.min(51, Math.round(opts.quantizer as number))) : 20;
 
@@ -256,7 +256,7 @@ export async function openStreamEncoder(opts: StreamEncoderOptions): Promise<Str
   const scratchCanvas = env.createCanvas(width, height);
   const packed = packedCanvas.getContext("2d", { alpha: false });
   const scratch = scratchCanvas.getContext("2d");
-  if (!packed || !scratch) throw new Error("轨道流:拿不到 2D 画布");
+  if (!packed || !scratch) throw new Error("Track stream: could not get a 2D canvas");
 
   const firstSegment = Math.max(0, Math.floor(opts.firstSegment ?? 0));
   let fed = 0;                       // 送进编码器的帧数
@@ -282,7 +282,7 @@ export async function openStreamEncoder(opts: StreamEncoderOptions): Promise<Str
     const description = avcC;
     delivery = delivery.then(async () => {
       if (failure) return;
-      if (!description) throw new Error("轨道流:编码器没有给出参数集(avcC)");
+      if (!description) throw new Error("Track stream: the encoder did not provide a parameter set (avcC)");
       if (!initSent) {
         initSent = true;
         await opts.onInit({ bytes: buildStreamInit({ width: size.width, height: size.height, fps: Math.round(fps), avcC: description }), codec: codecOfAvcC(description), width: size.width, height: size.height });
@@ -297,11 +297,11 @@ export async function openStreamEncoder(opts: StreamEncoderOptions): Promise<Str
         const desc = meta?.decoderConfig?.description;
         if (desc && !avcC) avcC = desc instanceof Uint8Array ? new Uint8Array(desc) : new Uint8Array(desc as ArrayBuffer);
         // 不产 B 帧:出来的顺序就是送进去的顺序。时间戳倒退说明编码器重排了,这种流播放器没法按「第几个样本」取帧
-        if (chunk.timestamp <= lastTimestamp) throw new Error("轨道流:编码器重排了帧(出现 B 帧),这种流不能用");
+        if (chunk.timestamp <= lastTimestamp) throw new Error("Track stream: the encoder reordered frames (B-frames appeared), this stream is unusable");
         lastTimestamp = chunk.timestamp;
         const isSync = chunk.type === "key";
         const at = out % SEGMENT_FRAMES;
-        if (at === 0 && !isSync) throw new Error(`轨道流:第 ${out} 个样本应当是关键帧`);
+        if (at === 0 && !isSync) throw new Error(`Track stream: sample ${out} should be a keyframe`);
         const data = new Uint8Array(chunk.byteLength);
         chunk.copyTo(data);
         pending.push({ data, isSync });
@@ -317,7 +317,7 @@ export async function openStreamEncoder(opts: StreamEncoderOptions): Promise<Str
 
   return {
     async add(source) {
-      if (closed) throw new Error("轨道流:编码器已经关了");
+      if (closed) throw new Error("Track stream: the encoder is already closed");
       if (failure) { close(); throw failure; }
       drawPackedFrame(packed, scratch, scratchCanvas, source, width, height);
       // 时间戳按「这条流里的第几帧」给(从流自己的第一帧起数,不是项目帧号);它只管编码器内部的先后,
@@ -334,7 +334,7 @@ export async function openStreamEncoder(opts: StreamEncoderOptions): Promise<Str
       if (failure) { close(); throw failure; }
     },
     async finish() {
-      if (closed) throw failure ?? new Error("轨道流:编码器已经关了");
+      if (closed) throw failure ?? new Error("Track stream: the encoder is already closed");
       try {
         await encoder.flush();
         flushSegment();
@@ -342,11 +342,11 @@ export async function openStreamEncoder(opts: StreamEncoderOptions): Promise<Str
       } catch (err) { fail(err); }
       close();
       if (failure) throw failure;
-      if (out !== fed) throw new Error(`轨道流:送进去 ${fed} 帧,只出来 ${out} 个样本`);
+      if (out !== fed) throw new Error(`Track stream: fed ${fed} frames, only ${out} samples came out`);
       return { frames: fed, segments, mode, codec: avcC ? codecOfAvcC(avcC) : String(probe.config!.codec) };
     },
     abort() {
-      fail(new Error("轨道流:已取消"));
+      fail(new Error("Track stream: canceled"));
       close();
     },
   };

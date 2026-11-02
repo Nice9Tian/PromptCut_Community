@@ -209,7 +209,7 @@ export function soundAssetFrom(src: MediaAsset, id: string): MediaAsset {
   return {
     id,
     kind: "audio",
-    name: `${src.name.replace(/\.[^.]+$/, "")} · 声音`,
+    name: `${src.name.replace(/\.[^.]+$/, "")} · Audio`,
     url: src.url,
     ...(src.path ? { path: src.path } : {}),
     ...(src.duration != null ? { duration: src.duration } : {}),
@@ -392,7 +392,7 @@ export function newProjectId(): string {
   return `p-${Date.now().toString(36)}-${rand}`;
 }
 
-export function createEmptyProject(name = "未命名"): Project {
+export function createEmptyProject(name = "Untitled"): Project {
   return {
     version: 1,
     id: newProjectId(),
@@ -404,8 +404,8 @@ export function createEmptyProject(name = "未命名"): Project {
     themeId: "midnight",
     media: [],
     tracks: [
-      { id: "t-1", name: "序列 1", clips: [] },
-      { id: "t-2", name: "序列 2", clips: [] },
+      { id: "t-1", name: "Track 1", clips: [] },
+      { id: "t-2", name: "Track 2", clips: [] },
     ],
   };
 }
@@ -776,8 +776,8 @@ export function suggestPosition(
     return {
       suggestedPosition: null,
       suggestedOccupancy: Math.round(occ * 100) / 100,
-      warning: `四个档位都被人物占住(最空的 ${pos} 也有 ${Math.round(occ * 100)}% 是人),`
-        + "这个镜头没有不遮人的位置,考虑缩小卡片、降低不透明度,或者换一个镜头放。",
+      warning: `All four tiers are occupied by people (even the emptiest, ${pos}, is ${Math.round(occ * 100)}% people),`
+        + "This shot has no position that avoids covering the person. Consider shrinking the card, lowering its opacity, or placing it on a different shot.",
     };
   }
   return { suggestedPosition: pos, suggestedOccupancy: Math.round(occ * 100) / 100 };

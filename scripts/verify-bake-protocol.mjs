@@ -33,8 +33,8 @@ export const SCANNED_FILES = [
 export const DOC = 'docs/guides/bake-page-protocol.md';
 
 const SECTIONS = [
-  { heading: 'HTML 路必需', key: 'html' },
-  { heading: 'PNG 路 / puppeteer 专用', key: 'png' },
+  { heading: 'Required for the HTML path', key: 'html' },
+  { heading: 'PNG path / puppeteer only', key: 'png' },
 ];
 
 /** 文件里出现的全部 `window.__xxx`,连它出现在哪个文件一起记 */
@@ -59,13 +59,13 @@ export function readDocLists() {
   for (let i = 0; i < SECTIONS.length; i++) {
     const { heading, key } = SECTIONS[i];
     const start = text.indexOf(`## ${heading}`);
-    if (start < 0) throw new Error(`${DOC} 缺少章节 "## ${heading}"`);
+    if (start < 0) throw new Error(`${DOC} is missing section "## ${heading}"`);
     const rest = text.slice(start + heading.length + 3);
     const nextHeading = rest.indexOf('\n## ');
     const body = nextHeading < 0 ? rest : rest.slice(0, nextHeading);
     const names = new Set();
     for (const m of body.matchAll(/^\|\s*`(__[A-Za-z0-9_$]+)`\s*\|/gm)) names.add(m[1]);
-    if (!names.size) throw new Error(`${DOC} 的 "${heading}" 一栏里一个名字都没有`);
+    if (!names.size) throw new Error(`${DOC}: the "${heading}" section has no names at all`);
     lists[key] = names;
   }
   return lists;
@@ -78,28 +78,28 @@ export function verifyBakeProtocol() {
   const documented = new Set([...lists.html, ...lists.png]);
 
   const both = [...lists.html].filter(name => lists.png.has(name));
-  for (const name of both) problems.push(`\`${name}\` 同时出现在两栏里,只能属于其中一栏`);
+  for (const name of both) problems.push(`\`${name}\` appears in both lists, it can belong to only one`);
 
   for (const [name, files] of [...usage].sort()) {
     if (!documented.has(name)) {
-      problems.push(`\`${name}\`(${[...files].join(', ')})不在 ${DOC} 的两栏清单里`);
+      problems.push(`\`${name}\` (${[...files].join(', ')}) is not in the two lists of ${DOC}`);
     }
   }
   for (const name of [...documented].sort()) {
     if (!usage.has(name)) {
-      problems.push(`${DOC} 列了 \`${name}\`,但扫描的文件里没有用到它`);
+      problems.push(`${DOC} lists \`${name}\`, but the scanned files do not use it`);
     }
   }
 
   // 舞台页也提供 __pcCreateSnapshot:两页同一份 src/render/createSnapshot.ts。
   for (const page of ['src/ExportView.tsx', 'src/StageView.tsx']) {
     const text = fs.readFileSync(path.join(root, page), 'utf8');
-    if (!/window\.__pcCreateSnapshot\s*=/.test(text)) problems.push(`${page} 没有挂 window.__pcCreateSnapshot`);
-    if (!/createSnapshot\s*\(/.test(text)) problems.push(`${page} 没有调用 createSnapshot()`);
-    if (!/\[data-pc-scene\]/.test(text)) problems.push(`${page} 的生成快照调用没有走 [data-pc-scene] 场景根`);
+    if (!/window\.__pcCreateSnapshot\s*=/.test(text)) problems.push(`${page} does not set window.__pcCreateSnapshot`);
+    if (!/createSnapshot\s*\(/.test(text)) problems.push(`${page} does not call createSnapshot()`);
+    if (!/\[data-pc-scene\]/.test(text)) problems.push(`${page} calls generate snapshots without going through the [data-pc-scene] scene root`);
   }
-  if (!/舞台页也提供\s*`__pcCreateSnapshot`/.test(fs.readFileSync(path.join(root, DOC), 'utf8'))) {
-    problems.push(`${DOC} 缺少「舞台页也提供 \`__pcCreateSnapshot\`」那一行`);
+  if (!/Stage page also provides\s*`__pcCreateSnapshot`/.test(fs.readFileSync(path.join(root, DOC), 'utf8'))) {
+    problems.push(`${DOC} is missing the line "Stage page also provides \`__pcCreateSnapshot\`"`);
   }
   return { problems, usage, lists };
 }
@@ -108,9 +108,9 @@ const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPat
 if (isMain) {
   const { problems, usage, lists } = verifyBakeProtocol();
   if (problems.length) {
-    console.error('预渲染页驱动协议与清单不符:');
+    console.error('The prerender page driver protocol does not match the manifest:');
     for (const p of problems) console.error('  - ' + p);
     process.exit(1);
   }
-  console.log(`PASS: ${usage.size} 个 window.__* 全部在 ${DOC} 的两栏里(HTML 路 ${lists.html.size} 个 / PNG 路 ${lists.png.size} 个),导出页与舞台页都挂了 __pcCreateSnapshot。`);
+  console.log(`PASS: all ${usage.size} window.__* are in the two lists of ${DOC} (HTML path ${lists.html.size} / PNG path ${lists.png.size}), and both the export page and the stage page set __pcCreateSnapshot.`);
 }

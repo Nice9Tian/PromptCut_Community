@@ -54,10 +54,10 @@ export interface BuildMotionResult {
 export function buildClipMotion(input: BuildMotionInput): BuildMotionResult {
   const { xy, visible, media, stage, card, clipOfMedia, pointIndex, whenHidden } = input;
   const total = xy.length;
-  if (total === 0) throw new Error("这条轨迹是空的");
-  if (!(media.duration > 0)) throw new Error(`素材 ${media.id} 没有时长，无法把轨迹对到时间轴上`);
+  if (total === 0) throw new Error("This motion path is empty");
+  if (!(media.duration > 0)) throw new Error(`Media ${media.id} has no duration, so the motion path cannot be mapped onto the timeline`);
   if (!(media.width > 0) || !(media.height > 0)) {
-    throw new Error(`素材 ${media.id} 没有分辨率，无法把轨迹换算到画面坐标`);
+    throw new Error(`Media ${media.id} has no resolution, so the motion path cannot be converted to frame coordinates`);
   }
 
   const frameStep = media.duration / total;
@@ -70,7 +70,7 @@ export function buildClipMotion(input: BuildMotionInput): BuildMotionResult {
 
   const sliceXy = xy.slice(i0, i1);
   const sliceVis = visible.slice(i0, i1);
-  if (sliceXy.length === 0) throw new Error("卡片段落在这条轨迹的范围之外");
+  if (sliceXy.length === 0) throw new Error("The card clip falls outside the range of this motion path");
 
   const scale = Math.max(stage.width / media.width, stage.height / media.height);
   const anchorIdx = Math.max(0, sliceVis.findIndex(Boolean));

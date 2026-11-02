@@ -276,7 +276,7 @@ export function docservicePlugin(): Plugin {
       // 局域网主机(PROMPTCUT_LAN_HOST=1)绑非回环而凭证存储没加载:拒绝启动(SP 契约第 5 节、M6a 失败即关)
       if (lanHostRequested() && storeMissing) {
         log("config.error", { reason: "auth-store", lanHost: true });
-        throw new Error("局域网主机(PROMPTCUT_LAN_HOST=1)要求凭证存储可用:<root>/out/docservice/auth 读不了,拒绝启动");
+        throw new Error("LAN host (PROMPTCUT_LAN_HOST=1) requires a usable credential store: <root>/out/docservice/auth is unreadable, refusing to start");
       }
 
       // 共享端点的预检要抢在 vite 自带的 cors 中间件前面答(它不认局域网的源,理由同 asset-service.ts 的 assetPreflightMiddleware)

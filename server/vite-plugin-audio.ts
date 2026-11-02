@@ -9,6 +9,7 @@ import { getAudioSandbox } from "./audio-sandbox.mjs";
 import { createAssetSourceResolver } from "./audio-source.mjs";
 import { assetServiceOrigin } from "./asset-client";
 import { mediaSourceOf } from "./vision/ffmpeg-frames";
+import { tr } from "./i18n.mjs";
 
 /**
  * 素材记录 → 素材服务上的 HTTP 地址(ffmpeg / ffprobe 的输入)。Agent 的测量工具像外部客户端一样经素材服务的接口取字节,
@@ -46,7 +47,7 @@ export function audioPlugin(): Plugin {
           try {
             const body = JSON.parse((await readBody(req)).toString("utf-8"));
             const ffmpeg = findFfmpeg();
-            if (!ffmpeg) return sendJson(res, 400, { ok: false, error: "找不到 ffmpeg" });
+            if (!ffmpeg) return sendJson(res, 400, { ok: false, error: tr("ffmpeg not found") });
             const ffprobe = path.join(path.dirname(ffmpeg), "ffprobe" + path.extname(ffmpeg));
             const out = await measureLoudness({ body, resolveSource, ffmpeg, ffprobe });
             sendJson(res, out.status, out.body);
@@ -58,7 +59,7 @@ export function audioPlugin(): Plugin {
           try {
             const body = JSON.parse((await readBody(req)).toString("utf-8"));
             const ffmpeg = findFfmpeg();
-            if (!ffmpeg) return sendJson(res, 400, { ok: false, error: "找不到 ffmpeg" });
+            if (!ffmpeg) return sendJson(res, 400, { ok: false, error: tr("ffmpeg not found") });
             const ffprobe = path.join(path.dirname(ffmpeg), "ffprobe" + path.extname(ffmpeg));
             const out = await measureJs({ body, resolveSource, ffmpeg, ffprobe, sandbox: getAudioSandbox() });
             sendJson(res, out.status, out.body);

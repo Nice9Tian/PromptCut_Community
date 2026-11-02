@@ -27,13 +27,13 @@ export const effectsHandlers = {
     return {
       ok: true,
       transitions: transitionsOf(p).map((tr) => ({ ...tr, describe: describeTransition(p, tr) })),
-      hint: "转场把它引用的片段绑成一组:那几段的相对时间关系锁住了,单独改时长 / 换序列 / 切开都会被拒。整组平移不受限制。要单独调先 remove_transition。",
+      hint: "A transition binds the clips it references into one group: their relative timing is locked, and changing duration alone, changing track or splitting any of them will be rejected. Moving the whole group is not restricted. To adjust one individually, run remove_transition first.",
     };
   },
   addTransition: (args) => {
     const kind = String(args.kind ?? "") as TransitionKind;
     if (!["crossfade", "fadeIn", "fadeOut"].includes(kind)) {
-      throw new Error(`kind 只能是 crossfade / fadeIn / fadeOut,收到 ${JSON.stringify(args.kind)}`);
+      throw new Error(`kind must be crossfade / fadeIn / fadeOut, received ${JSON.stringify(args.kind)}`);
     }
     const r = actions.addTransition({ kind, clipId: args.clipId, otherClipId: args.otherClipId, dur: args.dur });
     if (!r.ok) throw new Error(r.error);
@@ -42,7 +42,7 @@ export const effectsHandlers = {
     return {
       ok: true, transition: r.transition, describe: describeTransition(p, r.transition),
       group: [r.transition.aId, ...(r.transition.bId ? [r.transition.bId] : [])],
-      note: "这几段现在绑成一组:相对时间关系锁住了(整组平移仍然可以)。要单独调先 remove_transition。",
+      note: "These segments are now bound into one group: their relative timing is locked (moving the whole group is still allowed). To adjust one individually, run remove_transition first.",
       timeline: timelineDigest(p),
     };
   },
@@ -62,7 +62,7 @@ export const effectsHandlers = {
     if (args?.cutId !== undefined) {
       const cut = resolveCut(p, { cutId: String(args.cutId) });
       const content = cutContent(p, cut.id);
-      if (!content) throw new Error(`剪辑「${cut.name}」(${cut.id})没有可读的内容`);
+      if (!content) throw new Error(`Cut "${cut.name}" (${cut.id}) has no readable content`);
       // 这里的 digest 是借 p 拼出来的别条剪辑的内容,「别的剪辑」提示对它没有意义
       const { otherCuts: _drop, ...digest } = timelineDigest({ ...p, tracks: content.tracks, duration: content.duration });
       out.timeline = { cutId: cut.id, name: cut.name, active: cut.id === activeCutIdOf(p), ...digest };
@@ -80,9 +80,9 @@ export const effectsHandlers = {
     const p = getState().project;
     return {
       ok: true, activeCutId: p.activeCutId, cuts: listCuts(p), timeline: timelineDigest(p),
-      note: `已切换到「${cut.name}」。切换会改共享的激活剪辑,让所有成员的界面一起翻;只是要改别的剪辑里已有的片段时不需要它——` +
-        "把 clipId(list_cuts 的 cutId 参数 / get_project 的 parkedCuts 里有)直接交给 update_clip 等就地改;看别的剪辑的画面用 see_frames 的 cutId。" +
-        "上面的 timeline 现在是这条的;之前激活的那条已停放,它里面的片段同样可以直接改。",
+      note: `Switched to "${cut.name}". Switching changes the shared active cut and flips every member's interface together; it is not needed when you only want to edit clips that already exist in another cut:` +
+        "Pass the clipId (found in list_cuts' cutId parameter / get_project's parkedCuts) directly to update_clip etc. to edit in place; to see another cut's picture, use see_frames' cutId." +
+        "The timeline above is now this cut's; the previously active one is parked, and the clips inside it can likewise be edited directly.",
     };
   },
   // 只建不切(2026-10-21 用户定):切换激活剪辑会动所有成员的界面,要切另调 user_interface_switch_cut
@@ -92,7 +92,7 @@ export const effectsHandlers = {
     const p = getState().project;
     return {
       ok: true, cut: { id: cut.id, name: cut.name }, activeCutId: p.activeCutId, cuts: listCuts(p),
-      note: `已新建「${cut.name}」(${cut.id}),没有切过去,激活的剪辑不变。要往里新增片段先 user_interface_switch_cut(会动所有成员的界面);也可以用 add_cut_segment 把它当剪辑段放进当前剪辑。`,
+      note: `Created "${cut.name}" (${cut.id}) without switching to it; the active cut is unchanged. To add clips into it, first run user_interface_switch_cut (this moves every member's interface); or use add_cut_segment to place it into the current cut as a cut segment.`,
     };
   },
   renameCut: (args) => {

@@ -59,7 +59,7 @@ function typesClash(a, b) {
 
 function fieldNames(fn, arg) {
   const out = fn(arg);
-  if (!isObj(out)) throw new TypeError('describeConn / health 必须返回对象');
+  if (!isObj(out)) throw new TypeError('describeConn / health must return an object');
   return Object.keys(out);
 }
 
@@ -101,9 +101,9 @@ export function createRouter({
   maxPendingBytes,
   gate = null,
 }) {
-  if (typeof write !== 'function') throw new TypeError('createRouter: write 必须是函数');
-  if (typeof buffered !== 'function') throw new TypeError('createRouter: buffered 必须是函数');
-  if (typeof close !== 'function') throw new TypeError('createRouter: close 必须是函数');
+  if (typeof write !== 'function') throw new TypeError('createRouter: write must be a function');
+  if (typeof buffered !== 'function') throw new TypeError('createRouter: buffered must be a function');
+  if (typeof close !== 'function') throw new TypeError('createRouter: close must be a function');
   const highWater = positive(highWaterBytes, CORE_DEFAULTS.HIGH_WATER_BYTES);
   const maxPending = positive(maxPendingBytes, CORE_DEFAULTS.MAX_PENDING_BYTES);
 
@@ -258,8 +258,8 @@ export function createRouter({
   function channelOps(entry) {
     const own = (channel) => {
       const prefix = prefixOf(channel);
-      if (prefix === null) throw new Error(`频道名不合法：${String(channel)}`);
-      if (!entry.channels.has(prefix)) throw new Error(`模块 ${entry.mod.name} 没有声明频道前缀 ${prefix}`);
+      if (prefix === null) throw new Error(`Invalid channel name: ${String(channel)}`);
+      if (!entry.channels.has(prefix)) throw new Error(`Module ${entry.mod.name} did not declare channel prefix ${prefix}`);
     };
     return {
       subscribe(connId, channel) {
@@ -325,49 +325,49 @@ export function createRouter({
   }
 
   function validate(mod) {
-    if (!isObj(mod)) throw new TypeError('模块必须是对象');
-    if (typeof mod.name !== 'string' || mod.name === '') throw new TypeError('模块的 name 必须是非空字符串');
+    if (!isObj(mod)) throw new TypeError('Module must be an object');
+    if (typeof mod.name !== 'string' || mod.name === '') throw new TypeError('Module name must be a non-empty string');
     if (!Array.isArray(mod.types) || mod.types.some((t) => typeof t !== 'string' || t === '')) {
-      throw new TypeError(`模块 ${mod.name} 的 types 必须是非空字符串数组`);
+      throw new TypeError(`types of module ${mod.name} must be a non-empty string array`);
     }
-    if (typeof mod.handle !== 'function') throw new TypeError(`模块 ${mod.name} 的 handle 必须是函数`);
+    if (typeof mod.handle !== 'function') throw new TypeError(`handle of module ${mod.name} must be a function`);
     for (const hook of ['connect', 'disconnect', 'tick', 'describeConn', 'health', 'describe']) {
-      if (mod[hook] !== undefined && typeof mod[hook] !== 'function') throw new TypeError(`模块 ${mod.name} 的 ${hook} 必须是函数`);
+      if (mod[hook] !== undefined && typeof mod[hook] !== 'function') throw new TypeError(`${hook} of module ${mod.name} must be a function`);
     }
     if (mod.channels !== undefined) {
       if (!Array.isArray(mod.channels) || mod.channels.some((p) => typeof p !== 'string' || !CHANNEL_PREFIX.test(p))) {
-        throw new TypeError(`模块 ${mod.name} 的 channels 必须是频道前缀数组（[a-z][a-z0-9-]{0,31}，不带冒号）`);
+        throw new TypeError(`channels of module ${mod.name} must be an array of channel prefixes ([a-z][a-z0-9-]{0,31}, no colon)`);
       }
-      if (new Set(mod.channels).size !== mod.channels.length) throw new Error(`模块 ${mod.name} 的 channels 有重复前缀`);
+      if (new Set(mod.channels).size !== mod.channels.length) throw new Error(`channels of module ${mod.name} has duplicate prefixes`);
     }
   }
 
   function mount(mod) {
     validate(mod);
-    if (mounted.some((e) => e.mod.name === mod.name)) throw new Error(`模块名 ${mod.name} 已经挂上了`);
+    if (mounted.some((e) => e.mod.name === mod.name)) throw new Error(`Module name ${mod.name} is already mounted`);
     for (const e of mounted) {
       for (const a of mod.types) {
         for (const b of e.mod.types) {
-          if (typesClash(a, b)) throw new Error(`模块 ${mod.name} 的类型 ${a} 与已挂模块 ${e.mod.name} 的 ${b} 冲突`);
+          if (typesClash(a, b)) throw new Error(`Type ${a} of module ${mod.name} conflicts with ${b} of mounted module ${e.mod.name}`);
         }
       }
     }
     const prefixes = new Set(mod.channels ?? []);
     for (const p of prefixes) {
       const other = mounted.find((e) => e.channels.has(p));
-      if (other) throw new Error(`模块 ${mod.name} 的频道前缀 ${p} 已被模块 ${other.mod.name} 声明`);
+      if (other) throw new Error(`Channel prefix ${p} of module ${mod.name} is already declared by module ${other.mod.name}`);
     }
     const connFields = mod.describeConn ? fieldNames((id) => mod.describeConn(id), PROBE_CONN_ID) : [];
     const healthFields = mod.health ? fieldNames(() => mod.health()) : [];
     for (const f of connFields) {
-      if (CORE_CONN_FIELDS.includes(f)) throw new Error(`模块 ${mod.name} 的连接字段 ${f} 与核心字段重名`);
+      if (CORE_CONN_FIELDS.includes(f)) throw new Error(`Module ${mod.name}: connection field ${f} duplicates a core field`);
       const other = mounted.find((e) => e.connFields.includes(f));
-      if (other) throw new Error(`模块 ${mod.name} 的连接字段 ${f} 与模块 ${other.mod.name} 重名`);
+      if (other) throw new Error(`Module ${mod.name}: connection field ${f} duplicates one in module ${other.mod.name}`);
     }
     for (const f of healthFields) {
-      if (CORE_HEALTH_FIELDS.includes(f)) throw new Error(`模块 ${mod.name} 的健康字段 ${f} 与核心字段重名`);
+      if (CORE_HEALTH_FIELDS.includes(f)) throw new Error(`Module ${mod.name}: health field ${f} duplicates a core field`);
       const other = mounted.find((e) => e.healthFields.includes(f));
-      if (other) throw new Error(`模块 ${mod.name} 的健康字段 ${f} 与模块 ${other.mod.name} 重名`);
+      if (other) throw new Error(`Module ${mod.name}: health field ${f} duplicates one in module ${other.mod.name}`);
     }
 
     const entry = { mod, ctx: null, connFields, healthFields, channels: prefixes, live: true };
@@ -423,19 +423,19 @@ export function createRouter({
     try {
       msg = JSON.parse(text);
     } catch {
-      return replyError(connId, 'bad-message', '不是合法的 JSON');
+      return replyError(connId, 'bad-message', 'Not valid JSON');
     }
     const reqId = isObj(msg) && isReqId(msg.reqId) ? msg.reqId : undefined;
-    if (!isObj(msg) || typeof msg.type !== 'string') return replyError(connId, 'bad-message', '消息必须是带字符串 type 字段的对象', reqId);
+    if (!isObj(msg) || typeof msg.type !== 'string') return replyError(connId, 'bad-message', 'Message must be an object with a string type field', reqId);
     const entry = ownerOf(msg.type);
-    if (!entry) return replyError(connId, 'unsupported', '没有模块处理这种消息', reqId);
+    if (!entry) return replyError(connId, 'unsupported', 'No module handles this kind of message', reqId);
     const fail = (err) => {
       log('module.error', { module: entry.mod.name, type: msg.type, message: String(err?.message ?? err) });
-      replyError(connId, 'internal', '处理这条消息时出错', reqId);
+      replyError(connId, 'internal', 'Error while handling this message', reqId);
     };
     const handle = (reason) => {
       if (conns.get(connId) !== conn) return;
-      if (typeof reason === 'string') return replyError(connId, reason, '这条连接不能发这种消息', reqId);
+      if (typeof reason === 'string') return replyError(connId, reason, 'This connection cannot send this kind of message', reqId);
       try {
         const result = entry.mod.handle(entry.ctx, connId, msg);
         if (result && typeof result.then === 'function') return result.catch(fail);
@@ -461,7 +461,7 @@ export function createRouter({
 
   return {
     connect(connId, principal, info = {}) {
-      if (conns.has(connId)) throw new Error(`连接 ${connId} 已经登记过`);
+      if (conns.has(connId)) throw new Error(`Connection ${connId} is already registered`);
       const conn = {
         connId,
         principal: { ...principal },

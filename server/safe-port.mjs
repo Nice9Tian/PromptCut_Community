@@ -66,5 +66,5 @@ export async function listenSafe(server, host) {
     got.push(port);
     await closeServer(server);
   }
-  throw new Error(`listenSafe: ${LISTEN_SAFE_TRIES} 次都拿到坏端口（${got.join(', ')}）`);
+  throw new Error(`listenSafe: got a bad port ${LISTEN_SAFE_TRIES} times (${got.join(', ')})`);
 }

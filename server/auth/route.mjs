@@ -25,6 +25,7 @@
  */
 import { lookupProject, createSharedProject as createOn } from './client.mjs';
 import { resolveHostedUrl } from './hosted-default.mjs';
+import { tr } from "../i18n.mjs";
 
 export const ROUTE_DEFAULTS = Object.freeze({
   /** 局域网发现的时限（契约第 3 节） */
@@ -40,7 +41,7 @@ export function wsBaseOf(url) {
   const u = new URL(url);
   if (u.protocol === 'http:') u.protocol = 'ws:';
   else if (u.protocol === 'https:') u.protocol = 'wss:';
-  else if (u.protocol !== 'ws:' && u.protocol !== 'wss:') throw new TypeError('地址必须是 http(s):// 或 ws(s)://');
+  else if (u.protocol !== 'ws:' && u.protocol !== 'wss:') throw new TypeError(tr("The address must be http(s):// or ws(s)://"));
   return `${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '')}`;
 }
 
@@ -50,7 +51,7 @@ export function wsBaseOf(url) {
  */
 export function manualBaseOf(address) {
   let text = String(address ?? '').trim();
-  if (text === '') throw new TypeError('手填地址是空的');
+  if (text === '') throw new TypeError(tr("The address entered manually is empty"));
   if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) text = `http://${text}`;
   const base = wsBaseOf(text);
   const u = new URL(base);
@@ -107,7 +108,7 @@ const TIMED_OUT = Symbol('timeout');
 export async function findSharedProject({
   name, hostedUrl, uiHostedUrl, lan = {}, fetch, lookupTimeoutMs = ROUTE_DEFAULTS.LOOKUP_TIMEOUT_MS,
 } = {}) {
-  if (typeof name !== 'string' || name.trim() === '') throw new TypeError('findSharedProject: name 不能为空');
+  if (typeof name !== 'string' || name.trim() === '') throw new TypeError('findSharedProject: name cannot be empty');
   const wanted = nameKey(name);
   const lanTimeout = Number.isFinite(lan?.timeoutMs) ? lan.timeoutMs : ROUTE_DEFAULTS.LAN_TIMEOUT_MS;
   const errors = [];
@@ -245,12 +246,12 @@ export async function createSharedProject({ where, hostedUrl, uiHostedUrl, lanBa
   let base;
   if (where === 'hosted') {
     base = typeof hostedUrl === 'string' && hostedUrl.trim() !== '' ? hostedUrl.trim() : resolveHostedUrl({ ui: uiHostedUrl });
-    if (!base) throw new TypeError('createSharedProject: 这一版没有托管端，要给 hostedUrl');
+    if (!base) throw new TypeError('createSharedProject: this build has no hosted side, hostedUrl is required');
   } else if (where === 'lan') {
     base = lanBase ?? localEditorBase();
-    if (!base) throw new TypeError('createSharedProject: 局域网模式要给 lanBase（本机编辑器的文档服务地址）');
+    if (!base) throw new TypeError('createSharedProject: LAN mode requires lanBase (the document service address of the local editor)');
   } else {
-    throw new TypeError("createSharedProject: where 只能是 'hosted' 或 'lan'");
+    throw new TypeError("createSharedProject: where must be 'hosted' or 'lan'");
   }
   const ws = wsBaseOf(base);
   const r = await createOn({ ...rest, base: ws });

@@ -46,6 +46,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { createDocEndpoint } from './render-node/session-link.mjs';
+import { tr } from "./i18n.mjs";
 
 export const CARD_SOURCE = 'card-source';
 
@@ -158,10 +159,10 @@ export function createCardSync({
   readOnly = false,
 } = {}) {
   if (!files || typeof files.read !== 'function' || typeof files.install !== 'function' || typeof files.backup !== 'function') {
-    throw new TypeError('createCardSync: files 要有 read、install、backup');
+    throw new TypeError('createCardSync: files must have read, install, backup');
   }
   const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志失败不影响同步 */ } };
-  if (connect !== null && typeof connect !== 'function') throw new TypeError('createCardSync: connect 要是函数');
+  if (connect !== null && typeof connect !== 'function') throw new TypeError('createCardSync: connect must be a function');
   const connectTo = connect ?? (({ url, protocols }) => createDocEndpoint({ url, protocols, log: (event, fields) => say(`doc.${event}`, fields) }));
   const changedOf = typeof files.changed === 'function' ? files.changed : () => true;
   const notices = [];
@@ -214,7 +215,7 @@ export function createCardSync({
       binding.connected = false;
       for (const [, w] of binding.waiting) {
         clearTimeout(w.timer);
-        w.reject(Object.assign(new Error('连接断了'), { code: 'disconnected' }));
+        w.reject(Object.assign(new Error('Connection lost'), { code: 'disconnected' }));
       }
       binding.waiting.clear();
       say('cards.sync.close', { spaceId, code: info?.code ?? null });
@@ -232,11 +233,11 @@ export function createCardSync({
 
   function request(binding, type, fields) {
     return new Promise((resolve, reject) => {
-      if (!binding.connected) return reject(Object.assign(new Error('没连上文档服务'), { code: 'disconnected' }));
+      if (!binding.connected) return reject(Object.assign(new Error('Not connected to the document service'), { code: 'disconnected' }));
       const reqId = `cards#${++reqSeq}`;
       const timer = setTimeout(() => {
         binding.waiting.delete(reqId);
-        reject(Object.assign(new Error(`${type} 超时`), { code: 'timeout' }));
+        reject(Object.assign(new Error(`${type} timed out`), { code: 'timeout' }));
       }, requestTimeoutMs);
       timer.unref?.();
       binding.waiting.set(reqId, { resolve, reject, timer, type });
@@ -245,7 +246,7 @@ export function createCardSync({
       if (!sent && binding.waiting.has(reqId)) {
         binding.waiting.delete(reqId);
         clearTimeout(timer);
-        reject(Object.assign(new Error('没发出去'), { code: 'disconnected' }));
+        reject(Object.assign(new Error('Not sent'), { code: 'disconnected' }));
       }
     });
   }
@@ -256,7 +257,7 @@ export function createCardSync({
       const w = binding.waiting.get(msg.reqId);
       binding.waiting.delete(msg.reqId);
       clearTimeout(w.timer);
-      if (msg.type === 'error') w.reject(Object.assign(new Error(`${w.type}：${msg.reason ?? 'error'}`), { code: msg.reason ?? 'error', detail: msg.detail }));
+      if (msg.type === 'error') w.reject(Object.assign(new Error(`${w.type}: ${msg.reason ?? 'error'}`), { code: msg.reason ?? 'error', detail: msg.detail }));
       else w.resolve(msg);
       return;
     }
@@ -361,7 +362,7 @@ export function createCardSync({
       } catch (err) {
         // 备份不下来就不覆盖：宁可两边暂时不一致，也不能把本机那份弄丢
         say('cards.sync.backup-failed', { key: rel, message: String(err?.message ?? err) });
-        emit({ type: 'rejected', key: rel, rev, error: `本机那份备份失败,没有覆盖:${err?.message ?? err}` });
+        emit({ type: 'rejected', key: rel, rev, error: tr("Local backup failed, not overwritten: {0}", err?.message ?? err) });
         return;
       }
     }
@@ -375,7 +376,7 @@ export function createCardSync({
       // 装不上（审查不过等）：记下这一版，免得每次变化都重试；本机内容照旧
       binding.ledger.set(rel, { rev, hash: curHash, mine: false, rejected: true });
       say('cards.sync.rejected', { key: rel, rev, error: res?.error ?? null });
-      emit({ type: 'rejected', key: rel, rev, error: res?.error ?? '装不上', actor });
+      emit({ type: 'rejected', key: rel, rev, error: res?.error ?? tr("Could not install"), actor });
       return;
     }
     binding.ledger.set(rel, { rev, hash: serverHash, mine: false });
@@ -412,7 +413,7 @@ export function createCardSync({
         say('cards.sync.put-failed', { key: rel, reason, code: err?.code ?? null, message: String(err?.message ?? err) });
         if (err?.code === 'too-large' || err?.code === 'bad-message') {
           binding.ledger.unmark(rel);
-          emit({ type: 'rejected', key: rel, error: `文档服务不收这个文件(${err.code})` });
+          emit({ type: 'rejected', key: rel, error: tr("The document service does not accept this file ({0})", err.code) });
         } else if (err?.code !== 'disconnected' && !binding.retryTimer && !binding.closed) {
           binding.retryTimer = setTimeout(() => {
             binding.retryTimer = null;
@@ -450,7 +451,7 @@ export function createCardSync({
     b = null;
     cur.closed = true;
     clearTimeout(cur.retryTimer);
-    for (const [, w] of cur.waiting) { clearTimeout(w.timer); w.reject(Object.assign(new Error('已解绑'), { code: 'disconnected' })); }
+    for (const [, w] of cur.waiting) { clearTimeout(w.timer); w.reject(Object.assign(new Error('Unbound'), { code: 'disconnected' })); }
     cur.waiting.clear();
     try { cur.endpoint.close(); } catch { /* 已经关了 */ }
     say('cards.sync.unbind', { spaceId: cur.spaceId, reason });
@@ -464,8 +465,8 @@ export function createCardSync({
      * `keys`：这个项目要带上的文件（用户卡与改过的内置卡），服务上没有的会传上去。
      */
     bind({ projectId = null, url, protocols, local = false, keys = [] } = {}) {
-      if (typeof url !== 'string' || !/^wss?:\/\//.test(url)) throw new TypeError('bind: url 要 ws(s):// 地址');
-      if (!local && (typeof projectId !== 'string' || !projectId)) throw new TypeError('bind: 共享项目要 projectId');
+      if (typeof url !== 'string' || !/^wss?:\/\//.test(url)) throw new TypeError('bind: url must be a ws(s):// address');
+      if (!local && (typeof projectId !== 'string' || !projectId)) throw new TypeError('bind: a shared project needs projectId');
       if (b && b.url === url && b.local === local && (local || b.projectId === projectId)) {
         this.setKeys(keys);
         return { spaceId: b.spaceId, rebound: false };
@@ -509,12 +510,12 @@ export function createCardSync({
      * 回 `{ ok, error? }`。装不上（审查不过）不传。
      */
     async takeMine(rel, source) {
-      if (readOnly) return { ok: false, error: '只读的同步实例不改卡' };
-      if (!isSyncablePath(rel) || typeof source !== 'string') return { ok: false, error: '不是可同步的卡片文件' };
+      if (readOnly) return { ok: false, error: 'A read-only sync instance does not modify cards' };
+      if (!isSyncablePath(rel) || typeof source !== 'string') return { ok: false, error: 'Not a syncable card file' };
       let res;
       try { res = await files.install(rel, normalizeSource(source), { rev: null }); }
       catch (err) { res = { ok: false, error: String(err?.message ?? err) }; }
-      if (!res?.ok) return { ok: false, error: res?.error ?? '装不上' };
+      if (!res?.ok) return { ok: false, error: res?.error ?? tr("Could not install") };
       saved(rel);
       say('cards.sync.take-mine', { key: rel });
       return { ok: true };

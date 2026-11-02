@@ -15,27 +15,27 @@ import { tools } from '../mcp-tools.mjs';
  * 要权限;而它真正需要的东西(卡片怎么引用素材、缺素材去哪找)PromptCut 工具里全都有。
  */
 const CLAUDE_ADDENDUM = `
-## 关于 Claude Code 自带的那套工具(只有你这一家需要看)
+## About Claude Code's built-in tools (only you need to read this)
 
-你除了 PromptCut 的工具(mcp__promptcut__*),还看得见 Claude Code 自带的 Read / Write / Edit / Glob / Grep /
-Bash / PowerShell / WebFetch / WebSearch。**在这里它们全部会被拒**:这是无人值守的会话,没人能给你点同意;
-换一个自带工具、换一种命令写法,结果都一样。被拒不会带来任何新信息,只会白烧一轮。
+Besides the PromptCut tools (mcp__promptcut__*), you can also see Claude Code's built-in Read / Write / Edit / Glob / Grep /
+Bash / PowerShell / WebFetch / WebSearch. **Here they are all rejected**: this is an unattended session and nobody can approve them for you;
+switching to another built-in tool or another way of writing the command gives the same result. A rejection brings no new information and only wastes a turn.
 
-你要做的每一件事都有对应的 PromptCut 工具:
+Every task you need to do has a matching PromptCut tool:
 
-| 你想干的事 | 用这个,别用自带工具 |
+| What you want to do | Use this, not the built-in tools |
 | --- | --- |
-| 看工程里有什么(轨道、片段、素材、卡片) | \`get_project\` / \`get_clip\` / \`list_media\` / \`list_cards\` |
-| 看一张素材图片 / 一段视频长什么样 | \`see_frames({ source: "media", mediaId })\`,别去 Read 素材的磁盘路径 |
-| 卡片里用素材库的图片 / 视频 | \`list_media\` 返回的 \`cardUrl\`(/@media/<文件名>)填进卡片参数;别猜地址、别 curl 探测 |
-| 素材库里没有要用的画面 | 视频:\`collect_search\` → \`collect_download\`;图片:找到直链后 \`import_media({ url, name })\` |
-| 读网页、查资料 | \`web_open\` / \`web_read\`,别用 WebFetch / curl |
-| 处理用户发来的附件 | \`import_media({ url })\`,url 取附件清单里的站内地址 |
-| 看某张卡的源码 / 改卡 | \`get_card_source\` / \`edit_card\` |
-| 等几秒再查后台作业 | \`wait({ seconds })\` |
-| 找之前的对话记录、交接笔记 | 没有这种文件可找。消息开头附了「前情」就是全部;不够就调 \`report_progress\` 在 todo 里问用户 |
-| 每个小阶段结束、整个任务收尾时向用户汇报 | \`report_progress\` |
-| 告诉用户你接下来要做什么、刚做好了什么(显示在对话气泡里) | \`send_message\`,to 填 "user" |
+| See what is in the project (tracks, clips, media, cards) | \`get_project\` / \`get_clip\` / \`list_media\` / \`list_cards\` |
+| See what a media image / video looks like | \`see_frames({ source: \\"media\\", mediaId })\`, do not Read the media's disk path |
+| Use a media library image / video in a card | Put the \`cardUrl\` returned by \`list_media\` (/@media/<file name>) into the card parameters; do not guess addresses or probe with curl |
+| The media library has no suitable footage | Video: \`collect_search\` → \`collect_download\`; image: once you find a direct link, \`import_media({ url, name })\` |
+| Read web pages, look things up | \`web_open\` / \`web_read\`, not WebFetch / curl |
+| Handle attachments sent by the user | \`import_media({ url })\`, taking the url from the in-site address in the attachment manifest |
+| View a card's source / edit a card | \`get_card_source\` / \`edit_card\` |
+| Wait a few seconds, then check a background job | \`wait({ seconds })\` |
+| Find earlier chat records or handoff notes | No such files exist. The "background" attached at the start of the message is everything; if it is not enough, call \`report_progress\` and ask the user in the todo |
+| Report to the user at the end of each small stage and when the whole task wraps up | \`report_progress\` |
+| Tell the user what you will do next or what you just finished (shown in the chat bubble) | \`send_message\`, set to to \\"user\\" |
 `;
 
 function getAllowedToolsArgv() {
@@ -62,6 +62,7 @@ export async function getClaudeProvider() {
 }
 
 import { runTextProtocolLoop } from '../harness/tool-protocol.mjs';
+import { tr } from "../i18n.mjs";
 
 export function startRun(opts) {
   if (opts.toolProtocol) {
@@ -92,7 +93,7 @@ export function startRun(opts) {
 
   const donePromise = run.done.then((res) => {
     if (rejected) {
-      opts.onEvent({ type: 'status', text: '原生工具被拒，改用文本协议重试' });
+      opts.onEvent({ type: 'status', text: tr("Native tool was rejected, retrying with text protocol") });
       const nextRun = runTextProtocolLoop({ startRun: _startRun, opts, onEvent: opts.onEvent });
       abortRef.abort = nextRun.abort;
       return nextRun.done;
@@ -215,7 +216,7 @@ function _startRun(opts) {
              opts.onPermissionDenied();
          }
          if (ev.is_error) {
-             const message = ev.result || ev.error?.message || ev.terminal_reason || 'Claude 出错';
+             const message = ev.result || ev.error?.message || ev.terminal_reason || tr("Claude error");
              finish({ type: 'error', message });
          } else {
              const usage = ev.usage || {};

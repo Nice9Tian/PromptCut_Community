@@ -3,6 +3,7 @@ import type { ServerResponse } from "http";
 import { spawn } from "child_process";
 import { exportsRunning } from "./render-pool-state.mjs";
 import { exportsRoot, listExports, deleteExport, pruneExport, resolveExportDir } from "./exports-list.mjs";
+import { tr } from "./i18n.mjs";
 
 /**
  * 导出产物的接口(存储占用计划 `docs/plan/storage-plan.md` 第 4 节),给开始页「存储」一块用:
@@ -41,14 +42,14 @@ export function exportsListPlugin(): Plugin {
         const opts = { exportsRunning: exportsRunning() > 0 };
         try {
           if (url === "/api/exports") {
-            if (req.method !== "GET") return send(res, 405, { ok: false, error: "只支持 GET" });
+            if (req.method !== "GET") return send(res, 405, { ok: false, error: "Only GET is supported" });
             return send(res, 200, { ok: true, items: await listExports(root, opts) });
           }
           const m = /^\/api\/exports\/([^/]+)\/(delete|prune|reveal)$/.exec(url);
-          if (!m) return send(res, 404, { ok: false, error: "没有这个接口" });
-          if (req.method !== "POST") return send(res, 405, { ok: false, error: "只支持 POST" });
+          if (!m) return send(res, 404, { ok: false, error: "API not available" });
+          if (req.method !== "POST") return send(res, 405, { ok: false, error: "Only POST is supported" });
           let id: string;
-          try { id = decodeURIComponent(m[1]); } catch { return send(res, 400, { ok: false, error: "不是导出目录的名字" }); }
+          try { id = decodeURIComponent(m[1]); } catch { return send(res, 400, { ok: false, error: tr("Not an export directory name") }); }
           const action = m[2];
           if (action === "reveal") {
             const r = await resolveExportDir(root, id);

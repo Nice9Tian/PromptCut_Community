@@ -24,11 +24,11 @@ function typeOf(control) {
 
 function describe(control) {
   const bits = [control.label].filter(Boolean);
-  if (control.required) bits.push("必填");
+  if (control.required) bits.push("required");
   if (control.hint) bits.push(control.hint);
   // 素材目录:列出可选的 URL,但不做 enum —— 目录之外的 URL / 内联 JSON 也是合法的
   if (control.type === "asset" && Array.isArray(control.options) && control.options.length) {
-    bits.push("素材目录:" + control.options.map((o) => `${o.value}(${o.label})`).join(";"));
+    bits.push("Media catalog:" + control.options.map((o) => `${o.value}(${o.label})`).join(";"));
   }
   return bits.join(" · ") || undefined;
 }
@@ -48,8 +48,8 @@ export function buildParamsSchema(cards, opts = {}) {
   return {
     type: "object",
     description: patch
-      ? `${PARAMS_PATCH_DESC}合法字段取决于这张卡当前的 cardId（换卡时才取新卡的字段）;下面每个分支对应一张卡。`
-      : "卡片参数,合法字段取决于 cardId。下面每个分支对应一张卡;先用 list_cards({cardId}) 看清该卡的 controls 再填。",
+      ? `${PARAMS_PATCH_DESC}Valid fields depend on the card's current cardId (the new card's fields apply only when the card is switched); each branch below corresponds to one card.`
+      : "Card parameters; valid fields depend on cardId. Each branch below corresponds to one card; first use list_cards({cardId}) to check that card's controls, then fill them in.",
     anyOf: usable.map((card) => {
       const properties = {};
       const required = [];
@@ -91,7 +91,7 @@ export function injectCardParams(tools, cards) {
 
 const FRAME_SCHEMA = {
   type: "object",
-  description: "相对父框的框:x / y 锚点位置(像素)、w / h 尺寸、anchor [ax, ay](默认 [0,0])、scale、rotate;省略用部件的 defaultFrame",
+  description: "Frame relative to the parent frame: x / y anchor position (pixels), w / h size, anchor [ax, ay] (default [0,0]), scale, rotate; if omitted, the part's defaultFrame is used",
   properties: {
     x: { type: "number" }, y: { type: "number" }, w: { type: "number" }, h: { type: "number" },
     anchor: { type: "array", items: { type: "number" } }, scale: { type: "number" }, rotate: { type: "number" },
@@ -105,7 +105,7 @@ export function buildPartParamsSchema(parts) {
   if (usable.length === 0) return null;
   return {
     type: "object",
-    description: "部件参数,合法字段取决于 partId;有文字的部件都有 size,填 0 = 按框自适应。先 list_parts({ partId }) 看 controls。",
+    description: "Part parameters; valid fields depend on partId; every part with text has size, and 0 = fit to the frame. First use list_parts({ partId }) to check controls.",
     anyOf: usable.map((part) => {
       const properties = {};
       const required = [];
@@ -127,17 +127,17 @@ export function buildPartsListSchema(parts, paramsSchema) {
   const item = (children) => ({
     type: "object",
     properties: {
-      partId: { type: "string", ...(ids.length ? { enum: ids } : {}), description: "list_parts 里的部件 id" },
+      partId: { type: "string", ...(ids.length ? { enum: ids } : {}), description: "Part id from list_parts" },
       params: paramsSchema ?? { type: "object", additionalProperties: true },
       frame: FRAME_SCHEMA,
-      enterMs: { type: "number", description: "相对父级进场的毫秒数" },
+      enterMs: { type: "number", description: "Milliseconds relative to the parent's entrance" },
       label: { type: "string" },
       ...(children ? { children } : {}),
     },
     required: ["partId"],
     additionalProperties: true,
   });
-  return { type: "array", items: item({ type: "array", items: item({ type: "array", items: item(null) }) }), description: "部件实例列表;最多在这里嵌套三层,更深的用 add_part 加" };
+  return { type: "array", items: item({ type: "array", items: item({ type: "array", items: item(null) }) }), description: "List of part instances; nest at most three levels here, use add_part for deeper ones" };
 }
 
 /** 就地把 add_part / set_part 的 params 和 add_composite 的 parts 换成真实 schema;拿不到部件列表就原样返回 */

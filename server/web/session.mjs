@@ -41,7 +41,7 @@ function withTimeout(promise, ms, what) {
   let timer;
   return Promise.race([
     promise,
-    new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`${what} 超过 ${ms / 1000} 秒没返回`)), ms); }),
+    new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`${what} did not return within ${ms / 1000} seconds`)), ms); }),
   ]).finally(() => clearTimeout(timer));
 }
 
@@ -68,15 +68,15 @@ function readMain(limit) {
 
 /** 每个动作收尾都走这里:扫墙 + 出新 view */
 async function finish(page, extra = {}) {
-  const walls = await withTimeout(page.evaluate(scanWall), 10000, '检测页面状态');
-  const view = await withTimeout(captureView(page), ACTION_TIMEOUT, '截图');
+  const walls = await withTimeout(page.evaluate(scanWall), 10000, 'detect page state');
+  const view = await withTimeout(captureView(page), ACTION_TIMEOUT, 'screenshot');
   const out = { ok: true, ...extra, ...view };
   if (walls.length) {
-    const names = { login: '登录表单', captcha: '验证码', qrcode: '扫码登录', consent: 'cookie 同意条' };
+    const names = { login: 'login form', captcha: 'verification code', qrcode: 'QR code login', consent: 'cookie consent bar' };
     out.wall = walls;
-    out.wallNote = `这一页有${walls.map((w) => names[w] || w).join('、')}。`
-      + '这类事不要自己动手 —— 调 user_interface_web_handoff 把浏览器窗口挪到用户面前,让用户处理完再继续。'
-      + (walls.includes('captcha') ? '验证码必须由用户来点。' : '');
+    out.wallNote = `This page has ${walls.map((w) => names[w] || w).join(', ')}.`
+      + 'Do not handle this yourself: call user_interface_web_handoff to move the browser window in front of the user, and continue after the user has dealt with it.'
+      + (walls.includes('captcha') ? 'A captcha must be clicked by the user.' : '');
   }
   return out;
 }
@@ -103,15 +103,15 @@ export async function click(page, { u, x, y, expect } = {}) {
   let uid = u;
   if (!uid) {
     if (typeof x !== 'number' || typeof y !== 'number') {
-      return { ok: false, error: '要么给 u,要么给 x,y。x,y 是上一次 web_view 返回的那张图上的像素坐标。' };
+      return { ok: false, error: 'Give either u, or x,y. x,y are pixel coordinates on the image returned by the last web_view.' };
     }
-    const res = await withTimeout(resolveAt(page, x, y, { expect }), 10000, '命中检测');
+    const res = await withTimeout(resolveAt(page, x, y, { expect }), 10000, 'hit test');
     if (!res.ok) return { ok: false, error: explain(res), ...(res.cands ? { candidates: res.cands } : {}) };
     uid = res.pick.u;
   }
   const handle = await page.$(`[data-pcuid="${uid}"]`);
   if (!handle) {
-    return { ok: false, error: `找不到 ${uid}。编号只对最近一次 web_view 有效,页面滚动或跳转后就失效了 —— 先重新 web_view。` };
+    return { ok: false, error: `Cannot find ${uid}. IDs are only valid for the most recent web_view, and become invalid after the page scrolls or navigates: run web_view again first.` };
   }
   const label = await page.evaluate(
     (el) => (el.getAttribute('aria-label') || el.innerText || el.value || '').trim().replace(/\s+/g, ' ').slice(0, 40),
@@ -129,7 +129,7 @@ export async function click(page, { u, x, y, expect } = {}) {
 /** 往输入框里打字。默认先清空 —— 追加往往不是模型想要的,要追加就传 append */
 export async function type(page, { u, text, append = false, submit = false } = {}) {
   const handle = await page.$(`[data-pcuid="${u}"]`);
-  if (!handle) return { ok: false, error: `找不到 ${u},先重新 web_view。` };
+  if (!handle) return { ok: false, error: `Cannot find ${u}, run web_view again first.` };
   await handle.click();
   if (!append) {
     await handle.evaluate((el) => { if ('value' in el) el.value = ''; else el.textContent = ''; });
@@ -161,10 +161,10 @@ export async function scroll(page, { dy = 600, to } = {}) {
  * 一张图 640 token 换不来比纯文本更多的信息。
  */
 export async function read(page, { limit = 8000 } = {}) {
-  const r = await withTimeout(page.evaluate(readMain, limit), 15000, '读正文');
+  const r = await withTimeout(page.evaluate(readMain, limit), 15000, 'read body text');
   return {
     ok: true, ...r,
-    ...(r.total > r.text.length ? { truncated: true, note: `正文共 ${r.total} 字,只给了前 ${r.text.length} 字。要后面的就先 web_scroll 再读。` } : {}),
+    ...(r.total > r.text.length ? { truncated: true, note: `The body text has ${r.total} characters in total, and only the first ${r.text.length} were returned. To get the rest, run web_scroll first and then read again.` } : {}),
   };
 }
 
@@ -180,7 +180,7 @@ export async function handoff(inst, { reason = '', hide = false } = {}) {
   const shell = !!inst.shell;
   if (hide) {
     await hideWindow(inst);
-    return { ok: true, visible: false, shell, message: shell ? '浏览器已经收回。' : '浏览器窗口已经藏回屏幕外。' };
+    return { ok: true, visible: false, shell, message: shell ? 'The browser has been put away.' : 'The browser window has been hidden off screen.' };
   }
   await showWindow(inst);
   return {
@@ -188,9 +188,9 @@ export async function handoff(inst, { reason = '', hide = false } = {}) {
     visible: true,
     shell,
     message: (shell
-      ? `浏览器已经显示在编辑台主窗口里${reason ? `(${reason})` : ''}。`
-      : `浏览器窗口已经挪到用户屏幕上${reason ? `(${reason})` : ''}。`)
-      + '现在停下来,用中文告诉用户要做什么、做完了怎么说。**不要继续调工具**,'
-      + '等用户回话之后再 web_view 看当前状态。',
+      ? `The browser is now shown in the main editor window${reason ? `(${reason})` : ''}.`
+      : `The browser window has been moved onto the user's screen${reason ? `(${reason})` : ''}.`)
+      + 'Stop now and tell the user in Chinese what to do and what to say when done. **Do not keep calling tools**, '
+      + 'and after the user replies, run web_view to see the current state.',
   };
 }

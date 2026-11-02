@@ -79,7 +79,7 @@ const HASH = /^[0-9a-f]{64}$/;
 /** 哈希归一成小写；格式不对抛 TypeError */
 export function normalizeHash(hash) {
   const key = typeof hash === 'string' ? hash.toLowerCase() : '';
-  if (!HASH.test(key)) throw new TypeError('BlobStore：hash 必须是 64 位十六进制');
+  if (!HASH.test(key)) throw new TypeError('BlobStore: hash must be 64 hex characters');
   return key;
 }
 
@@ -91,7 +91,7 @@ export function normalizeExt(ext) {
   if (ext === undefined || ext === null) return '';
   const raw = String(ext).trim().toLowerCase().replace(/^\./, '');
   if (raw === '') return '';
-  if (!/^[a-z0-9]{1,8}$/.test(raw)) throw new TypeError('BlobStore：ext 必须是 1～8 位字母数字');
+  if (!/^[a-z0-9]{1,8}$/.test(raw)) throw new TypeError('BlobStore: ext must be 1-8 alphanumeric characters');
   return raw;
 }
 
@@ -106,8 +106,8 @@ export function normalizeTier(tier) {
 
 /** 分片号与全件大小的形状校验；不合法抛 TypeError */
 export function checkChunkArgs(n, size) {
-  if (!Number.isSafeInteger(n) || n < 0) throw new TypeError('BlobStore：n 必须是非负整数');
-  if (!Number.isSafeInteger(size) || size <= 0) throw new TypeError('BlobStore：size 必须是正整数');
+  if (!Number.isSafeInteger(n) || n < 0) throw new TypeError('BlobStore: n must be a non-negative integer');
+  if (!Number.isSafeInteger(size) || size <= 0) throw new TypeError('BlobStore: size must be a positive integer');
 }
 
 /** 分片数：小于一片的也算 1 片 */
@@ -179,7 +179,7 @@ export function toBuffer(chunk) {
   if (Buffer.isBuffer(chunk)) return chunk;
   if (chunk instanceof Uint8Array) return Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
   if (typeof chunk === 'string') return Buffer.from(chunk);
-  throw new TypeError('BlobStore：source 只能产出 Buffer / Uint8Array / 字符串');
+  throw new TypeError('BlobStore: source can only yield Buffer / Uint8Array / string');
 }
 
 /**

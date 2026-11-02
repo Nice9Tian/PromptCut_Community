@@ -395,13 +395,13 @@ export function VideoTrack({
           data-pc-media-pending="1"
           style={{ ...boxOf(uploading.clip), display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,.35)", color: "rgba(255,255,255,.72)", fontSize: 14 }}
         >
-          上传中…
+          Uploading…
         </div>
       )}
       {awaiting && (
         <div key={`awaiting-${awaiting.clip.id}`} data-pc-media-awaiting="1" style={{ ...boxOf(awaiting.clip), pointerEvents: "none" }}>
           <span style={{ position: "absolute", left: 16, bottom: 16, padding: "4px 16px", borderRadius: 999, background: "rgba(0,0,0,.45)", color: "rgba(255,255,255,.8)", fontSize: 28 }}>
-            等待上传方
+            Waiting for the uploader
           </span>
         </div>
       )}

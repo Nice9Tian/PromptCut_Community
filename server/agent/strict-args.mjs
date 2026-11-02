@@ -12,7 +12,7 @@ export const STRICT_ARG_TOOLS = new Set(['set_project_meta']);
 export function undeclaredArgs(tool, toolDef, args) {
   if (!STRICT_ARG_TOOLS.has(tool)) return [];
   if (args === undefined || args === null) return [];
-  if (typeof args !== 'object' || Array.isArray(args)) return ['(参数不是对象)'];
+  if (typeof args !== 'object' || Array.isArray(args)) return ['(arguments are not an object)'];
   const declared = Object.keys(toolDef?.inputSchema?.properties ?? {});
   return Object.keys(args).filter((k) => !declared.includes(k));
 }
@@ -20,7 +20,7 @@ export function undeclaredArgs(tool, toolDef, args) {
 /** 被拒时回给 Agent 的话 */
 export function undeclaredArgsError(tool, toolDef, unknown) {
   const declared = Object.keys(toolDef?.inputSchema?.properties ?? {});
-  const creativity = unknown.includes('creativity') ? '创造力等级只能由用户在项目设置或 AI 栏里改,Agent 不能写。' : '';
-  return `${tool} 不认这些字段:${unknown.join('、')}。这次调用整个没有执行,一个字段都没写。` +
-    `它只收 ${declared.join('、')}。${creativity}别的项目内容用对应的工具改。`;
+  const creativity = unknown.includes('creativity') ? 'Creativity level can only be changed by the user in project settings or the AI panel; the Agent cannot write it.' : '';
+  return `${tool} does not accept these fields: ${unknown.join(', ')}. This call was not executed at all, and no field was written.` +
+    `It only accepts ${declared.join(', ')}. ${creativity}Use the matching tool to change other project content.`;
 }

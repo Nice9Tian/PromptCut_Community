@@ -37,6 +37,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createAssetClient } from './asset-store/client.mjs';
+import { tr } from "./i18n.mjs";
 
 export const BAKE_INDEX_DIR = 'bake-index';
 export const BAKE_NS = 'px';
@@ -98,9 +99,9 @@ function wrap(err, base, what) {
   const status = err && typeof err === 'object' ? err.status : undefined;
   const msg = String(err?.message || err);
   if (typeof status === 'number') {
-    return new BakeStoreError(`素材服务拒绝了${what}(${base},HTTP ${status}):${msg}`, { status });
+    return new BakeStoreError(tr("Asset service rejected the {0} ({1}, HTTP {2}): {3}", what, base, status, msg), { status });
   }
-  return new BakeStoreError(`素材服务不可达(${base}),PNG 快照没能${what}:${msg}`);
+  return new BakeStoreError(tr("Asset service unreachable ({0}), PNG snapshot failed to {1}: {2}", base, what, msg));
 }
 
 async function writeAtomic(file, text) {
@@ -140,14 +141,14 @@ async function mapLimit(list, limit, fn) {
  * @param {number} [p.retries]  素材服务客户端的重试次数(缺省 2)
  */
 export function createBakeStore({ indexDir, origin, fetchImpl = globalThis.fetch, remote = bakeRemote, log = () => {}, timeoutMs = BAKE_ASSET_TIMEOUT_MS, retries = 2 }) {
-  if (typeof indexDir !== 'string' || !indexDir) throw new TypeError('createBakeStore:indexDir 必填');
-  if (typeof origin !== 'function') throw new TypeError('createBakeStore:origin 必须是函数');
+  if (typeof indexDir !== 'string' || !indexDir) throw new TypeError('createBakeStore: indexDir is required');
+  if (typeof origin !== 'function') throw new TypeError('createBakeStore: origin must be a function');
   let cached = null; // { base, client }
 
   /** 当前素材服务的客户端;取不到地址抛 */
   function current(what) {
     const src = String(origin() || '').trim().replace(/\/+$/, '');
-    if (!src) throw new BakeStoreError(`素材服务不可达:取不到素材服务的地址,PNG 快照没能${what}`);
+    if (!src) throw new BakeStoreError(tr("Asset service unreachable: cannot get the asset service address, PNG snapshot failed to {0}", what));
     const base = `${src}/api/asset`;
     if (cached?.base !== base) cached = { src, base, client: createAssetClient({ base, fetch: fetchImpl, timeoutMs, retries }) };
     return cached;
@@ -188,10 +189,10 @@ export function createBakeStore({ indexDir, origin, fetchImpl = globalThis.fetch
     const base = String(client.base || '').replace(/\/+$/, '');
     if (base && entry.pushed === base) return null;
     // 选定的就是本机素材服务(推送队列还没等到别的登记时会回落本机):已经写在那儿了,不推
-    try { if (base && base === current('读取').base) return null; } catch { /* 取不到本机地址就照推 */ }
+    try { if (base && base === current(tr("read")).base) return null; } catch { /* 取不到本机地址就照推 */ }
     return (async () => {
       try {
-        const buf = bytes ?? await current('读取').client.get(BAKE_NS, entry.hash);
+        const buf = bytes ?? await current(tr("read")).client.get(BAKE_NS, entry.hash);
         if (!buf) return;
         await client.put(BAKE_NS, buf, { ext: 'png' });
         const now = await readEntry(entry.key);
@@ -213,9 +214,9 @@ export function createBakeStore({ indexDir, origin, fetchImpl = globalThis.fetch
     async lookup(key) {
       const e = await readEntry(key);
       if (!e) return null;
-      const { base, client } = current('读取');
+      const { base, client } = current(tr("read"));
       let complete;
-      try { complete = await client.has(BAKE_NS, e.hash); } catch (err) { throw wrap(err, base, '读取'); }
+      try { complete = await client.has(BAKE_NS, e.hash); } catch (err) { throw wrap(err, base, tr("read")); }
       if (!complete) {
         // 素材服务里已经没有这一块:索引不作判决依据,条目删掉,当作没渲过
         await dropEntry(key);
@@ -233,10 +234,10 @@ export function createBakeStore({ indexDir, origin, fetchImpl = globalThis.fetch
      * @param {{ width?: number, height?: number, clipId?: string, name?: string }} [meta]
      */
     async put(key, buf, meta = {}) {
-      if (!KEY_RE.test(String(key))) throw new TypeError(`PNG 快照的键不合法:${key}`);
-      const { base, client } = current('写入');
+      if (!KEY_RE.test(String(key))) throw new TypeError(tr("Invalid PNG snapshot key: {0}", key));
+      const { base, client } = current(tr("write"));
       let r;
-      try { r = await client.put(BAKE_NS, buf, { ext: 'png' }); } catch (err) { throw wrap(err, base, '写入'); }
+      try { r = await client.put(BAKE_NS, buf, { ext: 'png' }); } catch (err) { throw wrap(err, base, tr("write")); }
       const entry = {
         key, hash: r.hash, bytes: r.size,
         width: Number(meta.width) || null, height: Number(meta.height) || null,
@@ -258,18 +259,18 @@ export function createBakeStore({ indexDir, origin, fetchImpl = globalThis.fetch
      */
     async migrateLegacy(key, name, meta = {}) {
       if (!KEY_RE.test(String(key)) || !/^bake-[\w.-]*\.png$/.test(String(name))) return null;
-      const { src, base } = current('读取');
+      const { src, base } = current(tr("read"));
       const url = `${src}/@media/${encodeURIComponent(name)}`;
       let res;
       try {
         res = await fetchImpl(url, { signal: AbortSignal.timeout(LEGACY_FETCH_TIMEOUT_MS) });
       } catch (err) {
-        throw new BakeStoreError(`素材服务不可达(${base}),PNG 快照没能读取:${err?.cause?.code || err?.message || err}`);
+        throw new BakeStoreError(tr("Asset service unreachable ({0}), failed to read PNG snapshot: {1}", base, err?.cause?.code || err?.message || err));
       }
       if (res.status === 404) { await res.arrayBuffer().catch(() => {}); return null; }
       if (!res.ok) {
         await res.arrayBuffer().catch(() => {});
-        throw new BakeStoreError(`素材服务拒绝了读取(${base},HTTP ${res.status}):/@media/${name}`, { status: res.status });
+        throw new BakeStoreError(tr("Asset service refused the read ({0}, HTTP {1}): /@media/{2}", base, res.status, name), { status: res.status });
       }
       const buf = Buffer.from(await res.arrayBuffer());
       // 不是 PNG(比如迁移期同名的别的东西、或空文件)就当没有,重渲
@@ -303,9 +304,9 @@ export function createBakeStore({ indexDir, origin, fetchImpl = globalThis.fetch
       const entries = (await Promise.all(uniq.map(readEntry))).filter(Boolean);
       const found = new Map();
       if (!entries.length) return found;
-      const { base, client } = current('读取');
+      const { base, client } = current(tr("read"));
       const done = await mapLimit(entries, STATUS_CONCURRENCY, async (e) => {
-        try { return await client.has(BAKE_NS, e.hash); } catch (err) { throw wrap(err, base, '读取'); }
+        try { return await client.has(BAKE_NS, e.hash); } catch (err) { throw wrap(err, base, tr("read")); }
       });
       for (let i = 0; i < entries.length; i++) {
         if (done[i]) found.set(entries[i].key, withUrl(entries[i]));
@@ -332,7 +333,7 @@ export function createBakeStore({ indexDir, origin, fetchImpl = globalThis.fetch
     },
 
     /** 单测用:当前素材服务的 API 基址 */
-    baseForTest() { return current('读取').base; },
+    baseForTest() { return current(tr("read")).base; },
   };
   return api;
 }

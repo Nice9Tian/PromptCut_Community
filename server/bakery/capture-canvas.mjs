@@ -124,11 +124,11 @@ export function unpackCanvasPixels(bytes, width, height) {
   const out = Buffer.alloc(total * 4);
   let i = 0, o = 0;
   while (i < bytes.length) {
-    if (i + 8 > bytes.length) throw new Error('画布像素的游程数据不完整');
+    if (i + 8 > bytes.length) throw new Error('canvas pixel run-length data is incomplete');
     const skip = bytes.readUInt32LE(i), count = bytes.readUInt32LE(i + 4);
     i += 8;
     o += skip;
-    if (o + count > total || i + count * 4 > bytes.length) throw new Error('画布像素的游程数据越界');
+    if (o + count > total || i + count * 4 > bytes.length) throw new Error('canvas pixel run-length data is out of bounds');
     bytes.copy(out, o * 4, i, i + count * 4);
     i += count * 4;
     o += count;
@@ -142,7 +142,7 @@ export function unpackCanvasPixels(bytes, width, height) {
  */
 export function compareRgba(a, b, width, height) {
   const pixels = width * height;
-  if (a.length < pixels * 4 || b.length < pixels * 4) throw new Error('compareRgba:数据比矩形小');
+  if (a.length < pixels * 4 || b.length < pixels * 4) throw new Error('compareRgba: data is smaller than the rectangle');
   let color = 0, alpha = 0, bad = 0;
   for (let i = 0, end = pixels * 4; i < end; i += 4) {
     const aa = a[i + 3], ba = b[i + 3];
@@ -227,7 +227,7 @@ export function directSegmentCapture(bakery, { clipId, rect, record, stride = 1,
   let mode = null;
   const shotAsRgba = async (shoot, why) => {
     const decoded = decodePngRgba(await shoot());
-    if (!decoded || decoded.width !== rect.w || decoded.height !== rect.h) throw new Error(`画布直取:这一帧取不到(${why}),截图也解不开`);
+    if (!decoded || decoded.width !== rect.w || decoded.height !== rect.h) throw new Error(`Direct canvas capture: this frame cannot be read (${why}), and the screenshot cannot be decoded either`);
     record.misses++;
     return { rgba: decoded.data, width: rect.w, height: rect.h };
   };
@@ -275,7 +275,7 @@ export function directSegmentCapture(bakery, { clipId, rect, record, stride = 1,
       // 这一帧碰巧取不到(平面的帧号对不上、卡还没挂上)只让这个分段走截图;比出差别、画布认不出来的,这条流从此走截图
       if (PERMANENT_REASONS.test(verdict.reason)) {
         record.failed = verdict.reason;
-        note(`画布直取没过(${verdict.reason}${verdict.color === undefined ? '' : `:颜色差 ${verdict.color}、不透明度差 ${verdict.alpha}、明显不同的像素 ${verdict.bad} 个`}),这条流照旧走截图`);
+        note(`Direct canvas capture failed (${verdict.reason}${verdict.color === undefined ? '' : `: color difference ${verdict.color}, opacity difference ${verdict.alpha}, clearly different pixels ${verdict.bad}`}), this stream falls back to screenshots as before`);
       } else record.misses++;
       return png;
     }

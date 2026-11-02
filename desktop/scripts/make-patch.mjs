@@ -69,7 +69,7 @@ const INSTALLER_DIR = option("--installer-src") || __dirname;
 const INSTALLER_FILES = ["apply-patch.ps1", "apply-patch.cmd", "patch-installer.nsi"];
 for (const f of INSTALLER_FILES) {
   if (!fs.existsSync(path.join(INSTALLER_DIR, f))) {
-    console.error(`[FAIL] 安装器文件缺失：${path.join(INSTALLER_DIR, f)}`);
+    console.error(`[FAIL] installer file missing: ${path.join(INSTALLER_DIR, f)}`);
     process.exit(1);
   }
 }
@@ -148,7 +148,7 @@ function copyTree(src, dest) {
   });
   // robocopy 用退出码表示做了什么，0–7 都算成功，≥8 才是真出错。
   if (r.error || r.status === null || r.status >= 8) {
-    fail(`复制 ${src} 失败（robocopy 代码 ${r.status}${r.error ? `，${r.error.message}` : ""}）`);
+    fail(`Failed to copy ${src} (robocopy code ${r.status}${r.error ? `, ${r.error.message}` : ""})`);
   }
 }
 
@@ -178,7 +178,7 @@ const mb = (bytes) => (bytes / 1048576).toFixed(1);
 function findBaseManifest(appVersion) {
   const explicit = option("--base");
   if (explicit) {
-    if (!fs.existsSync(explicit)) fail(`--base 指定的清单不存在：${explicit}`);
+    if (!fs.existsSync(explicit)) fail(`manifest given by --base does not exist: ${explicit}`);
     return { path: explicit, data: JSON.parse(fs.readFileSync(explicit, "utf-8")) };
   }
   if (!fs.existsSync(RELEASE_DIR)) return null;
@@ -213,9 +213,9 @@ function hashLockDeps(file) {
 function main() {
   console.log("PromptCut make-patch");
 
-  if (!fs.existsSync(APP_DIR)) fail(`runtime/app 不存在，先跑 npm run prepare-runtime`);
+  if (!fs.existsSync(APP_DIR)) fail(`runtime/app does not exist, run npm run prepare-runtime first`);
   const distIndex = path.join(APP_DIR, "dist", "index.html");
-  if (!fs.existsSync(distIndex)) fail(`runtime/app/dist/index.html 不存在，先跑 npm run prepare-runtime`);
+  if (!fs.existsSync(distIndex)) fail(`runtime/app/dist/index.html does not exist, run npm run prepare-runtime first`);
 
   const appPkg = JSON.parse(fs.readFileSync(path.join(APP_DIR, "package.json"), "utf-8"));
   // 防的是「改完源码忘了重跑 prepare-runtime，拿旧的 app 打补丁」。
@@ -224,7 +224,7 @@ function main() {
   if (!flag("--skip-source-check")) {
     const rootPkg = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, "package.json"), "utf-8"));
     if (appPkg.version !== rootPkg.version) {
-      fail(`runtime/app 落后于源码（app ${appPkg.version} ≠ 源码 ${rootPkg.version}），先重跑 prepare-runtime`);
+      fail(`runtime/app is behind the source (app ${appPkg.version} ≠ source ${rootPkg.version}), rerun prepare-runtime first`);
     }
   }
   const appVersion = appPkg.version;
@@ -236,8 +236,8 @@ function main() {
   const gen = (v) => v.split(".").slice(0, 2).join(".");
   if (gen(MIN_SHELL_VERSION) !== gen(shellVersion)) {
     fail(
-      `MIN_SHELL_VERSION(${MIN_SHELL_VERSION})和本次外壳(${shellVersion})不是同一代次。` +
-        `外壳换代时要把它一起挪到新代次的起点。`
+      `MIN_SHELL_VERSION(${MIN_SHELL_VERSION}) and this shell (${shellVersion}) are not the same generation.` +
+        `When the shell generation changes, move it to the start of the new generation too.`
     );
   }
 
@@ -245,29 +245,29 @@ function main() {
   const lockHash = sha256File(lockPath);
   const lockDepsHash = hashLockDeps(lockPath);
   const base = findBaseManifest(appVersion);
-  if (base) console.log(`  基准清单：${path.basename(base.path)}（app ${base.data.appVersion}）`);
-  else console.log("  没有找到上一次发布的清单");
+  if (base) console.log(`  baseline manifest: ${path.basename(base.path)} (app ${base.data.appVersion})`);
+  else console.log("  no manifest from the previous release found");
 
   // 依赖是否要随包发出去。lock 一样就不带，这才是「只改 Node 代码」的常见情形。
   let includesDeps;
   let depsReason;
   if (flag("--with-deps")) {
-    includesDeps = true; depsReason = "命令行指定 --with-deps";
+    includesDeps = true; depsReason = "--with-deps given on the command line";
   } else if (flag("--no-deps")) {
-    includesDeps = false; depsReason = "命令行指定 --no-deps";
+    includesDeps = false; depsReason = "--no-deps given on the command line";
   } else if (!base) {
-    includesDeps = true; depsReason = "没有基准清单可比，保守起见带上依赖";
+    includesDeps = true; depsReason = "no baseline manifest to compare, including dependencies to be safe";
   } else if (!base.data.lockDepsHash) {
     // 老清单只记了整份文件的哈希，没法判断变的是不是依赖，保守带上
-    includesDeps = true; depsReason = "基准清单来自旧版本，无法只比依赖";
+    includesDeps = true; depsReason = "baseline manifest is from an old version, cannot compare dependencies only";
   } else if (base.data.lockDepsHash !== lockDepsHash) {
-    includesDeps = true; depsReason = "依赖与基准不同";
+    includesDeps = true; depsReason = "dependencies differ from baseline";
   } else {
-    includesDeps = false; depsReason = "依赖与基准一致";
+    includesDeps = false; depsReason = "dependencies match baseline";
   }
-  console.log(`  依赖：${includesDeps ? "随包发出" : "不发"}（${depsReason}）`);
+  console.log(`  dependencies: ${includesDeps ? "shipped in package" : "not shipped"} (${depsReason})`);
   if (!includesDeps && base && base.data.lockDepsHash && base.data.lockDepsHash !== lockDepsHash) {
-    fail("依赖有变化，--no-deps 会产出一个装上去就跑不起来的补丁");
+    fail("dependencies changed, --no-deps would produce a patch that will not run once installed");
   }
 
   // ── 收集载荷 ──────────────────────────────────────────────────────
@@ -279,13 +279,13 @@ function main() {
     hashes[rel] = sha256File(full);
     payloadBytes += fs.statSync(full).size;
   }
-  console.log(`  构建产物：${files.length} 个文件，${mb(payloadBytes)} MB`);
+  console.log(`  build output: ${files.length} files, ${mb(payloadBytes)} MB`);
 
   // 上一版有、这一版没有的文件。只删构建产物，用户数据不在这个集合里。
   const removed = base?.data?.files
     ? Object.keys(base.data.files).filter((rel) => !(rel in hashes))
     : [];
-  if (removed.length) console.log(`  需要删除的旧文件：${removed.length} 个`);
+  if (removed.length) console.log(`  old files to delete: ${removed.length}`);
 
   // ── 组装补丁目录 ──────────────────────────────────────────────────
   const stem = `PromptCut-patch-${appVersion}`;
@@ -303,11 +303,11 @@ function main() {
   let deps = null;
   if (includesDeps) {
     const src = path.join(APP_DIR, "node_modules");
-    if (!fs.existsSync(src)) fail("要带依赖，但 runtime/app/node_modules 不存在");
-    console.log("  复制 node_modules…");
+    if (!fs.existsSync(src)) fail("dependencies are required, but runtime/app/node_modules does not exist");
+    console.log("  copying node_modules…");
     copyTree(src, path.join(payloadDir, "node_modules"));
     deps = countTree(path.join(payloadDir, "node_modules"));
-    console.log(`  依赖：${deps.files} 个文件，${mb(deps.bytes)} MB`);
+    console.log(`  dependencies: ${deps.files} files, ${mb(deps.bytes)} MB`);
   }
 
   const manifest = {
@@ -335,7 +335,7 @@ function main() {
   fs.writeFileSync(path.join(root, "patch.json"), JSON.stringify(manifest, null, 2));
 
   fs.copyFileSync(path.join(INSTALLER_DIR, "apply-patch.ps1"), path.join(root, "apply-patch.ps1"));
-  fs.copyFileSync(path.join(INSTALLER_DIR, "apply-patch.cmd"), path.join(root, "安装更新.cmd"));
+  fs.copyFileSync(path.join(INSTALLER_DIR, "apply-patch.cmd"), path.join(root, "Install update.cmd"));
   fs.writeFileSync(path.join(root, "README.txt"), readmeText(manifest));
 
   // ── 打包 ──────────────────────────────────────────────────────────
@@ -343,16 +343,16 @@ function main() {
   const zipPath = path.join(RELEASE_DIR, `${stem}.zip`);
   rmrf(zipPath);
   // 打包前先核对暂存目录：该进去的都在，才轮得到压缩。
-  const mustHave = ["patch.json", "apply-patch.ps1", "安装更新.cmd", "README.txt",
+  const mustHave = ["patch.json", "apply-patch.ps1", "Install update.cmd", "README.txt",
     ...files.map((rel) => `payload/${rel}`)];
   const missing = mustHave.filter((p) => !fs.existsSync(path.join(root, p)));
-  if (missing.length) fail(`补丁内容少了 ${missing.length} 项，例如 ${missing[0]}`);
-  console.log(`  内容核对通过：${mustHave.length} 项`);
+  if (missing.length) fail(`patch is missing ${missing.length} items, for example ${missing[0]}`);
+  console.log(`  content check passed: ${mustHave.length} items`);
 
   // 主产物是 exe：用户双击就装，不用先解压、也不会有人误在压缩包里点 cmd。
   const exePath = path.join(RELEASE_DIR, `${stem}.exe`);
   rmrf(exePath);
-  console.log("  用 NSIS 打成 exe…");
+  console.log("  Packaging into an exe with NSIS…");
   const nsis = findMakensis();
   const build = spawnSync(nsis, [
     `-DVERSION=${appVersion}`,
@@ -362,12 +362,12 @@ function main() {
     path.join(INSTALLER_DIR, "patch-installer.nsi"),
   ], { windowsHide: true, encoding: "utf8", timeout: 1_800_000 });
   if (build.status !== 0 || !fs.existsSync(exePath)) {
-    fail(`NSIS 打包失败（退出码 ${build.status}）\n${(build.stdout || "").slice(-2000)}${build.stderr || ""}`);
+    fail(`NSIS packaging failed (exit code ${build.status})\n${(build.stdout || "").slice(-2000)}${build.stderr || ""}`);
   }
 
   // 想看看补丁里到底有什么就加 --zip，日常发布用不到。
   if (flag("--zip")) {
-    console.log("  额外打一份 zip…");
+    console.log("  also building a zip…");
     // hdrcharset=UTF-8 不能省：默认按 CP437 存文件名，「安装更新.cmd」会被
     // 直接丢掉，只在 stderr 留一行警告。
     const tarExe = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe");
@@ -375,15 +375,15 @@ function main() {
       ["-a", "-c", "--options", "hdrcharset=UTF-8", "-f", zipPath, stem], { windowsHide: true,
         cwd: STAGE_DIR, stdio: ["ignore", "inherit", "pipe"], encoding: "utf8", timeout: 1_800_000,
       });
-    if (zip.status !== 0) fail(`zip 打包失败（退出码 ${zip.status}）${zip.stderr || ""}`);
-    if (zip.stderr && zip.stderr.trim()) fail(`zip 里有文件被跳过：\n${zip.stderr.trim()}`);
+    if (zip.status !== 0) fail(`zip packaging failed (exit code ${zip.status})${zip.stderr || ""}`);
+    if (zip.stderr && zip.stderr.trim()) fail(`some files were skipped in the zip:\n${zip.stderr.trim()}`);
   }
 
   // 清单单独放一份，下一次构建拿它当基准算差异
   fs.writeFileSync(path.join(RELEASE_DIR, `manifest-${appVersion}.json`), JSON.stringify(manifest, null, 2));
   rmrf(STAGE_DIR);
 
-  console.log(`\n  补丁：${exePath}（${mb(fs.statSync(exePath).size)} MB）`);
+  console.log(`\n  patch: ${exePath} (${mb(fs.statSync(exePath).size)} MB)`);
   return { exePath, manifest };
 }
 
@@ -393,29 +393,29 @@ function findMakensis() {
   if (fs.existsSync(bundled)) return bundled;
   const probe = spawnSync("makensis", ["/VERSION"], { windowsHide: true, encoding: "utf8" });
   if (probe.status === 0 || probe.stdout) return "makensis";
-  fail("找不到 makensis。跑一次 npm run build 让 Tauri 把 NSIS 装下来，或者自己装 NSIS 并加进 PATH。");
+  fail("makensis not found. Run npm run build once to let Tauri install NSIS, or install NSIS yourself and add it to PATH.");
 }
 
 function readmeText(m) {
   return [
-    `PromptCut 更新补丁 ${m.appVersion}`,
+    `PromptCut update patch ${m.appVersion}`,
     ``,
-    `这个补丁只更新程序里 Node 那一部分（界面和后端逻辑）${m.includesDeps ? "以及依赖" : ""}，`,
-    `不动 Chrome、ffmpeg、Python 和外壳，所以比完整安装包小很多。`,
+    `This patch only updates the Node part of the app (UI and backend logic)${m.includesDeps ? " and dependencies" : ""},`,
+    `It does not touch Chrome, ffmpeg, Python or the shell, so it is much smaller than the full installer.`,
     ``,
-    `用法：双击「安装更新.cmd」。`,
+    `Usage: double-click "Install update.cmd".`,
     ``,
-    `它会做这些事：`,
-    `  1. 找到已安装的 PromptCut（默认 %LOCALAPPDATA%\\PromptCut）`,
-    `  2. 确认版本对得上（外壳需要 ${m.minShellVersion} 或更新）`,
-    `  3. 请你关掉正在运行的 PromptCut`,
-    `  4. 备份当前版本，然后覆盖更新`,
-    `  5. 出任何问题都会自动回滚到备份`,
+    `It will do the following:`,
+    `  1. Find the installed PromptCut (default %LOCALAPPDATA%\\PromptCut)`,
+    `  2. Check that versions match (shell needs ${m.minShellVersion} or newer)`,
+    `  3. Ask you to close the running PromptCut`,
+    `  4. Back up the current version, then overwrite it with the update`,
+    `  5. Roll back to the backup automatically if anything goes wrong`,
     ``,
-    `不会动的东西：导出的视频（exports）、AI 会话历史（.pc-chats）、`,
-    `设置和密钥（%LOCALAPPDATA%\\promptcut）、下载的语音模型。`,
+    `Left untouched: exported videos (exports), AI session history (.pc-chats), `,
+    `settings and keys (%LOCALAPPDATA%\\promptcut), downloaded speech models.`,
     ``,
-    `如果补丁装不上，用完整安装包覆盖安装即可，效果一样。`,
+    `If the patch cannot be installed, install the full installer over it instead; the result is the same.`,
   ].join("\r\n");
 }
 

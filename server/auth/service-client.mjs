@@ -25,6 +25,7 @@
  */
 import { PROTOCOL, TICKET_PREFIX } from './protocol.mjs';
 import { buildServiceProtocols, readServiceKeyFile } from './service-identity.mjs';
+import { tr } from "../i18n.mjs";
 
 export const SERVICE_CLIENT_DEFAULTS = Object.freeze({
   requestTimeoutMs: 10_000,
@@ -70,8 +71,8 @@ export function createServiceClient({
   reconnectMs = SERVICE_CLIENT_DEFAULTS.reconnectMs,
   autoReconnect = true,
 } = {}) {
-  if (typeof base !== 'string' || base === '') throw new TypeError('createServiceClient: base 必须是非空字符串');
-  if (typeof WebSocketImpl !== 'function') throw new TypeError('createServiceClient: 没有可用的 WebSocket 实现');
+  if (typeof base !== 'string' || base === '') throw new TypeError('createServiceClient: base must be a non-empty string');
+  if (typeof WebSocketImpl !== 'function') throw new TypeError('createServiceClient: no WebSocket implementation available');
   const key = givenKey ?? readServiceKeyFile(keyFile);
   const url = wsUrlOf(base);
   const say = (event, fields = {}) => {
@@ -136,12 +137,12 @@ export function createServiceClient({
 
   /** 建一次控制连接；已连上直接回。失败抛错（并按退避安排下一次） */
   function connect() {
-    if (closed) return Promise.reject(Object.assign(new Error('服务客户端已关闭'), { code: 'closed' }));
+    if (closed) return Promise.reject(Object.assign(new Error('The service client is closed'), { code: 'closed' }));
     if (open) return Promise.resolve();
     connecting ??= (async () => {
       try {
         const protocols = await buildServiceProtocols({ base, key, fetch: fetchImpl });
-        if (closed) throw Object.assign(new Error('服务客户端已关闭'), { code: 'closed' });
+        if (closed) throw Object.assign(new Error('The service client is closed'), { code: 'closed' });
         await new Promise((resolve, reject) => {
           const sock = new WebSocketImpl(url, protocols);
           let settled = false;
@@ -149,7 +150,7 @@ export function createServiceClient({
             if (settled) return;
             settled = true;
             try { sock.close(); } catch { /* 还没连上 */ }
-            reject(Object.assign(new Error('控制连接超时'), { code: 'timeout' }));
+            reject(Object.assign(new Error(tr("Control connection timed out")), { code: 'timeout' }));
           }, connectTimeoutMs);
           timer.unref?.();
           sock.addEventListener('open', () => {
@@ -172,7 +173,7 @@ export function createServiceClient({
             if (!settled) {
               settled = true;
               clearTimeout(timer);
-              reject(Object.assign(new Error(`控制连接没建成（${ev.code ?? 0}）`), { code: 'refused', closeCode: ev.code ?? null }));
+              reject(Object.assign(new Error(tr("Control connection failed ({0})", ev.code ?? 0)), { code: 'refused', closeCode: ev.code ?? null }));
               return;
             }
             if (wasOpen) {
@@ -307,7 +308,7 @@ export function createServiceClient({
       return async (conversation) => {
         const grant = typeof delegation === 'function' ? delegation() : delegation;
         const r = await api.memberTicket({ projectId, conversation, conversationId, delegation: grant });
-        if (!r.ok) throw Object.assign(new Error(`换不出连接票据（${r.reason}）`), { code: r.reason });
+        if (!r.ok) throw Object.assign(new Error(tr("Could not exchange for a connection ticket ({0})", r.reason)), { code: r.reason });
         return ticketProtocols(r.ticket);
       };
     },

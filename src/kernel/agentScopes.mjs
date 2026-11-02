@@ -18,7 +18,7 @@
 export function cutNameOf(project) {
   const cuts = Array.isArray(project?.cuts) ? project.cuts : [];
   const hit = cuts.find((c) => c && c.id === project?.activeCutId) ?? cuts[0];
-  return typeof hit?.name === 'string' && hit.name ? hit.name : '剪辑1';
+  return typeof hit?.name === 'string' && hit.name ? hit.name : 'Cut 1';
 }
 
 const tracksOf = (p) => (Array.isArray(p?.tracks) ? p.tracks.filter((t) => t && typeof t === 'object') : []);
@@ -40,7 +40,7 @@ export function diffScopes(before, after) {
     }
   }
   for (const b of tracksOf(before)) {
-    if (!tracksOf(after).some((t) => t.id === b.id)) out.push(`${name}->${b.name}(已删)`);
+    if (!tracksOf(after).some((t) => t.id === b.id)) out.push(`${name}->${b.name}(deleted)`);
   }
   // 停放的剪辑里被就地改了(Agent 不切换剪辑直接改它的片段,store/core.ts 的 runInCutScope)也算范围:
   // 内容住在 cuts[].tracks 里,逐条停放的剪辑按同一口径比序列
@@ -56,15 +56,15 @@ export function diffScopes(before, after) {
       if (!b || b.clips !== t.clips || b.name !== t.name || !!b.hidden !== !!t.hidden || !!b.muted !== !!t.muted || !!b.locked !== !!t.locked) out.push(`${cname}->${t.name}`);
     }
     for (const b of tracksOf({ tracks: bc.tracks })) {
-      if (!tracksOf(c).some((t) => t.id === b.id)) out.push(`${cname}->${b.name}(已删)`);
+      if (!tracksOf(c).some((t) => t.id === b.id)) out.push(`${cname}->${b.name}(deleted)`);
     }
   }
   if (out.length === 0) {
     const order = (p) => tracksOf(p).map((t) => t.id).join('\n');
-    if (order(before) !== order(after)) out.push(`${name}->序列顺序`);
+    if (order(before) !== order(after)) out.push(`${name}->track order`);
   }
   if (out.length === 0 && before.theme !== after.theme && JSON.stringify(before.theme ?? null) !== JSON.stringify(after.theme ?? null)) {
-    out.push('全局主题');
+    out.push('global theme');
   }
   return out;
 }
@@ -112,10 +112,10 @@ export const CUTS_INDEX_LIMITS = Object.freeze({ maxClips: 60, perCutMax: 30, la
 
 /** 写给模型看的一句话。get_project / list_cuts 的索引里带一份 */
 export const PARKED_EDIT_NOTE =
-  "这些是没有激活的剪辑里的片段。改它们不用 user_interface_switch_cut:把 clipId 直接交给 update_clip / set_clip / get_clip / " +
-  "set_position / set_rect / align / nudge / set_emphasis / set_clip_volume / set_clip_muted,它们就地改那条剪辑里的片段。" +
-  "看它们的画面用 see_frames 传 cutId,也不用切。激活的剪辑是所有成员共享的,user_interface_switch_cut 会让每个人的界面一起翻,只有要在别的剪辑里新增 / 删除 / 切分 / 复制片段时才切。" +
-  "trackId 要用那条剪辑自己的序列 id(下面每个片段带着)。";
+  "These are clips in cuts that are not active. To edit them, do not use user_interface_switch_cut: pass the clipId directly to update_clip / set_clip / get_clip / " +
+  "set_position / set_rect / align / nudge / set_emphasis / set_clip_volume / set_clip_muted, which edit the clips in that cut in place." +
+  "To view their frames, pass cutId to see_frames, no switch needed either. The active cut is shared by all members, and user_interface_switch_cut flips everyone's UI at once, so switch only when you need to add / delete / split / duplicate clips in another cut." +
+  "trackId must be the id of that cut's own track (each clip below carries it).";
 
 const round2 = (n) => Math.round(n * 100) / 100;
 
@@ -172,7 +172,7 @@ export function parkedCutsIndex(project, opts = {}) {
       trackCount: tracks.length,
       clipCount: flat.length,
       clips,
-      ...(omitted > 0 ? { omitted, more: `还有 ${omitted} 个片段没列出,用 list_cuts({ cutId: "${c.id}" }) 看这条的全部` } : null),
+      ...(omitted > 0 ? { omitted, more: `${omitted} more clips not listed, use list_cuts({ cutId: "${c.id}" }) to see all of this cut` } : null),
     });
   }
   return { activeCutId, note: PARKED_EDIT_NOTE, cuts: out };
@@ -198,7 +198,7 @@ export function otherCutsHint(project) {
   if (!rest.length) return null;
   return {
     cuts: rest,
-    hint: "上面的 timeline 只是激活剪辑的。别的剪辑里的片段不用 user_interface_switch_cut:clipId 在 get_project 的 parkedCuts 或 list_cuts({ cutId }) 里,直接交给 update_clip 等就地改;看画面用 see_frames 传 cutId。",
+    hint: "The timeline above is only for the active cut. For clips in other cuts, do not use user_interface_switch_cut: the clipId is in parkedCuts of get_project or in list_cuts({ cutId }), pass it directly to update_clip etc. to edit in place; to view frames, pass cutId to see_frames.",
   };
 }
 
@@ -221,13 +221,13 @@ export function otherCutsHint(project) {
 export function cutLookView(project, cutId) {
   const cuts = Array.isArray(project?.cuts) ? project.cuts.filter((c) => c && typeof c === "object") : [];
   const activeId = activeCutIdForIndex(project) ?? "cut-1";
-  const activeName = cuts.find((c) => c.id === activeId)?.name || "剪辑1";
+  const activeName = cuts.find((c) => c.id === activeId)?.name || "Cut 1";
   const want = typeof cutId === "string" ? cutId.trim() : "";
   if (!want || want === activeId) return { project, cut: { id: activeId, name: activeName }, active: true, parkedT: null };
   const target = cuts.find((c) => c.id === want);
   if (!target) {
-    const list = cuts.length ? cuts.map((c) => `${c.name || c.id}(${c.id})`).join("、") : `${activeName}(${activeId})`;
-    throw Object.assign(new Error(`找不到剪辑 ${JSON.stringify(want)};现有的:${list}。cutId 从 list_cuts 里拿,不传就看当前激活的剪辑。`), { code: "cut-not-found" });
+    const list = cuts.length ? cuts.map((c) => `${c.name || c.id}(${c.id})`).join(", ") : `${activeName}(${activeId})`;
+    throw Object.assign(new Error(`Cut ${JSON.stringify(want)} not found; existing cuts: ${list}. Get cutId from list_cuts; if omitted, the currently active cut is used.`), { code: "cut-not-found" });
   }
   const nextCuts = cuts.map((c) => {
     if (c.id === activeId) return { ...c, tracks: project.tracks ?? [], duration: project.duration, transitions: Array.isArray(project.transitions) ? project.transitions : [] };

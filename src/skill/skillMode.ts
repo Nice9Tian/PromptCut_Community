@@ -12,6 +12,7 @@
  * 前端再单独搞一套推送只会让两边看到的时刻对不上。一秒一次的 JSON 请求便宜得很。
  */
 import { onlinePage } from "../online/pageFlag";
+import { tr } from "../i18n/index.ts";
 
 export interface SkillState {
   active: boolean;
@@ -99,25 +100,25 @@ async function post(path: string, body: unknown, what: string): Promise<void> {
       signal: AbortSignal.timeout(10_000),
     });
   } catch (e) {
-    throw new Error(`${what}请求没发出去:${e instanceof Error ? e.message : String(e)}`);
+    throw new Error(tr("{0} request was not sent: {1}", what, e instanceof Error ? e.message : String(e)));
   }
   const data = await res.json().catch(() => null);
   if (!res.ok || !data?.ok) {
-    throw new Error(`${what}请求被拒(HTTP ${res.status}):${data?.error ?? "服务端没有说明原因"}`);
+    throw new Error(tr("{0} request was rejected (HTTP {1}): {2}", what, res.status, data?.error ?? tr("the server gave no reason")));
   }
 }
 
 /** 开:用户在顶栏切到 SKILL。之后桌面 APP 的会话可以动手 */
 export async function openSkillMode(): Promise<void> {
-  await post("/api/skill-mode/open", {}, "打开 SKILL 模式");
+  await post("/api/skill-mode/open", {}, tr("Open SKILL mode"));
   await poll();
 }
 
 /** 关:用户切回传统式。之后桌面 APP 会话的任何工具调用都会被拒(AI 栏的 Agent 不受影响) */
 export async function closeSkillMode(by = "user"): Promise<void> {
-  await post("/api/skill-mode/close", { by }, "关闭 SKILL 模式");
+  await post("/api/skill-mode/close", { by }, tr("Close SKILL mode"));
   await poll();
   if (snapshot.state.active) {
-    throw new Error("关闭请求成功了,但服务端仍报告 SKILL 模式开着 —— 可能有别的实例在同时改状态,再点一次试试");
+    throw new Error(tr("The close request succeeded, but the server still reports SKILL mode as on. Another instance may be changing the state at the same time, try again"));
   }
 }

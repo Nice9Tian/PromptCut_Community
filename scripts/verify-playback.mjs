@@ -136,7 +136,7 @@ try {
   console.log('PASS: live scheduler heartbeat / pause', pipeline.playback.status().metrics);
   await page.goto(origin + '/retry-test');
   await page.waitForFunction(() => window.seeAttempts >= 2 && [...document.images].some(img => img.complete && img.naturalWidth === 160), { timeout: 15000 });
-  assert.equal(await page.evaluate(() => [...document.querySelectorAll('[role="status"]')].some(el => el.textContent.includes('连接中断'))), false);
+  assert.equal(await page.evaluate(() => [...document.querySelectorAll('[role="status"]')].some(el => el.textContent.includes('Connection lost'))), false);
   console.log('PASS: paused preview retries a backend outage without a seek or reload');
   await fs.writeFile(path.join(out, 'result.json'), JSON.stringify({ probe: probe(), streamed, metrics: pipeline.playback.status().metrics }, null, 2));
 } finally {

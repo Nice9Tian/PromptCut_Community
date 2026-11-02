@@ -57,7 +57,7 @@ function pickVersion(byteLen, ec) {
     const need = 4 + ccBits + byteLen * 8;
     if (need <= dataCodewords(v, ec) * 8) return v;
   }
-  throw new Error(`内容太长(${byteLen} 字节),超过版本 ${MAX_VERSION} 的容量`);
+  throw new Error(`Content too long (${byteLen} bytes), exceeds the capacity of version ${MAX_VERSION}`);
 }
 
 // ── GF(256) 与 Reed-Solomon ──────────────────────────────────────────
@@ -311,7 +311,7 @@ const MASKS = [
  * 传 mask 可以钉死掩码(测试用),不传就按罚分挑。
  */
 export function encodeQr(text, { ec = "M", mask = null } = {}) {
-  if (!(ec in BLOCKS)) throw new Error(`纠错等级只支持 L / M,给的是 ${ec}`);
+  if (!(ec in BLOCKS)) throw new Error(`Error correction level only supports L / M, got ${ec}`);
   const bytes = Array.from(new TextEncoder().encode(String(text)));
   const version = pickVersion(bytes.length, ec);
   const codewords = interleave(encodeData(bytes, version, ec), version, ec);

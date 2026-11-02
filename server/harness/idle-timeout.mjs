@@ -18,7 +18,7 @@
 
 /** 造一个和 `AbortSignal.timeout` 同形状的超时错误,好让上层按老办法认出来 */
 function timeoutError(ms) {
-  const e = new Error(`The operation was aborted due to timeout（${Math.round(ms / 1000)} 秒没有收到任何数据）`);
+  const e = new Error(`The operation was aborted due to timeout (no data received for ${Math.round(ms / 1000)} seconds)`);
   e.name = 'TimeoutError';
   return e;
 }

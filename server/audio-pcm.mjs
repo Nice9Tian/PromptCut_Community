@@ -11,6 +11,7 @@
  */
 import { spawn } from "node:child_process";
 import { timelineMixParts } from "./audio-measure.mjs";
+import { tr } from "./i18n.mjs";
 
 export const PCM_LIMITS = Object.freeze({
   defaultSampleRate: 16000,
@@ -41,8 +42,8 @@ export function sampleBudgetError({ duration, sampleRate, channels }, limits = P
   const need = Math.ceil(duration * sampleRate) * channels;
   if (need <= limits.maxSamples) return null;
   const maxSec = Math.floor(limits.maxSamples / (sampleRate * channels));
-  return `要测的这段 ${duration.toFixed(1)} 秒、${sampleRate} Hz、${channels} 声道,共 ${need} 个样本,超过上限 ${limits.maxSamples}` +
-    `(这个采样率和声道数下最多 ${maxSec} 秒)。降 sampleRate、传 mono: true,或用 start / duration 只测一段。`;
+  return tr("The segment to measure is {0} s, {1} Hz, {2} channels, {3} samples in total, over the limit of {4}", duration.toFixed(1), sampleRate, channels, need, limits.maxSamples) +
+    tr(" (at most {0} s at this sample rate and channel count). Lower sampleRate, pass mono: true, or measure only one segment with start / duration.", maxSec);
 }
 
 /**
@@ -53,7 +54,7 @@ export function windowOf({ baseOffset = 0, baseDuration, start, duration }) {
   const s = Number(start);
   const d = Number(duration);
   const from = Number.isFinite(s) && s > 0 ? s : 0;
-  if (baseDuration !== undefined && from >= baseDuration) throw new Error(`start ${from} 秒超出了这段声音的长度(${baseDuration} 秒)`);
+  if (baseDuration !== undefined && from >= baseDuration) throw new Error(tr("start {0} s is beyond the length of this audio ({1} s)", from, baseDuration));
   let dur = baseDuration !== undefined ? baseDuration - from : undefined;
   if (Number.isFinite(d) && d > 0) dur = dur === undefined ? d : Math.min(dur, d);
   return { offset: baseOffset + from, duration: dur };
@@ -131,23 +132,23 @@ export function decodePcm(ffmpeg, args, { channels, sampleRate, limits = PCM_LIM
     let stderr = "";
     let failed = null;
     const fail = (msg) => { if (!failed) { failed = msg; try { child.kill(); } catch { /* 已经退了 */ } } };
-    const timer = setTimeout(() => fail(`解码超时(${limits.decodeTimeoutMs / 1000} 秒)`), limits.decodeTimeoutMs);
+    const timer = setTimeout(() => fail(tr("Decoding timed out ({0} s)", limits.decodeTimeoutMs / 1000)), limits.decodeTimeoutMs);
     child.stdout.on("data", (d) => {
       if (failed) return;
       bytes += d.length;
       if (bytes > maxBytes) {
         const maxSec = Math.floor(limits.maxSamples / (sampleRate * channels));
-        fail(`要测的声音超过样本上限 ${limits.maxSamples}(${sampleRate} Hz、${channels} 声道下最多 ${maxSec} 秒)。降 sampleRate、传 mono: true,或用 start / duration 只测一段。`);
+        fail(tr("The audio to measure exceeds the sample limit {0} (at most {3} s at {1} Hz, {2} channels). Lower sampleRate, pass mono: true, or measure only one segment with start / duration.", limits.maxSamples, sampleRate, channels, maxSec));
         return;
       }
       chunks.push(d);
     });
     child.stderr.on("data", (d) => { if (stderr.length < 4000) stderr += d.toString(); });
-    child.on("error", (e) => { clearTimeout(timer); reject(new Error("启动 ffmpeg 失败: " + e.message)); });
+    child.on("error", (e) => { clearTimeout(timer); reject(new Error(tr("Failed to start ffmpeg: ") + e.message)); });
     child.on("close", (code) => {
       clearTimeout(timer);
       if (failed) return reject(new Error(failed));
-      if (code !== 0) return reject(new Error("ffmpeg 解码失败: " + stderr.trim().slice(-300)));
+      if (code !== 0) return reject(new Error(tr("ffmpeg decoding failed: ") + stderr.trim().slice(-300)));
       resolve(deinterleave(Buffer.concat(chunks), channels));
     });
   });

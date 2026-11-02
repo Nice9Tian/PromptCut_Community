@@ -123,7 +123,7 @@ export async function removeLeftover(target, report, { kind = 'leftover', log = 
     const found = await inspect(target);
     if (found.linked) {
       report.skipped.push({ path: target, kind, reason: 'link' });
-      log?.(`[storage] 跳过（链接）：${target}`);
+      log?.(`[storage] Skipped (link): ${target}`);
       return false;
     }
     bytes = found.bytes;
@@ -134,7 +134,7 @@ export async function removeLeftover(target, report, { kind = 'leftover', log = 
   } catch (error) {
     if (error?.code === 'ENOENT') return false;
     report.skipped.push({ path: target, kind, reason: error?.code || String(error?.message || error) });
-    log?.(`[storage] 删不掉，跳过：${target}（${error?.code || error?.message || error}）`);
+    log?.(`[storage] Cannot delete, skipped: ${target} (${error?.code || error?.message || error})`);
     return false;
   }
 }
@@ -193,7 +193,7 @@ export async function sweepFrameLibrary(root, { alive = pidAlive, now = Date.now
     if (item.isDirectory() && KEY.test(item.name)) await sweepPreview(path.join(root, 'tracks', item.name));
   }
   if (report.removed.length || report.skipped.length) {
-    log?.(`[storage] 帧库遗留：删 ${report.removed.length} 个（${(report.bytes / 1048576).toFixed(1)} MB），跳过 ${report.skipped.length} 个`);
+    log?.(`[storage] Frame store leftovers: deleted ${report.removed.length} (${(report.bytes / 1048576).toFixed(1)} MB), skipped ${report.skipped.length}`);
   }
   return report;
 }
@@ -209,7 +209,7 @@ export async function sweepExportRoot(outRoot, { alive = pidAlive, log = null } 
     await removeLeftover(path.join(outRoot, item.name), report, { kind: 'export-vision', log });
   }
   if (report.removed.length || report.skipped.length) {
-    log?.(`[storage] 视觉临时导出遗留：删 ${report.removed.length} 个，跳过 ${report.skipped.length} 个`);
+    log?.(`[storage] Visual temporary export leftovers: deleted ${report.removed.length}, skipped ${report.skipped.length}`);
   }
   return report;
 }
@@ -250,5 +250,5 @@ export async function claimExportDir(base, now = new Date()) {
       if (error?.code !== 'EEXIST') throw error;
     }
   }
-  throw new Error('同一秒内的导出目录太多');
+  throw new Error('Too many export directories within the same second');
 }

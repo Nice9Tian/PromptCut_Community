@@ -13,6 +13,7 @@
  *   调用方回一句写明素材服务地址与原因的错,不当成「文件不存在」「没有音频流」。
  */
 import { spawn } from "node:child_process";
+import { tr } from "./i18n.mjs";
 
 export class AssetSourceError extends Error {
   constructor(message) {
@@ -36,7 +37,7 @@ export const SOURCE_CHECK_TIMEOUT_MS = 10_000;
 export function createAssetSourceResolver({ origin, toUrl, fetchImpl = globalThis.fetch, timeoutMs = SOURCE_CHECK_TIMEOUT_MS }) {
   return async (m) => {
     const base = origin();
-    if (!base) throw new AssetSourceError("素材服务不可达:编辑器进程取不到素材服务的地址");
+    if (!base) throw new AssetSourceError(tr("Asset service unreachable: the editor process cannot get the asset service address"));
     const url = toUrl(m, base);
     if (!url) return null;
     let res;
@@ -44,13 +45,13 @@ export function createAssetSourceResolver({ origin, toUrl, fetchImpl = globalThi
       // 只要 1 个字节:看素材服务答不答、有没有这份素材。共享项目里本地没有的,这一下同时让本地素材服务开始向远程拉
       res = await fetchImpl(url, { headers: { Range: "bytes=0-0" }, signal: AbortSignal.timeout(timeoutMs) });
     } catch (e) {
-      const why = e?.name === "TimeoutError" ? `${timeoutMs / 1000} 秒没有应答` : String(e?.cause?.code || e?.message || e);
-      throw new AssetSourceError(`素材服务不可达(${base}):${why}`);
+      const why = e?.name === "TimeoutError" ? tr("No response after {0} s", timeoutMs / 1000) : String(e?.cause?.code || e?.message || e);
+      throw new AssetSourceError(tr("Asset service unreachable ({0}): {1}", base, why));
     }
     try { await res.body?.cancel(); } catch { /* 已经读完 */ }
     if (res.status === 404) return null;
     if (res.status >= 200 && res.status < 300) return url;
-    throw new AssetSourceError(`素材服务拒绝了读取(${base},HTTP ${res.status})`);
+    throw new AssetSourceError(tr("Asset service refused the read ({0}, HTTP {1})", base, res.status));
   };
 }
 

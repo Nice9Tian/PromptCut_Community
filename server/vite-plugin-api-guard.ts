@@ -1,5 +1,6 @@
 import type { Plugin, ViteDevServer } from "vite";
 import { originOk, jsonContentType, apiPath, isAssetServicePath, fromLocalClient, lanApiAllowed } from "./http-guard.mjs";
+import { tr } from "./i18n.mjs";
 
 /**
  * `/api/**` 的同源守卫。**一个卡口,不是十二个。**
@@ -71,11 +72,11 @@ export function apiGuardPlugin(): Plugin {
 
         // 局域网监听之后「不带 Origin 当自己人」只对本机成立,理由见 http-guard.mjs 的 fromLocalClient
         if (!lanApiAllowed() && !fromLocalClient(req)) {
-          return deny("局域网设备只能访问素材服务;要开放其它接口,启动时设 PROMPTCUT_LAN_API=1");
+          return deny(tr("LAN devices can only access the asset service; to open up other endpoints, set PROMPTCUT_LAN_API=1 at startup"));
         }
 
         if (!originOk(req)) {
-          return deny(`跨源请求被拒绝(Origin: ${req.headers.origin})`);
+          return deny(tr("Cross-origin request rejected (Origin: {0})", req.headers.origin));
         }
 
         const method = String(req.method || "GET").toUpperCase();
@@ -83,7 +84,7 @@ export function apiGuardPlugin(): Plugin {
         // url 已经转过小写,前缀表本来就是全小写的
         const rawBody = RAW_BODY_PREFIXES.some((p) => url.startsWith(p));
         if (method !== "GET" && method !== "HEAD" && hasCt && !rawBody && !jsonContentType(req)) {
-          return deny("这个接口只接受 Content-Type: application/json");
+          return deny("This endpoint only accepts Content-Type: application/json");
         }
 
         next();

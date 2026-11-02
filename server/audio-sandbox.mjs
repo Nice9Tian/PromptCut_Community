@@ -25,6 +25,7 @@
  */
 import { randomUUID } from "node:crypto";
 import vm from "node:vm";
+import { tr } from "./i18n.mjs";
 
 /**
  * 仅做 V8 语法解析（绝不执行），提取语法错误在函数体 `code` 内的精确行号与列号（1-based）。
@@ -51,7 +52,7 @@ export function syntaxLocationOf(code) {
         break;
       }
     }
-    return { line, column, message: `${err?.name || "SyntaxError"}: ${err?.message || "语法错误"}` };
+    return { line, column, message: `${err?.name || "SyntaxError"}: ${err?.message || tr("Syntax error")}` };
   }
 }
 
@@ -110,27 +111,27 @@ const WORKER_SOURCE = String.raw`
 "use strict";
 (() => {
   const post = self.postMessage.bind(self);
-  const blocked = (name) => function () { throw new Error("沙箱里不能联网:" + name + " 不可用"); };
+  const blocked = (name) => function () { throw new Error("No network access in the sandbox: " + name + " is unavailable"); };
   const NET = ["fetch", "XMLHttpRequest", "WebSocket", "EventSource", "WebTransport", "importScripts", "Worker", "SharedWorker", "BroadcastChannel", "RTCPeerConnection"];
   for (const name of NET) {
     for (let o = self; o; o = Object.getPrototypeOf(o)) {
       if (Object.prototype.hasOwnProperty.call(o, name)) {
-        try { Object.defineProperty(o, name, { value: blocked(name), writable: false, configurable: false }); } catch (e) { /* 改不了的由内容安全策略挡 */ }
+        try { Object.defineProperty(o, name, { value: blocked(name), writable: false, configurable: false }); } catch (e) { /* what cannot be redefined is blocked by the content security policy */ }
       }
     }
   }
   for (let o = self; o; o = Object.getPrototypeOf(o)) {
     if (Object.prototype.hasOwnProperty.call(o, "postMessage")) {
-      try { Object.defineProperty(o, "postMessage", { value: function () { throw new Error("用 return 返回结果,不要 postMessage"); }, writable: false, configurable: false }); } catch (e) { /* 同上 */ }
+      try { Object.defineProperty(o, "postMessage", { value: function () { throw new Error("Return the result with return, not with postMessage"); }, writable: false, configurable: false }); } catch (e) { /* same as above */ }
     }
   }
   const describe = (err) => {
     if (err && typeof err === "object") {
       const head = (err.name || "Error") + ": " + (err.message || "");
       const m = String(err.stack || "").match(/<anonymous>:(\d+):(\d+)/);
-      return m ? head + "(第 " + Math.max(1, Number(m[1]) - 2) + " 行第 " + m[2] + " 列)" : head;
+      return m ? head + " (line " + Math.max(1, Number(m[1]) - 2) + ", column " + m[2] + ")" : head;
     }
-    return "抛出了非 Error 的值:" + String(err);
+    return "Threw a value that is not an Error: " + String(err);
   };
   const AsyncFunction = (async () => {}).constructor;
   self.onmessage = async (e) => {
@@ -140,51 +141,24 @@ const WORKER_SOURCE = String.raw`
     for (let c = 0; c < numberOfChannels; c++) channels.push(new Float32Array(buf, c * frames * 4, frames));
     let fn;
     try { fn = new AsyncFunction("input", code); }
-    catch (err) { post({ ok: false, kind: "syntax", error: "代码有语法错误:" + describe(err) }); return; }
+    catch (err) { post({ ok: false, kind: "syntax", error: "The code has a syntax error: " + describe(err) }); return; }
     let value;
     try {
       value = await fn(Object.freeze({ ...meta, channels: Object.freeze(channels), sampleRate, duration, frames, numberOfChannels }));
-    } catch (err) { post({ ok: false, kind: "exception", error: "代码运行时抛错:" + describe(err) }); return; }
+    } catch (err) { post({ ok: false, kind: "exception", error: "The code threw while running: " + describe(err) }); return; }
     let json;
     try { json = JSON.stringify(value); }
-    catch (err) { post({ ok: false, kind: "unserializable", error: "返回值不能转成 JSON:" + describe(err) }); return; }
-    if (json === undefined) { post({ ok: false, kind: "unserializable", error: "返回值是 undefined(或函数 / Symbol),不能转成 JSON;用 return 返回对象、数组、数字、字符串或布尔值" }); return; }
+    catch (err) { post({ ok: false, kind: "unserializable", error: "The return value cannot be converted to JSON: " + describe(err) }); return; }
+    if (json === undefined) { post({ ok: false, kind: "unserializable", error: "The return value is undefined (or a function / Symbol) and cannot be converted to JSON; return an object, an array, a number, a string or a boolean" }); return; }
     const bytes = new TextEncoder().encode(json).length;
-    if (bytes > maxResultBytes) { post({ ok: false, kind: "too-large", error: "返回值转成 JSON 有 " + bytes + " 字节,超过上限 " + maxResultBytes + ";只返回汇总(统计量、逐秒的少量点),不要返回原始样本" }); return; }
+    if (bytes > maxResultBytes) { post({ ok: false, kind: "too-large", error: "The return value is " + bytes + " bytes as JSON, over the limit of " + maxResultBytes + "; return only a summary (statistics, a few points per second), not the raw samples" }); return; }
     post({ ok: true, json });
   };
 })();
 `;
 
 /** 页面:可信的外壳,取 PCM、起 Worker、到点掐断 */
-const HARNESS_HTML = `<!doctype html><meta charset="utf-8"><title>sandbox</title><script>
-const WORKER_SOURCE = ${JSON.stringify(WORKER_SOURCE)};
-window.__runMeasure = async (o) => {
-  const parts = [];
-  for (let i = 0; i < o.chunks; i++) {
-    const r = await fetch("/pcm/" + o.token + "/" + i);
-    if (!r.ok) return { ok: false, kind: "internal", error: "沙箱取 PCM 失败(块 " + i + ")" };
-    parts.push(new Uint8Array(await r.arrayBuffer()));
-  }
-  const total = parts.reduce((n, p) => n + p.length, 0);
-  const all = new Uint8Array(total);
-  let at = 0;
-  for (const p of parts) { all.set(p, at); at += p.length; }
-  const url = URL.createObjectURL(new Blob([WORKER_SOURCE], { type: "text/javascript" }));
-  const w = new Worker(url);
-  URL.revokeObjectURL(url);
-  const t0 = performance.now();
-  return await new Promise((resolve) => {
-    let done = false;
-    const finish = (v) => { if (done) return; done = true; clearTimeout(timer); w.terminate(); resolve({ ...v, elapsedMs: Math.round(performance.now() - t0) }); };
-    const timer = setTimeout(() => finish({ ok: false, kind: "timeout", error: "代码运行超过 " + (o.timeoutMs / 1000) + " 秒,已终止(死循环、或者算得太慢;缩小要测的范围、降采样率,或把 timeoutMs 调大,最多 " + (o.maxTimeoutMs / 1000) + " 秒)" }), o.timeoutMs);
-    w.onmessage = (e) => finish(e.data && typeof e.data === "object" ? e.data : { ok: false, kind: "internal", error: "沙箱回了意外的消息" });
-    w.onerror = (e) => { e.preventDefault(); finish({ ok: false, kind: e.message ? "exception" : "crashed", error: e.message ? "代码运行出错:" + e.message : "沙箱里的代码异常退出(没有报错文字,多半是内存超过上限 " + o.heapMb + " MB)" }); };
-    w.onmessageerror = () => finish({ ok: false, kind: "unserializable", error: "返回值传不出沙箱" });
-    w.postMessage({ code: o.code, buf: all.buffer, frames: o.frames, numberOfChannels: o.numberOfChannels, sampleRate: o.sampleRate, duration: o.duration, meta: o.meta, maxResultBytes: o.maxResultBytes }, [all.buffer]);
-  });
-};
-</script>`;
+const HARNESS_HTML = `<!doctype html><meta charset="utf-8"><title>sandbox</title><script>\r\nconst WORKER_SOURCE = ${JSON.stringify(WORKER_SOURCE)};\r\nwindow.__runMeasure = async (o) => {\r\n  const parts = [];\r\n  for (let i = 0; i < o.chunks; i++) {\r\n    const r = await fetch(\"/pcm/\" + o.token + \"/\" + i);\r\n    if (!r.ok) return { ok: false, kind: \"internal\", error: \"Sandbox failed to fetch PCM (chunk \" + i + \")\" };\r\n    parts.push(new Uint8Array(await r.arrayBuffer()));\r\n  }\r\n  const total = parts.reduce((n, p) => n + p.length, 0);\r\n  const all = new Uint8Array(total);\r\n  let at = 0;\r\n  for (const p of parts) { all.set(p, at); at += p.length; }\r\n  const url = URL.createObjectURL(new Blob([WORKER_SOURCE], { type: \"text/javascript\" }));\r\n  const w = new Worker(url);\r\n  URL.revokeObjectURL(url);\r\n  const t0 = performance.now();\r\n  return await new Promise((resolve) => {\r\n    let done = false;\r\n    const finish = (v) => { if (done) return; done = true; clearTimeout(timer); w.terminate(); resolve({ ...v, elapsedMs: Math.round(performance.now() - t0) }); };\r\n    const timer = setTimeout(() => finish({ ok: false, kind: \"timeout\", error: \"Code ran longer than \" + (o.timeoutMs / 1000) + \" s and was terminated (infinite loop, or too slow to compute; narrow the range to measure, lower the sample rate, or raise timeoutMs, up to \" + (o.maxTimeoutMs / 1000) + \" s)\" }), o.timeoutMs);\r\n    w.onmessage = (e) => finish(e.data && typeof e.data === \"object\" ? e.data : { ok: false, kind: \"internal\", error: \"Sandbox sent an unexpected message\" });\r\n    w.onerror = (e) => { e.preventDefault(); finish({ ok: false, kind: e.message ? \"exception\" : \"crashed\", error: e.message ? \"Code failed to run: \" + e.message : \"Code in the sandbox exited abnormally (no error text, most likely memory over the limit of \" + o.heapMb + \" MB)\" }); };\r\n    w.onmessageerror = () => finish({ ok: false, kind: \"unserializable\", error: \"Return value could not be passed out of the sandbox\" });\r\n    w.postMessage({ code: o.code, buf: all.buffer, frames: o.frames, numberOfChannels: o.numberOfChannels, sampleRate: o.sampleRate, duration: o.duration, meta: o.meta, maxResultBytes: o.maxResultBytes }, [all.buffer]);\r\n  });\r\n};\r\n</script>`;
 
 /** 不挡进程退出的等待(兜底用的上限,不该让编辑器进程或测试多挂几秒) */
 const sleep = (ms) => new Promise((r) => { const t = setTimeout(r, ms); t.unref?.(); });
@@ -239,7 +213,7 @@ export function createAudioSandbox({ launch = defaultLaunch, limits: override = 
     try {
       return await browserP;
     } catch (e) {
-      throw new SandboxError("no-chrome", "自定义测量的沙箱起不来(找不到或启动不了 Chrome):" + (e?.message || e));
+      throw new SandboxError("no-chrome", "The custom measurement sandbox could not start (Chrome not found or failed to launch): " + (e?.message || e));
     }
   }
   function resetBrowser() {
@@ -254,7 +228,7 @@ export function createAudioSandbox({ launch = defaultLaunch, limits: override = 
   }
 
   async function runOnce({ code, channels, sampleRate, duration, meta, timeoutMs, signal }) {
-    if (signal?.aborted) throw new SandboxError("cancelled", "自定义测量已取消");
+    if (signal?.aborted) throw new SandboxError("cancelled", "Custom measurement cancelled");
     const browser = await ensureBrowser();
     const frames = channels[0]?.length ?? 0;
     const pcm = Buffer.alloc(frames * channels.length * 4);
@@ -295,7 +269,7 @@ export function createAudioSandbox({ launch = defaultLaunch, limits: override = 
           token, chunks, code, frames, numberOfChannels: channels.length, sampleRate, duration, meta: meta ?? {},
           timeoutMs, maxTimeoutMs: limits.maxTimeoutMs, maxResultBytes: limits.maxResultBytes, heapMb: limits.heapMb,
         }),
-        crash.then(() => ({ ok: false, kind: "crashed", error: `沙箱页面崩溃了(多半是内存超过上限 ${limits.heapMb} MB);缩小要测的范围,别一次建太大的数组` })),
+        crash.then(() => ({ ok: false, kind: "crashed", error: `Sandbox page crashed (most likely memory over the limit of ${limits.heapMb} MB); narrow the range to measure and do not build huge arrays at once` })),
         /*
          * 心跳:Worker 里的死循环不挡页面主线程,页面照样应答;内存炸弹不一样 —— 实测 Worker 堆到上限后整个渲染进程卡死
          * (页面主线程不再跑定时器,也不报 crash 事件),只能等看门狗。所以每秒问页面一次,连续 heartbeatMisses 次没回话
@@ -310,19 +284,19 @@ export function createAudioSandbox({ launch = defaultLaunch, limits: override = 
               .then((v) => {
                 clearTimeout(t);
                 misses = v === 1 ? 0 : misses + 1;
-                if (misses >= limits.heartbeatMisses) reject(new SandboxError("crashed", `沙箱卡死了(多半是内存超过上限 ${limits.heapMb} MB),已重启;缩小要测的范围,别一次建太大的数组`));
+                if (misses >= limits.heartbeatMisses) reject(new SandboxError("crashed", `Sandbox hung (most likely memory over the limit of ${limits.heapMb} MB) and was restarted; narrow the range to measure and do not build huge arrays at once`));
               });
           }, limits.heartbeatEveryMs);
           heartbeat.unref?.();
         }),
         new Promise((_, reject) => {
-          watchdog = setTimeout(() => reject(new SandboxError("hung", `沙箱在 ${(timeoutMs + limits.graceMs) / 1000} 秒内没有回话,已重启`)), timeoutMs + limits.graceMs + chunks * 1000);
+          watchdog = setTimeout(() => reject(new SandboxError("hung", `Sandbox did not respond within ${(timeoutMs + limits.graceMs) / 1000} s and was restarted`)), timeoutMs + limits.graceMs + chunks * 1000);
           watchdog.unref?.();
         }),
       ];
       if (signal) {
         races.push(new Promise((_, reject) => {
-          onAbort = () => reject(new SandboxError("cancelled", "自定义测量已取消"));
+          onAbort = () => reject(new SandboxError("cancelled", "Custom measurement cancelled"));
           if (signal.aborted) onAbort();
           else signal.addEventListener("abort", onAbort, { once: true });
         }));
@@ -335,9 +309,9 @@ export function createAudioSandbox({ launch = defaultLaunch, limits: override = 
       if (e instanceof SandboxError) throw e;
       const msg = String(e?.message || e);
       if (/Target closed|crash|Session closed|detached|Protocol error/i.test(msg)) {
-        throw new SandboxError("crashed", `沙箱崩溃了(多半是内存超过上限 ${limits.heapMb} MB):${msg.slice(0, 200)}`);
+        throw new SandboxError("crashed", `Sandbox crashed (most likely memory over the limit of ${limits.heapMb} MB): ${msg.slice(0, 200)}`);
       }
-      throw new SandboxError("internal", "沙箱内部出错:" + msg.slice(0, 300));
+      throw new SandboxError("internal", "Sandbox internal error: " + msg.slice(0, 300));
     } finally {
       if (signal && onAbort) signal.removeEventListener("abort", onAbort);
       clearTimeout(watchdog);
@@ -353,30 +327,30 @@ export function createAudioSandbox({ launch = defaultLaunch, limits: override = 
    * kind:syntax | exception | timeout | unserializable | too-large | crashed | hung | no-chrome | busy | invalid | cancelled | internal
    */
   async function run({ code, channels, sampleRate, duration, meta, timeoutMs, signal }) {
-    if (signal?.aborted) return { ok: false, kind: "cancelled", error: "自定义测量已取消" };
-    if (typeof code !== "string" || !code.trim()) return { ok: false, kind: "invalid", error: "code 是空的:写一个函数体,用 return 返回结果" };
-    if (code.length > limits.maxCodeChars) return { ok: false, kind: "invalid", error: `code 有 ${code.length} 个字符,超过上限 ${limits.maxCodeChars}` };
+    if (signal?.aborted) return { ok: false, kind: "cancelled", error: "Custom measurement cancelled" };
+    if (typeof code !== "string" || !code.trim()) return { ok: false, kind: "invalid", error: "code is empty: write a function body and return the result with return" };
+    if (code.length > limits.maxCodeChars) return { ok: false, kind: "invalid", error: `code has ${code.length} characters, over the limit of ${limits.maxCodeChars}` };
     if (!Array.isArray(channels) || !channels.length || !channels.every((c) => c instanceof Float32Array)) {
-      return { ok: false, kind: "invalid", error: "沙箱没收到 PCM" };
+      return { ok: false, kind: "invalid", error: "Sandbox did not receive PCM" };
     }
-    if (queued >= limits.maxQueue) return { ok: false, kind: "busy", error: `自定义测量排队的已有 ${queued} 个,稍后再试` };
+    if (queued >= limits.maxQueue) return { ok: false, kind: "busy", error: `${queued} custom measurements already queued, try again later` };
     const limit = clampTimeout(timeoutMs, limits);
     queued++;
     clearTimeout(idleTimer);
     const job = chain.then(async () => {
       try {
-        if (signal?.aborted) return { ok: false, kind: "cancelled", error: "自定义测量已取消" };
+        if (signal?.aborted) return { ok: false, kind: "cancelled", error: "Custom measurement cancelled" };
         const { verdict, blocked } = await runOnce({ code, channels, sampleRate, duration, meta, timeoutMs: limit, signal });
         const netNote = blocked.length ? { blockedRequests: blocked.slice(0, 5) } : null;
-        if (!verdict || typeof verdict !== "object") return { ok: false, kind: "internal", error: "沙箱回了意外的结果" };
+        if (!verdict || typeof verdict !== "object") return { ok: false, kind: "internal", error: "Sandbox returned an unexpected result" };
         if (!verdict.ok) {
           const kind = verdict.kind || "exception";
-          let error = String(verdict.error || "沙箱里出错");
+          let error = String(verdict.error || "Error in the sandbox");
           let loc = null;
           if (kind === "syntax") {
             loc = syntaxLocationOf(code);
-            if (loc && !/第 \d+ 行/.test(error)) {
-              error = `${error}(第 ${loc.line} 行第 ${loc.column} 列)`;
+            if (loc && !/line \d+/.test(error)) {
+              error = `${error} (line ${loc.line}, column ${loc.column})`;
             }
           }
           return {
@@ -389,7 +363,7 @@ export function createAudioSandbox({ launch = defaultLaunch, limits: override = 
         }
         const json = String(verdict.json);
         if (Buffer.byteLength(json, "utf8") > limits.maxResultBytes) {
-          return { ok: false, kind: "too-large", error: `返回值超过上限 ${limits.maxResultBytes} 字节` };
+          return { ok: false, kind: "too-large", error: `Return value exceeds the limit of ${limits.maxResultBytes} bytes` };
         }
         return { ok: true, value: JSON.parse(json), elapsedMs: verdict.elapsedMs, ...netNote };
       } catch (e) {

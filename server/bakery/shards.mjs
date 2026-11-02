@@ -84,7 +84,7 @@ async function bakeSharded(opts, n) {
     // mode are treated as stateful.
     const clips = await first.page.evaluate(() => window.__pcClipFrameModes?.() ?? null);
     const shards = planShardRanges(clips ?? (timeline.clips || []), start, end, fps, n);
-    console.log(`分片导出:${shards.length} 个进程,段 ${shards.map(([a, b]) => `${a}-${b}`).join(' ')}`);
+    console.log(`Shard export: ${shards.length} processes, segments ${shards.map(([a, b]) => `${a}-${b}`).join(' ')}`);
     while (bakeries.length < shards.length) bakeries.push(await openBakery(opts));
     const t0 = Date.now();
     // 推帧补画(`bake.mjs` 文件头):第二片起不补,理由同 `export-unified.mjs`(切点前面推过去的卡到切点都已卸掉)
@@ -110,7 +110,7 @@ async function bakeSharded(opts, n) {
       const m = JSON.parse(await fs.readFile(mf, 'utf8'));
       await fs.writeFile(mf, JSON.stringify({ ...m, startFrame: start, endFrame: end }, null, 1));
     }
-    console.log(`分片导出完成:${totalFrames} 帧,${merged.elapsed}s。`);
+    console.log(`Shard export finished: ${totalFrames} frames, ${merged.elapsed}s.`);
     return merged;
   } finally {
     await Promise.all(bakeries.map((b) => b.close().catch(() => {})));

@@ -180,9 +180,9 @@ export function stagePortsPlugin(): Plugin {
           for (const p of stagePortsOf(addr.port)) {
             const s = await makeProxy(host, p, addr.port);
             if (s) { servers.push(s); ports.push(p); }
-            else server.config.logger.warn(`[stage-ports] 端口 ${p} 起不来(多半被占),这一个舞台退回同源`);
+            else server.config.logger.warn(`[stage-ports] Port ${p} could not start (probably in use), this stage falls back to same-origin`);
           }
-          if (ports.length) server.config.logger.info(`[stage-ports] 舞台端口 ${ports.join(" / ")}(带 Origin-Agent-Cluster: ?1)`);
+          if (ports.length) server.config.logger.info(`[stage-ports] Stage ports ${ports.join(" / ")} (with Origin-Agent-Cluster: ?1)`);
         })();
       });
 

@@ -7,6 +7,7 @@ import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 import { pipeline } from "node:stream/promises";
 import { Transform } from "node:stream";
+import { tr } from "./i18n.mjs";
 
 /** 会话存储目录：优先读环境变量，默认在项目根目录下的 .pc-chats */
 function chatsDir(root: string): string {
@@ -284,7 +285,7 @@ export function chatsPlugin(): Plugin {
                 if (firstUser && typeof firstUser.text === "string" && firstUser.text.trim()) {
                   title = firstUser.text.trim().slice(0, 20);
                 } else {
-                  title = "未命名对话";
+                  title = tr("Untitled chat");
                 }
               }
 
@@ -338,18 +339,18 @@ export function chatsPlugin(): Plugin {
         if (req.method === "GET" && pathname === "/api/chats/get") {
           const id = parsedUrl.searchParams.get("id");
           if (!id || !isValidChatId(id)) {
-            sendJson(res, 400, { ok: false, error: "会话 id 不合法" });
+            sendJson(res, 400, { ok: false, error: tr("Invalid session id") });
             return;
           }
 
           const filePath = getSafeChatPath(root, id);
           if (!filePath) {
-            sendJson(res, 400, { ok: false, error: "非法路径" });
+            sendJson(res, 400, { ok: false, error: tr("Illegal path") });
             return;
           }
 
           if (!existsSync(filePath)) {
-            sendJson(res, 404, { ok: false, error: "会话不存在" });
+            sendJson(res, 404, { ok: false, error: tr("Session does not exist") });
             return;
           }
 
@@ -358,7 +359,7 @@ export function chatsPlugin(): Plugin {
             const chat = JSON.parse(raw);
             sendJson(res, 200, { ok: true, chat });
           } catch {
-            sendJson(res, 500, { ok: false, error: "读取会话失败" });
+            sendJson(res, 500, { ok: false, error: tr("Failed to read session") });
           }
           return;
         }
@@ -370,10 +371,10 @@ export function chatsPlugin(): Plugin {
             buffer = await readBody(req);
           } catch (err: any) {
             if (err?.statusCode === 413) {
-              sendJson(res, 413, { ok: false, error: "请求体体积超出 32MB 限制" });
+              sendJson(res, 413, { ok: false, error: tr("Request body exceeds the 32MB limit") });
               return;
             }
-            sendJson(res, 500, { ok: false, error: "读取请求体失败" });
+            sendJson(res, 500, { ok: false, error: tr("Failed to read request body") });
             return;
           }
 
@@ -381,18 +382,18 @@ export function chatsPlugin(): Plugin {
           try {
             body = JSON.parse(buffer.toString("utf-8"));
           } catch {
-            sendJson(res, 400, { ok: false, error: "JSON 解析错误" });
+            sendJson(res, 400, { ok: false, error: tr("JSON parse error") });
             return;
           }
 
           if (!body || !isValidChatId(body.id) || !Array.isArray(body.messages)) {
-            sendJson(res, 400, { ok: false, error: "参数不合法，缺少有效 id 或 messages 数组" });
+            sendJson(res, 400, { ok: false, error: tr("Invalid parameters: missing a valid id or messages array") });
             return;
           }
 
           const filePath = getSafeChatPath(root, body.id);
           if (!filePath) {
-            sendJson(res, 400, { ok: false, error: "非法路径" });
+            sendJson(res, 400, { ok: false, error: tr("Illegal path") });
             return;
           }
 
@@ -403,7 +404,7 @@ export function chatsPlugin(): Plugin {
             if (firstUser && typeof firstUser.text === "string" && firstUser.text.trim()) {
               title = firstUser.text.trim().slice(0, 20);
             } else {
-              title = "未命名对话";
+              title = tr("Untitled chat");
             }
           }
 
@@ -454,7 +455,7 @@ export function chatsPlugin(): Plugin {
           try {
             buffer = await readBody(req);
           } catch {
-            sendJson(res, 500, { ok: false, error: "读取请求体失败" });
+            sendJson(res, 500, { ok: false, error: tr("Failed to read request body") });
             return;
           }
 
@@ -462,19 +463,19 @@ export function chatsPlugin(): Plugin {
           try {
             body = JSON.parse(buffer.toString("utf-8"));
           } catch {
-            sendJson(res, 400, { ok: false, error: "JSON 解析错误" });
+            sendJson(res, 400, { ok: false, error: tr("JSON parse error") });
             return;
           }
 
           if (!body || !isValidChatId(body.id)) {
-            sendJson(res, 400, { ok: false, error: "参数不合法，缺少有效 id" });
+            sendJson(res, 400, { ok: false, error: tr("Invalid parameters: missing a valid id") });
             return;
           }
 
           const filePath = getSafeChatPath(root, body.id);
           const workPath = getSafeWorkDir(root, body.id);
           if (!filePath || !workPath) {
-            sendJson(res, 400, { ok: false, error: "非法路径" });
+            sendJson(res, 400, { ok: false, error: tr("Illegal path") });
             return;
           }
 
@@ -494,7 +495,7 @@ export function chatsPlugin(): Plugin {
           try {
             buffer = await readBody(req);
           } catch {
-            sendJson(res, 500, { ok: false, error: "读取请求体失败" });
+            sendJson(res, 500, { ok: false, error: tr("Failed to read request body") });
             return;
           }
 
@@ -502,14 +503,14 @@ export function chatsPlugin(): Plugin {
           try {
             body = JSON.parse(buffer.toString("utf-8"));
           } catch {
-            sendJson(res, 400, { ok: false, error: "JSON 解析错误" });
+            sendJson(res, 400, { ok: false, error: tr("JSON parse error") });
             return;
           }
 
           const conversationId = body?.conversationId;
           const srcPath = body?.srcPath;
           if (!isValidChatId(conversationId)) {
-            sendJson(res, 400, { ok: false, error: "无效的 conversationId" });
+            sendJson(res, 400, { ok: false, error: tr("Invalid conversationId") });
             return;
           }
           /*
@@ -521,20 +522,20 @@ export function chatsPlugin(): Plugin {
            * 用户机器上任意一个文件复制到 web 目录下 —— 0.3.0 评审列的第一条高危就是这个。
            */
           if (typeof srcPath !== "string" || !srcPath || !existsSync(srcPath)) {
-            sendJson(res, 400, { ok: false, error: "源文件路径不存在或不合法" });
+            sendJson(res, 400, { ok: false, error: tr("Source file path does not exist or is invalid") });
             return;
           }
 
           const destDir = getSafeWorkDir(root, conversationId);
           if (!destDir) {
-            sendJson(res, 400, { ok: false, error: "非法路径" });
+            sendJson(res, 400, { ok: false, error: tr("Illegal path") });
             return;
           }
 
           try {
             await fs.mkdir(destDir, { recursive: true });
           } catch (e: unknown) {
-            sendJson(res, 500, { ok: false, error: "创建工作目录失败" });
+            sendJson(res, 500, { ok: false, error: tr("Failed to create working directory") });
             return;
           }
 
@@ -598,7 +599,7 @@ export function chatsPlugin(): Plugin {
                   }
                 }
               } else {
-                const errMsg = parsed?.error || stderrData.trim() || `复制进程退出码 ${code}`;
+                const errMsg = parsed?.error || stderrData.trim() || tr("Copy process exit code {0}", code);
                 job.status = "error";
                 job.error = errMsg;
                 job.attachment.status = "error";
@@ -620,21 +621,21 @@ export function chatsPlugin(): Plugin {
           const conversationId = parsedUrl.searchParams.get("conversationId");
           const rawName = parsedUrl.searchParams.get("name");
           if (!conversationId || !isValidChatId(conversationId) || !rawName) {
-            sendJson(res, 400, { ok: false, error: "缺少有效 conversationId 或 name 参数" });
+            sendJson(res, 400, { ok: false, error: tr("Missing a valid conversationId or name parameter") });
             return;
           }
 
           const name = decodeURIComponent(rawName);
           const destDir = getSafeWorkDir(root, conversationId);
           if (!destDir) {
-            sendJson(res, 400, { ok: false, error: "非法路径" });
+            sendJson(res, 400, { ok: false, error: tr("Illegal path") });
             return;
           }
 
           try {
             await fs.mkdir(destDir, { recursive: true });
           } catch {
-            sendJson(res, 500, { ok: false, error: "创建工作目录失败" });
+            sendJson(res, 500, { ok: false, error: tr("Failed to create working directory") });
             return;
           }
 
@@ -699,7 +700,7 @@ export function chatsPlugin(): Plugin {
             sendJson(res, 200, { ok: true, job });
           } catch (err: unknown) {
             job.status = "error";
-            job.error = limitExceeded ? "文件超出 512MB 限制" : (err instanceof Error ? err.message : String(err));
+            job.error = limitExceeded ? tr("File exceeds the 512MB limit") : (err instanceof Error ? err.message : String(err));
             job.attachment.status = "error";
             job.attachment.error = job.error;
             try {
@@ -732,13 +733,13 @@ export function chatsPlugin(): Plugin {
 
           const jobId = parsedUrl.searchParams.get("jobId");
           if (!jobId) {
-            sendJson(res, 400, { ok: false, error: "缺少 jobId 参数" });
+            sendJson(res, 400, { ok: false, error: "Missing jobId parameter" });
             return;
           }
 
           const job = attachJobs.get(jobId);
           if (!job) {
-            sendJson(res, 404, { ok: false, error: "任务不存在" });
+            sendJson(res, 404, { ok: false, error: tr("Task does not exist") });
             return;
           }
 

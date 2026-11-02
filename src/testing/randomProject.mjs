@@ -77,7 +77,7 @@ export function randClip(r) {
 }
 
 export function randTrack(r, maxClips = 6) {
-  return { id: freshId(r, "t"), name: `序列 ${r.int(9)}`, ...(r.chance(0.2) ? { hidden: true } : {}), clips: Array.from({ length: r.int(maxClips) }, () => randClip(r)) };
+  return { id: freshId(r, "t"), name: `Track ${r.int(9)}`, ...(r.chance(0.2) ? { hidden: true } : {}), clips: Array.from({ length: r.int(maxClips) }, () => randClip(r)) };
 }
 
 export function randProject(r, opts = {}) {
@@ -85,7 +85,7 @@ export function randProject(r, opts = {}) {
   const p = {
     version: 1,
     id: freshId(r, "p-"),
-    name: r.pick(["未命名", "demo", "a/b"]),
+    name: r.pick(["Untitled", "demo", "a/b"]),
     width: 1920,
     height: 1080,
     fps: r.pick([24, 30, 60]),
@@ -95,7 +95,7 @@ export function randProject(r, opts = {}) {
     tracks: Array.from({ length: 1 + r.int(maxTracks) }, () => randTrack(r)),
   };
   if (r.chance(0.4)) p.filters = Array.from({ length: r.int(3) }, () => ({ id: freshId(r, "f"), kind: "grade", strength: r.next() }));
-  if (r.chance(0.3)) p.cuts = Array.from({ length: 1 + r.int(2) }, () => ({ id: freshId(r, "k"), name: "剪辑", tracks: [randTrack(r, 3)] }));
+  if (r.chance(0.3)) p.cuts = Array.from({ length: 1 + r.int(2) }, () => ({ id: freshId(r, "k"), name: "Cut", tracks: [randTrack(r, 3)] }));
   if (r.chance(0.3)) p.style = randObject(r, 1);
   return p;
 }
@@ -185,7 +185,7 @@ export function deepFreeze(v) {
 
 /** 把一个项目放大到 n 个片段(性能基准用) */
 export function bigProject(r, clipCount, trackCount = 10) {
-  const tracks = Array.from({ length: trackCount }, (_, ti) => ({ id: `t-${ti}`, name: `序列 ${ti}`, clips: [] }));
+  const tracks = Array.from({ length: trackCount }, (_, ti) => ({ id: `t-${ti}`, name: `Track ${ti}`, clips: [] }));
   for (let i = 0; i < clipCount; i++) {
     const t = tracks[i % trackCount];
     const start = t.clips.length * 3;
@@ -194,7 +194,7 @@ export function bigProject(r, clipCount, trackCount = 10) {
       cardId: "title",
       start,
       end: start + 2.5,
-      params: { text: `片段 ${i}`, size: 48, color: "#fff", align: "center", shadow: { x: 1, y: 2, blur: 4 }, items: ["a", "b", "c"] },
+      params: { text: `clip ${i}`, size: 48, color: "#fff", align: "center", shadow: { x: 1, y: 2, blur: 4 }, items: ["a", "b", "c"] },
       frame: { x: 100, y: 200, w: 800, h: 200, anchor: "center", scale: 1, rotation: 0 },
       fadeIn: 0.2,
       fadeOut: 0.2,
@@ -237,7 +237,7 @@ export function realisticEdit(r, p) {
       return withTrack(ti, (tr) => { const cs = [...clips]; const [el] = cs.splice(ci, 1); cs.splice(r.int(cs.length + 1), 0, el); return { ...tr, clips: cs }; });
     case 7: // 改序列名 / 隐藏
       if (ti < 0) break;
-      return withTrack(ti, (tr) => (r.chance(0.5) ? { ...tr, name: `序列 ${r.int(100)}` } : { ...tr, hidden: !tr.hidden }));
+      return withTrack(ti, (tr) => (r.chance(0.5) ? { ...tr, name: `Track ${r.int(100)}` } : { ...tr, hidden: !tr.hidden }));
     case 8: // 加删序列
       if (r.chance(0.7) || tracks.length < 2) return { ...p, tracks: [...tracks, randTrack(r, 3)] };
       return { ...p, tracks: tracks.filter((_, i) => i !== ti) };

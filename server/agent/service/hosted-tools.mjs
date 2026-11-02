@@ -45,9 +45,9 @@ export const HOSTED_TOOL_DEFAULTS = Object.freeze({
 });
 
 /** 运行素材没开时给模型的话：不要重试，告诉它素材从哪儿来 */
-export const RUN_ASSETS_OFF_TEXT = '云端这一版还不能由 Agent 把文件装进素材库(运行素材没有开),再试也一样,不要重试。' +
-  '用户在对话里发的图片、视频、音频,页面发送时已经放进素材库,用 list_media 找到那一条直接用;' +
-  '别的文件请告诉用户自己在左侧素材库点「导入媒体」放进去。';
+export const RUN_ASSETS_OFF_TEXT = 'This cloud version cannot let the Agent add files to the media library (run assets is off); retrying will not help, do not retry.' +
+  'Images, videos and audio the user sent in the chat were already added to the media library when the page sent them; find that item with list_media and use it directly; ' +
+  'for other files, tell the user to click "Import media" in the media library on the left to add them.';
 
 export class HostedToolError extends Error {
   constructor(message, extra = {}) {
@@ -68,7 +68,7 @@ const MIME_EXT = {
   'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov', 'audio/mpeg': 'mp3', 'audio/wav': 'wav', 'audio/x-wav': 'wav',
   'audio/mp4': 'm4a', 'audio/ogg': 'ogg', 'audio/flac': 'flac',
 };
-const KIND_LABEL = { video: '视频', image: '图片', audio: '音频' };
+const KIND_LABEL = { video: 'Video', image: 'Image', audio: 'audio' };
 
 export const extOf = (name) => (/\.([A-Za-z0-9]{1,5})$/.exec(String(name ?? ''))?.[1] ?? '').toLowerCase();
 export const kindOfName = (name) => EXT_KIND[extOf(name)] ?? null;
@@ -299,8 +299,8 @@ export function createHostedTools({
       if (reply.type === 'error') {
         const reason = reply.reason ?? 'error';
         throw new HostedToolError(reason === 'forbidden'
-          ? '文档服务拒绝了这次操作:你在这个项目里没有这个权限。'
-          : `文档服务没有接受这次操作(${reason})${reply.detail ? `:${reply.detail}` : ''}`, { code: reason });
+          ? 'The document service rejected this operation: you do not have this permission in this project.'
+          : `The document service did not accept this operation (${reason})${reply.detail ? `:${reply.detail}` : ''}`, { code: reason });
       }
       return reply;
     }
@@ -308,7 +308,7 @@ export function createHostedTools({
     /* ---------- 素材服务 ---------- */
 
     function assetClient() {
-      if (!assetBase) throw new HostedToolError('这台云节点没有配置素材服务的地址,云端 Agent 暂时不能把文件入库。请联系托管方。', { code: 'no-asset-service' });
+      if (!assetBase) throw new HostedToolError('This cloud node has no asset service address configured, so the Cloud Agent cannot store files for now. Contact the host.', { code: 'no-asset-service' });
       let cached = null;
       return createAssetClient({
         base: `${assetBase.replace(/\/+$/, '')}/api/asset`,
@@ -330,14 +330,14 @@ export function createHostedTools({
     async function ensureCanWrite() {
       if (c.runAssets) {
         try { await c.runAssets.authorizeWrite(); }
-        catch { throw new HostedToolError('这条任务现在不能往项目里写素材(任务已被停止,或发起人在这个项目里没有写权限)。', { code: 'forbidden' }); }
+        catch { throw new HostedToolError('This task cannot write media to the project right now (the task was stopped, or the initiator has no write permission in this project).', { code: 'forbidden' }); }
         return;
       }
-      if (!assetBase) throw new HostedToolError('这台云节点没有配置素材服务的地址,云端 Agent 暂时不能把文件入库。请联系托管方。', { code: 'no-asset-service' });
+      if (!assetBase) throw new HostedToolError('This cloud node has no asset service address configured, so the Cloud Agent cannot store files for now. Contact the host.', { code: 'no-asset-service' });
       try {
         await docRequest({ type: 'auth.ticket', kind: 'asset', access: 'rw' }, ['auth.ticket.ok']);
       } catch (err) {
-        if (err?.code === 'forbidden') throw new HostedToolError('你在这个项目里只有只读权限,云端 Agent 不能替你把素材写进项目。', { code: 'forbidden' });
+        if (err?.code === 'forbidden') throw new HostedToolError('You only have read-only permission in this project, so the Cloud Agent cannot write media to the project for you.', { code: 'forbidden' });
         throw err;
       }
     }
@@ -351,9 +351,9 @@ export function createHostedTools({
         return { hash: out.assetRef.hash, size: out.assetRef.size };
       } catch (err) {
         if (err?.status === 403 || err?.status === 401 || ['run-access-denied', 'run-revoked', 'run-resource-fenced'].includes(err?.code)) {
-          throw new HostedToolError('素材服务拒绝了这次写入:这条任务现在不能往项目里写素材(任务已被停止,或发起人没有写权限)。', { code: 'forbidden' });
+          throw new HostedToolError('The asset service rejected this write: this task cannot write media to the project right now (the task was stopped, or the initiator has no write permission).', { code: 'forbidden' });
         }
-        if (err?.workspace) throw new HostedToolError(`素材没有入库:${err.message}`, { code: err.code ?? 'quota' });
+        if (err?.workspace) throw new HostedToolError(`Media was not stored: ${err.message}`, { code: err.code ?? 'quota' });
         if (err?.code === 'run-assets-unconfigured') throw new HostedToolError(RUN_ASSETS_OFF_TEXT, { code: 'run-assets-unconfigured' });
         throw err;
       }
@@ -364,23 +364,23 @@ export function createHostedTools({
       const ws = workspace();
       const abs = ws.resolve(rel);
       const st = ws.stat(rel);
-      if (!st) throw new HostedToolError('工作目录里没有这个文件。', { code: 'not-found' });
-      if (st.size === 0) throw new HostedToolError('这个文件是空的。');
+      if (!st) throw new HostedToolError('This file is not in the working directory.', { code: 'not-found' });
+      if (st.size === 0) throw new HostedToolError('This file is empty.');
       const hash = await sha256File(abs);
       const ext = extOf(rel);
       if (c.runAssets) {
         const kind = kindHint ?? kindOfName(rel);
-        if (!kind || !ext) throw new HostedToolError('无法识别这个文件的类型,请使用视频、音频或图片文件。');
+        if (!kind || !ext) throw new HostedToolError('Cannot recognize this file\'s type; use a video, audio or image file.');
         // 来源已经是工作目录里的文件(进来时按额度核过、也算在占用里):导入时临时落的那一份不再按额度算第二遍
         const stored = await runAssetImport(() => fs.createReadStream(abs), { name: `import.${ext}`, kind }, { inWorkspace: true, size: st.size });
-        if (stored.hash !== hash || stored.size !== st.size) throw new HostedToolError('素材入库后的内容与原文件对不上,没有登记。');
+        if (stored.hash !== hash || stored.size !== st.size) throw new HostedToolError('The stored media does not match the original file, so it was not registered.');
         return { hash, ext, bytes: st.size };
       }
       try {
         await assetClient().putFile('media', abs, { hash, ext });
       } catch (err) {
         if (err?.code === 'forbidden' || err?.status === 403 || err?.status === 401) {
-          throw new HostedToolError('素材服务拒绝了这次写入:你在这个项目里只有只读权限,云端 Agent 不能替你导入素材。', { code: 'forbidden' });
+          throw new HostedToolError('The asset service rejected this write: you only have read-only permission in this project, so the Cloud Agent cannot import media for you.', { code: 'forbidden' });
         }
         throw err;
       }
@@ -430,7 +430,7 @@ export function createHostedTools({
         if (place) {
           const start = typeof place.start === 'number' ? Math.max(0, place.start) : (place.atEnd ? host.contentEnd() : 0);
           clip = host.addMediaClip(media.id, start, place.trackId ? { trackId: place.trackId } : {});
-          if (!clip && place.required) throw new HostedToolError(`素材已入库,但放上时间轴失败 —— trackId 不对?`);
+          if (!clip && place.required) throw new HostedToolError(`Media was stored, but placing it on the timeline failed: is trackId wrong?`);
         }
         return { ok: true };
       });
@@ -448,21 +448,21 @@ export function createHostedTools({
     async function materialize(url, nameIn) {
       const ws = workspace();
       if (typeof url !== 'string' || !url) {
-        throw new HostedToolError('要传附件的地址(url)。附件用用户消息末尾清单里的地址(形如 work:attachments/<文件名>);网上的文件直接传 http(s) 地址。');
+        throw new HostedToolError('The address (url) of the attachment to upload is required. For an attachment, use the address in the manifest at the end of the user\'s message (like work:attachments/<filename>); for a file on the web, pass the http(s) address directly.');
       }
       if (url.startsWith('work:')) {
         const rel = url.slice(5);
-        if (!ws.exists(rel)) throw new HostedToolError(`工作目录里没有 ${rel}。附件的地址以用户消息末尾的清单为准。`, { code: 'not-found' });
+        if (!ws.exists(rel)) throw new HostedToolError(`${rel} is not in the working directory. The attachment address is whatever the manifest at the end of the user's message says.`, { code: 'not-found' });
         return { rel, name: nameIn || rel.split('/').pop() };
       }
       const pc = /^\/@pcwork\/([^/]+)\/([^/?#]+)$/.exec(url);
       if (pc) {
-        if (decodeURIComponent(pc[1]) !== conversationId) throw new HostedToolError('这个附件不属于这个对话。', { code: 'not-found' });
+        if (decodeURIComponent(pc[1]) !== conversationId) throw new HostedToolError('This attachment does not belong to this chat.', { code: 'not-found' });
         const rel = `attachments/${decodeURIComponent(pc[2])}`;
-        if (!ws.exists(rel)) throw new HostedToolError('这个附件不在了,请让用户重新添加。', { code: 'not-found' });
+        if (!ws.exists(rel)) throw new HostedToolError('This attachment is gone; ask the user to add it again.', { code: 'not-found' });
         return { rel, name: nameIn || decodeURIComponent(pc[2]) };
       }
-      if (!/^https?:\/\//i.test(url)) throw new HostedToolError('地址只能是附件清单里的地址,或 http(s) 地址。');
+      if (!/^https?:\/\//i.test(url)) throw new HostedToolError('The address must be one from the attachment manifest, or an http(s) address.');
       let name = safeName(nameIn || decodeURIComponent(new URL(url).pathname.split('/').pop() || 'download'), 'download');
       const tmpRel = `downloads/${Date.now().toString(36)}-${name}`;
       const writer = ws.writer(tmpRel);
@@ -471,12 +471,12 @@ export function createHostedTools({
         res = await egress.request(url, { maxBytes: limits.maxImportBytes, timeoutMs: limits.downloadMs, onChunk: (chunk) => writer.write(chunk) });
       } catch (err) {
         writer.abort();
-        if (err?.egress) throw new HostedToolError(`取不到这个地址:${err.message}`, { code: `egress-${err.code}` });
+        if (err?.egress) throw new HostedToolError(`Cannot fetch this address: ${err.message}`, { code: `egress-${err.code}` });
         throw err;
       }
       if (res.status < 200 || res.status >= 300) {
         writer.abort();
-        throw new HostedToolError(`取文件失败(HTTP ${res.status}),地址可能不对或已失效。`);
+        throw new HostedToolError(`Failed to fetch the file (HTTP ${res.status}); the address may be wrong or expired.`);
       }
       writer.end();
       // 直链常常不带扩展名:按回包的类型补一个
@@ -496,7 +496,7 @@ export function createHostedTools({
       const kind = kindOfName(got.rel) ?? kindOfName(got.name);
       if (!kind) {
         if (got.downloaded) workspace().remove(got.rel);
-        throw new HostedToolError(`无法识别文件“${got.name}”的类型,请使用视频、音频或图片文件。`);
+        throw new HostedToolError(`Cannot recognize the type of file "${got.name}"; use a video, audio or image file.`);
       }
       const ps = c.pageState();
       const { media, clip, meta } = await registerMedia(track, {
@@ -506,14 +506,14 @@ export function createHostedTools({
       });
       if (got.downloaded) workspace().remove(got.rel);
       const base = { mediaId: media.id, name: got.name, kind, kindLabel: KIND_LABEL[kind], cardUrl: media.url };
-      const missing = meta.probeMissing ? ' 这台云节点上没有 ffprobe,没读出时长与尺寸;放上时间轴时请自己给 duration。' : '';
+      const missing = meta.probeMissing ? ' This cloud node has no ffprobe, so duration and dimensions were not read; provide duration yourself when placing it on the timeline.' : '';
       if (kind === 'image') {
-        return { ...base, width: media.width, height: media.height, hint: `图片已进“图片”素材库(没放到时间轴)。卡片参数里要用这张图就填 cardUrl。` };
+        return { ...base, width: media.width, height: media.height, hint: `The image was added to the "Images" media library (not placed on the timeline). To use this image in card parameters, fill in cardUrl.` };
       }
-      if (kind === 'audio') return { ...base, duration: media.duration, hint: `音频已进素材库(没放到时间轴)。${missing}` };
+      if (kind === 'audio') return { ...base, duration: media.duration, hint: `The audio was added to the media library (not placed on the timeline). ${missing}` };
       return {
         ...base, duration: media.duration, width: media.width, height: media.height, ...(clip ? { clipId: clip.id } : {}),
-        hint: `已装进素材库${clip ? '并放到视频轨上' : ''}。${missing}`,
+        hint: `Added to the media library${clip ? ' and placed on the video track' : ''}. ${missing}`,
       };
     }
 
@@ -531,16 +531,16 @@ export function createHostedTools({
         customVoices: (cfg?.customVoices ?? []).map((v) => ({ provider: v.provider, voiceId: v.voiceId, name: v.name, kind: v.kind, note: v.note })),
         textLimits: presets.TEXT_LIMITS,
         hint: set
-          ? 'voice_generate 的 voiceId 从 systemVoices / customVoices 里挑(customVoices 要配对 provider)。云端的配音用的是托管方的配置。'
-          : '托管方还没有为云端 Agent 配置配音服务,voice_generate 会失败。请告诉用户联系托管方,或在电脑上的 PromptCut 里配音。',
+          ? 'For voice_generate, pick voiceId from systemVoices / customVoices (customVoices must be paired with provider). Cloud voiceover uses the host\'s configuration.'
+          : 'The host has not configured a voiceover service for the Cloud Agent, so voice_generate will fail. Tell the user to contact the host, or to make the voiceover in PromptCut on their computer.',
       };
     }
 
     async function voiceGenerate(args, track) {
-      if (!args?.text || !String(args.text).trim()) throw new HostedToolError('text 不能是空的');
+      if (!args?.text || !String(args.text).trim()) throw new HostedToolError('text must not be empty');
       const cfg = await voiceConfig();
       if (!cfg?.apiKey || !cfg?.effectiveBaseUrl) {
-        throw new HostedToolError('托管方还没有为云端 Agent 配置配音服务。请告诉用户联系托管方,或在电脑上的 PromptCut 里配音。', { code: 'no-voice-config' });
+        throw new HostedToolError('The host has not configured a voiceover service for the Cloud Agent. Tell the user to contact the host, or to make the voiceover in PromptCut on their computer.', { code: 'no-voice-config' });
       }
       await ensureCanWrite();
       const { generateVoice } = await import(new URL('../../voice/generate.mjs', import.meta.url).href);
@@ -563,14 +563,14 @@ export function createHostedTools({
         });
       } catch (err) {
         // 参数不对(音色不在列表里、语速越界)没有发出请求,不记用量;发出去失败了的照记(服务商可能已经计费)
-        if (err?.name !== 'VoiceError' || /HTTP|接口|网关|超时/.test(String(err?.message))) row(null, false);
+        if (err?.name !== 'VoiceError' || /HTTP|gateway|timeout|timed out/.test(String(err?.message))) row(null, false);
         throw new HostedToolError(String(err?.message ?? err).slice(0, 300));
       }
       row(out, true);
       const rel = `voice/${out.name}`;
       // 生成的文件计入工作区的总量(generateVoice 自己写的盘):超了就删掉、报错
       const usage = ws.usage();
-      if (usage.bytes > workspaces.limits.maxConversationBytes) { ws.remove(rel); throw new HostedToolError('这个对话的工作目录已满,语音没有保存。'); }
+      if (usage.bytes > workspaces.limits.maxConversationBytes) { ws.remove(rel); throw new HostedToolError('The working directory of this chat is full, so the speech was not saved.'); }
       const place = typeof args.start === 'number' ? { start: args.start, trackId: args.trackId, required: true } : null;
       const { media, clip } = await registerMedia(track, { rel, name: out.name, kind: 'audio', place });
       ws.remove(rel);
@@ -578,8 +578,8 @@ export function createHostedTools({
         mediaId: media.id, name: out.name, duration: media.duration, ...(clip ? { clipId: clip.id } : {}),
         provider: out.provider, model: out.model, voiceId: out.voiceId, chars: out.chars,
         hint: clip
-          ? '已进素材库并放到时间轴。下一段的 start 接在这段 start + duration 后面。'
-          : '已进素材库(没放时间轴)。要上时间轴就传 start 再生成。',
+          ? 'Added to the media library and placed on the timeline. The next clip\'s start follows this clip\'s start + duration.'
+          : 'Added to the media library (not placed on the timeline). To put it on the timeline, pass start and generate again.',
       };
     }
 
@@ -658,14 +658,14 @@ export function createHostedTools({
     }
 
     async function putCard(key, source) {
-      if (Buffer.byteLength(source, 'utf8') > limits.maxCardBytes) throw new HostedToolError(`源码超过 ${Math.round(limits.maxCardBytes / 1024)}KB,太大了。`);
+      if (Buffer.byteLength(source, 'utf8') > limits.maxCardBytes) throw new HostedToolError(`The source is over ${Math.round(limits.maxCardBytes / 1024)}KB, which is too large.`);
       // 渲染节点装卡时的那道预检(越界的 @import、@plugin、import.meta.glob 等写法会被拒装)提前在这里报:过不了的卡入了库也渲不出来
       // 预检的真实现在闭源侧，从 Agent 扩展表里取。社区版没有那张表 → 跳过这道预检，
       // 而它本来就是「云端渲染节点装不装得上」的事，社区版没有云端渲染节点。
       const gate = findAgentExtension('source-gate');
       if (gate && typeof gate.checkSyncedSource === 'function') {
         const pre = gate.checkSyncedSource(key, source);
-        if (!pre.ok) throw new HostedToolError(`这份源码在云端的渲染节点上装不上,没有保存:\n${pre.errors.join('\n')}`, { errors: pre.errors });
+        if (!pre.ok) throw new HostedToolError(`This source cannot be installed on the cloud render node and was not saved:\n${pre.errors.join('\n')}`, { errors: pre.errors });
       }
       const stored = await docRequest({ type: 'content.put', kind: CARD_KIND, key, body: source, session: `agent:${agentKey}`.slice(0, 128) }, ['content.stored']);
       cards.items.set(key, { hash: stored.hash, rev: stored.rev ?? null, body: source });
@@ -680,7 +680,7 @@ export function createHostedTools({
 
     async function getCardSource(args) {
       const id = String(args?.cardId ?? args?.id ?? '');
-      if (!ID_RE.test(id)) throw new HostedToolError(`卡片 id "${id}" 不合法。`);
+      if (!ID_RE.test(id)) throw new HostedToolError(`Card id "${id}" is invalid.`);
       await refreshCards();
       const lib = await cardLib();
       const found = await closureOf(id);
@@ -690,36 +690,36 @@ export function createHostedTools({
           return {
             ok: true, id, file: cat.entry.file, source: cat.source, lines: cat.source.split('\n').length,
             catalog: true, tier: cat.entry.tier, blockers: cat.entry.blockers, props: cat.entry.props,
-            hint: `这是 Magic UI 目录里的原始源码(MIT),还不是卡。包成 CardDef、文件头写「来源: https://magicui.design/docs/components/${cat.name}」和 MIT,再用 create_card 以 id "${id}" 建卡。${cat.entry.blockers.length ? '要先处理:' + cat.entry.blockers.join('、') : ''}`,
+            hint: `This is raw source from the Magic UI catalog (MIT), not a card yet. Wrap it as a CardDef, write "Source: https://magicui.design/docs/components/${cat.name}" and MIT in the file header, then create the card with create_card using id "${id}". ${cat.entry.blockers.length ? 'Handle this first:' + cat.entry.blockers.join(', ') : ''}`,
           };
         }
-        throw new HostedToolError(`找不到卡片 "${id}" 的源码。先用 list_cards 确认 id;Magic UI 目录里还没搬的组件用 mu-<name> 读(见 card_authoring_guide 末尾的目录)。`);
+        throw new HostedToolError(`Cannot find the source of card "${id}". Confirm the id with list_cards first; for components in the Magic UI catalog that have not been moved over yet, read them with mu-<name> (see the catalog at the end of card_authoring_guide).`);
       }
       const target = typeof args?.file === 'string' && args.file ? args.file : found.defFile;
-      if (!found.closure.includes(target)) throw new HostedToolError(`"${target}" 不在卡片 ${id} 的源码文件里。能读的是:${found.closure.join('、')}`);
+      if (!found.closure.includes(target)) throw new HostedToolError(`"${target}" is not in the source files of card ${id}. Readable files: ${found.closure.join(', ')}`);
       const source = effective(target);
-      if (typeof source !== 'string') throw new HostedToolError(`读不到 "${target}"。`);
+      if (typeof source !== 'string') throw new HostedToolError(`Cannot read "${target}".`);
       return {
         ok: true, id, file: target, source, lines: source.split('\n').length, builtin: found.builtin,
         files: found.closure.map((f) => ({ file: f, ...(cards.items.has(f) ? { inProject: true } : {}) })),
-        ...(found.builtin ? { hint: '这是内置卡。改它用 edit_card:改动只进这个项目(存在项目的内容库里),别的项目不受影响。' } : {}),
+        ...(found.builtin ? { hint: 'This is a built-in card. Use edit_card to change it: the changes only go into this project (stored in the project\'s content store) and do not affect other projects.' } : {}),
       };
     }
 
     async function createCard(args) {
       const id = args?.id;
       const source = args?.source;
-      if (typeof id !== 'string' || typeof source !== 'string') throw new HostedToolError('id 和 source 都必须是字符串');
-      if (!ID_RE.test(id)) throw new HostedToolError(`卡片 id "${id}" 不合法:只能是小写字母、数字和连字符,字母开头。`);
+      if (typeof id !== 'string' || typeof source !== 'string') throw new HostedToolError('id and source must both be strings');
+      if (!ID_RE.test(id)) throw new HostedToolError(`Card id "${id}" is invalid: it may only contain lowercase letters, digits and hyphens, and must start with a letter.`);
       await refreshCards(true);
       const lib = await cardLib();
       const host = await c.host();
       const key = `${USER_PREFIX}${id}.tsx`;
       const already = cards.items.has(key);
       if (already && args.overwrite !== true) {
-        throw new HostedToolError(`${key} 已存在。要改它请用 get_card_source 读回源码、再用 edit_card 改那一处;确实要整张推倒重来才传 overwrite: true。`);
+        throw new HostedToolError(`${key} already exists. To change it, read the source back with get_card_source, then change that spot with edit_card; pass overwrite: true only if you really need to tear down and redo the whole card.`);
       }
-      if (!already && host.cardIds().includes(id)) throw new HostedToolError(`卡片 id "${id}" 和已有的内置卡重复。改个 id 再试。`);
+      if (!already && host.cardIds().includes(id)) throw new HostedToolError(`Card id "${id}" duplicates an existing built-in card. Change the id and try again.`);
       const translated = lib.translateCardSource(source);
       const finalSource = translated.source;
       const existing = already ? [] : [...new Set([...host.cardIds(), ...cards.parsed.map((p) => p.id)])];
@@ -736,25 +736,25 @@ export function createHostedTools({
         ok: true, id, file: key, overwritten: already, rewrites: translated.rewrites, suggestedControls,
         ...(check.findings?.length ? { findings: check.findings } : {}),
         source: finalSource, lines: finalSource.split('\n').length,
-        hint: `已存进这个项目的卡片库,所有成员都会收到。要再改它请用 edit_card 做局部替换,不要用 create_card 整篇重写。${known ? '' : ' 注意:云端没能从源码里静态读出这张卡的参数表(id、name、defaults、controls 要写成字面量),add_clip 暂时认不出它,请把它们改成字面量。'}`,
+        hint: `Saved to this project's card library; all members will receive it. To change it again, use edit_card for a partial replacement; do not rewrite the whole thing with create_card. ${known ? '' : ' Note: the cloud could not statically read this card\'s parameter table from the source (id, name, defaults and controls must be written as literals), so add_clip cannot recognize it for now. Change them into literals.'}`,
       };
     }
 
     async function editCard(args) {
       const { file, find, replace, replaceAll } = args ?? {};
       const id = args?.cardId ?? args?.id;
-      if (typeof id !== 'string' || typeof find !== 'string' || typeof replace !== 'string') throw new HostedToolError('cardId、find、replace 都必须是字符串');
-      if (!ID_RE.test(id)) throw new HostedToolError(`卡片 id "${id}" 不合法。`);
+      if (typeof id !== 'string' || typeof find !== 'string' || typeof replace !== 'string') throw new HostedToolError('cardId, find and replace must all be strings');
+      if (!ID_RE.test(id)) throw new HostedToolError(`Card id "${id}" is invalid.`);
       await refreshCards(true);
       const lib = await cardLib();
       const found = await closureOf(id);
-      if (!found) throw new HostedToolError(`找不到卡片 "${id}" 的源码。先用 get_card_source 确认 id 和能改的文件。`);
+      if (!found) throw new HostedToolError(`Cannot find the source of card "${id}". Confirm the id and the editable files with get_card_source first.`);
       const target = typeof file === 'string' && file ? file : found.defFile;
       if (!found.closure.includes(target) || !lib.isEditablePath(target)) {
-        throw new HostedToolError(`"${target}" 不是卡片 ${id} 的源码文件,不能改。能改的是:${found.closure.join('、')}`);
+        throw new HostedToolError(`"${target}" is not a source file of card ${id} and cannot be changed. Editable files: ${found.closure.join(', ')}`);
       }
       const before = effective(target);
-      if (typeof before !== 'string') throw new HostedToolError(`读不到 "${target}"。`);
+      if (typeof before !== 'string') throw new HostedToolError(`Cannot read "${target}".`);
       const patch = lib.applyCardPatch(before, find, replace, replaceAll === true);
       if (!patch.ok) throw new HostedToolError(patch.error);
       const isUserDef = target === found.defFile && found.defFile.startsWith(USER_PREFIX);
@@ -765,8 +765,8 @@ export function createHostedTools({
       return {
         ok: true, id, file: target, replaced: patch.replaced, source: patch.after, builtin: found.builtin,
         hint: found.builtin
-          ? '已改写,改动存在这个项目的内容库里(只影响这个项目),所有成员都会收到。'
-          : '已改写,所有成员都会收到。',
+          ? 'Rewritten. The changes are stored in this project\'s content store (only affecting this project), and all members will receive them.'
+          : 'Rewritten. All members will receive it.',
       };
     }
 
@@ -779,7 +779,7 @@ export function createHostedTools({
         return await assetClient().put('media', wav, { ext: 'wav' });
       } catch (err) {
         if (err?.code === 'forbidden' || err?.status === 403 || err?.status === 401) {
-          throw new HostedToolError('素材服务拒绝了这次写入:你在这个项目里只有只读权限,云端 Agent 不能替你生成声音。', { code: 'forbidden' });
+          throw new HostedToolError('The asset service rejected this write: you only have read-only access in this project, so the Cloud Agent cannot generate audio for you.', { code: 'forbidden' });
         }
         throw err;
       }
@@ -834,7 +834,7 @@ export function createHostedTools({
         finally { clearTimeout(timer); opened.stream.destroy(); }
         return { status: 200 };
       }
-      if (!assetBase) throw new HostedToolError('这台云节点没有配置素材服务的地址,云端 Agent 暂时读不到素材。请联系托管方。', { code: 'no-asset-service' });
+      if (!assetBase) throw new HostedToolError('This cloud node has no asset service address configured, so the Cloud Agent cannot read media for now. Contact the host.', { code: 'no-asset-service' });
       const reply = await docRequest({ type: 'auth.ticket', kind: 'asset', access: 'r' }, ['auth.ticket.ok']);
       const res = await fetchImpl(`${assetBase.replace(/\/+$/, '')}/api/asset/media/${hash}`, {
         headers: { Authorization: `Bearer ${reply.ticket}` }, signal: AbortSignal.timeout(timeoutMs),
@@ -859,7 +859,7 @@ export function createHostedTools({
       // 下载物进素材库:与 import_media 同一条路(成员本人的素材票据、在项目副本上登记;视频照桌面版放上时间轴)
       importFile: async (rel, name) => {
         const kind = kindOfName(rel) ?? kindOfName(name);
-        if (!kind) throw new HostedToolError(`无法识别文件「${name}」的类型`);
+        if (!kind) throw new HostedToolError(`Cannot identify the type of file "${name}"`);
         const ps = c.pageState();
         const { media, clip } = await registerMedia({}, { rel, name, kind, place: kind === 'video' ? (ps.online ? { start: ps.t } : { atEnd: true }) : null });
         return { mediaId: media.id, kind, ...(clip ? { clipId: clip.id } : {}), duration: media.duration, width: media.width, height: media.height, bytes: media.size };
@@ -937,7 +937,7 @@ export async function saveAttachment(workspace, nameIn, stream, { maxBytes = HOS
   try {
     for await (const chunk of stream) {
       size += chunk.length;
-      if (size > maxBytes) throw new HostedToolError('附件太大了。', { code: 'too-large' });
+      if (size > maxBytes) throw new HostedToolError('The attachment is too large.', { code: 'too-large' });
       writer.write(chunk);
     }
   } catch (err) {
@@ -945,7 +945,7 @@ export async function saveAttachment(workspace, nameIn, stream, { maxBytes = HOS
     throw err;
   }
   writer.end();
-  if (size === 0) { workspace.remove(rel); throw new HostedToolError('附件是空的。', { code: 'bad-request' }); }
+  if (size === 0) { workspace.remove(rel); throw new HostedToolError('The attachment is empty.', { code: 'bad-request' }); }
   const ext = extOf(rel);
   const out = { name: rel.slice('attachments/'.length), url: `work:${rel}`, size, kind: kindOfName(rel) ?? (TEXT_EXT.has(ext) ? 'text' : 'file') };
   if (TEXT_EXT.has(ext) && size <= inlineTextBytes) {
@@ -966,12 +966,12 @@ export function attachmentsPrompt(workspace, attachments, { inlineTextBytes = HO
     try { st = workspace.stat(rel); } catch { st = null; }
     if (!st) continue;
     const kind = kindOfName(rel);
-    let line = `- [${kind ? KIND_LABEL[kind] : '文件'}] ${rel.slice('attachments/'.length)} · 地址 ${url}`;
+    let line = `- [${kind ? KIND_LABEL[kind] : 'file'}] ${rel.slice('attachments/'.length)} · URL ${url}`;
     // 页面发送时已经放进素材库的(云端对话,2026-10-18 用户定):直接用素材库那一条,不要再导入
     const lib = a?.library && typeof a.library === 'object' ? a.library : null;
     if (lib && typeof lib.mediaId === 'string' && typeof lib.url === 'string') {
-      line += ` · 已在素材库:mediaId ${lib.mediaId} · cardUrl ${lib.url}(直接用这一条,不要再 import_media)`; inLibrary++;
-    } else if (typeof a?.libraryError === 'string' && a.libraryError) line += ` · 页面没能把它放进素材库:${a.libraryError}`;
+      line += ` · Already in the media library: mediaId ${lib.mediaId} · cardUrl ${lib.url} (use this one directly, do not import_media again)`; inLibrary++;
+    } else if (typeof a?.libraryError === 'string' && a.libraryError) line += ` · The page could not put it into the media library: ${a.libraryError}`;
     if (TEXT_EXT.has(extOf(rel)) && st.size <= inlineTextBytes) {
       try { line += `\n\`\`\`\n${workspace.read(rel).toString('utf8')}\n\`\`\``; } catch { /* 读不出就不内联 */ }
     }
@@ -980,7 +980,7 @@ export function attachmentsPrompt(workspace, attachments, { inlineTextBytes = HO
   if (!lines.length) return '';
   // 都已经在素材库里时不再叫它 import_media(云端运行素材没开时那样做只会失败)
   const head = inLibrary === lines.length
-    ? '附件(页面已放进素材库,用标出的 mediaId / cardUrl;工作目录里另有一份原文件)'
-    : '附件(在这个对话的工作目录里;标了「已在素材库」的直接用那一条,其余要剪辑、转写或配动效,先用 import_media 传它的地址装进素材库)';
+    ? 'Attachment (the page has put it into the media library; use the marked mediaId / cardUrl; the original file is also in the working directory)'
+    : 'Attachment (in this chat\'s working directory; for those marked "Already in the media library", use that entry directly; for the rest, to edit, transcribe or add motion graphics, first pass its URL to import_media to load it into the media library)';
   return `\n\n${head}:\n${lines.join('\n')}`;
 }

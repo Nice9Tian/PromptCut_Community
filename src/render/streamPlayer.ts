@@ -214,7 +214,7 @@ function findBox(view: DataView, type: string, start: number, end: number): Box 
 export function parseInit(buf: ArrayBuffer): { codec: string; description: Uint8Array; width: number; height: number } {
   const view = new DataView(buf);
   const avcC = findBox(view, "avcC", 0, buf.byteLength);
-  if (!avcC) throw new Error("init.mp4 里没有 avcC");
+  if (!avcC) throw new Error("No avcC in init.mp4");
   const description = new Uint8Array(buf.slice(avcC.start + avcC.header, avcC.end));
   const hex = (n: number) => n.toString(16).padStart(2, "0");
   const codec = `avc1.${hex(description[1])}${hex(description[2])}${hex(description[3])}`;
@@ -234,10 +234,10 @@ export interface SegmentSample { offset: number; size: number; isSync: boolean }
 export function parseSegment(buf: ArrayBuffer): SegmentSample[] {
   const view = new DataView(buf);
   const moof = boxesOf(view, 0, buf.byteLength).find((b) => b.type === "moof");
-  if (!moof) throw new Error("分段里没有 moof");
+  if (!moof) throw new Error("No moof in the segment");
   const tfhd = findBox(view, "tfhd", moof.start + moof.header, moof.end);
   const trun = findBox(view, "trun", moof.start + moof.header, moof.end);
-  if (!tfhd || !trun) throw new Error("分段里没有 tfhd / trun");
+  if (!tfhd || !trun) throw new Error("No tfhd / trun in the segment");
   let defSize = 0, defFlags = 0;
   {
     const p = tfhd.start + tfhd.header;
@@ -372,7 +372,7 @@ export class HttpStreamSource implements StreamSource {
   constructor(base: () => Promise<string> = defaultBase) { this.base = base; }
   private async get(path: string, init: RequestInit): Promise<Response> {
     const res = await fetch((await this.base()) + path, init);
-    if (!res.ok) throw Object.assign(new Error(`轨道流还没就绪:${path}`), { status: res.status });
+    if (!res.ok) throw Object.assign(new Error(`Track stream not ready yet: ${path}`), { status: res.status });
     return res;
   }
   async manifest(key: string, signal?: AbortSignal): Promise<StreamManifest> {
@@ -420,7 +420,7 @@ export function manifestBlockHashes(manifest: StreamManifest | null | undefined)
 }
 
 const isBuffer = (v: unknown): v is ArrayBuffer => !!v && typeof (v as ArrayBuffer).byteLength === "number" && typeof (v as ArrayBuffer).slice === "function";
-const missingBlock = (what: string) => Object.assign(new Error(`父页还没把这一块推过来:${what}`), { status: 404 });
+const missingBlock = (what: string) => Object.assign(new Error(`The parent page has not pushed this block yet: ${what}`), { status: 404 });
 
 /** 舞台一侧:字节源是父页随流平面推来的块 */
 export class PushedStreamSource implements StreamSource {
@@ -442,18 +442,18 @@ export class PushedStreamSource implements StreamSource {
   }
   async manifest(key: string): Promise<StreamManifest> {
     const m = this.manifests.get(key);
-    if (!m) throw missingBlock(`清单 ${key}`);
+    if (!m) throw missingBlock(`manifest ${key}`);
     return m;
   }
   async init(key: string, id: string): Promise<ArrayBuffer> {
     const hash = this.manifests.get(key)?.inits?.[id]?.hash;
     const buf = hash ? this.blocks.get(hash) : undefined;
-    if (!buf) throw missingBlock(`开头文件 ${id}`);
+    if (!buf) throw missingBlock(`head file ${id}`);
     return buf;
   }
   async segment(_key: string, file: string): Promise<ArrayBuffer> {
     const buf = this.blocks.get(file);
-    if (!buf) throw missingBlock(`分段 ${file}`);
+    if (!buf) throw missingBlock(`segment ${file}`);
     return buf;
   }
   /** 手里有没有这一块(探针、单测看) */
@@ -650,7 +650,7 @@ class SharedGl {
     try {
       const canvas = newGlCanvas();
       const gl = canvas?.getContext("webgl", { premultipliedAlpha: true, alpha: true, preserveDrawingBuffer: false, antialias: false }) as WebGLRenderingContext | null;
-      if (!canvas || !gl) throw new Error("轨道流拿不到 WebGL 上下文");
+      if (!canvas || !gl) throw new Error("Track stream could not get a WebGL context");
       this.setup(gl);
       const target = canvas as unknown as Partial<EventTarget>;
       target.addEventListener?.("webglcontextlost", (e) => {
@@ -727,7 +727,7 @@ class PlaneCompositor {
     this.canvas = canvas;
     this.shared = shared;
     const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("轨道流平面拿不到 2D 上下文");
+    if (!ctx) throw new Error("Track stream plane could not get a 2D context");
     this.ctx = ctx;
   }
   /** 画布的位置和尺寸 = 流的矩形上界(平面坐标)。只在变了的时候写 */

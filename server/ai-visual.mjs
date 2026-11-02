@@ -128,7 +128,7 @@ export function safeFileName(name) {
  * 格式化数值用于友好展示，对过长字符串进行截断并美化小数。
  */
 export function formatValue(v) {
-  if (v === undefined) return '(无)';
+  if (v === undefined) return '(none)';
   let str;
   if (typeof v === 'string') {
     str = v;
@@ -178,7 +178,7 @@ export function diffClips(before, after) {
   }
 
   if (stableStringify(before.parts) !== stableStringify(after.parts)) {
-    diffs.push({ key: 'parts', from: '(原部件)', to: '(改动了部件)' });
+    diffs.push({ key: 'parts', from: '(original parts)', to: '(parts changed)' });
   }
 
   return diffs;

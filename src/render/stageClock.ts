@@ -216,7 +216,7 @@ export function installStageClock(): StageClock {
       try {
         e.cb(ms);
       } catch (err) {
-        console.error("[stageClock] rAF 回调抛错", err);
+        console.error("[stageClock] rAF callback threw an error", err);
       }
     }
     return due.length;

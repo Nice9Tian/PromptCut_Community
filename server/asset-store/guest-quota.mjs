@@ -129,7 +129,7 @@ export function videoSourcesOf(entries) {
  *   `isVideoExt`：这个扩展名（不含点、小写）是不是视频。必须给：缺了就等于「页面报的一样都不算视频」
  */
 export function createGuestAssetQuota({ isVideoExt } = /** @type {any} */ ({})) {
-  if (typeof isVideoExt !== 'function') throw new TypeError('createGuestAssetQuota：要传 isVideoExt');
+  if (typeof isVideoExt !== 'function') throw new TypeError('createGuestAssetQuota: isVideoExt is required');
   const claimedVideo = ext => !!isVideoExt(String(ext || '').toLowerCase().replace(/^\./, ''));
 
   /** @type {Map<string, boolean>} 哈希 → 按文件头算不算视频（不含「页面报的扩展名」那一半） */

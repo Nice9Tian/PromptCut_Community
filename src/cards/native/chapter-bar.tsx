@@ -115,10 +115,10 @@ function ChapterBarCard({ params, t = 0, duration = 6, playToken = 0 }: CardProp
 
 export const chapterBar: CardDef<Params> = {
   id: "chapter-bar",
-  name: "章节导航",
-  description: "常驻顶部的章节进度",
-  useWhen: "视频分成了几个章节,需要一条常驻顶部的进度指示告诉观众讲到第几节。**chapters 每行格式是「章节名 空格 起始秒数」**,漏了秒数进度会失效;横排单行只放得下 3 到 5 个短章节名。这张卡跟着时间轴走,clip 要覆盖整段而不是一小截。",
-  tags: ["章节","导航","进度","常驻"],
+  name: "Chapter navigation",
+  description: "Chapter progress pinned to the top",
+  useWhen: "The video is split into several chapters and needs a persistent progress indicator at the top to tell viewers which section is being covered. **Each line of chapters is formatted as \"chapter name, space, start seconds\"**; if the seconds are missing, progress stops working; a single horizontal row only fits 3 to 5 short chapter names. This card follows the timeline, so the clip must cover the whole span, not just a short piece.",
+  tags: ["chapters","navigation","progress","persistent"],
   source: "native",
   // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
   frameMode: "stateful",
@@ -133,14 +133,14 @@ export const chapterBar: CardDef<Params> = {
   },
   controls: [
     ...hudControls,
-    { key: "chapters", label: "章节(名称 秒)", type: "text" },
-    { key: "showProgress", label: "显示进度", type: "select", options: [{ value: "true", label: "是" }, { value: "false", label: "否" }] },
-    { key: "progMode", label: "进度模式", type: "select", options: [{ value: "fill", label: "填充" }, { value: "line", label: "底线" }] },
-    { key: "progAccent", label: "进度颜色", type: "color" },
-    { key: "progAlpha", label: "进度透明度", type: "number", step: 0.1 },
+    { key: "chapters", label: "Chapters (name, seconds)", type: "text" },
+    { key: "showProgress", label: "Show progress", type: "select", options: [{ value: "true", label: "yes" }, { value: "false", label: "no" }] },
+    { key: "progMode", label: "Progress mode", type: "select", options: [{ value: "fill", label: "Fill" }, { value: "line", label: "Underline" }] },
+    { key: "progAccent", label: "Progress color", type: "color" },
+    { key: "progAlpha", label: "Progress opacity", type: "number", step: 0.1 },
   ],
   parts: [
-    { id: "chapters", label: "章节", role: "list", params: ["chapters", "showProgress", "progMode", "progAccent", "progAlpha"], enterMs: 0, settleMs: 800 },
+    { id: "chapters", label: "chapters", role: "list", params: ["chapters", "showProgress", "progMode", "progAccent", "progAlpha"], enterMs: 0, settleMs: 800 },
   ],
   lifecycle: { settleMs: 800, after: "evolve", exit: ["fade"] },
   Component: ChapterBarCard,

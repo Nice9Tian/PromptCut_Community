@@ -28,7 +28,7 @@ export interface CaptionLine {
 export const CAPTION_CARD_ID = "caption-track";
 
 /** 字幕专用序列的名字。auto_workflow / add_clip 建字幕卡时都往这条上放 */
-export const CAPTION_TRACK_NAME = "字幕";
+export const CAPTION_TRACK_NAME = "Captions";
 
 /** 一条字幕最短多久(秒):再短就点不中也读不完 */
 export const MIN_CAPTION_DUR = 0.2;
@@ -283,6 +283,6 @@ export function captionsFromTranscript(
 
 /** 给人看的一句话:「第 3 条 · 1.20–3.40s · 大家好」 */
 export function describeCaption(l: CaptionLine, index: number): string {
-  const text = l.zh || l.en || "(空)";
-  return `第 ${index + 1} 条 · ${round(l.start)}–${round(l.end)}s · ${text.slice(0, 20)}`;
+  const text = l.zh || l.en || "(empty)";
+  return `Caption ${index + 1} · ${round(l.start)}–${round(l.end)}s · ${text.slice(0, 20)}`;
 }

@@ -118,7 +118,7 @@ export class MemDocService {
 
   drain(r) {
     let n = 0;
-    while (this.step(r)) if (++n > 1e6) throw new Error("drain 停不下来");
+    while (this.step(r)) if (++n > 1e6) throw new Error("drain cannot stop");
     return n;
   }
 }

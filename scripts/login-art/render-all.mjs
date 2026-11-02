@@ -37,10 +37,10 @@ function palettes() {
     const accent = /dark:\s*\{[^}]*?accent:\s*"([^"]+)"/s.exec(tail);
     // 底色取 surfaces[0]（L0 画布，也就是 --bg-canvas）——登录页左栏垫的就是它
     const bg = /dark:\s*\{[^}]*?surfaces:\s*\[\s*"([^"]+)"/s.exec(tail);
-    if (!accent) throw new Error(`${id} 没读到 dark.accent`);
+    if (!accent) throw new Error(`${id}: could not read dark.accent`);
     out.push({ id, name, accent: accent[1], bg: bg ? bg[1] : '#111016' });
   }
-  if (out.length === 0) throw new Error('一套皮肤都没读到，palettes.ts 的写法可能变了');
+  if (out.length === 0) throw new Error('No skin could be read, the format of palettes.ts may have changed');
   return out;
 }
 
@@ -60,23 +60,23 @@ for (const p of palettes()) {
   if (only && !only.has(p.id)) continue;
   const projPath = path.join(ROOT, `scripts/login-art/project-${p.id}.json`);
   fs.writeFileSync(projPath, JSON.stringify({
-    version: 1, id: `login-art-${p.id}`, name: `登录页左栏极光 · ${p.name}`,
+    version: 1, id: `login-art-${p.id}`, name: `Login page left rail aurora · ${p.name}`,
     width: W, height: H, fps: FPS, duration: LOOP_SECONDS,
     themeId: 'midnight', media: [],
-    tracks: [{ id: 't-art', name: '序列 1', clips: [{
+    tracks: [{ id: 't-art', name: 'Track 1', clips: [{
       id: 'c-art', cardId: 'pc-login-art', start: 0, end: LOOP_SECONDS,
       params: { cool: p.accent, warm: '#e2731f', bg: p.bg, loopSeconds: LOOP_SECONDS },
     }] }],
-    cuts: [{ id: 'cut-1', name: '剪辑1' }], activeCutId: 'cut-1',
+    cuts: [{ id: 'cut-1', name: 'Cut 1' }], activeCutId: 'cut-1',
   }, null, 1) + '\n', 'utf8');
 
-  console.log(`\n── ${p.name}（${p.id}）强调色 ${p.accent}，底色 ${p.bg} ──`);
+  console.log(`\n── ${p.name} (${p.id}) accent color ${p.accent}, background color ${p.bg} ──`);
   const t0 = Date.now();
   const log = execFileSync(process.execPath, [
     'scripts/export-e2e.mjs', '--project', projPath, '--id', `art-${p.id}`, '--video',
   ], { cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 26, windowsHide: true });
-  const mp4 = /成片:(.+preview\.mp4)/.exec(log)?.[1]?.trim();
-  if (!mp4 || !fs.existsSync(mp4)) throw new Error(`${p.id}: 没拿到 preview.mp4\n${log.slice(-600)}`);
+  const mp4 = /final video:(.+preview\.mp4)/.exec(log)?.[1]?.trim();
+  if (!mp4 || !fs.existsSync(mp4)) throw new Error(`${p.id}: did not get preview.mp4\n${log.slice(-600)}`);
 
   const dest = path.join(ART, `login-art-${p.id}.mp4`);
   execFileSync(FF, ['-hide_banner', '-loglevel', 'error', '-y', '-i', mp4, '-an',
@@ -84,9 +84,9 @@ for (const p of palettes()) {
     '-pix_fmt', 'yuv420p', '-movflags', '+faststart', dest], { stdio: 'inherit', windowsHide: true });
   const bytes = fs.statSync(dest).size;
   made.push({ id: p.id, name: p.name, accent: p.accent, bytes });
-  console.log(`   → ${path.relative(ROOT, dest)}  ${(bytes / 1024).toFixed(0)} KB  （${((Date.now() - t0) / 1000).toFixed(0)} 秒）`);
+  console.log(`   → ${path.relative(ROOT, dest)}  ${(bytes / 1024).toFixed(0)} KB  (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
 }
 
-console.log('\n── 全部做完 ──');
+console.log('\n── All done ──');
 for (const m of made) console.log(`  ${m.name.padEnd(4)} ${m.id.padEnd(10)} ${m.accent}  ${(m.bytes / 1024).toFixed(0)} KB`);
-console.log(`  合计 ${(made.reduce((s, m) => s + m.bytes, 0) / 1024 / 1024).toFixed(1)} MB（页面只加载当前皮肤那一个）`);
+console.log(`  Total ${(made.reduce((s, m) => s + m.bytes, 0) / 1024 / 1024).toFixed(1)} MB (the page loads only the one for the current skin)`);

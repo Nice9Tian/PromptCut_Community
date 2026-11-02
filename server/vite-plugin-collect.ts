@@ -32,6 +32,7 @@ import {
 } from "./collect-cookies.mjs";
 import { qrLogin } from "./collect-qr-login.mjs";
 import { isInside } from "./http-guard.mjs";
+import { tr } from "./i18n.mjs";
 
 /** ingest:文件都下好了,正在经素材服务的入库接口送进内容库 */
 export type CollectStage = "starting" | "video" | "audio" | "merge" | "transcode" | "ingest" | "done";
@@ -249,7 +250,7 @@ async function downloadInto(
       const { id, title, duration, uploader, webpage_url } = ev as Record<string, unknown>;
       job.info = { id, title, duration, uploader, webpage_url };
     } else if (type === "retry") {
-      job.notes.push(`第 ${ev.attempt} 次遇到临时错误,${ev.wait}s 后重试:${String(ev.message ?? "").slice(0, 160)}`);
+      job.notes.push(`Temporary error on attempt ${ev.attempt}, retrying in ${ev.wait}s: ${String(ev.message ?? "").slice(0, 160)}`);
     } else if (type === "progress") {
       const stage = String(ev.stage ?? "video") as CollectStage;
       const p = typeof ev.percent === "number" ? ev.percent : undefined;
@@ -284,7 +285,7 @@ async function downloadInto(
       const file = path.join(outDir, filename);
       if (!filename || !fs.existsSync(file)) {
         job.status = "error";
-        job.message = `下载进程报了文件「${filename || "(没有文件名)"}」,临时目录里却没有它`;
+        job.message = tr("The download process reported the file \"{0}\", but it is not in the temp directory", filename || tr("(no file name)"));
         break;
       }
       try {
@@ -293,7 +294,7 @@ async function downloadInto(
         job.items.push({ ...(rest as Partial<CollectItem>), filename, url: media.url, hash: media.hash, bytes: media.bytes, media });
       } catch (e) {
         job.status = "error";
-        job.message = `下载好了但没能送进素材库:${e instanceof Error ? e.message : String(e)}`;
+        job.message = tr("Download finished but could not be added to the media library: {0}", e instanceof Error ? e.message : String(e));
         break;
       }
     }
@@ -306,7 +307,7 @@ async function downloadInto(
   } else if (job.status === "running") {
     job.status = "error";
     job.message = job.message ?? pickError(lastError, job.stderrTail, code);
-    if (lastError?.notInstalled) job.message += "(用 collect_install 装上再试)";
+    if (lastError?.notInstalled) job.message += tr("(install it with collect_install and try again)");
   }
 }
 
@@ -356,20 +357,20 @@ export function collectPlugin(): Plugin {
           if (req.method === "GET") return sendJson(res, 200, { ok: true, cookies: cookieOverview(root) });
           if (req.method === "DELETE") {
             const site = new URLSearchParams(query).get("site") ?? "";
-            if (!(site in SITES)) return sendJson(res, 400, { ok: false, error: `site 只能是 ${siteNames().join(" / ")}` });
+            if (!(site in SITES)) return sendJson(res, 400, { ok: false, error: `site must be one of ${siteNames().join(" / ")}` });
             const removed = forgetCookies(dataDir(root), site);
             return sendJson(res, 200, { ok: true, removed, cookies: cookieOverview(root) });
           }
-          return sendJson(res, 405, { ok: false, error: "只支持 GET / DELETE" });
+          return sendJson(res, 405, { ok: false, error: "Only GET / DELETE are supported" });
         }
 
         // POST /api/collect/login —— 把登录页挪到用户面前;用户扫完码再调 /login/check
         if (req.method === "POST" && url === "/api/collect/login") {
           let body: Record<string, unknown>;
           try { body = JSON.parse((await readBody(req)).toString("utf-8") || "{}"); }
-          catch { return sendJson(res, 400, { ok: false, error: "请求体不是合法 JSON" }); }
+          catch { return sendJson(res, 400, { ok: false, error: "Request body is not valid JSON" }); }
           const site = typeof body.site === "string" ? body.site : "bilibili";
-          if (!(site in SITES)) return sendJson(res, 400, { ok: false, error: `site 只能是 ${siteNames().join(" / ")}` });
+          if (!(site in SITES)) return sendJson(res, 400, { ok: false, error: `site must be one of ${siteNames().join(" / ")}` });
           const def = SITES[site as keyof typeof SITES];
           // 已经登录且没过期就不用再麻烦用户
           const saved = savedCookieStatus(dataDir(root), site);
@@ -381,7 +382,7 @@ export function collectPlugin(): Plugin {
             const result = await session.enqueue(async () => {
               const it = await webInst();
               await it.page.goto(def.loginUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
-              return session.handoff(it, { reason: `${def.name}登录` });
+              return session.handoff(it, { reason: `${def.name} login` });
             });
             return sendJson(res, 200, { ok: true, site, loginUrl: def.loginUrl, ...result });
           } catch (e) {
@@ -393,9 +394,9 @@ export function collectPlugin(): Plugin {
         if (req.method === "POST" && url === "/api/collect/login/check") {
           let body: Record<string, unknown>;
           try { body = JSON.parse((await readBody(req)).toString("utf-8") || "{}"); }
-          catch { return sendJson(res, 400, { ok: false, error: "请求体不是合法 JSON" }); }
+          catch { return sendJson(res, 400, { ok: false, error: "Request body is not valid JSON" }); }
           const site = typeof body.site === "string" ? body.site : "bilibili";
-          if (!(site in SITES)) return sendJson(res, 400, { ok: false, error: `site 只能是 ${siteNames().join(" / ")}` });
+          if (!(site in SITES)) return sendJson(res, 400, { ok: false, error: `site must be one of ${siteNames().join(" / ")}` });
           // 先看存盘的:扫码登录(接口版)成功后登录态已经在文件里,不用碰浏览器
           const savedNow = savedCookieStatus(dataDir(root), site);
           if (savedNow.loggedIn) {
@@ -409,7 +410,7 @@ export function collectPlugin(): Plugin {
             // 浏览器没开着就别为了查一眼把它拉起来。热重启后模块里的实例会丢,但 profile 里
             // 有活着的调试端点时 getBrowser 会接管而不是新起,所以两样都看
             if (!browser.peekBrowser() && !browser.existingEndpoint(dataDir(root))) {
-              return sendJson(res, 200, { ok: true, loggedIn: false, site, missing: SITES[site as keyof typeof SITES].required, expired: savedNow.expired, hint: savedNow.expired ? "存盘的登录态已过期,重新登录一次" : "还没有登录态:先 user_interface_collect_login(扫码或浏览器)" });
+              return sendJson(res, 200, { ok: true, loggedIn: false, site, missing: SITES[site as keyof typeof SITES].required, expired: savedNow.expired, hint: savedNow.expired ? tr("The saved login state has expired, log in again") : tr("No login state yet: run user_interface_collect_login first (scan the QR code or use the browser)") });
             }
             const result = await session.enqueue(async () => {
               const it = await webInst();
@@ -418,7 +419,7 @@ export function collectPlugin(): Plugin {
               if (!a.loggedIn) {
                 return {
                   ok: true, loggedIn: false, site, missing: a.missing, expired: a.expired,
-                  hint: a.expired ? "浏览器里的登录态已过期,请在窗口里重新登录" : "浏览器里还没有登录态,请在窗口里完成登录后再查一次",
+                  hint: a.expired ? tr("The login state in the browser has expired, log in again in the window") : tr("No login state in the browser yet, finish logging in in the window and check again"),
                 };
               }
               const file = saveCookies(dataDir(root), site, a.cookies);
@@ -439,7 +440,7 @@ export function collectPlugin(): Plugin {
         if (req.method === "POST" && url === "/api/collect/qr/start") {
           let body: Record<string, unknown> = {};
           try { const raw = (await readBody(req)).toString("utf-8"); if (raw) body = JSON.parse(raw); }
-          catch { return sendJson(res, 400, { ok: false, error: "请求体不是合法 JSON" }); }
+          catch { return sendJson(res, 400, { ok: false, error: "Request body is not valid JSON" }); }
           const site = typeof body.site === "string" ? body.site : "bilibili";
           try {
             const s = await qrLogin().start(site);
@@ -451,7 +452,7 @@ export function collectPlugin(): Plugin {
         if (req.method === "GET" && url === "/api/collect/qr/svg") {
           const key = new URLSearchParams(query).get("key") ?? "";
           const svg = key ? qrLogin().svg(key, { scale: 6 }) : null;
-          if (!svg) return sendJson(res, 404, { ok: false, error: "这张二维码不存在或服务已重启" });
+          if (!svg) return sendJson(res, 404, { ok: false, error: tr("This QR code does not exist or the service has restarted") });
           res.statusCode = 200;
           res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
           res.setHeader("Cache-Control", "no-store");
@@ -459,7 +460,7 @@ export function collectPlugin(): Plugin {
         }
         if (req.method === "GET" && url === "/api/collect/qr/poll") {
           const key = new URLSearchParams(query).get("key") ?? "";
-          if (!key) return sendJson(res, 400, { ok: false, error: "缺 key" });
+          if (!key) return sendJson(res, 400, { ok: false, error: "Missing key" });
           try {
             const r = await qrLogin().poll(key, { dataDir: dataDir(root) });
             return sendJson(res, 200, { ok: true, ...r });
@@ -472,9 +473,9 @@ export function collectPlugin(): Plugin {
         if (req.method === "POST" && url === "/api/collect/search") {
           let body: Record<string, unknown>;
           try { body = JSON.parse((await readBody(req)).toString("utf-8") || "{}"); }
-          catch { return sendJson(res, 400, { ok: false, error: "请求体不是合法 JSON" }); }
+          catch { return sendJson(res, 400, { ok: false, error: "Request body is not valid JSON" }); }
           const query = typeof body.query === "string" ? body.query.trim() : "";
-          if (!query) return sendJson(res, 400, { ok: false, error: "缺 query" });
+          if (!query) return sendJson(res, 400, { ok: false, error: "Missing query" });
           const boot = await bootstrap(root);
           if (!boot) return sendJson(res, 503, { ok: false, error: PYTHON_MISSING });
           const site = typeof body.site === "string" && SITE_PRESETS.has(body.site) && body.site !== "auto" ? body.site : "bilibili";
@@ -495,7 +496,7 @@ export function collectPlugin(): Plugin {
           }, tail);
           clearTimeout(timer);
           if (!done) {
-            const message = err ? pickError(err, tail, code) : (code === -1 || code === 1 ? pickError(undefined, tail, code) : "搜索超时(55 秒),把 limit 调小再试");
+            const message = err ? pickError(err, tail, code) : (code === -1 || code === 1 ? pickError(undefined, tail, code) : tr("Search timed out (55 seconds), lower limit and try again"));
             return sendJson(res, 200, { ok: false, error: message, notInstalled: !!err?.notInstalled, notes });
           }
           return sendJson(res, 200, { ok: true, notes, cookiesUsed: !!ck.path, ...done });
@@ -505,9 +506,9 @@ export function collectPlugin(): Plugin {
         if (req.method === "POST" && url === "/api/collect/probe") {
           let body: Record<string, unknown>;
           try { body = JSON.parse((await readBody(req)).toString("utf-8") || "{}"); }
-          catch { return sendJson(res, 400, { ok: false, error: "请求体不是合法 JSON" }); }
+          catch { return sendJson(res, 400, { ok: false, error: "Request body is not valid JSON" }); }
           const link = typeof body.url === "string" ? body.url.trim() : "";
-          if (!link) return sendJson(res, 400, { ok: false, error: "缺 url" });
+          if (!link) return sendJson(res, 400, { ok: false, error: "Missing url" });
           const boot = await bootstrap(root);
           if (!boot) return sendJson(res, 503, { ok: false, error: PYTHON_MISSING });
           const args = ["-m", "promptcut_collect", "probe", "--url", link];
@@ -528,7 +529,7 @@ export function collectPlugin(): Plugin {
           }, tail);
           clearTimeout(timer);
           if (!done) {
-            const message = err ? pickError(err, tail, code) : (code === -1 || code === 1 ? pickError(undefined, tail, code) : "探测超时(50 秒)");
+            const message = err ? pickError(err, tail, code) : (code === -1 || code === 1 ? pickError(undefined, tail, code) : tr("Probe timed out (50 s)"));
             return sendJson(res, 200, { ok: false, error: message, notInstalled: !!err?.notInstalled, notes });
           }
           return sendJson(res, 200, { ok: true, notes, cookiesUsed: !!ck.path, ...done });
@@ -538,9 +539,9 @@ export function collectPlugin(): Plugin {
         if (req.method === "POST" && url === "/api/collect/download") {
           let body: Record<string, unknown>;
           try { body = JSON.parse((await readBody(req)).toString("utf-8") || "{}"); }
-          catch { return sendJson(res, 400, { ok: false, error: "请求体不是合法 JSON" }); }
+          catch { return sendJson(res, 400, { ok: false, error: "Request body is not valid JSON" }); }
           const link = typeof body.url === "string" ? body.url.trim() : "";
-          if (!link) return sendJson(res, 400, { ok: false, error: "缺 url" });
+          if (!link) return sendJson(res, 400, { ok: false, error: "Missing url" });
           const quality = typeof body.quality === "number" && QUALITIES.has(body.quality) ? body.quality : 1080;
           const site = typeof body.site === "string" && SITE_PRESETS.has(body.site) ? body.site : "auto";
           // 同一条链接正在下就别再起一个:两个进程写同一个文件名会互相踩
@@ -572,22 +573,22 @@ export function collectPlugin(): Plugin {
         const jobMatch = url.match(/^\/api\/collect\/job\/([\w-]+)$/);
         if (jobMatch) {
           const job = jobs.get(jobMatch[1]);
-          if (!job) return sendJson(res, 404, { ok: false, error: "作业不存在,可能服务已重启" });
+          if (!job) return sendJson(res, 404, { ok: false, error: tr("Job not found, the service may have restarted") });
           if (req.method === "GET") return sendJson(res, 200, { ok: true, job });
           if (req.method === "DELETE") {
             const child = procs.get(job.id);
             if (child) { killTree(child); procs.delete(job.id); }
             if (job.status === "running") {
               job.status = "error";
-              job.message = "已取消";
+              job.message = "Cancelled";
               job.finishedAt = Date.now();
             }
             return sendJson(res, 200, { ok: true, job });
           }
-          return sendJson(res, 405, { ok: false, error: "只支持 GET / DELETE" });
+          return sendJson(res, 405, { ok: false, error: "Only GET / DELETE are supported" });
         }
 
-        return sendJson(res, 404, { ok: false, error: `没有这个接口:${url}` });
+        return sendJson(res, 404, { ok: false, error: `No such endpoint: ${url}` });
       });
     },
   };

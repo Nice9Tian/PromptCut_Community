@@ -218,33 +218,33 @@ const TOLERANT_ATTRS = new Set(['style']);
  */
 export function compareSnapshotHtml(a, b, opts = {}) {
   const tolerance = Number.isFinite(opts.tolerance) ? opts.tolerance : NUMBER_RELATIVE_TOLERANCE;
-  if (typeof a !== 'string' || typeof b !== 'string') return { same: false, reason: '不是字符串' };
+  if (typeof a !== 'string' || typeof b !== 'string') return { same: false, reason: 'not a string' };
   if (a === b) return { same: true };
   const ta = tokenizeHtml(a);
   const tb = tokenizeHtml(b);
   if (ta.length !== tb.length) {
-    return { same: false, reason: `记号数不同（${ta.length} 对 ${tb.length}）` };
+    return { same: false, reason: `Token counts differ (${ta.length} vs ${tb.length})` };
   }
   for (let i = 0; i < ta.length; i++) {
     const x = ta[i];
     const y = tb[i];
-    if (x.kind !== y.kind) return { same: false, reason: '结构不同', at: i, expected: x.kind, actual: y.kind };
+    if (x.kind !== y.kind) return { same: false, reason: 'Structure differs', at: i, expected: x.kind, actual: y.kind };
     if (x.kind === 'text' || x.kind === 'comment') {
-      if (x.text !== y.text) return { same: false, reason: '文本不同', at: i, expected: x.text, actual: y.text };
+      if (x.text !== y.text) return { same: false, reason: 'Text differs', at: i, expected: x.text, actual: y.text };
       continue;
     }
-    if (x.name !== y.name) return { same: false, reason: '标签名不同', at: i, expected: x.name, actual: y.name };
+    if (x.name !== y.name) return { same: false, reason: 'Tag name differs', at: i, expected: x.name, actual: y.name };
     if (x.kind === 'close') continue;
-    if (x.selfClosing !== y.selfClosing) return { same: false, reason: '自闭合不同', at: i, expected: x.name, actual: y.name };
+    if (x.selfClosing !== y.selfClosing) return { same: false, reason: 'Self-closing differs', at: i, expected: x.name, actual: y.name };
     if (x.attrs.size !== y.attrs.size) {
-      return { same: false, reason: `<${x.name}> 属性个数不同`, at: i,
+      return { same: false, reason: `<${x.name}> attribute count differs`, at: i,
         expected: [...x.attrs.keys()].join(','), actual: [...y.attrs.keys()].join(',') };
     }
     for (const [name, value] of x.attrs) {
-      if (!y.attrs.has(name)) return { same: false, reason: `<${x.name}> 少了属性 ${name}`, at: i };
+      if (!y.attrs.has(name)) return { same: false, reason: `<${x.name}> is missing attribute ${name}`, at: i };
       const other = y.attrs.get(name);
       const ok = TOLERANT_ATTRS.has(name.toLowerCase()) ? valuesCloseEnough(value, other, tolerance) : value === other;
-      if (!ok) return { same: false, reason: `<${x.name}> 的 ${name} 不同`, at: i, expected: value, actual: other };
+      if (!ok) return { same: false, reason: `<${x.name}> has a different ${name}`, at: i, expected: value, actual: other };
     }
   }
   return { same: true };

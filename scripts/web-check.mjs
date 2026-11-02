@@ -42,72 +42,78 @@ async function bundledChrome() {
 const t0 = Date.now();
 try {
   const exe = await bundledChrome();
-  console.log(`\n── 1. 起浏览器 ──`);
-  console.log(`  Chrome: ${exe || '(没找到随包那份,用 puppeteer 自己的缓存)'}`);
+  console.log(`
+── 1. Launch browser ──`);
+  console.log(`  Chrome: ${exe || '(bundled copy not found, using puppeteer\'s own cache)'}`);
   // 用临时 profile,不碰 out/web-profile —— 那份是用户的登录态,自检不该占用它
   // (占用了会让正在跑的 dev server 起不来浏览器,而且自检产生的 cookie 也不该留下)
   const inst = await getBrowser({ dataDir: null, executablePath: exe });
-  ok(!!inst.page, '实例起来了', await inst.browser.version());
+  ok(!!inst.page, 'instance is up', await inst.browser.version());
 
   const { bounds } = await inst.cdp.send('Browser.getWindowForTarget');
-  ok(bounds.left < 0, '窗口在屏幕外', `left=${bounds.left}`);
+  ok(bounds.left < 0, 'window is off-screen', `left=${bounds.left}`);
 
-  console.log(`\n── 2. 打开页面 + 出图和清单 ──`);
+  console.log(`
+── 2. Open page + screenshot and manifest ──`);
   const opened = await session.open(inst.page, URL_ARG);
-  ok(opened.ok, '导航成功', opened.url);
-  ok(!!opened.__image?.base64, '截到图了', `${Math.round((opened.__image?.base64.length || 0) / 1024)} KB webp`);
+  ok(opened.ok, 'navigation succeeded', opened.url);
+  ok(!!opened.__image?.base64, 'screenshot captured', `${Math.round((opened.__image?.base64.length || 0) / 1024)} KB webp`);
   ok(opened.image.width <= 800 && opened.image.height <= 800,
-    '长边不超过 800', `${opened.image.width}x${opened.image.height}`);
+    'long edge at most 800', `${opened.image.width}x${opened.image.height}`);
   const vp = inst.page.viewport();
   const ratioImg = opened.image.width / opened.image.height;
   const ratioVp = vp.width / vp.height;
-  ok(Math.abs(ratioImg - ratioVp) < 0.02, '宽高比和视口一致(等比缩放)',
-    `图 ${ratioImg.toFixed(3)} / 视口 ${ratioVp.toFixed(3)}`);
+  ok(Math.abs(ratioImg - ratioVp) < 0.02, 'aspect ratio matches the viewport (proportional scaling)',
+    `image ${ratioImg.toFixed(3)} / viewport ${ratioVp.toFixed(3)}`);
   ok(Array.isArray(opened.clickable) && opened.clickable.length > 0,
-    '出了可点清单', `${opened.clickable.length} 项${opened.omitted ? `,省略 ${opened.omitted}` : ''}`);
+    'clickable manifest returned', `${opened.clickable.length} items${opened.omitted ? `, ${opened.omitted} omitted` : ''}`);
   const listBytes = JSON.stringify(opened.clickable).length;
-  console.log(`     清单 ${listBytes} 字符 ≈ ${Math.round(listBytes / 4)} token`);
+  console.log(`     manifest ${listBytes} chars ≈ ${Math.round(listBytes / 4)} tokens`);
 
-  console.log(`\n── 3. 命中检测 ──`);
+  console.log(`
+── 3. Hit test ──`);
   const target = opened.clickable.find((c) => c.n && c.n.length > 2 && c.b[1] > 0);
-  if (!target) { ok(false, '找不到可测的目标元素'); }
+  if (!target) { ok(false, 'no testable target element found'); }
   else {
     const cx = Math.round((target.b[0] + target.b[2]) / 2);
     const cy = Math.round((target.b[1] + target.b[3]) / 2);
     const hit = await resolveAt(inst.page, cx, cy);
-    ok(hit.ok && hit.pick.u === target.u, '中心点能还原回同一个 uid',
-      `报(${cx},${cy}) → ${hit.ok ? hit.pick.u : hit.reason},目标 ${target.u} «${target.n}»`);
+    ok(hit.ok && hit.pick.u === target.u, 'center point resolves back to the same uid',
+      `reported (${cx},${cy}) → ${hit.ok ? hit.pick.u : hit.reason}, target ${target.u} «${target.n}»`);
 
-    const bad = await resolveAt(inst.page, cx, cy, { expect: '这个名字页面上绝对没有' });
+    const bad = await resolveAt(inst.page, cx, cy, { expect: 'this name is definitely not on the page' });
     ok(!bad.ok && bad.reason === 'expect_mismatch',
-      'expect 对不上时拒绝,不替模型赌', `reason=${bad.reason}`);
+      'rejects when expect does not match, does not gamble for the model', `reason=${bad.reason}`);
 
     const far = await resolveAt(inst.page, 5, opened.image.height - 5);
-    ok(!far.ok, '边角空白处正确落空', `reason=${far.reason}`);
+    ok(!far.ok, 'empty corner area correctly misses', `reason=${far.reason}`);
   }
 
-  console.log(`\n── 4. 读正文 ──`);
+  console.log(`
+── 4. Read body text ──`);
   const read = await session.read(inst.page, { limit: 500 });
-  ok(read.ok && read.text.length > 50, '取到正文', `共 ${read.total} 字`);
-  ok(!read.__image, '读正文不返图(省 token)');
+  ok(read.ok && read.text.length > 50, 'body text retrieved', `${read.total} chars total`);
+  ok(!read.__image, 'reading body text returns no image (saves tokens)');
 
-  console.log(`\n── 5. 滚动 ──`);
+  console.log(`
+── 5. Scroll ──`);
   const scrolled = await session.scroll(inst.page, { dy: 800 });
-  ok(scrolled.ok && !!scrolled.__image, '滚动后自动带回新的图和清单');
+  ok(scrolled.ok && !!scrolled.__image, 'after scrolling, a new image and manifest are returned automatically');
 
-  console.log(`\n── 6. 窗口交接 ──`);
+  console.log(`
+── 6. Window handoff ──`);
   await showWindow(inst);
   const shown = await inst.cdp.send('Browser.getWindowForTarget');
-  ok(shown.bounds.left >= 0, '能挪到屏幕上交给用户', `left=${shown.bounds.left}`);
+  ok(shown.bounds.left >= 0, 'can be moved on-screen and handed to the user', `left=${shown.bounds.left}`);
   await hideWindow(inst);
   const hidden = await inst.cdp.send('Browser.getWindowForTarget');
-  ok(hidden.bounds.left < 0, '能藏回屏幕外', `left=${hidden.bounds.left}`);
+  ok(hidden.bounds.left < 0, 'can be hidden off-screen again', `left=${hidden.bounds.left}`);
 } catch (e) {
   fail++;
-  console.log(`\n  ✗ 抛异常:${e.stack || e.message}`);
+  console.log(`\n  ✗ threw an exception: ${e.stack || e.message}`);
 } finally {
   await closeBrowser();
 }
 
-console.log(`\n${fail === 0 ? '全部通过' : `${fail} 项失败`} — ${pass} 通过 / ${pass + fail} 项,耗时 ${((Date.now() - t0) / 1000).toFixed(1)}s\n`);
+console.log(`\n${fail === 0 ? 'All passed' : `${fail} failed`}, ${pass} passed / ${pass + fail} items, took ${((Date.now() - t0) / 1000).toFixed(1)}s\n`);
 process.exit(fail === 0 ? 0 : 1);

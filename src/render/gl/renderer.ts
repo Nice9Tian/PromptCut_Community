@@ -125,7 +125,7 @@ export function createGlRenderer(opts: {
       alpha: true, antialias: false, premultipliedAlpha: true,
       depth: false, stencil: false, preserveDrawingBuffer: false,
     }) as WebGL2RenderingContext | null;
-    if (!gl) error = "拿不到 webgl2 上下文";
+    if (!gl) error = "Could not get a webgl2 context";
   } catch (e) {
     canvas = null as unknown as OffscreenCanvas;
     error = e instanceof Error ? e.message : String(e);
@@ -176,7 +176,7 @@ export function createGlRenderer(opts: {
     if (!p) {
       p = fetch(url)
         .then((r) => {
-          if (!r.ok) throw new Error(`纹理 ${r.status}: ${url}`);
+          if (!r.ok) throw new Error(`Texture ${r.status}: ${url}`);
           return r.blob();
         })
         .then((blob) => createImageBitmap(blob, { imageOrientation: orientation === "flipY" ? "flipY" : "from-image", premultiplyAlpha: "none" }))
@@ -283,7 +283,7 @@ export function createGlRenderer(opts: {
     const finish = () => {
       prog.done = true;
       if (!g.getProgramParameter(program, g.LINK_STATUS)) {
-        prog.error = `着色器链接失败:${g.getShaderInfoLog(vs) || ""} ${g.getShaderInfoLog(fs) || ""} ${g.getProgramInfoLog(program) || ""}`.trim();
+        prog.error = `Shader link failed: ${g.getShaderInfoLog(vs) || ""} ${g.getShaderInfoLog(fs) || ""} ${g.getProgramInfoLog(program) || ""}`.trim();
       }
       prog.aPos = g.getAttribLocation(program, "aPos");
       g.deleteShader(vs);
@@ -379,8 +379,8 @@ export function createGlRenderer(opts: {
 
   const startPrepare = (c: CardState) => {
     if (c.ready || c.preparing || c.error) return;
-    if (!c.program) { c.error = `没有注册 program:${c.programId}`; return; }
-    if (c.program.kind !== c.kind) { c.error = `program ${c.programId} 是 ${c.program.kind},契约写的是 ${c.kind}`; return; }
+    if (!c.program) { c.error = `No program registered: ${c.programId}`; return; }
+    if (c.program.kind !== c.kind) { c.error = `program ${c.programId} is ${c.program.kind}, but the contract says ${c.kind}`; return; }
     const p = c.kind === "three" ? prepareThree(c) : c.kind === "gl" ? prepareGl(c) : prepare2d(c);
     c.preparing = p.then(
       () => { c.preparing = null; },

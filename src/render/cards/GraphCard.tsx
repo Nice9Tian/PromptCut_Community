@@ -59,9 +59,9 @@ export function GraphCard({ def, clip, graph, fps, t, params, stage }: {
 
   /** 一个节点在 `time` 的画面,解成位图。素材节点走解码器,素材效果卡节点递归执行。 */
   const renderNode = useCallback(async (id: string, time: number, depth: number, signal?: AbortSignal): Promise<ImageBitmap> => {
-    if (depth > MAX_DEPTH) throw new Error("素材效果卡输入嵌套过深");
+    if (depth > MAX_DEPTH) throw new Error("Media effect card inputs are nested too deeply");
     const node = nodeAt(id);
-    if (!node) throw new Error(`素材效果卡输入节点不存在：${id}`);
+    if (!node) throw new Error(`Media effect card input node does not exist: ${id}`);
     const media = node.adapter === "media" ? (node.media as { url?: string } | undefined) : undefined;
     // 素材节点的取帧时刻 = 片段内时间 × 片段速度(`rate`,只在变速段上有,`kernel/cardGraph.mjs`)+ 裁剪起点。
     // 没有 rate 时不乘,和原来逐位相同
@@ -87,9 +87,9 @@ export function GraphCard({ def, clip, graph, fps, t, params, stage }: {
   }, [nodeAt, width, height]);
 
   const renderUpstream = useCallback(async (node: CardNode, time: number, depth: number, signal?: AbortSignal): Promise<ImageBitmap> => {
-    if (node.adapter !== "card") throw new Error(`素材效果卡输入节点不是素材效果卡：${node.id}`);
+    if (node.adapter !== "card") throw new Error(`Media effect card input node is not a media effect card: ${node.id}`);
     const upstreamDef = getCard(node.cardId as string);
-    if (typeof upstreamDef?.card !== "function") throw new Error(`上游素材效果卡的定义找不到：${node.cardId}`);
+    if (typeof upstreamDef?.card !== "function") throw new Error(`Definition of the upstream media effect card not found: ${node.cardId}`);
     const upstreamParams = { ...upstreamDef.defaults, ...(node.params as Record<string, unknown>) };
     const sourceTime = time + (Number(node.timeOffset) || 0);
     const upstreamValue = await upstreamDef.card(sourcesOf(node, sourceTime, depth), sourceTime, upstreamParams,
@@ -111,7 +111,7 @@ export function GraphCard({ def, clip, graph, fps, t, params, stage }: {
   }, [fps, width, height, duration, stage]);
 
   const resolveValue = useCallback(async (source: SourceValue | PixelsValue, requestedTime: number, depth: number, signal?: AbortSignal) => {
-    if (source.type !== "source") throw new Error("素材效果卡不产生需要宿主下载的像素结果");
+    if (source.type !== "source") throw new Error("A media effect card does not produce pixel results that the host needs to download");
     return renderNode(source.nodeId, requestedTime, depth, signal);
   }, [renderNode]);
 
@@ -136,7 +136,7 @@ export function GraphCard({ def, clip, graph, fps, t, params, stage }: {
      */
     for (const name of (node.missingInputs as string[] | undefined) ?? []) {
       Object.defineProperty(sources, name, { enumerable: true, configurable: true,
-        get() { throw new Error("输入片段已删除：" + name); } });
+        get() { throw new Error("Input clip was deleted: " + name); } });
     }
     return sources;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -146,12 +146,12 @@ export function GraphCard({ def, clip, graph, fps, t, params, stage }: {
     if (!graph) return;
     const controller = new AbortController();
     ticket.current?.dispose();
-    const work = beginFrameWork(`素材效果卡 ${nodeId} @ ${t}`); ticket.current = work;
+    const work = beginFrameWork(`Media effect card ${nodeId} @ ${t}`); ticket.current = work;
     setFailure("");
     const evaluate = (async () => {
       const node = nodeAt(nodeId);
-      if (!node) throw new Error(`素材效果卡节点不存在：${nodeId}`);
-      if (typeof def.card !== "function") throw new Error(`${def.id} 不是视觉素材效果卡`);
+      if (!node) throw new Error(`Media effect card node does not exist: ${nodeId}`);
+      if (typeof def.card !== "function") throw new Error(`${def.id} is not a visual media effect card`);
       const sourceTime = t + (Number(node.timeOffset) || 0);
       return def.card(sourcesOf(node, sourceTime, 0), sourceTime, params, { fps, width, height, duration, stage });
     })();

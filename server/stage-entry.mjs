@@ -11,7 +11,7 @@ export const STAGE_ENTRY_FILE = 'stage.html';
 export function stageEntryHtml(indexHtml) {
   const meta = `<meta http-equiv="Content-Security-Policy" content="${STAGE_CSP_META}" />`;
   const m = /<head[^>]*>/i.exec(indexHtml);
-  if (!m) throw new Error('index.html 里没有 <head>,没法生成舞台入口');
+  if (!m) throw new Error('index.html has no <head>, cannot generate the stage entry');
   const at = m.index + m[0].length;
   return `${indexHtml.slice(0, at)}\n    ${meta}${indexHtml.slice(at)}`;
 }

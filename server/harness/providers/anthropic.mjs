@@ -101,7 +101,7 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
         }
 
         if (event === 'error' || parsed.type === 'error' || parsed.error) {
-          const message = typeof parsed.error === 'string' ? parsed.error : (parsed.error?.message || parsed.message || 'API 流返回错误');
+          const message = typeof parsed.error === 'string' ? parsed.error : (parsed.error?.message || parsed.message || 'API stream returned an error');
           if (receivedStop) break; // 已经正常收尾,后面来的错不影响这次回复
           // 流已经出过内容之后来的 error(网关中途掐断、上游 overloaded):按截断收尾,不扔掉已经写出的东西
           if (!started) throw new Error(message);
@@ -162,7 +162,7 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
           // 连 content_block_stop 都没等到的那一个(截断时可能这样)也算没写完
           for (const tool of [...broken, ...Object.values(partialTools)]) {
             if (truncated) yield { type: 'tool_use_partial', id: tool.id, name: tool.name, args: tool.partialJson || '' };
-            else yield { type: 'tool_use', id: tool.id, name: tool.name, input: {}, inputError: `工具参数 JSON 不完整：${tool.error || '没有收到结尾'}` };
+            else yield { type: 'tool_use', id: tool.id, name: tool.name, input: {}, inputError: `Tool arguments JSON incomplete: ${tool.error || 'no end received'}` };
           }
           broken.length = 0; partialTools = {};
           yield { type: 'usage', input: inputTokens, output: outputTokens };
@@ -175,7 +175,7 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
         if (!receivedStop) cut = { how: 'connection', detail: err?.message || String(err) };
       }
 
-      if (!receivedStop && !cut && started && !signal?.aborted) cut = { how: 'no-finish', detail: '流在 message_stop 之前结束' };
+      if (!receivedStop && !cut && started && !signal?.aborted) cut = { how: 'no-finish', detail: 'Stream ended before message_stop' };
       if (cut) {
         // 没写完的工具调用(参数解不开的、连 content_block_stop 都没等到的)交成 tool_use_partial,由 agent.mjs 存代码块、让模型接着写
         yield streamCutNotice('anthropic', cut.how, cut.detail, { pendingToolCalls: broken.length + Object.keys(partialTools).length });
@@ -187,7 +187,7 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
       }
 
       if (!receivedStop && !signal?.aborted) {
-        throw new Error('API 响应流提前结束或未返回 SSE 数据，请检查接口协议。');
+        throw new Error('The API response stream ended early or returned no SSE data. Check the API protocol.');
       }
     }
   };

@@ -15,6 +15,7 @@
 import { execFileSync } from "node:child_process";
 import { AssetSourceError, probeAudioChannelsAsync } from "./audio-source.mjs";
 import { PCM_LIMITS, pcmFormat, sampleBudgetError, windowOf, filePcmArgs, timelinePcmArgs, decodePcm } from "./audio-pcm.mjs";
+import { tr } from "./i18n.mjs";
 
 /** 第一条音频流的声道数;没有音频流回 0。同步版,只给单测和本地文件用;测量走 `probeAudioChannelsAsync`(输入是 HTTP 地址时同步会卡住事件循环) */
 export function probeAudioChannels(file, ffprobe) {
@@ -58,9 +59,9 @@ export async function measureJs({ body, resolveSource, resolveFile, ffmpeg, ffpr
 
 async function measureJsInner({ body, resolve, ffmpeg, ffprobe, sandbox, pcmLimits, probeChannels, spawnImpl, signal }) {
   const bad = (error, kind = "invalid") => ({ status: 200, body: { ok: false, kind, error } });
-  if (!body || typeof body !== "object") return bad("请求体不对");
+  if (!body || typeof body !== "object") return bad(tr("Invalid request body"));
   const code = body.code;
-  if (typeof code !== "string" || !code.trim()) return bad("code 是空的:写一个函数体,收到 input(channels、sampleRate、duration……),用 return 返回结果");
+  if (typeof code !== "string" || !code.trim()) return bad(tr("code is empty: write a function body that receives input (channels, sampleRate, duration, ...) and returns the result with return"));
   const { sampleRate, mono } = pcmFormat(body, pcmLimits);
   const notes = [];
 
@@ -70,11 +71,11 @@ async function measureJsInner({ body, resolve, ffmpeg, ffprobe, sandbox, pcmLimi
   let source;
   if (body.scope === "clip" || body.scope === "media") {
     const file = await resolve(body.media);
-    if (!file) return bad("素材文件不存在", "no-media");
+    if (!file) return bad(tr("Media file does not exist"), "no-media");
     const n = await probeChannels(file, ffprobe);
-    if (!n) return bad("该文件没有音频流", "no-audio");
+    if (!n) return bad(tr("This file has no audio stream"), "no-audio");
     channels = mono ? 1 : Math.min(pcmLimits.maxChannels, n);
-    if (!mono && n > pcmLimits.maxChannels) notes.push(`源有 ${n} 个声道,混成了立体声`);
+    if (!mono && n > pcmLimits.maxChannels) notes.push(tr("Source has {0} channels, mixed down to stereo", n));
     let win;
     try {
       win = windowOf({
@@ -93,15 +94,15 @@ async function measureJsInner({ body, resolve, ffmpeg, ffprobe, sandbox, pcmLimi
     for (const e of Array.isArray(body.entries) ? body.entries : []) {
       const file = await resolve(e?.media);
       const n = file ? await probeChannels(file, ffprobe) : 0;
-      if (!n) { skipped.push(e?.media?.name || e?.clipId || "未知片段"); continue; }
+      if (!n) { skipped.push(e?.media?.name || e?.clipId || tr("Unknown clip")); continue; }
       if (n === 1) monoSources += 1;
       entries.push({ ...e, file });
     }
-    if (skipped.length) notes.push(`有 ${skipped.length} 段没有音频流或文件不存在,已跳过:${skipped.join("、")}`);
-    if (!entries.length) return bad("时间轴上没有能解码的声音", "no-audio");
+    if (skipped.length) notes.push(tr("Skipped {0} clips with no audio stream or missing file: {1}", skipped.length, skipped.join(", ")));
+    if (!entries.length) return bad(tr("No decodable audio on the timeline"), "no-audio");
     channels = mono ? 1 : 2;
     // 与导出一致(server/bakery/audio-mix.mjs 每段 -ac 2):单声道素材摊到立体声时每路低 3 dB
-    if (monoSources) notes.push(`混音按导出的做法是立体声:${monoSources} 段单声道素材摊到两个声道,每路低 3 dB(ffmpeg 缺省的中置混音系数)`);
+    if (monoSources) notes.push(tr("The mix is stereo, as in export: {0} mono media clips are spread across both channels, each 3 dB lower (ffmpeg's default center mix coefficient)", monoSources));
     const total = num(body.total) > 0 ? num(body.total) : undefined;
     let win;
     try { win = windowOf({ baseOffset: 0, baseDuration: total, start: body.start, duration: body.length }); } catch (e) { return bad(e.message); }
@@ -109,7 +110,7 @@ async function measureJsInner({ body, resolve, ffmpeg, ffprobe, sandbox, pcmLimi
     args = timelinePcmArgs(entries, { total, offset: win.offset, duration: win.duration, sampleRate, channels });
     source = { scope: "timeline", start: win.offset, ...(win.duration !== undefined ? { requestedDuration: +win.duration.toFixed(3) } : null) };
   } else {
-    return bad("无效的 scope");
+    return bad(tr("Invalid scope"));
   }
 
   const over = sampleBudgetError({ duration: expected, sampleRate, channels }, pcmLimits);
@@ -122,7 +123,7 @@ async function measureJsInner({ body, resolve, ffmpeg, ffprobe, sandbox, pcmLimi
     return bad(String(e?.message || e), "decode");
   }
   const frames = pcm[0]?.length ?? 0;
-  if (!frames) return bad("解码出来是空的(这一段没有声音样本)", "no-audio");
+  if (!frames) return bad(tr("Decoded output is empty (this segment has no audio samples)"), "no-audio");
   const duration = +(frames / sampleRate).toFixed(6);
 
   const meta = body.meta && typeof body.meta === "object" ? body.meta : {};

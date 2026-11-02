@@ -26,11 +26,11 @@ const ROLE_ROUNDS = 60;
 const RETRIES = 2;
 const WORKER_MIN_ROUNDS = 60;
 const MAX_INTERRUPTS = 2;
-const RETRY_PROMPT = '上一次请求因为网关超时断了。之前的进度都还在,接着刚才停下的地方继续做。';
-const NUDGE_PROMPT = '你还没有按规定交出结论。现在就交。';
+const RETRY_PROMPT = 'The previous request was cut off by a gateway timeout. Your earlier progress is all still there; continue from where you stopped.';
+const NUDGE_PROMPT = 'You have not submitted your conclusion as required. Submit it now.';
 
 /** 和 runners/api.mjs 判「可续跑」用的是同一套:超时类的错误才重试 */
-export const isTimeout = (err) => err?.name === 'TimeoutError' || /timeout|timed out|aborted due to timeout|没有收到任何数据/i.test(String(err?.message || ''));
+export const isTimeout = (err) => err?.name === 'TimeoutError' || /timeout|timed out|aborted due to timeout|no data received/i.test(String(err?.message || ''));
 
 const str = (description) => ({ type: 'string', description });
 
@@ -40,19 +40,19 @@ const str = (description) => ({ type: 'string', description });
  */
 export const SUBMIT_DEFS = {
   issue_plan: {
-    description: '交出给 worker 的任务要求和给 reviewer 的检查项。',
+    description: 'Submit the task requirements for the worker and the checklist for the reviewer.',
     inputSchema: {
       type: 'object',
       properties: {
-        requirements: str('给 worker 的任务要求,逐条写清验收标准'),
-        reviewerBrief: str('给 reviewer 的检查项,每项写明用什么工具、看什么、什么算不合格'),
-        lessons: { type: 'array', items: { type: 'string' }, description: '(改写时)你认可的教训,一条一句' },
+        requirements: str('Task requirements for the worker, with acceptance criteria written out item by item'),
+        reviewerBrief: str('Checklist for the reviewer; for each item, state which tool to use, what to look at, and what counts as a failure'),
+        lessons: { type: 'array', items: { type: 'string' }, description: '(When rewriting) the lessons you endorse, one sentence each' },
       },
       required: ['requirements', 'reviewerBrief'],
     },
   },
   submit_review: {
-    description: '交出全部审查意见。没有问题就交空列表。',
+    description: 'Submit all review opinions. If there are no problems, submit an empty list.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -60,7 +60,7 @@ export const SUBMIT_DEFS = {
           type: 'array',
           items: {
             type: 'object',
-            properties: { issue: str('问题是什么'), evidence: str('依据:哪个工具、哪个时刻 t、看到了什么') },
+            properties: { issue: str('What the problem is'), evidence: str('Evidence: which tool, at which time t, what was seen') },
             required: ['issue', 'evidence'],
           },
         },
@@ -69,36 +69,36 @@ export const SUBMIT_DEFS = {
     },
   },
   phase_done: {
-    description: '宣布这条片子通过、环路结束。只有四条项目要求都有依据证明达到时才交。',
-    inputSchema: { type: 'object', properties: { summary: str('四条项目要求各自的依据') }, required: ['summary'] },
+    description: 'Declare that this video passes and the loop ends. Submit only when evidence proves all four project requirements are met.',
+    inputSchema: { type: 'object', properties: { summary: str('Evidence for each of the four project requirements') }, required: ['summary'] },
   },
   request_revision: {
-    description: '判定这次交付不通过,把逐条裁定和下一轮要求交给 worker。',
+    description: 'Judge this delivery as not passed and hand the per-item rulings and the next round\'s requirements to the worker.',
     inputSchema: {
       type: 'object',
       properties: {
         rulings: {
           type: 'array',
-          description: '对 reviewer 每一条意见的裁定',
+          description: 'Ruling on each reviewer opinion',
           items: {
             type: 'object',
             properties: {
-              opinion: str('reviewer 的那条意见(可以缩写)'),
-              verdict: { type: 'string', enum: ['采纳', '驳回', '降级'], description: '采纳 / 驳回 / 降级' },
-              reason: str('为什么这样裁定'),
+              opinion: str('That reviewer opinion (may be abbreviated)'),
+              verdict: { type: 'string', enum: ['Accept', 'Reject', 'downgrade'], description: 'Accept / Reject / Downgrade' },
+              reason: str('Why this ruling was made'),
             },
             required: ['opinion', 'verdict', 'reason'],
           },
         },
-        requirements: str('给 worker 的下一轮要求,只来自采纳和降级的条目'),
-        reviewerBrief: str('(可选)改写后的检查项'),
+        requirements: str('Requirements for the worker\'s next round, taken only from accepted and downgraded items'),
+        reviewerBrief: str('(Optional) Rewritten checklist'),
       },
       required: ['rulings', 'requirements'],
     },
   },
   need_user: {
-    description: '遇到必须由用户处理或决定的事(扫码登录、验证码、需要拍板),说明原因后停下。',
-    inputSchema: { type: 'object', properties: { reason: str('要用户做什么') }, required: ['reason'] },
+    description: 'When something must be handled or decided by the user (QR code login, captcha, a decision needed), explain why and stop.',
+    inputSchema: { type: 'object', properties: { reason: str('What the user needs to do') }, required: ['reason'] },
   },
 };
 
@@ -125,9 +125,9 @@ export function apiBackend(o, onRoleEvent) {
       const recorders = submit.map((name) => ({
         name, description: SUBMIT_DEFS[name].description, inputSchema: SUBMIT_DEFS[name].inputSchema,
         async execute(input) {
-          if (submitted) return { ok: false, error: '这一回合已经交过了,不要重复调用。用一句话收尾即可。' };
+          if (submitted) return { ok: false, error: 'This round has already been submitted. Do not call again. Just finish with one sentence.' };
           submitted = { name, input };
-          return { ok: true, recorded: true, next: '已记录。本回合到此结束,不要再调用任何工具,用一句话收尾即可。' };
+          return { ok: true, recorded: true, next: 'Recorded. This round ends here. Do not call any more tools. Just finish with one sentence.' };
         },
       }));
       const base = access === 'all' ? everything : access === 'readonly' ? readOnly : [];
@@ -171,14 +171,14 @@ export function presentLoopEvent(ev) {
   if (ev.type === 'loop') {
     const role = ROLE_LABEL[ev.role] || '';
     switch (ev.stage) {
-      case 'plan': return [{ type: 'status', text: '审查环路 · judger 正在看工程,定任务要求和检查项' }];
-      case 'work': return [{ type: 'status', text: `worker 开始第 ${ev.attempt} 次交付${ev.batch > 1 ? `(第 ${ev.batch} 批)` : ''}` }];
-      case 'review': return [{ type: 'status', text: 'reviewer 正在按检查项审查' }];
-      case 'judging': return [{ type: 'status', text: 'judger 正在逐条裁定 reviewer 的意见' }];
+      case 'plan': return [{ type: 'status', text: 'Review loop · judger is looking at the project and setting the task requirements and checklist' }];
+      case 'work': return [{ type: 'status', text: `worker starts delivery #${ev.attempt}${ev.batch > 1 ? ` (batch ${ev.batch})` : ''}` }];
+      case 'review': return [{ type: 'status', text: 'reviewer is reviewing against the checklist' }];
+      case 'judging': return [{ type: 'status', text: 'judger is ruling on the reviewer\'s opinions one by one' }];
       case 'verdict': {
-        if (ev.verdict === 'phase_done') return [{ type: 'status', text: 'judger:通过' }];
-        if (ev.verdict === 'need_user') return [{ type: 'status', text: 'judger:需要你来决定' }];
-        if (ev.verdict !== 'request_revision') return [{ type: 'status', text: 'judger 没有给出裁决,按不通过处理' }];
+        if (ev.verdict === 'phase_done') return [{ type: 'status', text: 'judger: passed' }];
+        if (ev.verdict === 'need_user') return [{ type: 'status', text: 'judger: needs your decision' }];
+        if (ev.verdict !== 'request_revision') return [{ type: 'status', text: 'judger gave no verdict, treating as not passed' }];
         const rulings = ev.input?.rulings || [];
         /*
          * 没有逐条裁定也会判不通过:judger 自己用只读工具核对,发现问题在 reviewer 意见之外
@@ -186,27 +186,27 @@ export function presentLoopEvent(ev) {
          * 改成直接把 judger 的要求摆出来。
          */
         if (!rulings.length) {
-          const first = String(ev.input?.requirements || '').split('\n').map((s) => s.trim()).find(Boolean) || '(没写要求)';
-          return [{ type: 'status', text: `judger:不通过 —— 没有逐条裁定 reviewer 的意见,是它自己核对后要求返工:\n· ${first}` }];
+          const first = String(ev.input?.requirements || '').split('\n').map((s) => s.trim()).find(Boolean) || '(no requirements written)';
+          return [{ type: 'status', text: `judger: not passed. It did not rule on the reviewer's opinions one by one; it checked on its own and requested rework:\n· ${first}` }];
         }
         const count = (v) => rulings.filter((r) => r.verdict === v).length;
         return [{
           type: 'status',
-          text: [`judger:不通过 —— 采纳 ${count('采纳')} 条、降级 ${count('降级')} 条、驳回 ${count('驳回')} 条`,
+          text: [`judger: not passed. ${count('Accept')} accepted, ${count('downgrade')} downgraded, ${count('Reject')} rejected`,
             ...rulings.map((r) => `· [${r.verdict}] ${r.opinion} —— ${r.reason}`)].join('\n'),
         }];
       }
-      case 'stalled': return [{ type: 'status', text: '连续两次卡在同样的问题上,提前进入反省' }];
+      case 'stalled': return [{ type: 'status', text: 'Stuck on the same problem twice in a row, entering reflection early' }];
       case 'retry': {
         // API 直连多半是网关超时;CLI 那边更常见的是它自己的内建工具被拒这类中断,话要说对
-        const why = !ev.reason || isTimeout({ message: ev.reason }) ? '请求网关超时' : '中断了';
-        return [{ type: 'status', text: `${role} 这一轮${why},接着刚才的进度重试(第 ${ev.attempt} 次)` }];
+        const why = !ev.reason || isTimeout({ message: ev.reason }) ? 'the request gateway timed out' : 'was interrupted';
+        return [{ type: 'status', text: `${role}: this round ${why}, retrying from the previous progress (attempt ${ev.attempt})` }];
       }
       case 'interrupted': return [{ type: 'status', text: ev.role === 'worker'
-        ? 'worker 重试用完仍然中断 —— 不作废整个任务,把它已经做的改动交给 reviewer 和 judger 核对'
-        : `${role} 重试用完仍然中断 —— 不作废整个任务,接着往下走` }];
-      case 'reflect': return [{ type: 'status', text: 'worker 连续没通过,这一轮不干活,先反省' }];
-      case 'rewrite': return [{ type: 'status', text: 'judger 读完反省,正在改写任务要求和检查项' }];
+        ? 'worker was still interrupted after using up its retries. Not voiding the whole task; handing the changes it has already made to the reviewer and judger to check'
+        : `${role} was still interrupted after using up its retries. Not voiding the whole task, moving on` }];
+      case 'reflect': return [{ type: 'status', text: 'worker failed several times in a row, so this round does no work and reflects first' }];
+      case 'rewrite': return [{ type: 'status', text: 'judger has read the reflection and is rewriting the task requirements and checklist' }];
       default: return [];
     }
   }
@@ -217,7 +217,7 @@ export function presentLoopEvent(ev) {
 }
 
 const signature = (rulings) => (rulings || [])
-  .filter((r) => r.verdict !== '驳回')
+  .filter((r) => r.verdict !== 'Reject')
   .map((r) => String(r.opinion || '').replace(/\s+/g, ''))
   .sort()
   .join('|');
@@ -277,7 +277,7 @@ export async function runReviewLoop(o) {
 
   // ── judger 开场 ──
   const plan = await judgerTurn('plan', P.judgerOpenPrompt({ userText }), ['issue_plan']);
-  if (!plan) return finish('no_plan', 'judger 没能给出任务要求和检查项,环路没有开始。可以换个说法再发一次。');
+  if (!plan) return finish('no_plan', 'judger could not produce task requirements and a checklist, so the loop did not start. You can rephrase and send it again.');
   let requirements = plan.input.requirements;
   let brief = plan.input.reviewerBrief;
 
@@ -294,21 +294,21 @@ export async function runReviewLoop(o) {
         system: system + P.WORKER_RULES, access: 'all', submit: ['need_user'],
         prompt: P.workerPrompt({ userText, requirements, lessons: [...lessons, ...newLessons] }),
       });
-      if (work.submitted?.name === 'need_user') return finish('need_user', `需要你处理:${work.submitted.input.reason}`);
+      if (work.submitted?.name === 'need_user') return finish('need_user', `You need to handle this: ${work.submitted.input.reason}`);
       interrupts = work.interrupted ? interrupts + 1 : 0;
       if (interrupts >= MAX_INTERRUPTS) {
         return finish('interrupted', [
-          `worker 连续 ${interrupts} 轮都被技术原因打断,环路先停下。最后一次的原因:`,
+          `worker was interrupted by technical causes for ${interrupts} rounds in a row, so the loop stops for now. Reason for the last one:`,
           work.interrupted,
           '',
-          '之前已经做过的改动都还在工程里。处理掉上面的原因后,再发一条消息就能接着做。',
+          'Changes already made earlier are still in the project. After you deal with the reason above, send another message to continue.',
         ].join('\n'));
       }
       // 中断的 worker 多半没写交货总结,但它中断前动过的工程是真的 —— 交给后面的人按工程现状核对
       const delivery = work.interrupted
-        ? [`(worker 这一轮被技术原因打断,没能写完交货总结。原因:${work.interrupted})`,
-          '它中断前对工程做的改动都还在,请直接用只读工具核对工程现状。',
-          work.text?.trim() ? `\n它中断前说到:\n${work.text.trim()}` : ''].join('\n')
+        ? [`(worker was interrupted by technical causes this round and could not finish the delivery summary. Reason: ${work.interrupted})`,
+          'The changes it made to the project before the interruption are still there. Please verify the current state of the project directly with read-only tools.',
+          work.text?.trim() ? `\nBefore the interruption it said:\n${work.text.trim()}` : ''].join('\n')
         : work.text;
 
       // ── reviewer ──
@@ -318,7 +318,7 @@ export async function runReviewLoop(o) {
         prompt: P.reviewerPrompt({ brief, userText, delivery }),
       });
       const opinions = review.submitted?.input?.opinions
-        ?? (!review.interrupted && review.text?.trim() ? [{ issue: review.text.trim(), evidence: '(reviewer 没有按格式提交,这是它的原文)' }] : []);
+        ?? (!review.interrupted && review.text?.trim() ? [{ issue: review.text.trim(), evidence: '(reviewer did not submit in the required format; this is its original text)' }] : []);
 
       // ── judger 裁决 ──
       // 开场播报用 judging:原来也叫 verdict,而 verdict 事件没带裁决结果时会显示成「judger 没有给出裁决」——
@@ -329,12 +329,12 @@ export async function runReviewLoop(o) {
       say({ stage: 'verdict', role: 'judger', verdict: verdict?.name || 'none', input: verdict?.input });
 
       if (verdict?.name === 'phase_done') {
-        return finish('passed', `judger 判定通过。\n\n${verdict.input.summary}`);
+        return finish('passed', `judger judged this as passed.\n\n${verdict.input.summary}`);
       }
       if (verdict?.name === 'need_user') {
-        return finish('need_user', `judger 需要你决定:${verdict.input.reason}`);
+        return finish('need_user', `judger needs your decision: ${verdict.input.reason}`);
       }
-      const rulings = verdict?.input?.rulings || [{ opinion: '(无)', verdict: '采纳', reason: 'judger 未裁决' }];
+      const rulings = verdict?.input?.rulings || [{ opinion: '(none)', verdict: 'Accept', reason: 'judger gave no ruling' }];
       verdicts.push({ rulings, requirements: verdict?.input?.requirements || requirements });
       if (verdict?.input?.requirements) requirements = verdict.input.requirements;
       if (verdict?.input?.reviewerBrief) brief = verdict.input.reviewerBrief;
@@ -353,10 +353,10 @@ export async function runReviewLoop(o) {
     if (batch === MAX_BATCHES) {
       const last = verdicts[verdicts.length - 1];
       return finish('exhausted', [
-        `这条片子两批都没通过 judger 的裁决,环路停下,交给你判断。`,
-        '', '最后一次裁决:',
+        `This video failed the judger's ruling in both batches. The loop stops and leaves the call to you.`,
+        '', 'Last ruling:',
         ...(last?.rulings || []).map((r) => `- [${r.verdict}] ${r.opinion} —— ${r.reason}`),
-        '', ...reflections.map((r, i) => `第 ${i + 1} 次反省:\n${r}`),
+        '', ...reflections.map((r, i) => `Reflection #${i + 1}:\n${r}`),
       ].join('\n'));
     }
 
@@ -368,5 +368,5 @@ export async function runReviewLoop(o) {
       for (const l of plan2.input.lessons || []) if (l && !newLessons.includes(l)) newLessons.push(l);
     }
   }
-  return finish('exhausted', '环路结束。');
+  return finish('exhausted', 'The loop has ended.');
 }

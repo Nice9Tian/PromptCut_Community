@@ -59,7 +59,7 @@ export const SAMPLE_FLAGS_SYNC = 0x02000000;
 export const SAMPLE_FLAGS_NON_SYNC = 0x01010000;
 
 function assertPositiveInt(name: string, v: number): void {
-  if (!Number.isInteger(v) || v <= 0) throw new Error(`轨道流封装:${name} 要是正整数,收到 ${v}`);
+  if (!Number.isInteger(v) || v <= 0) throw new Error(`Track stream muxing: ${name} must be a positive integer, got ${v}`);
 }
 
 /** 初始化段:`ftyp + moov`。同一条流的所有分段共用它 */
@@ -67,8 +67,8 @@ export function buildStreamInit(cfg: StreamInitConfig): Uint8Array {
   assertPositiveInt('width', cfg.width);
   assertPositiveInt('height', cfg.height);
   assertPositiveInt('fps', cfg.fps);
-  if (cfg.width > 0xffff || cfg.height > 0xffff) throw new Error('轨道流封装:宽高超出 avc1 能写的范围');
-  if (!(cfg.avcC instanceof Uint8Array) || cfg.avcC.length < 7 || cfg.avcC[0] !== 1) throw new Error('轨道流封装:avcC 不是 AVCDecoderConfigurationRecord');
+  if (cfg.width > 0xffff || cfg.height > 0xffff) throw new Error('Track stream muxing: width/height exceed what avc1 can store');
+  if (!(cfg.avcC instanceof Uint8Array) || cfg.avcC.length < 7 || cfg.avcC[0] !== 1) throw new Error('Track stream muxing: avcC is not an AVCDecoderConfigurationRecord');
 
   const ftyp = box('ftyp', fourcc('isom'), u32(0x200), fourcc('isom'), fourcc('iso6'), fourcc('avc1'), fourcc('mp41'));
 
@@ -122,11 +122,11 @@ export interface StreamSegmentInput {
 /** 一个分段:`moof + mdat` */
 export function buildStreamSegment(input: StreamSegmentInput): Uint8Array {
   assertPositiveInt('sequence', input.sequence);
-  if (!Number.isInteger(input.baseDecodeTime) || input.baseDecodeTime < 0) throw new Error('轨道流封装:baseDecodeTime 要是非负整数');
+  if (!Number.isInteger(input.baseDecodeTime) || input.baseDecodeTime < 0) throw new Error('Track stream muxing: baseDecodeTime must be a non-negative integer');
   const samples = input.samples;
-  if (!samples.length) throw new Error('轨道流封装:分段里没有样本');
-  if (!samples[0].isSync) throw new Error('轨道流封装:分段的第一个样本必须是关键帧');
-  for (const s of samples) if (!(s.data instanceof Uint8Array) || !s.data.length) throw new Error('轨道流封装:样本是空的');
+  if (!samples.length) throw new Error('Track stream muxing: the segment has no samples');
+  if (!samples[0].isSync) throw new Error('Track stream muxing: the first sample of a segment must be a keyframe');
+  for (const s of samples) if (!(s.data instanceof Uint8Array) || !s.data.length) throw new Error('Track stream muxing: the sample is empty');
 
   // tfhd:default-base-is-moof(0x020000);tfdt 用版本 1(64 位);
   // trun:数据偏移(0x1)+ 逐样本大小(0x200)+ 逐样本标志(0x400),时长走 trex 的缺省 1

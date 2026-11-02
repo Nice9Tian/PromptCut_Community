@@ -54,8 +54,8 @@ export function applyCardDefinition(project, args, getCard = () => undefined) {
   for (const id of referencedClips) materialize(clipById(id));
 
   // 第一版不接 DOM 卡:既不套在 DOM 卡段上,也不引用 DOM 卡的输出。
-  if (isDomCard(getCard(clip.cardId))) throw new Error('素材效果卡第一版不接 DOM 卡输入');
-  for (const id of referencedClips) if (isDomCard(getCard(clipById(id)?.cardId))) throw new Error('素材效果卡第一版不接 DOM 卡输入');
+  if (isDomCard(getCard(clip.cardId))) throw new Error('Media effect cards do not accept DOM card inputs in the first version');
+  for (const id of referencedClips) if (isDomCard(getCard(clipById(id)?.cardId))) throw new Error('Media effect cards do not accept DOM card inputs in the first version');
 
   /*
    * 同一片段不能同时挂音频素材效果卡和视觉素材效果卡:音频素材效果卡不写 clip.cardId,所以判据只能看
@@ -64,7 +64,7 @@ export function applyCardDefinition(project, args, getCard = () => undefined) {
   const priorNodeId = clip.nodeId;
   const prior = priorNodeId ? next.cardNodes?.find(node => node.id === priorNodeId) : undefined;
   if (prior?.adapter === 'card' && (prior.kind === 'audio' && !prior.embeddedAudio) !== (definition.kind === 'audio' && !isAudiovisualCard(definition)))
-    throw new Error('同一片段不能同时挂音频素材效果卡和视觉素材效果卡，先复制片段');
+    throw new Error('The same clip cannot have both an audio media effect card and a visual media effect card, duplicate the clip first');
 
   const nodeId = args.nodeId || crypto.randomUUID();
   const previous = next.cardNodes?.find(node => node.id === nodeId);
@@ -89,7 +89,7 @@ export function applyCardDefinition(project, args, getCard = () => undefined) {
     const owner = synthetic ? clipById(synthetic[1]) : undefined;
     const node = next.cardNodes?.find(node => node.id === ref.nodeId);
     if (node?.adapter === 'chrome' || (owner && !owner.mediaId && isDomCard(getCard(owner.cardId))))
-      throw new Error('素材效果卡第一版不接 DOM 卡输入');
+      throw new Error('Media effect cards do not accept DOM card inputs in the first version');
   }
 
   /*
@@ -159,7 +159,7 @@ export function detachCardNode(project, clipId, getCard = () => undefined) {
   const clip = next.tracks?.flatMap(track => track.clips ?? []).find(c => c.id === clipId);
   if (!clip) throw new Error(`Unknown clip: ${clipId}`);
   const nodeId = clip.nodeId;
-  if (!nodeId) throw new Error('这一段没有挂素材效果卡');
+  if (!nodeId) throw new Error('This segment has no media effect card attached');
   const node = (next.cardNodes || []).find(n => n.id === nodeId);
   if (!node) {
     // 悬空(节点被别处删了):把指针擦掉就是,不用拦着用户
@@ -169,8 +169,8 @@ export function detachCardNode(project, clipId, getCard = () => undefined) {
 
   const inputs = node.inputs || {};
   const names = Object.keys(inputs);
-  if (!names.length) throw new Error('这张卡没有输入,它本身就是这一段的内容,不是叠加上去的;要去掉请删掉这一段');
-  if (!inputs.source) throw new Error(`这张卡有不止一路输入(${names.join('、')}),摘掉它等于拆掉这处合成;请在编辑分区的节点图里改`);
+  if (!names.length) throw new Error('This card has no inputs; it is the content of this segment itself, not an overlay. To remove it, delete the segment');
+  if (!inputs.source) throw new Error(`This card has more than one input (${names.join(', ')}); detaching it would tear down this composite. Edit it in the node graph in the editing section`);
 
   const upstream = typeof inputs.source === 'string' ? inputs.source : inputs.source.nodeId;
   const upstreamNode = (next.cardNodes || []).find(n => n.id === upstream);

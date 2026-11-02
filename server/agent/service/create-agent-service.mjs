@@ -39,7 +39,7 @@ import { findAgentExtension } from './extensions.mjs';
 
 export const CONVERSATION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 /** 满额提示(一级文字，2026-10-13 用户确认用这一句)。页面一侧的同一句集中在 `src/ai/cloud/chatTexts.ts`，要同步 */
-export const CONVERSATION_LIMIT_MESSAGE = '你在这个项目里的云端对话已满 50 个。请先删除不用的对话，再新建。';
+export const CONVERSATION_LIMIT_MESSAGE = 'You already have 50 cloud chats in this project. Delete unused chats first, then create a new one.';
 
 export const HOSTED_DEFAULTS = Object.freeze({
   /** 没有进行中的一轮、这么久没有请求的实例被回收 */
@@ -104,15 +104,15 @@ export function ownerKeyOf(identity) {
 
 /** 撤销与授权失效时写进对话记录的那句话 */
 const REVOKE_TEXT = Object.freeze({
-  disabled: '项目创建者已关闭云端 Agent,这一轮已停下。已经落地的改动保留在项目里。',
-  removed: '你已被移出这个项目,云端 Agent 的这一轮已停下。已经落地的改动保留在项目里。',
-  kicked: '你已被请出这个项目,云端 Agent 的这一轮已停下。已经落地的改动保留在项目里。',
-  deleted: '项目已删除,云端 Agent 的这一轮已停下。',
-  expired: '这一轮的授权已过期,已停下。已经落地的改动保留在项目里;再发一条消息即可继续。',
-  generation: '项目的成员名单或口令改过,这一轮的授权已失效,已停下。已经落地的改动保留在项目里;再发一条消息即可继续。',
-  'bad-grant': '这一轮的授权没有被文档服务接受,已停下。已经落地的改动保留在项目里;再发一条消息即可继续。',
+  disabled: 'The project creator has turned off the Cloud Agent, so this turn was stopped. Changes already applied are kept in the project.',
+  removed: 'You were removed from this project, so the Cloud Agent\'s turn was stopped. Changes already applied are kept in the project.',
+  kicked: 'You were kicked from this project, so the Cloud Agent\'s turn was stopped. Changes already applied are kept in the project.',
+  deleted: 'The project was deleted, so the Cloud Agent\'s turn was stopped.',
+  expired: 'The authorization for this turn has expired, so it was stopped. Changes already applied are kept in the project; send another message to continue.',
+  generation: 'The project\'s member list or password was changed, so the authorization for this turn is no longer valid and it was stopped. Changes already applied are kept in the project; send another message to continue.',
+  'bad-grant': 'The authorization for this turn was not accepted by the document service, so it was stopped. Changes already applied are kept in the project; send another message to continue.',
 });
-const revokeText = (reason) => REVOKE_TEXT[reason] ?? `云端 Agent 的这段对话已失效(${reason}),这一轮已停下。已经落地的改动保留在项目里。`;
+const revokeText = (reason) => REVOKE_TEXT[reason] ?? `This Cloud Agent chat is no longer valid (${reason}), so this turn was stopped. Changes already applied are kept in the project.`;
 
 /** 文档服务不给票据时的 `reason` → 对话记录里的收尾原因;不在表里的(连不上、超时)是暂时性故障,不收尾 */
 const CREDENTIAL_REASON = Object.freeze({
@@ -130,7 +130,7 @@ export function revokeReasonOfClose({ code, reason } = {}) {
 }
 
 /** 模型接口给的错误原文里去掉地址(地址是托管方的配置;Key 已由驱动替换掉) */
-const scrub = (text) => String(text ?? '').replace(/https?:\/\/[^\s"'<>)]+/g, '[地址]').slice(0, 500);
+const scrub = (text) => String(text ?? '').replace(/https?:\/\/[^\s"'<>)]+/g, '[URL]').slice(0, 500);
 
 /**
  * @param {object} o
@@ -204,10 +204,10 @@ export function createHostedAgentService({
       connectionsClosed, childrenClosed, task, assignmentReady, onTaskDrained, runEventsSink, log, now }); }
     return createAccountConversationService({ conversationClient, now });
   }
-  if (typeof loadModule !== 'function') throw new TypeError('createHostedAgentService: 要 loadModule');
-  if (typeof docUrl !== 'string' || !/^wss?:\/\//.test(docUrl)) throw new TypeError('createHostedAgentService: docUrl 要是 ws(s):// 地址');
-  if (!credentials || typeof credentials.protocolsFor !== 'function') throw new TypeError('createHostedAgentService: 要 credentials.protocolsFor');
-  if (typeof modelConfig !== 'function') throw new TypeError('createHostedAgentService: 要 modelConfig');
+  if (typeof loadModule !== 'function') throw new TypeError('createHostedAgentService: loadModule is required');
+  if (typeof docUrl !== 'string' || !/^wss?:\/\//.test(docUrl)) throw new TypeError('createHostedAgentService: docUrl must be a ws(s):// URL');
+  if (!credentials || typeof credentials.protocolsFor !== 'function') throw new TypeError('createHostedAgentService: credentials.protocolsFor is required');
+  if (typeof modelConfig !== 'function') throw new TypeError('createHostedAgentService: modelConfig is required');
   const limits = { ...HOSTED_DEFAULTS, ...limitsIn };
   const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志失败不影响服务 */ } };
 
@@ -271,12 +271,12 @@ export function createHostedAgentService({
 
   function checkIdentity(identity) {
     if (!identity || typeof identity.projectId !== 'string' || !identity.projectId || typeof identity.userId !== 'string' || !identity.userId) {
-      throw new AgentServiceError('unauthorized', '没有身份', 401);
+      throw new AgentServiceError('unauthorized', 'No identity', 401);
     }
   }
 
   function checkConversationId(id) {
-    if (typeof id !== 'string' || !CONVERSATION_ID_RE.test(id)) throw new AgentServiceError('bad-request', '对话 id 不合法');
+    if (typeof id !== 'string' || !CONVERSATION_ID_RE.test(id)) throw new AgentServiceError('bad-request', 'Invalid chat id');
   }
 
   function closeEntry(entry, reason) {
@@ -447,13 +447,13 @@ export function createHostedAgentService({
 
   /** 找到或建出这位成员在这个项目里的实例;同一个键并发到达的共用同一次建立 */
   async function instanceFor(identity) {
-    if (closed) throw new AgentServiceError('unavailable', '服务正在关闭', 503);
+    if (closed) throw new AgentServiceError('unavailable', 'Service is shutting down', 503);
     const key = keyOf(identity);
     let entry = instances.get(key);
     if (!entry) {
       if (instances.size >= maxInstances()) {
         const idle = [...instances.values()].filter((e) => e.runs.size === 0).sort((a, b) => a.lastUsed - b.lastUsed)[0];
-        if (!idle) throw new AgentServiceError('busy', '云端 Agent 正忙,请稍后再试。', 503);
+        if (!idle) throw new AgentServiceError('busy', 'The Cloud Agent is busy. Please try again later.', 503);
         closeEntry(idle, 'evicted');
       }
       entry = { key, identity: { ...identity }, ownerKey: ownerKeyOf(identity), inst: null, runs: new Map(), lastUsed: now(), closed: false, ready: null };
@@ -490,7 +490,7 @@ export function createHostedAgentService({
       });
       entry.ready = entry.inst.bindAgent({ projectId: identity.projectId, mode: 'hosted' }).then(() => own, (err) => {
         closeEntry(own, 'bind-failed');
-        throw new AgentServiceError('unavailable', `连不上文档服务:${err?.message ?? err}`, 503);
+        throw new AgentServiceError('unavailable', `Cannot reach the document service: ${err?.message ?? err}`, 503);
       });
       instances.set(key, entry);
       say('agent.instance.open', { projectId: identity.projectId, user: sha(identity.userId).slice(0, 8), instances: instances.size });
@@ -525,14 +525,14 @@ export function createHostedAgentService({
      */
     async send(identity, conversationId, body = {}) {
       checkIdentity(identity);
-      if (closed) throw new AgentServiceError('unavailable', '服务正在关闭', 503);
-      if (typeof body.prompt !== 'string' || !body.prompt.trim()) throw new AgentServiceError('bad-request', '消息是空的');
+      if (closed) throw new AgentServiceError('unavailable', 'Service is shutting down', 503);
+      if (typeof body.prompt !== 'string' || !body.prompt.trim()) throw new AgentServiceError('bad-request', 'The message is empty');
       checkConversationId(conversationId);
       const before = conversationOf(identity, conversationId, false);
-      if (before?.run) throw new AgentServiceError('busy-conversation', '这个对话还有一轮在进行。', 409);
-      if (before && store.full(before)) throw new AgentServiceError('too-large', '这个对话的记录已经太长,请新开一个对话。', 413);
+      if (before?.run) throw new AgentServiceError('busy-conversation', 'This chat still has a turn in progress.', 409);
+      if (before && store.full(before)) throw new AgentServiceError('too-large', 'The history of this chat is too long. Please start a new chat.', 413);
       const cfg = (await modelConfig()) ?? {};
-      if (!modelReady(cfg)) throw new AgentServiceError('no-model-key', '托管方还没有为云端 Agent 配置模型。', 503);
+      if (!modelReady(cfg)) throw new AgentServiceError('no-model-key', 'The host has not configured a model for the Cloud Agent yet.', 503);
       const grant = typeof body.grant === 'string' && body.grant ? body.grant : null;
       if (typeof credentials.admitGrant === 'function') {
         try {
@@ -540,16 +540,16 @@ export function createHostedAgentService({
         } catch (err) {
           if (err instanceof AgentServiceError) throw err;
           const why = CREDENTIAL_REASON[err?.reason];
-          if (why === 'disabled') throw new AgentServiceError('disabled', '项目创建者已关闭云端 Agent。', 403);
-          if (err?.reason === 'unavailable' || err?.reason === 'timeout') throw new AgentServiceError('unavailable', '文档服务暂时连不上,请稍后再试。', 503);
-          throw new AgentServiceError('bad-grant', '这条消息带的授权不对或已过期,请重试。', 403);
+          if (why === 'disabled') throw new AgentServiceError('disabled', 'The project creator has turned off the Cloud Agent.', 403);
+          if (err?.reason === 'unavailable' || err?.reason === 'timeout') throw new AgentServiceError('unavailable', 'The document service is temporarily unreachable. Please try again later.', 503);
+          throw new AgentServiceError('bad-grant', 'The grant attached to this message is invalid or has expired. Please retry.', 403);
         }
       }
       // 闸:一轮开始前(契约第 6.2 节)。放行即占名额,之后恰好还一次
       const admitted = await gate.admitRun({ projectId: identity.projectId, userId: identity.userId });
       if (!admitted?.ok) {
         const code = admitted?.code ?? 'busy';
-        throw new AgentServiceError(code, admitted?.message ?? '云端 Agent 正忙,请稍后再试。', code === 'disabled' ? 403 : 429);
+        throw new AgentServiceError(code, admitted?.message ?? 'The Cloud Agent is busy. Please try again later.', code === 'disabled' ? 403 : 429);
       }
       const slot = { projectId: identity.projectId, userId: identity.userId };
       // 委托先放好:实例一建起来就要连文档服务,那时就得有凭证
@@ -561,8 +561,8 @@ export function createHostedAgentService({
       try {
         entry = await instanceFor(identity);
         conv = conversationOf(identity, conversationId, true);
-        if (!conv) throw new AgentServiceError('bad-request', '对话 id 不合法');
-        if (conv.run) throw new AgentServiceError('busy-conversation', '这个对话还有一轮在进行。', 409);
+        if (!conv) throw new AgentServiceError('bad-request', 'Invalid chat id');
+        if (conv.run) throw new AgentServiceError('busy-conversation', 'This chat still has a turn in progress.', 409);
       } catch (err) {
         gate.release(slot);
         // 这条消息没起成一轮:它带来的委托不留(同一个对话正在跑的那一轮的委托放回去)
@@ -606,10 +606,10 @@ export function createHostedAgentService({
         stopped = true;
         try { inner?.abort(); } catch { /* 已经结束 */ }
         if (kind === 'stopped') {
-          store.emit(conv, { type: 'status', runId, text: '已停止' });
+          store.emit(conv, { type: 'status', runId, text: 'Stopped' });
           finish('idle', 'stopped');
         } else if (kind === 'limit') {
-          const message = `这一轮超过了 ${Math.round(limits.runMs / 60_000)} 分钟的上限,已停下。已经落地的改动保留在项目里。`;
+          const message = `This turn exceeded the limit of ${Math.round(limits.runMs / 60_000)} minutes and was stopped. Changes already applied are kept in the project.`;
           store.emit(conv, { type: 'error', code: 'limit', runId, message });
           finish('failed', 'limit', message);
         } else if (kind === 'revoked') {
@@ -684,7 +684,7 @@ export function createHostedAgentService({
         onModelCall: async (phase, info) => {
           if (phase === 'before') {
             const ok = await gate.admitModelCall({ projectId: identity.projectId, userId: identity.userId, model });
-            if (!ok?.ok) throw Object.assign(new Error(ok?.message ?? '云端 Agent 现在不能调用模型。'), { runErrorCode: ok?.code ?? 'busy' });
+            if (!ok?.ok) throw Object.assign(new Error(ok?.message ?? 'The Cloud Agent cannot call the model right now.'), { runErrorCode: ok?.code ?? 'busy' });
             return;
           }
           gate.record({
@@ -700,7 +700,7 @@ export function createHostedAgentService({
             // 托管档只发配置与请求、回应的计数,不带模型接口的地址(契约第 2.4 节);技能清单只有名字和错误代号,放了不生效时要看得到
             if (ev.stage !== 'configuration' && ev.stage !== 'request' && ev.stage !== 'response' && ev.stage !== 'skills') return;
           } else if (ev.type === 'error') {
-            out = typeof ev.code === 'string' ? ev : { ...ev, code: 'model', message: `模型调用失败:${scrub(ev.message)}` };
+            out = typeof ev.code === 'string' ? ev : { ...ev, code: 'model', message: `Model call failed: ${scrub(ev.message)}` };
             sawError = out;
           } else if (ev.type === 'done' && ev.outcome === 'round_limit') {
             limitHit = true;
@@ -717,7 +717,7 @@ export function createHostedAgentService({
           if (finished || stopped) return;
           if (sawError) return finish('failed', sawError.code ?? 'model', sawError.message ?? null);
           if (limitHit) {
-            const message = `这一轮到了 ${limits.rounds} 次模型往返的上限,已停下。已经落地的改动保留在项目里,可以接着说。`;
+            const message = `This turn reached the limit of ${limits.rounds} model round trips and was stopped. Changes already applied are kept in the project, and you can continue.`;
             store.emit(conv, { type: 'error', code: 'limit', runId, message });
             return finish('failed', 'limit', message);
           }
@@ -725,7 +725,7 @@ export function createHostedAgentService({
         },
         (err) => {
           if (finished || stopped) return;
-          const message = `模型调用失败:${scrub(err?.message ?? err)}`;
+          const message = `Model call failed: ${scrub(err?.message ?? err)}`;
           store.emit(conv, { type: 'error', code: 'model', runId, message });
           finish('failed', 'model', message);
         },
@@ -767,17 +767,17 @@ export function createHostedAgentService({
     pageResult(identity, conversationId, body = {}) {
       const conv = conversationOf(identity, conversationId, false);
       if (!conv) return null;
-      const gone = () => new AgentServiceError('page-request-gone', '这次请求已经不在等了。', 410);
+      const gone = () => new AgentServiceError('page-request-gone', 'This request is no longer being waited on.', 410);
       const run = conv.run;
       const id = typeof body.id === 'string' ? body.id : '';
       if (!run || !run.pageId || run.userId !== identity.userId || body.pageId !== run.pageId || !run.pageRequests.has(id)) throw gone();
       const out = body.ok === true
         ? { ok: true, result: body.result ?? null }
-        : { ok: false, error: String(typeof body.error === 'string' && body.error ? body.error : '页面没有做成这一步').slice(0, 500) };
+        : { ok: false, error: String(typeof body.error === 'string' && body.error ? body.error : 'The page did not complete this step').slice(0, 500) };
       if (Buffer.byteLength(JSON.stringify(out)) > MAX_PAGE_RESULT_BYTES) {
         // 太大的不收,但这次请求算答过了(不让 Agent 干等到超时)
-        settlePage(run, id, { ok: true, result: { ok: false, error: '页面交回的结果太大,没有收下。' } });
-        throw new AgentServiceError('too-large', '页面交回的结果太大', 413);
+        settlePage(run, id, { ok: true, result: { ok: false, error: 'The result returned by the page is too large and was not accepted.' } });
+        throw new AgentServiceError('too-large', 'The result returned by the page is too large', 413);
       }
       if (!settlePage(run, id, { ok: true, result: out })) throw gone();
       return { ok: true };
@@ -834,9 +834,9 @@ export function createHostedAgentService({
     async attach(identity, conversationId, name, stream) {
       checkIdentity(identity);
       checkConversationId(conversationId);
-      if (closed) throw new AgentServiceError('unavailable', '服务正在关闭', 503);
-      if (!agentEnabled(identity.projectId)) throw new AgentServiceError('disabled', '项目创建者已关闭云端 Agent。', 403);
-      if (!workspaces.available) throw new AgentServiceError('unavailable', '这个云端 Agent 服务没有工作目录,不能收附件。', 503);
+      if (closed) throw new AgentServiceError('unavailable', 'Service is shutting down', 503);
+      if (!agentEnabled(identity.projectId)) throw new AgentServiceError('disabled', 'The project creator has turned off the Cloud Agent.', 403);
+      if (!workspaces.available) throw new AgentServiceError('unavailable', 'This Cloud Agent service has no working directory and cannot accept attachments.', 503);
       const ws = workspaces.open({ projectId: identity.projectId, ownerKey: ownerKeyOf(identity), conversationId });
       try {
         return await saveAttachment(ws, name, stream);

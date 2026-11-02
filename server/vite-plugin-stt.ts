@@ -5,6 +5,7 @@ import path from "path";
 import fs from "fs/promises";
 import { existsSync } from "fs";
 import { spawn, ChildProcess } from "child_process";
+import { tr } from "./i18n.mjs";
 
 // 运行中的 job: jobId → child process
 const activeJobs = new Map<string, ChildProcess>();
@@ -22,8 +23,8 @@ function sanitizeName(name: string) {
  * 「未就绪,先跑 npm run prepare-python」,那条命令用户手上根本没有,只会把人带偏。
  */
 export const PYTHON_MISSING =
-  "找不到内置 Python。正式安装包自带它,缺了多半是安装损坏或被杀毒软件删掉,重装一次即可;" +
-  "在仓库里开发的话跑 npm run prepare-python 组装。";
+  tr("Bundled Python not found. The official installer ships with it; if it is missing, the install is probably corrupted or it was deleted by antivirus software, so reinstall once; ") +
+  tr("If you are developing in the repo, run npm run prepare-python to assemble it.");
 
 /** 按文档顺序查找内置 Python 解释器路径;找不到返回 null */
 export function findPython(root: string): string | null {
@@ -73,9 +74,9 @@ export function spawnPython(pythonPath: string, args: string[], env: NodeJS.Proc
     const bad = args.find((a) => CMD_METACHARS.test(String(a)));
     if (bad !== undefined) {
       throw new Error(
-        `参数里有 cmd 元字符(${JSON.stringify(bad)}),批处理解释器接不住 —— ` +
-        `PROMPTCUT_PYTHON 现在指向 ${path.basename(pythonPath)}。` +
-        `把它改指到 python.exe 就没有这个限制(.exe 不经过 shell)。`,
+        tr("The arguments contain cmd metacharacters ({0}), which the batch interpreter cannot handle -- ", JSON.stringify(bad)) +
+        tr("PROMPTCUT_PYTHON currently points to {0}.", path.basename(pythonPath)) +
+        tr("Point it to python.exe to avoid this limitation (.exe does not go through the shell)."),
       );
     }
     return spawn("cmd.exe", ["/d", "/s", "/c", pythonPath, ...args], { env, windowsHide: true });
@@ -222,7 +223,7 @@ export function pipeToSse(child: ChildProcess, res: ServerResponse): void {
     }
     if (code !== 0 && !hasDone) {
       const tail = stderrLines.slice(-10).join("\n");
-      const errEvent = JSON.stringify({ event: "error", message: `进程退出码 ${code}`, stderr: tail });
+      const errEvent = JSON.stringify({ event: "error", message: tr("Process exit code {0}", code), stderr: tail });
       res.write("data: " + errEvent + "\n\n");
     }
     res.end();
@@ -288,7 +289,7 @@ export function sttPlugin(): Plugin {
               } catch {
                 res.statusCode = 500;
                 res.setHeader("Content-Type", "application/json");
-                res.end(JSON.stringify({ error: "Python 输出解析失败", raw: out, stderr: err }));
+                res.end(JSON.stringify({ error: tr("Failed to parse Python output"), raw: out, stderr: err }));
               }
             });
           } catch (e: unknown) {
@@ -371,7 +372,7 @@ export function sttPlugin(): Plugin {
             if (!jobId) {
               res.statusCode = 400;
               res.setHeader("Content-Type", "application/json");
-              res.end(JSON.stringify({ error: "jobId 必须" }));
+              res.end(JSON.stringify({ error: "jobId is required" }));
               return;
             }
 
@@ -387,7 +388,7 @@ export function sttPlugin(): Plugin {
             if (!inputPath) {
               res.statusCode = 400;
               res.setHeader("Content-Type", "application/json");
-              res.end(JSON.stringify({ error: `找不到 ${jobId} 的上传文件,先调 /api/stt/upload` }));
+              res.end(JSON.stringify({ error: `No uploaded file found for ${jobId}, call /api/stt/upload first` }));
               return;
             }
 

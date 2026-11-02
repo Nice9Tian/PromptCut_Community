@@ -8,7 +8,7 @@ import { PNG } from 'pngjs';
 const urlArg = process.argv.indexOf('--url');
 const BASE = ((urlArg >= 0 ? process.argv[urlArg + 1] : '') || process.env.PROMPTCUT_BASE || '').replace(/\/+$/, '');
 if (!BASE || BASE.startsWith('--')) {
-  console.error('用法: node scripts/io-check.mjs --url http://127.0.0.1:<自己起的 dev server 端口>\n  或设环境变量 PROMPTCUT_BASE。不给地址不跑:不缺省连用户常驻的编辑器。');
+  console.error('Usage: node scripts/io-check.mjs --url http://127.0.0.1:<port of your own dev server>\n  or set the PROMPTCUT_BASE environment variable. It won\'t run without an address: it never defaults to the user\'s long-running editor.');
   process.exit(2);
 }
 
@@ -81,7 +81,7 @@ if (!BASE || BASE.startsWith('--')) {
     };
   }, jsonStr);
   console.log('Reimport result:', reimportResult);
-  console.log('Has missing prefix:', reimportResult.mediaName.includes('(缺失)'));
+  console.log('Has missing prefix:', reimportResult.mediaName.includes('(missing)'));
   console.log('Is url empty string:', reimportResult.mediaUrl === '');
   console.log('Are video clips preserved:', reimportResult.videoClipCount > 0);
 

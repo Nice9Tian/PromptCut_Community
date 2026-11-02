@@ -113,14 +113,14 @@ export function layoutClips(project, clipIds, measured = null, t = 0) {
   const cardIds = [];
   for (const id of ids) {
     const clip = byId.get(id);
-    if (!clip) { clips[id] = { contentBox: null, contentNote: `找不到 clip ${id}` }; continue; }
+    if (!clip) { clips[id] = { contentBox: null, contentNote: `clip ${id} not found` }; continue; }
     // 素材段:不进快照测量,框由项目数据决定
     if (!clip.cardId) { clips[id] = { contentBox: frameContentBox(clip.frame, stage) }; continue; }
     cardIds.push(id);
     if (!measured) { clips[id] = { contentBox: null }; continue; }
     const hit = measured.find(m => m?.clipId === id);
     if (!hit) {
-      clips[id] = { contentBox: null, contentNote: `这张卡此刻不在画面上(t=${t}s 不在它的 ${clip.start}~${clip.end}s 区间内),先 seek 进它的时段再读` };
+      clips[id] = { contentBox: null, contentNote: `This card is not on screen right now (t=${t}s is outside its ${clip.start}~${clip.end}s range); seek into its time range first, then read` };
       continue;
     }
     clips[id] = { contentBox: roundBox(hit.bounds ?? hit.rect) };
@@ -527,9 +527,9 @@ export class FramePipeline {
   laneRefused(lane) {
     // 预渲染进程按模式拒(`modeRefusal`):`user` 模式拒 Agent 的查询,`agent` 模式拒预渲染的各条 lane
     if (this.interactive) return modeRefusal(this.mode, lane);
-    if (lane === 'agent') return Object.assign(new Error('这个进程没有 Agent lane:Agent 的查询只在预渲染进程里跑。'), { status: 503, code: 'NO_AGENT_LANE', retryable: true });
+    if (lane === 'agent') return Object.assign(new Error('This process has no Agent lane: Agent queries only run in the prerender process.'), { status: 503, code: 'NO_AGENT_LANE', retryable: true });
     if (lane !== 'user' && lane !== 'playback') return null;
-    return Object.assign(new Error('交互帧请求请直接打预渲染进程。'), { status: 503, code: 'USE_PRERENDER' });
+    return Object.assign(new Error('Send interactive frame requests directly to the prerender process.'), { status: 503, code: 'USE_PRERENDER' });
   }
   /**
    * **Agent lane 的唯一入队口**(T1a 审查 #12)。`see_frames` 的 agent 批、`layout`、`entityRects`、
@@ -651,7 +651,7 @@ export class FramePipeline {
         if (!unit.inbox.length) return false;
         await this.drainAgentInbox(unit, { heartbeat, reason: 'batch' });
         if (this.closed || item.signal?.aborted) throw Object.assign(new Error('Queue task cancelled'), { cancelled: true });
-        if (session && this.lanes.get('agent') !== session) throw Object.assign(new Error('Agent 专用实例在让路时换掉了'), { agentGone: true });
+        if (session && this.lanes.get('agent') !== session) throw Object.assign(new Error('The dedicated Agent instance was replaced while yielding'), { agentGone: true });
         return true;
       },
     } : { worker, shouldYield: () => false, yieldPoint: async () => false };
@@ -707,7 +707,7 @@ export class FramePipeline {
    */
   async resetAgentFor(project, scaleLane = 'queue') {
     const session = this.lanes.get('agent');
-    if (!session) throw Object.assign(new Error('Agent 专用实例已经关了'), { agentGone: true });
+    if (!session) throw Object.assign(new Error('The dedicated Agent instance is already closed'), { agentGone: true });
     try {
       await session.bakery.reset(project, this.emptyUrl(project), { deferCards: true });
       await session.bakery.page.setViewport({ width: project.width, height: project.height, deviceScaleFactor: this.scaleForLane(scaleLane) });
@@ -1119,7 +1119,7 @@ export class FramePipeline {
       // use; a watchdog around readFrames will kill a renderer that does not
       // release its slot.
       if (Date.now() - waitStart > USER_RENDER_TIMEOUT_MS) {
-        throw Object.assign(new Error(`用户预览等待 Chrome 超过 ${USER_RENDER_TIMEOUT_MS / 1000} 秒，已放弃这次旧请求。`), { status: 504, timedOut: true });
+        throw Object.assign(new Error(`User preview waited for Chrome for more than ${USER_RENDER_TIMEOUT_MS / 1000} seconds; this stale request was dropped.`), { status: 504, timedOut: true });
       }
       await new Promise(resolve => setTimeout(resolve, 25));
     }
@@ -1182,7 +1182,7 @@ export class FramePipeline {
     if (lane === 'playback') return this.readFrames(entry, frames.sort((a, b) => a - b), lane, signal, onFrame);
     return new Promise((resolve, reject) => {
       if (lane === 'user' && generation !== this.userGeneration) {
-        reject(Object.assign(new Error('交互帧请求已过期，已跳过旧请求。'), { status: 499, cancelled: true, superseded: true }));
+        reject(Object.assign(new Error('The interactive frame request expired; the stale request was skipped.'), { status: 499, cancelled: true, superseded: true }));
         return;
       }
       if (lane === 'user') {
@@ -1190,7 +1190,7 @@ export class FramePipeline {
         // Agent/background queues are deliberately left untouched.
         const stale = this.queue.filter(r => r.lane === 'user');
         this.queue = this.queue.filter(r => r.lane !== 'user');
-        stale.forEach(r => r.reject(Object.assign(new Error('交互帧请求已被更新的请求替代。'), { status: 499, cancelled: true, superseded: true })));
+        stale.forEach(r => r.reject(Object.assign(new Error('The interactive frame request was superseded by a newer request.'), { status: 499, cancelled: true, superseded: true })));
       }
       this.queue.push({ entry, frames, signal: renderSignal, lane, generation, onFrame, resolve, reject });
       if (!this.timer) this.timer = setTimeout(() => {
@@ -1227,7 +1227,7 @@ export class FramePipeline {
     const groups = new Map();
     for (const request of requests) {
       if (request.signal?.aborted || (lane === 'user' && request.generation !== this.userGeneration)) {
-        request.reject(Object.assign(new Error('交互帧请求已过期，已跳过旧请求。'), { status: 499, cancelled: true, superseded: true }));
+        request.reject(Object.assign(new Error('The interactive frame request expired; the stale request was skipped.'), { status: 499, cancelled: true, superseded: true }));
         continue;
       }
       const list = groups.get(request.entry.key) || [];
@@ -1241,7 +1241,7 @@ export class FramePipeline {
           for (const request of group) if (!request.signal?.aborted && request.frames.includes(frame)) await request.onFrame?.(frame, value);
         }, lease);
         for (const request of group) {
-          if (request.signal?.aborted || (lane === 'user' && request.generation !== this.userGeneration)) request.reject(Object.assign(new Error('交互帧请求已过期，已跳过旧请求。'), { status: 499, cancelled: true, superseded: true }));
+          if (request.signal?.aborted || (lane === 'user' && request.generation !== this.userGeneration)) request.reject(Object.assign(new Error('The interactive frame request expired; the stale request was skipped.'), { status: 499, cancelled: true, superseded: true }));
           else request.resolve(new Map(request.frames.map(n => [n, result.get(n)])));
         }
       } catch (e) { group.forEach(r => r.reject(e)); }
@@ -1275,7 +1275,7 @@ export class FramePipeline {
           // the latest pointer position. Ownership begins before reset awaits.
           if (ownedSession && !ownedSession.dead) this.dropUserSession(ownedSession);
           void this.prewarmUser(entry.project).catch(() => {});
-          reject(Object.assign(new Error(`用户预览渲染超过 ${USER_RENDER_TIMEOUT_MS / 1000} 秒，已重启 Chrome。`), { status: 504, timedOut: true }));
+          reject(Object.assign(new Error(`User preview rendering took more than ${USER_RENDER_TIMEOUT_MS / 1000} seconds; Chrome was restarted.`), { status: 504, timedOut: true }));
         }, USER_RENDER_TIMEOUT_MS); };
         arm();
       });
@@ -2600,7 +2600,7 @@ export class FramePipeline {
       if (!Number.isInteger(local) || local < 0 || local >= control.count) continue;
       const start = local - (local % 4);
       if (!pending.has(start) || start === ordered[0]) continue;
-      console.log(`[frames] wanted: 片段 ${control.clipId} 的第 ${start}~${Math.min(start + 3, control.count - 1)} 批提前(顺序批本来是 ${ordered[0]})`);
+      console.log(`[frames] wanted: batches ${start}~${Math.min(start + 3, control.count - 1)} of clip ${control.clipId} moved up (sequential batch was ${ordered[0]})`);
       // 预渲染进程的 stdout 被编辑器进程收走了(`vite-plugin-prerender` 的 `keep`),
       // 端到端探针看不见上面那行;所以同一件事也记一条,经 `/api/frames/diagnostics` 读。
       this.notePromotion({ clipId: control.clipId, start, instead: ordered[0], frame: Number(item.frame) });
@@ -3150,12 +3150,12 @@ export class FramePipeline {
       if (signal?.aborted) throw Object.assign(new Error('Queue task cancelled'), { cancelled: true });
       return this.browserCardPlan(bakery);
     }, signal);
-    if (!browserPlan) throw Object.assign(new Error('预渲染间没有给出卡片计划(window.__pcCardPlan)'), { code: 'no-card-plan', retryable: true });
+    if (!browserPlan) throw Object.assign(new Error('The prerender page did not provide a card plan (window.__pcCardPlan)'), { code: 'no-card-plan', retryable: true });
     await this.ensureCardLocks();
     if (!Array.isArray(entry.cardPlan)) {
       let plan;
       try { plan = entry.cardCache.plan(browserPlan); }
-      catch (error) { throw Object.assign(new Error(`算不出卡片计划:${error?.message || error}`), { code: 'no-card-plan', retryable: true }); }
+      catch (error) { throw Object.assign(new Error(`Could not compute the card plan: ${error?.message || error}`), { code: 'no-card-plan', retryable: true }); }
       this.recordCardPlan(entry, plan);
     }
     // 锁可能在 card plan 记下之后变过(页面刚存了测量帧):按锁库重排一遍
@@ -3292,7 +3292,7 @@ export class FramePipeline {
    */
   async renderExportFrames(entry, spec, range, { signal, progress } = {}) {
     const producer = this.streamProducer();
-    if (!producer) throw Object.assign(new Error('这个预渲染实例没有轨道流生产者,取不了导出位图'), { code: 'no-stream-producer', retryable: false });
+    if (!producer) throw Object.assign(new Error('This prerender instance has no track stream producer, so it cannot fetch export bitmaps'), { code: 'no-stream-producer', retryable: false });
     await producer.produceExportRange(entry, spec, range, { signal, progress,
       onFrame: async (frame, shot) => { await storeExportFrame(this.root, spec.exportResultKey, frame, shotToPng(shot)); } });
     return null;
@@ -3311,7 +3311,7 @@ export class FramePipeline {
    */
   async renderStreamRange(entry, spec, range, { signal, progress, density = null } = {}) {
     const producer = this.streamProducer();
-    if (!producer) throw Object.assign(new Error('这个预渲染实例没有轨道流生产者'), { code: 'no-stream-producer', retryable: false });
+    if (!producer) throw Object.assign(new Error('This prerender instance has no track stream producer'), { code: 'no-stream-producer', retryable: false });
     await producer.produceRange(entry, spec, range, { signal, progress, density });
     return null;
   }
@@ -3347,7 +3347,7 @@ export class FramePipeline {
   }
   /** `heartbeat`:专用实例给 Agent 让路期间定时调(执行器的阶段回调 → 会话的工作计数,租约不被当成停滞) */
   async renderCardSnapshotRange(entry, control, range, { signal, progress, timing = null, heartbeat = null } = {}) {
-    const locked = () => Object.assign(new Error(`片段 ${control.clipId} 这张卡锁在别的环境上`), { code: 'card-locked-local', retryable: false });
+    const locked = () => Object.assign(new Error(`The card of clip ${control.clipId} is locked to a different environment`), { code: 'card-locked-local', retryable: false });
     if (control.cardLock?.foreign === true) throw locked();
     let done = 0;
     // 诊断(不改行为):`timing` 给了就记各步用时(排队等 lane、借预渲染间、推帧各项、收尾画小尺寸)
@@ -3533,7 +3533,7 @@ export class FramePipeline {
         await this.save(entry);
       }
       const html = entry.html?.get?.(frame);
-      if (typeof html !== 'string' || !html) throw new Error(`第 ${frame} 帧没有生成的快照，量不到实体框`);
+      if (typeof html !== 'string' || !html) throw new Error(`Frame ${frame} has no generated snapshot, so the entity box cannot be measured`);
       measured = await captureSnapshot(bakery, html, undefined, {
         screenshot: false,
         afterFonts: page => page.evaluate(ids => {

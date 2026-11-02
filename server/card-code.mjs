@@ -68,7 +68,7 @@ export function cardEntryCode(globalCode, versions) {
  * @param {number} [options.settleMs]
  */
 export function createCardCodeIndex({ identityOf, now = Date.now, settleMs = CARD_CODE_SETTLE_MS } = {}) {
-  if (typeof identityOf !== 'function') throw new TypeError('createCardCodeIndex:identityOf 必须是函数');
+  if (typeof identityOf !== 'function') throw new TypeError('createCardCodeIndex: identityOf must be a function');
   /** cardId → { version, custom } | null */
   const cache = new Map();
   let epoch = 0;

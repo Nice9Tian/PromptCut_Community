@@ -72,9 +72,9 @@ export class ShotsToolError extends Error {
   }
 }
 
-const FALLBACK_HINT = '退路:用 see_frames 看真实画面,自己判断切点,不要凭空编镜头;或请用户在电脑上的 PromptCut 里检测。';
-const NOT_CONFIGURED = `这台云节点没有配置镜头识别(ffmpeg 与可选的 TransNetV2 由部署者提供,云端 Agent 不能往节点上装)。${FALLBACK_HINT}`;
-const NO_FFMPEG = `这台云节点上 ffmpeg 起不来,镜头识别两档都用不了(硬切检测靠 ffmpeg,模型档也要它解码)。${FALLBACK_HINT}`;
+const FALLBACK_HINT = 'Fallback: use see_frames to look at the real footage and judge the cut points yourself; do not invent shots. Or ask the user to run detection in PromptCut on their computer.';
+const NOT_CONFIGURED = `Shot detection is not configured on this cloud node (ffmpeg and the optional TransNetV2 are provided by the deployer; the Cloud Agent cannot install anything on the node). ${FALLBACK_HINT}`;
+const NO_FFMPEG = `ffmpeg cannot start on this cloud node, so neither shot detection tier works (hard-cut detection relies on ffmpeg, and the model tier needs it for decoding). ${FALLBACK_HINT}`;
 
 const MEDIA_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,199}$/;
 const REQUEST_RE = /^[A-Za-z0-9_-]{8,128}$/;
@@ -99,26 +99,26 @@ const round3 = (v) => Math.round(v * 1000) / 1000;
 export function readShotsConfig(env, { root }) {
   const ffmpeg = env.PROMPTCUT_FFMPEG;
   if (typeof ffmpeg !== 'string' || !ffmpeg) return null;
-  if (!path.isAbsolute(ffmpeg) || !fs.existsSync(ffmpeg)) return { error: 'PROMPTCUT_FFMPEG 要是存在的 ffmpeg 的绝对路径' };
+  if (!path.isAbsolute(ffmpeg) || !fs.existsSync(ffmpeg)) return { error: 'PROMPTCUT_FFMPEG must be the absolute path of an existing ffmpeg' };
   const ffmpegDir = path.dirname(ffmpeg);
   const ext = path.extname(ffmpeg);
   let ffprobe = env.PROMPTCUT_FFPROBE;
   if (typeof ffprobe === 'string' && ffprobe) {
-    if (!path.isAbsolute(ffprobe) || !fs.existsSync(ffprobe)) return { error: 'PROMPTCUT_FFPROBE 要是存在的 ffprobe 的绝对路径' };
+    if (!path.isAbsolute(ffprobe) || !fs.existsSync(ffprobe)) return { error: 'PROMPTCUT_FFPROBE must be the absolute path of an existing ffprobe' };
   } else {
     ffprobe = path.join(ffmpegDir, `ffprobe${ext}`);
-    if (!fs.existsSync(ffprobe)) return { error: '找不到 ffprobe:放在 ffmpeg 同一个目录,或用 PROMPTCUT_FFPROBE 指定' };
+    if (!fs.existsSync(ffprobe)) return { error: 'ffprobe not found: put it in the same directory as ffmpeg, or set PROMPTCUT_FFPROBE' };
   }
   const base = { ffmpeg, ffprobe, ffmpegDir };
   const python = env.PROMPTCUT_AGENT_SHOTS_PYTHON;
   if (typeof python !== 'string' || !python) return base;
-  if (!path.isAbsolute(python) || !fs.existsSync(python)) return { error: 'PROMPTCUT_AGENT_SHOTS_PYTHON 要是存在的解释器的绝对路径' };
+  if (!path.isAbsolute(python) || !fs.existsSync(python)) return { error: 'PROMPTCUT_AGENT_SHOTS_PYTHON must be the absolute path of an existing interpreter' };
   const modelsDir = env.PROMPTCUT_AGENT_SHOTS_MODELS;
   if (typeof modelsDir !== 'string' || !path.isAbsolute(modelsDir) || !fs.existsSync(modelsDir)) {
-    return { error: 'PROMPTCUT_AGENT_SHOTS_MODELS 要是存在的权重目录的绝对路径' };
+    return { error: 'PROMPTCUT_AGENT_SHOTS_MODELS must be the absolute path of an existing weights directory' };
   }
   const pylibs = env.PROMPTCUT_AGENT_SHOTS_PYLIBS;
-  if (pylibs && !path.isAbsolute(pylibs)) return { error: 'PROMPTCUT_AGENT_SHOTS_PYLIBS 要是绝对路径' };
+  if (pylibs && !path.isAbsolute(pylibs)) return { error: 'PROMPTCUT_AGENT_SHOTS_PYLIBS must be an absolute path' };
   return {
     ...base, python, modelsDir,
     ...(pylibs ? { pylibs } : {}),
@@ -189,11 +189,11 @@ export function createShotsTools({
 } = {}) {
   for (const [name, dep, methods] of [['resources', resources, ['register', 'authorize']], ['assets', assets, ['openRead']],
     ['jobs', jobs, ['start', 'update', 'get', 'checkpointRetained']], ['project', project, ['getMedia', 'setMediaShots']]]) {
-    if (!dep || methods.some((m) => typeof dep[m] !== 'function')) throw new ShotsToolError(`镜头识别缺少依赖:${name}`, 'shots-unconfigured');
+    if (!dep || methods.some((m) => typeof dep[m] !== 'function')) throw new ShotsToolError(`Shot detection is missing a dependency: ${name}`, 'shots-unconfigured');
   }
-  if (typeof workspace !== 'function') throw new ShotsToolError('镜头识别缺少依赖:workspace', 'shots-unconfigured');
+  if (typeof workspace !== 'function') throw new ShotsToolError('Shot detection is missing a dependency: workspace', 'shots-unconfigured');
   for (const fn of ['subjectForRange', 'suggestPosition', 'rectForSafeSide']) {
-    if (typeof kernel?.[fn] !== 'function') throw new ShotsToolError(`镜头识别没配置全:缺内核函数 ${fn}(宿主要经 ssr-host 载入缝取来注入 kernel)`, 'shots-unconfigured');
+    if (typeof kernel?.[fn] !== 'function') throw new ShotsToolError(`Shot detection is not fully configured: missing kernel function ${fn} (the host must fetch it through the ssr-host loading seam and inject it into kernel)`, 'shots-unconfigured');
   }
   const limits = { ...SHOTS_DEFAULTS, ...limitsIn };
   const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志失败不影响工具 */ } };
@@ -222,15 +222,15 @@ export function createShotsTools({
   const children = new Set();
 
   const authorize = async (context, action) => {
-    if (closing) throw new ShotsToolError('云端 Agent 服务正在关闭,镜头识别不再接新活。', 'shots-closing');
+    if (closing) throw new ShotsToolError('The Cloud Agent service is shutting down; shot detection no longer accepts new jobs.', 'shots-closing');
     try { return await resources.authorize(context, action); }
     catch (error) {
       if (error instanceof ShotsToolError) throw error;
       // 文档服务联系不上:fail closed,但说清是「上游不可用」(503),不是「没权限」(403)
       if (['run-authority-unavailable', 'tool-instance-unavailable', 'fence-unavailable', 'authorization-unavailable'].includes(error?.code)) {
-        throw Object.assign(new ShotsToolError('文档服务暂时联系不上,没法确认这一轮的权限,镜头识别没有开始。稍后再试。', 'authority-unavailable'), { status: 503 });
+        throw Object.assign(new ShotsToolError('The document service is temporarily unreachable, so permissions for this turn could not be confirmed and shot detection did not start. Try again later.', 'authority-unavailable'), { status: 503 });
       }
-      throw Object.assign(new ShotsToolError(action === 'write' ? '这一轮没有写项目的权限(只读成员、被停止或已转私有),镜头识别没有开始。' : '这一轮没有读项目的权限,镜头识别没有开始。', 'shots-forbidden'), { status: 403 });
+      throw Object.assign(new ShotsToolError(action === 'write' ? 'This turn has no permission to write to the project (read-only member, stopped, or moved to private), so shot detection did not start.' : 'This turn has no permission to read the project, so shot detection did not start.', 'shots-forbidden'), { status: 403 });
     }
   };
 
@@ -260,12 +260,12 @@ export function createShotsTools({
     let out = String(text ?? '');
     let workDir = null;
     try { workDir = ws?.dir?.() ?? null; } catch { workDir = null; }
-    if (workDir) out = out.split(workDir).join('<工作目录>');
-    out = out.replace(/(?:<工作目录>[/\x5c])?shots[/\x5c]job_[^/\x5c\s]+[/\x5c]media\.[A-Za-z0-9]+/g, '<素材文件>');
+    if (workDir) out = out.split(workDir).join('<working directory>');
+    out = out.replace(/(?:<working directory>[/\x5c])?shots[/\x5c]job_[^/\x5c\s]+[/\x5c]media\.[A-Za-z0-9]+/g, '<media file>');
     for (const secret of [config?.modelsDir, config?.python, config?.pylibs, config?.ffmpeg, config?.ffprobe, ...(config?.pythonPath ?? '').split(path.delimiter)].filter(Boolean)) {
-      out = out.split(secret).join('<节点目录>');
+      out = out.split(secret).join('<node directory>');
     }
-    return out.replace(/[A-Za-z]:\\[^\s'",)]+/g, '<节点目录>');
+    return out.replace(/[A-Za-z]:\\[^\s'",)]+/g, '<node directory>');
   };
 
   const pathEnv = () => {
@@ -293,7 +293,7 @@ export function createShotsTools({
       });
     } catch {
       // 登记被拒:superviseChild 已经杀掉整棵树并等它收干净
-      throw new ShotsToolError('这一轮已经没有权限继续(被停止、转私有或 Agent 关闭),镜头识别进程没有启动。', 'shots-forbidden');
+      throw new ShotsToolError('This turn no longer has permission to continue (stopped, moved to private, or the Agent was shut down), so the shot detection process did not start.', 'shots-forbidden');
     }
     const done = run.done.then((end) => ({
       code: end.spawnError ? -1 : (end.code ?? -1), timedOut: end.timedOut, stderrTail,
@@ -330,7 +330,7 @@ export function createShotsTools({
   /** 模型档就绪吗:Python 的 `status`(要 onnxruntime 与权重文件都在)。回 `{ ready, why?, reason?, detail? }`;只有权限被撤才抛 */
   async function modelStatus(context, ws, { fresh = false } = {}) {
     if (!config?.python) {
-      return { ready: false, why: 'no-python', reason: '节点没有配置 TransNetV2(没有 Python 解释器与权重)。' };
+      return { ready: false, why: 'no-python', reason: 'TransNetV2 is not configured on the node (no Python interpreter or weights).' };
     }
     if (!fresh && statusCache && now() - statusCache.at < limits.statusCacheMs) return statusCache.value;
     const events = [];
@@ -348,18 +348,18 @@ export function createShotsTools({
     let value;
     if (!ev) {
       const tail = end.stderrTail.slice(-2).join(' ');
-      value = { ready: false, why: 'not-ready', reason: end.timedOut ? '查 TransNetV2 状态超时。' : scrub(tail || '解释器没有返回可解析的状态', ws) };
+      value = { ready: false, why: 'not-ready', reason: end.timedOut ? 'Checking TransNetV2 status timed out.' : scrub(tail || 'The interpreter returned no parseable status', ws) };
     } else {
       const runtimeOk = ev.runtime?.installed === true;
       const modelOk = ev.model?.exists === true;
       const missing = [
-        !runtimeOk && `onnxruntime 没装${ev.runtime?.error ? `(${scrub(ev.runtime.error, ws).slice(0, 120)})` : ''}`,
-        !modelOk && '权重文件 transnetv2.onnx 不在节点的权重目录里',
+        !runtimeOk && `onnxruntime is not installed${ev.runtime?.error ? `(${scrub(ev.runtime.error, ws).slice(0, 120)})` : ''}`,
+        !modelOk && 'The weights file transnetv2.onnx is not in the node\'s weights directory',
       ].filter(Boolean);
       value = {
         ready: ev.ready === true && runtimeOk && modelOk,
         why: 'not-ready',
-        ...(missing.length ? { reason: `TransNetV2 用不了:${missing.join(';')}。` } : null),
+        ...(missing.length ? { reason: `TransNetV2 is unavailable: ${missing.join(';')}.` } : null),
         detail: {
           runtime: { installed: runtimeOk, version: ev.runtime?.version ?? null },
           model: { exists: modelOk, ...(Number.isFinite(ev.model?.bytes) ? { bytes: ev.model.bytes } : {}) },
@@ -418,11 +418,11 @@ export function createShotsTools({
 
   const mediaIdOf = (args) => {
     const id = args?.mediaId;
-    if (typeof id !== 'string' || !MEDIA_ID_RE.test(id)) throw new ShotsToolError('mediaId 必填,是素材的 id(可用 list_media 查看)', 'bad-args');
+    if (typeof id !== 'string' || !MEDIA_ID_RE.test(id)) throw new ShotsToolError('mediaId is required, it is the id of the media (see list_media)', 'bad-args');
     return id;
   };
-  const notFound = (id) => new ShotsToolError(`找不到素材 ${String(id).slice(0, 80)}(没有这个 id,或它不在当前项目里)`, 'media-not-found');
-  const KIND_NAME = { image: '图片', audio: '音频', video: '视频' };
+  const notFound = (id) => new ShotsToolError(`Media ${String(id).slice(0, 80)} not found (no such id, or it is not in the current project)`, 'media-not-found');
+  const KIND_NAME = { image: 'Image', audio: 'audio', video: 'Video' };
 
   async function detectShots(context, args, options = {}) {
     await authorize(context, 'write');
@@ -431,16 +431,16 @@ export function createShotsTools({
     const media = await project.getMedia(context, mediaId);
     if (!media) throw notFound(mediaId);
     if (media.kind !== 'video') {
-      throw new ShotsToolError(`${media.name} 不是视频${KIND_NAME[media.kind] ? `(是${KIND_NAME[media.kind]})` : ''},没有镜头可分`, 'media-kind');
+      throw new ShotsToolError(`${media.name} is not a video${KIND_NAME[media.kind] ? `(is ${KIND_NAME[media.kind]})` : ''}, so there are no shots to split`, 'media-kind');
     }
-    if (media.pending) throw new ShotsToolError(`${media.name} 还没进素材服务(上传没完成或失败),稍后再试或重新导入`, 'media-pending');
+    if (media.pending) throw new ShotsToolError(`${media.name} is not in the asset service yet (upload incomplete or failed), try again later or re-import`, 'media-pending');
     if (!config) return { ok: false, cloudUnavailable: true, error: NOT_CONFIGURED };
 
     if (media.shots && args?.force !== true) {
       return {
         reused: true, mediaId, engine: media.shots.engine,
         shots: media.shots.shots.length, transitions: media.shots.transitions.length,
-        hint: '这个素材已经检测过了,直接用 list_shots 取结果;要重测传 force:true',
+        hint: 'This media has already been analyzed; use list_shots to get the result, or pass force:true to re-run',
       };
     }
     const choice = await chooseEngine(context, ws);
@@ -453,11 +453,11 @@ export function createShotsTools({
     if (already) {
       const liveJob = live.get(already);
       if (liveJob && liveJob.digest === digest && liveJob.conversationId === context.conversationId) {
-        return { jobId: already, started: false, alreadyRunning: true, mediaId, engine, hint: '同样的镜头识别已经在跑,用 list_shots 轮询,不要重复启动。' };
+        return { jobId: already, started: false, alreadyRunning: true, mediaId, engine, hint: 'The same shot detection is already running; poll with list_shots and do not start it again.' };
       }
-      throw new ShotsToolError('这个素材正在做镜头识别,等它跑完(用 list_shots 轮询)再重测。', 'shots-busy');
+      throw new ShotsToolError('Shot detection is already running on this media; wait for it to finish (poll with list_shots) before re-running.', 'shots-busy');
     }
-    if (live.size + reserving >= limits.maxRunning) throw new ShotsToolError('节点上镜头识别正在跑的作业太多了,过一会儿再试。', 'shots-busy');
+    if (live.size + reserving >= limits.maxRunning) throw new ShotsToolError('Too many shot detection jobs are running on the node; try again in a moment.', 'shots-busy');
 
     const requestId = REQUEST_RE.test(options.requestId ?? '') ? options.requestId : `sh_${randomUUID().replace(/-/g, '')}`;
     // 先占位再 await:同一素材的两个并发调用,第二个看到占位就回 busy
@@ -467,22 +467,22 @@ export function createShotsTools({
     try { started = await jobs.start(context, 'shots.detect', digest, requestId); }
     catch (error) {
       byMedia.delete(mediaKey);
-      throw new ShotsToolError(`镜头识别没能登记作业(${error?.code ?? '账本不可用'})`, 'shots-job');
+      throw new ShotsToolError(`Shot detection could not register the job (${error?.code ?? 'ledger unavailable'})`, 'shots-job');
     } finally { reserving -= 1; }
     if (closing) {
       byMedia.delete(mediaKey);
       void tracker(context, started.jobId).patch({ state: 'interrupted', errorCode: 'SERVICE_CLOSING' });
-      throw new ShotsToolError('云端 Agent 服务正在关闭,镜头识别不再接新活。', 'shots-closing');
+      throw new ShotsToolError('The Cloud Agent service is shutting down; shot detection no longer accepts new jobs.', 'shots-closing');
     }
     const seconds = Number(media.duration);
     const etaSeconds = Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds * (engine === 'transnetv2' ? 0.15 : 0.05)) + 5 : undefined;
     const result = {
       jobId: started.jobId, started: true, mediaId, engine,
-      ...(engine === 'scdet' ? { engineNote: `ffmpeg scdet 兜底,只认硬切、认不出溶解。${choice.scdetWhy ?? ''}`.trim() } : null),
+      ...(engine === 'scdet' ? { engineNote: `ffmpeg scdet fallback: detects hard cuts only, cannot detect dissolves. ${choice.scdetWhy ?? ''}`.trim() } : null),
       ...(etaSeconds ? { etaSeconds } : null),
-      hint: '镜头识别已在后台开始,请用 list_shots 轮询该 mediaId;'
-        + `${engine === 'transnetv2' ? '实测 5 分钟素材约 36 秒' : 'scdet 比模型档快'},间隔用 wait 工具等,别每秒都问。`
-        + '素材很长或模型中途出错时会换成 scdet,最终用的是哪一档以 list_shots 返回的 engine 为准。',
+      hint: 'Shot detection has started in the background; poll that mediaId with list_shots; '
+        + `${engine === 'transnetv2' ? 'measured: about 36 seconds for 5 minutes of media' : 'scdet is faster than the model tier'}; wait between polls with the wait tool, do not ask every second.`
+        + 'For long media or if the model fails midway, it switches to scdet; the tier finally used is whatever engine list_shots returns.',
     };
     if (started.state !== 'queued' || live.has(started.jobId)) {
       // 同一 requestId 的重试:作业已经开了,不再开第二个
@@ -526,24 +526,24 @@ export function createShotsTools({
         '-v', 'error', '-protocol_whitelist', 'file', '-select_streams', 'v:0',
         '-show_entries', 'stream=r_frame_rate,avg_frame_rate:format=duration', '-of', 'json', ws.resolve(file),
       ]), { timeoutMs: limits.probeMs, onStdout: (t) => { if (out.length < 64 * 1024) out += t; } });
-    } catch (error) { return { ok: false, message: scrub(error?.message ?? 'ffprobe 没能启动', ws), forbidden: true }; }
+    } catch (error) { return { ok: false, message: scrub(error?.message ?? 'ffprobe failed to start', ws), forbidden: true }; }
     job.kill = run.kill;
     if (job.cancelRequested || closing) run.kill();
     const end = await run.done;
     await run.closed;
     job.kill = null;
     if (job.cancelRequested || closing || run.signal.aborted) return { ok: false, cancelled: true };
-    if (end.timedOut) return { ok: false, message: `读素材信息超时(超过 ${Math.round(limits.probeMs / 1000)} 秒),已强制结束。` };
+    if (end.timedOut) return { ok: false, message: `Reading media info timed out (over ${Math.round(limits.probeMs / 1000)} seconds), forcibly terminated.` };
     if (end.code !== 0) {
       const tail = scrub(end.stderrTail.join(' ').trim(), ws).slice(0, 300);
-      return { ok: false, message: `ffprobe 读不出这个文件的视频信息${tail ? `(${tail})` : ''}。文件可能损坏或不是视频。` };
+      return { ok: false, message: `ffprobe could not read video info from this file${tail ? `(${tail})` : ''}. The file may be corrupt or not a video.` };
     }
     let info;
-    try { info = JSON.parse(out); } catch { return { ok: false, message: 'ffprobe 输出解析失败。' }; }
+    try { info = JSON.parse(out); } catch { return { ok: false, message: 'Failed to parse ffprobe output.' }; }
     const stream = info?.streams?.[0];
-    if (!stream) return { ok: false, message: '这个文件里没有视频轨,没有镜头可分。' };
+    if (!stream) return { ok: false, message: 'This file has no video track, so there are no shots to split.' };
     const fps = parseRate(stream.r_frame_rate) || parseRate(stream.avg_frame_rate);
-    if (!fps) return { ok: false, message: '读不出这个视频的帧率。' };
+    if (!fps) return { ok: false, message: 'Could not read the frame rate of this video.' };
     const duration = Number(info?.format?.duration);
     return { ok: true, fps, duration: Number.isFinite(duration) && duration > 0 ? duration : 0 };
   }
@@ -557,7 +557,7 @@ export function createShotsTools({
     const okShot = (s) => s && typeof s === 'object' && finite(s.start) && finite(s.end) && s.end > s.start && s.start >= 0
       && (s.inTransition === null || KINDS.has(s.inTransition)) && (s.outTransition === null || KINDS.has(s.outTransition));
     if (!transitions || !shots || shots.length === 0 || !transitions.every(okTransition) || !shots.every(okShot)) {
-      throw new ShotsToolError('镜头识别模型返回的结果格式不对,已丢弃。', 'bad-result');
+      throw new ShotsToolError('The shot detection model returned a result in the wrong format, discarded.', 'bad-result');
     }
     return {
       engine: 'transnetv2',
@@ -583,7 +583,7 @@ export function createShotsTools({
       cursor = t;
     }
     if (duration > cursor) shots.push({ start: cursor, end: round3(duration), inTransition: times.length ? 'cut' : null, outTransition: null });
-    if (shots.length === 0) throw new ShotsToolError('算不出镜头:素材没有时长信息。', 'bad-result');
+    if (shots.length === 0) throw new ShotsToolError('Cannot compute shots: the media has no duration info.', 'bad-result');
     return { engine: 'scdet', createdAt: new Date(at).toISOString(), transitions, shots };
   }
 
@@ -617,7 +617,7 @@ export function createShotsTools({
         '-map', '0:v:0', '-an', '-sn', '-dn', '-vf', `scdet=threshold=${limits.scdetThreshold}`,
         '-f', 'null', '-progress', 'pipe:1', '-nostats', '-',
       ]), { timeoutMs: limitMs, onStdout: (t) => outFeed(t), onStderr: (t) => errFeed(t) });
-    } catch (error) { return { ok: false, message: scrub(error?.message ?? 'ffmpeg 没能启动', ws), forbidden: true }; }
+    } catch (error) { return { ok: false, message: scrub(error?.message ?? 'ffmpeg failed to start', ws), forbidden: true }; }
     job.kill = run.kill;
     if (job.cancelRequested || closing) run.kill();
     const end = await run.done;
@@ -628,7 +628,7 @@ export function createShotsTools({
     if (end.timedOut) return { ok: false, timedOut: true };
     if (end.code !== 0) {
       const tail = scrub(end.stderrTail.slice(-3).join(' '), ws).slice(0, 300);
-      return { ok: false, message: `ffmpeg 退出码 ${end.code}${tail ? `:${tail}` : ''}` };
+      return { ok: false, message: `ffmpeg exit code ${end.code}${tail ? `:${tail}` : ''}` };
     }
     try { return { ok: true, shots: shotsFromScdet(hits, meta.duration > 0 ? meta.duration : lastOut, now()) }; }
     catch (error) { return { ok: false, message: error.message }; }
@@ -655,7 +655,7 @@ export function createShotsTools({
     let run;
     try {
       run = await runChild(context, ws, config.python, pythonArgv(['detect', ws.resolve(file), '--fps', String(meta.fps)]), { timeoutMs: limitMs, env: pathEnv(), onStdout: (t) => feed(t) });
-    } catch (error) { return { ok: false, message: scrub(error?.message ?? 'Python 没能启动', ws), forbidden: true }; }
+    } catch (error) { return { ok: false, message: scrub(error?.message ?? 'Python failed to start', ws), forbidden: true }; }
     job.kill = run.kill;
     if (job.cancelRequested || closing) run.kill();
     const end = await run.done;
@@ -665,7 +665,7 @@ export function createShotsTools({
     if (job.cancelRequested || closing || run.signal.aborted) return { ok: false, cancelled: true };
     if (end.timedOut) return { ok: false, timedOut: true };
     if (!resultEvent) {
-      const message = scrub(errorEvent?.message || end.stderrTail.join('\n').trim() || (end.code === 0 ? '镜头识别模型没有返回结果' : `镜头识别进程异常退出(代码 ${end.code})`), ws).slice(0, 400);
+      const message = scrub(errorEvent?.message || end.stderrTail.join('\n').trim() || (end.code === 0 ? 'The shot detection model returned no result' : `Shot detection process exited abnormally (code ${end.code})`), ws).slice(0, 400);
       return { ok: false, message };
     }
     try { return { ok: true, shots: shotsFromPython(resultEvent, now()) }; }
@@ -680,7 +680,7 @@ export function createShotsTools({
     const stopped = () => job.cancelRequested || closing;
     const cancelledNote = (suffix = '') => ({
       state: closing ? 'interrupted' : 'cancelled', errorCode: closing ? 'SERVICE_CLOSING' : 'SHOTS_CANCELLED',
-      message: closing ? `镜头识别被服务关闭中断,没有结果。可以重新调 detect_shots(force:true)。${suffix}` : `镜头识别已被取消。${suffix}`,
+      message: closing ? `Shot detection was interrupted by service shutdown, no result. You can call detect_shots(force:true) again.${suffix}` : `Shot detection was cancelled.${suffix}`,
     });
     try {
       const first = await track.patch({ state: 'running', stage: 'fetch', progress: 0 });
@@ -690,7 +690,7 @@ export function createShotsTools({
       let read;
       try { read = await assets.openRead(context, mediaId); }
       catch (error) {
-        const message = error?.status === 404 || error?.message === 'asset-missing' ? '素材的字节在素材服务上找不到(上传没完成或已被清理)。' : `取素材失败(${scrub(error?.code ?? error?.message ?? error).slice(0, 80)})。`;
+        const message = error?.status === 404 || error?.message === 'asset-missing' ? 'The media bytes were not found on the asset service (upload did not finish or was cleaned up).' : `Failed to fetch media (${scrub(error?.code ?? error?.message ?? error).slice(0, 80)}).`;
         return await finishJob(job, ws, track, { state: 'error', errorCode: 'MEDIA_FETCH_FAILED', message });
       }
       const mediaRev = read.mediaRev;
@@ -700,13 +700,13 @@ export function createShotsTools({
       job.abortFetch = () => read.stream.destroy();
       const writer = ws.writer(mediaFile);
       let fetched = 0;
-      const fetchTimer = setTimeout(() => { fetchError = new ShotsToolError('取素材超时', 'fetch-timeout'); read.stream.destroy(); }, limits.fetchMs);
+      const fetchTimer = setTimeout(() => { fetchError = new ShotsToolError('Media fetch timed out', 'fetch-timeout'); read.stream.destroy(); }, limits.fetchMs);
       fetchTimer.unref?.();
       try {
         for await (const piece of read.stream) {
-          if (stopped()) throw new ShotsToolError('已取消', 'cancelled');
+          if (stopped()) throw new ShotsToolError('Cancelled', 'cancelled');
           fetched += piece.length;
-          if (fetched > limits.maxFetchBytes) throw new ShotsToolError('素材太大,云端镜头识别取不下来', 'too-large');
+          if (fetched > limits.maxFetchBytes) throw new ShotsToolError('The media is too large for cloud shot detection to fetch', 'too-large');
           writer.write(piece);
         }
         if (fetchError) throw fetchError;
@@ -716,7 +716,7 @@ export function createShotsTools({
         read.stream.destroy();
         await read.closed.catch(() => {});
         if (stopped()) return await finishJob(job, ws, track, cancelledNote());
-        const message = error?.code === 'too-large' ? '素材太大,云端镜头识别取不下来。' : error?.code === 'fetch-timeout' ? '取素材超时。' : `取素材失败(${scrub(error?.code ?? error?.message ?? error).slice(0, 80)})。`;
+        const message = error?.code === 'too-large' ? 'The media is too large for cloud shot detection to fetch.' : error?.code === 'fetch-timeout' ? 'Fetching media timed out.' : `Failed to fetch media (${scrub(error?.code ?? error?.message ?? error).slice(0, 80)}).`;
         return await finishJob(job, ws, track, { state: 'error', errorCode: 'MEDIA_FETCH_FAILED', message });
       } finally { clearTimeout(fetchTimer); job.abortFetch = null; }
       await read.closed.catch(() => {});
@@ -728,7 +728,7 @@ export function createShotsTools({
       const meta = await probeVideo(job, ws, mediaFile);
       if (meta.cancelled || stopped()) return await finishJob(job, ws, track, cancelledNote());
       if (!meta.ok) {
-        return await finishJob(job, ws, track, { state: 'error', errorCode: 'SHOTS_FAILED', message: `镜头识别没成功:${meta.message}${FALLBACK_HINT}` });
+        return await finishJob(job, ws, track, { state: 'error', errorCode: 'SHOTS_FAILED', message: `Shot detection failed: ${meta.message}${FALLBACK_HINT}` });
       }
 
       // 3) 选档并检测。模型档的帧数太多会吃光内存,改用 scdet;模型档中途出错也改用 scdet(并如实记下)
@@ -736,7 +736,7 @@ export function createShotsTools({
       let scdetWhy = job.scdetWhy;
       if (engine === 'transnetv2' && meta.duration * meta.fps > limits.maxModelFrames) {
         engine = 'scdet';
-        scdetWhy = `素材太长(约 ${Math.round(meta.duration / 60)} 分钟),模型档要把整段视频解成小帧放进内存,所以改用 ffmpeg 的 scdet 兜底。`;
+        scdetWhy = `The media is too long (about ${Math.round(meta.duration / 60)} minutes); the model tier has to decode the whole video into small frames in memory, so it falls back to ffmpeg's scdet.`;
       }
       const limitMs = Math.min(limits.maxDetectMs, Math.max(limits.minDetectMs, (meta.duration || 0) * limits.perSecondMs));
       await track.patch({ stage: 'detect', progress: 0.1 });
@@ -747,9 +747,9 @@ export function createShotsTools({
         outcome = await runTransNet(job, ws, mediaFile, meta, track, limitMs);
         if (!outcome.ok && !outcome.cancelled && !outcome.timedOut && !outcome.forbidden && !stopped()) {
           fellBackFrom = 'transnetv2';
-          fallbackReason = String(outcome.message ?? '原因未知').slice(0, 300);
+          fallbackReason = String(outcome.message ?? 'unknown reason').slice(0, 300);
           engine = 'scdet';
-          scdetWhy = `本来要跑 TransNetV2,中途出错退回了 scdet:${fallbackReason}`;
+          scdetWhy = `TransNetV2 was supposed to run, but it errored midway and fell back to scdet: ${fallbackReason}`;
           say('agent.shots.model-fell-back', { message: fallbackReason.slice(0, 120) });
           outcome = null;
         }
@@ -764,10 +764,10 @@ export function createShotsTools({
 
       if (outcome.cancelled || stopped()) return await finishJob(job, ws, track, cancelledNote());
       if (outcome.timedOut) {
-        return await finishJob(job, ws, track, { state: 'error', errorCode: 'SHOTS_TIMEOUT', message: `镜头识别超时(超过 ${limitMs < 10_000 ? Number((limitMs / 1000).toFixed(1)) : Math.round(limitMs / 1000)} 秒),已强制结束。素材可能太长。${FALLBACK_HINT}` });
+        return await finishJob(job, ws, track, { state: 'error', errorCode: 'SHOTS_TIMEOUT', message: `Shot detection timed out (over ${limitMs < 10_000 ? Number((limitMs / 1000).toFixed(1)) : Math.round(limitMs / 1000)} seconds), forcibly terminated. The media may be too long.${FALLBACK_HINT}` });
       }
       if (!outcome.ok) {
-        return await finishJob(job, ws, track, { state: 'error', errorCode: 'SHOTS_FAILED', message: `镜头识别没成功:${outcome.message}。${FALLBACK_HINT}` });
+        return await finishJob(job, ws, track, { state: 'error', errorCode: 'SHOTS_FAILED', message: `Shot detection failed: ${outcome.message}. ${FALLBACK_HINT}` });
       }
       const shots = outcome.shots;
 
@@ -775,17 +775,17 @@ export function createShotsTools({
       const committing = await track.patch({ stage: 'commit', progress: 0.97 });
       if (!committing.ok) {
         // 账本已被栅栏取消(终态),或权限已撤、账本写不了:都不写项目
-        return await finishJob(job, ws, track, { state: 'cancelled', errorCode: 'FENCE_CANCELLED', message: '这一轮已不能写项目(被停止、转私有或权限变了),检测结果没有写入。' });
+        return await finishJob(job, ws, track, { state: 'cancelled', errorCode: 'FENCE_CANCELLED', message: 'This round can no longer write to the project (it was stopped, made private, or permissions changed); the detection result was not written.' });
       }
       try { await authorize(context, 'write'); }
-      catch { return await finishJob(job, ws, track, { state: 'cancelled', errorCode: 'FENCE_CANCELLED', message: '这一轮已不能写项目(被停止、转私有或权限变了),检测结果没有写入。' }); }
-      if (stopped()) return await finishJob(job, ws, track, cancelledNote('结果没有写入。'));
+      catch { return await finishJob(job, ws, track, { state: 'cancelled', errorCode: 'FENCE_CANCELLED', message: 'This round can no longer write to the project (it was stopped, made private, or permissions changed); the detection result was not written.' }); }
+      if (stopped()) return await finishJob(job, ws, track, cancelledNote('The result was not written.'));
       try { await project.setMediaShots(context, { mediaId, expectedMediaRev: mediaRev, shots, jobId: job.jobId }); }
       catch (error) {
         const changed = error?.code === 'media-changed';
         return await finishJob(job, ws, track, {
           state: 'error', errorCode: changed ? 'MEDIA_CHANGED' : 'COMMIT_REJECTED',
-          message: changed ? '检测期间这个素材被换掉或重新导入了,这次结果对不上新素材,已丢弃。请重新调 detect_shots。' : `检测结果没能写进项目(${scrub(error?.code ?? error?.message ?? '被拒绝', ws).slice(0, 80)})。`,
+          message: changed ? 'This media was replaced or re-imported during detection, so this result does not match the new media and was discarded. Please call detect_shots again.' : `The detection result could not be written to the project (${scrub(error?.code ?? error?.message ?? 'rejected', ws).slice(0, 80)}).`,
         });
       }
       const ref = OUTPUT_ID_RE.test(mediaId) ? mediaId : sha(mediaId).slice(0, 32);
@@ -802,7 +802,7 @@ export function createShotsTools({
 
   /* ---------------------------------------------------------------- list_shots */
 
-  const INTERRUPTED = '上一次镜头识别被服务重启或关闭中断了,没有结果。可以重新调 detect_shots(传 force:true)。';
+  const INTERRUPTED = 'The previous shot detection was interrupted by a service restart or shutdown, no result. You can call detect_shots again (pass force:true).';
   const FINISHED = ['done', 'error', 'cancelled', 'interrupted'];
 
   /** 一条工作区索引里的作业现在是什么状态:账本是主;作业已经收尾而账本没写成(权限已撤)时以索引里的终态为准 */
@@ -822,7 +822,7 @@ export function createShotsTools({
     const { state, ledger } = await stateOf(context, row, false);
     if (state === 'queued' || state === 'running') return { pending: { percent: Math.max(0, Math.min(99, Math.round((ledger?.progress ?? 0) * 100))) } };
     if (state === 'error' || state === 'cancelled' || state === 'interrupted') {
-      return { error: row.message || (state === 'interrupted' ? '主体检测被服务重启或关闭中断了,没有结果' : '没有成功') };
+      return { error: row.message || (state === 'interrupted' ? 'Subject detection was interrupted by a service restart or shutdown, no result' : 'Did not succeed') };
     }
     return null;
   }
@@ -840,7 +840,7 @@ export function createShotsTools({
       sampledAt: info.times,
       boxCount: info.boxes.length,
       boxes: topBoxes(info.boxes),
-      ...(info.approximate ? { approximate: true, note: '这段区间里没有采样点,数字来自时间上最近的一次采样,只是近似' } : null),
+      ...(info.approximate ? { approximate: true, note: 'There are no sample points in this range; the numbers come from the nearest sample in time and are only approximate' } : null),
     };
   }
 
@@ -851,18 +851,18 @@ export function createShotsTools({
     if (!media) throw notFound(mediaId);
     const ws = await workspace(context);
     const row = [...readIndex(ws)].reverse().find((r) => r.kind === 'detect' && r.mediaId === mediaId);
-    const older = media.shots ? '(项目里还留着更早成功的一批结果,不是这次的。)' : '';
+    const older = media.shots ? '(The project still holds an earlier successful batch of results, not from this run.)' : '';
     if (row) {
       const { state, ledger } = await stateOf(context, row, live.has(row.jobId));
       if (state === 'queued' || state === 'running') {
         const percent = Math.max(0, Math.min(99, Math.round((ledger?.progress ?? 0) * 100)));
         return {
           running: true, percent, engine: row.engine,
-          ...(media.shots ? { stale: true, staleNote: '上一批结果还在,但新一次检测正在跑,这里不给镜头;跑完再调一次本工具' } : null),
+          ...(media.shots ? { stale: true, staleNote: 'The previous batch of results is still there, but a new detection is running, so no shots are given here; call this tool again once it finishes' } : null),
         };
       }
       if (state === 'error' || state === 'cancelled' || state === 'interrupted') {
-        const message = row.message || (state === 'interrupted' ? INTERRUPTED : '上一次镜头识别没有成功。');
+        const message = row.message || (state === 'interrupted' ? INTERRUPTED : 'The previous shot detection did not succeed.');
         throw new ShotsToolError(`${message}${older}`, `job-${state}`);
       }
     }
@@ -877,13 +877,13 @@ export function createShotsTools({
     // 这一批结果是哪一档、为什么:作业索引里找得到就说原因(找不到,比如是别的对话跑的,只说档位)
     const doneRow = row && row.status === 'done' && row.engine === media.shots.engine ? row : null;
     const engineNote = media.shots.engine === 'scdet'
-      ? `当前用的是 ffmpeg scdet 兜底,只认硬切,溶解等渐变转场检测不出来${doneRow?.scdetWhy ? `。${doneRow.scdetWhy}` : ''}`
-      : 'TransNetV2,硬切和溶解都认得';
+      ? `Currently using the ffmpeg scdet fallback, which only detects hard cuts and cannot detect gradual transitions such as dissolves${doneRow?.scdetWhy ? `. ${doneRow.scdetWhy}` : ''}`
+      : 'TransNetV2, recognizes both hard cuts and dissolves';
     const result = {
       running: false,
       engine: media.shots.engine,
       engineNote,
-      ...(doneRow?.fellBackFrom ? { fellBackFrom: doneRow.fellBackFrom, fallbackNote: `本来要跑 TransNetV2,中途出错退回了 scdet:${doneRow.fallbackReason ?? '原因未知'}。所以这批结果只有硬切。` } : null),
+      ...(doneRow?.fellBackFrom ? { fellBackFrom: doneRow.fellBackFrom, fallbackNote: `Was supposed to run TransNetV2 but hit an error midway and fell back to scdet: ${doneRow.fallbackReason ?? 'unknown reason'}. So this batch of results contains hard cuts only.` } : null),
       shots: media.shots.shots.map((s) => ({ ...s, subject: subjectDigest(k, k.subjectForRange(media.subjects, s.start, s.end), stage) })),
       transitions: media.shots.transitions.map(({ thumbs: _thumbs, ...rest }) => rest),
     };
@@ -891,30 +891,30 @@ export function createShotsTools({
     if (subjectJob?.error) {
       return {
         ...result,
-        subjectHint: `上次主体检测失败:${subjectJob.error}。`
-          + (media.subjects ? '下面每个镜头的 subject 来自更早成功的那一批,不是这次的。' : '')
-          + '先调 subject_status 看 engine:为 null 说明这台机器上两档都用不了(没有兜底档),'
-          + "退回 see_frames({ source: 'timeline', t }) 看真实画面判断人在哪,**不要继续轮询本工具**;"
-          + 'engine 不为 null 才值得调 detect_subjects 并传 force:true 重试。',
+        subjectHint: `Last subject detection failed: ${subjectJob.error}.`
+          + (media.subjects ? 'The subject of each shot below comes from an earlier successful batch, not this one.' : '')
+          + 'First call subject_status and check engine: null means neither tier works on this machine (there is no fallback tier), '
+          + "fall back to see_frames({ source: 'timeline', t }) and judge from the real frames where the person is, **do not keep polling this tool**; "
+          + 'Only when engine is not null is it worth calling detect_subjects with force:true to retry.',
       };
     }
     if (subjectJob?.pending) {
       return {
         ...result,
-        subjectHint: `主体检测正在跑(${subjectJob.pending.percent}%),跑完再调一次本工具就能看到每个镜头的人物位置${media.subjects ? ';下面的 subject 是上一批的结果,新一批跑完会替换' : ''}`,
+        subjectHint: `Subject detection is running (${subjectJob.pending.percent}%). Call this tool again when it finishes to see the person positions in each shot${media.subjects ? '; the subject below is from the previous batch and will be replaced when the new batch finishes' : ''}`,
       };
     }
     if (!media.subjects) {
-      return { ...result, subjectHint: '这些镜头还没做主体检测,所以每个 subject 都是 null。要决定卡片放哪边、别遮住人物的脸,先调 detect_subjects 拿人物位置。' };
+      return { ...result, subjectHint: 'Subject detection has not been run on these shots, so every subject is null. To decide which side to put the card on and avoid covering people\'s faces, first call detect_subjects to get person positions.' };
     }
     if (result.shots.every((s) => s.subject === null)) {
       return {
         ...result,
         subjectEngine: media.subjects.engine,
         subjectFailedCount: media.subjects.failedCount ?? 0,
-        subjectHint: `主体检测跑完了,但这一批 ${media.subjects.samples.length} 个采样没有一个可用`
-          + '(全部抽帧失败,见 subjectFailedCount),所以每个 subject 都是 null —— 这不是「画面里没有人」。'
-          + "换几个时刻用 detect_subjects 传 times 重测,或退回 see_frames({ source: 'timeline', t }) 看图。",
+        subjectHint: `Subject detection finished, but none of the ${media.subjects.samples.length} samples in this batch is usable`
+          + ' (all frame extractions failed, see subjectFailedCount), so every subject is null. This does not mean "there is nobody in the frame".'
+          + "Re-measure with detect_subjects by passing different times, or fall back to see_frames({ source: 'timeline', t }) and look at the image.",
       };
     }
     return {
@@ -924,12 +924,12 @@ export function createShotsTools({
       ...(media.subjects.fellBackFrom
         ? {
           subjectFellBackFrom: media.subjects.fellBackFrom,
-          subjectFallbackNote: `本来要跑 full 档,中途退回了 light:${media.subjects.fallbackReason ?? '原因未知'}。所以 prompt 没生效,label 只可能是 person / face。`,
+          subjectFallbackNote: `Was supposed to run the full tier but fell back to light midway: ${media.subjects.fallbackReason ?? 'unknown reason'}. So prompt had no effect, and label can only be person / face.`,
         }
         : null),
-      subjectHint: '每个镜头的 subject.suggestedPosition 可以直接填进卡片的 params.position(只会是 left / right / bottom,不会返回 center);boxes 是原始视频像素的人物框。'
-        + 'suggestedPosition 为 null 表示四档全被人物占住(看 suggestedOccupancy 和 warning),那个镜头没有不遮人的位置,别硬填。'
-        + '能不能填以 list_cards({cardId}) 的 controls 为准,卡片不支持这个值就换一张卡,不要退回默认的居中 —— 居中正是人脸所在。',
+      subjectHint: 'Each shot\'s subject.suggestedPosition can be filled directly into the card\'s params.position (it is only ever left / right / bottom, never center); boxes are person boxes in original video pixels.'
+        + 'suggestedPosition being null means all four tiers are occupied by people (see suggestedOccupancy and warning); that shot has no position that avoids people, so do not force one.'
+        + 'Whether it can be filled is determined by the controls of list_cards({cardId}); if the card does not support the value, switch to another card, and do not fall back to the default center, which is exactly where the face is.',
     };
   }
 
@@ -950,7 +950,7 @@ export function createShotsTools({
      */
     call(name, args, context, options = {}) {
       const handler = Object.hasOwn(handlers, name) ? handlers[name] : null;
-      if (!handler) return Promise.reject(new ShotsToolError(`镜头识别不处理 ${String(name).slice(0, 60)}`, 'unknown-tool'));
+      if (!handler) return Promise.reject(new ShotsToolError(`Shot detection does not handle ${String(name).slice(0, 60)}`, 'unknown-tool'));
       return Promise.resolve().then(() => handler(context, args ?? {}, options));
     },
     /** 这台节点上镜头识别能跑到哪一档(宿主与探针用,不是模型能调的工具)。需要 read 权限 */

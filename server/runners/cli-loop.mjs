@@ -17,15 +17,16 @@
 import { runReviewLoop, presentLoopEvent, SUBMIT_DEFS } from '../harness/loop.mjs';
 import { READ_ONLY_TOOLS } from '../harness/loop-prompts.mjs';
 import { lessonsStore } from './api.mjs';
+import { tr } from "../i18n.mjs";
 
 const RETRIES = 2;
 
 function fieldDoc(schema, indent = '  ') {
   const req = new Set(schema.required || []);
   return Object.entries(schema.properties || {}).map(([k, v]) => {
-    let type = v.type === 'array' ? `数组${v.items?.type === 'object' ? ',每一项是对象' : `,每一项是${v.items?.type || '值'}`}` : v.type;
-    if (v.enum) type += `,取值 ${v.enum.join(' / ')}`;
-    const line = `${indent}- ${k}(${type},${req.has(k) ? '必填' : '可选'}):${v.description || ''}`;
+    let type = v.type === 'array' ? `array${v.items?.type === 'object' ? ', each item is an object' : `, each item is ${v.items?.type || 'value'}`}` : v.type;
+    if (v.enum) type += `, one of ${v.enum.join(' / ')}`;
+    const line = `${indent}- ${k}(${type},${req.has(k) ? 'required' : 'optional'}):${v.description || ''}`;
     const sub = v.type === 'array' && v.items?.type === 'object' ? '\n' + fieldDoc(v.items, indent + '    ') : '';
     return line + sub;
   }).join('\n');
@@ -34,16 +35,16 @@ function fieldDoc(schema, indent = '  ') {
 /** 拼在系统提示末尾:这一回合要交的结论怎么交 */
 export function submitFormat(names) {
   const example = names[0] === 'need_user'
-    ? '```need_user\n{"reason": "请在弹出的窗口里扫码登录"}\n```'
-    : `\`\`\`${names[0]}\n{ …字段见下… }\n\`\`\``;
+    ? '```need_user\n{"reason": "Please scan the QR code to log in in the pop-up window"}\n```'
+    : `\`\`\`${names[0]}\n{ …fields below… }\n\`\`\``;
   return [
-    '', '', '## 怎么交结论(重要)',
-    `这里说的 ${names.join(' / ')} **不是工具**,你的工具清单里没有它们,不要去找,也不要调用。`,
-    '交结论的方式是:在回复的**最后**单独输出一个代码块,代码块的语言标记写结论名,内容是一个 JSON 对象。例如:',
+    '', '', '## How to submit conclusions (important)',
+    `The ${names.join(' / ')} mentioned here are **not tools**; they are not in your tool list, so do not look for them and do not call them.`,
+    'To submit a conclusion: at the **end** of your reply, output a single code block whose language tag is the conclusion name and whose content is a JSON object. For example:',
     example,
-    '这一回合可以交的结论和字段:',
+    'Conclusions and fields you can submit this turn:',
     ...names.map((n) => `- ${n}:${SUBMIT_DEFS[n].description}\n${fieldDoc(SUBMIT_DEFS[n].inputSchema)}`),
-    '整个回复只交一个结论块。JSON 里的字符串用双引号。',
+    'Submit only one conclusion block in the whole reply. Use double quotes for strings in JSON.',
   ].join('\n');
 }
 
@@ -66,9 +67,9 @@ export function parseSubmission(text, names) {
 }
 
 const accessNote = (access) => access === 'readonly'
-  ? `\n\n## 这一回合你能用的 PromptCut 工具\n只有这些只读工具:${READ_ONLY_TOOLS.filter((n) => n !== 'think').join('、')}。其余 PromptCut 工具这一回合会被拒绝,不要调用。`
+  ? `\n\n## PromptCut tools you can use this turn\nOnly these read-only tools: ${READ_ONLY_TOOLS.filter((n) => n !== 'think').join(', ')}. All other PromptCut tools will be rejected this turn, do not call them.`
   : access === 'none'
-    ? '\n\n## 这一回合不调用任何工具\n只用文字回答。PromptCut 的工具这一回合全部会被拒绝。'
+    ? '\n\n## Do not call any tools this turn\nAnswer in text only. All PromptCut tools will be rejected this turn.'
     : '';
 
 /**
@@ -80,7 +81,7 @@ export function cliBackend({ startProviderRun, baseOpts, setToolAccess, signal }
   return (onRoleEvent) => {
     /** 起一次 CLI,收齐这一次的文字、会话 id、用量和错误;内层的 done / session / error 不往外转 */
     const runOnce = ({ role, systemPrompt, prompt, sessionId }) => new Promise((resolve, reject) => {
-      if (signal?.aborted) return reject(Object.assign(new Error('已停止'), { name: 'AbortError' }));
+      if (signal?.aborted) return reject(Object.assign(new Error(tr("Stopped")), { name: 'AbortError' }));
       let text = '', sid = null, usage = null, error = null;
       const run = startProviderRun({
         ...baseOpts, systemPrompt, prompt, sessionId,
@@ -96,7 +97,7 @@ export function cliBackend({ startProviderRun, baseOpts, setToolAccess, signal }
       signal?.addEventListener('abort', onAbort, { once: true });
       run.done.then(() => {
         signal?.removeEventListener('abort', onAbort);
-        if (signal?.aborted) return reject(Object.assign(new Error('已停止'), { name: 'AbortError' }));
+        if (signal?.aborted) return reject(Object.assign(new Error(tr("Stopped")), { name: 'AbortError' }));
         resolve({ text, sessionId: sid, usage: normalizeUsage(usage), error });
       }, reject);
     });
@@ -112,7 +113,7 @@ export function cliBackend({ startProviderRun, baseOpts, setToolAccess, signal }
             const r = await runOnce({ role, systemPrompt, prompt: ask, sessionId });
             sessionId = r.sessionId || sessionId;
             if (!r.error) return { text: r.text, submitted: parseSubmission(r.text, submit), session: sessionId, usage: r.usage };
-            if (signal?.aborted || r.error.authReason || !r.error.retryable) throw Object.assign(new Error(r.error.message || 'CLI 报错'), { runEvent: r.error });
+            if (signal?.aborted || r.error.authReason || !r.error.retryable) throw Object.assign(new Error(r.error.message || tr("CLI error")), { runEvent: r.error });
             if (attempt >= RETRIES || !sessionId) {
               /*
                * 可续跑的中断,重试用完了:这一回合交不出东西,但**环路不该跟着作废**。
@@ -120,10 +121,10 @@ export function cliBackend({ startProviderRun, baseOpts, setToolAccess, signal }
                * worker 已经动过的工程全白跑,用户只看到一个错误。改成交回一个标了 interrupted 的结果,
                * 怎么接由 loop.mjs 决定。不可续跑的错(模型名不对之类)和用户点停止照旧抛出去。
                */
-              return { text: r.text, submitted: parseSubmission(r.text, submit), session: sessionId, usage: r.usage, interrupted: r.error.message || 'CLI 报错' };
+              return { text: r.text, submitted: parseSubmission(r.text, submit), session: sessionId, usage: r.usage, interrupted: r.error.message || tr("CLI error") };
             }
             onRoleEvent(role, { type: 'loop', stage: 'retry', role, attempt: attempt + 1, reason: r.error.message });
-            ask = r.error.retryPrompt || '上一次中断了。之前的进度都还在,接着刚才停下的地方继续做。';
+            ask = r.error.retryPrompt || 'The last run was interrupted. All earlier progress is still there, continue from where you stopped.';
           }
         } finally {
           setToolAccess?.(null);
@@ -158,7 +159,7 @@ export function startCliLoop(opts, startProviderRun, deps = {}) {
       });
       opts.onEvent({ type: 'done', usage: result.usage, outcome: result.outcome, completed: result.completed, failed: result.failed });
     } catch (err) {
-      if (ac.signal.aborted) opts.onEvent({ type: 'status', text: '已中止' });
+      if (ac.signal.aborted) opts.onEvent({ type: 'status', text: tr("Aborted") });
       else opts.onEvent(err.runEvent || { type: 'error', message: String(err?.message || err) });
     } finally {
       opts.setToolAccess?.(null);

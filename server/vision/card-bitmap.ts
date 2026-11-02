@@ -61,6 +61,6 @@ export async function renderCardBitmaps(
   const lane = o.lane === "preview" || o.lane === "prerender" ? o.lane : "agent";
   if (lane === "agent") await service.runAgentTask(work);
   else await service.runQueueTask(work, o.signal, { front: lane === "preview", scaleLane: "preview", kind: lane });
-  for (const frame of frames) if (!shots.has(frame)) throw new Error(`第 ${frame} 帧没渲出来`);
+  for (const frame of frames) if (!shots.has(frame)) throw new Error(`Frame ${frame} was not rendered`);
   return shots;
 }

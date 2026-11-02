@@ -122,7 +122,7 @@ export function hostedRenderCapabilities(base, { cardSync }) {
 }
 
 function badHost(detail) {
-  const err = new Error(`独立渲染主机配置:${detail}`);
+  const err = new Error(`Standalone render host config: ${detail}`);
   err.code = 'bad-host-config';
   return err;
 }
@@ -133,8 +133,8 @@ function badHost(detail) {
  */
 export function hostMaxConcurrent(value) {
   if (value === undefined || value === null) return 1;
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) throw badHost('maxConcurrent 要是 1～4 的整数');
-  if (value > HOST_MAX_CONCURRENT) throw badHost(`maxConcurrent 上限 ${HOST_MAX_CONCURRENT}(给了 ${value})`);
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) throw badHost('maxConcurrent must be an integer from 1 to 4');
+  if (value > HOST_MAX_CONCURRENT) throw badHost(`maxConcurrent limit is ${HOST_MAX_CONCURRENT} (got ${value})`);
   return value;
 }
 
@@ -150,13 +150,13 @@ export function hostMaxConcurrent(value) {
 export function parseHostConfig(raw, { device } = {}) {
   const list = Array.isArray(raw) ? raw : [raw];
   if (list.length === 0) {
-    const err = new Error(`${SHARED_CONFIG_ENV}:配置是空数组`);
+    const err = new Error(`${SHARED_CONFIG_ENV}: config is an empty array`);
     err.code = 'bad-shared-config';
     throw err;
   }
   const entries = list.map((item) => (device ? normalizeEntry(item, device) : normalizeEntry(item)));
   for (const [i, item] of list.entries()) {
-    if (item.role !== undefined && item.role !== 'render') throw badHost(`第 ${i} 项的 role 要是 'render'(主机只开 render 连接)`);
+    if (item.role !== undefined && item.role !== 'render') throw badHost(`Item ${i}: role must be 'render' (the host only opens render connections)`);
   }
   const given = list.filter((item) => item.maxConcurrent !== undefined && item.maxConcurrent !== null).map((item) => hostMaxConcurrent(item.maxConcurrent));
   return { entries, maxConcurrent: given.length ? Math.max(...given) : 1 };
@@ -175,14 +175,14 @@ export function loadHostConfig(env = process.env) {
   try {
     raw = JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch (err) {
-    const e = new Error(`${SHARED_CONFIG_ENV}:读不了配置文件(${err?.code ?? 'bad-json'})`);
+    const e = new Error(`${SHARED_CONFIG_ENV}: cannot read config file (${err?.code ?? 'bad-json'})`);
     e.code = 'bad-shared-config';
     throw e;
   }
   const parsed = parseHostConfig(raw, { device: localDeviceInfo(env) });
   const override = env[HOST_CONCURRENCY_ENV];
   if (override !== undefined && override !== '') {
-    if (!/^\d+$/.test(String(override))) throw badHost(`${HOST_CONCURRENCY_ENV} 要是 1～4 的整数`);
+    if (!/^\d+$/.test(String(override))) throw badHost(`${HOST_CONCURRENCY_ENV} must be an integer from 1 to 4`);
     parsed.maxConcurrent = hostMaxConcurrent(Number(override));
   }
   return parsed;
@@ -230,8 +230,8 @@ export function createRenderHost({
   onEvent = () => {},
   dynamic = false,
 }) {
-  if (!Array.isArray(entries) || (entries.length === 0 && !dynamic)) throw new TypeError('createRenderHost:entries 至少一项');
-  if (typeof connect !== 'function') throw new TypeError('createRenderHost:connect 必须是函数');
+  if (!Array.isArray(entries) || (entries.length === 0 && !dynamic)) throw new TypeError('createRenderHost: entries needs at least one item');
+  if (typeof connect !== 'function') throw new TypeError('createRenderHost: connect must be a function');
   const cap = hostMaxConcurrent(maxConcurrent);
   let version = codeVersion;
   let stopped = false;
@@ -315,7 +315,7 @@ export function createRenderHost({
     const wired = connect(entry, index, { streams: () => live.streams });
     const endpoint = wired?.endpoint;
     if (!endpoint || typeof endpoint.send !== 'function' || typeof endpoint.onMessage !== 'function') {
-      throw new TypeError(`createRenderHost:第 ${index} 项的 endpoint 不对`);
+      throw new TypeError(`createRenderHost: endpoint of item ${index} is invalid`);
     }
     const m = {
       index,
@@ -580,7 +580,7 @@ export function renderHostArgs(argv) {
   const opts = { port: 5400, config: null, data: null, maxConcurrent: null, streams: false, verbose: false, cwd: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    const next = () => { const v = argv[++i]; if (v === undefined) throw new Error(`${a} 要跟一个值`); return v; };
+    const next = () => { const v = argv[++i]; if (v === undefined) throw new Error(`${a} needs a value`); return v; };
     if (a === '--port') opts.port = Number(next());
     else if (a === '--config') opts.config = next();
     else if (a === '--data') opts.data = next();
@@ -588,11 +588,11 @@ export function renderHostArgs(argv) {
     else if (a === '--streams') opts.streams = true;
     else if (a === '--verbose') opts.verbose = true;
     else if (a === '--cwd') opts.cwd = next();
-    else throw new Error(`不认识的参数 ${a}`);
+    else throw new Error(`Unknown argument ${a}`);
   }
-  if (!Number.isInteger(opts.port) || opts.port <= 0 || opts.port > 65533) throw new Error('--port 不对');
+  if (!Number.isInteger(opts.port) || opts.port <= 0 || opts.port > 65533) throw new Error('--port is invalid');
   if (opts.maxConcurrent !== null && !(Number.isInteger(opts.maxConcurrent) && opts.maxConcurrent >= 1 && opts.maxConcurrent <= 4)) {
-    throw new Error('--max-concurrent 要是 1～4 的整数');
+    throw new Error('--max-concurrent must be an integer from 1 to 4');
   }
   return opts;
 }
@@ -635,7 +635,7 @@ export function createBrokerClient({ url, key, fetch: fetchImpl = globalThis.fet
     const res = await fetchImpl(`${base}${pathname}`, { ...init, headers, signal: AbortSignal.timeout(timeoutMs) });
     const body = await res.json().catch(() => null);
     if (res.status !== 200 || !body || body.ok !== true) {
-      const err = new Error(`渲染代理口 ${pathname}:${res.status} ${body?.error ?? ''}`.trim());
+      const err = new Error(`Render proxy port ${pathname}:${res.status} ${body?.error ?? ''}`.trim());
       err.code = body?.error ?? `http-${res.status}`;
       throw err;
     }

@@ -13,33 +13,33 @@ async function pipeline(args: { mediaId: string; style?: string; maxCards?: numb
   const state = getState();
   const media = state.project.media.find(m => m.id === mediaId);
   if (!media) {
-    throw new Error("找不到该素材，可以用 list_media 查");
+    throw new Error("Media not found, you can look it up with list_media");
   }
 
   // 2. 拿文字稿
   let transcribed = false;
   if (!media.transcript || media.transcript.segments.length === 0) {
-    job.phase = "转写中";
+    job.phase = "Transcribing";
     const status = await sttStatus();
     if (!status.engines["faster-whisper"].installed && !status.engines.whisper.installed) {
-      throw new Error("没装语音识别引擎，请先用 stt_install 装 faster-whisper");
+      throw new Error("No speech-to-text engine installed, please install faster-whisper first with stt_install");
     }
     const engine = status.engines["faster-whisper"].installed ? "faster-whisper" : "whisper";
     
     await Promise.race([
       transcribeMedia(mediaId, { engine }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("转写超过 10 分钟")), 600000))
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Transcription took more than 10 minutes")), 600000))
     ]);
     
     transcribed = true;
   }
   
-  job.phase = "配卡中";
+  job.phase = "Composing cards";
   
   // 重新读取
   const newMedia = getState().project.media.find(m => m.id === mediaId);
   if (!newMedia || !newMedia.transcript || newMedia.transcript.segments.length === 0) {
-    throw new Error("文字稿是空的");
+    throw new Error("The transcript is empty");
   }
   const transcript = newMedia.transcript;
 
@@ -290,7 +290,7 @@ export async function runAutoWorkflow(args: { mediaId: string; style?: string; m
     result: null,
     error: null,
     startedAt: Date.now(),
-    phase: "转写中"
+    phase: "Transcribing"
   };
   autoWorkflowJobs.set(jobId, job);
 
@@ -299,12 +299,12 @@ export async function runAutoWorkflow(args: { mediaId: string; style?: string; m
     job.done = true;
     job.ok = true;
     job.result = res;
-    job.phase = "已完成";
+    job.phase = "Completed";
   }).catch(err => {
     job.done = true;
     job.ok = false;
     job.error = err instanceof Error ? err.message : String(err);
-    job.phase = "失败";
+    job.phase = "failed";
   });
 
   const raceResult = await Promise.race([
@@ -319,7 +319,7 @@ export async function runAutoWorkflow(args: { mediaId: string; style?: string; m
       started: true,
       mediaId: args.mediaId,
       phase: job.phase,
-      hint: "素材较长，转写和配卡已在后台继续，请用 auto_workflow_status 带上这个 jobId 轮询，done 为 true 时 result 里就是完整结果；这期间不要重复调用 auto_workflow"
+      hint: "The media is long, transcription and card matching continue in the background. Poll with auto_workflow_status using this jobId; when done is true, result holds the complete result. Do not call auto_workflow again in the meantime"
     };
   } else {
     return {
@@ -333,7 +333,7 @@ export async function runAutoWorkflow(args: { mediaId: string; style?: string; m
 export function getAutoWorkflowStatus(args: { jobId: string }) {
   const job = autoWorkflowJobs.get(args.jobId);
   if (!job) {
-    throw new Error("找不到该作业，可能是 jobId 错误或系统已重启");
+    throw new Error("Job not found, the jobId may be wrong or the system restarted");
   }
   return {
     jobId: args.jobId,

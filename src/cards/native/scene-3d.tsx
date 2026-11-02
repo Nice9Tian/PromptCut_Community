@@ -50,15 +50,15 @@ function Scene3DCard() {
 
 export const scene3dCard: CardDef<Params> = {
   id: "scene-3d",
-  name: "三维物件",
-  description: "一个会转的立体物件(方块 / 球 / 圆环 / 纽结 / 锥 / 柱 / 晶体),透明底,可以叠在别的卡上",
+  name: "3D object",
+  description: "A spinning 3D object (cube / sphere / torus / knot / cone / cylinder / crystal) on a transparent background, can be overlaid on other cards",
   useWhen:
     "需要一个真正立体的东西当视觉锚点时用:片头的旋转标志物、讲抽象概念时的一个几何体、产品段落的陪衬。" +
     "它是**装饰**不是信息 —— 数字用 odometer、要点用清单卡,别指望这张卡说清楚什么。" +
     "透明底,通常叠在背景之上、文字之下(放到靠下的序列里)。" +
     "转速用圈/秒,0 就是不转、停在 tilt 那个角度;负数反着转。" +
     "**它和用 set_camera3d 打开的三维默认就是同一台相机**(fov 留 0 即可),所以它和摆进空间的卡片透视强度一致、叠起来不用调。只有想让它单独用一个视角时才填 fov。",
-  tags: ["三维", "3D", "立体", "模型", "旋转", "几何", "canvas", "webgl"],
+  tags: ["three-dimensional", "3D", "solid", "model", "rotation", "geometry", "canvas", "webgl"],
   source: "native",
   // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
   frameMode: "stateful",
@@ -67,26 +67,26 @@ export const scene3dCard: CardDef<Params> = {
     spinY: 0.15, spinX: 0, tilt: -18, light: "studio", fov: 0, wire: "no", texture: "",
   },
   controls: [
-    { key: "shape", label: "形状", type: "select", options: [
-      { value: "knot", label: "纽结" }, { value: "cube", label: "方块" }, { value: "sphere", label: "球" },
-      { value: "torus", label: "圆环" }, { value: "cone", label: "锥" }, { value: "cylinder", label: "柱" },
-      { value: "crystal", label: "晶体" },
+    { key: "shape", label: "Shape", type: "select", options: [
+      { value: "knot", label: "Knot" }, { value: "cube", label: "Cube" }, { value: "sphere", label: "Sphere" },
+      { value: "torus", label: "Torus" }, { value: "cone", label: "Cone" }, { value: "cylinder", label: "Cylinder" },
+      { value: "crystal", label: "Crystal" },
     ] },
-    { key: "color", label: "颜色", type: "color" },
-    { key: "metal", label: "金属感", type: "number", min: 0, max: 1, step: 0.05, hint: "0 = 塑料/陶瓷,1 = 金属。金属感高时颜色主要来自反光,配 studio 打光最好看" },
-    { key: "rough", label: "粗糙度", type: "number", min: 0, max: 1, step: 0.05, hint: "0 = 镜面,1 = 全哑光" },
-    { key: "size", label: "大小", type: "number", min: 0.05, max: 1, step: 0.05, hint: "占画布高度的比例。0.55 大约是半屏高" },
-    { key: "spinY", label: "水平转速", type: "number", min: -3, max: 3, step: 0.05, hint: "圈/秒,绕竖轴。0.15 是从容的慢转;负数反向" },
-    { key: "spinX", label: "翻滚转速", type: "number", min: -3, max: 3, step: 0.05, hint: "圈/秒,绕横轴。两个都给就是斜着滚" },
-    { key: "tilt", label: "初始倾斜", type: "number", min: -90, max: 90, step: 1, hint: "度,绕横轴。转速为 0 时就靠它决定停在什么角度" },
-    { key: "light", label: "打光", type: "select", options: [
-      { value: "studio", label: "棚拍(立体感强)" }, { value: "soft", label: "柔光(平)" }, { value: "rim", label: "逆光(剪影)" },
+    { key: "color", label: "Color", type: "color" },
+    { key: "metal", label: "Metalness", type: "number", min: 0, max: 1, step: 0.05, hint: "0 = plastic/ceramic, 1 = metal. At high metalness the color comes mainly from reflections; looks best with studio lighting" },
+    { key: "rough", label: "Roughness", type: "number", min: 0, max: 1, step: 0.05, hint: "0 = mirror, 1 = fully matte" },
+    { key: "size", label: "Size", type: "number", min: 0.05, max: 1, step: 0.05, hint: "Fraction of the canvas height. 0.55 is about half the screen height" },
+    { key: "spinY", label: "Horizontal spin speed", type: "number", min: -3, max: 3, step: 0.05, hint: "Turns/second, around the vertical axis. 0.15 is a calm slow spin; negative reverses it" },
+    { key: "spinX", label: "Tumble speed", type: "number", min: -3, max: 3, step: 0.05, hint: "Turns/second, around the horizontal axis. Set both to roll diagonally" },
+    { key: "tilt", label: "Initial tilt", type: "number", min: -90, max: 90, step: 1, hint: "Degrees, around the horizontal axis. When spin speed is 0, this decides the angle it rests at" },
+    { key: "light", label: "Lighting", type: "select", options: [
+      { value: "studio", label: "Studio (strong depth)" }, { value: "soft", label: "Soft light (flat)" }, { value: "rim", label: "Backlight (silhouette)" },
     ] },
-    { key: "fov", label: "视角(度)", type: "number", min: 0, max: 120, step: 1, hint: "0 = 跟着项目的相机走(默认,推荐);填正数 = 这张卡单独用一个视角,和别的卡就不在同一个空间里了" },
-    { key: "wire", label: "线框", type: "select", options: [{ value: "no", label: "实体" }, { value: "yes", label: "线框" }] },
-    { key: "texture", label: "贴图", type: "text", hint: "图片 URL。用 bake_card 把一张卡渲染成透明底 PNG 再贴上来最直接;素材库里的图片也行。留空 = 纯色" },
+    { key: "fov", label: "Field of view (deg)", type: "number", min: 0, max: 120, step: 1, hint: "0 = follow the project camera (default, recommended); a positive value = this card uses its own field of view, so it no longer shares a space with other cards" },
+    { key: "wire", label: "Wireframe", type: "select", options: [{ value: "no", label: "entity" }, { value: "yes", label: "Wireframe" }] },
+    { key: "texture", label: "Texture", type: "text", hint: "Image URL. The most direct way is to render a card to a transparent PNG with bake_card and apply it here; images from the media library also work. Leave empty = solid color" },
   ],
-  parts: [{ id: "object", label: "物件", role: "media", params: ["shape", "color", "metal", "rough", "size", "spinY", "spinX", "tilt", "light", "fov", "wire", "texture"] }],
+  parts: [{ id: "object", label: "Object", role: "media", params: ["shape", "color", "metal", "rough", "size", "spinY", "spinX", "tilt", "light", "fov", "wire", "texture"] }],
   // 没有进场动画:它一挂载就是最终形态,之后一直转
   lifecycle: { after: "evolve", exit: ["fade"] },
   /*

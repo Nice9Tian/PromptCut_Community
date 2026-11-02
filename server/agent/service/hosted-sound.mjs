@@ -85,7 +85,7 @@ export function createSoundTools({ state, slot, host, snapshot, mutate, ensureCa
     const stale = () => state.latest.get(job.targetKey) !== job.id;
     try {
       release = await slot.acquire(signal);
-      if (stale()) throw Object.assign(new Error('已有新的生成请求,旧结果未应用'), { stale: true });
+      if (stale()) throw Object.assign(new Error('A newer generation request exists; the old result was not applied'), { stale: true });
       job.state = 'rendering';
       const wav = await h.sound.renderWav(plan.recipe, {
         signal,
@@ -98,13 +98,13 @@ export function createSoundTools({ state, slot, host, snapshot, mutate, ensureCa
       bytes = wav.byteLength;
       const asset = await put(wav);
       signal.throwIfAborted();
-      if (!/^[a-f0-9]{64}$/.test(asset.hash)) throw new Error('素材服务未返回有效内容哈希');
+      if (!/^[a-f0-9]{64}$/.test(asset.hash)) throw new Error('The asset service did not return a valid content hash');
       const reuseKey = await h.sound.reuseDigest(plan.recipe);
       let result = null;
       await mutate(track, (hh) => {
         // 进锁之后再看一次:取消了、或有了更新的请求,这一份不落地
         signal.throwIfAborted();
-        if (stale()) throw Object.assign(new Error('已有新的生成请求,旧结果未应用'), { stale: true });
+        if (stale()) throw Object.assign(new Error('A newer generation request exists; the old result was not applied'), { stale: true });
         result = hh.sound.commit({
           ...spec,
           asset: {
@@ -118,9 +118,9 @@ export function createSoundTools({ state, slot, host, snapshot, mutate, ensureCa
       job.state = 'succeeded'; job.progress = 1; job.result = result;
     } catch (err) {
       const message = String(err?.message ?? err);
-      if (signal.aborted && job.state !== 'stale') { job.state = 'cancelled'; job.error = '已取消,原音效保持不变'; }
+      if (signal.aborted && job.state !== 'stale') { job.state = 'cancelled'; job.error = 'Cancelled; the original sound effect is unchanged'; }
       else if (job.state === 'stale') { /* 被更新的请求顶掉时已经写好了原因 */ }
-      else if (err?.stale || /已改变|已切换|has changed/.test(message)) { job.state = 'stale'; job.error = err?.stale ? message : `项目或片段已改变,旧生成结果未应用(${message})`; }
+      else if (err?.stale || /已改变|已切换|has changed/.test(message)) { job.state = 'stale'; job.error = err?.stale ? message : `The project or clip has changed; the old generation result was not applied (${message})`; }
       else { job.state = 'failed'; job.error = message.slice(0, 300); }
     } finally {
       release?.();
@@ -134,7 +134,7 @@ export function createSoundTools({ state, slot, host, snapshot, mutate, ensureCa
 
   async function generate(args, track) {
     const requestId = args?.requestId;
-    if (typeof requestId !== 'string' || !requestId || requestId.length > 200) throw new ToolError('requestId 必须是 1 到 200 个字符');
+    if (typeof requestId !== 'string' || !requestId || requestId.length > 200) throw new ToolError('requestId must be 1 to 200 characters');
     await ensureCanWrite();
     const h = await host();
     const { project: p } = await snapshot();
@@ -150,16 +150,16 @@ export function createSoundTools({ state, slot, host, snapshot, mutate, ensureCa
     const requestKey = `${targetKey}\0${requestId}`;
     const old = state.jobs.get(state.byRequest.get(requestKey) ?? '');
     if (old && !REDO.has(old.state)) {
-      if (old.signature !== signature) throw new ToolError('requestId 已用于不同配方,修改后请使用新的 requestId');
+      if (old.signature !== signature) throw new ToolError('requestId was already used for a different recipe; use a new requestId after changing it');
       const resultCurrent = () => !!p.media?.some((m) => m.id === old.result?.mediaId)
         && (!old.result?.clipId || p.tracks?.some((t) => t.clips.some((c) => c.id === old.result.clipId && c.mediaId === old.result.mediaId)));
       if (old.state !== 'succeeded' || resultCurrent()) return viewOf(await old.done);
     }
     const pending = [...state.jobs.values()].filter((j) => !finished(j) && j.targetKey !== targetKey);
-    if (pending.length >= pendingMax) throw new ToolError(`音效任务队列已满(最多 ${pendingMax} 个),请等待或取消`);
+    if (pending.length >= pendingMax) throw new ToolError(`The sound effect queue is full (max ${pendingMax}); wait or cancel`);
     for (const prior of state.jobs.values()) {
       if (prior.targetKey !== targetKey || finished(prior)) continue;
-      prior.state = 'stale'; prior.error = '已有新的生成请求,旧结果未应用';
+      prior.state = 'stale'; prior.error = 'A newer generation request exists; the old result was not applied';
       prior.abort.abort();
     }
     const job = {
@@ -176,19 +176,19 @@ export function createSoundTools({ state, slot, host, snapshot, mutate, ensureCa
     return viewOf(await job.done);
   }
 
-  const withOk = (view) => (view.state === 'succeeded' ? { ok: true, ...view } : finished(view) ? { ok: false, ...view, error: view.error ?? '音效没有生成' } : view);
+  const withOk = (view) => (view.state === 'succeeded' ? { ok: true, ...view } : finished(view) ? { ok: false, ...view, error: view.error ?? 'No sound effect was generated' } : view);
 
   return {
     sound_generate: async (args, track) => withOk(await generate(args ?? {}, track ?? {})),
     sound_status: async (args) => {
       if (!args?.jobId) return { jobs: [...state.jobs.values()].map(viewOf) };
       const job = state.jobs.get(String(args.jobId));
-      if (!job) throw new ToolError('找不到音效任务(服务重启后请从片段的配方重新生成)');
+      if (!job) throw new ToolError('Sound effect job not found (after a service restart, regenerate from the clip\'s recipe)');
       return viewOf(job);
     },
     sound_cancel: async (args) => {
       const job = state.jobs.get(String(args?.jobId ?? ''));
-      if (!job) throw new ToolError('找不到音效任务');
+      if (!job) throw new ToolError('Sound effect job not found');
       if (!finished(job)) job.abort.abort();
       // 已经在提交的那一下不可分:等它落定再答,不回一个之后会变的状态
       const settled = await Promise.race([job.done, new Promise((resolve) => setTimeout(() => resolve(null), 2000))]);

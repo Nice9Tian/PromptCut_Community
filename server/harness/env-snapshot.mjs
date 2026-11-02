@@ -37,7 +37,7 @@ export function inspectSessionStore(dir = sessionStoreDir(), io = fs) {
   try {
     names = io.readdirSync(dir).filter((n) => n.endsWith('.json'));
   } catch {
-    out.note = '目录不存在或读不了 —— 说明这台机器上还没有任何 API 直连的会话落过盘';
+    out.note = 'Directory does not exist or cannot be read: no direct API session has been saved to disk on this machine yet';
     return out;
   }
   out.exists = true;
@@ -65,13 +65,13 @@ export function inspectSessionStore(dir = sessionStoreDir(), io = fs) {
           for (const m of arr) { const r = String(m?.role || '?'); tally[r] = (tally[r] || 0) + 1; }
           row.roles = tally;
         }
-      } catch { row.messages = '(读不出来)'; }
+      } catch { row.messages = '(unreadable)'; }
     } else {
-      row.messages = '(文件过大,没有打开)';
+      row.messages = '(file too large, not opened)';
     }
     out.recent.push(row);
   }
-  if (stated.length > PARSE_COUNT) out.note = `只细看了最新的 ${PARSE_COUNT} 个,共 ${stated.length} 个`;
+  if (stated.length > PARSE_COUNT) out.note = `Only examined the latest ${PARSE_COUNT} in detail, ${stated.length} in total`;
   return out;
 }
 

@@ -11,6 +11,7 @@ import { exportBegin, exportEnd } from "./render-pool-state.mjs";
 import { exportOriginalsGate } from "./export-originals";
 import { hashFromUrl, originalHashOf } from "../src/render/mediaTier";
 import { EXPORT_KEEP, claimExportDir, pruneExportDir, sweepExportRoot } from "./storage-leftovers.mjs";
+import { tr as trText } from "./i18n.mjs";
 
 interface ExportJob {
   id: string;
@@ -228,7 +229,7 @@ async function handleExportStart(req: Connect.IncomingMessage, res: ServerRespon
       // 素材地址:有哈希按哈希、没哈希才按路径;已标缺失的跳过它所在的片段并告诉用户(规则见 normalizeExportMedia)
       const { skipped } = await normalizeExportMedia(project, root, id);
       const skippedMedia = dropSkippedMediaClips(project, skipped);
-      if (skippedMedia.length) console.warn(`[export] 跳过缺失素材所在的片段:${skippedMedia.map((m) => `${m.name || m.id}×${m.clips}`).join("、")}`);
+      if (skippedMedia.length) console.warn(`[export] Skipping clips whose media is missing: ${skippedMedia.map((m) => `${m.name || m.id}×${m.clips}`).join(", ")}`);
       
       const projectJsonPath = path.resolve(outDir, "project.json");
       await fs.writeFile(projectJsonPath, JSON.stringify(project, null, 2));
@@ -318,7 +319,7 @@ async function handleExportStart(req: Connect.IncomingMessage, res: ServerRespon
         await cleanupExportDir(outDir, { framesOnly: !!noVideo }).catch(() => {});
         if (job.cancelled) {
           job.status = "cancelled";
-          job.message = "已取消";
+          job.message = "Cancelled";
         } else if (code === 0) {
           job.status = "done";
         } else {
@@ -328,8 +329,8 @@ async function handleExportStart(req: Connect.IncomingMessage, res: ServerRespon
           // 所以 stderr 是空的。裸报一个十进制数字没人看得懂,这里给一句人话。
           job.message = tail
             || (code === 3221225794
-              ? "渲染进程启动失败(0xC0000142)。通常是同时开了太多浏览器实例,关掉一些再试;若持续出现请重启软件。"
-              : `渲染进程异常退出(代码 ${code})`);
+              ? trText("Render process failed to start (0xC0000142). This is usually caused by too many browser instances open at once. Close some and try again; if it keeps happening, restart the app.")
+              : trText("Render process exited abnormally (code {0})", code));
         }
       });
       
@@ -464,7 +465,7 @@ async function handleDeliverable(res: ServerResponse, id: string, name: string) 
     createReadStream(file).on("error", () => { if (!res.headersSent) res.statusCode = 404; res.destroy(); }).pipe(res);
   } catch {
     res.statusCode = 404;
-    res.end("产物还没生成");
+    res.end(trText("Output not generated yet"));
   }
 }
 
@@ -560,7 +561,7 @@ export function exportPlugin(): Plugin {
             });
             if (over) {
               res.statusCode = 413;
-              return res.end(JSON.stringify({ ok: false, error: "混音超过 3 GB,没有保存" }));
+              return res.end(JSON.stringify({ ok: false, error: trText("Audio mix exceeds 3 GB, not saved") }));
             }
             const buf = { length: bytes };
             res.setHeader("Content-Type", "application/json");

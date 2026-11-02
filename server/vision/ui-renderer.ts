@@ -132,7 +132,7 @@ export function createUiRenderer(root: string, originFn: () => string) {
       if (Date.now() - r.startedAt < UI_INTERRUPT_MS) { r.ac.abort(); break; }
     }
     // 规则 3:只留最新的一个
-    if (pending) pending.reject(Object.assign(new Error("被更新的请求替换了"), { cancelled: true }));
+    if (pending) pending.reject(Object.assign(new Error("Replaced by a newer request"), { cancelled: true }));
     pending = req;
     req.signal?.addEventListener("abort", () => {
       if (pending !== req) return;

@@ -227,7 +227,7 @@ export function createUploadQueue({
         // 两档都在素材服务上 complete 才出队(同步状态只问素材服务)
         for (const t of item.uploaded) {
           const st = await where.client.chunks('media', t.hash);
-          if (!st.complete) throw Object.assign(new Error(`素材服务上 ${t.tier} ${t.hash} 还没 complete`), { code: 'not-complete' });
+          if (!st.complete) throw Object.assign(new Error(`${t.tier} ${t.hash} on the asset service is not complete yet`), { code: 'not-complete' });
         }
         items.delete(item.id);
         counters.done++;
@@ -289,7 +289,7 @@ export function createUploadQueue({
     if (tier === 'small') {
       // 素材小尺寸在素材服务上 complete 了才算传过:没 complete 就重试它,不往下传素材原尺寸
       const st = await client.chunks('media', t.hash);
-      if (!st.complete) throw Object.assign(new Error(`素材服务上 ${t.tier} ${t.hash} 还没 complete`), { code: 'not-complete' });
+      if (!st.complete) throw Object.assign(new Error(`${t.tier} ${t.hash} on the asset service is not complete yet`), { code: 'not-complete' });
     }
     item.sent.add(tier);
     if (!item.uploaded.some((x) => x.tier === tier)) item.uploaded.push(t);

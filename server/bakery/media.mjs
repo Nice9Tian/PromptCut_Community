@@ -80,7 +80,7 @@ async function loadProject(url, outDir) {
       }
     }
   } catch (e) {
-    console.warn('取项目失败,改读产物目录里的 project.json:', e.message);
+    console.warn('Failed to fetch the project, reading project.json from the output directory instead:', e.message);
   }
   const f = path.join(outDir, 'project.json');
   if (fsSync.existsSync(f)) {
@@ -115,11 +115,11 @@ async function planMedia(opts, outDir, ffmpegCmd) {
       if (!probed.has(src)) probed.set(src, probeVisual(ffprobeCmd, src));
       info = probed.get(src);
       if (!info) {
-        console.warn(`素材「${l.media.name || l.media.id}」ffprobe 读不出来(${src}),这一层没有画面`);
+        console.warn(`Media "${l.media.name || l.media.id}" cannot be read by ffprobe (${src}), this layer has no picture`);
         src = null;
       }
     } else {
-      console.warn(`素材「${l.media.name || l.media.id}」找不到文件(${l.media.url || '无地址'}),这一层没有画面`);
+      console.warn(`Media "${l.media.name || l.media.id}" file not found (${l.media.url || 'no URL'}), this layer has no picture`);
     }
     return { ...l, src, hasAlpha: !!info?.hasAlpha, colorSpace: info?.colorSpace, decoder: info?.decoder };
   });

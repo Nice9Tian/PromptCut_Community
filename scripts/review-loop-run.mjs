@@ -69,7 +69,7 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => {
-      if (i + 1 >= argv.length) throw new Error(`${a} 后面要跟一个值`);
+      if (i + 1 >= argv.length) throw new Error(`${a} must be followed by a value`);
       return argv[++i];
     };
     if (a === '--prompt') o.prompt = next();
@@ -82,13 +82,13 @@ function parseArgs(argv) {
     else if (a === '--timeout-min') o.timeoutMin = Number(next());
     else if (a === '--ai-config') o.aiConfig = path.resolve(next());
     else if (a === '--connect-only') o.connectOnly = true;
-    else throw new Error(`不认识的参数 ${a}`);
+    else throw new Error(`Unknown argument ${a}`);
   }
-  if (!o.connectOnly && !o.prompt?.trim()) throw new Error('要给 --prompt 或 --prompt-file(只想试环境用 --connect-only)');
-  if (!(o.timeoutMin > 0)) throw new Error('--timeout-min 要是正数');
-  if (o.port !== undefined && !(Number.isInteger(o.port) && o.port > 0 && o.port < 65534)) throw new Error('--port 要是一个端口号');
+  if (!o.connectOnly && !o.prompt?.trim()) throw new Error('Provide --prompt or --prompt-file (use --connect-only just to test the environment)');
+  if (!(o.timeoutMin > 0)) throw new Error('--timeout-min must be a positive number');
+  if (o.port !== undefined && !(Number.isInteger(o.port) && o.port > 0 && o.port < 65534)) throw new Error('--port must be a port number');
   for (const f of [...o.attach, ...(o.open ? [o.open] : []), ...(o.aiConfig ? [o.aiConfig] : [])]) {
-    if (!fs.existsSync(f)) throw new Error(`文件不存在:${f}`);
+    if (!fs.existsSync(f)) throw new Error(`File does not exist: ${f}`);
   }
   return o;
 }
@@ -97,7 +97,7 @@ let opts;
 try {
   opts = parseArgs(process.argv.slice(2));
 } catch (e) {
-  console.error(`${e.message}\n用法见 scripts/review-loop-run.mjs 文件头`);
+  console.error(`${e.message}\nSee the header of scripts/review-loop-run.mjs for usage`);
   process.exit(2);
 }
 
@@ -123,16 +123,16 @@ function cleanup() {
   cleaned = true;
   try { chat?.abort(); } catch {}
   if (browser) killTree(browser.process()?.pid);
-  if (server) { server.stop(); log('已关 dev server'); }
+  if (server) { server.stop(); log('dev server stopped'); }
   if (copiedKeys) {
     fs.rmSync(copiedKeys, { recursive: true, force: true });
-    log('已删复制过来的 keys/');
+    log('Deleted the copied keys/');
   }
 }
 
 process.on('exit', cleanup);
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) {
-  process.on(sig, () => { log(`收到 ${sig},中止这一趟并收工`); cleanup(); process.exit(130); });
+  process.on(sig, () => { log(`Received ${sig}, aborting this run and wrapping up`); cleanup(); process.exit(130); });
 }
 process.on('uncaughtException', (e) => { console.error(e); cleanup(); process.exit(1); });
 
@@ -142,7 +142,7 @@ process.on('uncaughtException', (e) => { console.error(e); cleanup(); process.ex
 function prepareAiConfig() {
   if (opts.aiConfig) return { configPath: opts.aiConfig, keysDir: path.join(path.dirname(opts.aiConfig), 'keys'), copied: false };
   const src = process.env.PROMPTCUT_AI_CONFIG || path.join(process.env.LOCALAPPDATA || os.homedir(), 'promptcut', 'ai.json');
-  if (!fs.existsSync(src)) throw new Error(`没找到 AI 配置 ${src},用 --ai-config 指一份`);
+  if (!fs.existsSync(src)) throw new Error(`AI config ${src} not found, point to one with --ai-config`);
   const dir = path.join(work, 'ai');
   fs.mkdirSync(dir, { recursive: true });
   fs.copyFileSync(src, path.join(dir, 'ai.json'));
@@ -161,11 +161,11 @@ function apiProblem({ configPath, keysDir }) {
   try {
     const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     const source = cfg?.api?.source;
-    if (!source) return 'ai.json 的 api.source 是空的,API 直连不会去读 key 文件';
-    if (!fs.existsSync(path.join(keysDir, `${source}.key`))) return `没有 keys/${source}.key`;
+    if (!source) return 'api.source in ai.json is empty, direct API will not read the key file';
+    if (!fs.existsSync(path.join(keysDir, `${source}.key`))) return `No keys/${source}.key`;
     return null;
   } catch (e) {
-    return `ai.json 读不了:${e.message}`;
+    return `Cannot read ai.json: ${e.message}`;
   }
 }
 
@@ -227,22 +227,22 @@ const indent = (text) => String(text).split('\n').join('\n         ');
 async function main() {
   fs.mkdirSync(work, { recursive: true });
   for (const d of Object.values(dirs)) fs.mkdirSync(d, { recursive: true });
-  log(`工作目录 ${work}`);
+  log(`Working directory ${work}`);
 
   const ai = prepareAiConfig();
-  log(`AI 配置 ${ai.configPath}${ai.copied ? '(用户配置的副本)' : ''}`);
+  log(`AI config ${ai.configPath}${ai.copied ? ' (copy of the user\'s config)' : ''}`);
   const problem = apiProblem(ai);
-  if (problem) log(`⚠ API 直连没配好:${problem}。这一趟发出去会直接报错`);
+  if (problem) log(`⚠ Direct API is not configured correctly: ${problem}. Sending this run will fail immediately`);
   // 转写找 Python 的顺序同 server/vite-plugin-stt.ts 的 findPython
   const python = [process.env.PROMPTCUT_PYTHON, path.join(REPO, 'desktop', 'src-tauri', 'runtime', 'python', 'python.exe'),
     path.join(REPO, 'python', '.venv', 'Scripts', 'python.exe')].find((p) => p && fs.existsSync(p));
   const missing = ['pylibs', 'models'].filter((d) => !process.env[`PROMPTCUT_${d.toUpperCase()}`] && !fs.existsSync(path.join(REPO, 'out', d)));
-  if (!python) log('⚠ 找不到转写用的 Python:对话里一转写就失败(/api/stt/status 回 503)。要用主仓库那份,设 PROMPTCUT_PYTHON、PROMPTCUT_PYLIBS、PROMPTCUT_MODELS');
-  else if (missing.length) log(`⚠ 这个工作副本没有 out/${missing.join('、out/')}:对话里一转写就会现装(几个 GB)。要复用主仓库那份,设 PROMPTCUT_PYLIBS / PROMPTCUT_MODELS`);
+  if (!python) log('⚠ Python for transcription not found: transcribing in chat fails immediately (/api/stt/status returns 503). To use the one from the main checkout, set PROMPTCUT_PYTHON, PROMPTCUT_PYLIBS, PROMPTCUT_MODELS');
+  else if (missing.length) log(`⚠ This working copy has no out/${missing.join(', out/')}: transcribing in a chat will install it on the fly (several GB). To reuse the one from the main checkout, set PROMPTCUT_PYLIBS / PROMPTCUT_MODELS`);
 
   const env = { ...dirs, PROMPTCUT_AI_CONFIG: ai.configPath };
   server = await startDevServer({ env, logFile: path.join(work, 'vite.log'), port: opts.port, log });
-  log(`dev server 就绪 ${server.origin}(舞台 ${server.stagePorts.join(' / ')})`);
+  log(`dev server ready ${server.origin} (stage ${server.stagePorts.join(' / ')})`);
 
   /* ---- 编辑器页面 ---- */
   const stats = { pageErrors: 0, consoleErrors: 0, reloads: 0, disconnects: 0 };
@@ -268,31 +268,31 @@ async function main() {
   });
   const page = await browser.newPage();
   await page.setViewport({ width: 1600, height: 960 });
-  page.on('pageerror', (e) => { stats.pageErrors++; record({ type: 'page_error', message: e.message }); log(`⚠ 页面错误:${e.message}`); });
+  page.on('pageerror', (e) => { stats.pageErrors++; record({ type: 'page_error', message: e.message }); log(`⚠ Page error: ${e.message}`); });
   page.on('console', (m) => { if (m.type() === 'error') { stats.consoleErrors++; record({ type: 'page_console_error', text: m.text() }); } });
   page.on('response', (r) => { if (r.status() >= 400) record({ type: 'page_http_error', status: r.status(), method: r.request().method(), url: r.url() }); });
   let loaded = false;
   page.on('framenavigated', (f) => {
     if (f !== page.mainFrame()) return;
-    if (loaded) { stats.reloads++; record({ type: 'page_reload', url: f.url() }); log(`⚠ 编辑器页面重载了(第 ${stats.reloads} 次)`); }
+    if (loaded) { stats.reloads++; record({ type: 'page_reload', url: f.url() }); log(`⚠ Editor page reloaded (time ${stats.reloads})`); }
     loaded = true;
   });
 
   const editorUrl = `${server.origin}/?editor&nosetup=1${opts.open ? `&open=${encodeURIComponent(opts.open)}` : ''}`;
   await page.goto(editorUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await waitHttp(`${server.origin}/api/mcp/status`, (d) => d?.editorConnected === true, 90000, '等编辑器连上 MCP 桥');
-  log(`编辑器已连上 MCP 桥(${editorUrl})`);
+  await waitHttp(`${server.origin}/api/mcp/status`, (d) => d?.editorConnected === true, 90000, 'Waiting for the editor to connect to the MCP bridge');
+  log(`Editor connected to the MCP bridge (${editorUrl})`);
 
   /* ---- 每 15 秒看一次编辑器还连着没有 ---- */
   let connected = true;
   const watch = setInterval(async () => {
     try {
       const st = await fetch(`${server.origin}/api/mcp/status`).then((r) => r.json());
-      if (connected && !st.editorConnected) { stats.disconnects++; record({ type: 'editor_disconnected' }); log('⚠ 编辑器断线了'); }
-      if (!connected && st.editorConnected) { record({ type: 'editor_reconnected' }); log('编辑器重新连上了'); }
+      if (connected && !st.editorConnected) { stats.disconnects++; record({ type: 'editor_disconnected' }); log('⚠ Editor disconnected'); }
+      if (!connected && st.editorConnected) { record({ type: 'editor_reconnected' }); log('Editor reconnected'); }
       connected = !!st.editorConnected;
     } catch (e) {
-      if (connected) { stats.disconnects++; log(`⚠ 查不到 /api/mcp/status:${e.message}`); }
+      if (connected) { stats.disconnects++; log(`⚠ Cannot reach /api/mcp/status: ${e.message}`); }
       connected = false;
     }
   }, 15000);
@@ -301,8 +301,8 @@ async function main() {
     await sleep(5000);
     clearInterval(watch);
     const st = await fetch(`${server.origin}/api/mcp/status`).then((r) => r.json());
-    log(`状态:${JSON.stringify(st)}`);
-    log(st.editorConnected && !stats.pageErrors ? '✓ 环境正常(--connect-only,没发对话)' : '✖ 环境不正常');
+    log(`Status: ${JSON.stringify(st)}`);
+    log(st.editorConnected && !stats.pageErrors ? '✓ Environment OK (--connect-only, no chat sent)' : '✖ Environment not OK');
     return st.editorConnected && !stats.pageErrors ? 0 : 1;
   }
 
@@ -311,15 +311,15 @@ async function main() {
   const convId = `rl-${stamp()}`;
   const attachments = prepareAttachments(convId);
   const body = { provider: 'api', reviewLoop: true, prompt: opts.prompt, attachments, ...(opts.model ? { model: opts.model } : {}) };
-  log(`发 /api/ai/chat(provider: api,reviewLoop: true${attachments.length ? `,附件 ${attachments.length} 个` : ''}),超时 ${opts.timeoutMin} 分钟`);
+  log(`Sending /api/ai/chat (provider: api, reviewLoop: true${attachments.length ? `, ${attachments.length} attachments` : ''}), timeout ${opts.timeoutMin} minutes`);
 
   chat = new AbortController();
   let timedOut = false;
-  const timer = setTimeout(() => { timedOut = true; log(`✖ 超过 ${opts.timeoutMin} 分钟,中止`); chat.abort(); }, opts.timeoutMin * 60000);
+  const timer = setTimeout(() => { timedOut = true; log(`✖ Exceeded ${opts.timeoutMin} minutes, aborting`); chat.abort(); }, opts.timeoutMin * 60000);
   const run = { done: null, errors: [], tools: new Map(), toolErrors: 0, verdicts: [], reply: '' };
   const heartbeat = setInterval(() => {
     const calls = [...run.tools.values()].reduce((a, b) => a + b, 0);
-    log(`… 进行中:工具调用 ${calls} 次,编辑器${connected ? '连着' : '断开'}${server.restarts() ? `,dev server 重启 ${server.restarts()} 次` : ''}`);
+    log(`… In progress: ${calls} tool calls, editor ${connected ? 'connected' : 'disconnected'}${server.restarts() ? `, dev server restarted ${server.restarts()} times` : ''}`);
   }, 60000);
 
   try {
@@ -333,7 +333,7 @@ async function main() {
         case 'run': log(`runId ${ev.runId}`); break;
         case 'session': log(`sessionId ${ev.sessionId}`); break;
         case 'diagnostic':
-          if (ev.stage === 'configuration') log(`模型 ${ev.data?.vendor} / ${ev.data?.model},effort ${ev.data?.effort}`);
+          if (ev.stage === 'configuration') log(`Model ${ev.data?.vendor} / ${ev.data?.model}, effort ${ev.data?.effort}`);
           break;
         case 'status':
           if (/^judger:/.test(ev.text)) run.verdicts.push(ev.text.split('\n')[0]);
@@ -366,17 +366,17 @@ async function main() {
   const calls = [...run.tools.entries()].sort((a, b) => b[1] - a[1]);
   const u = run.done?.usage;
   console.log('');
-  log('—— 结果 ——');
-  log(`用时 ${clock()};${run.done ? `结束(outcome ${run.done.outcome ?? '—'})` : timedOut ? '超时中止' : '没收到 done'}`);
-  if (u) log(`token:输入 ${u.input}(其中缓存命中 ${u.cacheRead}),输出 ${u.output}`);
-  log(`工具调用 ${calls.reduce((a, [, n]) => a + n, 0)} 次,失败 ${run.toolErrors} 次${calls.length ? `;最多的:${calls.slice(0, 6).map(([k, n]) => `${k}×${n}`).join('、')}` : ''}`);
-  if (run.verdicts.length) log(`judger 裁决:${run.verdicts.join(' → ')}`);
-  if (run.errors.length) log(`错误 ${run.errors.length} 条,第一条:${run.errors[0].split('\n')[0]}`);
-  log(`编辑器断线 ${stats.disconnects} 次,页面重载 ${stats.reloads} 次,页面错误 ${stats.pageErrors} 个,dev server 重启 ${server.restarts()} 次`);
-  if (cardsAfter.length) log(`⚠ src/cards/user/ 多了这些改动(没删,自己看要不要留):\n         ${cardsAfter.join('\n         ')}`);
-  log(`最终回复 ${path.join(work, 'reply.md')}(${run.reply.length} 字);事件 ${path.join(work, 'events.jsonl')}`);
+  log('-- Result --');
+  log(`Elapsed ${clock()}; ${run.done ? `finished (outcome ${run.done.outcome ?? '—'})` : timedOut ? 'aborted on timeout' : 'no done received'}`);
+  if (u) log(`token: input ${u.input} (cache hits ${u.cacheRead}), output ${u.output}`);
+  log(`${calls.reduce((a, [, n]) => a + n, 0)} tool calls, ${run.toolErrors} failed${calls.length ? `; most frequent: ${calls.slice(0, 6).map(([k, n]) => `${k}×${n}`).join(', ')}` : ''}`);
+  if (run.verdicts.length) log(`judger verdict: ${run.verdicts.join(' → ')}`);
+  if (run.errors.length) log(`${run.errors.length} errors, first: ${run.errors[0].split('\n')[0]}`);
+  log(`Editor disconnected ${stats.disconnects} times, page reloaded ${stats.reloads} times, ${stats.pageErrors} page errors, dev server restarted ${server.restarts()} times`);
+  if (cardsAfter.length) log(`⚠ src/cards/user/ has these extra changes (not deleted, decide yourself whether to keep them):\n         ${cardsAfter.join('\n         ')}`);
+  log(`Final reply ${path.join(work, 'reply.md')} (${run.reply.length} chars); events ${path.join(work, 'events.jsonl')}`);
   const lessons = path.join(path.dirname(ai.configPath), 'review-lessons.json');
-  if (fs.existsSync(lessons)) log(`教训 ${lessons}`);
+  if (fs.existsSync(lessons)) log(`Lessons ${lessons}`);
   return run.done && !run.errors.length && !timedOut ? 0 : 1;
 }
 

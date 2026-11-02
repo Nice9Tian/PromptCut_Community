@@ -29,9 +29,9 @@
 export const CLIP_SPEED_MIN = 0.25;
 export const CLIP_SPEED_MAX = 4;
 /** 界面上写明「变速段不出原声」的那一句(〔裁〕第一版):桌面编辑分区、手机版「速度」面板同一句 */
-export const SPEED_MUTE_NOTE = "变速后这一段视频不出原声（第一版不做变速声音）；要听声音可以音画分离，分出来的声音跟着变速、会变调。改回 1× 恢复。";
+export const SPEED_MUTE_NOTE = "After a speed change, this video segment plays no original audio (the first version has no speed-changed audio). To hear sound, split the audio from the video; the split-out audio follows the speed change and its pitch shifts. Set it back to 1× to restore.";
 /** 声音段(含音画分离出来的)变速时的说明 */
-export const SPEED_AUDIO_NOTE = "声音段变速后跟着变调（第一版不做保调变速）。";
+export const SPEED_AUDIO_NOTE = "Audio segments shift in pitch after a speed change (the first version has no pitch-preserving speed change).";
 /** 界面上给的几档 */
 export const CLIP_SPEED_PRESETS = Object.freeze([0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4]);
 
@@ -200,7 +200,7 @@ export function withMediaRates(project, graph) {
   }) };
 }
 
-const TRANSITION_NAME = { crossfade: "交叉溶解", fadeIn: "淡入", fadeOut: "淡出" };
+const TRANSITION_NAME = { crossfade: "crossfade", fadeIn: "Fade in", fadeOut: "Fade out" };
 
 /**
  * 改速度之后的那句说明(桌面编辑分区的提示与手机版的气泡共用):转场跟着缩了几秒、谁跟着挪了、后面推开了几段。
@@ -208,12 +208,12 @@ const TRANSITION_NAME = { crossfade: "交叉溶解", fadeIn: "淡入", fadeOut: 
  */
 export function speedChangeNotes(r, clipId) {
   const parts = [];
-  for (const t of r?.transitions ?? []) parts.push(`${TRANSITION_NAME[t.kind] ?? "转场"}跟着缩短：${t.from.toFixed(2)} 秒 → ${t.to.toFixed(2)} 秒（这一段变短，原来的转场装不下）`);
+  for (const t of r?.transitions ?? []) parts.push(`${TRANSITION_NAME[t.kind] ?? "Transition"} shortened accordingly: ${t.from.toFixed(2)} s → ${t.to.toFixed(2)} s (this segment got shorter, so the original transition no longer fits)`);
   const moved = r?.moved ?? [];
-  if (moved.includes(clipId)) parts.push("为了缩短交叉溶解，这一段整体往后挪了（内容不变）");
-  if (moved.some((id) => id !== clipId)) parts.push("交叉溶解的另一段跟着挪了");
-  if (r?.pushed) parts.push(`后面 ${r.pushed.clips} 段整体往后推了 ${r.pushed.by.toFixed(2)} 秒`);
-  return parts.length ? parts.join("；") : null;
+  if (moved.includes(clipId)) parts.push("To shorten the crossfade, this segment was shifted later as a whole (content unchanged)");
+  if (moved.some((id) => id !== clipId)) parts.push("The other segment of the crossfade was shifted too");
+  if (r?.pushed) parts.push(`The following ${r.pushed.clips} segments were pushed later by ${r.pushed.by.toFixed(2)} s`);
+  return parts.length ? parts.join(";") : null;
 }
 
 /** 给人看的倍数:`2×`、`0.5×` */

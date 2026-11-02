@@ -24,11 +24,11 @@ const cardFile = path.join(root, "src", "cards", "user", `${CARD_ID}.tsx`);
 const CARD_SOURCE = `import type { CardDef } from "../../kernel/types";
 import { glsl } from "../../render/cards/graphValues";
 
-/** 验证脚本的临时卡:整幅不透明红(225,20,30),用来看层序是按 tr.clips 走的。 */
+/** Temporary card for the verify script: a fully opaque red (225,20,30), to check that layer order follows tr.clips. */
 export const opaqueRed: CardDef<Record<string, never>> = {
   id: "${CARD_ID}",
-  name: "不透明红",
-  description: "整幅不透明红色的素材效果卡,只给 verify-frame-scene-order 用",
+  name: "Opaque red",
+  description: "A media effect card that is fully opaque red, used only by verify-frame-scene-order",
   source: "user",
   kind: "animation",
   frameMode: "direct",
@@ -65,7 +65,7 @@ try {
   const mod = await server.ssrLoadModule(`/src/cards/user/${CARD_ID}.tsx`);
   // ssrLoadModule 回的是模块命名空间,不是函数 —— 取出里面那个 CardDef 再包成 getCard
   const definition = Object.values(mod).find((value) => value && typeof value === "object" && value.id === CARD_ID);
-  assert.ok(definition, `临时素材效果卡没有导出 id 为 ${CARD_ID} 的 CardDef`);
+  assert.ok(definition, `The temporary media effect card does not export a CardDef with id ${CARD_ID}`);
   const getCard = (id) => (id === definition.id ? definition : undefined);
   const makeGraph = (id, frame = undefined) =>
     applyCardDefinition(base, { cardId: CARD_ID, trackId: "main", start: 0, end: 2, newClipId: id, nodeId: `${id}-node`, ...(frame ? { frame } : {}) }, getCard).project;
@@ -85,11 +85,11 @@ try {
   const graphFirst = makeGraph("graph-first");
   graphFirst.tracks[0].clips.push(native);
   const first = center(await capture("graph-before-native", graphFirst));
-  assert.ok(!same(first, red), `native card was not above prior 素材效果卡 clip: ${first}`);
+  assert.ok(!same(first, red), `native card was not above prior media effect card clip: ${first}`);
   const graphLast = makeGraph("graph-last");
   graphLast.tracks[0].clips.unshift(native);
   const last = center(await capture("native-before-graph", graphLast));
-  assert.ok(same(last, red), `素材效果卡 clip was not above prior native card: ${last}`);
+  assert.ok(same(last, red), `media effect card clip was not above prior native card: ${last}`);
 
   // Cached controls are a full-stage image. Verify both ordering directions;
   // an opaque cache after native must cover it, while one before native must not.
@@ -113,8 +113,8 @@ try {
     if (!wrapper) return "missing";
     return { own: getComputedStyle(wrapper).perspective, parent: getComputedStyle(wrapper.parentElement).perspective };
   });
-  assert.notEqual(perspective, "missing", "3-D 素材效果卡片段没有出现在舞台上");
-  assert.notEqual(perspective.parent, "none", "素材效果卡 3-D parent did not receive CSS perspective");
+  assert.notEqual(perspective, "missing", "3-D media effect card clip did not appear on the stage");
+  assert.notEqual(perspective.parent, "none", "media effect card 3-D parent did not receive CSS perspective");
   const evidence = { frame: 10, graphBeforeNative: first, nativeBeforeGraph: last, nativeBeforeCache: cacheOnTop, cacheBeforeNative: cacheBelow, graph3dPerspective: perspective };
   await fs.writeFile(path.join(output, "evidence.json"), JSON.stringify(evidence, null, 2));
   console.log("PASS FrameScene mixed ordering", JSON.stringify(evidence));

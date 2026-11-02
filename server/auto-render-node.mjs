@@ -47,16 +47,16 @@ export function autoRenderNodeOffReason(env = process.env) {
 
 /** 规整页面交来的共享配置;不合格抛错(错误信息里不带票据) */
 export function normalizeBinding(input) {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('共享配置要是对象');
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Shared config must be an object');
   let url;
-  try { url = new URL(String(input.url ?? '')); } catch { throw new Error('url 不是合法地址'); }
-  if (url.protocol !== 'ws:' && url.protocol !== 'wss:') throw new Error('url 要是 ws:// 或 wss://');
-  if (typeof input.projectId !== 'string' || !PROJECT_ID_RE.test(input.projectId)) throw new Error('projectId 不合法');
+  try { url = new URL(String(input.url ?? '')); } catch { throw new Error('url is not a valid address'); }
+  if (url.protocol !== 'ws:' && url.protocol !== 'wss:') throw new Error('url must be ws:// or wss://');
+  if (typeof input.projectId !== 'string' || !PROJECT_ID_RE.test(input.projectId)) throw new Error('projectId is invalid');
   let assetBase = null;
   if (input.assetBase !== undefined && input.assetBase !== null && input.assetBase !== '') {
     let a;
-    try { a = new URL(String(input.assetBase)); } catch { throw new Error('assetBase 不是合法地址'); }
-    if (a.protocol !== 'http:' && a.protocol !== 'https:') throw new Error('assetBase 要是 http:// 或 https://');
+    try { a = new URL(String(input.assetBase)); } catch { throw new Error('assetBase is not a valid address'); }
+    if (a.protocol !== 'http:' && a.protocol !== 'https:') throw new Error('assetBase must be http:// or https://');
     assetBase = String(input.assetBase).replace(/\/+$/, '');
   }
   const contentId = typeof input.contentId === 'string' && input.contentId && input.contentId.length <= 256 ? input.contentId : null;
@@ -75,7 +75,7 @@ export const ticketOk = (t) => typeof t === 'string' && t.length > 0 && t.length
  * @param {(event: string, fields?: object) => void} [deps.log]
  */
 export function createAutoRenderNode({ start, stop, requestTicket, now = Date.now, log = () => {} }) {
-  if (typeof start !== 'function' || typeof stop !== 'function' || typeof requestTicket !== 'function') throw new TypeError('createAutoRenderNode 要 start、stop、requestTicket');
+  if (typeof start !== 'function' || typeof stop !== 'function' || typeof requestTicket !== 'function') throw new TypeError('createAutoRenderNode requires start, stop and requestTicket');
   const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志出错不影响交接 */ } };
 
   /** 当前这一代:{ gen, binding, link, handle, starting, ticket: { value, exp } | null, inflight, state, lastError, … } */
@@ -93,14 +93,14 @@ export function createAutoRenderNode({ start, stop, requestTicket, now = Date.no
 
   /** 这一代的 `protocols()`:每次建新会话时调(两条连接可能同时要,合并成一次请求) */
   const protocolsOf = (rec) => async () => {
-    if (rec.gen !== gen) throw new Error('这份共享配置已经撤掉');
+    if (rec.gen !== gen) throw new Error('This shared config has been revoked');
     let t = freshTicket(rec);
     if (!t) {
       rec.inflight ??= (async () => {
         counters.ticketRequests++;
         try {
           const got = await requestTicket(rec.binding.projectId);
-          if (!ticketOk(got)) throw new Error('页面交回的票据不合格');
+          if (!ticketOk(got)) throw new Error('The ticket returned by the page is invalid');
           if (rec.gen === gen) keepTicket(rec, got);
           rec.waitingPage = false;
           return got;
@@ -116,7 +116,7 @@ export function createAutoRenderNode({ start, stop, requestTicket, now = Date.no
       })();
       t = await rec.inflight;
     }
-    if (rec.gen !== gen) throw new Error('这份共享配置已经撤掉');
+    if (rec.gen !== gen) throw new Error('This shared config has been revoked');
     rec.ticketFailures = 0;
     return ['promptcut.v1', `promptcut.ticket.${t}`];
   };

@@ -19,10 +19,10 @@ function CompositePlaceholder(_: CardProps<Record<string, never>>) {
 
 export const compositeCard: CardDef<Record<string, never>> = {
   id: COMPOSITE_CARD_ID,
-  name: "组合卡",
-  description: "由部件库里的部件自由搭出来的卡:每个部件有自己的位置、参数和进场时机",
-  useWhen: "现成的卡都不合适、要按内容自己搭一张(标题 + 要点 + 指标随意组合)时用。先 add_composite 建一张空的,再 list_parts 挑部件 add_part 进去,或者一次把 parts 传给 add_composite。",
-  tags: ["组合", "部件", "自定义"],
+  name: "Composite card",
+  description: "A card freely assembled from parts in the parts library: each part has its own position, parameters and entrance timing",
+  useWhen: "Use when none of the ready-made cards fit and you need to build one from the content (any mix of title + key points + metrics). First create an empty one with add_composite, then pick parts with list_parts and add them with add_part, or pass parts to add_composite all at once.",
+  tags: ["composite", "part", "custom"],
   source: "native",
   // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
   frameMode: "stateful",

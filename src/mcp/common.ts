@@ -54,7 +54,7 @@ export async function measureContentBoxes(clipIds: string[]): Promise<Map<string
   const cardIds: string[] = [];
   for (const id of clipIds) {
     const hit = findClip(st.project, id);
-    if (!hit) { out.set(id, { contentBox: null, contentNote: `找不到 clip ${id}` }); continue; }
+    if (!hit) { out.set(id, { contentBox: null, contentNote: `clip ${id} not found` }); continue; }
     if (!hit.clip.cardId) { out.set(id, { contentBox: roundBox(frameBox(hit.clip.frame, stage)) }); continue; }
     cardIds.push(id);
   }
@@ -64,7 +64,7 @@ export async function measureContentBoxes(clipIds: string[]): Promise<Map<string
    * 接着的是 Agent 的 get_layout:与其把一次工具调用挂在那里,不如让它拿到这句话再来一次。
    */
   if (!backStage()) {
-    for (const id of cardIds) out.set(id, { contentBox: null, contentNote: "预览窗口没就绪,量不到内容框;稍后再 get_layout" });
+    for (const id of cardIds) out.set(id, { contentBox: null, contentNote: "The preview window is not ready, so the content box cannot be measured; call get_layout again later" });
     return out;
   }
   const list = await runBackJob("measure", async ({ stage: s }) => {
@@ -80,7 +80,7 @@ export async function measureContentBoxes(clipIds: string[]): Promise<Map<string
     }
     return rects;
   }).catch((err: unknown) => {
-    for (const id of cardIds) out.set(id, { contentBox: null, contentNote: `舞台没回应,量不到内容框:${err instanceof Error ? err.message : String(err)}` });
+    for (const id of cardIds) out.set(id, { contentBox: null, contentNote: `The stage did not respond, so the content box cannot be measured: ${err instanceof Error ? err.message : String(err)}` });
     return null;
   });
   if (!list) return out;
@@ -89,7 +89,7 @@ export async function measureContentBoxes(clipIds: string[]): Promise<Map<string
     if (!r) {
       const hit = findClip(st.project, id);
       const range = hit ? `${hit.clip.start}~${hit.clip.end}s` : "?";
-      out.set(id, { contentBox: null, contentNote: `这张卡此刻不在画面上(播放头 ${st.t}s 不在它的 ${range} 区间内),先 seek 进它的时段再读` });
+      out.set(id, { contentBox: null, contentNote: `This card is not on screen right now (playhead ${st.t}s is not within its ${range} range); seek into its time range first, then read` });
       continue;
     }
     out.set(id, { contentBox: roundBox(r.bounds ?? r.rect) });
@@ -126,8 +126,8 @@ export async function contentLayoutOf(clipIds: string[]) {
  */
 export function withParts<R extends { tree: PartInstance[] }>(clipId: string, next: (tree: PartInstance[]) => R, extra?: (r: R) => Record<string, unknown>) {
   const hit = findClip(getState().project, clipId);
-  if (!hit) throw new Error(`找不到 clip ${clipId}`);
-  if (!isComposite(hit.clip)) throw new Error(`clip ${clipId} 不是组合卡(cardId 要是 composite);先 add_composite 建一张,或 update_clip 把它换成 composite`);
+  if (!hit) throw new Error(`clip ${clipId} not found`);
+  if (!isComposite(hit.clip)) throw new Error(`clip ${clipId} is not a composite card (cardId must be composite); first create one with add_composite, or switch it to composite with update_clip`);
   const r = next(hit.clip.parts ?? []);
   actions.setClipParts(clipId, r.tree);
   const after = findClip(getState().project, clipId)!;
@@ -136,7 +136,7 @@ export function withParts<R extends { tree: PartInstance[] }>(clipId: string, ne
 
 export function withFrame(clipId: string, next: (prev: ClipFrame | undefined, stage: Size) => ClipFrame | undefined) {
   const hit = findClip(getState().project, clipId);
-  if (!hit) throw new Error(`找不到 clip ${clipId}`);
+  if (!hit) throw new Error(`clip ${clipId} not found`);
   const prev = (hit.clip as { frame?: ClipFrame }).frame;
   actions.setClipFrame(clipId, next(prev, stageSize()));
   return { ok: true, clipId, layout: frameLayoutOf(clipId), look: lookHint(clipId) };
@@ -192,14 +192,14 @@ function audioTargetOf(args: { clipId?: string; mediaId?: string; scope?: string
   const scope = args.scope || (args.clipId ? "clip" : args.mediaId ? "media" : "timeline");
   const mediaOf = (id: string) => {
     const m = p.media.find((x) => x.id === id);
-    if (!m) throw new Error(`找不到素材 ${id}`);
-    if (m.kind === "image") throw new Error(`「${m.name}」是图片,没有声音`);
+    if (!m) throw new Error(`Asset ${id} not found`);
+    if (m.kind === "image") throw new Error(`"${m.name}" is an image and has no sound`);
     return { id: m.id, name: m.name, kind: m.kind, url: m.url, path: (m as { path?: string }).path };
   };
   if (scope === "clip") {
     const hit = findClip(p, String(args.clipId || ""));
-    if (!hit) throw new Error(`当前剪辑里没有片段 ${args.clipId || "(没给 clipId)"}`);
-    if (!hit.clip.mediaId || hit.clip.cardId) throw new Error("卡片没有声音;要测的是视频 / 声音片段");
+    if (!hit) throw new Error(`The current cut has no clip ${args.clipId || "(no clipId given)"}`);
+    if (!hit.clip.mediaId || hit.clip.cardId) throw new Error("Cards have no sound; measure a video / audio clip instead");
     // 变速段量的是它用到的那截素材(时间轴时长 × 片段速度,kernel/clipTime.mjs;缺省 1 逐位不变)
     return { scope, plan: null, body: { scope, media: mediaOf(hit.clip.mediaId), offset: hit.clip.mediaOffset ?? 0, duration: mediaSpanOf(hit.clip) } as Record<string, unknown> };
   }
@@ -219,7 +219,7 @@ function audioTargetOf(args: { clipId?: string; mediaId?: string; scope?: string
   };
 }
 
-const NO_SOUND_NOTE = "时间轴上没有会出声的片段(隐藏 / 静音的序列和静音的片段不算)";
+const NO_SOUND_NOTE = "There are no clips that produce sound on the timeline (hidden / muted tracks and muted clips do not count)";
 
 /**
  * 自定义测量(measure_audio_js,计划 A6;只在创造力等级「高」开放,闸在 server/agent/creativity-gate.mjs)。
@@ -243,11 +243,11 @@ export async function measureAudioJs(args: {
   };
   const res = await fetch(apiUrl("/api/audio/measure-js"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(85000) });
   const data = await res.json().catch(() => null);
-  if (!res.ok || !data) throw new Error(data?.error || `自定义测量失败(HTTP ${res.status})`);
+  if (!res.ok || !data) throw new Error(data?.error || `Custom measurement failed (HTTP ${res.status})`);
   const out: Record<string, unknown> = { ...data, scope: target.scope };
   if (target.plan) {
     const withFx = target.plan.filter((e) => e.fx).map((e) => e.clipId);
-    if (withFx.length) out.notes = [...(Array.isArray(data.notes) ? data.notes : []), `${withFx.join("、")} 挂着音频效果,这里测的不含效果`];
+    if (withFx.length) out.notes = [...(Array.isArray(data.notes) ? data.notes : []), `${withFx.join(", ")} has audio effects attached; the measurement here does not include effects`];
   }
   return out;
 }
@@ -262,7 +262,7 @@ export async function measureAudio(args: { clipId?: string; mediaId?: string; sc
   if (!req.body) return req.empty;
   const res = await fetch(apiUrl("/api/audio/measure"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req.body), signal: AbortSignal.timeout(55000) });
   const data = await res.json().catch(() => null);
-  if (!res.ok || !data || data.ok === false) throw new Error(data?.error || `测响度失败(HTTP ${res.status})`);
+  if (!res.ok || !data || data.ok === false) throw new Error(data?.error || `Loudness measurement failed (HTTP ${res.status})`);
   return measureAudioFinish(req, data);
 }
 
@@ -286,10 +286,10 @@ export function measureAudioFinish(req: { scope: string; plan: ReturnType<typeof
   if (plan) {
     if (Array.isArray(data.series)) out.series = data.series.map((s: { t: number }) => ({ ...s, sounding: soundingAt(plan!, s.t) }));
     const withFx = plan.filter((e) => e.fx).map((e) => e.clipId);
-    if (withFx.length) notes.push(`${withFx.join("、")} 挂着音频效果,这里测的不含效果(效果在 Chrome 里算,导出时才混进去)`);
+    if (withFx.length) notes.push(`${withFx.join(", ")} has audio effects attached; the measurement here does not include effects (effects are computed in Chrome and only mixed in on export)`);
     out.clips = plan.map((e) => ({ clipId: e.clipId, mediaId: e.mediaId, start: e.start, end: +(e.start + e.dur).toFixed(3), volume: +e.volume.toFixed(3), ...(e.fx ? { fxId: e.fx.def.id } : null) }));
   } else if (scope === "clip") {
-    notes.push("测的是这一段用到的那截素材的原声;片段音量、淡入淡出和音频效果都不含");
+    notes.push("This measures the original sound of the part of the media used by this clip; clip volume, fades and audio effects are not included");
   }
   if (notes.length) out.notes = notes;
   return out;
@@ -329,13 +329,13 @@ export function findCaptionClip(clipId?: string) {
   const project = getState().project;
   if (!clipId) {
     const hits = project.tracks.flatMap((t) => t.clips.filter((c) => c.cardId === CAPTION_CARD_ID));
-    if (hits.length === 0) throw new Error("时间轴上没有字幕卡。先 add_clip 建一张 caption-track,再用 fill_captions 灌进文字稿。");
-    if (hits.length > 1) throw new Error(`时间轴上有 ${hits.length} 张字幕卡,请用 clipId 指明是哪一张:${hits.map((c) => c.id).join(", ")}`);
+    if (hits.length === 0) throw new Error("There is no captions card on the timeline. First create a caption-track with add_clip, then feed in the transcript with fill_captions.");
+    if (hits.length > 1) throw new Error(`There are ${hits.length} captions cards on the timeline, specify which one with clipId: ${hits.map((c) => c.id).join(", ")}`);
     clipId = hits[0].id;
   }
   const hit = findClip(project, clipId);
-  if (!hit) throw new Error(`找不到 clip ${clipId}`);
-  if (hit.clip.cardId !== CAPTION_CARD_ID) throw new Error(`clip ${clipId} 是 ${hit.clip.cardId || "素材段"},不是字幕卡。`);
+  if (!hit) throw new Error(`clip ${clipId} not found`);
+  if (hit.clip.cardId !== CAPTION_CARD_ID) throw new Error(`clip ${clipId} is ${hit.clip.cardId || "media clip"}, not a captions card.`);
   return hit;
 }
 
@@ -374,7 +374,7 @@ export function subjectDigest(info: SubjectRangeInfo | null) {
     boxCount: info.boxes.length,
     boxes: topBoxes(info.boxes),
     ...(info.approximate
-      ? { approximate: true, note: "这段区间里没有采样点,数字来自时间上最近的一次采样,只是近似" }
+      ? { approximate: true, note: "There are no sample points in this range; the numbers come from the nearest sample in time and are only approximate" }
       : null),
   };
 }

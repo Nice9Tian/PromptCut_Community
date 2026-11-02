@@ -98,10 +98,10 @@ export function createVirtualTimers(): VirtualTimers {
         try {
           best.cb(...best.args);
         } catch (err) {
-          console.error("[stageClock] 定时器回调抛错", err);
+          console.error("[stageClock] timer callback threw an error", err);
         }
       }
-      console.warn("[stageClock] 一拍内定时器触发次数到顶,剩下的推到下一拍");
+      console.warn("[stageClock] timer fire count hit the limit within one tick, the rest is pushed to the next tick");
       return fired;
     },
     shift(delta) {

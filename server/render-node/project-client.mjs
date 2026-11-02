@@ -101,10 +101,10 @@ export function createProjectClient(endpoint, {
   clearTimeout: clearTimer = globalThis.clearTimeout,
 } = {}) {
   if (!endpoint || typeof endpoint.send !== 'function' || typeof endpoint.onMessage !== 'function') {
-    throw new TypeError('createProjectClient：endpoint 必须有 send 与 onMessage');
+    throw new TypeError('createProjectClient: endpoint must have send and onMessage');
   }
   if (!(Number.isFinite(timeoutMs) && timeoutMs > 0)) {
-    throw new TypeError('createProjectClient：timeoutMs 必须是正数');
+    throw new TypeError('createProjectClient: timeoutMs must be a positive number');
   }
 
   const instance = randomUUID().slice(0, 8);
@@ -126,7 +126,7 @@ export function createProjectClient(endpoint, {
   function arm(reqId, entry) {
     const timer = setTimer(() => {
       const e = settle(reqId);
-      if (e) e.reject(clientError('timeout', `项目 ${e.type}：${timeoutMs} ms 内没有回包`));
+      if (e) e.reject(clientError('timeout', `Project ${e.type}: no reply within ${timeoutMs} ms`));
     }, timeoutMs);
     timer?.unref?.();
     entry.timer = timer;
@@ -139,7 +139,7 @@ export function createProjectClient(endpoint, {
     if (message.type === 'error') {
       settle(reqId);
       const reason = typeof message.reason === 'string' ? message.reason : 'error';
-      entry.reject(clientError(reason, `项目 ${entry.type} 失败：${reason}`, { reason, detail: message.detail }));
+      entry.reject(clientError(reason, `Project ${entry.type} failed: ${reason}`, { reason, detail: message.detail }));
       return;
     }
     let verdict;
@@ -162,7 +162,7 @@ export function createProjectClient(endpoint, {
     endpoint.onClose(() => {
       for (const reqId of [...inflight.keys()]) {
         const entry = settle(reqId);
-        entry.reject(clientError('disconnected', `项目 ${entry.type}：连接已断开`));
+        entry.reject(clientError('disconnected', `Project ${entry.type}: connection closed`));
       }
     });
   }
@@ -178,7 +178,7 @@ export function createProjectClient(endpoint, {
       try {
         JSON.stringify(message);
       } catch {
-        reject(clientError('bad-message', `项目 ${type}：消息无法序列化`));
+        reject(clientError('bad-message', `Project ${type}: message cannot be serialized`));
         return;
       }
       const entry = { type, reject, timer: null, onReply: (m) => onReply(m, resolve) };
@@ -193,12 +193,12 @@ export function createProjectClient(endpoint, {
       // 端点可能在 send 里同步收到回包（测试替身），这时已经 settle 过了
       if (!sent && inflight.has(reqId)) {
         settle(reqId);
-        reject(clientError('disconnected', `项目 ${type}：连接未就绪，没有发出`));
+        reject(clientError('disconnected', `Project ${type}: connection not ready, nothing was sent`));
       }
     });
   }
 
-  const unexpected = (type, message) => clientError('bad-reply', `项目 ${type} 回了意外的 ${String(message?.type)}`);
+  const unexpected = (type, message) => clientError('bad-reply', `Project ${type} got an unexpected reply ${String(message?.type)}`);
 
   return {
     announce(projectId, digest, session) {
@@ -214,11 +214,11 @@ export function createProjectClient(endpoint, {
     },
 
     async putSnapshot(projectId, projectRev, digest, text) {
-      if (typeof text !== 'string') throw new TypeError('putSnapshot：text 必须是字符串');
+      if (typeof text !== 'string') throw new TypeError('putSnapshot: text must be a string');
       const parts = splitText(text, PROJECT_CLIENT_DEFAULTS.partBytes);
       const count = parts.length;
       if (count > PROJECT_CLIENT_DEFAULTS.maxParts) {
-        throw clientError('too-large', `项目快照切出 ${count} 片，超过 ${PROJECT_CLIENT_DEFAULTS.maxParts} 片的上限`);
+        throw clientError('too-large', `Project snapshot was split into ${count} parts, over the limit of ${PROJECT_CLIENT_DEFAULTS.maxParts} parts`);
       }
       let last = null;
       for (let index = 0; index < count; index += 1) {
@@ -228,7 +228,7 @@ export function createProjectClient(endpoint, {
         });
       }
       if (last?.complete !== true) {
-        throw clientError('incomplete', `项目快照上传完 ${count} 片，服务端只收到 ${String(last?.received)} 片`);
+        throw clientError('incomplete', `Project snapshot upload finished ${count} parts, but the server received only ${String(last?.received)} parts`);
       }
     },
 
@@ -248,28 +248,28 @@ export function createProjectClient(endpoint, {
             return 'done';
           }
           if (typeof m.data !== 'string' || !Number.isSafeInteger(m.count) || m.count < 1) {
-            throw clientError('bad-reply', '项目快照分片的字段不对');
+            throw clientError('bad-reply', 'Project snapshot part has wrong fields');
           }
           if (count === null) count = m.count;
           if (m.count !== count || m.index !== parts.length || parts.length >= count) {
-            throw clientError('bad-reply', `项目快照分片乱了：期望第 ${parts.length} 片（共 ${count} 片），收到第 ${String(m.index)} 片（共 ${m.count} 片）`);
+            throw clientError('bad-reply', `Project snapshot parts out of order: expected part ${parts.length} (of ${count}), received part ${String(m.index)} (of ${m.count})`);
           }
           parts.push(m.data);
           return 'more';
         }
         if (m.type === 'project.snapshot.end') {
           if (count === null || parts.length !== count) {
-            throw clientError('bad-reply', `项目快照没收齐就结束了：收到 ${parts.length} 片，应有 ${String(count)} 片`);
+            throw clientError('bad-reply', `Project snapshot ended before all parts arrived: received ${parts.length} parts, expected ${String(count)}`);
           }
           const text = parts.join('');
           if (typeof m.digest !== 'string' || sha256(text) !== m.digest) {
-            throw clientError('digest-mismatch', '项目快照拼起来的内容与摘要不符');
+            throw clientError('digest-mismatch', 'Reassembled project snapshot does not match its digest');
           }
           let json;
           try {
             json = JSON.parse(text);
           } catch {
-            throw clientError('bad-json', '项目快照不是合法的 JSON');
+            throw clientError('bad-json', 'Project snapshot is not valid JSON');
           }
           resolve({ project: json, projectRev });
           return 'done';

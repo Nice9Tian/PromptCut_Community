@@ -51,11 +51,11 @@ export function mergeUserOf(principal) {
 }
 
 function checkThing(t, limits = MERGE_LIMITS) {
-  if (!isObj(t) || typeof t.key !== 'string' || t.key.length < 1 || t.key.length > 512) throw new Refused('bad-message', 'things[].key 必须是 1～512 个字符');
-  if (!Array.isArray(t.props) || t.props.some((p) => !isObj(p) || typeof p.prop !== 'string' || p.prop.length > 256)) throw new Refused('bad-message', 'things[].props 必须是 { prop } 的数组');
+  if (!isObj(t) || typeof t.key !== 'string' || t.key.length < 1 || t.key.length > 512) throw new Refused('bad-message', 'things[].key must be 1-512 characters');
+  if (!Array.isArray(t.props) || t.props.some((p) => !isObj(p) || typeof p.prop !== 'string' || p.prop.length > 256)) throw new Refused('bad-message', 'things[].props must be an array of { prop }');
   let n;
-  try { n = bytes(t); } catch { throw new Refused('bad-message', '记录不能序列化'); }
-  if (n > limits.THING_BYTES) throw new Refused('too-large', `一样东西超过 ${limits.THING_BYTES} 字节`);
+  try { n = bytes(t); } catch { throw new Refused('bad-message', 'Record cannot be serialized'); }
+  if (n > limits.THING_BYTES) throw new Refused('too-large', `An item exceeds ${limits.THING_BYTES} bytes`);
   return t;
 }
 
@@ -66,7 +66,7 @@ function checkThing(t, limits = MERGE_LIMITS) {
  * @param {typeof MERGE_LIMITS} [options.limits] 单测换小数字用
  */
 export function pendingMergeModule({ store, now = Date.now, limits = MERGE_LIMITS } = {}) {
-  if (!store || typeof store.read !== 'function' || typeof store.rewrite !== 'function') throw new TypeError('pendingMergeModule: store 必须有 read / rewrite');
+  if (!store || typeof store.read !== 'function' || typeof store.rewrite !== 'function') throw new TypeError('pendingMergeModule: store must have read / rewrite');
   const principals = new Map();
   /** projectId → Map<user, { things: object[], version: number }>(用到时从存储读) */
   const projects = new Map();
@@ -96,12 +96,12 @@ export function pendingMergeModule({ store, now = Date.now, limits = MERGE_LIMIT
   }
 
   function common(connId, msg) {
-    if (typeof msg.projectId !== 'string' || !PROJECT_ID_RE.test(msg.projectId)) throw new Refused('bad-message', 'projectId 不合法');
+    if (typeof msg.projectId !== 'string' || !PROJECT_ID_RE.test(msg.projectId)) throw new Refused('bad-message', 'projectId is invalid');
     const principal = principals.get(connId);
     const user = mergeUserOf(principal);
-    if (!user) throw new Refused('forbidden', '这条连接不能用待合并表');
+    if (!user) throw new Refused('forbidden', 'This connection cannot use the pending merge list');
     // 共享项目的空间就是项目本身:只能碰这个项目的表(本机空间的项目号由页面给)
-    if (principal.tenantId && principal.tenantId !== 'local' && msg.projectId !== principal.tenantId) throw new Refused('forbidden', '不是这条连接的项目');
+    if (principal.tenantId && principal.tenantId !== 'local' && msg.projectId !== principal.tenantId) throw new Refused('forbidden', 'Not the project of this connection');
     return { projectId: msg.projectId, user };
   }
 
@@ -139,7 +139,7 @@ export function pendingMergeModule({ store, now = Date.now, limits = MERGE_LIMIT
 
   function put(ctx, connId, msg, reqId) {
     const { projectId, user } = common(connId, msg);
-    if (!Array.isArray(msg.things)) throw new Refused('bad-message', 'things 必须是数组');
+    if (!Array.isArray(msg.things)) throw new Refused('bad-message', 'things must be an array');
     const incoming = msg.things.map((t) => checkThing(t, limits));
     const t = tableOf(projectId);
     const e = t.get(user) ?? { things: [], version: 0 };
@@ -150,8 +150,8 @@ export function pendingMergeModule({ store, now = Date.now, limits = MERGE_LIMIT
       else things.push(x);
     }
     // 超限:整条不收(不丢最旧的、不收一半),表原样;页面把这几条留在本机,窗口里说「暂时只存在这台设备上」
-    if (things.length > limits.THINGS_PER_USER) throw new Refused('too-many', `待合并表最多 ${limits.THINGS_PER_USER} 样东西`);
-    if (bytes(things) > limits.USER_BYTES) throw new Refused('too-large', `待合并表超过 ${limits.USER_BYTES} 字节`);
+    if (things.length > limits.THINGS_PER_USER) throw new Refused('too-many', `The pending merge list holds at most ${limits.THINGS_PER_USER} items`);
+    if (bytes(things) > limits.USER_BYTES) throw new Refused('too-large', `The pending merge list exceeds ${limits.USER_BYTES} bytes`);
     t.set(user, { things, version: e.version + 1 });
     persist(projectId);
     stats.puts += 1;
@@ -163,7 +163,7 @@ export function pendingMergeModule({ store, now = Date.now, limits = MERGE_LIMIT
   function remove(ctx, connId, msg, reqId) {
     const { projectId, user } = common(connId, msg);
     if (!Array.isArray(msg.remove) || msg.remove.some((r) => !isObj(r) || typeof r.key !== 'string' || (r.props !== undefined && (!Array.isArray(r.props) || r.props.some((p) => typeof p !== 'string')))))
-      throw new Refused('bad-message', 'remove 必须是 { key, props? } 的数组');
+      throw new Refused('bad-message', 'remove must be an array of { key, props? }');
     const t = tableOf(projectId);
     const e = t.get(user);
     watch(connId, projectId);
@@ -207,7 +207,7 @@ export function pendingMergeModule({ store, now = Date.now, limits = MERGE_LIMIT
     handle(ctx, connId, msg) {
       const reqId = isReqId(msg.reqId) ? msg.reqId : undefined;
       const fn = HANDLERS[msg.type];
-      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: '待合并表模块不支持这种消息' }, reqId);
+      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: 'The pending merge list module does not support this message' }, reqId);
       try {
         fn(ctx, connId, msg, reqId);
       } catch (err) {

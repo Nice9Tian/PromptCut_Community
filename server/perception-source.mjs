@@ -18,6 +18,7 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { AssetSourceError } from './audio-source.mjs';
+import { tr } from "./i18n.mjs";
 
 /** 请求体里的素材标识。只取这几项;`path` 不取(见文件头) */
 const REF_KEYS = ['id', 'name', 'kind', 'url', 'hash'];
@@ -37,7 +38,7 @@ export function mediaRefOf(body) {
 
 /** 给人看的素材名:报错里点名用 */
 export function mediaLabel(ref) {
-  return ref?.name || ref?.id || ref?.hash || ref?.url || '(未命名素材)';
+  return ref?.name || ref?.id || ref?.hash || ref?.url || tr("(Unnamed media)");
 }
 
 /**
@@ -52,11 +53,11 @@ export function mediaLabel(ref) {
 export async function resolveMediaSource(body, resolveSource) {
   const ref = mediaRefOf(body);
   if (!ref) {
-    return { ok: false, status: 400, error: '没给素材:请求体要带 media(素材的 id / url / hash);本机文件路径不再接受,字节一律经素材服务取' };
+    return { ok: false, status: 400, error: tr("No media given: the request body must include media (the media id / url / hash); local file paths are no longer accepted, and bytes are always fetched through the asset service") };
   }
   try {
     const src = await resolveSource(ref);
-    if (!src) return { ok: false, status: 404, error: `素材服务上没有这份素材:${mediaLabel(ref)}(还在上传就等传完再试;否则重新导入一次)` };
+    if (!src) return { ok: false, status: 404, error: tr("This media is not on the asset service: {0} (if it is still uploading, wait for the upload to finish and retry; otherwise import it again)", mediaLabel(ref)) };
     return { ok: true, src, media: ref };
   } catch (e) {
     if (e instanceof AssetSourceError) return { ok: false, status: 502, kind: 'asset-service', error: e.message };
@@ -108,14 +109,14 @@ export async function downloadToTemp(src, ref, { fetchImpl = globalThis.fetch, t
     const res = await fetchImpl(src);
     if (!res.ok || !res.body) {
       try { await res.body?.cancel(); } catch { /* 已读完 */ }
-      throw new AssetSourceError(`素材服务拒绝了读取(HTTP ${res.status})`);
+      throw new AssetSourceError(tr("The asset service refused the read (HTTP {0})", res.status));
     }
     await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(file));
     return { file, cleanup };
   } catch (e) {
     cleanup();
     if (e instanceof AssetSourceError) throw e;
-    throw new AssetSourceError(`从素材服务取字节失败:${String(e?.cause?.code || e?.message || e)}`);
+    throw new AssetSourceError(tr("Failed to fetch bytes from the asset service: {0}", String(e?.cause?.code || e?.message || e)));
   }
 }
 

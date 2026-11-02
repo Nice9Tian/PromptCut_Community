@@ -36,30 +36,30 @@ const nullOr = (v, ok) => v === null || v === undefined || ok(v);
 
 /** 核对并补齐一份 `limits.json` 的内容;不对就抛错(说明哪里不对) */
 export function normalizeLimits(raw) {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('不是对象');
-  if (raw.v !== undefined && raw.v !== 1) throw new Error(`不认识的版本 v=${raw.v}`);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Not an object');
+  if (raw.v !== undefined && raw.v !== 1) throw new Error(`Unknown version v=${raw.v}`);
   const node = { ...NODE_LIMIT_DEFAULTS };
   if (raw.node !== undefined) {
-    if (!raw.node || typeof raw.node !== 'object' || Array.isArray(raw.node)) throw new Error('node 不是对象');
+    if (!raw.node || typeof raw.node !== 'object' || Array.isArray(raw.node)) throw new Error('node is not an object');
     for (const k of Object.keys(NODE_LIMIT_DEFAULTS)) {
       if (raw.node[k] === undefined) continue;
-      if (!posInt(raw.node[k])) throw new Error(`node.${k} 要是正整数`);
+      if (!posInt(raw.node[k])) throw new Error(`node.${k} must be a positive integer`);
       node[k] = raw.node[k];
     }
   }
   const one = (v, at) => {
-    if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error(`${at} 不是对象`);
-    if (!nullOr(v.limitTokens, (x) => Number.isSafeInteger(x) && x >= 0)) throw new Error(`${at}.limitTokens 要是非负整数或 null`);
-    if (v.window !== undefined && !QUOTA_WINDOWS.includes(v.window)) throw new Error(`${at}.window 只能是 ${QUOTA_WINDOWS.join(' / ')}`);
-    if (!nullOr(v.maxRuns, posInt)) throw new Error(`${at}.maxRuns 要是正整数或 null`);
+    if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error(`${at} is not an object`);
+    if (!nullOr(v.limitTokens, (x) => Number.isSafeInteger(x) && x >= 0)) throw new Error(`${at}.limitTokens must be a non-negative integer or null`);
+    if (v.window !== undefined && !QUOTA_WINDOWS.includes(v.window)) throw new Error(`${at}.window must be one of ${QUOTA_WINDOWS.join(' / ')}`);
+    if (!nullOr(v.maxRuns, posInt)) throw new Error(`${at}.maxRuns must be a positive integer or null`);
     return { limitTokens: v.limitTokens ?? null, window: v.window ?? 'total', maxRuns: v.maxRuns ?? null };
   };
   const defaults = raw.defaults === undefined ? { limitTokens: null, window: 'total', maxRuns: null } : one(raw.defaults, 'defaults');
   const projects = {};
   if (raw.projects !== undefined) {
-    if (!raw.projects || typeof raw.projects !== 'object' || Array.isArray(raw.projects)) throw new Error('projects 不是对象');
+    if (!raw.projects || typeof raw.projects !== 'object' || Array.isArray(raw.projects)) throw new Error('projects is not an object');
     for (const [id, v] of Object.entries(raw.projects)) {
-      if (!PROJECT_ID_RE.test(id)) throw new Error(`projects 里的项目号不合法:${id.slice(0, 40)}`);
+      if (!PROJECT_ID_RE.test(id)) throw new Error(`Invalid project ID in projects: ${id.slice(0, 40)}`);
       // 项目这一行没写的字段跟着 defaults
       const p = one(v, `projects.${id}`);
       projects[id] = {
@@ -100,7 +100,7 @@ export function writeLimitsFile(file, raw) {
  * @param {object} [o.node] 覆盖节点级并发数(测试)
  */
 export function createGate({ limitsFile = null, usage, isEnabled = () => true, node: nodeOverride = null, now = () => Date.now(), log = () => {} } = {}) {
-  if (!usage || typeof usage.append !== 'function') throw new TypeError('createGate: 要 usage');
+  if (!usage || typeof usage.append !== 'function') throw new TypeError('createGate: usage is required');
   let limits = EMPTY_LIMITS;
   let stamp = '';
   /** 进行中的一轮:全节点、按项目、按成员 */
@@ -140,13 +140,13 @@ export function createGate({ limitsFile = null, usage, isEnabled = () => true, n
     if (pl.limitTokens === null) return { ok: true };
     const used = usage.used(projectId, pl.window, now());
     if (used < pl.limitTokens) return { ok: true };
-    return { ok: false, code: 'quota-exceeded', message: `这个项目的云端 Agent 额度已用完(已用 ${used} / 上限 ${pl.limitTokens})。请联系托管方。`, used, limit: pl.limitTokens };
+    return { ok: false, code: 'quota-exceeded', message: `This project's Cloud Agent quota is used up (used ${used} / limit ${pl.limitTokens}). Contact the host.`, used, limit: pl.limitTokens };
   }
 
   function enabled(projectId) {
     let on = true;
     try { on = isEnabled(projectId) !== false; } catch { on = true; }
-    return on ? { ok: true } : { ok: false, code: 'disabled', message: '项目创建者已关闭云端 Agent。' };
+    return on ? { ok: true } : { ok: false, code: 'disabled', message: 'The project creator has turned off the Cloud Agent.' };
   }
 
   return {
@@ -157,7 +157,7 @@ export function createGate({ limitsFile = null, usage, isEnabled = () => true, n
       if (!e.ok) return e;
       const n = nodeLimits();
       const pl = projectLimits(projectId);
-      const busy = { ok: false, code: 'busy', message: '云端 Agent 正忙,请稍后再试。' };
+      const busy = { ok: false, code: 'busy', message: 'The Cloud Agent is busy. Please try again later.' };
       if (running >= n.maxRuns) return busy;
       if ((byProject.get(projectId) ?? 0) >= Math.min(n.maxRunsPerProject, pl.maxRuns ?? Infinity)) return busy;
       if ((byMember.get(memberKey(projectId, userId)) ?? 0) >= n.maxRunsPerMember) return busy;

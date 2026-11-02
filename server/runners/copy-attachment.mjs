@@ -5,7 +5,7 @@ import path from "node:path";
 async function main() {
   const [, , src, dest] = process.argv;
   if (!src || !dest) {
-    console.log(JSON.stringify({ ok: false, error: "缺少源文件或目标文件路径参数" }));
+    console.log(JSON.stringify({ ok: false, error: "Missing source file or target file path argument" }));
     process.exit(1);
   }
 

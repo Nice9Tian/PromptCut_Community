@@ -104,7 +104,7 @@ export class SnapshotStore {
     const record = { clipId: clipId ?? null, key: key ?? null, localFrame, ...over, at: Date.now() };
     this.oversize.push(record);
     while (this.oversize.length > OVERSIZE_LOG) this.oversize.shift();
-    console.warn(`[snapshot] 快照超限,不进就绪索引:卡 ${record.clipId ?? key} 本地帧 ${localFrame} ${record.bytes} 字节 > ${record.limit}`);
+    console.warn(`[snapshot] Snapshot over the limit, not added to the ready index: card ${record.clipId ?? key} local frame ${localFrame} ${record.bytes} bytes > ${record.limit}`);
     return false;
   }
 

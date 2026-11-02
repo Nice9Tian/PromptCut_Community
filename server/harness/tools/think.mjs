@@ -2,7 +2,7 @@
 
 export const thinkTool = {
   name: "think",
-  description: "记录一段思考或计划,不产生副作用。用于在多步操作前理清思路。",
+  description: "Record a thought or plan with no side effects. Use it to organize your thinking before multi-step operations.",
   inputSchema: {
     type: "object",
     properties: {

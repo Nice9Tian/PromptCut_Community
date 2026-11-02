@@ -331,9 +331,9 @@ export function createLanHost({
   dgram: dgramImpl = dgram,
   log = noop,
 } = {}) {
-  if (typeof projects !== 'function') throw new TypeError('createLanHost: projects 必须是函数');
-  if (!isDeviceName(hostDeviceName)) throw new TypeError('createLanHost: hostDeviceName 不合法');
-  if (!Number.isInteger(servicePort) || servicePort <= 0) throw new TypeError('createLanHost: servicePort 必须是端口号');
+  if (typeof projects !== 'function') throw new TypeError('createLanHost: projects must be a function');
+  if (!isDeviceName(hostDeviceName)) throw new TypeError('createLanHost: hostDeviceName is invalid');
+  if (!Number.isInteger(servicePort) || servicePort <= 0) throw new TypeError('createLanHost: servicePort must be a port number');
 
   let socket = null;
   let starting = null;

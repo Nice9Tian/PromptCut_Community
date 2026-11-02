@@ -20,14 +20,14 @@ import type { MediaAsset } from "./project";
  * 不用写规则就会落到文字色,和设计稿整屏里的取色一致。
  */
 const TAG_RULES: Array<[TrackKind, readonly string[]]> = [
-  ["transition", ["转场", "过渡", "切换", "擦除", "推移"]],
+  ["transition", ["Transition", "fade", "switch", "wipe", "push"]],
   // 入场 / 出场这类「效果」本身就是卡的主体,归特效
-  ["fx", ["特效", "粒子", "光效", "故障", "扫描", "终端", "3d", "浮现", "模糊"]],
+  ["fx", ["Effects", "particles", "glow", "glitch", "scan", "terminal", "3d", "fade-in", "blur"]],
   // 数据可视化:图表类自成一档,不和纯文字卡混
-  ["image", ["图表", "折线", "走势", "排名", "条形图", "榜单", "环形", "百分比", "指标"]],
-  ["sticker", ["贴纸", "角标", "徽章", "名牌", "实体", "人物", "机构", "章节", "导航"]],
-  ["audio", ["音频", "波形", "配乐", "声音"]],
-  ["video", ["视频", "画面", "半屏", "出镜"]],
+  ["image", ["chart", "line chart", "trend", "ranking", "bar chart", "leaderboard", "circular", "percentage", "metric"]],
+  ["sticker", ["sticker", "corner badge", "badge", "name tag", "entity", "person", "organization", "chapters", "navigation"]],
+  ["audio", ["audio", "waveform", "Background music", "Sound"]],
+  ["video", ["Video", "Visual", "half-screen", "on camera"]],
 ];
 
 /** 卡片 id → 轨道色。tags 归不出来时按 id 兜底(比 tags 更明确的少数几张)。 */

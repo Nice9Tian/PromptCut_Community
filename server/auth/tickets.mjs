@@ -45,7 +45,7 @@ export function signTicket(rec, fields, at) {
   const unavailable = roomUnavailableReason(rec);
   if (unavailable) throw Object.assign(new Error('Room unavailable'), { reason: unavailable });
   const ttl = TICKET_TTL[fields.k];
-  if (!ttl) throw new TypeError(`不认识的票据类别 ${fields.k}`);
+  if (!ttl) throw new TypeError(`Unknown ticket type ${fields.k}`);
   const payload = {
     kid: kidOf(rec.ticketKey),
     k: fields.k,

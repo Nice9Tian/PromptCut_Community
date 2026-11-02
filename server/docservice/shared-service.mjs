@@ -54,6 +54,7 @@ import { docServiceExtensions } from './extensions.mjs';
 import { serviceGate, AGENT_WRITE_TYPES } from './service-gate.mjs';
 import { serviceAdmission } from '../auth/service-identity.mjs';
 import { offeredProtocols } from './auth.mjs';
+import { tr } from "../i18n.mjs";
 
 /**
  * @param {object} options
@@ -111,7 +112,7 @@ export function createSharedDocService({
   accountRequired = false,
   docAssembly = null,
 } = {}) {
-  if (mode !== 'hosted' && mode !== 'lan') throw new TypeError("createSharedDocService: mode 只能是 'hosted' 或 'lan'");
+  if (mode !== 'hosted' && mode !== 'lan') throw new TypeError("createSharedDocService: mode must be 'hosted' or 'lan'");
   const say = typeof log === 'function' ? log : undefined;
   // 本机信任关掉时，回环来源与别的来源一样对待（第 10 节）
   const isLoopback = trustLoopback === false ? () => false : isLoopbackOption;
@@ -213,7 +214,7 @@ export function createSharedDocService({
     }
     if (accountRuntime && pathname.startsWith('/shared/') && pathname !== '/shared/service-challenge') {
       res.writeHead(403, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-      res.end(JSON.stringify({ ok: false, code: 'account-required', error: '当前软件版本已过期，无法搬到云端', message: '当前软件版本已过期，无法搬到云端' }));
+      res.end(JSON.stringify({ ok: false, code: 'account-required', error: tr("This app version has expired and cannot move to the cloud"), message: tr("This app version has expired and cannot move to the cloud") }));
       return true;
     }
     return sharedHttp.handle(req, res, '');

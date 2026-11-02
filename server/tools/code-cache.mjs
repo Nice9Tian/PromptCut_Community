@@ -45,10 +45,10 @@ const bytes = (text) => Buffer.byteLength(text, 'utf8');
  *   writer:记在 index.json 里「最后谁写的」(对话 id);不给就空
  */
 export function createCodeCacheStore({ dir, limits = {}, now = () => Date.now(), writer = '' } = {}) {
-  if (typeof dir !== 'string' || !dir) throw new Error('代码块空间没有目录');
+  if (typeof dir !== 'string' || !dir) throw new Error('The code block space has no directory');
   const lim = { ...CODE_CACHE_LIMITS, ...limits };
   const fileOf = (name) => {
-    if (!validCodeCacheName(name)) throw coded(`代码块名字不合法:${JSON.stringify(name)}。只能用字母、数字、下划线、点和连字符,1～64 个字符,不能以点开头。`, 'code-cache-bad-name');
+    if (!validCodeCacheName(name)) throw coded(`Invalid code block name: ${JSON.stringify(name)}. Only letters, digits, underscores, dots and hyphens are allowed, 1~64 characters, and it cannot start with a dot.`, 'code-cache-bad-name');
     return path.join(dir, `${name}.txt`);
   };
   const indexFile = path.join(dir, 'index.json');
@@ -67,14 +67,14 @@ export function createCodeCacheStore({ dir, limits = {}, now = () => Date.now(),
   const has = (name) => fs.existsSync(fileOf(name));
   const read = (name) => {
     const file = fileOf(name);
-    try { return fs.readFileSync(file, 'utf8'); } catch { throw coded(`代码块 ${name} 不存在。先用 code_cache_list 看有哪些。`, 'code-cache-missing'); }
+    try { return fs.readFileSync(file, 'utf8'); } catch { throw coded(`Code block ${name} does not exist. Use code_cache_list first to see which ones exist.`, 'code-cache-missing'); }
   };
   const totalBytes = (except = '') => names().filter((n) => n !== except).reduce((sum, n) => { try { return sum + fs.statSync(fileOf(n)).size; } catch { return sum; } }, 0);
   const checkRoom = (name, nextText) => {
     const size = bytes(nextText);
-    if (size > lim.blockBytes) throw coded(`代码块 ${name} 会有 ${size} 字节,超过一块的上限 ${lim.blockBytes} 字节。拆成几块,或者删掉不用的内容。`, 'code-cache-too-large');
-    if (!has(name) && names().length >= lim.blocks) throw coded(`代码块已经有 ${lim.blocks} 块,到上限了。先用 code_cache_delete 删掉不用的。`, 'code-cache-full');
-    if (totalBytes(name) + size > lim.totalBytes) throw coded(`这个项目的代码块合计会超过 ${lim.totalBytes} 字节。先删掉不用的块。`, 'code-cache-full');
+    if (size > lim.blockBytes) throw coded(`Code block ${name} would be ${size} bytes, over the per-block limit of ${lim.blockBytes} bytes. Split it into several blocks, or delete content you do not need.`, 'code-cache-too-large');
+    if (!has(name) && names().length >= lim.blocks) throw coded(`There are already ${lim.blocks} code blocks, which is the limit. Use code_cache_delete first to delete unused ones.`, 'code-cache-full');
+    if (totalBytes(name) + size > lim.totalBytes) throw coded(`The code blocks of this project would total more than ${lim.totalBytes} bytes. Delete unused blocks first.`, 'code-cache-full');
   };
   const write = (name, text) => {
     const file = fileOf(name);
@@ -93,7 +93,7 @@ export function createCodeCacheStore({ dir, limits = {}, now = () => Date.now(),
   };
   const remove = (name) => {
     const file = fileOf(name);
-    if (!fs.existsSync(file)) throw coded(`代码块 ${name} 不存在。`, 'code-cache-missing');
+    if (!fs.existsSync(file)) throw coded(`Code block ${name} does not exist.`, 'code-cache-missing');
     fs.rmSync(file, { force: true });
     touch(name, true);
     return { name, deleted: true };
@@ -107,7 +107,7 @@ export function createCodeCacheStore({ dir, limits = {}, now = () => Date.now(),
   const freshName = (prefix) => {
     const base = String(prefix || 'block').replace(/[^A-Za-z0-9_.-]/g, '_').replace(/^\.+/, '').slice(0, 56) || 'block';
     for (let n = 1; n < 10000; n += 1) { const name = `${base}_${n}`; if (!has(name)) return name; }
-    throw coded('起不出新的代码块名字', 'code-cache-full');
+    throw coded('Cannot come up with a new code block name', 'code-cache-full');
   };
   return { dir, limits: lim, has, read, write, append, remove, list, info, freshName, withWriter: (w) => createCodeCacheStore({ dir, limits, now, writer: w }) };
 }
@@ -152,14 +152,14 @@ export function codeCacheTools(store) {
   return [
     {
       name: 'code_cache_write',
-      description: `新建一个代码块,或者把已有的整个换掉。代码块是这个项目的草稿区:写很长的源码或文本时,先分几次写进代码块(这个工具写开头,code_cache_append 接着写),最后在任何工具的字符串参数里整个写成 "${CODE_CACHE_REF}名字",调用前会被换成代码块的内容(比如 create_card 的 source 写 "${CODE_CACHE_REF}my_card")。一块最多 ${lim.blockBytes} 字节。`,
-      inputSchema: { type: 'object', properties: { name: str('代码块名字:字母、数字、下划线、点、连字符,1～64 个字符'), text: str('内容') }, required: ['name', 'text'] },
+      description: `Create a new code block, or replace an existing one entirely. Code blocks are this project's scratch area: when writing very long source code or text, first write it into a code block in several passes (this tool writes the beginning, code_cache_append continues), then in the string argument of any tool write the whole thing as "${CODE_CACHE_REF}name"; it is replaced with the code block content before the call (for example, write "${CODE_CACHE_REF}my_card" for the source of create_card). At most ${lim.blockBytes} bytes per block.`,
+      inputSchema: { type: 'object', properties: { name: str('Code block name: letters, digits, underscores, dots, hyphens, 1~64 characters'), text: str('Content') }, required: ['name', 'text'] },
       async execute(input) { return { ok: true, ...store.write(input.name, input.text) }; },
     },
     {
       name: 'code_cache_append',
-      description: '把一段文本接在代码块末尾(代码块不存在就新建)。分几次写长源码、或者回复被截断后接着写时用;从断开的地方接着写,不要重复已经写过的内容,也不要自己补换行以外的东西。',
-      inputSchema: { type: 'object', properties: { name: str('代码块名字'), text: str('要接上的内容') }, required: ['name', 'text'] },
+      description: 'Append a piece of text to the end of a code block (creates the block if it does not exist). Use it to write long source code in several passes, or to continue after a reply was truncated; continue from where it broke off, do not repeat what has already been written, and do not add anything other than newlines yourself.',
+      inputSchema: { type: 'object', properties: { name: str('Code block name'), text: str('Content to append') }, required: ['name', 'text'] },
       async execute(input) {
         const r = store.append(input.name, input.text);
         return { ok: true, ...r, tail: tailLines(store.read(input.name)) };
@@ -167,8 +167,8 @@ export function codeCacheTools(store) {
     },
     {
       name: 'code_cache_read',
-      description: `读代码块。可以按行(startLine、endLine,从 1 数,含两端)或按字符(start、end,从 0 数,不含 end)读一段;都不给就从头读,一次最多交回 ${lim.readChars} 字,没读完会告诉你下一段从哪开始。`,
-      inputSchema: { type: 'object', properties: { name: str('代码块名字'), startLine: int('从第几行开始(从 1 数)'), endLine: int('读到第几行(含)'), start: int('从第几个字符开始(从 0 数)'), end: int('读到第几个字符(不含)') }, required: ['name'] },
+      description: `Read a code block. You can read a range by line (startLine, endLine, counted from 1, both inclusive) or by character (start, end, counted from 0, end exclusive); if you give neither, it reads from the beginning and returns at most ${lim.readChars} characters at a time. If it is not finished, it tells you where the next range starts.`,
+      inputSchema: { type: 'object', properties: { name: str('Code block name'), startLine: int('Line to start from (counted from 1)'), endLine: int('Line to read up to (inclusive)'), start: int('Character to start from (counted from 0)'), end: int('Character to read up to (exclusive)') }, required: ['name'] },
       async execute(input) {
         const text = store.read(input.name);
         const total = { chars: text.length, lines: lineCount(text) };
@@ -178,40 +178,40 @@ export function codeCacheTools(store) {
           const to = Math.min(lines.length, Number(input.endLine) || lines.length);
           let body = lines.slice(from - 1, to).join('\n');
           let more = null;
-          if (body.length > lim.readChars) { body = body.slice(0, lim.readChars); more = '这一段太长,只交回了前面一部分;缩小行范围再读。'; }
+          if (body.length > lim.readChars) { body = body.slice(0, lim.readChars); more = 'This range is too long, so only the first part was returned; narrow the line range and read again.'; }
           return { ok: true, name: input.name, ...total, startLine: from, endLine: to, text: body, ...(more ? { more } : {}) };
         }
         const from = Math.max(0, Number(input.start) || 0);
         const wanted = input.end !== undefined ? Math.min(text.length, Number(input.end)) : text.length;
         const to = Math.min(wanted, from + lim.readChars);
-        return { ok: true, name: input.name, ...total, start: from, end: to, text: text.slice(from, to), ...(to < wanted ? { more: `没读完,下一段从 start=${to} 开始` } : {}) };
+        return { ok: true, name: input.name, ...total, start: from, end: to, text: text.slice(from, to), ...(to < wanted ? { more: `Not finished, next range starts at start=${to}` } : {}) };
       },
     },
     {
       name: 'code_cache_replace',
-      description: '在代码块里把一段文字换成另一段。old 要和代码块里的原文逐字相同;只出现一次才换,出现多次时要么把 old 写长一点让它唯一,要么给 all: true 全部换。',
-      inputSchema: { type: 'object', properties: { name: str('代码块名字'), old: str('原文(逐字相同)'), new: str('换成什么'), all: { type: 'boolean', description: '出现多次时全部换' } }, required: ['name', 'old', 'new'] },
+      description: 'Replace one piece of text with another in a code block. old must match the original text in the code block exactly; it is replaced only if it occurs once. If it occurs multiple times, either make old longer so it is unique, or pass all: true to replace all of them.',
+      inputSchema: { type: 'object', properties: { name: str('Code block name'), old: str('Original text (exact match)'), new: str('What to replace it with'), all: { type: 'boolean', description: 'Replace all when it occurs multiple times' } }, required: ['name', 'old', 'new'] },
       async execute(input) {
         const text = store.read(input.name);
         const oldStr = String(input.old ?? '');
-        if (!oldStr) throw coded('old 不能是空的。', 'code-cache-bad-replace');
+        if (!oldStr) throw coded('old cannot be empty.', 'code-cache-bad-replace');
         const count = text.split(oldStr).length - 1;
-        if (count === 0) throw coded(`代码块 ${input.name} 里没有找到 old 这段原文。先用 code_cache_read 看一下原文,注意空格和换行要一致。`, 'code-cache-not-found');
-        if (count > 1 && input.all !== true) throw coded(`old 在代码块 ${input.name} 里出现了 ${count} 次。把 old 写长一点让它唯一,或者给 all: true 全部换。`, 'code-cache-ambiguous');
+        if (count === 0) throw coded(`Could not find the original text old in code block ${input.name}. Use code_cache_read to look at the original text first, and make sure spaces and line breaks match.`, 'code-cache-not-found');
+        if (count > 1 && input.all !== true) throw coded(`old occurs ${count} times in code block ${input.name}. Make old longer so it is unique, or pass all: true to replace all of them.`, 'code-cache-ambiguous');
         const r = store.write(input.name, text.split(oldStr).join(String(input.new ?? '')));
         return { ok: true, ...r, replaced: input.all === true ? count : 1 };
       },
     },
     {
       name: 'code_cache_list',
-      description: '列出这个项目里所有代码块:名字、字数、行数、最后更新时间和最后写它的对话。',
+      description: 'List all code blocks in this project: name, character count, line count, last update time, and the chat that last wrote it.',
       inputSchema: { type: 'object', properties: {} },
-      async execute() { return { ok: true, blocks: store.list(), ref: `在工具参数里整个写成 "${CODE_CACHE_REF}名字" 就能用代码块的内容` }; },
+      async execute() { return { ok: true, blocks: store.list(), ref: `Write the whole value in tool arguments as "${CODE_CACHE_REF}name" to use the content of a code block` }; },
     },
     {
       name: 'code_cache_delete',
-      description: '删掉一个代码块(用完了、不再需要时)。',
-      inputSchema: { type: 'object', properties: { name: str('代码块名字') }, required: ['name'] },
+      description: 'Delete a code block (when it is used up and no longer needed).',
+      inputSchema: { type: 'object', properties: { name: str('Code block name') }, required: ['name'] },
       async execute(input) { return { ok: true, ...store.remove(input.name) }; },
     },
   ];

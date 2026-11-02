@@ -36,7 +36,7 @@ export const layoutHandlers = {
     });
     clipGuard.noteMutation();
     return invisible
-      ? { ...r, note: "这张卡的画布铺满舞台、也没缩小,对齐看不出效果。先 set_rect(放进一个矩形)或 nudge({ scaleBy: 0.6 })缩小,再对齐。" }
+      ? { ...r, note: "This card's canvas fills the stage and is not scaled down, so alignment would show no effect. First shrink it with set_rect (place it into a rectangle) or nudge({ scaleBy: 0.6 }), then align." }
       : r;
   }),
   nudge: /* @__PURE__ */ inClipCut((args: Args<"nudge">) => {

@@ -17,6 +17,7 @@
  */
 import { assessLogin, saveCookies } from './collect-cookies.mjs';
 import { qrSvg } from './qr.mjs';
+import { tr } from "./i18n.mjs";
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
 
@@ -110,13 +111,13 @@ export function createQrLogin({ fetchImpl = globalThis.fetch, now = () => Date.n
 
   async function start(site = 'bilibili') {
     const ep = ENDPOINTS[site];
-    if (!ep) throw new Error(`站点 ${site} 没有扫码登录`);
+    if (!ep) throw new Error(tr("Site {0} has no QR code login", site));
     sweep();
     const r = await fetchImpl(ep.generate, { headers: ep.headers });
-    if (!r.ok) throw new Error(`拿二维码失败:HTTP ${r.status}`);
+    if (!r.ok) throw new Error(tr("Failed to get QR code: HTTP {0}", r.status));
     const body = await r.json();
     if (body?.code !== 0 || !body?.data?.url || !body?.data?.qrcode_key) {
-      throw new Error(`拿二维码失败:${body?.message ?? '返回格式不对'}`);
+      throw new Error(tr("Failed to get QR code: {0}", body?.message ?? tr("unexpected response format")));
     }
     const key = String(body.data.qrcode_key);
     const session = { key, site, url: String(body.data.url), createdAt: now(), state: 'waiting', ttl: ep.ttl };
@@ -136,15 +137,15 @@ export function createQrLogin({ fetchImpl = globalThis.fetch, now = () => Date.n
    */
   async function poll(key, { dataDir } = {}) {
     const s = sessions.get(key);
-    if (!s) return { state: 'expired', message: '这张二维码不存在或服务已重启,重新生成一张' };
+    if (!s) return { state: 'expired', message: tr("This QR code does not exist or the service was restarted. Generate a new one") };
     if (s.state === 'ok') return { state: 'ok', ...s.result };
     const ep = ENDPOINTS[s.site];
     if (now() - s.createdAt > ep.ttl * 1000) {
       s.state = 'expired';
-      return { state: 'expired', message: '二维码已过期,重新生成一张' };
+      return { state: 'expired', message: tr("QR code expired. Generate a new one") };
     }
     const r = await fetchImpl(ep.poll + encodeURIComponent(key), { headers: ep.headers, redirect: 'manual' });
-    if (!r.ok) return { state: s.state, message: `查询失败:HTTP ${r.status}`, transient: true };
+    if (!r.ok) return { state: s.state, message: tr("Query failed: HTTP {0}", r.status), transient: true };
     const body = await r.json();
     const code = body?.data?.code;
     const state = ep.states[code] ?? (body?.code === 0 ? 'waiting' : 'expired');
@@ -159,7 +160,7 @@ export function createQrLogin({ fetchImpl = globalThis.fetch, now = () => Date.n
     const a = assessLogin(s.site, cookies, now());
     if (!a.loggedIn) {
       s.state = 'expired';
-      return { state: 'expired', message: `登录响应里缺 ${a.missing.join(' / ')},重新扫一次` };
+      return { state: 'expired', message: tr("Login response is missing {0}, scan again", a.missing.join(' / ')) };
     }
     const file = dataDir ? saveCookies(dataDir, s.site, a.cookies) : null;
     s.state = 'ok';

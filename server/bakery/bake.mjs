@@ -67,7 +67,7 @@ export function pushDrawNeeded({ isStatic, damaged, drawnBefore, previousDrawn }
  * 回一共发了几拍。
  */
 export async function drawDiscarded(bakery, prime, signal) {
-  const cancelled = () => Object.assign(new Error('已取消'), { cancelled: true });
+  const cancelled = () => Object.assign(new Error('Cancelled'), { cancelled: true });
   let ticks = 0;
   if (prime) {
     if (signal?.aborted) throw cancelled();
@@ -289,7 +289,7 @@ export async function bakeFrames(bakery, opts = {}) {
        * 取消只在两帧之间生效:这时上一帧的推进、排空、截图都已经做完,页面不在半路上。
        * 调用方(render-worker)据此只换一张新页,不必把整个浏览器当成可疑的重开。
        */
-      if (opts.signal?.aborted) throw Object.assign(new Error('已取消'), { cancelled: true });
+      if (opts.signal?.aborted) throw Object.assign(new Error('Cancelled'), { cancelled: true });
       const wantShot = targetFrames ? targetFrames.has(i) : i >= startFrame;
       const isStatic = await step(i, wantShot);
       const snapshotWanted = domDir || (opts.onSnapshot && (!opts.snapshotFrames || opts.snapshotFrames.has(i)));
@@ -367,7 +367,7 @@ export async function bakeFrames(bakery, opts = {}) {
   let mismatchAt = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     if (attempt > 0) {
-      console.warn(`静态跳过在第 ${mismatchAt} 帧判错(复用的和真截的不一致),禁用跳过重跑一遍`);
+      console.warn(`Static skip misjudged frame ${mismatchAt} (reused frame differs from the real capture), rerunning with skip disabled`);
     }
     await warmUp();
     mismatchAt = await renderPass(staticSkip && attempt === 0);
@@ -381,7 +381,7 @@ export async function bakeFrames(bakery, opts = {}) {
     await fs.writeFile(path.join(domDir, 'manifest.json'), JSON.stringify({
       width, height, fps, startFrame, endFrame, themeId: timeline.themeId ?? null, exportUrl, lossyCanvases: domLossy,
     }, null, 1));
-    if (domLossy) console.warn(`HTML 采样缓存:${domLossy} 个画布读不出像素,重放时这些画布是空的`);
+    if (domLossy) console.warn(`HTML sample cache: ${domLossy} canvases could not be read back as pixels, so they will be empty on replay`);
   }
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   console.log(`Export finished in ${elapsed}s (${totalFrames} frames${reused ? `, ${reused} reused` : ''}${glass.list.length ? `, ${glass.list.length} glass masks` : ''}).`);
@@ -467,7 +467,7 @@ export function createStepper(bakery, { fps, directFrameAt = frame => frame, sig
     const isStatic = !!probe && probe.anims === 0 && probe.finished === 0 && probe.mut === before.mut
       && probe.raf === before.raf && !probe.video && !probe.canvas;
     if (process.env.PC_STATIC_TRACE) {
-      console.log(`  静态判定 帧${frameIndex}: anims=${probe?.anims} finished=${probe?.finished} mut=${before.mut}->${probe?.mut} raf=${before.raf}->${probe?.raf} video=${probe?.video} canvas=${probe?.canvas} => ${isStatic ? '静止' : '在变'}`);
+      console.log(`  static check frame ${frameIndex}: anims=${probe?.anims} finished=${probe?.finished} mut=${before.mut}->${probe?.mut} raf=${before.raf}->${probe?.raf} video=${probe?.video} canvas=${probe?.canvas} => ${isStatic ? 'still' : 'changing'}`);
     }
     step.last.isStatic = isStatic;
     return isStatic;
@@ -492,7 +492,7 @@ export async function warmUpAt(bakery, step, { startFrame, warmFrames = 3, frame
   console.log(`Warm-up ${warmFrames} frames...`);
   for (let i = 0; i < warmFrames; i++) {
     // 预热也看取消:不看的话,取消要等预热走完、进了逐帧循环才生效,这段时间 worker 其实还占着
-    if (signal?.aborted) throw Object.assign(new Error('已取消'), { cancelled: true });
+    if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { cancelled: true });
     await step(startFrame, false);
     await beginFrame();
   }
@@ -540,10 +540,10 @@ const STREAM_SHOT = { format: 'png', optimizeForSpeed: true };
 export async function bakeStream(bakery, opts) {
   const { page, client } = bakery;
   const { streamSignature, fromFrame, toFrame, signal } = opts;
-  if (!streamSignature) throw new Error('bakeStream 要流签名');
-  if (!Number.isInteger(fromFrame) || !Number.isInteger(toFrame) || fromFrame < 0 || toFrame < fromFrame) throw new Error(`bakeStream 帧区间不对:${fromFrame}..${toFrame}`);
+  if (!streamSignature) throw new Error('bakeStream needs a stream signature');
+  if (!Number.isInteger(fromFrame) || !Number.isInteger(toFrame) || fromFrame < 0 || toFrame < fromFrame) throw new Error(`bakeStream frame range is invalid: ${fromFrame}..${toFrame}`);
   const stride = Math.max(1, Math.round(Number(opts.stride) || 1));
-  const cancelled = () => Object.assign(new Error('已取消'), { cancelled: true });
+  const cancelled = () => Object.assign(new Error('Cancelled'), { cancelled: true });
   let lease = bakery.streamLease;
   // 页面换过(`bakery.reset` 换了一个新 page)也算断:租约里的 stepper 绑的是旧页面
   const continues = !!lease && !lease.dirty && lease.page === page && lease.streamSignature === streamSignature && fromFrame === lease.lastFrame + 1;

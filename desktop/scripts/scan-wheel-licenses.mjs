@@ -72,22 +72,22 @@ export function collectWheels(manifests) {
 
 /** 一行的判定：许可证表达式或分类器里出现 BAD 就算可疑 */
 export function isSuspicious(row) {
-  return row.license === "(查不到)" || BAD.test(row.license) || BAD.test(row.classifiers);
+  return row.license === "(not found)" || BAD.test(row.license) || BAD.test(row.classifiers);
 }
 
 async function fetchLicense(name, version) {
   const url = `https://pypi.org/pypi/${encodeURIComponent(name)}/${encodeURIComponent(version)}/json`;
   try {
     const res = await fetch(url);
-    if (!res.ok) return { license: "(查不到)", classifiers: `HTTP ${res.status}` };
+    if (!res.ok) return { license: "(not found)", classifiers: `HTTP ${res.status}` };
     const info = (await res.json()).info || {};
     // license_expression 是 PEP 639 的新字段，比自由文本的 license 可靠；都没有就看分类器
     let license = info.license_expression || info.license || "";
     if (license.length > 120) license = `${license.slice(0, 120).replace(/\s+/g, " ")}…`;
     const classifiers = (info.classifiers || []).filter((c) => c.startsWith("License")).join(" | ");
-    return { license: license.replace(/\s+/g, " ").trim() || "(空)", classifiers };
+    return { license: license.replace(/\s+/g, " ").trim() || "(empty)", classifiers };
   } catch (e) {
-    return { license: "(查不到)", classifiers: String(e.message || e) };
+    return { license: "(not found)", classifiers: String(e.message || e) };
   }
 }
 
@@ -110,8 +110,8 @@ async function main() {
   const files = given.length ? given : findManifests(EXT_DIR);
 
   if (!files.length) {
-    console.error(`[FAIL] 没找到 manifest。先打一次拓展包（node desktop/scripts/make-extension.mjs light …），`
-      + `或者把 ext-*.json 的路径当参数传进来。找过的位置：${EXT_DIR}`);
+    console.error(`[FAIL] No manifest found. Build an extension package first (node desktop/scripts/make-extension.mjs light …),`
+      + `or pass the path of an ext-*.json as an argument. Locations searched: ${EXT_DIR}`);
     process.exit(1);
   }
 
@@ -120,7 +120,7 @@ async function main() {
     return { label: m.tier || m.name, wheels: m.wheels, file: f };
   });
   if (!asJson) {
-    for (const m of manifests) console.log(`manifest：${m.file}（${m.label}，${(m.wheels || []).length} 个 wheel）`);
+    for (const m of manifests) console.log(`manifest: ${m.file} (${m.label}, ${(m.wheels || []).length} wheels)`);
     console.log("");
   }
 
@@ -142,13 +142,13 @@ async function main() {
       console.log(`     license: ${r.license}`);
       if (r.classifiers) console.log(`     classifiers: ${r.classifiers}`);
     }
-    console.log(`\n共 ${rows.length} 个包，可疑 ${flagged.length} 个。`);
+    console.log(`\n${rows.length} packages in total, ${flagged.length} suspicious.`);
     if (flagged.length) {
-      console.log("可疑的逐个打开 wheel 看 METADATA / LICENSE 再定；确认能发的话，"
-        + "在 desktop/THIRD-PARTY-LICENSES.md 第 9 节写明理由。");
+      console.log("Open each suspicious wheel and check METADATA / LICENSE before deciding; if it is confirmed OK to ship,"
+        + "state the reason in section 9 of desktop/THIRD-PARTY-LICENSES.md.");
     } else {
-      console.log("没有 GPL / AGPL / LGPL / SSPL / 非商用 授权的包。"
-        + "MPL-2.0（certifi、tqdm）不算可疑，但要按 MPL §3.2 告知源码获取途径，已写在包内的 THIRD-PARTY-LICENSES.txt。");
+      console.log("No packages with GPL / AGPL / LGPL / SSPL / non-commercial licenses."
+        + "MPL-2.0 (certifi, tqdm) is not suspicious, but MPL §3.2 requires telling users how to get the source; this is already written in THIRD-PARTY-LICENSES.txt inside the package.");
     }
   }
   process.exit(flagged.length ? 1 : 0);

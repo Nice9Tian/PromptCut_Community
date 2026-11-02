@@ -133,9 +133,9 @@ export async function resolveDocservice({
  */
 export function watchServiceEndpoints(wsEndpoint, kinds, onChange) {
   if (kinds !== 'all' && !(Array.isArray(kinds) && kinds.every((k) => typeof k === 'string'))) {
-    throw new TypeError("watchServiceEndpoints：kinds 必须是字符串数组或 'all'");
+    throw new TypeError("watchServiceEndpoints: kinds must be a string array or 'all'");
   }
-  if (typeof onChange !== 'function') throw new TypeError('watchServiceEndpoints：onChange 必须是函数');
+  if (typeof onChange !== 'function') throw new TypeError('watchServiceEndpoints: onChange must be a function');
   const watchKinds = kinds === 'all' ? 'all' : [...kinds];
   let stopped = false;
 

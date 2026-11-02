@@ -70,10 +70,10 @@ export function ownerKeyOf(record, { username, userId, creator }) {
 export function signDelegation(rec, fields, at) {
   const unavailable = roomUnavailableReason(rec);
   if (unavailable) throw Object.assign(new Error('Room unavailable'), { reason: unavailable });
-  if (!DELEGATION_AUDIENCES.includes(fields.aud)) throw new TypeError('signDelegation: 不认识的受众');
-  if (!isAccess(fields.acc)) throw new TypeError("signDelegation: acc 只能是 'r' 或 'rw'");
+  if (!DELEGATION_AUDIENCES.includes(fields.aud)) throw new TypeError('signDelegation: unknown audience');
+  if (!isAccess(fields.acc)) throw new TypeError("signDelegation: acc must be 'r' or 'rw'");
   const grant = fields.cid !== undefined && fields.cid !== null;
-  if (grant && !isConversationId(fields.cid)) throw new TypeError('signDelegation: 对话 id 不合格');
+  if (grant && !isConversationId(fields.cid)) throw new TypeError('signDelegation: invalid chat id');
   const payload = {
     kid: kidOf(rec.ticketKey),
     k: DELEGATION_KIND,

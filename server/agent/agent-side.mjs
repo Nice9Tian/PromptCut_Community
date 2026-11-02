@@ -47,7 +47,7 @@ export function createAgentSide({
   loadHost,
   tools,
   callPage,
-  callServer = async (tool) => ({ ok: false, error: `服务端工具 ${tool} 没有实现` }),
+  callServer = async (tool) => ({ ok: false, error: `Server tool ${tool} is not implemented` }),
   pageResult = 'plain',
   prerenderPost = null,
   playhead = () => 0,
@@ -63,8 +63,8 @@ export function createAgentSide({
   isolateStore = false,
   enterHost = null,
 } = {}) {
-  if (!Array.isArray(tools)) throw new TypeError('createAgentSide: 要 tools(工具表)');
-  if (typeof callPage !== 'function') throw new TypeError('createAgentSide: 要 callPage');
+  if (!Array.isArray(tools)) throw new TypeError('createAgentSide: tools (the tool table) is required');
+  if (typeof callPage !== 'function') throw new TypeError('createAgentSide: callPage is required');
   const byName = new Map(tools.map((t) => [t.name, t]));
   const link = createAgentLink({ url, projectId, protocolsFor, log, ...(WebSocketImpl ? { WebSocketImpl } : {}), ...linkOptions });
 

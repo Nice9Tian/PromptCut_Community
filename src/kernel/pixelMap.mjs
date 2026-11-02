@@ -40,9 +40,9 @@ function sourceOf(raw, label) {
     if (parseColor(value)) return { kind: "color", value };
     if (value) return { kind: "media", mediaId: value, stage: "origin" };
   }
-  if (!raw || typeof raw !== "object") throw new FilterExprError(`${label} 要是素材、颜色、transparent 或表达式对象`);
+  if (!raw || typeof raw !== "object") throw new FilterExprError(`${label} must be a media, color, transparent or expression object`);
   const stage = raw.stage ?? "origin";
-  if (!PIXEL_MAP_STAGES.includes(stage)) throw new FilterExprError(`${label}.stage 只能是 origin 或 after_filters`);
+  if (!PIXEL_MAP_STAGES.includes(stage)) throw new FilterExprError(`${label}.stage must be origin or after_filters`);
   if (typeof raw.mediaId === "string" && raw.mediaId.trim()) return { kind: "media", mediaId: raw.mediaId.trim(), stage, ...(raw.filterId ? { filterId: String(raw.filterId) } : null) };
   if (typeof raw.value === "string") {
     if (raw.value.trim().toLowerCase() === "transparent") return { kind: "transparent" };
@@ -55,45 +55,45 @@ function sourceOf(raw, label) {
     const out = { kind: "expr", r: raw.r ?? "r", g: raw.g ?? "g", b: raw.b ?? "b", a: raw.a ?? "a" };
     for (const k of ["r", "g", "b", "a"]) {
       if (typeof out[k] === "number") continue;
-      if (typeof out[k] !== "string" || !out[k].trim()) throw new FilterExprError(`${label}.${k} 要是表达式`);
-      try { compiledOf(out[k].trim(), PIXEL_VARS); } catch (e) { throw new FilterExprError(`${label}.${k} 表达式有问题:${e.message}`); }
+      if (typeof out[k] !== "string" || !out[k].trim()) throw new FilterExprError(`${label}.${k} must be an expression`);
+      try { compiledOf(out[k].trim(), PIXEL_VARS); } catch (e) { throw new FilterExprError(`${label}.${k} has an invalid expression: ${e.message}`); }
     }
     return out;
   }
-  throw new FilterExprError(`${label} 写法不认识`);
+  throw new FilterExprError(`${label} has an unrecognized format`);
 }
 
 function sequenceOf(raw) {
   if (raw == null) return undefined;
-  if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_SEQUENCE) throw new FilterExprError(`colorSequence 要是 1~${MAX_SEQUENCE} 个颜色`);
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_SEQUENCE) throw new FilterExprError(`colorSequence must have 1~${MAX_SEQUENCE} colors`);
   const out = raw.map((v, i) => {
     const c = parseColor(v);
-    if (!c) throw new FilterExprError(`colorSequence[${i}] 不是颜色`);
+    if (!c) throw new FilterExprError(`colorSequence[${i}] is not a color`);
     return String(v).trim();
   });
   return out;
 }
 
 export function normalizePixelMapDef(input) {
-  if (!input || typeof input !== "object") throw new FilterExprError("像素映射定义要是一个对象");
+  if (!input || typeof input !== "object") throw new FilterExprError("A pixel map definition must be an object");
   const name = str(input.name);
-  if (!name || name.length > 40) throw new FilterExprError("name 必填,40 字以内");
+  if (!name || name.length > 40) throw new FilterExprError("name is required, up to 40 characters");
   const where = str(input.where);
-  if (!where) throw new FilterExprError("where 必填:用 r/g/b/a/luma/x/y/t 写选区权重");
-  try { compiledOf(where, PIXEL_VARS); } catch (e) { throw new FilterExprError(`where 表达式有问题:${e.message}`); }
+  if (!where) throw new FilterExprError("where is required: write the selection weight using r/g/b/a/luma/x/y/t");
+  try { compiledOf(where, PIXEL_VARS); } catch (e) { throw new FilterExprError(`where has an invalid expression: ${e.message}`); }
   const source = input.source == null ? { stage: "origin" } : input.source;
-  if (!source || typeof source !== "object") throw new FilterExprError("source 要是对象");
+  if (!source || typeof source !== "object") throw new FilterExprError("source must be an object");
   const stage = source.stage ?? "origin";
-  if (!PIXEL_MAP_STAGES.includes(stage)) throw new FilterExprError("source.stage 只能是 origin 或 after_filters");
+  if (!PIXEL_MAP_STAGES.includes(stage)) throw new FilterExprError("source.stage must be origin or after_filters");
   const to = input.to == null && input.colorSequence?.to?.length
     ? { kind: "color", value: String(input.colorSequence.to[input.colorSequence.to.length - 1]) }
     : sourceOf(input.to, "to");
   const mode = input.mode ?? "continuous";
-  if (!PIXEL_MAP_MODES.includes(mode)) throw new FilterExprError("mode 只能是 continuous 或 discrete");
+  if (!PIXEL_MAP_MODES.includes(mode)) throw new FilterExprError("mode must be continuous or discrete");
   const from = sequenceOf(input.colorSequence?.from);
   const seqTo = sequenceOf(input.colorSequence?.to);
-  if ((from && !seqTo) || (!from && seqTo)) throw new FilterExprError("colorSequence 要同时提供 from 和 to");
-  if (from && seqTo && to.kind !== "color") throw new FilterExprError("colorSequence 不需要 to,或 to 只能留空");
+  if ((from && !seqTo) || (!from && seqTo)) throw new FilterExprError("colorSequence requires both from and to");
+  if (from && seqTo && to.kind !== "color") throw new FilterExprError("colorSequence does not need to, or to must be left empty");
   return {
     name,
     ...(str(input.description) ? { description: str(input.description).slice(0, 200) } : null),
@@ -299,7 +299,7 @@ function flatColorOps(def) {
   const w = constWhere(def);
   if (w === null) {
     const used = [...parseExpr(def.where, PIXEL_VARS).uses].join(" ");
-    return { why: `where 引用了 ${used},是逐像素选区` };
+    return { why: `where references ${used}, so it is a per-pixel selection` };
   }
   const to = def.to ?? {};
   let candidates = [];
@@ -307,30 +307,30 @@ function flatColorOps(def) {
   if (def.colorSequence) {
     candidates = [sequenceCandidate(def, w)];
     shapeWhy = w !== 1
-      ? "colorSequence 配上不是 1 的 where:混合要用到原色,而整帧调色那一步已经把原色抹掉了"
-      : "colorSequence 的 from 不全是灰阶(取色是 RGB 最近邻,不是按一个标量查表),或 to 里有半透明色";
+      ? "colorSequence with a where other than 1: blending needs the original color, but the whole-frame color grading step has already erased it"
+      : "colorSequence from is not all grayscale (color picking is RGB nearest neighbor, not a lookup by a single scalar), or to contains semi-transparent colors";
   } else if (to.kind === "expr") {
-    if (!alphaIsIdentity(def)) return { why: "to.a 会改 alpha,曲线 / 矩阵做不到" };
+    if (!alphaIsIdentity(def)) return { why: "to.a changes alpha, which a curve / matrix cannot do" };
     candidates = [curvesCandidate(def, w), matrixCandidate(def, w)];
-    shapeWhy = "to 的通道之间互相依赖:既不是每通道只依赖自己(曲线),也不是 r/g/b 的线性组合(矩阵)";
+    shapeWhy = "The channels of to depend on each other: it is neither per-channel self-dependent (curve) nor a linear combination of r/g/b (matrix)";
   } else if (to.kind === "color") {
     candidates = [colorCandidate(def, w)];
-    shapeWhy = "to 是半透明颜色,曲线 / 矩阵改不了 alpha";
-  } else if (to.kind === "transparent") return { why: "to 是 transparent,曲线 / 矩阵改不了 alpha" };
-  else if (to.kind === "media") return { why: "to 是另一段素材,要逐像素取第二张纹理" };
-  else return { why: `to 的写法「${to.kind ?? "(空)"}」不是整帧调色` };
+    shapeWhy = "to is a semi-transparent color, and a curve / matrix cannot change alpha";
+  } else if (to.kind === "transparent") return { why: "to is transparent, and a curve / matrix cannot change alpha" };
+  else if (to.kind === "media") return { why: "to is another media clip, which requires sampling a second texture per pixel" };
+  else return { why: `The form of to "${to.kind ?? "(empty)"}" is not whole-frame color grading` };
 
   let worstSeen = Infinity;
   for (const ops of candidates) {
     if (!ops) continue;
     let checked;
-    try { checked = normalizeFilterDef({ name: def.name || "调色", ops }).ops; } catch { continue; }
+    try { checked = normalizeFilterDef({ name: def.name || "Color grading", ops }).ops; } catch { continue; }
     const diff = pixelMapOpsDiff(def, checked);
     if (diff <= 1) return { ops: checked, diff, w };
     worstSeen = Math.min(worstSeen, diff);
   }
   if (!Number.isFinite(worstSeen)) return { why: shapeWhy };
-  return { why: `形状像整帧调色,但取样成曲线 / 矩阵之后逐值差到 ${worstSeen} 级(>1),表示不了,只能逐像素算` };
+  return { why: `It looks like whole-frame color grading, but after sampling into a curve / matrix the per-value difference reaches ${worstSeen} levels (>1), which cannot be represented, so it can only be computed per pixel` };
 }
 
 /**
@@ -344,10 +344,10 @@ export function classifyPixelMap(def) {
   if (flat.ops) {
     const alphaNote = def.to?.kind === "expr"
       ? undefined
-      : "等价滤镜只改 RGB;原定义在半透明像素上还会把 alpha 一并推向目标色,素材不透明时两者一致。";
+      : "The equivalent filter only changes RGB; on semi-transparent pixels the original definition also pushes alpha toward the target color. The two agree when the media is opaque.";
     return {
       kind: "A",
-      reason: "这是整帧调色:where 是个常数,to 只是颜色到颜色的函数,等价于一串 curves / matrix 滤镜步骤。",
+      reason: "This is whole-frame color grading: where is a constant and to is just a color-to-color function, equivalent to a series of curves / matrix filter steps.",
       ops: flat.ops,
       filter: { name: def.name, ...(def.description ? { description: def.description } : null), ops: flat.ops },
       diff: flat.diff,
@@ -370,7 +370,7 @@ const GLSL_FUNCS = {
 };
 
 function glf(v) {
-  if (!Number.isFinite(v)) throw new PixelMapGlslError(`表达式里出现了 ${v},翻译不了`);
+  if (!Number.isFinite(v)) throw new PixelMapGlslError(`The expression produced ${v}, which cannot be translated`);
   const s = String(v);
   return /[.e]/i.test(s) ? s : `${s}.0`;
 }
@@ -410,7 +410,7 @@ function emitPow(aNode, bNode) {
   if (isNonNegative(aNode)) return `pow(${A}, ${B})`;
   const k = literalInt(bNode);
   if (k === null) {
-    throw new PixelMapGlslError(`「${emitExpr(aNode)} ^ ${B}」翻译不了:底数可能是负数,而 GLSL 的 pow 在底数为负时无定义。把底数包进 abs(),或把指数写成整数常量`);
+    throw new PixelMapGlslError(`"${emitExpr(aNode)} ^ ${B}" cannot be translated: the base may be negative, and GLSL pow is undefined for a negative base. Wrap the base in abs(), or write the exponent as an integer constant`);
   }
   if (k === 0) return "1.0";
   return k % 2 === 0 ? `pow(abs(${A}), ${B})` : `(sign(${A}) * pow(abs(${A}), ${B}))`;
@@ -425,7 +425,7 @@ function emitCall(n) {
   if (n.name === "min" || n.name === "max") return a.reduce((l, r) => `${n.name}(${l}, ${r})`);
   if (n.name === "step" || n.name === "smoothstep" || n.name === "clamp") return `${n.name}(${a.join(", ")})`;
   const g = Object.hasOwn(GLSL_FUNCS, n.name) ? GLSL_FUNCS[n.name] : null;
-  if (!g) throw new PixelMapGlslError(`函数 ${n.name}() 在 GLSL 里没有对应物,翻译不了`);
+  if (!g) throw new PixelMapGlslError(`Function ${n.name}() has no GLSL equivalent and cannot be translated`);
   return `${g}(${a.join(", ")})`;
 }
 
@@ -439,14 +439,14 @@ function emitExpr(n) {
     return `(${emitExpr(n.a)} ${n.op} ${emitExpr(n.b)})`;
   }
   if (n.t === "call") return emitCall(n);
-  throw new PixelMapGlslError(`表达式里有翻译不了的节点「${n?.t}」`);
+  throw new PixelMapGlslError(`The expression contains a node "${n?.t}" that cannot be translated`);
 }
 
 const emitSrc = (v) => emitExpr(astOf(v));
 const vec4Of = (c) => `vec4(${c.map(glf).join(", ")})`;
 
 export const PIXEL_MAP_VERTEX_GLSL = `#version 300 es
-// 三个顶点铺满整个视口,不用顶点缓冲
+// Three vertices cover the whole viewport, no vertex buffer needed
 void main() {
   float u = float((gl_VertexID << 1) & 2);
   float v = float(gl_VertexID & 2);
@@ -498,7 +498,7 @@ function sequenceGlsl(def) {
  * 返回 { fragment, vertex, usesTarget, usesTime, key }。
  */
 export function compilePixelMapGlsl(def) {
-  if (!def || typeof def !== "object") throw new PixelMapGlslError("像素映射定义要是一个对象");
+  if (!def || typeof def !== "object") throw new PixelMapGlslError("A pixel map definition must be an object");
   const where = emitSrc(def.where);
   const seq = def.colorSequence ? sequenceGlsl(def) : null;
   const to = def.to ?? {};
@@ -509,14 +509,14 @@ export function compilePixelMapGlsl(def) {
   if (seq) target = seq.body;
   else if (to.kind === "color") {
     const c = parseColor(to.value);
-    if (!c) throw new PixelMapGlslError(`to.value「${to.value}」不是颜色`);
+    if (!c) throw new PixelMapGlslError(`to.value "${to.value}" is not a color`);
     target = `  target = ${vec4Of(c)};\n`;
   } else if (to.kind === "transparent") target = `  target = vec4(src.rgb, 0.0);\n`;
   else if (to.kind === "media") target = `  target = uHasTarget ? pc01v(texture(uTarget, uv)) : src;\n`;
   else if (to.kind === "expr") {
     const ch = ["r", "g", "b", "a"].map((k) => `pc01(${emitSrc(to[k] ?? k)})`);
     target = `  target = vec4(${ch.join(", ")});\n`;
-  } else throw new PixelMapGlslError(`to 的写法「${to.kind ?? "(空)"}」翻译不了`);
+  } else throw new PixelMapGlslError(`The form of to "${to.kind ?? "(empty)"}" cannot be translated`);
 
   const fragment = `#version 300 es
 precision highp float;
@@ -528,7 +528,7 @@ uniform float uT;
 uniform vec2 uSize;
 out vec4 fragColor;
 
-// mapRgba 的 clamp01:非有限数按 0 算,再夹进 0~1
+// clamp01 of mapRgba: non-finite values count as 0, then clamp to 0~1
 float pc01(float v) { if (!(v > 0.0)) return 0.0; return v > 1.0 ? 1.0 : v; }
 vec4 pc01v(vec4 v) { return vec4(pc01(v.r), pc01(v.g), pc01(v.b), pc01(v.a)); }
 ${decls}

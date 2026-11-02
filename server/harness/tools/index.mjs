@@ -21,22 +21,22 @@ export async function buildTools({ callTool, workspaceDir, onEvent = () => {}, p
     const start = Date.now();
     while (Date.now() - start < jobTimeoutMs) {
       context.signal?.throwIfAborted();
-      onEvent({ type: 'progress', phase: 'waiting', round: context.round, callId: context.callId, jobId, text: `后台任务进行中：${name}，已等待 ${Math.floor((Date.now() - start) / 1000)} 秒；自动等待，不消耗模型轮数。` });
+      onEvent({ type: 'progress', phase: 'waiting', round: context.round, callId: context.callId, jobId, text: `Background task in progress: ${name}, waited ${Math.floor((Date.now() - start) / 1000)} s; waiting automatically, no model rounds used.` });
       await delay(pollIntervalMs, undefined, { signal: context.signal });
       const status = await callTool(workflow ? 'auto_workflow_status' : 'background_job_status', { jobId });
       onEvent({ type: 'diagnostic', stage: 'job_poll', callId: context.callId, data: status });
       if (!status?.done) continue;
-      if (status.ok === false) throw new Error(status.error || '后台任务失败，请检查安装或转写日志。');
+      if (status.ok === false) throw new Error(status.error || 'Background task failed. Check the install or transcription log.');
       if (name === 'transcribe_media') return await callTool('get_transcript', { mediaId: input.mediaId });
       if (name === 'stt_install') return await callTool('stt_status', {});
       return status.result ?? status;
     }
-    throw new Error(`后台任务 ${jobId} 等待超时；任务可能仍在运行，请先查询状态，不要重复启动。`);
+    throw new Error(`Timed out waiting for background task ${jobId}; it may still be running. Check its status first and do not start it again.`);
   }
   const offered = only ? mcpTools.filter((t) => only.has(t.name)) : mcpTools;
   const result = offered.map(t => ({
     name: t.name,
-    description: t.description + (['auto_workflow', 'stt_install', 'transcribe_media'].includes(t.name) ? ' API 模式会自动等待后台作业结束，不要自己密集轮询或重复启动。' : ''),
+    description: t.description + (['auto_workflow', 'stt_install', 'transcribe_media'].includes(t.name) ? ' In API mode background jobs are awaited automatically; do not poll densely or restart them yourself.' : ''),
     // 深拷贝:下面要就地改写 params,而 mcpTools 是整个进程共享的模块级常量
     inputSchema: JSON.parse(JSON.stringify(t.inputSchema)),
     // context.callId 是这次 tool_use 的 id:交给编辑器放进工具调用事件,页面 AI 栏按它对上聊天记录(c65-integ2)
@@ -70,14 +70,14 @@ export async function buildTools({ callTool, workspaceDir, onEvent = () => {}, p
     injectCardParams(result, cards);
   } catch (error) {
     // 拿不到卡片列表就退回自由对象:少了参数提示总比工具整个不能用强
-    onEvent({ type: 'status', text: `没能取到卡片 schema,add_clip 的参数提示会缺失:${error.message}` });
+    onEvent({ type: 'status', text: `Could not fetch the card schema; add_clip parameter hints will be missing: ${error.message}` });
   }
 
   try {
     const parts = await callTool('list_parts', { detail: 'full' });
     injectPartParams(result, parts);
   } catch (error) {
-    onEvent({ type: 'status', text: `没能取到部件 schema,add_part 的参数提示会缺失:${error.message}` });
+    onEvent({ type: 'status', text: `Could not fetch the part schema; add_part parameter hints will be missing: ${error.message}` });
   }
 
   return result;

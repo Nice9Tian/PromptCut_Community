@@ -33,7 +33,7 @@ const digest = (text) => createHash('sha256').update(text, 'utf8').digest();
  */
 export function createClusterAuth({ token, allowAnonymous = false, log = () => {} } = {}) {
   const tokenMode = token !== undefined && token !== null;
-  if (tokenMode && !checkTokenFormat(token)) throw new TypeError('createClusterAuth: 集群令牌格式不对（要 32～256 个 base64url 字符）');
+  if (tokenMode && !checkTokenFormat(token)) throw new TypeError('createClusterAuth: invalid cluster token format (expected 32-256 base64url characters)');
   const expected = tokenMode ? digest(token) : null;
 
   function reject(req, reason) {

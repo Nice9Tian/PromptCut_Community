@@ -91,7 +91,7 @@ export function createProvider(cfg) {
             return;
           }
         }
-        yield { type: 'text_delta', text: '完成。' };
+        yield { type: 'text_delta', text: 'Done.' };
         yield { ...usage, output: 2 };
         yield { type: 'stop', reason: 'end_turn' };
         return;
@@ -102,14 +102,14 @@ export function createProvider(cfg) {
         yield { type: 'tool_use', id: 'call_1', name: cfg?.toolName || 'get_editor_state', input: {} };
         yield { type: 'stop', reason: 'tool_use' };
       } else if (turn === 2) {
-        const text = cfg?.finalText || '时间轴上有 2 张卡。';
+        const text = cfg?.finalText || 'There are 2 cards on the timeline.';
         const mid = Math.floor(text.length / 2);
         yield { type: 'text_delta', text: text.slice(0, mid) };
         yield { type: 'text_delta', text: text.slice(mid) };
         yield { type: 'usage', input: 10, output: 20 };
         yield { type: 'stop', reason: 'end_turn' };
       } else {
-        yield { type: 'text_delta', text: '没别的事了。' };
+        yield { type: 'text_delta', text: 'Nothing else to do.' };
         yield { type: 'stop', reason: 'end_turn' };
       }
     }

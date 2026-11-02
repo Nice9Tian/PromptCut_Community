@@ -151,7 +151,7 @@ export async function assertOk(response, vendor) {
     // ignore
   }
   
-  let msg = '无 message 字段';
+  let msg = 'no message field';
   if (text) {
     try {
       const body = JSON.parse(text);

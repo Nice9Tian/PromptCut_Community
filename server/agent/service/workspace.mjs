@@ -67,17 +67,17 @@ export function isInside(parent, child) {
  * 任何一段是 `..`、带 NUL、段名是 Windows 设备名、段名以空格或点结尾(Windows 会悄悄去掉,能绕过别的比较)、带 `:`(NTFS 备用数据流)。
  */
 export function splitRelative(input) {
-  if (typeof input !== 'string' || !input) throw new WorkspaceError('bad-path', '路径是空的');
-  if (input.length > 1024) throw new WorkspaceError('bad-path', '路径太长');
-  if (input.includes('\0')) throw new WorkspaceError('bad-path', '路径里有非法字符');
-  if (/^[\\/]/.test(input) || /^[A-Za-z]:/.test(input)) throw new WorkspaceError('bad-path', '只能用工作目录里的相对路径');
+  if (typeof input !== 'string' || !input) throw new WorkspaceError('bad-path', 'Path is empty');
+  if (input.length > 1024) throw new WorkspaceError('bad-path', 'Path is too long');
+  if (input.includes('\0')) throw new WorkspaceError('bad-path', 'Path contains invalid characters');
+  if (/^[\\/]/.test(input) || /^[A-Za-z]:/.test(input)) throw new WorkspaceError('bad-path', 'Only relative paths inside the working directory are allowed');
   const parts = input.split(/[\\/]+/).filter((p) => p !== '' && p !== '.');
-  if (!parts.length) throw new WorkspaceError('bad-path', '路径是空的');
+  if (!parts.length) throw new WorkspaceError('bad-path', 'Path is empty');
   for (const p of parts) {
-    if (p === '..') throw new WorkspaceError('bad-path', '路径不能往上走');
-    if (p.includes(':')) throw new WorkspaceError('bad-path', '路径里有非法字符');
-    if (/[. ]$/.test(p)) throw new WorkspaceError('bad-path', '文件名不能以点或空格结尾');
-    if (DEVICE_RE.test(p)) throw new WorkspaceError('bad-path', '文件名是系统保留名');
+    if (p === '..') throw new WorkspaceError('bad-path', 'Path cannot go up');
+    if (p.includes(':')) throw new WorkspaceError('bad-path', 'Path contains invalid characters');
+    if (/[. ]$/.test(p)) throw new WorkspaceError('bad-path', 'File name cannot end with a dot or a space');
+    if (DEVICE_RE.test(p)) throw new WorkspaceError('bad-path', 'File name is a reserved system name');
   }
   return parts;
 }
@@ -149,8 +149,8 @@ export function createWorkspaces({ dataDir, limits: limitsIn = {}, log = () => {
   const root = dataDir ? path.join(path.resolve(dataDir), 'work') : null;
 
   const projectDir = (projectId) => {
-    if (!root) throw new WorkspaceError('not-found', '这个进程没有工作区');
-    if (typeof projectId !== 'string' || !ID_RE.test(projectId)) throw new WorkspaceError('bad-path', '项目 id 不合法');
+    if (!root) throw new WorkspaceError('not-found', 'This process has no workspace');
+    if (typeof projectId !== 'string' || !ID_RE.test(projectId)) throw new WorkspaceError('bad-path', 'Project id is invalid');
     return path.join(root, dirName(projectId));
   };
 
@@ -159,8 +159,8 @@ export function createWorkspaces({ dataDir, limits: limitsIn = {}, log = () => {
    * @param {{ projectId: string, ownerKey: string, conversationId: string }} who 全部来自鉴权与服务端,不来自工具参数
    */
   function open({ projectId, ownerKey, conversationId }) {
-    if (typeof ownerKey !== 'string' || !/^[A-Za-z0-9]{8,64}$/.test(ownerKey)) throw new WorkspaceError('bad-path', '主人键不合法');
-    if (typeof conversationId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(conversationId)) throw new WorkspaceError('bad-path', '对话 id 不合法');
+    if (typeof ownerKey !== 'string' || !/^[A-Za-z0-9]{8,64}$/.test(ownerKey)) throw new WorkspaceError('bad-path', 'Owner key is invalid');
+    if (typeof conversationId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(conversationId)) throw new WorkspaceError('bad-path', 'Invalid chat id');
     const pdir = projectDir(projectId);
     const dir = path.join(pdir, ownerKey, conversationId);
 
@@ -173,23 +173,23 @@ export function createWorkspaces({ dataDir, limits: limitsIn = {}, log = () => {
     function resolve(rel) {
       const parts = splitRelative(rel);
       const abs = path.resolve(dir, ...parts);
-      if (!isInside(dir, abs) || abs === dir) throw new WorkspaceError('outside', '路径不在这个对话的工作目录里');
+      if (!isInside(dir, abs) || abs === dir) throw new WorkspaceError('outside', 'Path is not inside this chat\'s working directory');
       ensure();
       const realDir = fs.realpathSync.native(dir);
       const real = realOfDeepest(abs);
       if (!isInside(realDir, real) || real === realDir) {
         say('agent.workspace.refused', { projectId, reason: 'link' });
-        throw new WorkspaceError('outside', '路径经链接指到了工作目录外面');
+        throw new WorkspaceError('outside', 'Path points outside the working directory through a link');
       }
       return abs;
     }
 
     function checkQuota(adding) {
-      if (adding > limits.maxFileBytes) throw new WorkspaceError('too-large', `单个文件超过上限(${limits.maxFileBytes} 字节)`);
+      if (adding > limits.maxFileBytes) throw new WorkspaceError('too-large', `Single file exceeds the limit (${limits.maxFileBytes} bytes)`);
       const mine = treeSize(dir);
-      if (mine.files + 1 > limits.maxFiles) throw new WorkspaceError('quota', '这个对话的工作目录里文件太多了');
-      if (mine.bytes + adding > limits.maxConversationBytes) throw new WorkspaceError('quota', '这个对话的工作目录已满');
-      if (treeSize(pdir).bytes + adding > limits.maxProjectBytes) throw new WorkspaceError('quota', '这个项目的工作目录已满');
+      if (mine.files + 1 > limits.maxFiles) throw new WorkspaceError('quota', 'Too many files in this chat\'s working directory');
+      if (mine.bytes + adding > limits.maxConversationBytes) throw new WorkspaceError('quota', 'This chat\'s working directory is full');
+      if (treeSize(pdir).bytes + adding > limits.maxProjectBytes) throw new WorkspaceError('quota', 'This project\'s working directory is full');
     }
 
     return {
@@ -204,9 +204,9 @@ export function createWorkspaces({ dataDir, limits: limitsIn = {}, log = () => {
       read(rel, { maxBytes = limits.maxFileBytes } = {}) {
         const abs = resolve(rel);
         let st;
-        try { st = fs.statSync(abs); } catch { throw new WorkspaceError('not-found', '工作目录里没有这个文件'); }
-        if (!st.isFile()) throw new WorkspaceError('not-found', '工作目录里没有这个文件');
-        if (st.size > maxBytes) throw new WorkspaceError('too-large', '文件太大');
+        try { st = fs.statSync(abs); } catch { throw new WorkspaceError('not-found', 'No such file in the working directory'); }
+        if (!st.isFile()) throw new WorkspaceError('not-found', 'No such file in the working directory');
+        if (st.size > maxBytes) throw new WorkspaceError('too-large', 'File is too large');
         return fs.readFileSync(abs);
       },
       stat(rel) {
@@ -237,7 +237,7 @@ export function createWorkspaces({ dataDir, limits: limitsIn = {}, log = () => {
         return {
           write(chunk) {
             bytes += chunk.length;
-            if (bytes > room) { close(); try { fs.rmSync(abs, { force: true }); } catch { /* 删不掉就留给清理 */ } throw new WorkspaceError('quota', '工作目录放不下这个文件'); }
+            if (bytes > room) { close(); try { fs.rmSync(abs, { force: true }); } catch { /* 删不掉就留给清理 */ } throw new WorkspaceError('quota', 'The working directory cannot hold this file'); }
             fs.writeSync(fd, chunk);
           },
           end() { close(); return { path: splitRelative(rel).join('/'), size: bytes }; },
@@ -272,7 +272,7 @@ export function createWorkspaces({ dataDir, limits: limitsIn = {}, log = () => {
       room() {
         ensure();
         const mine = treeSize(dir);
-        if (mine.files + 1 > limits.maxFiles) throw new WorkspaceError('quota', '这个对话的工作目录里文件太多了');
+        if (mine.files + 1 > limits.maxFiles) throw new WorkspaceError('quota', 'Too many files in this chat\'s working directory');
         return Math.max(0, Math.min(limits.maxFileBytes, limits.maxConversationBytes - mine.bytes, limits.maxProjectBytes - treeSize(pdir).bytes));
       },
       /**

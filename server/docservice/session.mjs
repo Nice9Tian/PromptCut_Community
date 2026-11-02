@@ -135,8 +135,8 @@ export function createSessionLayer({
   tombstoneMs,
   resumeGate,
 } = /** @type {any} */ ({})) {
-  if (!router || typeof router.connect !== 'function') throw new TypeError('createSessionLayer: 要给 router');
-  if (typeof nextConnId !== 'function') throw new TypeError('createSessionLayer: 要给 nextConnId');
+  if (!router || typeof router.connect !== 'function') throw new TypeError('createSessionLayer: router is required');
+  if (typeof nextConnId !== 'function') throw new TypeError('createSessionLayer: nextConnId is required');
   const retain = positive(retainMs, SESSION_DEFAULTS.RETAIN_MS);
   const tombTtl = positive(tombstoneMs, SESSION_DEFAULTS.TOMBSTONE_MS);
   const say = (event, fields) => { try { log(event, fields); } catch { /* 日志出错不影响会话 */ } };

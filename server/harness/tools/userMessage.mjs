@@ -6,28 +6,28 @@
  * 多 Agent 协调的 send_message(发给别的 Agent)定义在 server/tools/agent.mjs,同一个名字;
  * 这里的定义只在那个工具没交给模型时(托管档的开放清单不含它)补上,只能发给用户。
  */
-export const USER_MESSAGE_RESULT = Object.freeze({ ok: true, shown: true, note: '已显示在用户的对话气泡里' });
+export const USER_MESSAGE_RESULT = Object.freeze({ ok: true, shown: true, note: 'Shown in the user\'s chat bubble' });
 
 /** 答一次对用户说的话:text 是空的就退回去,让模型重说 */
 export function answerUserMessage(input) {
-  if (typeof input?.text !== 'string' || !input.text.trim()) return { ok: false, error: 'text 不能是空的:写一两句要对用户说的话' };
+  if (typeof input?.text !== 'string' || !input.text.trim()) return { ok: false, error: 'text must not be empty: write one or two sentences to say to the user' };
   return USER_MESSAGE_RESULT;
 }
 
 export function userMessageTool() {
   return {
     name: 'send_message',
-    description: '对用户说一两句话:to 填 "user",text 写你接下来要做什么、或刚做好了什么。会按顺序显示在这一轮的对话气泡里。每组操作前说一句、做完说一句,和那一组工具调用放在同一次回复里;收尾仍交 final 为 true 的 report_progress。',
+    description: 'Say one or two sentences to the user: set to to "user" and write in text what you are about to do or what you just finished. They appear in order in the chat bubbles of this turn. Say one before each group of operations and one after, in the same reply as that group of tool calls; still finish with a report_progress whose final is true.',
     inputSchema: {
       type: 'object',
       properties: {
-        to: { type: 'string', enum: ['user'], description: '固定填 user' },
-        text: { type: 'string', description: '要对用户说的话,一两句,简洁中文' },
+        to: { type: 'string', enum: ['user'], description: 'Always set to user' },
+        text: { type: 'string', description: 'What to say to the user, one or two sentences, concise Chinese' },
       },
       required: ['to', 'text'],
     },
     async execute(input) {
-      if (!input || String(input.to ?? '').trim().toLowerCase() !== 'user') return { ok: false, error: 'to 只能填 user' };
+      if (!input || String(input.to ?? '').trim().toLowerCase() !== 'user') return { ok: false, error: 'to must be user' };
       return answerUserMessage(input);
     },
   };

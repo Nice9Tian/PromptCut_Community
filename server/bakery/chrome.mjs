@@ -221,13 +221,13 @@ export async function probeFramePath(browser, { timeoutMs = 30000 } = {}) {
       const out = await client.send('HeadlessExperimental.beginFrame', { frameTimeTicks: (tick += FRAME_INTERVAL), interval: FRAME_INTERVAL, screenshot: { format: 'png' } });
       if (out?.screenshotData) return { ok: true, bytes: Buffer.from(out.screenshotData, 'base64').length };
     }
-    return { ok: false, stage: 'frame', detail: 'beginFrame 连发 8 拍都没有交回画面' };
+    return { ok: false, stage: 'frame', detail: 'beginFrame was sent 8 times in a row without returning a frame' };
   })();
   let timer = null;
   try {
     return await Promise.race([
       work,
-      new Promise((resolve) => { timer = setTimeout(() => resolve({ ok: false, stage, detail: `${timeoutMs / 1000} 秒没有结果` }), timeoutMs); }),
+      new Promise((resolve) => { timer = setTimeout(() => resolve({ ok: false, stage, detail: `no result after ${timeoutMs / 1000} seconds` }), timeoutMs); }),
     ]);
   } catch (err) {
     return { ok: false, stage, detail: String(err?.message ?? err).split('\n')[0].slice(0, 300) };
@@ -290,8 +290,8 @@ async function newSession(browser, url) {
   }
   const waitNet = (ms = 30000) => (inflight.size === 0 ? Promise.resolve() : new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(
-      `${inflight.size} 个网络请求 ${ms / 1000} 秒还没回来:页面可能挂着一直不结束的请求。`
-      + `前几个:${[...inflight.values()].slice(0, 3).join(' | ')}`
+      `${inflight.size} network requests have not returned after ${ms / 1000} seconds: the page may have requests that never finish.`
+      + `First few: ${[...inflight.values()].slice(0, 3).join(' | ')}`
     )), ms);
     waiters.push(() => { clearTimeout(timer); resolve(); });
   }));
@@ -313,7 +313,7 @@ async function newSession(browser, url) {
     for (;;) {
       await beginFrame({ noDisplayUpdates: true }).catch(() => {});
       if (await page.evaluate(() => window.__pcReady === true).catch(() => false)) return;
-      if (Date.now() - t0 > 60000) throw new Error('导出页 60 秒没就绪(window.__pcReady 一直不是 true)');
+      if (Date.now() - t0 > 60000) throw new Error('The export page was not ready after 60 seconds (window.__pcReady never became true)');
       await new Promise((r) => setTimeout(r, 10));
     }
   };
@@ -329,7 +329,7 @@ async function newSession(browser, url) {
   if (errorText) {
     const u = new URL(url);
     const where = url.length > 120 ? `${u.origin}${u.pathname}…` : url;
-    throw new Error(`打不开导出页 ${where}:${errorText} —— 这个地址上的 dev server 起了吗?`);
+    throw new Error(`Cannot open the export page ${where}: ${errorText}. Is the dev server running at this address?`);
   }
   console.log('Waiting for window.__pcReady...');
   await waitReady();
@@ -362,7 +362,7 @@ async function headlessShellBuildId() {
     const m = src.match(/['"]chrome-headless-shell['"]\s*:\s*['"]([^'"]+)['"]/) || src.match(/\bchrome\s*:\s*['"]([^'"]+)['"]/);
     if (m) return m[1];
   }
-  throw new Error('读不到 puppeteer-core 的 chrome-headless-shell 版本号');
+  throw new Error('Cannot read the chrome-headless-shell version of puppeteer-core');
 }
 
 /** 同一个进程里并发开 bakery(分片导出)时只装一次 */
@@ -375,7 +375,7 @@ async function installHeadlessShell() {
     const { install, Browser, detectBrowserPlatform } = await import('@puppeteer/browsers');
     const cacheDir = process.env.PUPPETEER_CACHE_DIR || path.join(os.homedir(), '.cache', 'puppeteer');
     const buildId = await headlessShellBuildId();
-    console.log(`安装 chrome-headless-shell@${buildId} 到 ${cacheDir}(约 100 MB,只装这一次)…`);
+    console.log(`Installing chrome-headless-shell@${buildId} to ${cacheDir} (about 100 MB, installed only once)…`);
     await install({ browser: Browser.CHROMEHEADLESSSHELL, buildId, cacheDir, platform: detectBrowserPlatform() });
   })();
   try {
@@ -398,7 +398,7 @@ export async function openBakery(opts = {}) {
 
   console.log('Launching Puppeteer (chrome-headless-shell)...');
   const sandboxOff = noSandboxReason();
-  if (sandboxOff) console.log(`Chrome 以 --no-sandbox 启动(原因:${sandboxOff})`);
+  if (sandboxOff) console.log(`Chrome launched with --no-sandbox (reason: ${sandboxOff})`);
   const launch = () => puppeteer.launch({ headless: 'shell', protocolTimeout: 60000, args: chromeLaunchArgs() });
   let browser;
   try {
@@ -410,13 +410,13 @@ export async function openBakery(opts = {}) {
      * 从 0.3.x 打补丁升上来的用户手里只有完整 Chrome、没有 headless-shell,导出会直接起不来。
      * 装进 PUPPETEER_CACHE_DIR(桌面版 = runtime/chrome),只装这一次;装不上(没网)就报清楚该怎么办。
      */
-    console.warn('没找到 chrome-headless-shell,尝试自动安装……');
+    console.warn('chrome-headless-shell not found, trying to install it automatically…');
     try {
       await installHeadlessShell();
     } catch (e2) {
       throw new Error(
-        '导出需要 chrome-headless-shell,没找到,自动安装也失败了(' + (e2?.message || e2) + ')。' +
-        '桌面版请用完整安装包重装一次;开发机上跑 `npx puppeteer browsers install chrome-headless-shell`。原始错误:' + e.message,
+        'Export needs chrome-headless-shell, which was not found, and the automatic install also failed (' + (e2?.message || e2) + ').' +
+        'For the desktop app, reinstall using the full installer; on a dev machine, run `npx puppeteer browsers install chrome-headless-shell`. Original error:' + e.message,
       );
     }
     browser = await launchHealthyChrome({ launch });

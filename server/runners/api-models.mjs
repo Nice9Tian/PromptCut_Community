@@ -1,3 +1,4 @@
+import { tr } from "../i18n.mjs";
 /**
  * 从 OpenAI 兼容接口拉可用模型清单(`GET {baseUrl}/v1/models`)。
  *
@@ -56,7 +57,7 @@ export function parseModels(payload) {
  */
 export async function listApiModels(api, { fetchImpl = globalThis.fetch, timeoutMs = 20000 } = {}) {
   const url = modelsUrl(api?.baseUrl);
-  if (!url) throw new Error('接口地址是空的');
+  if (!url) throw new Error(tr("The endpoint URL is empty"));
   const res = await fetchImpl(url, {
     method: 'GET',
     headers: { Authorization: `Bearer ${api?.apiKey || ''}` },
@@ -64,14 +65,14 @@ export async function listApiModels(api, { fetchImpl = globalThis.fetch, timeout
   });
   if (!res.ok) {
     // 401 是最常见的一种,单独说人话;别把整个响应体贴出来(可能带 Key 回显)
-    if (res.status === 401 || res.status === 403) throw new Error(`接口拒绝了这个 Key(HTTP ${res.status})`);
-    throw new Error(`拉模型清单失败:HTTP ${res.status}`);
+    if (res.status === 401 || res.status === 403) throw new Error(tr("The endpoint rejected this key (HTTP {0})", res.status));
+    throw new Error(tr("Failed to fetch the model list: HTTP {0}", res.status));
   }
   let payload;
   try {
     payload = await res.json();
   } catch {
-    throw new Error('拉模型清单失败:回来的不是 JSON');
+    throw new Error(tr("Failed to fetch the model list: the response was not JSON"));
   }
   return parseModels(payload);
 }

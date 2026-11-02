@@ -74,7 +74,7 @@ const CANCELLED_EARLY_MAX = 200;
 let lastUrl = null;
 
 function cancelledError() {
-  return Object.assign(new Error('已取消'), { cancelled: true });
+  return Object.assign(new Error('Cancelled'), { cancelled: true });
 }
 
 function armIdleExit() {
@@ -135,7 +135,7 @@ async function projectOf(url) {
     return JSON.parse(decodeURIComponent(tl.slice(comma + 1)));
   }
   const res = await fetch(new URL(tl, u.origin));
-  if (!res.ok) throw new Error(`取项目失败 HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`Failed to fetch project, HTTP ${res.status}`);
   return await res.json();
 }
 
@@ -249,7 +249,7 @@ process.on('message', (msg) => {
     process.send?.({ type: 'started', id: msg.id });
     try {
       if (cancelledEarly.delete(msg.id)) {
-        process.send?.({ type: 'error', id: msg.id, message: '已取消', cancelled: true });
+        process.send?.({ type: 'error', id: msg.id, message: 'Cancelled', cancelled: true });
         return;
       }
       const ac = new AbortController();

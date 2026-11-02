@@ -29,7 +29,7 @@ export function restoreSnapshots(project: Project, snapshots?: string) {
 function frameFetchError(error: any) {
   if (error?.name === "AbortError") return error;
   const detail = error?.cause?.code || error?.cause?.message || error?.message || String(error);
-  return Object.assign(new Error(`帧服务连接中断（${detail}）。渲染 Chrome 或服务可能正在重启，请稍后重试。`, { cause: error }), {
+  return Object.assign(new Error(`Frame service connection lost (${detail}). The render Chrome or the service may be restarting, please try again later.`, { cause: error }), {
     code: "FRAME_SERVICE_UNAVAILABLE",
     retryable: true,
   });
@@ -71,7 +71,7 @@ export async function frameRequest(operation: string, project: Project, extra: R
     await resyncDataMirror();
     return frameRequest(operation, project, extra, signal, options, true);
   }
-  if (!res.ok) throw Object.assign(new Error(result.error || "帧读取失败"), {
+  if (!res.ok) throw Object.assign(new Error(result.error || "Frame read failed"), {
     code: result.code,
     status: res.status,
     retryable: result.retryable,

@@ -49,7 +49,7 @@ const AREAS = [
   'src/start/', 'src/ai/', 'src/online/', 'src/mobile/', 'src/render/',
   'server/docservice/', 'server/asset-store/', 'server/agent/', 'server/', 'src/', 'scripts/',
 ];
-const areaOf = (f) => AREAS.find((a) => f.startsWith(a)) ?? '其它';
+const areaOf = (f) => AREAS.find((a) => f.startsWith(a)) ?? 'Other';
 
 const byArea = new Map();
 for (const [f, hits] of prod) {
@@ -60,25 +60,25 @@ for (const [f, hits] of prod) {
 const areasSorted = [...byArea.entries()].sort((x, y) => y[1].length - x[1].length);
 
 if (AS_MD) {
-  console.log(`# 要拆的接缝清单（生成于 ${new Date().toISOString().slice(0, 10)}）\n`);
-  console.log(`公开侧还在 import 闭源的文件：**产品代码 ${prod.length} 个**，测试与探针 ${tests.length} 个。\n`);
-  console.log('按块分，每一块可以独立派一份活（互不撞车）：\n');
+  console.log(`# Seams to cut (generated on ${new Date().toISOString().slice(0, 10)})\n`);
+  console.log(`Files on the public side that still import closed-source files: **${prod.length} product code files**, ${tests.length} tests and probes.\n`);
+  console.log('Split by chunk; each chunk can be assigned independently (no collisions):\n');
   for (const [a, list] of areasSorted) {
-    console.log(`## ${a}（${list.length}）\n`);
-    for (const [f, hits] of list) console.log(`- \`${f}\` → ${hits.map((h) => `\`${h}\``).join('、')}`);
+    console.log(`## ${a} (${list.length})\n`);
+    for (const [f, hits] of list) console.log(`- \`${f}\` → ${hits.map((h) => `\`${h}\``).join(', ')}`);
     console.log('');
   }
-  console.log('## 测试与探针\n');
-  console.log(`共 ${tests.length} 个，跟着各自的主题走，不单独派活。\n`);
+  console.log('## Tests and probes\n');
+  console.log(`${tests.length} in total; they follow their own topics and are not assigned separately.\n`);
 } else {
-  console.log(`公开侧还在 import 闭源：产品代码 ${prod.length}、测试与探针 ${tests.length}`);
+  console.log(`Public side still imports closed source: product code ${prod.length}, tests and probes ${tests.length}`);
   console.log('');
   for (const [a, list] of areasSorted) console.log(`${String(list.length).padStart(4)}  ${a}`);
   console.log('');
   const entry = lanSeams.has(LAN_ENTRY);
   const others = [...lanSeams.keys()].filter((f) => f !== LAN_ENTRY);
-  console.log(`core 还在 import lan：${others.length} 个（${LAN_ENTRY} 那条入口注册${entry ? '在位' : '不在了'}，不算）`);
-  for (const f of others) console.log(`      ${f} → ${lanSeams.get(f).join('、')}`);
-  console.log('      ↑ Lite 版（只有本地、没有局域网）要从社区版裁出来，这一维只许降不许升；');
-  console.log('        闸门等拆完两仓之后在公开仓库里加（用户 2026-10-28 定）。');
+  console.log(`core still imports lan: ${others.length} (the ${LAN_ENTRY} entry registration is ${entry ? 'present' : 'gone'}, not counted)`);
+  for (const f of others) console.log(`      ${f} → ${lanSeams.get(f).join(', ')}`);
+  console.log('      ↑ The Lite edition (local only, no LAN) is to be cut out of the community edition; this dimension may only go down, never up;');
+  console.log('        the gate is added in the public repo after the two repos are split (user decision, 2026-10-28).');
 }

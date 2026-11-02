@@ -45,7 +45,7 @@ async function waitHttp(target, ms) {
     }
     await wait(300);
   }
-  throw new Error(`等不到 ${target}`);
+  throw new Error(`timed out waiting for ${target}`);
 }
 
 let vite = null;
@@ -58,7 +58,7 @@ async function startVite() {
   });
   const target = `http://127.0.0.1:${PORT}/`;
   await waitHttp(target, 90000);
-  log(`vite 就绪 ${target}`);
+  log(`vite ready ${target}`);
   return target;
 }
 
@@ -76,12 +76,12 @@ function stopVite() {
 /** 进编辑器(开始页就点「开始创作」),等预览那套模块加载出来 */
 async function enterEditor(page) {
   await page.waitForFunction(
-    () => !!document.querySelector('[data-pc="editor"]') || [...document.querySelectorAll("*")].some((e) => e.childElementCount === 0 && e.textContent.trim() === "开始创作"),
+    () => !!document.querySelector('[data-pc="editor"]') || [...document.querySelectorAll("*")].some((e) => e.childElementCount === 0 && e.textContent.trim() === "Start creating"),
     { timeout: 60000 },
   );
   await page.evaluate(() => {
     if (document.querySelector('[data-pc="editor"]')) return;
-    const el = [...document.querySelectorAll("*")].find((e) => e.childElementCount === 0 && e.textContent.trim() === "开始创作");
+    const el = [...document.querySelectorAll("*")].find((e) => e.childElementCount === 0 && e.textContent.trim() === "Start creating");
     let n = el;
     for (let i = 0; i < 4 && n; i++) {
       if (n.tagName === "BUTTON" || n.getAttribute("role") === "button" || n.onclick) break;
@@ -122,11 +122,11 @@ async function main() {
     const page = await browser.newPage();
     // 舞台按 1920×1080 量,视口给够,免得布局被挤变形
     await page.setViewport({ width: 1600, height: 1000 });
-    page.on("pageerror", (e) => log("页面报错:", String(e).slice(0, 200)));
+    page.on("pageerror", (e) => log("Page error:", String(e).slice(0, 200)));
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
 
     const total = await arm(page);
-    log(`开始量 ${total} 张`);
+    log(`Start measuring ${total} cards`);
 
     const deadline = Date.now() + TIMEOUT_S * 1000;
     let last = -1;
@@ -136,30 +136,30 @@ async function main() {
       if (pending < 0) {
         // 页面重载了(共享工作区里别的会话一改文件,vite 就把页面刷了)。
         // 量到的都在 localStorage 里,重新进编辑器接着量即可。
-        log("页面重载了,接着量");
+        log("Page reloaded, resuming measurement");
         await wait(1000);
         pending = await arm(page);
         continue;
       }
       if (pending !== last) {
         last = pending;
-        if (pending % 10 === 0) log(`还剩 ${pending}`);
+        if (pending % 10 === 0) log(`${pending} left`);
       }
       if (pending === 0) break;
       await wait(500);
     }
-    if (pending > 0) log(`超时,还剩 ${pending} 张没量完,先把量到的写出去`);
+    if (pending > 0) log(`Timed out, ${pending} cards not measured yet, writing out what was measured`);
 
     const data = await page.evaluate(() => window.__pcPreviewBoxes.dump());
     const keys = Object.keys(data.boxes ?? {});
-    if (keys.length === 0) throw new Error("一张都没量到,不覆盖原来的表");
+    if (keys.length === 0) throw new Error("No cards were measured, not overwriting the existing table");
     keys.sort();
     // rev:这一版表的印记,页面上的本机缓存靠它作废旧结论(previewBoxes.ts)
     const sorted = { rev: Date.now(), stage: data.stage, boxes: {} };
     for (const k of keys) sorted.boxes[k] = data.boxes[k];
     fs.writeFileSync(OUT, JSON.stringify(sorted, null, 2) + "\n", "utf8");
     const tight = keys.filter((k) => sorted.boxes[k]).length;
-    log(`写入 ${path.relative(ROOT, OUT)}:${keys.length} 张,其中 ${tight} 张能推近,${keys.length - tight} 张本来就铺满整幅`);
+    log(`Wrote ${path.relative(ROOT, OUT)}: ${keys.length} cards, ${tight} can zoom in, ${keys.length - tight} already fill the whole frame`);
   } finally {
     await browser.close().catch(() => {});
     stopVite();
@@ -167,7 +167,7 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error("[preview-boxes] 失败:", e);
+  console.error("[preview-boxes] failed:", e);
   stopVite();
   process.exit(1);
 });

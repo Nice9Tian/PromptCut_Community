@@ -67,7 +67,7 @@ const keyOf = (ns, hash) => `${ns}/${hash}`;
  * @param {Partial<typeof SERVICE_USAGE_DEFAULTS>} [p.options]
  */
 export function createServiceUsage({ dir, capBytes, service = 'render', now = Date.now, log = () => {}, options = {}, projectScoped = false }) {
-  if (typeof dir !== 'string' || dir === '') throw new TypeError('createServiceUsage：dir 必须是非空字符串');
+  if (typeof dir !== 'string' || dir === '') throw new TypeError('createServiceUsage: dir must be a non-empty string');
   const o = { ...SERVICE_USAGE_DEFAULTS, ...options };
   const file = path.join(path.resolve(dir), projectScoped ? 'render-v2.ndjson' : SERVICE_USAGE_FILE);
   /** `ns/hash` → { ns, hash, size, projects: Map<projectId, at> } */

@@ -26,34 +26,34 @@ export const CARD_AUDIO_DEFAULTS = Object.freeze({
 export const newCardAudioState = () => ({ pending: new Map() });
 
 /** 「这次没看成:…」是给看画面的工具写的;卡片声音借同一条路,原因照用、开头换掉 */
-const reword = (message) => `卡片声音这次没有生成:${String(message ?? '').replace(/^这次没看成[:：]\s*/, '')}`;
+const reword = (message) => `Card audio was not generated this time: ${String(message ?? '').replace(/^Could not view this time:\s*/, '')}`;
 
 /**
  * 核对渲染服务回来的 WAV:RIFF / WAVE、32 位浮点、48000 Hz、声道数与帧数和记录对得上、长度一个字节不差。
  * @returns {string | null} 不对回原因
  */
 export function checkCardAudioWav(wav, rendition) {
-  if (!Buffer.isBuffer(wav) || wav.length < 45) return 'WAV 太短';
-  if (wav.toString('latin1', 0, 4) !== 'RIFF' || wav.toString('latin1', 8, 12) !== 'WAVE' || wav.toString('latin1', 12, 16) !== 'fmt ' || wav.toString('latin1', 36, 40) !== 'data') return '不是这条路该有的 WAV';
+  if (!Buffer.isBuffer(wav) || wav.length < 45) return 'WAV is too short';
+  if (wav.toString('latin1', 0, 4) !== 'RIFF' || wav.toString('latin1', 8, 12) !== 'WAVE' || wav.toString('latin1', 12, 16) !== 'fmt ' || wav.toString('latin1', 36, 40) !== 'data') return 'Not the WAV this path should have';
   const channels = wav.readUInt16LE(22);
-  if (wav.readUInt16LE(20) !== 3 || wav.readUInt16LE(34) !== 32 || wav.readUInt32LE(24) !== 48000) return 'WAV 的格式不是 48000 Hz 的 32 位浮点';
-  if (channels !== rendition.channels) return 'WAV 的声道数与记录不符';
-  if (wav.length !== 44 + rendition.frames * channels * 4 || wav.readUInt32LE(40) !== wav.length - 44) return 'WAV 的长度与记录不符';
+  if (wav.readUInt16LE(20) !== 3 || wav.readUInt16LE(34) !== 32 || wav.readUInt32LE(24) !== 48000) return 'WAV format is not 48000 Hz 32-bit float';
+  if (channels !== rendition.channels) return 'WAV channel count does not match the record';
+  if (wav.length !== 44 + rendition.frames * channels * 4 || wav.readUInt32LE(40) !== wav.length - 44) return 'WAV length does not match the record';
   return null;
 }
 
 /** 核对身份记录的形状;回收拾过的记录(只留该有的字段)或抛原因 */
 export function checkRendition(r, clip, limits = CARD_AUDIO_DEFAULTS) {
-  if (!r || typeof r !== 'object' || Array.isArray(r)) throw new Error('渲染服务没有回声音的记录');
-  if (r.version !== 1 || r.sampleRate !== 48000) throw new Error('声音记录的版本不对');
-  if (typeof r.cardId !== 'string' || r.cardId !== (clip.cardId ?? '')) throw new Error('声音记录不是这张卡的');
-  if (!Number.isSafeInteger(r.frames) || r.frames < 1 || r.frames > 60 * 48000) throw new Error('声音记录的长度不对');
-  if (!Number.isInteger(r.channels) || r.channels < 1 || r.channels > 8) throw new Error('声音记录的声道数不对');
-  if (!Number.isFinite(r.sourceOffset) || !Number.isFinite(r.duration) || Math.abs(r.duration - r.frames / 48000) > 1e-9) throw new Error('声音记录的时间不对');
-  if (typeof r.sourceKey !== 'string' || !/^[a-f0-9]{64}$/.test(r.sourceKey)) throw new Error('声音记录的键不对');
-  if (!r.identity || typeof r.identity !== 'object' || Array.isArray(r.identity)) throw new Error('声音记录没有身份');
+  if (!r || typeof r !== 'object' || Array.isArray(r)) throw new Error('The render service returned no audio record');
+  if (r.version !== 1 || r.sampleRate !== 48000) throw new Error('Audio record has the wrong version');
+  if (typeof r.cardId !== 'string' || r.cardId !== (clip.cardId ?? '')) throw new Error('Audio record does not belong to this card');
+  if (!Number.isSafeInteger(r.frames) || r.frames < 1 || r.frames > 60 * 48000) throw new Error('Audio record has an invalid length');
+  if (!Number.isInteger(r.channels) || r.channels < 1 || r.channels > 8) throw new Error('Audio record has an invalid channel count');
+  if (!Number.isFinite(r.sourceOffset) || !Number.isFinite(r.duration) || Math.abs(r.duration - r.frames / 48000) > 1e-9) throw new Error('Audio record has an invalid time');
+  if (typeof r.sourceKey !== 'string' || !/^[a-f0-9]{64}$/.test(r.sourceKey)) throw new Error('Audio record has an invalid key');
+  if (!r.identity || typeof r.identity !== 'object' || Array.isArray(r.identity)) throw new Error('Audio record has no identity');
   const identity = JSON.parse(JSON.stringify(r.identity));
-  if (Buffer.byteLength(JSON.stringify(identity), 'utf8') > limits.maxIdentityBytes) throw new Error('卡片声音参数记录过大,请缩短片段或精简输入');
+  if (Buffer.byteLength(JSON.stringify(identity), 'utf8') > limits.maxIdentityBytes) throw new Error('The card audio parameter record is too large. Shorten the clip or simplify the input');
   return { version: 1, cardId: r.cardId, sourceKey: r.sourceKey, sourceOffset: r.sourceOffset, duration: r.duration, sampleRate: 48000, frames: r.frames, channels: r.channels, identity };
 }
 
@@ -74,17 +74,17 @@ export function createCardAudioTools({ state, look, snapshot, refreshCards = asy
 
   async function render(args, track) {
     const clipId = typeof args?.clipId === 'string' ? args.clipId : '';
-    if (!clipId) throw new ToolError('要传 clipId');
+    if (!clipId) throw new ToolError('clipId is required');
     const ask = look();
     if (!ask) {
-      return { ok: false, cloudUnavailable: true, error: '云端 Agent 在这台节点上生成不了卡片声音:节点没有开渲染服务的口子(卡片的声音代码只在渲染服务的隔离进程里执行)。请告诉用户在电脑上的 PromptCut 里生成。' };
+      return { ok: false, cloudUnavailable: true, error: 'The Cloud Agent cannot generate card audio on this node: the node has no render service port open (card audio code only runs in the render service\'s isolated process). Tell the user to generate it in PromptCut on their computer.' };
     }
     await ensureCanWrite();
     await refreshCards();
     const { project } = await snapshot();
     const clip = (project.tracks ?? []).flatMap((t) => t.clips ?? []).find((c) => c.id === clipId);
-    if (!clip) return fail('找不到带内嵌声音的动效卡片');
-    if (!state.pending.has(clipId) && state.pending.size >= limits.pendingJobs) return fail(`最多同时排队 ${limits.pendingJobs} 个卡片声音任务,请等待或取消已有任务`);
+    if (!clip) return fail('Cannot find a motion graphics card with embedded audio');
+    if (!state.pending.has(clipId) && state.pending.size >= limits.pendingJobs) return fail(`At most ${limits.pendingJobs} card audio jobs can be queued at once. Wait for or cancel an existing job`);
     state.pending.get(clipId)?.abort();
     const controller = new AbortController();
     state.pending.set(clipId, controller);
@@ -99,11 +99,11 @@ export function createCardAudioTools({ state, look, snapshot, refreshCards = asy
         try {
           data = await ask('/api/cards/audio', { project, clipId, force }, { timeoutMs: limits.renderMs, signal });
         } catch (err) {
-          if (signal.aborted) return fail('已取消,原有的卡片声音保持不变', true);
+          if (signal.aborted) return fail('Canceled, the existing card audio is unchanged', true);
           return fail(reword(err?.message ?? err));
         }
-        if (signal.aborted) return fail('已取消,原有的卡片声音保持不变', true);
-        if (!data || typeof data !== 'object' || data.ok !== true) return fail(typeof data?.error === 'string' && data.error ? data.error : '卡片声音没有生成');
+        if (signal.aborted) return fail('Canceled, the existing card audio is unchanged', true);
+        if (!data || typeof data !== 'object' || data.ok !== true) return fail(typeof data?.error === 'string' && data.error ? data.error : 'Card audio was not generated');
         if (data.reusable && round === 0 && !force) {
           // 记录还对得上:素材服务里真有这份字节才算数(只认项目素材表里那一条的哈希,不认渲染页报的)
           const media = (project.media ?? []).find((m) => m.id === clip.cardAudio?.mediaId);
@@ -111,21 +111,21 @@ export function createCardAudioTools({ state, look, snapshot, refreshCards = asy
           force = true;
           continue;
         }
-        if (typeof data.wav !== 'string' || data.wav.length > Math.ceil(limits.maxWavBytes / 3) * 4 + 8) return fail('渲染服务回来的声音太大或不完整');
+        if (typeof data.wav !== 'string' || data.wav.length > Math.ceil(limits.maxWavBytes / 3) * 4 + 8) return fail('The audio returned by the render service is too large or incomplete');
         let rendition;
         try { rendition = checkRendition(data.rendition, clip, limits); } catch (err) { return fail(err.message); }
         const wav = Buffer.from(data.wav, 'base64');
         const bad = checkCardAudioWav(wav, rendition);
-        if (bad) return fail(`渲染服务回来的声音不对:${bad}`);
+        if (bad) return fail(`The audio returned by the render service is invalid: ${bad}`);
         bytes = wav.length;
         const asset = await put(wav);
-        if (signal.aborted) return fail('已取消,原有的卡片声音保持不变', true);
-        if (!/^[a-f0-9]{64}$/.test(asset?.hash ?? '')) return fail('素材服务未返回有效内容哈希');
-        const name = `${String(typeof data.name === 'string' && data.name ? data.name : `${clip.label || clip.cardId} · 卡片声音.wav`).replace(/[\0-\x1f]/g, ' ').slice(0, 200)}`;
+        if (signal.aborted) return fail('Canceled, the existing card audio is unchanged', true);
+        if (!/^[a-f0-9]{64}$/.test(asset?.hash ?? '')) return fail('The asset service did not return a valid content hash');
+        const name = `${String(typeof data.name === 'string' && data.name ? data.name : `${clip.label || clip.cardId} · card audio.wav`).replace(/[\0-\x1f]/g, ' ').slice(0, 200)}`;
         let result = null;
         try {
           await mutate(track, (h) => {
-            if (signal.aborted || state.pending.get(clipId) !== controller) throw Object.assign(new Error('已取消,原有的卡片声音保持不变'), { cancelled: true });
+            if (signal.aborted || state.pending.get(clipId) !== controller) throw Object.assign(new Error('Canceled, the existing card audio is unchanged'), { cancelled: true });
             result = h.cardAudio.commit({
               projectId: project.id, cutId: project.activeCutId, clipId,
               // 提交时比的是**我们自己**在取副本那一刻看到的片段,不用渲染页报的那一份

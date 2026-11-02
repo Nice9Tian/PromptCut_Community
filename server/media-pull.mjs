@@ -100,9 +100,9 @@ export function setRemoteAssetService(remote) {
   }
   const base = String(remote.base || '').trim().replace(/\/+$/, '');
   let url;
-  try { url = new URL(base); } catch { throw new TypeError('远程素材服务的基址解析不了'); }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new TypeError('远程素材服务的基址只能是 http(s)');
-  if (url.username || url.password) throw new TypeError('远程素材服务的基址不能带用户名或密码');
+  try { url = new URL(base); } catch { throw new TypeError('The base URL of the remote asset service could not be parsed'); }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new TypeError('The base URL of the remote asset service must be http(s)');
+  if (url.username || url.password) throw new TypeError('The base URL of the remote asset service must not contain a username or password');
   const ticket = remote.ticket ?? null;
   const scope = context.getStore();
   if (scope && remote.projectId !== scope.projectId) throw Object.assign(new Error('project-mismatch'), { code: 'project-mismatch' });

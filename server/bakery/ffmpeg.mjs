@@ -110,9 +110,9 @@ function runFfmpegProgress(ffmpegCmd, args, onFrame, stallMs = Number(process.en
     });
     proc.on('close', (code) => {
       clearInterval(dog);
-      if (stalled) reject(Object.assign(new Error(`ffmpeg 合成 ${stallMs / 1000} 秒没有任何进展(停在第 ${Math.max(0, last)} 帧),已中止`), { stalled: true }));
+      if (stalled) reject(Object.assign(new Error(`ffmpeg compositing made no progress for ${stallMs / 1000} seconds (stuck at frame ${Math.max(0, last)}), aborted`), { stalled: true }));
       else if (code === 0) resolve();
-      else reject(new Error(`ffmpeg(素材合成)exited with code ${code}`));
+      else reject(new Error(`ffmpeg (media compositing) exited with code ${code}`));
     });
     proc.on('error', (e) => {
       clearInterval(dog);
@@ -230,9 +230,9 @@ export function streamFilterThreads(cpus = typeof os.availableParallelism === 'f
  */
 export function streamSegmentArgs({ encoder = 'libx264', fps, raw = null }) {
   const spec = STREAM_ENCODERS[encoder];
-  if (!spec) throw new Error(`未知的轨道流编码器 ${encoder}`);
-  if (!(Number(fps) > 0)) throw new Error('轨道流编码要帧率');
-  if (raw && !(Number.isInteger(raw.width) && Number.isInteger(raw.height) && raw.width > 0 && raw.height > 0)) throw new Error('原始像素输入要整数宽高');
+  if (!spec) throw new Error(`Unknown track stream encoder ${encoder}`);
+  if (!(Number(fps) > 0)) throw new Error('Track stream encoding requires a frame rate');
+  if (raw && !(Number.isInteger(raw.width) && Number.isInteger(raw.height) && raw.width > 0 && raw.height > 0)) throw new Error('Raw pixel input requires an integer width and height');
   const input = raw ? ['-f', 'rawvideo', '-pix_fmt', 'rgba', '-video_size', `${raw.width}x${raw.height}`] : ['-f', 'image2pipe', '-c:v', 'png'];
   return ['-y', '-hide_banner', '-loglevel', 'error', '-filter_complex_threads', String(streamFilterThreads()),
     '-reinit_filter', '0', ...STREAM_INPUT_ARGS, ...input, '-framerate', String(fps), '-i', 'pipe:0',
@@ -394,7 +394,7 @@ export function openStreamSegmentEncoder(ffmpeg, { encoder = 'libx264', fps, pre
   const done = new Promise((resolve, reject) => {
     proc.on('error', reject);
     proc.on('close', code => code === 0 ? resolve(Buffer.concat(chunks))
-      : reject(inputError || new Error(`ffmpeg(${encoder})退出码 ${code}:${stderr.trim()}`)));
+      : reject(inputError || new Error(`ffmpeg (${encoder}) exit code ${code}: ${stderr.trim()}`)));
   });
   done.catch(() => {});
   return {
@@ -465,7 +465,7 @@ export async function probeEncoders(ffmpeg, { order = STREAM_ENCODER_ORDER, fps 
   const pngs = probePngs();
   const results = [];
   for (const name of order) {
-    if (!STREAM_ENCODERS[name]) { results.push({ name, ok: false, error: '未知编码器' }); continue; }
+    if (!STREAM_ENCODERS[name]) { results.push({ name, ok: false, error: 'Unknown encoder' }); continue; }
     const started = Date.now();
     const enc = openStreamSegmentEncoder(ffmpeg, { encoder: name, fps, prewarm: false });
     const timer = setTimeout(() => { void enc.abort(); }, timeoutMs);
@@ -473,7 +473,7 @@ export async function probeEncoders(ffmpeg, { order = STREAM_ENCODER_ORDER, fps 
       for (const png of pngs) await enc.write(png);
       const { bytes } = await enc.finish();
       const ok = bytes.includes(Buffer.from('moof', 'latin1')) && bytes.includes(Buffer.from('avcC', 'latin1'));
-      results.push({ name, ok, ms: Date.now() - started, error: ok ? null : '输出里没有 moof / avcC' });
+      results.push({ name, ok, ms: Date.now() - started, error: ok ? null : 'No moof / avcC in the output' });
     } catch (e) {
       results.push({ name, ok: false, ms: Date.now() - started, error: String(e?.message || e).split(/\r?\n/).slice(-2).join(' ') });
     } finally { clearTimeout(timer); }
@@ -489,7 +489,7 @@ export async function pickStreamEncoder(ffmpeg, preference = streamEncoderPrefer
     pickedEncoders.set(key, (async () => {
       const results = await probeEncoders(ffmpeg, { order: preference });
       const hit = results.find(r => r.ok);
-      if (!hit) throw Object.assign(new Error(`没有能用的 H.264 编码器:${results.map(r => `${r.name}(${r.error})`).join('; ')}`), { code: 'NO_STREAM_ENCODER', results });
+      if (!hit) throw Object.assign(new Error(`No usable H.264 encoder: ${results.map(r => `${r.name}(${r.error})`).join('; ')}`), { code: 'NO_STREAM_ENCODER', results });
       return { encoder: hit.name, results };
     })());
     pickedEncoders.get(key).catch(() => pickedEncoders.delete(key));

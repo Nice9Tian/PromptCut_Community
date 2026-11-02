@@ -74,14 +74,14 @@ export function webPlugin(): Plugin {
       server.middlewares.use(async (req: Connect.IncomingMessage, res, next) => {
         if (!req.url?.startsWith("/api/web")) return next();
         const url = req.url.split("?")[0];
-        if (req.method !== "POST") return sendJson(res, 405, { ok: false, error: "只支持 POST" });
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, error: "Only POST is supported" });
 
         let body: Record<string, unknown> = {};
         try {
           const raw = await readBody(req);
           if (raw.length) body = JSON.parse(raw.toString("utf-8"));
         } catch {
-          return sendJson(res, 400, { ok: false, error: "请求体不是合法 JSON" });
+          return sendJson(res, 400, { ok: false, error: "Request body is not valid JSON" });
         }
 
         const { session } = await mods();
@@ -98,7 +98,7 @@ export function webPlugin(): Plugin {
             const it = await inst();
 
             if (url === "/api/web/open") {
-              if (!body.url) return sendJson(res, 400, { ok: false, error: "要给 url" });
+              if (!body.url) return sendJson(res, 400, { ok: false, error: "url is required" });
               return sendJson(res, 200, await session.open(it.page, String(body.url)));
             }
             if (url === "/api/web/view")   return sendJson(res, 200, await session.view(it.page));
@@ -108,7 +108,7 @@ export function webPlugin(): Plugin {
             if (url === "/api/web/read")   return sendJson(res, 200, await session.read(it.page, body));
             if (url === "/api/web/handoff") return sendJson(res, 200, await session.handoff(it, body));
 
-            return sendJson(res, 404, { ok: false, error: `没有这个接口:${url}` });
+            return sendJson(res, 404, { ok: false, error: `No such endpoint: ${url}` });
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             return sendJson(res, 200, { ok: false, error: msg });

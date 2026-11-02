@@ -74,8 +74,8 @@ const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 /** 报错里不带服务器上的路径:盘符路径和 `/a/b` 形的路径都抹掉 */
 export function scrubPaths(text, max = 400) {
   return String(text ?? '')
-    .replace(/[A-Za-z]:[\\/][^\s'"<>|]*/g, '<路径>')
-    .replace(/(?:^|[\s(=:])\/(?:[^\s'"<>|/]+\/)+[^\s'"<>|/]*/g, (m) => `${m[0] === '/' ? '' : m[0]}<路径>`)
+    .replace(/[A-Za-z]:[\\/][^\s'"<>|]*/g, '<path>')
+    .replace(/(?:^|[\s(=:])\/(?:[^\s'"<>|/]+\/)+[^\s'"<>|/]*/g, (m) => `${m[0] === '/' ? '' : m[0]}<path>`)
     .slice(0, max);
 }
 
@@ -87,7 +87,7 @@ export function scrubPaths(text, max = 400) {
  */
 export function createTrackResultStore({ databasePath, now = Date.now } = {}) {
   if (typeof databasePath !== 'string' || !databasePath.trim() || databasePath === ':memory:') {
-    throw new TrackToolError('TRACK_UNCONFIGURED', '追踪结果表要一个磁盘路径');
+    throw new TrackToolError('TRACK_UNCONFIGURED', 'The tracking result table needs a disk path');
   }
   const file = path.resolve(databasePath);
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -122,7 +122,7 @@ export function createTrackResultStore({ databasePath, now = Date.now } = {}) {
     );
   `);
   let closed = false;
-  const live = () => { if (closed) throw new TrackToolError('TRACK_CLOSED', '追踪结果表已关闭'); return db; };
+  const live = () => { if (closed) throw new TrackToolError('TRACK_CLOSED', 'The tracking result table is closed'); return db; };
   const decodeRun = (row) => (row ? {
     jobId: row.job_id, kind: row.kind, projectId: row.project_id, conversationId: row.conversation_id,
     mediaId: row.media_id, mediaRev: row.media_rev, mediaHash: row.media_hash, pointCount: row.point_count,
@@ -208,9 +208,9 @@ export function summarizePoints(points) {
 }
 
 const ENGINE_NOTE = {
-  bootstapir: 'BootsTAPIR,任意点追踪,visible 为 false 表示该帧被遮挡或移出画面',
-  template: '当前是模板匹配兜底(云节点没装运动追踪拓展,或权重不在)。刚体、纹理清晰、不转向的目标能追得很准,'
-    + '但目标一旦转向、缩放或长时间被挡就会跟丢;某个点带 note 字段表示它压根没追成',
+  bootstapir: 'BootsTAPIR, arbitrary point tracking; visible being false means the point is occluded or out of frame in that frame',
+  template: 'Currently using the template matching fallback (the cloud node has no motion tracking extension installed, or the weights are missing). Rigid targets with clear texture that do not turn can be tracked very accurately,'
+    + 'but once the target turns, scales or is occluded for a long time, tracking is lost; a point with a note field means it could not be tracked at all',
 };
 
 /** Python 侧的 error.code → 作业表里的稳定错误码 */
@@ -227,24 +227,24 @@ const CANCEL_CODES = new Set(['run-resource-fenced', 'run-resource-unauthorized'
 
 /** 作业错误码 → 给模型看的话。导出给「后台作业状态」(`hosted-workflow.mjs` 的 `errorTexts`)用,两处说的是同一句 */
 export const TRACK_ERROR_TEXT = Object.freeze({
-  TRACK_TIMEOUT: '这次追踪超过了时限,已被停掉。请减少点数或把素材剪短后再追。',
-  TRACK_TOO_LONG: '素材太长,超出这台节点一次能追的帧数。请先把素材剪短再追。',
-  TRACK_ENGINE_UNAVAILABLE: '这台节点上追踪用的 Python 运行环境不可用(缺 numpy 或 ffmpeg)。请告诉用户联系托管方。',
-  TRACK_NOT_VIDEO: '这个素材不是视频,没有运动可追。',
-  TRACK_MEDIA_MISSING: '素材字节取不到(素材服务上没有这份素材,或还没传完)。稍后再试或重新导入。',
-  TRACK_BAD_POINTS: '追踪点不合法。',
-  TRACK_FAILED: '追踪进程失败。',
-  TRACK_SPOOL_FAILED: '素材放不进这个对话的工作目录(超过空间上限)。',
-  TRACK_TOO_LARGE: '素材文件太大,这台节点不追。',
-  INTERRUPTED_ON_RESTART: '服务重启,上一次追踪被中断了。',
-  PROVIDER_CLOSED: '服务正在关闭,这次追踪被停掉了。',
-  RUN_CANCELLED: '这次追踪随任务一起被取消了。',
-  FENCE_CANCELLED: '这次追踪随任务一起被取消了。',
-  TRACK_INSTALL_FAILED: '拓展安装失败。',
+  TRACK_TIMEOUT: 'This tracking run exceeded the time limit and was stopped. Reduce the number of points or trim the media shorter, then track again.',
+  TRACK_TOO_LONG: 'The media is too long and exceeds the number of frames this node can track at once. Trim the media shorter first, then track.',
+  TRACK_ENGINE_UNAVAILABLE: 'The Python runtime used for tracking on this node is unavailable (numpy or ffmpeg is missing). Tell the user to contact the host.',
+  TRACK_NOT_VIDEO: 'This media is not a video, so there is no motion to track.',
+  TRACK_MEDIA_MISSING: 'Cannot fetch the media bytes (the asset service does not have this media, or the upload has not finished). Try again later or re-import it.',
+  TRACK_BAD_POINTS: 'Invalid tracking points.',
+  TRACK_FAILED: 'The tracking process failed.',
+  TRACK_SPOOL_FAILED: 'The media does not fit in this chat\'s working directory (over the space limit).',
+  TRACK_TOO_LARGE: 'The media file is too large; this node will not track it.',
+  INTERRUPTED_ON_RESTART: 'The service restarted and the previous tracking run was interrupted.',
+  PROVIDER_CLOSED: 'The service is shutting down and this tracking run was stopped.',
+  RUN_CANCELLED: 'This tracking run was cancelled along with the task.',
+  FENCE_CANCELLED: 'This tracking run was cancelled along with the task.',
+  TRACK_INSTALL_FAILED: 'Extension install failed.',
 });
 const JOB_ERROR_MESSAGE = TRACK_ERROR_TEXT;
 
-const errorMessageOf = (code) => JOB_ERROR_MESSAGE[code] ?? `追踪失败(${code})。`;
+const errorMessageOf = (code) => JOB_ERROR_MESSAGE[code] ?? `Tracking failed (${code}).`;
 
 /* ---------------------------------------------------------------- 提供者 */
 
@@ -273,9 +273,9 @@ export function createTrackTools({
     ['contextAccess', contextAccess, ['authorize']], ['resources', resources, ['register']],
     ['jobs', jobs, ['start', 'update', 'get', 'checkpointRetained']], ['assets', assets, ['openRead']],
   ]) {
-    if (!dep || methods.some((m) => typeof dep[m] !== 'function')) throw new TrackToolError('TRACK_UNCONFIGURED', `createTrackTools 缺 ${name}`);
+    if (!dep || methods.some((m) => typeof dep[m] !== 'function')) throw new TrackToolError('TRACK_UNCONFIGURED', `createTrackTools is missing ${name}`);
   }
-  if (typeof workspace !== 'function') throw new TrackToolError('TRACK_UNCONFIGURED', 'createTrackTools 缺 workspace');
+  if (typeof workspace !== 'function') throw new TrackToolError('TRACK_UNCONFIGURED', 'createTrackTools is missing workspace');
   const limits = { ...TRACK_DEFAULTS, ...limitsIn };
   const store = resultsIn ?? createTrackResultStore({ databasePath, now });
   const ownsStore = resultsIn === null;
@@ -304,8 +304,8 @@ export function createTrackTools({
    * 回 `{ code, signal, timedOut, aborted, events, stderrTail }`;子进程 exit + close 之后才返回。
    */
   async function runPython(context, ws, args, { timeoutMs, onEvent = () => {}, env = {}, preamble = [] } = {}) {
-    if (!python?.executable) throw new TrackToolError('TRACK_UNCONFIGURED', '这台云节点没有配置运动追踪的 Python 运行环境。请告诉用户联系托管方。');
-    if (closing) throw new TrackToolError('TRACK_CLOSED', '服务正在关闭');
+    if (!python?.executable) throw new TrackToolError('TRACK_UNCONFIGURED', 'This cloud node has no Python runtime configured for motion tracking. Tell the user to contact the host.');
+    if (closing) throw new TrackToolError('TRACK_CLOSED', 'Service is shutting down');
     // PYTHON* 环境变量在隔离模式下不生效(包目录、UTF-8 都由命令行给),这里不设
     const argv = isolatedPythonArgs('promptcut_track', { roots: splitRoots(python.packageRoot), args: [...pythonFlags(), ...preamble, ...args] });
     const child = ws.spawn(python.executable, argv, { env: { ...env } });
@@ -341,7 +341,7 @@ export function createTrackTools({
     children.delete(entry);
     if (end.spawnError) {
       // 起都没起来(解释器路径不对):没有进程可登记
-      throw Object.assign(new Error('python-spawn-failed'), { code: end.spawnError?.code ?? 'SPAWN_FAILED', jobCode: 'TRACK_ENGINE_UNAVAILABLE', detail: 'Python 解释器起不来' });
+      throw Object.assign(new Error('python-spawn-failed'), { code: end.spawnError?.code ?? 'SPAWN_FAILED', jobCode: 'TRACK_ENGINE_UNAVAILABLE', detail: 'The Python interpreter failed to start' });
     }
     return { code: end.code, signal: end.signal, timedOut: end.timedOut, aborted: end.aborted, events: state.events, stderrTail: state.stderrTail };
   }
@@ -471,11 +471,11 @@ export function createTrackTools({
         const missingDependency = !failure && /ModuleNotFoundError|ImportError/.test(outcome.stderrTail);
         throw Object.assign(new Error('python-failed'), {
           jobCode: missingDependency ? 'TRACK_ENGINE_UNAVAILABLE' : (PYTHON_ERROR_CODE[failure?.code] ?? 'TRACK_FAILED'),
-          detail: detail || `追踪进程异常退出(代码 ${outcome.code})`,
+          detail: detail || `The tracking process exited abnormally (code ${outcome.code})`,
         });
       }
       if (!['bootstapir', 'template'].includes(result.engine) || !Array.isArray(result.points) || !result.points.length) {
-        throw Object.assign(new Error('bad-result'), { jobCode: 'TRACK_FAILED', detail: '追踪进程没有给出合法的结果' });
+        throw Object.assign(new Error('bad-result'), { jobCode: 'TRACK_FAILED', detail: 'The tracking process did not return a valid result' });
       }
 
       /* 存结果,再把作业推到 done;推不过去(fence 变了)就把结果删掉,不留迟到的产物 */
@@ -540,7 +540,7 @@ export function createTrackTools({
       if (outcome.code !== 0 || !installed) {
         throw Object.assign(new Error('install-failed'), {
           jobCode: 'TRACK_INSTALL_FAILED',
-          detail: scrubPaths([failure?.message, ...tail.slice(-5)].filter(Boolean).join(' | ') || `安装进程异常退出(代码 ${outcome.code})`, 800),
+          detail: scrubPaths([failure?.message, ...tail.slice(-5)].filter(Boolean).join(' | ') || `Install process exited abnormally (code ${outcome.code})`, 800),
         });
       }
       store.setDetail(jobId, canonical({ needsModel: installed.needsModel === true, ready: installed.ready === true, engine: installed.engine ?? null, tail: tail.slice(-8) }));
@@ -559,9 +559,9 @@ export function createTrackTools({
   /* ---- 工具 ---- */
 
   const MODEL_HINTS = {
-    bootstapir: '已装拓展,走 BootsTAPIR。',
-    template: '没装拓展(或权重不在),走模板匹配兜底 —— 能追,但目标转向、形变或长时间被挡时会跟丢。要更稳的结果得由托管方在节点上装运动追踪拓展(track_install)。',
-    none: '两档都用不了(这台节点的 Python 缺 numpy 或 ffmpeg),这里追不了。请告诉用户联系托管方,或在电脑上的 PromptCut 里追。',
+    bootstapir: 'Extension installed, using BootsTAPIR.',
+    template: 'Extension not installed (or weights missing), falling back to template matching. It can track, but loses the target when it turns, deforms or is occluded for a long time. For more stable results, the host must install the motion tracking extension on the node (track_install).',
+    none: 'Neither tier is usable (this node\'s Python lacks numpy or ffmpeg), so tracking is not possible here. Tell the user to contact the host, or to track in PromptCut on their computer.',
   };
 
   async function trackStatus(context) {
@@ -570,7 +570,7 @@ export function createTrackTools({
     const installInfo = installRun ? await installStatusOf(context, installRun) : null;
     const base = { ok: true, installAllowed: install.enabled === true, limits: { maxPoints: limits.maxPoints, maxFrames: limits.maxFrames }, ...(installInfo ? { install: installInfo } : {}) };
     if (!python?.executable) {
-      return { ...base, ready: false, engine: null, reason: '这台云节点没有配置运动追踪的 Python 运行环境', hint: MODEL_HINTS.none };
+      return { ...base, ready: false, engine: null, reason: 'This cloud node has no Python environment configured for motion tracking', hint: MODEL_HINTS.none };
     }
     if (statusCache && Number(now()) - statusCache.at < limits.statusTtlMs) return { ...base, ...statusCache.value };
     const ws = await workspace(context);
@@ -580,7 +580,7 @@ export function createTrackTools({
     } catch (error) {
       if (error instanceof TrackToolError && error.code === 'TRACK_UNCONFIGURED') throw error;
       if (error?.code === 'ENOENT') {
-        return { ...base, ready: false, engine: null, reason: '解释器启动失败', hint: MODEL_HINTS.none };
+        return { ...base, ready: false, engine: null, reason: 'Interpreter failed to start', hint: MODEL_HINTS.none };
       }
       throw error;
     }
@@ -588,7 +588,7 @@ export function createTrackTools({
     let value;
     if (!info) {
       const why = scrubPaths(lastLine(outcome.stderrTail), 200);
-      value = { ready: false, engine: null, reason: `${outcome.timedOut ? '查状态超时' : '解释器没有返回可解析的状态'}${why ? `:${why}` : ''}`, hint: MODEL_HINTS.none };
+      value = { ready: false, engine: null, reason: `${outcome.timedOut ? 'Status check timed out' : 'The interpreter returned no parseable status'}${why ? `:${why}` : ''}`, hint: MODEL_HINTS.none };
     } else {
       value = {
         ready: !!info.ready,
@@ -622,48 +622,48 @@ export function createTrackTools({
       await contextAccess.authorize(context, 'read');
       return {
         ok: false, cloudUnavailable: true, code: 'TRACK_INSTALL_DISABLED', started: false,
-        error: '云端的运动追踪拓展由托管方在节点上统一安装,不能由 Agent 安装(模型给不了 pip 参数,下载也不经你)。'
-          + '现在已经能用模板匹配兜底追踪;要更稳的 BootsTAPIR,请告诉用户联系托管方。可以用 track_status 看节点上现在是哪一档。',
+        error: 'The cloud motion tracking extension is installed centrally on the node by the host and cannot be installed by the Agent (the model cannot supply pip arguments, and downloads do not go through you).'
+          + 'Fallback tracking with template matching already works; for the more stable BootsTAPIR, tell the user to contact the host. Use track_status to see which tier the node is on now.',
       };
     }
-    if (!python?.executable) throw new TrackToolError('TRACK_UNCONFIGURED', '这台云节点没有配置运动追踪的 Python 运行环境。请告诉用户联系托管方。');
+    if (!python?.executable) throw new TrackToolError('TRACK_UNCONFIGURED', 'This cloud node has no Python runtime configured for motion tracking. Tell the user to contact the host.');
     if (!egress && install.direct !== true) {
       return {
         ok: false, cloudUnavailable: true, code: 'TRACK_INSTALL_NO_EGRESS', started: false,
-        error: '这台云节点没有给安装配出网闸,运动追踪拓展不能由 Agent 触发下载。请告诉用户联系托管方在节点上装。',
+        error: 'This cloud node has no network gate configured for installs, so the Agent cannot trigger the motion tracking extension download. Tell the user to contact the host to install it on the node.',
       };
     }
     if (installing) {
-      return { ok: true, started: false, alreadyRunning: true, jobId: installing, hint: '拓展正在安装,不要重复启动;用 track_status 看进度。' };
+      return { ok: true, started: false, alreadyRunning: true, jobId: installing, hint: 'The extension is being installed, do not start it again; use track_status to check progress.' };
     }
     const digest = sha256(canonical({ kind: 'track.install', requirements: python.requirements ? 'pinned' : 'bundled' }));
     const started = await jobs.start(context, 'track.install', digest, `trkinst-${digest.slice(0, 40)}`);
     const fresh = store.registerRun({ jobId: started.jobId, kind: 'install', projectId: context.projectId, conversationId: context.conversationId });
     if (!fresh || started.state !== 'queued' || closing) {
-      return { ok: true, started: false, jobId: started.jobId, state: started.state, hint: '这一轮已经起过安装,用 track_status 看结果。' };
+      return { ok: true, started: false, jobId: started.jobId, state: started.state, hint: 'An install was already started this round, use track_status to see the result.' };
     }
     installing = started.jobId;
     launch(() => runInstallJob(context, started.jobId));
     return {
       ok: true, started: true, jobId: started.jobId,
-      hint: '运动追踪拓展正在后台安装(torch,要几分钟)。用 track_status 看有没有变成 bootstapir;不要重复启动。装完还可能缺权重文件,那由托管方放到节点上。',
+      hint: 'The motion tracking extension is being installed in the background (torch, takes a few minutes). Use track_status to see whether it has become bootstapir; do not start it again. After installing, weight files may still be missing; the host puts those on the node.',
     };
   }
 
   function validatePoints(raw) {
-    if (!Array.isArray(raw) || raw.length === 0) throw new TrackToolError('TRACK_BAD_POINTS', 'points 至少要有一个点,写成 [[帧号, x, y], ...]');
-    if (raw.length > limits.maxPoints) throw new TrackToolError('TRACK_BAD_POINTS', `一次最多追 ${limits.maxPoints} 个点,收到 ${raw.length} 个。分几次追。`);
+    if (!Array.isArray(raw) || raw.length === 0) throw new TrackToolError('TRACK_BAD_POINTS', 'points needs at least one point, written as [[frameNumber, x, y], ...]');
+    if (raw.length > limits.maxPoints) throw new TrackToolError('TRACK_BAD_POINTS', `At most ${limits.maxPoints} points can be tracked at a time, received ${raw.length}. Track them in several batches.`);
     return raw.map((p, i) => {
       if (!Array.isArray(p) || p.length !== 3 || !p.every((v) => typeof v === 'number' && Number.isFinite(v))) {
-        throw new TrackToolError('TRACK_BAD_POINTS', `第 ${i} 个点要写成 [帧号, x, y] 三个有限的数字`);
+        throw new TrackToolError('TRACK_BAD_POINTS', `Point ${i} must be written as [frameNumber, x, y], three finite numbers`);
       }
-      if (p[0] < 0 || p[1] < 0 || p[2] < 0) throw new TrackToolError('TRACK_BAD_POINTS', `第 ${i} 个点的帧号和坐标不能是负数(坐标是素材的原始像素)`);
+      if (p[0] < 0 || p[1] < 0 || p[2] < 0) throw new TrackToolError('TRACK_BAD_POINTS', `The frame number and coordinates of point ${i} cannot be negative (coordinates are original pixels of the media)`);
       return [p[0], p[1], p[2]];
     });
   }
 
   function checkMediaId(value) {
-    if (typeof value !== 'string' || !MEDIA_ID_RE.test(value)) throw new TrackToolError('TRACK_BAD_ARGS', 'mediaId 必填(list_media 里拿)');
+    if (typeof value !== 'string' || !MEDIA_ID_RE.test(value)) throw new TrackToolError('TRACK_BAD_ARGS', 'mediaId is required (get it from list_media)');
     return value;
   }
 
@@ -673,9 +673,9 @@ export function createTrackTools({
     if (!project) return null;
     const media = (project.media ?? []).find((m) => m?.id === mediaId);
     if (!media) {
-      throw new TrackToolError('TRACK_MEDIA_NOT_FOUND', `找不到素材 ${mediaId}。现有素材:${(project.media ?? []).map((m) => m.id).slice(0, 20).join('、') || '(没有)'}`);
+      throw new TrackToolError('TRACK_MEDIA_NOT_FOUND', `Media ${mediaId} not found. Existing media: ${(project.media ?? []).map((m) => m.id).slice(0, 20).join(', ') || '(none)'}`);
     }
-    if (media.kind && media.kind !== 'video') throw new TrackToolError('TRACK_NOT_VIDEO', `${media.name ?? mediaId} 不是视频,没有运动可追`);
+    if (media.kind && media.kind !== 'video') throw new TrackToolError('TRACK_NOT_VIDEO', `${media.name ?? mediaId} is not a video, there is no motion to track`);
     return media;
   }
 
@@ -684,8 +684,8 @@ export function createTrackTools({
     const points = validatePoints(args?.points);
     await contextAccess.authorize(context, 'write');
     await mediaFromProject(context, mediaId);
-    if (!python?.executable) throw new TrackToolError('TRACK_UNCONFIGURED', '这台云节点没有配置运动追踪的 Python 运行环境,追不了。请告诉用户联系托管方。');
-    if (closing) throw new TrackToolError('TRACK_CLOSED', '服务正在关闭,稍后再试');
+    if (!python?.executable) throw new TrackToolError('TRACK_UNCONFIGURED', 'This cloud node has no Python environment configured for motion tracking, so tracking is not possible. Tell the user to contact the host.');
+    if (closing) throw new TrackToolError('TRACK_CLOSED', 'Service is shutting down, try again later');
     const digest = sha256(canonical({ mediaId, points }));
     const requestId = `trk-${digest.slice(0, 32)}${args?.force === true ? `-${randomUUID().slice(0, 8)}` : ''}`;
     const started = await jobs.start(context, 'track.points', digest, requestId);
@@ -695,18 +695,18 @@ export function createTrackTools({
       if (started.state === 'queued' && !activeJobs.has(started.jobId)) {
         const cursor = cursorFor(context, started.jobId);
         await finishWith(cursor, started.jobId, { state: 'interrupted', stage: 'done', errorCode: 'INTERRUPTED_ON_RESTART' });
-        return { ok: true, started: false, jobId: started.jobId, state: 'interrupted', mediaId, hint: `${errorMessageOf('INTERRUPTED_ON_RESTART')}要重追就带 force:true 再调一次。` };
+        return { ok: true, started: false, jobId: started.jobId, state: 'interrupted', mediaId, hint: `${errorMessageOf('INTERRUPTED_ON_RESTART')} To re-track, call again with force:true.` };
       }
       return {
         ok: true, started: false, jobId: started.jobId, state: started.state, mediaId, points: points.length,
-        hint: `同样的追踪这一轮已经起过(${started.state}),用 get_track 取结果。要换个结果重追就带 force:true。`,
+        hint: `The same tracking was already started this round (${started.state}), use get_track to fetch the result. To re-track for a different result, pass force:true.`,
       };
     }
     launch(() => runTrackJob(context, started.jobId, { mediaId, points }));
     return {
       ok: true, jobId: started.jobId, started: true, mediaId, points: points.length,
-      hint: '运动追踪已在后台开始,请用 get_track 轮询该 mediaId',
-      engineHint: '哪一档在跑要等结果出来才知道,看 get_track 返回的 engine',
+      hint: 'Motion tracking has started in the background, poll this mediaId with get_track',
+      engineHint: 'Which tier is running is only known once the result is out, see engine returned by get_track',
     };
   }
 
@@ -736,9 +736,9 @@ export function createTrackTools({
   function failureOf(job, run) {
     const code = job.errorCode ?? 'TRACK_FAILED';
     const retry = ['INTERRUPTED_ON_RESTART', 'PROVIDER_CLOSED', 'RUN_CANCELLED', 'FENCE_CANCELLED', 'TRACK_TIMEOUT'].includes(code)
-      ? '同样的追踪要重来,在 track_points 里带 force:true。' : '';
+      ? 'To redo the same tracking, pass force:true in track_points.' : '';
     return new TrackToolError(code.startsWith('TRACK_') ? code : `TRACK_${job.state.toUpperCase()}`,
-      `${errorMessageOf(code)}${run.detail ? `详情:${run.detail}。` : ''}${retry}`, { jobId: job.jobId, state: job.state, errorCode: code });
+      `${errorMessageOf(code)}${run.detail ? `Details: ${run.detail}.` : ''}${retry}`, { jobId: job.jobId, state: job.state, errorCode: code });
   }
 
   /** 项目里这段素材现在的版本和追踪时的对得上吗(没有项目视图就不判) */
@@ -747,8 +747,8 @@ export function createTrackTools({
     let project;
     try { project = await readProject(context); } catch { return { checked: false }; }
     const media = (project?.media ?? []).find((m) => m?.id === run.mediaId);
-    if (!media) return { checked: true, stale: true, reason: '素材已不在项目里' };
-    if (run.mediaHash && media.hash && media.hash !== run.mediaHash) return { checked: true, stale: true, reason: '素材换过了,这条轨迹是旧版本画面追的' };
+    if (!media) return { checked: true, stale: true, reason: 'The media is no longer in the project' };
+    if (run.mediaHash && media.hash && media.hash !== run.mediaHash) return { checked: true, stale: true, reason: 'The media was replaced, this track was tracked on an older version of the footage' };
     return { checked: true, stale: false };
   }
 
@@ -756,13 +756,13 @@ export function createTrackTools({
     const mediaId = checkMediaId(args?.mediaId);
     await contextAccess.authorize(context, 'read');
     const found = await lookup(context, mediaId);
-    if (!found) return { ok: true, found: false, mediaId, hint: `${mediaId} 还没追过,先调 track_points` };
+    if (!found) return { ok: true, found: false, mediaId, hint: `${mediaId} has not been tracked yet, call track_points first` };
     const { run, job, result } = found;
     if (job.state === 'queued' || job.state === 'running') {
       return { ok: true, running: true, jobId: job.jobId, stage: job.stage, percent: Math.round(job.progress * 100), ...(run.engine ? { engine: run.engine } : {}) };
     }
     if (job.state !== 'done') throw failureOf(job, run);
-    if (!result) throw new TrackToolError('TRACK_RESULT_MISSING', '追踪作业标成完成了,但结果表里没有它的轨迹。请用 force:true 重追。', { jobId: job.jobId });
+    if (!result) throw new TrackToolError('TRACK_RESULT_MISSING', 'The tracking job was marked complete, but the result table has no track for it. Re-track with force:true.', { jobId: job.jobId });
     const stale = await staleness(context, run);
     const head = {
       ok: true, running: false, jobId: job.jobId, mediaId,
@@ -775,7 +775,7 @@ export function createTrackTools({
     return {
       ...head,
       points: summarizePoints(result.points),
-      hint: '只给了摘要。要让卡片跟着某个点走就调 attach_clip_motion(不用把坐标读出来);确实需要逐帧坐标时传 full:true,但那会是很长一串数字。',
+      hint: 'Only a summary was returned. To make a card follow a point, call attach_clip_motion (no need to read out the coordinates); if you really need per-frame coordinates, pass full:true, but that will be a very long list of numbers.',
     };
   }
 
@@ -787,11 +787,11 @@ export function createTrackTools({
     const mediaId = checkMediaId(mediaIdIn);
     await contextAccess.authorize(context, 'read');
     const found = await lookup(context, mediaId);
-    if (!found) throw new TrackToolError('TRACK_NONE', `${mediaId} 还没追过,先调 track_points`);
+    if (!found) throw new TrackToolError('TRACK_NONE', `${mediaId} has not been tracked yet, call track_points first`);
     const { run, job, result } = found;
-    if (job.state === 'queued' || job.state === 'running') throw new TrackToolError('TRACK_RUNNING', `${mediaId} 的追踪还没跑完,先用 get_track 等它出结果`);
+    if (job.state === 'queued' || job.state === 'running') throw new TrackToolError('TRACK_RUNNING', `Tracking for ${mediaId} has not finished, use get_track to wait for its result first`);
     if (job.state !== 'done') throw failureOf(job, run);
-    if (!result) throw new TrackToolError('TRACK_RESULT_MISSING', '追踪作业标成完成了,但结果表里没有它的轨迹。请用 force:true 重追。');
+    if (!result) throw new TrackToolError('TRACK_RESULT_MISSING', 'The tracking job was marked complete, but the result table has no track for it. Re-track with force:true.');
     return { jobId: job.jobId, engine: run.engine, createdAt: run.createdAt, mediaId, mediaRev: run.mediaRev, mediaHash: run.mediaHash, ...result };
   }
 
@@ -801,8 +801,8 @@ export function createTrackTools({
     handles: new Set(TRACK_TOOL_NAMES),
     /** @param {string} name @param {object} args @param {object} context F0 的可信 `ToolRunContext` */
     async call(name, args, context) {
-      if (!Object.hasOwn(TOOLS, name)) throw new TrackToolError('TRACK_UNKNOWN_TOOL', `track 提供者不处理 ${name}`);
-      if (closing) throw new TrackToolError('TRACK_CLOSED', '服务正在关闭,稍后再试');
+      if (!Object.hasOwn(TOOLS, name)) throw new TrackToolError('TRACK_UNKNOWN_TOOL', `The track provider does not handle ${name}`);
+      if (closing) throw new TrackToolError('TRACK_CLOSED', 'Service is shutting down, try again later');
       return TOOLS[name](context, isPlain(args) ? args : {});
     },
     readResult,

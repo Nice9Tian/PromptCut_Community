@@ -1,3 +1,4 @@
+import { tr } from "./i18n.mjs";
 /**
  * `/api/storage*`(存储占用计划第 4 节的前三条;`/api/exports*` 归界面那一支)。
  *
@@ -36,7 +37,7 @@ const json = (res, status, data) => {
 function readBody(req, limit = 4096) {
   return new Promise((resolve, reject) => {
     let body = '';
-    req.on('data', chunk => { body += chunk; if (body.length > limit) { reject(Object.assign(new Error('请求体太大'), { status: 413 })); req.destroy(); } });
+    req.on('data', chunk => { body += chunk; if (body.length > limit) { reject(Object.assign(new Error(tr("Request body too large")), { status: 413 })); req.destroy(); } });
     req.on('end', () => resolve(body));
     req.on('error', reject);
   });
@@ -63,7 +64,7 @@ export function createStorageHandler({ storage, exports: exportSummary }) {
       }
       if (route === '/cap') {
         let input;
-        try { input = JSON.parse((await readBody(req)) || '{}'); } catch { return json(res, 400, { ok: false, code: 'BAD_JSON', error: '请求体不是 JSON' }); }
+        try { input = JSON.parse((await readBody(req)) || '{}'); } catch { return json(res, 400, { ok: false, code: 'BAD_JSON', error: 'Request body is not JSON' }); }
         const bytes = Number(input?.bytes);
         const { capBytes } = await manager.setCap(bytes);
         return json(res, 200, { ok: true, capBytes });

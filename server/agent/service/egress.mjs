@@ -150,24 +150,24 @@ export function createEgressGate({
    */
   async function admit(hostnameIn, port) {
     const hostname = bareHost(hostnameIn);
-    if (!hostname) throw refuse('unresolved', '地址里没有主机名');
-    if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw refuse('port', `端口 ${port} 不合法`);
+    if (!hostname) throw refuse('unresolved', 'The address has no hostname');
+    if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw refuse('port', `Port ${port} is invalid`);
     let addrs;
     if (net.isIP(hostname)) addrs = [{ address: hostname, family: net.isIP(hostname) }];
     else {
       try { addrs = await resolve(hostname); } catch { addrs = []; }
       addrs = (Array.isArray(addrs) ? addrs : []).filter((a) => a && net.isIP(a.address));
-      if (!addrs.length) throw refuse('unresolved', `解析不了这个主机名`, { port });
+      if (!addrs.length) throw refuse('unresolved', `Cannot resolve this hostname`, { port });
     }
     // 测试例外:每一个解析结果都在例外表里才算(只给探针在本机回环上起的「测试专用外部地址」)
     if (allow.size && addrs.every((a) => allow.has(`${a.address.toLowerCase()}:${port}`))) {
       stats.allowed += 1;
       return { address: addrs[0].address, family: addrs[0].family, hostname, port, testAllowed: true };
     }
-    if (!portSet.has(port)) throw refuse('port', `云端 Agent 不许访问 ${port} 端口`, { port });
+    if (!portSet.has(port)) throw refuse('port', `The Cloud Agent is not allowed to access port ${port}`, { port });
     for (const a of addrs) {
       if (addressRefusal(a.address)) {
-        throw refuse('blocked-address', '云端 Agent 不许访问节点本机、内网与保留地址', { port });
+        throw refuse('blocked-address', 'The Cloud Agent is not allowed to access the node itself, internal networks or reserved addresses', { port });
       }
     }
     stats.allowed += 1;
@@ -177,9 +177,9 @@ export function createEgressGate({
   /** 核一个地址(字符串或 URL);回 `{ url, target }` */
   async function admitUrl(input) {
     let url;
-    try { url = input instanceof URL ? input : new URL(String(input)); } catch { throw refuse('protocol', '地址不合法'); }
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') throw refuse('protocol', '云端 Agent 只许访问 http / https 地址');
-    if (url.username || url.password) throw refuse('credentials', '地址里不许带用户名口令');
+    try { url = input instanceof URL ? input : new URL(String(input)); } catch { throw refuse('protocol', 'The address is invalid'); }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') throw refuse('protocol', 'The Cloud Agent may only access http / https addresses');
+    if (url.username || url.password) throw refuse('credentials', 'The address must not contain a username or password');
     const port = url.port ? Number(url.port) : (url.protocol === 'https:' ? 443 : 80);
     const target = await admit(url.hostname, port);
     return { url, target };
@@ -210,7 +210,7 @@ export function createEgressGate({
         signal,
       });
       req.once('response', (res) => resolvePromise({ res, req }));
-      req.once('error', (err) => reject(err?.egress ? err : new EgressError(err?.name === 'AbortError' ? 'timeout' : 'network', `连不上:${String(err?.code ?? err?.message ?? err).slice(0, 120)}`)));
+      req.once('error', (err) => reject(err?.egress ? err : new EgressError(err?.name === 'AbortError' ? 'timeout' : 'network', `Cannot connect: ${String(err?.code ?? err?.message ?? err).slice(0, 120)}`)));
       if (body !== null && body !== undefined) req.end(body); else req.end();
     });
   }
@@ -247,9 +247,9 @@ export function createEgressGate({
         const status = res.statusCode ?? 0;
         if ([301, 302, 303, 307, 308].includes(status) && typeof res.headers.location === 'string') {
           res.resume();
-          if (hops >= maxRedirects) throw refuse('redirects', `重定向超过 ${maxRedirects} 次`);
+          if (hops >= maxRedirects) throw refuse('redirects', `More than ${maxRedirects} redirects`);
           let next;
-          try { next = new URL(res.headers.location, url); } catch { throw refuse('protocol', '重定向的地址不合法'); }
+          try { next = new URL(res.headers.location, url); } catch { throw refuse('protocol', 'The redirect address is invalid'); }
           if (next.origin !== url.origin) {
             headers = Object.fromEntries(Object.entries(headers).filter(([k]) => !/^(authorization|cookie|proxy-authorization)$/i.test(k)));
           }
@@ -260,7 +260,7 @@ export function createEgressGate({
         const declared = Number(res.headers['content-length']);
         if (Number.isFinite(declared) && declared > cap) {
           res.destroy();
-          throw refuse('too-large', `响应体超过上限(${cap} 字节)`);
+          throw refuse('too-large', `Response body exceeds the limit (${cap} bytes)`);
         }
         const chunks = [];
         let bytes = 0;
@@ -268,7 +268,7 @@ export function createEgressGate({
           bytes += chunk.length;
           if (bytes > cap) {
             res.destroy();
-            throw refuse('too-large', `响应体超过上限(${cap} 字节)`);
+            throw refuse('too-large', `Response body exceeds the limit (${cap} bytes)`);
           }
           if (typeof o.onChunk === 'function') await o.onChunk(chunk);
           else chunks.push(chunk);
@@ -277,8 +277,8 @@ export function createEgressGate({
       }
     } catch (err) {
       if (err?.egress) throw err;
-      if (ctl.signal.aborted) throw new EgressError('timeout', `请求超过 ${Math.round(limitMs / 1000)} 秒没有完成`);
-      throw new EgressError('network', `请求失败:${String(err?.code ?? err?.message ?? err).slice(0, 120)}`);
+      if (ctl.signal.aborted) throw new EgressError('timeout', `The request did not complete within ${Math.round(limitMs / 1000)} seconds`);
+      throw new EgressError('network', `Request failed: ${String(err?.code ?? err?.message ?? err).slice(0, 120)}`);
     } finally {
       clearTimeout(timer);
       o.signal?.removeEventListener?.('abort', onOuterAbort);
@@ -296,7 +296,7 @@ export function createEgressGate({
       void (async () => {
         try {
           const { url, target } = await admitUrl(req.url ?? '');
-          if (url.protocol !== 'http:') throw refuse('protocol', '代理的明文通道只接 http 地址');
+          if (url.protocol !== 'http:') throw refuse('protocol', 'The proxy\'s plaintext channel only accepts http addresses');
           const headers = { ...req.headers };
           for (const k of Object.keys(headers)) if (/^proxy-/i.test(k)) delete headers[k];
           const up = http.request({
@@ -319,7 +319,7 @@ export function createEgressGate({
       void (async () => {
         try {
           const m = /^(\[[^\]]+\]|[^:]+):(\d{1,5})$/.exec(String(req.url ?? ''));
-          if (!m) throw refuse('protocol', 'CONNECT 的目标不合法');
+          if (!m) throw refuse('protocol', 'The CONNECT target is invalid');
           const target = await admit(m[1], Number(m[2]));
           const up = net.connect({ host: target.address, port: target.port, family: target.family });
           sockets.add(up);

@@ -663,7 +663,7 @@ export function isolatedStreamProject(project, spec) {
   // 剪辑段里摊出来的卡(`solo: 'flat'`):带着这条剪辑段链隔离,嵌套场景照常算预卷(`src/kernel/cutFlatten.mjs` 的 `isolatedFlatProject`)
   if (spec?.solo === 'flat') {
     const isolated = isolatedFlatProject(project, spec.topClipId, c => localClip(c, spec));
-    if (!isolated) throw new Error(`隔离工程:项目里没有剪辑段里的片段 ${spec.topClipId}`);
+    if (!isolated) throw new Error(`Isolated project: the project has no clip ${spec.topClipId} in its cut segments`);
     return isolated;
   }
   const members = new Set(spec.clipIds);
@@ -843,7 +843,7 @@ export function isolatedBelowProject(project, spec, { withTarget = true } = {}) 
   const source = project.tracks ?? [];
   let ti = -1, ci = -1;
   source.forEach((track, i) => (track.clips ?? []).forEach((clip, j) => { if (ti < 0 && clip.id === targetId) { ti = i; ci = j; } }));
-  if (ti < 0) throw new Error(`隔离工程:项目里没有片段 ${targetId}`);
+  if (ti < 0) throw new Error(`Isolated project: the project has no clip ${targetId}`);
   const ids = new Set(source.map(t => t.id));
   const tracks = [];
   source.forEach((track, i) => {
@@ -890,8 +890,8 @@ export function segmentSignature({ streamKey, segment, stride, encoder, rect, pr
  * 要的形状 `{ key, range, header, inits, segments: [[n, seg]…] }`。不认识的字段忽略;格式不对就抛。
  */
 export function streamAdoption(result) {
-  const bad = why => { throw Object.assign(new Error(`轨道流清单不对:${why}`), { retryable: false }); };
-  if (!result || typeof result !== 'object') bad('不是对象');
+  const bad = why => { throw Object.assign(new Error(`Invalid track stream manifest: ${why}`), { retryable: false }); };
+  if (!result || typeof result !== 'object') bad('Not an object');
   if (result.v !== 1) bad(`v = ${result.v}`);
   if (result.kind !== 'stream') bad(`kind = ${result.kind}`);
   const key = result.resultKey;
@@ -910,9 +910,9 @@ export function streamAdoption(result) {
   const segments = [];
   for (const [name, seg] of Object.entries(result.segments ?? {})) {
     const n = Number(name);
-    if (!Number.isInteger(n) || String(n) !== name || n < from || n > to) bad(`分段 ${name}`);
-    if (!KEY_RE.test(String(seg?.hash)) || !INIT_RE.test(String(seg?.init))) bad(`分段 ${name}`);
-    if (!Number.isInteger(seg.stride) || seg.stride < 1 || !Number.isInteger(seg.samples) || seg.samples < 1) bad(`分段 ${name}`);
+    if (!Number.isInteger(n) || String(n) !== name || n < from || n > to) bad(`segment ${name}`);
+    if (!KEY_RE.test(String(seg?.hash)) || !INIT_RE.test(String(seg?.init))) bad(`segment ${name}`);
+    if (!Number.isInteger(seg.stride) || seg.stride < 1 || !Number.isInteger(seg.samples) || seg.samples < 1) bad(`segment ${name}`);
     segments.push([n, seg]);
   }
   segments.sort((a, b) => a[0] - b[0]);
@@ -1007,7 +1007,7 @@ export class StreamProducer {
   attachRoute() {
     if (this.routeAttached) return;
     this.routeAttached = true;
-    this.note('分段读口已接上');
+    this.note('Segment read endpoint attached');
     if (this.pendingEntry) { const entry = this.pendingEntry; this.pendingEntry = null; void this.update(entry).catch(() => {}); }
   }
 
@@ -1048,7 +1048,7 @@ export class StreamProducer {
     this.ffmpeg ||= await findFfmpeg();
     const { encoder } = await pickStreamEncoder(this.ffmpeg);
     this.encoderName = encoder;
-    this.note(`编码器:${encoder}`);
+    this.note(`Encoder: ${encoder}`);
     return encoder;
   }
 
@@ -1075,7 +1075,7 @@ export class StreamProducer {
       return true;
     } catch (error) {
       this.enabled = false;
-      this.note(`没有能用的 H.264 编码器,轨道流关闭:${error?.message || error}`);
+      this.note(`No usable H.264 encoder, track stream disabled: ${error?.message || error}`);
       return false;
     }
   }
@@ -1147,9 +1147,9 @@ export class StreamProducer {
     /** 这一段还要不要产:稀疏任务只补一张都没有的(和签名对不上的),满密度任务补到满密度为止 */
     const pending = (state, n) => { const s = this.segmentState(state, n); return sparse ? (s === 'none' || s === 'stale') : s !== 'dense'; };
     const cancelled = () => Object.assign(new Error('Queue task cancelled'), { cancelled: true });
-    if (!this.enabled || this.closed) throw Object.assign(new Error('本机的轨道流关着'), { code: 'streams-disabled', retryable: false });
-    if (!this.routeAttached) throw Object.assign(new Error('轨道流的分段读口还没接上'), { code: 'streams-not-ready', retryable: true });
-    if (!(await this.capable())) throw Object.assign(new Error('本机没有能用的 H.264 编码器'), { code: 'no-stream-encoder', retryable: false });
+    if (!this.enabled || this.closed) throw Object.assign(new Error('The local track stream is disabled'), { code: 'streams-disabled', retryable: false });
+    if (!this.routeAttached) throw Object.assign(new Error('The track stream segment read endpoint is not attached yet'), { code: 'streams-not-ready', retryable: true });
+    if (!(await this.capable())) throw Object.assign(new Error('This machine has no usable H.264 encoder'), { code: 'no-stream-encoder', retryable: false });
     const from = Math.max(range.from, spec.firstSegment), to = Math.min(range.to, spec.lastSegment);
     const state = await this.queueState(entry, spec);
     state.queueHolds = (state.queueHolds ?? 0) + 1;
@@ -1161,10 +1161,10 @@ export class StreamProducer {
         while (pending(state, n)) {
           if (signal?.aborted || this.closed) throw cancelled();
           // 差分取层实测没过的流(`belowSegmentCapture`):这张卡的这种流产不出来,换一台同样的节点也一样,不重试
-          if (state.below?.failed) throw Object.assign(new Error(`流 ${spec.streamKey.slice(0, 8)} 的差分取层没过(${state.below.failed})`), { code: 'below-capture-failed', retryable: false });
+          if (state.below?.failed) throw Object.assign(new Error(`Differential layer capture failed for stream ${spec.streamKey.slice(0, 8)} (${state.below.failed})`), { code: 'below-capture-failed', retryable: false });
           if (state.reserved.has(n)) { await sleep(50); continue; }
           if (attempts++ >= QUEUE_SEGMENT_ATTEMPTS) {
-            throw Object.assign(new Error(`流 ${spec.streamKey.slice(0, 8)} 分段 ${n} 连续 ${QUEUE_SEGMENT_ATTEMPTS} 次没产成`), { code: 'stream-segment-failed', retryable: true });
+            throw Object.assign(new Error(`Stream ${spec.streamKey.slice(0, 8)} segment ${n} failed to produce ${QUEUE_SEGMENT_ATTEMPTS} times in a row`), { code: 'stream-segment-failed', retryable: true });
           }
           const task = { state, segment: n, stride, queue: { signal } };
           state.reserved.add(n);
@@ -1179,7 +1179,7 @@ export class StreamProducer {
             if (!error?.cancelled) {
               this.stats.failures++;
               state.failures.set(n, (state.failures.get(n) ?? 0) + 1);
-              this.note(`队列分段 ${spec.streamKey.slice(0, 8)}#${n} 失败:${error?.message || error}`);
+              this.note(`Queue segment ${spec.streamKey.slice(0, 8)}#${n} failed: ${error?.message || error}`);
               // 会话可能已经坏了:换一个新的(同 `runWorker`)
               if (bakery) { this.pipeline.returnStreamBakery(bakery, { dead: true }); bakery = null; }
             }
@@ -1212,7 +1212,7 @@ export class StreamProducer {
     await this.assertProjectScope?.(entry, spec);
     const cancelled = () => Object.assign(new Error('Queue task cancelled'), { cancelled: true });
     if (this.closed) throw cancelled();
-    if (typeof onFrame !== 'function') throw new Error('produceExportRange 要 onFrame');
+    if (typeof onFrame !== 'function') throw new Error('produceExportRange requires onFrame');
     const key = this.projectId ? `${this.projectId}:${spec.exportResultKey}` : spec.exportResultKey;
     this.exportStates ||= new Map();
     let state = this.exportStates.get(key);
@@ -1231,7 +1231,7 @@ export class StreamProducer {
       for (let n = from; n <= to; n++) {
         for (let attempts = 0; ;) {
           if (signal?.aborted || this.closed) throw cancelled();
-          if (state.below?.failed) throw Object.assign(new Error(`导出位图 ${key.slice(0, 8)} 的差分取层没过(${state.below.failed})`), { code: 'below-capture-failed', retryable: false });
+          if (state.below?.failed) throw Object.assign(new Error(`Differential layer capture failed for export bitmap ${key.slice(0, 8)} (${state.below.failed})`), { code: 'below-capture-failed', retryable: false });
           try {
             bakery ||= await this.pipeline.leaseStreamBakery();
             await this.runSegment(bakery, { state, segment: n, stride: 1, queue: { signal }, exportSink: onFrame });
@@ -1240,10 +1240,10 @@ export class StreamProducer {
             if (signal?.aborted || this.closed) throw cancelled();
             if (error?.retryable === false) throw error;
             this.stats.failures++;
-            this.note(`导出位图 ${key.slice(0, 8)}#${n} 失败:${error?.message || error}`);
+            this.note(`Export bitmap ${key.slice(0, 8)}#${n} failed: ${error?.message || error}`);
             if (bakery) { this.pipeline.returnStreamBakery(bakery, { dead: true }); bakery = null; }
             if (++attempts >= QUEUE_SEGMENT_ATTEMPTS) {
-              throw Object.assign(new Error(`导出位图 ${key.slice(0, 8)} 分段 ${n} 连续 ${QUEUE_SEGMENT_ATTEMPTS} 次没取成:${error?.message || error}`), { code: 'export-frames-failed', retryable: true });
+              throw Object.assign(new Error(`Export bitmap ${key.slice(0, 8)} segment ${n} failed to capture ${QUEUE_SEGMENT_ATTEMPTS} times in a row: ${error?.message || error}`), { code: 'export-frames-failed', retryable: true });
             }
           }
         }
@@ -1437,7 +1437,7 @@ export class StreamProducer {
   kick() {
     if (!this.enabled || this.closed || !this.routeAttached) return;
     while (this.workers.size < this.pool) {
-      const worker = this.runWorker().catch(error => this.note(`worker 异常:${error?.message || error}`)).finally(() => this.workers.delete(worker));
+      const worker = this.runWorker().catch(error => this.note(`worker error: ${error?.message || error}`)).finally(() => this.workers.delete(worker));
       this.workers.add(worker);
       if (!this.hasWork()) break;
     }
@@ -1454,7 +1454,7 @@ export class StreamProducer {
         // 编码器要先定下来:分段签名里有它。一个能用的都没有就整个关掉(记一条诊断),不反复探
         try { await this.encoder(); } catch (error) {
           this.enabled = false;
-          this.note(`没有能用的 H.264 编码器,轨道流关闭:${error?.message || error}`);
+          this.note(`No usable H.264 encoder, track stream disabled: ${error?.message || error}`);
           return;
         }
         const task = this.nextTask(bakery);
@@ -1470,7 +1470,7 @@ export class StreamProducer {
           else {
             this.stats.failures++;
             task.state.failures.set(task.segment, (task.state.failures.get(task.segment) ?? 0) + 1);
-            this.note(`分段 ${task.state.spec.streamKey.slice(0, 8)}#${task.segment} 失败:${error?.message || error}`);
+            this.note(`Segment ${task.state.spec.streamKey.slice(0, 8)}#${task.segment} failed: ${error?.message || error}`);
             // 会话可能已经坏了(页面崩溃 / 协议超时):换一个新的
             if (bakery) { this.pipeline.returnStreamBakery(bakery, { dead: true }); bakery = null; }
           }
@@ -1524,18 +1524,18 @@ export class StreamProducer {
     const { spec } = state;
     const below = spec.kind === 'below';
     // 差分取层实测没过的流不再产(不白付一次重灌和回放);自动生产把它记成这个分段的一次失败,三次以后不再挑它
-    if (below && state.below?.failed) throw Object.assign(new Error(`差分取层没过(${state.below.failed}),这条流不再产`), { code: 'below-capture-failed', retryable: false });
+    if (below && state.below?.failed) throw Object.assign(new Error(`Differential layer capture failed (${state.below.failed}); this stream will no longer be produced`), { code: 'below-capture-failed', retryable: false });
     // X1:队列任务产的分段(`task.queue`)不随版本作废 —— 流键是内容寻址的,换了一版而键没变,分段照样有效;
     // 只有任务被中止、生产者关了、这条流被换掉才作废。`generation: null` 让 `storeSegment` 不按版本判旧
     const queue = task.queue ?? null;
     const generation = queue ? null : state.generation;
     const fps = spec.fps;
     // 这个分段盖住的项目帧:从这条流自己的第一帧起数,末段到这条流的最后一帧为止(`streamSegments.mjs`)
-    if (!isStreamOrigin(spec.originFrame)) throw Object.assign(new Error(`流 ${spec.streamKey.slice(0, 8)} 没有第一帧,产不了分段`), { retryable: false });
+    if (!isStreamOrigin(spec.originFrame)) throw Object.assign(new Error(`Stream ${spec.streamKey.slice(0, 8)} has no first frame, so segments cannot be produced`), { retryable: false });
     const fromFrame = streamSegmentFirstFrame(segment, spec.originFrame);
     const toFrame = streamSegmentLastFrame(segment, spec.originFrame, spec.lastFrame);
     const samples = toFrame - fromFrame + 1;
-    if (segment < 0 || samples < 1) throw Object.assign(new Error(`流 ${spec.streamKey.slice(0, 8)} 没有分段 ${segment}`), { retryable: false });
+    if (segment < 0 || samples < 1) throw Object.assign(new Error(`Stream ${spec.streamKey.slice(0, 8)} has no segment ${segment}`), { retryable: false });
     // 导出专用的逐帧位图(`produceExportRange`):同一套推帧与取帧,帧不进编码器、交给 `exportSink`;恒按矩形上界取、不量不收紧、不走画布直取
     const exportSink = typeof task.exportSink === 'function' ? task.exportSink : null;
     const encoder = exportSink ? null : await this.encoder();
@@ -1600,7 +1600,7 @@ export class StreamProducer {
       // 画布直取:这个分段的帧不截图,从画布取像素(过不了实测的照旧截图);`shot` 是 PNG,或 `{ rgba, width, height }`
       const direct = exportSink ? null : this.directOf(state);
       const belowCapture = below ? belowSegmentCapture(bakery, { clipId: spec.topClipId, view: viewRect, rect: captureRect, record: state.below ||= newBelowRecord(), signal: abort.signal,
-        note: message => this.note(`流 ${spec.streamKey.slice(0, 8)} ${message}`) }) : null;
+        note: message => this.note(`Stream ${spec.streamKey.slice(0, 8)} ${message}`) }) : null;
       const result = await bakeStream(bakery, {
         streamSignature: spec.streamKey, fromFrame: drawAll ? drawFrom : fromFrame, toFrame: bakeTo, stride: drawAll ? 1 : stride, fps,
         ...(replay ? { mountFrame: spec.mountFrame } : { warm: 0 }),
@@ -1618,9 +1618,9 @@ export class StreamProducer {
         } }
         : below ? { capture: belowCapture }
         : direct ? { capture: directSegmentCapture(bakery, { clipId: spec.topClipId, rect: captureRect, record: direct, stride, captures: Math.ceil(samples / stride), always: this.direct === 'always',
-          note: message => this.note(`流 ${spec.streamKey.slice(0, 8)} ${message}`) }) } : {}),
+          note: message => this.note(`Stream ${spec.streamKey.slice(0, 8)} ${message}`) }) } : {}),
         onFrame: async (frame, shot) => {
-          if (stale()) throw Object.assign(new Error('流已作废'), { cancelled: true });
+          if (stale()) throw Object.assign(new Error('Stream is obsolete'), { cancelled: true });
           // 画一张丢掉的帧(不是这个分段要的)不进编码器
           if (shot === BELOW_SKIPPED || (drawAll && !wanted(frame))) return;
           if (exportSink) { await exportSink(frame, shot); return; }
@@ -1634,7 +1634,7 @@ export class StreamProducer {
             if (remeasure) remeasured = unionRect(remeasured, !local ? null : local.full ? rect : { x: rect.x + local.x, y: rect.y + local.y, w: local.w, h: local.h });
             if (guardTight && local && !local.full) {
               const sides = tightOverflowSides(local, rect, manifest.bound);
-              if (sides) throw Object.assign(new Error(`第 ${frame} 帧的画面顶到了收紧矩形的边(${Object.keys(sides).join('、')})`), { code: 'tight-overflow', sides });
+              if (sides) throw Object.assign(new Error(`The picture in frame ${frame} hit the edge of the tight rectangle (${Object.keys(sides).join(', ')})`), { code: 'tight-overflow', sides });
             }
           }
           if (!enc) {
@@ -1683,7 +1683,7 @@ export class StreamProducer {
         // 这一趟是按放到上界的矩形产的,比定下来的收紧矩形大:不留它,这个分段按定下来的矩形再产一次(不算失败)
         if (enc) { await enc.abort(); this.releaseEncoderSlot(); }
         bakery.streamLease = null;
-        throw Object.assign(new Error(`流 ${spec.streamKey.slice(0, 8)}#${segment} 的收紧矩形重新量过,按新矩形重来`), { cancelled: true });
+        throw Object.assign(new Error(`The tight rectangle of stream ${spec.streamKey.slice(0, 8)}#${segment} was re-measured; restarting with the new rectangle`), { cancelled: true });
       }
     }
     // 导出专用的逐帧位图:帧已经逐张交出去了,没有编码器、不进流库
@@ -1695,7 +1695,7 @@ export class StreamProducer {
       .catch(error => {
         this.stats.failures++;
         state.failures.set(segment, (state.failures.get(segment) ?? 0) + 1);
-        this.note(`分段 ${spec.streamKey.slice(0, 8)}#${segment} 编码失败:${error?.message || error}`);
+        this.note(`Segment ${spec.streamKey.slice(0, 8)}#${segment} encoding failed: ${error?.message || error}`);
       })
       .finally(() => { state.reserved.delete(segment); this.releaseEncoderSlot(); this.encoding.delete(job); this.kick(); });
     this.encoding.add(job);
@@ -1737,7 +1737,7 @@ export class StreamProducer {
     if (!union) { manifest.tight = bound; return; }
     const tight = evenRect(intersectRect(padRect(union, MEASURE_PAD_PX), bound), bound);
     manifest.tight = rectArea(tight) <= rectArea(bound) * (1 - TIGHTEN_MIN_SAVING) ? tight : bound;
-    this.note(`流 ${spec.streamKey.slice(0, 8)} 收紧到 ${JSON.stringify(manifest.tight)}(上界 ${JSON.stringify(bound)})`);
+    this.note(`Stream ${spec.streamKey.slice(0, 8)} tightened to ${JSON.stringify(manifest.tight)} (upper bound ${JSON.stringify(bound)})`);
   }
 
   /**
@@ -1753,7 +1753,7 @@ export class StreamProducer {
     const wider = evenRect(intersectRect(unionRect(manifest.tight, padRect(plane, MEASURE_PAD_PX)), bound), bound);
     if (rectArea(wider) <= rectArea(manifest.tight)) return false;
     state.measured = unionRect(state.measured, plane);
-    this.note(`流 ${spec.streamKey.slice(0, 8)} 的收紧矩形放大到 ${JSON.stringify(wider)}(原来 ${JSON.stringify(manifest.tight)},目标卡改到了它外面)`);
+    this.note(`Stream ${spec.streamKey.slice(0, 8)}: tight rectangle widened to ${JSON.stringify(wider)} (was ${JSON.stringify(manifest.tight)}, the target card moved outside it)`);
     manifest.tight = wider;
     return true;
   }
@@ -1781,7 +1781,7 @@ export class StreamProducer {
     let wider = evenRect(intersectRect(grown, bound), bound);
     if (rectArea(wider) > rectArea(bound) * (1 - TIGHTEN_MIN_SAVING)) wider = bound;
     if (rectArea(wider) <= rectArea(tight)) return tight;
-    this.note(`流 ${state.spec.streamKey.slice(0, 8)} 的收紧矩形放大到 ${JSON.stringify(wider)}(原来 ${JSON.stringify(tight)},补密时画面顶到了${Object.keys(sides).filter(k => sides[k]).join('、')}边)`);
+    this.note(`Stream ${state.spec.streamKey.slice(0, 8)}: tight rectangle widened to ${JSON.stringify(wider)} (was ${JSON.stringify(tight)}, the picture hit the ${Object.keys(sides).filter(k => sides[k]).join(', ')} edge during backfill)`);
     manifest.tight = wider;
     state.widened = (state.widened ?? 0) + 1;
     return wider;
@@ -1792,13 +1792,13 @@ export class StreamProducer {
     await this.ownership?.assert();
     const { spec } = state;
     const { init, segments, dropped } = splitFmp4(out.bytes);
-    if (segments.length !== 1) throw new Error(`一次编码应当恰好一个分段,实际 ${segments.length} 个`);
+    if (segments.length !== 1) throw new Error(`One encode should produce exactly one segment, got ${segments.length}`);
     const info = segmentInfo(segments[0]);
-    if (info.moofs !== 1) throw new Error(`分段里应当恰好一个 moof,实际 ${info.moofs}`);
+    if (info.moofs !== 1) throw new Error(`A segment should contain exactly one moof, got ${info.moofs}`);
     // G2:一个分段的样本数必须恰好 15(这条流的末段除外),少一帧就重拍
-    if (info.sampleCount !== samples) throw new Error(`分段样本数 ${info.sampleCount},应当是 ${samples}`);
-    if (info.firstSampleIsSync !== true) throw new Error('分段首帧不是 IDR');
-    if (!init.length) throw new Error('编码输出里没有 ftyp + moov');
+    if (info.sampleCount !== samples) throw new Error(`Segment sample count is ${info.sampleCount}, expected ${samples}`);
+    if (info.firstSampleIsSync !== true) throw new Error('First frame of the segment is not an IDR');
+    if (!init.length) throw new Error('Encoder output has no ftyp + moov');
     // `generation === null`:队列任务产的分段,不按版本判旧(见 `runSegment`)
     if ((generation !== null && state.generation !== generation) || this.streams.get(spec.streamKey) !== state) return;
     const manifest = state.manifest;
@@ -1810,7 +1810,7 @@ export class StreamProducer {
       const meta = initInfo(init);
       await this.store.writeFile(this.store.initFile(spec.streamKey, initId), init);
       manifest.inits[initId] = { codec: meta.codec, width: meta.width, height: meta.height, timescale: meta.timescale, rect, encoder, bytes: init.length };
-      this.note(`流 ${spec.streamKey.slice(0, 8)} 新变体 init-${initId}(${meta.codec} ${meta.width}×${meta.height})`);
+      this.note(`Stream ${spec.streamKey.slice(0, 8)}: new variant init-${initId} (${meta.codec} ${meta.width}×${meta.height})`);
     }
     const file = `${segment}-${sha(segments[0], 16)}.m4s`;
     await this.store.writeFile(this.store.segFile(spec.streamKey, file), segments[0]);
@@ -1891,9 +1891,9 @@ export class StreamProducer {
     const { key } = plan;
     const blobOf = hash => {
       const buf = typeof blobs?.get === 'function' ? blobs.get(hash) : blobs?.[hash];
-      if (!Buffer.isBuffer(buf) && !(buf instanceof Uint8Array)) throw new Error(`缺少块 ${hash}`);
+      if (!Buffer.isBuffer(buf) && !(buf instanceof Uint8Array)) throw new Error(`Missing chunk ${hash}`);
       const bytes = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
-      if (sha(bytes) !== hash) throw new Error(`块 ${hash} 的内容和哈希对不上`);
+      if (sha(bytes) !== hash) throw new Error(`Content of chunk ${hash} does not match its hash`);
       return bytes;
     };
     let state = await this.adoptionState(key, plan);
@@ -1902,12 +1902,12 @@ export class StreamProducer {
     for (const [n, seg] of plan.segments) {
       if (!this.adoptable(state, n, seg)) continue;
       const initMeta = plan.inits[seg.init] ?? state.manifest.inits?.[seg.init];
-      if (!initMeta) throw new Error(`分段 ${n} 用的 init ${seg.init} 不在清单里`);
+      if (!initMeta) throw new Error(`Init ${seg.init} used by segment ${n} is not in the manifest`);
       pending.push({ n, seg, bytes: blobOf(seg.hash) });
     }
     const initIds = [...new Set(pending.map(p => p.seg.init))].filter(id => !state.manifest.inits?.[id]);
     const initBytes = new Map(initIds.map(id => {
-      if (!plan.inits[id]) throw new Error(`init ${id} 不在清单里`);
+      if (!plan.inits[id]) throw new Error(`Init ${id} is not in the manifest`);
       return [id, blobOf(plan.inits[id].hash)];
     }));
     // 写文件(内容寻址,重复写同一份无害)
@@ -1969,7 +1969,7 @@ export class StreamProducer {
       }, REPLACED_DELETE_MS);
       timer.unref?.();
     }
-    if (written) this.note(`流 ${key.slice(0, 8)} 拉进 ${written} 个分段(跳过 ${skipped})`);
+    if (written) this.note(`Stream ${key.slice(0, 8)}: pulled in ${written} segments (skipped ${skipped})`);
     return { written, skipped, inits };
   }
 
@@ -2024,7 +2024,7 @@ export class StreamProducer {
     const ok = avg(busy) <= 2 * avg(idle);
     const want = ok && this.streams.size > 1 ? STREAM_POOL_MAX : STREAM_POOL_DEFAULT;
     if (want !== this.pool) {
-      this.note(`streamPool ${this.pool} → ${want}(带编码器 ${avg(busy).toFixed(1)} ms/帧,空闲 ${avg(idle).toFixed(1)} ms/帧)`);
+      this.note(`streamPool ${this.pool} → ${want} (with encoder ${avg(busy).toFixed(1)} ms/frame, idle ${avg(idle).toFixed(1)} ms/frame)`);
       this.pool = want;
       this.kick();
     }

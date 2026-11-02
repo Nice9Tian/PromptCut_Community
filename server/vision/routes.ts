@@ -47,13 +47,13 @@ export function registerEditorSide(server: ViteDevServer, root: string) {
     if (req.method !== "POST") return sendJson(res, 405, { ok: false, error: "POST only" });
     let body = "";
     let over = false;
-    req.on("data", (c) => { if (over) return; body += c; over = overLimit(req, res, body.length, 64 * 1024 * 1024, "请求体超过 64MB"); });
+    req.on("data", (c) => { if (over) return; body += c; over = overLimit(req, res, body.length, 64 * 1024 * 1024, "Request body exceeds 64MB"); });
     req.on("end", async () => {
       if (over) return;
       try {
         const { project, clips, size, bg } = JSON.parse(body || "{}");
-        if (!project || !Array.isArray(project.tracks)) return sendJson(res, 400, { ok: false, error: "缺少 project" });
-        if (!Array.isArray(clips) || !clips.length) return sendJson(res, 400, { ok: false, error: "缺少 clips" });
+        if (!project || !Array.isArray(project.tracks)) return sendJson(res, 400, { ok: false, error: "Missing project" });
+        if (!Array.isArray(clips) || !clips.length) return sendJson(res, 400, { ok: false, error: "Missing clips" });
         const resolved = resolveMediaUrls(project).project;
         const signal = abortOnClose(res);
         const byClip = new Map<string, number[]>();
@@ -74,7 +74,7 @@ export function registerEditorSide(server: ViteDevServer, root: string) {
          */
         for (const [clipId, ts] of byClip) {
           if (signal.aborted) {
-            failed.push({ clipId, error: "请求方已经不要了", cancelled: true });
+            failed.push({ clipId, error: "The requester no longer needs it", cancelled: true });
             continue;
           }
           try {
@@ -118,19 +118,19 @@ export function registerPrerenderSide(server: ViteDevServer, root: string) {
         if (req.method !== "POST") return sendJson(res, 405, { ok: false, error: "POST only" });
         let body = "";
         let over = false;
-        req.on("data", (c) => { if (over) return; body += c; over = overLimit(req, res, body.length, 1024 * 1024, "请求体超过 1MB"); });
+        req.on("data", (c) => { if (over) return; body += c; over = overLimit(req, res, body.length, 1024 * 1024, "Request body exceeds 1MB"); });
         req.on("end", async () => {
           if (over) return;
           try {
             const { media, start, end, grid } = JSON.parse(body || "{}");
             const file = mediaSourceOf(media);
-            if (!file) return sendJson(res, 404, { ok: false, error: "素材服务不可达,或这条素材记录没有地址" });
+            if (!file) return sendJson(res, 404, { ok: false, error: "The asset service is unreachable, or this asset record has no address" });
             const s0 = Number(start), s1 = Number(end);
-            if (!Number.isFinite(s0) || !Number.isFinite(s1) || s1 <= s0) return sendJson(res, 400, { ok: false, error: "start / end 要是秒数且 end > start" });
+            if (!Number.isFinite(s0) || !Number.isFinite(s1) || s1 <= s0) return sendJson(res, 400, { ok: false, error: "start / end must be numbers of seconds and end > start" });
             const g = grid === 9 ? 9 : 4;
             const cols = g === 9 ? 3 : 2;
             const ffmpeg = ffmpegCommand();
-            if (!ffmpeg) return sendJson(res, 500, { ok: false, error: "这台机器上找不到 ffmpeg" });
+            if (!ffmpeg) return sendJson(res, 500, { ok: false, error: "ffmpeg not found on this machine" });
             const eps = 0.05;
             const dur = Math.max(0.1, s1 - s0 - eps);
             const hash = mediaHashOf(media);
@@ -146,7 +146,7 @@ export function registerPrerenderSide(server: ViteDevServer, root: string) {
               // 用 GET + Range 只取 1 字节 —— /api/media/file 这条老路由不答 HEAD
               const probe = await fetch(file, { headers: { Range: "bytes=0-0" } }).catch(() => null);
               probe?.body?.cancel().catch(() => {});
-              if (!probe || !probe.ok) return sendJson(res, 404, { ok: false, error: `素材服务上取不到这份素材(${probe ? `HTTP ${probe.status}` : "连不上"}),重新导入一次再试` });
+              if (!probe || !probe.ok) return sendJson(res, 404, { ok: false, error: `Could not fetch this asset from the asset service (${probe ? `HTTP ${probe.status}` : "unreachable"}); re-import it and try again` });
             }
             if (!cached) {
               await new Promise<void>((resolve, reject) => {
@@ -160,14 +160,14 @@ export function registerPrerenderSide(server: ViteDevServer, root: string) {
                 const child = spawn(ffmpeg, args, { stdio: ["ignore", "ignore", "pipe"], windowsHide: true });
                 let err = "";
                 child.stderr.on("data", (c) => { err += c; });
-                const timer = setTimeout(() => { child.kill(); reject(new Error("ffmpeg 拼图超时")); }, EXTRACT_TIMEOUT_MS * 2);
+                const timer = setTimeout(() => { child.kill(); reject(new Error("ffmpeg contact sheet timed out")); }, EXTRACT_TIMEOUT_MS * 2);
                 child.on("error", (e) => { clearTimeout(timer); reject(e); });
                 child.on("close", (code) => {
                   clearTimeout(timer);
                   // 失败时写了一半的图别留下:有哈希的那张下次会被当成缓存命中
                   if (code !== 0 || !fs.existsSync(out)) {
                     fs.rmSync(out, { force: true });
-                    return reject(new Error(`ffmpeg 退出码 ${code}${err ? `:${err.trim().slice(-300)}` : ""}`));
+                    return reject(new Error(`ffmpeg exit code ${code}${err ? `:${err.trim().slice(-300)}` : ""}`));
                   }
                   resolve();
                 });
@@ -240,10 +240,10 @@ export function registerPrerenderSide(server: ViteDevServer, root: string) {
           const dir = visualDir();
           const p = visual.gifPaths(dir, key);
           const spec = await visual.readJson(dir, p.spec);
-          if (!spec) throw Object.assign(new Error("找不到这张动图的渲染规格(可能是清理过 out/ai-visual)"), { status: 404 });
+          if (!spec) throw Object.assign(new Error("Could not find the render spec for this animated image (out/ai-visual may have been cleaned up)"), { status: 404 });
           if (fs.existsSync(p.gif) && fs.existsSync(p.grid)) return { gif: p.gif, grid: p.grid, times: spec.times };
           const ffmpeg = ffmpegCommand();
-          if (!ffmpeg) throw new Error("这台机器上找不到 ffmpeg,做不了动图");
+          if (!ffmpeg) throw new Error("ffmpeg not found on this machine, cannot make animated images");
           const notes: string[] = [];
           const fps = spec.project.fps || 30;
           const maxFrame = Math.max(0, Math.floor((spec.project.duration || 0) * fps) - 1);
@@ -252,7 +252,7 @@ export function registerPrerenderSide(server: ViteDevServer, root: string) {
             ? await renderFrames(root, originOf(server), spec.project, spec.times, notes, 0, { lane: "preview" })
             : await enqueue(() => renderFrames(root, originOf(server), spec.project, spec.times, notes, 1, { lane: "agent" }), 1, 25000);
           const bufs = spec.times.map((t: number) => frames.get(frameOf(t))?.buf).filter(Boolean) as Buffer[];
-          if (!bufs.length) throw new Error("一帧都没渲出来");
+          if (!bufs.length) throw new Error("No frame was rendered");
           // 给用户看的动图裁到这张卡出现过的区域(整屏缩到一百来像素宽字就看不清了);交给 Agent 的拼图照旧整屏
           const crop = await visual.contentCrop(bufs).catch(() => null);
           await visual.encodeGif({ ffmpeg, frames: bufs, outGif: p.gif, outGrid: p.grid, crop });
@@ -274,12 +274,12 @@ export function registerPrerenderSide(server: ViteDevServer, root: string) {
             let m: RegExpExecArray | null;
             if ((m = /^\/(v-[0-9a-z]{6,40})\.json$/.exec(url))) {
               const rec = await visual.readJson(dir, `${m[1]}.json`);
-              return rec ? sendJson(res, 200, { ok: true, record: rec }) : sendJson(res, 404, { ok: false, error: "没有这条可视化记录" });
+              return rec ? sendJson(res, 200, { ok: true, record: rec }) : sendJson(res, 404, { ok: false, error: "No such visualization record" });
             }
             if ((m = /^\/file\/([^/]+)$/.exec(url))) {
               const name = visual.safeFileName(m[1]);
               const file = name && path.join(dir, name);
-              if (!file || !fs.existsSync(file)) return sendJson(res, 404, { ok: false, error: "没有这个文件" });
+              if (!file || !fs.existsSync(file)) return sendJson(res, 404, { ok: false, error: "No such file" });
               const ext = path.extname(file).slice(1);
               res.setHeader("Content-Type", ext === "jpg" ? "image/jpeg" : `image/${ext}`);
               res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
@@ -291,7 +291,7 @@ export function registerPrerenderSide(server: ViteDevServer, root: string) {
               res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
               return fs.createReadStream(g.gif).pipe(res);
             }
-            sendJson(res, 404, { ok: false, error: "没有这个接口" });
+            sendJson(res, 404, { ok: false, error: "API not available" });
           })().catch(fail);
           return;
         }
@@ -307,12 +307,12 @@ export function registerPrerenderSide(server: ViteDevServer, root: string) {
         if (url === "/render") {
           let raw = "";
           let tooBig = false;
-          req.on("data", (c) => { if (tooBig) return; raw += c; tooBig = overLimit(req, res, raw.length, 64 * 1024, "请求体超过 64KB"); });
+          req.on("data", (c) => { if (tooBig) return; raw += c; tooBig = overLimit(req, res, raw.length, 64 * 1024, "Request body exceeds 64KB"); });
           req.on("end", async () => {
             if (tooBig) return;
             try {
               const { key } = JSON.parse(raw || "{}");
-              if (typeof key !== "string" || !/^[0-9a-f]{16}$/.test(key)) return sendJson(res, 400, { ok: false, error: "缺少合法的 key" });
+              if (typeof key !== "string" || !/^[0-9a-f]{16}$/.test(key)) return sendJson(res, 400, { ok: false, error: "Missing a valid key" });
               const g = await ensureGif(key, "model");
               const grid = (await fsp.readFile(g.grid)).toString("base64");
               sendJson(res, 200, { ok: true, times: g.times, gifUrl: `/api/ai/visual/gif/${key}.gif`, grid });
@@ -325,7 +325,7 @@ export function registerPrerenderSide(server: ViteDevServer, root: string) {
 
         let body = "";
         let over = false;
-        req.on("data", (c) => { if (over) return; body += c; over = overLimit(req, res, body.length, 64 * 1024 * 1024, "请求体超过 64MB"); });
+        req.on("data", (c) => { if (over) return; body += c; over = overLimit(req, res, body.length, 64 * 1024 * 1024, "Request body exceeds 64MB"); });
         req.on("end", async () => {
           if (over) return;
           try {
@@ -366,7 +366,7 @@ export function registerPrerenderSide(server: ViteDevServer, root: string) {
         if (req.method !== "POST") return sendJson(res, 405, { ok: false, error: "POST only" });
         let body = "";
         let over = false;
-        req.on("data", (c) => { if (over) return; body += c; over = overLimit(req, res, body.length, 64 * 1024 * 1024, "请求体超过 64MB"); });
+        req.on("data", (c) => { if (over) return; body += c; over = overLimit(req, res, body.length, 64 * 1024 * 1024, "Request body exceeds 64MB"); });
         req.on("end", async () => {
           if (over) return;
           try {
@@ -374,7 +374,7 @@ export function registerPrerenderSide(server: ViteDevServer, root: string) {
             // 调用方断开(Agent 那边放弃等待、页面掐了请求)就不渲了:排队的摘掉,在跑的叫停
             const signal = abortOnClose(res);
             if (!project || !Array.isArray(project.tracks)) {
-              return sendJson(res, 400, { ok: false, error: "缺少 project" });
+              return sendJson(res, 400, { ok: false, error: "Missing project" });
             }
 
             const resolved = resolveMediaUrls(project);
@@ -382,16 +382,16 @@ export function registerPrerenderSide(server: ViteDevServer, root: string) {
             let at = Number(t);
             const notes: string[] = [];
             if (resolved.unresolved.length) {
-              notes.push(`这些素材服务端取不到文件,画面里它们那一层是空的(不是卡片的问题):${resolved.unresolved.join("、")}。`);
+              notes.push(`The server could not fetch files for these assets, so their layer in the frame is empty (not a card problem): ${resolved.unresolved.join(", ")}.`);
             }
             if (clipId) {
               const iso = isolateClip(target, clipId, { preserveContext: true });
-              if (!iso) return sendJson(res, 404, { ok: false, error: `时间轴上没有 id 为 ${clipId} 的片段。` });
+              if (!iso) return sendJson(res, 404, { ok: false, error: `No clip with id ${clipId} on the timeline.` });
               target = iso.project;
               // 没指定时间就取这一段的中点:起止两端常常正卡在进场 / 退场动画上,
               // 拿那一帧去判断「这张卡长什么样」会看到一个半透明的中间态。
               if (!Number.isFinite(at)) at = (iso.clip.start + iso.clip.end) / 2;
-              notes.push(iso.context ? `渲染了片段 ${clipId}，并保留它需要的下方合成背景。` : `只显示片段 ${clipId}，其他片段仅保留为不可见的输入依赖。`);
+              notes.push(iso.context ? `Rendered clip ${clipId}, keeping the composite background below it that it needs.` : `Showing only clip ${clipId}; other clips are kept only as invisible input dependencies.`);
             }
             if (!Number.isFinite(at)) at = 0;
 
@@ -406,11 +406,11 @@ export function registerPrerenderSide(server: ViteDevServer, root: string) {
             const fpsOf = target.fps || 30;
             const lastT = Math.max(0, Math.floor((target.duration || 0) * fpsOf) - 1) / fpsOf;
             if (at > lastT) {
-              notes.push(`要看的 ${at} 秒超过了整条片子的长度(${target.duration} 秒),实际渲的是最后一帧 ${lastT.toFixed(2)} 秒。`);
+              notes.push(`The requested ${at} s is beyond the length of the whole video (${target.duration} s); rendered the last frame at ${lastT.toFixed(2)} s instead.`);
               at = lastT;
             }
 
-            notes.push("画面里的灰色棋盘格是**透明**,不是画面内容 —— 那里什么都没画。卡片盖住的地方看不到格子。") ;
+            notes.push("The gray checkerboard in the frame is **transparent**, not frame content: nothing is drawn there. The checkerboard is not visible where a card covers it.") ;
             /*
              * times:一次看多个时刻,**合成一趟渲**(renderFrames:从第 0 帧顺推,沿途截这几帧)。
              *
@@ -424,7 +424,7 @@ export function registerPrerenderSide(server: ViteDevServer, root: string) {
               const maxFrame = Math.round(lastT * fpsOf);
               const clamped = list.map((x) => Math.min(Math.max(0, x), lastT));
               if (clamped.some((x, i) => x !== list[i])) {
-                notes.push(`有的时刻超出了片子的长度(${target.duration} 秒),按最后一帧 ${lastT.toFixed(2)} 秒渲。`);
+                notes.push(`Some times are beyond the length of the video (${target.duration} s); rendered at the last frame, ${lastT.toFixed(2)} s.`);
               }
               // 缩图在渲染 worker 里做(post.shrink),这里拿到的就是给模型看的那张,只做 base64
               const shots = await enqueue(
@@ -444,7 +444,7 @@ export function registerPrerenderSide(server: ViteDevServer, root: string) {
                 ok: true,
                 frames,
                 // 素材层按帧各抽各的,取不到文件时每一帧都会记一条同样的话 —— 去重
-                note: [`${images.length} 张画面按 times 的顺序排列,每张标着时刻。`, ...new Set(notes)].join(" "),
+                note: [`${images.length} frames, in the order of times, each labeled with its time.`, ...new Set(notes)].join(" "),
                 __images: images,
               });
             }
@@ -522,13 +522,13 @@ export function registerPrerenderSide(server: ViteDevServer, root: string) {
         if (req.method !== "POST") return sendJson(res, 405, { ok: false, error: "POST only" });
         let body = "";
         let over = false;
-        req.on("data", (c) => { if (over) return; body += c; over = overLimit(req, res, body.length, 64 * 1024 * 1024, "请求体超过 64MB"); });
+        req.on("data", (c) => { if (over) return; body += c; over = overLimit(req, res, body.length, 64 * 1024 * 1024, "Request body exceeds 64MB"); });
         req.on("end", async () => {
           if (over) return;
           try {
             const { project, clips, size, bg, priority } = JSON.parse(body || "{}");
-            if (!project || !Array.isArray(project.tracks)) return sendJson(res, 400, { ok: false, error: "缺少 project" });
-            if (!Array.isArray(clips) || !clips.length) return sendJson(res, 400, { ok: false, error: "缺少 clips" });
+            if (!project || !Array.isArray(project.tracks)) return sendJson(res, 400, { ok: false, error: "Missing project" });
+            if (!Array.isArray(clips) || !clips.length) return sendJson(res, 400, { ok: false, error: "Missing clips" });
             const resolved = resolveMediaUrls(project).project;
             const baked: any[] = [];
             const failed: any[] = [];
@@ -590,12 +590,12 @@ export function registerPrerenderSide(server: ViteDevServer, root: string) {
         if (req.method !== "POST") return sendJson(res, 405, { ok: false, error: "POST only" });
         let body = "";
         let over = false;
-        req.on("data", (c) => { if (over) return; body += c; over = overLimit(req, res, body.length, 64 * 1024 * 1024, "请求体超过 64MB"); });
+        req.on("data", (c) => { if (over) return; body += c; over = overLimit(req, res, body.length, 64 * 1024 * 1024, "Request body exceeds 64MB"); });
         req.on("end", async () => {
           if (over) return;
           try {
             const { project, clips, size, bg } = JSON.parse(body || "{}");
-            if (!project || !Array.isArray(project.tracks)) return sendJson(res, 400, { ok: false, error: "缺少 project" });
+            if (!project || !Array.isArray(project.tracks)) return sendJson(res, 400, { ok: false, error: "Missing project" });
             const resolved = resolveMediaUrls(project).project;
             const onDisk = new Map((await listBakes(root)).map((f) => [f.key, f]));
             const items: any[] = [];
@@ -659,7 +659,7 @@ export function registerPrerenderSide(server: ViteDevServer, root: string) {
         if (req.method !== "POST") return sendJson(res, 405, { ok: false, error: "POST only" });
         let body = "";
         let over = false;
-        req.on("data", (c) => { if (over) return; body += c; over = overLimit(req, res, body.length, 4 * 1024 * 1024, "请求体超过 4MB"); });
+        req.on("data", (c) => { if (over) return; body += c; over = overLimit(req, res, body.length, 4 * 1024 * 1024, "Request body exceeds 4MB"); });
         req.on("end", async () => {
           if (over) return;
           try {
@@ -676,13 +676,13 @@ export function registerPrerenderSide(server: ViteDevServer, root: string) {
         if (req.method !== "POST") return sendJson(res, 405, { ok: false, error: "POST only" });
         let body = "";
         let over = false;
-        req.on("data", (c) => { if (over) return; body += c; over = overLimit(req, res, body.length, 64 * 1024 * 1024, "请求体超过 64MB"); });
+        req.on("data", (c) => { if (over) return; body += c; over = overLimit(req, res, body.length, 64 * 1024 * 1024, "Request body exceeds 64MB"); });
         req.on("end", async () => {
           if (over) return;
           try {
             const { project, clipId, t, size, bg } = JSON.parse(body || "{}");
-            if (!project || !Array.isArray(project.tracks)) return sendJson(res, 400, { ok: false, error: "缺少 project" });
-            if (!clipId) return sendJson(res, 400, { ok: false, error: "缺少 clipId:一次只能渲染一张卡" });
+            if (!project || !Array.isArray(project.tracks)) return sendJson(res, 400, { ok: false, error: "Missing project" });
+            if (!clipId) return sendJson(res, 400, { ok: false, error: "Missing clipId: only one card can be rendered at a time" });
             // 和 /snapshot 同理:bake_card 是模型正阻塞着等的一次调用,在预渲染池里排最前(priority 1),
             // 不该排在空闲预渲染后面。fit 保持默认的 square —— 贴图要正方形
             const signal = abortOnClose(res);

@@ -24,21 +24,21 @@ import { migrateHostedText } from './hosted-default.mjs';
 export const SHARED_CONFIG_ENV = 'PROMPTCUT_SHARED_CONFIG';
 
 function bad(detail) {
-  const err = new Error(`${SHARED_CONFIG_ENV}：${detail}`);
+  const err = new Error(`${SHARED_CONFIG_ENV}: ${detail}`);
   err.code = 'bad-shared-config';
   return err;
 }
 
 /** 规整一条配置；不合格抛错（错误信息里不带口令与 K） */
 export function normalizeEntry(raw, device = localDeviceInfo()) {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw bad('每一项必须是对象');
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw bad('Each entry must be an object');
   let url;
   try {
     url = new URL(migrateHostedText(raw.url)); // 换下来的托管主机名换成新的（hosted-default.mjs）
   } catch {
-    throw bad('url 不是合法地址');
+    throw bad('url is not a valid address');
   }
-  if (!['ws:', 'wss:'].includes(url.protocol)) throw bad('url 必须是 ws:// 或 wss://');
+  if (!['ws:', 'wss:'].includes(url.protocol)) throw bad('url must be ws:// or wss://');
   const out = {
     url: raw.url,
     projectId: raw.projectId ?? null,
@@ -54,16 +54,16 @@ export function normalizeEntry(raw, device = localDeviceInfo()) {
     contentId: raw.contentId ?? null,
     owner: raw.owner ?? null,
   };
-  if (out.projectId !== null && !isProjectId(out.projectId)) throw bad('projectId 不合法');
-  if (out.projectId === null && (typeof out.name !== 'string' || out.name === '')) throw bad('要 projectId 或 name');
-  if (!isUsername(out.username)) throw bad('username 不合法');
-  if (!isDeviceId(out.deviceId)) throw bad('deviceId 要 16～64 个 [A-Za-z0-9_-]');
-  if (!isDeviceName(out.deviceName)) throw bad('deviceName 不合法');
-  if (out.contentId !== null && (typeof out.contentId !== 'string' || out.contentId === '' || out.contentId.length > 256)) throw bad('contentId 要是 1～256 字的字符串');
-  if (out.as !== 'member' && out.as !== 'creator') throw bad("as 只能是 'member' 或 'creator'");
-  if (!isRole(out.role)) throw bad('role 只能是 page / agent / render');
-  if (out.key !== null && !isB64Bytes(out.key, KEY_BYTES)) throw bad('key 必须是 32 字节 base64url');
-  if (out.key === null && (typeof out.password !== 'string' || out.password === '')) throw bad('要 password 或 key');
+  if (out.projectId !== null && !isProjectId(out.projectId)) throw bad('projectId is invalid');
+  if (out.projectId === null && (typeof out.name !== 'string' || out.name === '')) throw bad('Needs projectId or name');
+  if (!isUsername(out.username)) throw bad('username is invalid');
+  if (!isDeviceId(out.deviceId)) throw bad('deviceId must be 16-64 characters of [A-Za-z0-9_-]');
+  if (!isDeviceName(out.deviceName)) throw bad('deviceName is invalid');
+  if (out.contentId !== null && (typeof out.contentId !== 'string' || out.contentId === '' || out.contentId.length > 256)) throw bad('contentId must be a string of 1-256 characters');
+  if (out.as !== 'member' && out.as !== 'creator') throw bad("as must be 'member' or 'creator'");
+  if (!isRole(out.role)) throw bad('role must be page / agent / render');
+  if (out.key !== null && !isB64Bytes(out.key, KEY_BYTES)) throw bad('key must be 32 bytes of base64url');
+  if (out.key === null && (typeof out.password !== 'string' || out.password === '')) throw bad('Needs password or key');
   return out;
 }
 
@@ -78,10 +78,10 @@ export function loadSharedConfig(env = process.env) {
   try {
     raw = JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch (err) {
-    throw bad(`读不了配置文件（${err?.code ?? 'bad-json'}）`);
+    throw bad(`Cannot read the config file (${err?.code ?? 'bad-json'})`);
   }
   const list = Array.isArray(raw) ? raw : [raw];
-  if (list.length === 0) throw bad('配置是空数组');
+  if (list.length === 0) throw bad('The config is an empty array');
   const device = localDeviceInfo(env);
   return list.map((e) => normalizeEntry(e, device));
 }

@@ -9,6 +9,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { synthesize, VoiceError } from './providers.mjs';
 import { PROVIDERS, SYSTEM_VOICES, EMOTIONS } from './presets.mjs';
+import { tr } from "../i18n.mjs";
 
 /** 这个音色在不在允许列表里 */
 export function voiceAllowed(cfg, provider, voiceId) {
@@ -19,16 +20,16 @@ export function voiceAllowed(cfg, provider, voiceId) {
 /** 按设置补齐一次合成的完整参数;args 里给了的覆盖设置里的 */
 export function resolveOptions(cfg, args = {}) {
   const provider = args.provider ?? cfg.provider;
-  if (!PROVIDERS.includes(provider)) throw new VoiceError(`provider 只能是 ${PROVIDERS.join(' / ')}`);
+  if (!PROVIDERS.includes(provider)) throw new VoiceError(tr("provider must be one of {0}", PROVIDERS.join(' / ')));
   const base = cfg[provider];
   const voiceId = args.voiceId || base.voiceId;
   if (!voiceAllowed(cfg, provider, voiceId)) {
-    throw new VoiceError(`音色 ${voiceId} 不在 ${provider} 的可用列表里。只能用系统音色或「配音设置 → 我的音色」里登记过的；新音色要用户自己在配音设置里建。`);
+    throw new VoiceError(`Voice ${voiceId} is not in the available list for ${provider}. Only system voices or voices registered under "Voiceover settings → My voices" can be used; the user must create new voices themselves in voiceover settings.`);
   }
-  if (args.emotion !== undefined && !EMOTIONS.includes(args.emotion)) throw new VoiceError(`emotion 只能是 ${EMOTIONS.filter(Boolean).join(' / ')}，或不传`);
+  if (args.emotion !== undefined && !EMOTIONS.includes(args.emotion)) throw new VoiceError(`emotion must be ${EMOTIONS.filter(Boolean).join(' / ')}, or omitted`);
   const speedRange = provider === 'kling' ? [0.8, 2] : [0.5, 2];
   const speed = args.speed === undefined ? base.speed : Number(args.speed);
-  if (!Number.isFinite(speed) || speed < speedRange[0] || speed > speedRange[1]) throw new VoiceError(`${provider} 的语速范围是 ${speedRange[0]}~${speedRange[1]}`);
+  if (!Number.isFinite(speed) || speed < speedRange[0] || speed > speedRange[1]) throw new VoiceError(`The speech rate range for ${provider} is ${speedRange[0]}~${speedRange[1]}`);
   return { ...base, provider, voiceId, speed, emotion: args.emotion ?? base.emotion, text: args.text };
 }
 

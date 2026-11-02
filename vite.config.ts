@@ -149,7 +149,7 @@ const cardRuntimeDeps = () => {
       if (fs.existsSync(file)) { const pkg = JSON.parse(fs.readFileSync(file, "utf8")); if (pkg.name === name) return String(pkg.version); }
       dir = path.dirname(dir);
     }
-    throw new Error(`取不到 ${name} 的版本`);
+    throw new Error(`Cannot get the version of ${name}`);
   };
   return { sucrase: versionOf("sucrase"), tailwindcss: versionOf("tailwindcss") };
 };
@@ -172,7 +172,7 @@ const stageEntryPlugin = (): Plugin => ({
     order: "post",
     handler(_options, bundle) {
       const index = bundle["index.html"];
-      if (!index || index.type !== "asset") throw new Error("在线构建里没有 index.html,没法生成舞台入口 stage.html");
+      if (!index || index.type !== "asset") throw new Error("No index.html in the online build, cannot generate the stage entry stage.html");
       const html = typeof index.source === "string" ? index.source : Buffer.from(index.source).toString("utf8");
       this.emitFile({ type: "asset", fileName: STAGE_ENTRY_FILE, source: stageEntryHtml(html) });
     },

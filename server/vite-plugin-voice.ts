@@ -37,6 +37,7 @@ import {
   PROVIDERS, PROVIDER_LABELS, MINIMAX_MODELS, EMOTIONS, EMOTION_LABELS, SYSTEM_VOICES, TEXT_LIMITS,
   isVoiceIdShape, isCloneIdShape,
 } from "./voice/presets.mjs";
+import { tr } from "./i18n.mjs";
 
 const PRESETS = {
   providers: PROVIDERS, labels: PROVIDER_LABELS, models: MINIMAX_MODELS,
@@ -60,7 +61,7 @@ async function readJson(req: Connect.IncomingMessage): Promise<Record<string, an
 
 function fail(res: ServerResponse, e: unknown): void {
   if (e instanceof VoiceError) return sendJson(res, e.status && e.status >= 500 ? 502 : 400, { ok: false, error: e.message });
-  if (e instanceof SyntaxError) return sendJson(res, 400, { ok: false, error: "请求体不是合法的 JSON" });
+  if (e instanceof SyntaxError) return sendJson(res, 400, { ok: false, error: tr("Request body is not valid JSON") });
   if (e instanceof AssetSourceError) return sendJson(res, 502, { ok: false, kind: "asset-service", error: e.message });
   sendJson(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });
 }
@@ -108,7 +109,7 @@ export async function resolveCloneSource(body: any, resolve: (m: any) => Promise
   const r: any = await resolveMediaSource(body, resolve);
   if (r.ok) return { src: r.src, label: mediaLabel(r.media) };
   if (r.kind === "asset-service") throw new AssetSourceError(r.error);
-  if (r.status === 400) throw new VoiceError("源文件要先上传进素材库（开始页的复刻表单会自动做），请求里带素材标识 media。");
+  if (r.status === 400) throw new VoiceError(tr("The source file must be uploaded to the media library first (the clone form on the start page does this automatically); include the media id in the request as media."));
   throw new VoiceError(r.error);
 }
 
@@ -124,7 +125,7 @@ export async function prepareCloneAudio(src: string, { ffmpeg, timeoutMs = 120_0
     if (ffmpegBin === undefined) ffmpegBin = findFfmpeg();
     ffmpeg = ffmpegBin || undefined;
   }
-  if (!ffmpeg) throw new VoiceError("找不到 ffmpeg，没法把源文件转成复刻要的音频。");
+  if (!ffmpeg) throw new VoiceError(tr("ffmpeg not found, cannot convert the source file to the audio needed for cloning."));
   const out = path.join(os.tmpdir(), `pc-voice-clone-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.wav`);
   const r = await new Promise<{ code: number | null; stderr: string }>((resolve) => {
     const child = spawn(ffmpeg!, [
@@ -134,13 +135,13 @@ export async function prepareCloneAudio(src: string, { ffmpeg, timeoutMs = 120_0
     ], { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
     let stderr = "";
     child.stderr!.on("data", (c) => { if (stderr.length < 64_000) stderr += c; });
-    const timer = setTimeout(() => { stderr += " ffmpeg 超时"; child.kill(); }, timeoutMs);
+    const timer = setTimeout(() => { stderr += " ffmpeg timed out"; child.kill(); }, timeoutMs);
     child.on("error", (e) => { clearTimeout(timer); resolve({ code: -1, stderr: String(e?.message || e) }); });
     child.on("close", (code) => { clearTimeout(timer); resolve({ code, stderr }); });
   });
   if (r.code !== 0 || !fs.existsSync(out)) {
     fs.rm(out, { force: true }, () => {});
-    throw new VoiceError(`源文件转音频失败：${r.stderr.trim().slice(-300) || "ffmpeg 没有输出"}`);
+    throw new VoiceError(tr("Failed to convert source file to audio: {0}", r.stderr.trim().slice(-300) || tr("ffmpeg produced no output")));
   }
   // 16 位单声道 32kHz:每秒 64000 字节,减掉 44 字节的 wav 头
   const seconds = Math.max(0, (fs.statSync(out).size - 44) / 64000);
@@ -164,11 +165,11 @@ export function voicePlugin(): Plugin {
             let name = "";
             try { name = decodeURIComponent(url.slice("/api/voice/preview/".length)); } catch { /* 下面按不认处理 */ }
             // 文件名被正则限死(不含路径分隔符),拼出来的路径跑不出试听缓存目录
-            if (!PREVIEW_NAME.test(name)) return sendJson(res, 404, { ok: false, error: "没有这个试听文件" });
+            if (!PREVIEW_NAME.test(name)) return sendJson(res, 404, { ok: false, error: tr("No such preview file") });
             res.setHeader("Cache-Control", "no-store");
             return serveFile(path.join(previewDir(root), name), req, res);
           }
-          if (method !== "POST") return sendJson(res, 405, { ok: false, error: "只接受 POST" });
+          if (method !== "POST") return sendJson(res, 405, { ok: false, error: "Only POST is accepted" });
           const body = await readJson(req);
 
           if (url === "/api/voice/config") {
@@ -202,8 +203,8 @@ export function voicePlugin(): Plugin {
             }
           }
           if (url === "/api/voice/custom") {
-            if (!PROVIDERS.includes(body.provider)) throw new VoiceError(`provider 只能是 ${PROVIDERS.join(" / ")}`);
-            if (!isVoiceIdShape(body.voiceId)) throw new VoiceError("音色 id 只能含字母数字和 - _ .");
+            if (!PROVIDERS.includes(body.provider)) throw new VoiceError(tr("provider must be one of {0}", PROVIDERS.join(" / ")));
+            if (!isVoiceIdShape(body.voiceId)) throw new VoiceError(tr("Voice id may only contain letters, digits and - _ ."));
             const cfg = addCustomVoice({ provider: body.provider, voiceId: body.voiceId, name: body.name, kind: "manual", note: body.note });
             return sendJson(res, 200, { ok: true, config: publicVoiceConfig(cfg) });
           }
@@ -216,20 +217,20 @@ export function voicePlugin(): Plugin {
             let trialUrl = "";
             if (r.trial) trialUrl = writePreview(root, `voice-design-${r.voiceId}.mp3`, r.trial);
             const next = addCustomVoice({
-              provider: "minimax", voiceId: r.voiceId, name: body.name || "设计的音色", kind: "design",
+              provider: "minimax", voiceId: r.voiceId, name: body.name || tr("Designed voice"), kind: "design",
               note: String(body.prompt || "").slice(0, 200),
             });
             return sendJson(res, 200, { ok: true, voiceId: r.voiceId, previewUrl: trialUrl, config: publicVoiceConfig(next) });
           }
           if (url === "/api/voice/clone") {
-            if (body.consent !== true) throw new VoiceError("复刻别人的声音要先得到本人同意；勾选确认后再提交。");
+            if (body.consent !== true) throw new VoiceError(tr("Cloning someone else's voice requires their consent first; tick the confirmation and submit again."));
             const voiceId = body.voiceId || `pcVoice${Date.now()}`;
-            if (!isCloneIdShape(voiceId)) throw new VoiceError("音色 id 要 8~256 位、字母开头、只含字母数字和 - _。");
+            if (!isCloneIdShape(voiceId)) throw new VoiceError(tr("Voice id must be 8-256 characters, start with a letter, and contain only letters, digits and - _."));
             // 字节只经素材服务取(见 resolveCloneSource);请求体里的 path 不看
             const source = await resolveCloneSource(body);
             const prepared = await prepareCloneAudio(source.src);
             try {
-              if (prepared.seconds < 10) throw new VoiceError(`去掉静音后只有 ${prepared.seconds.toFixed(1)} 秒，复刻至少要 10 秒人声。`);
+              if (prepared.seconds < 10) throw new VoiceError(tr("Only {0} seconds remain after removing silence; cloning needs at least 10 seconds of speech.", prepared.seconds.toFixed(1)));
               const cfg = readVoiceConfig();
               const r = await cloneVoice({ baseUrl: cfg.effectiveBaseUrl, apiKey: cfg.apiKey }, {
                 audio: fs.readFileSync(prepared.file), filename: "voice.wav", voiceId, previewText: body.previewText,
@@ -237,15 +238,15 @@ export function voicePlugin(): Plugin {
               let demoUrl = "";
               if (r.demo) demoUrl = writePreview(root, `voice-clone-${voiceId}.mp3`, r.demo);
               const next = addCustomVoice({
-                provider: "minimax", voiceId, name: body.name || "复刻的音色", kind: "clone",
-                note: `源文件 ${source.label}，${prepared.seconds.toFixed(1)} 秒`,
+                provider: "minimax", voiceId, name: body.name || tr("Cloned voice"), kind: "clone",
+                note: tr("Source file {0}, {1} seconds", source.label, prepared.seconds.toFixed(1)),
               });
               return sendJson(res, 200, { ok: true, voiceId, demoUrl, seconds: prepared.seconds, config: publicVoiceConfig(next) });
             } finally {
               fs.rm(prepared.file, { force: true }, () => {});
             }
           }
-          return sendJson(res, 404, { ok: false, error: `没有这个接口：${url}` });
+          return sendJson(res, 404, { ok: false, error: `No such endpoint: ${url}` });
         } catch (e) {
           return fail(res, e);
         }

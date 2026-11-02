@@ -14,7 +14,7 @@ export const partsHandlers = {
   // 部件库 + 组合卡:Agent 用部件搭卡,操作的仍然是封装(clip.parts 那棵实例树)
   listParts: (args) => {
     const wanted = args?.partId ? [getPart(args.partId)].filter(Boolean) : allParts();
-    if (args?.partId && wanted.length === 0) throw new Error(`没有 id 为 "${args.partId}" 的部件。可用的:${allParts().map((p) => p.id).join(", ")}`);
+    if (args?.partId && wanted.length === 0) throw new Error(`No part with id "${args.partId}". Available: ${allParts().map((p) => p.id).join(", ")}`);
     const full = args?.detail === "full" || !!args?.partId;
     return wanted.map((p) => {
       const base = {
@@ -22,12 +22,12 @@ export const partsHandlers = {
         ...(p!.useWhen ? { useWhen: p!.useWhen } : {}), ...(p!.tags?.length ? { tags: p!.tags } : {}), ...(p!.from ? { from: p!.from } : {}),
       };
       if (full) return { ...base, controls: p!.controls, defaults: p!.defaults, defaultFrame: p!.defaultFrame ?? null, after: p!.after ?? "hold" };
-      return { ...base, params: p!.controls.map((c) => (c.required ? `${c.key}*` : c.key)), hint: "带 * 的是必填。要完整 schema 就用 list_parts({ partId })。" };
+      return { ...base, params: p!.controls.map((c) => (c.required ? `${c.key}*` : c.key)), hint: "Params marked with * are required. For the full schema use list_parts({ partId })." };
     });
   },
   addComposite: (args) => {
-    if (typeof args.start !== "number" || !Number.isFinite(args.start)) throw new Error("start 要是秒数");
-    if (args.parts !== undefined && !Array.isArray(args.parts)) throw new Error("parts 要是数组,每项 { partId, params?, frame?, enterMs?, children? }");
+    if (typeof args.start !== "number" || !Number.isFinite(args.start)) throw new Error("start must be a number of seconds");
+    if (args.parts !== undefined && !Array.isArray(args.parts)) throw new Error("parts must be an array, each item { partId, params?, frame?, enterMs?, children? }");
     // 没给 id 的实例补一个;validatePartTree 要求有 id,所以先补再校验
     const withIds = (list: unknown[]): unknown[] => list.map((raw) => {
       const r = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {}) as Record<string, unknown>;
@@ -40,9 +40,9 @@ export const partsHandlers = {
       ...(!n.frame && getPart(n.partId)?.defaultFrame ? { frame: { ...getPart(n.partId)!.defaultFrame! } } : {}),
       ...(n.children ? { children: fillFrames(n.children) } : {}),
     }));
-    if (args.trackId !== undefined && !getState().project.tracks.some((t) => t.id === args.trackId)) throw new Error(`找不到序列 ${args.trackId}`);
+    if (args.trackId !== undefined && !getState().project.tracks.some((t) => t.id === args.trackId)) throw new Error(`Track not found ${args.trackId}`);
     const clip = actions.addCardClip(COMPOSITE_CARD_ID, args.start, { trackId: args.trackId, duration: args.duration, parts: fillFrames(parts) });
-    if (!clip) throw new Error("没有序列可放,先 add_track");
+    if (!clip) throw new Error("No track to place it on, call add_track first");
     clipGuard.noteCreated(clip.id);
     return { ok: true, clipId: clip.id, envelope: envelopeOf(getState().project, clip, getCard(COMPOSITE_CARD_ID), stageSize()), look: lookHint(clip.id), timeline: timelineDigest(getState().project) };
   },

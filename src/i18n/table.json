@@ -3712,7 +3712,7 @@
   "ja": "ファイルのアップロードに失敗しました：{0} {1}"
  },
  "Fill": {
-  "zh": "铺满",
+  "zh": "填充",
   "ja": "全体に広げる"
  },
  "Fill in the API Key so the agent can do voiceover": {
@@ -7584,7 +7584,7 @@
   "ja": "ほかの人"
  },
  "Sound": {
-  "zh": "声音",
+  "zh": "发声",
   "ja": "サウンド"
  },
  "Sound duration s": {
@@ -7924,7 +7924,7 @@
   "ja": "お名前を教えてください"
  },
  "Text": {
-  "zh": "文字",
+  "zh": "文本",
   "ja": "テキスト"
  },
  "Text protocol mode": {
@@ -9280,7 +9280,7 @@
   "ja": "時間がかかりすぎました。再試行してください"
  },
  "Total duration (seconds)": {
-  "zh": "总时长（秒）",
+  "zh": "整段时长(秒)",
   "ja": "総再生時間（秒）"
  },
  "Total {0}": {
@@ -10235,7 +10235,7 @@
   "zh": "例：年轻男声，影视解说腔，语速偏快，带一点悬念感",
   "ja": "例：若い男性の声、映画解説調、やや早口で、少しサスペンス感を込めて"
  },
- "e.g.\\n1. Open with the pain point in 5 seconds, using a quote card\\n2. Middle follows \"problem → data → solution\", with a trend chart in the data part\\n3. Close by echoing the opening line": {
+ "e.g.\n1. Open with the pain point in 5 seconds, using a quote card\n2. Middle follows \"problem → data → solution\", with a trend chart in the data part\n3. Close by echoing the opening line": {
   "zh": "例：\n1. 开场 5 秒讲清痛点，用金句卡\n2. 中段按「问题 → 数据 → 方案」推进，数据段配趋势图\n3. 结尾回扣开头那句话",
   "ja": "例：\n1. 冒頭の5秒で課題を伝え、名言カードを使う\n2. 中盤は「課題 → データ → 解決策」の順に進め、データのパートにはトレンドグラフを入れる\n3. 最後に冒頭の一文を受けて締める"
  },
@@ -14218,5 +14218,1625 @@
  " (follows project)": {
   "zh": "(跟项目)",
   "ja": "（プロジェクトに従う）"
+ },
+ " (at most {0} s at this sample rate and channel count). Lower sampleRate, pass mono: true, or measure only one segment with start / duration.": {
+  "zh": "(这个采样率和声道数下最多 {0} 秒)。降 sampleRate、传 mono: true,或用 start / duration 只测一段。",
+  "ja": ""
+ },
+ " Prerender state: {0}, address: {1}, restarts: {2}.": {
+  "zh": " 预渲染状态：{0}，地址：{1}，重启次数：{2}。",
+  "ja": ""
+ },
+ " The prerender process or Chrome may have crashed or been reclaimed. Please retry later.": {
+  "zh": " 可能是预渲染进程或 Chrome 崩溃/被回收，请稍后重试。",
+  "ja": ""
+ },
+ " clips with no audio stream or missing file: ": {
+  "zh": " 段没有音频流或文件不存在，已跳过：",
+  "ja": ""
+ },
+ "(Unnamed media)": {
+  "zh": "(未命名素材)",
+  "ja": ""
+ },
+ "(install it with collect_install and try again)": {
+  "zh": "(用 collect_install 装上再试)",
+  "ja": ""
+ },
+ "(no file name)": {
+  "zh": "(没有文件名)",
+  "ja": ""
+ },
+ "(the file did not exist before)": {
+  "zh": "(原来没有这个文件)",
+  "ja": ""
+ },
+ "(unknown)": {
+  "zh": "(未知)",
+  "ja": ""
+ },
+ ", {0} window resets {1}": {
+  "zh": ",{0}窗口 {1} 重置",
+  "ja": ""
+ },
+ "A read-only connection cannot modify the project": {
+  "zh": "只读的连接不能改项目",
+  "ja": ""
+ },
+ "A read-only connection cannot upload the project": {
+  "zh": "只读的连接不能上传项目",
+  "ja": ""
+ },
+ "A sub-Agent is not higher than the chat {0} that launched it": {
+  "zh": "子 Agent 不高于拉起它的对话 {0}",
+  "ja": ""
+ },
+ "API Key is not set, cannot fetch the model list": {
+  "zh": "还没填 API Key,拉不了模型清单",
+  "ja": ""
+ },
+ "API Key mode has no subscription quota window": {
+  "zh": "API Key 模式没有订阅额度窗口",
+  "ja": ""
+ },
+ "API did not return JSON: {0}": {
+  "zh": "API 返回的不是 JSON：{0}",
+  "ja": ""
+ },
+ "API returned HTTP {0}: {1}": {
+  "zh": "API 返回 HTTP {0}：{1}",
+  "ja": ""
+ },
+ "Account projects can only connect to the account's cloud document service": {
+  "zh": "账号项目只能连账号云端的文档服务",
+  "ja": ""
+ },
+ "Analysis timed out": {
+  "zh": "分析超时",
+  "ja": ""
+ },
+ "Angry": {
+  "zh": "愤怒",
+  "ja": ""
+ },
+ "Antigravity blocked its own {0}: no popup can ask for consent in unattended mode. PromptCut's tools are unaffected; have it use PromptCut's tools to do the same thing instead.": {
+  "zh": "Antigravity 拦下了它自己的 {0}——无人值守模式下没法弹窗征求同意。PromptCut 的工具不受影响,让它改用 PromptCut 的工具做同一件事即可。",
+  "ja": ""
+ },
+ "Antigravity gave up this turn after rejecting its own built-in tools ({0}), and produced no result.": {
+  "zh": "Antigravity 拒绝了它自己的内建工具({0})之后放弃了这一轮,没有产出任何结果。",
+  "ja": ""
+ },
+ "Antigravity itself rejected this tool (its built-in tool, not PromptCut's): {0}": {
+  "zh": "Antigravity 自己拒绝了这个工具(它的内建工具,不是 PromptCut 的):{0}",
+  "ja": ""
+ },
+ "Antigravity reported an error without giving a reason": {
+  "zh": "Antigravity 报错但没说原因",
+  "ja": ""
+ },
+ "Asset service refused the read ({0}, HTTP {1})": {
+  "zh": "素材服务拒绝了读取({0},HTTP {1})",
+  "ja": ""
+ },
+ "Asset service refused the read ({0}, HTTP {1}): /@media/{2}": {
+  "zh": "素材服务拒绝了读取({0},HTTP {1}):/@media/{2}",
+  "ja": ""
+ },
+ "Asset service rejected the ingest ({0}, HTTP {1}){2}": {
+  "zh": "素材服务拒绝了入库({0},HTTP {1}){2}",
+  "ja": ""
+ },
+ "Asset service rejected the {0} ({1}, HTTP {2}): {3}": {
+  "zh": "素材服务拒绝了{0}({1},HTTP {2}):{3}",
+  "ja": ""
+ },
+ "Asset service unreachable ({0}), PNG snapshot failed to {1}: {2}": {
+  "zh": "素材服务不可达({0}),PNG 快照没能{1}:{2}",
+  "ja": ""
+ },
+ "Asset service unreachable ({0}), failed to read PNG snapshot: {1}": {
+  "zh": "素材服务不可达({0}),PNG 快照没能读取:{1}",
+  "ja": ""
+ },
+ "Asset service unreachable ({0}), ingest failed: {1}": {
+  "zh": "素材服务不可达({0}),没能入库:{1}",
+  "ja": ""
+ },
+ "Asset service unreachable ({0}): {1}": {
+  "zh": "素材服务不可达({0}):{1}",
+  "ja": ""
+ },
+ "Asset service unreachable: cannot get the asset service address, PNG snapshot failed to {0}": {
+  "zh": "素材服务不可达:取不到素材服务的地址,PNG 快照没能{0}",
+  "ja": ""
+ },
+ "Asset service unreachable: the editor process cannot get the asset service address": {
+  "zh": "素材服务不可达:编辑器进程取不到素材服务的地址",
+  "ja": ""
+ },
+ "Asset service unreachable: the editor process could not get the asset service address, so ingest failed": {
+  "zh": "素材服务不可达:编辑器进程取不到素材服务的地址,没能入库",
+  "ja": ""
+ },
+ "Audio file download failed (HTTP {0})": {
+  "zh": "音频文件下载失败（HTTP {0}）",
+  "ja": ""
+ },
+ "Audio mix exceeds 3 GB, not saved": {
+  "zh": "混音超过 3 GB,没有保存",
+  "ja": ""
+ },
+ "Authentication state cannot be saved for now. It will need to be confirmed again after the backend restarts.": {
+  "zh": "认证状态暂时无法保存，后端重启后需要重新确认。",
+  "ja": ""
+ },
+ "Authorization code submitted, confirming login…": {
+  "zh": "授权码已提交，正在确认登录…",
+  "ja": ""
+ },
+ "Backup does not exist": {
+  "zh": "备份不存在",
+  "ja": ""
+ },
+ "Base URL is not set (official sources have no unified list endpoint, only relay services do)": {
+  "zh": "还没填接口地址(官方源没有统一的清单口子,中转站才有)",
+  "ja": ""
+ },
+ "Built-in tool {0} was rejected": {
+  "zh": "内建工具 {0} 被拒绝",
+  "ja": ""
+ },
+ "Bundled Python not found. The official installer ships with it; if it is missing, the install is probably corrupted or it was deleted by antivirus software, so reinstall once; ": {
+  "zh": "找不到内置 Python。正式安装包自带它,缺了多半是安装损坏或被杀毒软件删掉,重装一次即可;",
+  "ja": ""
+ },
+ "CLI error": {
+  "zh": "CLI 报错",
+  "ja": ""
+ },
+ "Calm": {
+  "zh": "平静",
+  "ja": ""
+ },
+ "Canceled. You can try again.": {
+  "zh": "已取消，可以重新尝试。",
+  "ja": ""
+ },
+ "Canceling, please wait…": {
+  "zh": "正在取消，请稍候…",
+  "ja": ""
+ },
+ "Cannot connect to API address {0}: {1}": {
+  "zh": "连不上 API 地址 {0}：{1}",
+  "ja": ""
+ },
+ "Cannot read PromptCut's port file {0} ({1}). Reopen PromptCut and try again.": {
+  "zh": "PromptCut 的端口文件 {0} 读不出来({1})。请重新打开 PromptCut 再试。",
+  "ja": ""
+ },
+ "Cannot read lock file: {0}": {
+  "zh": "锁文件读不了:{0}",
+  "ja": ""
+ },
+ "Cannot read quota: {0} (not logged in?)": {
+  "zh": "读不到额度:{0}(没登录?)",
+  "ja": ""
+ },
+ "Cannot reliably read or save collaboration recovery info; the original data is kept, restore from backup or re-authenticate.": {
+  "zh": "无法可靠读取或保存协作恢复信息；原数据已保留，请从备份恢复或重新认证。",
+  "ja": ""
+ },
+ "Cannot start: {0}": {
+  "zh": "无法启动：{0}",
+  "ja": ""
+ },
+ "Card audio was not generated": {
+  "zh": "卡片声音没有生成",
+  "ja": ""
+ },
+ "Card source sync is not enabled": {
+  "zh": "卡片源码同步没开",
+  "ja": ""
+ },
+ "Claude error": {
+  "zh": "Claude 出错",
+  "ja": ""
+ },
+ "Click log in and complete authorization in the browser.": {
+  "zh": "请点击登录，在浏览器中完成授权。",
+  "ja": ""
+ },
+ "Clip {0} uses a pixel map. Export with the default Chrome export (--media chrome); the ffmpeg compatibility bypass does not support pixel-level mapping": {
+  "zh": "片段 {0} 使用了像素映射,请用默认的 Chrome 导出(--media chrome);ffmpeg 兼容旁路不支持像素级映射",
+  "ja": ""
+ },
+ "Cloned voice": {
+  "zh": "复刻的音色",
+  "ja": ""
+ },
+ "Cloning someone else's voice requires their consent first; tick the confirmation and submit again.": {
+  "zh": "复刻别人的声音要先得到本人同意；勾选确认后再提交。",
+  "ja": ""
+ },
+ "Close SKILL mode": {
+  "zh": "关闭 SKILL 模式",
+  "ja": ""
+ },
+ "Code sandbox unavailable: {0}": {
+  "zh": "代码块空间用不了:{0}",
+  "ja": ""
+ },
+ "Codex cannot read PromptCut's standalone config, please check the config based on the previous error.": {
+  "zh": "Codex 无法读取 PromptCut 的独立配置，请根据上一条错误检查配置。",
+  "ja": ""
+ },
+ "Codex login has expired, please log in again. After logging in, resend or continue the original instruction yourself.": {
+  "zh": "Codex 登录已失效，请重新登录。登录成功后请自行重新发送或继续原指令。",
+  "ja": ""
+ },
+ "Codex login state needs confirmation, please log in again.": {
+  "zh": "Codex 登录状态待确认，请重新登录。",
+  "ja": ""
+ },
+ "Codex started working": {
+  "zh": "Codex 开始处理",
+  "ja": ""
+ },
+ "Collaboration recovery data corrupted; the original data is kept, restore from backup or re-authenticate": {
+  "zh": "协作恢复数据损坏；保留原数据，请从备份恢复或重新认证",
+  "ja": ""
+ },
+ "Collaboration recovery info is temporarily unreadable or cannot be saved; the original data is kept and will be retried automatically.": {
+  "zh": "协作恢复信息暂时无法读取或保存；原数据已保留，将自动重试。",
+  "ja": ""
+ },
+ "Complete the login in your browser; if it does not open automatically, click the login link below.": {
+  "zh": "请在浏览器中完成登录；若没有自动打开，可点击下方登录链接。",
+  "ja": ""
+ },
+ "Config module is missing": {
+  "zh": "配置模块缺失",
+  "ja": ""
+ },
+ "Connected, model list fetched successfully.": {
+  "zh": "已连接，模型列表获取成功。",
+  "ja": ""
+ },
+ "Control connection failed ({0})": {
+  "zh": "控制连接没建成（{0}）",
+  "ja": ""
+ },
+ "Control connection timed out": {
+  "zh": "控制连接超时",
+  "ja": ""
+ },
+ "Copy process exit code {0}": {
+  "zh": "复制进程退出码 {0}",
+  "ja": ""
+ },
+ "Could not exchange for a connection ticket ({0})": {
+  "zh": "换不出连接票据（{0}）",
+  "ja": ""
+ },
+ "Could not install": {
+  "zh": "装不上",
+  "ja": ""
+ },
+ "Could not read the frame rate": {
+  "zh": "读不出帧率",
+  "ja": ""
+ },
+ "Creator proof is incorrect": {
+  "zh": "创建者证明不对",
+  "ja": ""
+ },
+ "Creator proof required": {
+  "zh": "要创建者证明",
+  "ja": ""
+ },
+ "Cross-origin request rejected (Origin: {0})": {
+  "zh": "跨源请求被拒绝(Origin: {0})",
+  "ja": ""
+ },
+ "Current 5 hours": {
+  "zh": "当前 5 小时",
+  "ja": ""
+ },
+ "Decoded output is empty (this segment has no audio samples)": {
+  "zh": "解码出来是空的(这一段没有声音样本)",
+  "ja": ""
+ },
+ "Decoding timed out ({0} s)": {
+  "zh": "解码超时({0} 秒)",
+  "ja": ""
+ },
+ "Designed voice": {
+  "zh": "设计的音色",
+  "ja": ""
+ },
+ "Desktop app sessions follow the project's default level": {
+  "zh": "桌面 APP 会话跟随项目的默认等级",
+  "ja": ""
+ },
+ "Device protection key corrupted": {
+  "zh": "设备保护密钥损坏",
+  "ja": ""
+ },
+ "Direct API does not require installing a CLI.": {
+  "zh": "API 直连无需安装 CLI。",
+  "ja": ""
+ },
+ "Direct API is not ready: server/runners/api.mjs is missing or failed to load": {
+  "zh": "API 直连还没就绪:server/runners/api.mjs 缺失或加载失败",
+  "ja": ""
+ },
+ "Direct API unavailable: API key not set yet": {
+  "zh": "API 直连不可用:还没填 API Key",
+  "ja": ""
+ },
+ "Direct API unavailable: config module is missing": {
+  "zh": "API 直连不可用:配置模块缺失",
+  "ja": ""
+ },
+ "Disgusted": {
+  "zh": "厌恶",
+  "ja": ""
+ },
+ "Domineering young man": {
+  "zh": "霸道青年",
+  "ja": ""
+ },
+ "Download finished but could not be added to the media library: {0}": {
+  "zh": "下载好了但没能送进素材库:{0}",
+  "ja": ""
+ },
+ "Downloading and installing the official CLI…": {
+  "zh": "正在下载并安装官方 CLI…",
+  "ja": ""
+ },
+ "Draft does not exist": {
+  "zh": "草稿不存在",
+  "ja": ""
+ },
+ "Dubbed-film male voice": {
+  "zh": "译制片男声",
+  "ja": ""
+ },
+ "Elite young man": {
+  "zh": "精英青年",
+  "ja": ""
+ },
+ "Emphasis color \"{0}\" not recognized, composited with default color {1}": {
+  "zh": "强调颜色「{0}」认不出来,按默认色 {1} 合成",
+  "ja": ""
+ },
+ "Emphasis of clip {0} was not composited: the media is opaque and the shadow is entirely outside the frame and clipped, so it is also invisible in the preview": {
+  "zh": "片段 {0} 的强调没有合成:素材不透明,影子全在框外被裁掉,预览里同样看不见",
+  "ja": ""
+ },
+ "Enter a voice description, for example \"young male voice, film narration style, fairly fast pace\".": {
+  "zh": "要写一句音色描述，比如「年轻男声，影视解说腔，语速偏快」。",
+  "ja": ""
+ },
+ "Failed to connect to the prerender service: the connection was closed while forwarding {0} ({1}). Please retry later.": {
+  "zh": "连接预渲染服务失败：转发 {0} 时连接被关闭（{1}）。请稍后重试。",
+  "ja": ""
+ },
+ "Failed to connect to the prerender service: the connection was closed while requesting {0} ({1}).": {
+  "zh": "连接预渲染服务失败：请求 {0} 时连接被关闭（{1}）。",
+  "ja": ""
+ },
+ "Failed to connect to the prerender service: {0}": {
+  "zh": "连接预渲染服务失败：{0}",
+  "ja": ""
+ },
+ "Failed to convert source file to audio: {0}": {
+  "zh": "源文件转音频失败：{0}",
+  "ja": ""
+ },
+ "Failed to create working directory": {
+  "zh": "创建工作目录失败",
+  "ja": ""
+ },
+ "Failed to fetch bytes from the asset service: {0}": {
+  "zh": "从素材服务取字节失败:{0}",
+  "ja": ""
+ },
+ "Failed to fetch the model list: HTTP {0}": {
+  "zh": "拉模型清单失败:HTTP {0}",
+  "ja": ""
+ },
+ "Failed to fetch the model list: the response was not JSON": {
+  "zh": "拉模型清单失败:回来的不是 JSON",
+  "ja": ""
+ },
+ "Failed to get QR code: HTTP {0}": {
+  "zh": "拿二维码失败:HTTP {0}",
+  "ja": ""
+ },
+ "Failed to get QR code: {0}": {
+  "zh": "拿二维码失败:{0}",
+  "ja": ""
+ },
+ "Failed to get config": {
+  "zh": "获取配置失败",
+  "ja": ""
+ },
+ "Failed to parse Python output": {
+  "zh": "Python 输出解析失败",
+  "ja": ""
+ },
+ "Failed to parse ffprobe output: {0}": {
+  "zh": "ffprobe 输出解析失败：{0}",
+  "ja": ""
+ },
+ "Failed to parse output: ": {
+  "zh": "解析输出失败: ",
+  "ja": ""
+ },
+ "Failed to read config: {0}": {
+  "zh": "读取配置失败: {0}",
+  "ja": ""
+ },
+ "Failed to read request body": {
+  "zh": "读取请求体失败",
+  "ja": ""
+ },
+ "Failed to read session": {
+  "zh": "读取会话失败",
+  "ja": ""
+ },
+ "Failed to start ffmpeg: ": {
+  "zh": "启动 ffmpeg 失败: ",
+  "ja": ""
+ },
+ "Fearful": {
+  "zh": "害怕",
+  "ja": ""
+ },
+ "Female presenter": {
+  "zh": "女性主持人",
+  "ja": ""
+ },
+ "File exceeds the 512MB limit": {
+  "zh": "文件超出 512MB 限制",
+  "ja": ""
+ },
+ "File for media \"{0}\" not found, clip {1} has no picture on this layer": {
+  "zh": "素材「{0}」找不到文件,片段 {1} 这一层没有画面",
+  "ja": ""
+ },
+ "Follows the project's default level": {
+  "zh": "跟随项目的默认等级",
+  "ja": ""
+ },
+ "Frame render failed": {
+  "zh": "帧渲染失败",
+  "ja": ""
+ },
+ "Gentle big sister": {
+  "zh": "温柔姐姐",
+  "ja": ""
+ },
+ "Happy": {
+  "zh": "高兴",
+  "ja": ""
+ },
+ "Host device conflict": {
+  "zh": "主机设备冲突",
+  "ja": ""
+ },
+ "Identity recovery record invalid": {
+  "zh": "身份恢复记录无效",
+  "ja": ""
+ },
+ "If you are developing in the repo, run npm run prepare-python to assemble it.": {
+  "zh": "在仓库里开发的话跑 npm run prepare-python 组装。",
+  "ja": ""
+ },
+ "Illegal path": {
+  "zh": "非法路径",
+  "ja": ""
+ },
+ "In phase 1, only Chromium-based browsers can serve as render nodes": {
+  "zh": "一期只在 Chromium 内核的浏览器上当渲染节点",
+  "ja": ""
+ },
+ "In unattended mode it cannot pop up a window to ask for consent, so reading files, reading web pages and running commands outside the workspace are always rejected automatically.": {
+  "zh": "无人值守模式下它没法弹窗征求同意,工作区以外的读文件、读网页、跑命令一律自动拒绝。",
+  "ja": ""
+ },
+ "Installation complete. You can log in now.": {
+  "zh": "安装完成，可以登录了。",
+  "ja": ""
+ },
+ "Installer exited ({0}). {1}": {
+  "zh": "安装程序退出（{0}）。{1}",
+  "ja": ""
+ },
+ "Interrupted, this call did not finish.": {
+  "zh": "已中断,这次调用没有执行完。",
+  "ja": ""
+ },
+ "Invalid PNG snapshot key: {0}": {
+  "zh": "PNG 快照的键不合法:{0}",
+  "ja": ""
+ },
+ "Invalid authorization code format: it should be the whole string shown on the login page, with no spaces or line breaks.": {
+  "zh": "授权码格式不对：应是登录网页上显示的那一整串，不含空格和换行。",
+  "ja": ""
+ },
+ "Invalid conversationId": {
+  "zh": "无效的 conversationId",
+  "ja": ""
+ },
+ "Invalid parameters: missing a valid id": {
+  "zh": "参数不合法，缺少有效 id",
+  "ja": ""
+ },
+ "Invalid parameters: missing a valid id or messages array": {
+  "zh": "参数不合法，缺少有效 id 或 messages 数组",
+  "ja": ""
+ },
+ "Invalid request body": {
+  "zh": "请求体不对",
+  "ja": ""
+ },
+ "Invalid scope": {
+  "zh": "无效的 scope",
+  "ja": ""
+ },
+ "Invalid session id": {
+  "zh": "会话 id 不合法",
+  "ja": ""
+ },
+ "JSON parse error": {
+  "zh": "JSON 解析错误",
+  "ja": ""
+ },
+ "Job not found, the service may have restarted": {
+  "zh": "作业不存在,可能服务已重启",
+  "ja": ""
+ },
+ "Key type must be one of {0}": {
+  "zh": "密钥类型只能是 {0}",
+  "ja": ""
+ },
+ "Kling": {
+  "zh": "可灵",
+  "ja": ""
+ },
+ "Kling synthesis failed: {0}. Kling only accepts official voice ids.": {
+  "zh": "可灵合成失败：{0}。可灵只认官方音色 id。",
+  "ja": ""
+ },
+ "LAN devices can only access the asset service; to open up other endpoints, set PROMPTCUT_LAN_API=1 at startup": {
+  "zh": "局域网设备只能访问素材服务;要开放其它接口,启动时设 PROMPTCUT_LAN_API=1",
+  "ja": ""
+ },
+ "Local backup failed, not overwritten: {0}": {
+  "zh": "本机那份备份失败,没有覆盖:{0}",
+  "ja": ""
+ },
+ "Login did not complete (exit code {0}). Please retry; if the browser callback fails, try device code login.": {
+  "zh": "登录未完成（退出码 {0}）。请重试；浏览器回调失败时可尝试设备码登录。",
+  "ja": ""
+ },
+ "Login response is missing {0}, scan again": {
+  "zh": "登录响应里缺 {0},重新扫一次",
+  "ja": ""
+ },
+ "Login successful.": {
+  "zh": "登录成功。",
+  "ja": ""
+ },
+ "Long-term window": {
+  "zh": "长期窗口",
+  "ja": ""
+ },
+ "Male presenter": {
+  "zh": "男性主持人",
+  "ja": ""
+ },
+ "Mature elder sister": {
+  "zh": "御姐",
+  "ja": ""
+ },
+ "Mature woman": {
+  "zh": "成熟女性",
+  "ja": ""
+ },
+ "Media file does not exist": {
+  "zh": "素材文件不存在",
+  "ja": ""
+ },
+ "Media not found: {0}": {
+  "zh": "找不到素材{0}",
+  "ja": ""
+ },
+ "Member {0}'s Agent": {
+  "zh": "成员 {0} 的 Agent",
+  "ja": ""
+ },
+ "Members cannot register or withdraw service addresses": {
+  "zh": "成员不能登记或撤回服务地址",
+  "ja": ""
+ },
+ "MiniMax returned no audio.": {
+  "zh": "MiniMax 没有返回音频。",
+  "ja": ""
+ },
+ "MiniMax {0} failed: {1} ({2})": {
+  "zh": "MiniMax {0}失败：{1}（{2}）",
+  "ja": ""
+ },
+ "Missing a valid conversationId or name parameter": {
+  "zh": "缺少有效 conversationId 或 name 参数",
+  "ja": ""
+ },
+ "Naive young man": {
+  "zh": "青涩青年",
+  "ja": ""
+ },
+ "Native tool was rejected, retrying with text protocol": {
+  "zh": "原生工具被拒，改用文本协议重试",
+  "ja": ""
+ },
+ "No API address. Enter it in \"Voiceover settings\", or first set the custom API address in the API settings.": {
+  "zh": "没有 API 地址。在「配音设置」里填，或者先在 API 设置里填好自定义 API 的地址。",
+  "ja": ""
+ },
+ "No API key for voiceover yet. Enter it in \"Voiceover settings\" (open it from the voiceover card on the start page or the editor top bar).": {
+  "zh": "还没有配音用的 API Key。去「配音设置」里填（开始页的配音卡、编辑台顶栏都能打开）。",
+  "ja": ""
+ },
+ "No audio to clone was received.": {
+  "zh": "没有拿到要复刻的音频。",
+  "ja": ""
+ },
+ "No decodable audio on the timeline": {
+  "zh": "时间轴上没有能解码的声音",
+  "ja": ""
+ },
+ "No file_id was received after uploading the clone audio.": {
+  "zh": "上传复刻音频后没有拿到 file_id。",
+  "ja": ""
+ },
+ "No key has been saved for {0} yet": {
+  "zh": "{0} 这一路还没有保存过 Key",
+  "ja": ""
+ },
+ "No login state in the browser yet, finish logging in in the window and check again": {
+  "zh": "浏览器里还没有登录态,请在窗口里完成登录后再查一次",
+  "ja": ""
+ },
+ "No login state yet: run user_interface_collect_login first (scan the QR code or use the browser)": {
+  "zh": "还没有登录态:先 user_interface_collect_login(扫码或浏览器)",
+  "ja": ""
+ },
+ "No login task is currently waiting for an authorization code. Click \"Log in\" first.": {
+  "zh": "现在没有在等授权码的登录任务。请先点「登录」。",
+  "ja": ""
+ },
+ "No media given: the request body must include media (the media id / url / hash); local file paths are no longer accepted, and bytes are always fetched through the asset service": {
+  "zh": "没给素材:请求体要带 media(素材的 id / url / hash);本机文件路径不再接受,字节一律经素材服务取",
+  "ja": ""
+ },
+ "No response after {0} s": {
+  "zh": "{0} 秒没有应答",
+  "ja": ""
+ },
+ "No running PromptCut found (no port file {0}). Open PromptCut first (the desktop app, or npm run dev in the repo), then try again.": {
+  "zh": "没有找到正在运行的 PromptCut(没有端口文件 {0})。请先打开 PromptCut(桌面版,或在仓库里 npm run dev),再回来重试。",
+  "ja": ""
+ },
+ "No site named {0}, available: {1}": {
+  "zh": "没有叫 {0} 的站点,可选:{1}",
+  "ja": ""
+ },
+ "No such preview file": {
+  "zh": "没有这个试听文件",
+  "ja": ""
+ },
+ "No usable Python": {
+  "zh": "没有可用的 Python",
+  "ja": ""
+ },
+ "No usable Python, cannot run the tracking extension.": {
+  "zh": "没有可用的 Python，无法运行追踪拓展。",
+  "ja": ""
+ },
+ "No usable Python, so subject detection can be neither installed nor run": {
+  "zh": "没有可用的 Python，装不了也跑不了主体检测",
+  "ja": ""
+ },
+ "No usage line found in the output: {0}": {
+  "zh": "没在输出里找到用量行:{0}",
+  "ja": ""
+ },
+ "Not a directory": {
+  "zh": "不是目录",
+  "ja": ""
+ },
+ "Not an export directory name": {
+  "zh": "不是导出目录的名字",
+  "ja": ""
+ },
+ "Not under the export directory": {
+  "zh": "不在导出目录下",
+  "ja": ""
+ },
+ "Offline operation record invalid": {
+  "zh": "离线操作记录无效",
+  "ja": ""
+ },
+ "One-click install currently supports Windows only.": {
+  "zh": "目前一键安装支持 Windows。",
+  "ja": ""
+ },
+ "Only claude / codex have a quota window": {
+  "zh": "只有 claude / codex 有额度窗口",
+  "ja": ""
+ },
+ "Only members of a shared project can do this": {
+  "zh": "只有共享项目的成员能做这件事",
+  "ja": ""
+ },
+ "Only members of this project can read or write its cost records": {
+  "zh": "只有这个项目的成员能读写它的成本记录",
+  "ja": ""
+ },
+ "Only {0} seconds remain after removing silence; cloning needs at least 10 seconds of speech.": {
+  "zh": "去掉静音后只有 {0} 秒，复刻至少要 10 秒人声。",
+  "ja": ""
+ },
+ "Open SKILL mode": {
+  "zh": "打开 SKILL 模式",
+  "ja": ""
+ },
+ "Operation timed out. Check your network or proxy and try again.": {
+  "zh": "操作超时，请检查网络或代理后重试。",
+  "ja": ""
+ },
+ "Output not generated yet": {
+  "zh": "产物还没生成",
+  "ja": ""
+ },
+ "PROMPTCUT_PYTHON currently points to {0}.": {
+  "zh": "PROMPTCUT_PYTHON 现在指向 {0}。",
+  "ja": ""
+ },
+ "Password cannot be empty": {
+  "zh": "口令不能为空",
+  "ja": ""
+ },
+ "Please check config.toml in the PromptCut standalone config directory {0}.": {
+  "zh": "请检查 PromptCut 独立配置目录 {0} 中的 config.toml。",
+  "ja": ""
+ },
+ "Please install first": {
+  "zh": "请先安装",
+  "ja": ""
+ },
+ "Point it to python.exe to avoid this limitation (.exe does not go through the shell).": {
+  "zh": "把它改指到 python.exe 就没有这个限制(.exe 不经过 shell)。",
+  "ja": ""
+ },
+ "Preparing…": {
+  "zh": "正在准备…",
+  "ja": ""
+ },
+ "Prerender request {0} got no response after {1} seconds.": {
+  "zh": "预渲染请求 {0} 超过 {1} 秒没有回应。",
+  "ja": ""
+ },
+ "Prerender returned non-JSON (HTTP {0})": {
+  "zh": "预渲染返回了非 JSON(HTTP {0})",
+  "ja": ""
+ },
+ "Probe command failed to run: {0}": {
+  "zh": "探测命令没跑起来:{0}",
+  "ja": ""
+ },
+ "Probe timed out (50 s)": {
+  "zh": "探测超时(50 秒)",
+  "ja": ""
+ },
+ "Process exit code {0}": {
+  "zh": "进程退出码 {0}",
+  "ja": ""
+ },
+ "Project asset ingest is missing an authorization ticket": {
+  "zh": "项目素材入库缺少授权票据",
+  "ja": ""
+ },
+ "Project asset ingest response ownership does not match": {
+  "zh": "项目素材入库回包归属不匹配",
+  "ja": ""
+ },
+ "Project does not exist": {
+  "zh": "项目不存在",
+  "ja": ""
+ },
+ "Project file too large": {
+  "zh": "项目文件太大",
+  "ja": ""
+ },
+ "Project {0} has no registered version {1}": {
+  "zh": "项目 {0} 没有登记过版本 {1}",
+  "ja": ""
+ },
+ "PromptCut is not in SKILL mode right now. Sessions in the desktop app cannot operate on projects.": {
+  "zh": "PromptCut 现在不在 SKILL 模式,桌面 APP 的会话不能操作项目。",
+  "ja": ""
+ },
+ "PromptCut is not running (no service on port {0}). Open PromptCut first, then come back and retry; do not retry repeatedly.": {
+  "zh": "PromptCut 没在运行(端口 {0} 没有服务)。请先打开 PromptCut,再回来重试;不要反复重试。",
+  "ja": ""
+ },
+ "PromptCut is not running: the process {0} (port {1}) recorded in the port file has exited. Open PromptCut first, then try again.": {
+  "zh": "PromptCut 没在运行:端口文件里记的进程 {0}(端口 {1})已经退出。请先打开 PromptCut,再回来重试。",
+  "ja": ""
+ },
+ "PromptCut's port file {0} has no valid port. Reopen PromptCut and try again.": {
+  "zh": "PromptCut 的端口文件 {0} 里没有有效的端口。请重新打开 PromptCut 再试。",
+  "ja": ""
+ },
+ "PromptCut's tools are unaffected: {0}.": {
+  "zh": "PromptCut 的工具不受影响 —— {0}。",
+  "ja": ""
+ },
+ "Provide a preview text.": {
+  "zh": "要给一句试听文本。",
+  "ja": ""
+ },
+ "QR code expired. Generate a new one": {
+  "zh": "二维码已过期,重新生成一张",
+  "ja": ""
+ },
+ "Query failed: HTTP {0}": {
+  "zh": "查询失败:HTTP {0}",
+  "ja": ""
+ },
+ "Read-back verification after writing failed (maybe {0} modified this file at the same time). The original file is backed up at {1}. Please try again later.": {
+  "zh": "写完读回核对不上(可能 {0} 同时改了这个文件)。原文件备份在 {1},请稍后重试。",
+  "ja": ""
+ },
+ "Reduce the number of times, or first confirm the tier with subject_status (the full tier is very slow).": {
+  "zh": "可以减少 times 的个数,或先用 subject_status 确认档位(full 档很慢)。",
+  "ja": ""
+ },
+ "Registered PromptCut as an MCP server for agy (agy mcp add promptcut)": {
+  "zh": "已把 PromptCut 注册为 agy 的 MCP 服务（agy mcp add promptcut）",
+  "ja": ""
+ },
+ "Registration count has reached the limit of {0}": {
+  "zh": "登记数已到上限 {0}",
+  "ja": ""
+ },
+ "Render process exited abnormally (code {0})": {
+  "zh": "渲染进程异常退出(代码 {0})",
+  "ja": ""
+ },
+ "Render process failed to start (0xC0000142). This is usually caused by too many browser instances open at once. Close some and try again; if it keeps happening, restart the app.": {
+  "zh": "渲染进程启动失败(0xC0000142)。通常是同时开了太多浏览器实例,关掉一些再试;若持续出现请重启软件。",
+  "ja": ""
+ },
+ "Request body exceeds the 32MB limit": {
+  "zh": "请求体体积超出 32MB 限制",
+  "ja": ""
+ },
+ "Request body is not valid JSON": {
+  "zh": "请求体不是合法的 JSON",
+  "ja": ""
+ },
+ "Request body is over 200KB": {
+  "zh": "请求体超过 200KB",
+  "ja": ""
+ },
+ "Request body too large": {
+  "zh": "请求体太大",
+  "ja": ""
+ },
+ "Room has been revoked": {
+  "zh": "房间已注销",
+  "ja": ""
+ },
+ "Room revoked or host conflict": {
+  "zh": "房间已注销或主机冲突",
+  "ja": ""
+ },
+ "Sad": {
+  "zh": "悲伤",
+  "ja": ""
+ },
+ "Search timed out (55 seconds), lower limit and try again": {
+  "zh": "搜索超时(55 秒),把 limit 调小再试",
+  "ja": ""
+ },
+ "Selection at the time the message was sent, not live": {
+  "zh": "发消息时的选区，非实时",
+  "ja": ""
+ },
+ "Session does not exist": {
+  "zh": "会话不存在",
+  "ja": ""
+ },
+ "Set for this chat only": {
+  "zh": "这个对话单独设的",
+  "ja": ""
+ },
+ "Shared endpoint {0} returned {1}{2}": {
+  "zh": "共享端点 {0} 回 {1}{2}",
+  "ja": ""
+ },
+ "Short-term window": {
+  "zh": "短期窗口",
+  "ja": ""
+ },
+ "Shot detection process exited abnormally (code {0})": {
+  "zh": "镜头识别进程异常退出（代码 {0}）",
+  "ja": ""
+ },
+ "Site {0} has no QR code login": {
+  "zh": "站点 {0} 没有扫码登录",
+  "ja": ""
+ },
+ "Skipped ": {
+  "zh": "有 ",
+  "ja": ""
+ },
+ "Skipped {0} clips with no audio stream or missing file: {1}": {
+  "zh": "有 {0} 段没有音频流或文件不存在,已跳过:{1}",
+  "ja": ""
+ },
+ "Some actions were rejected: {0}": {
+  "zh": "部分动作被拒绝: {0}",
+  "ja": ""
+ },
+ "Source file path does not exist or is invalid": {
+  "zh": "源文件路径不存在或不合法",
+  "ja": ""
+ },
+ "Source file {0}, {1} seconds": {
+  "zh": "源文件 {0}，{1} 秒",
+  "ja": ""
+ },
+ "Source has {0} channels, mixed down to stereo": {
+  "zh": "源有 {0} 个声道,混成了立体声",
+  "ja": ""
+ },
+ "Stage windows cannot call this endpoint": {
+  "zh": "舞台窗口不能调这个接口",
+  "ja": ""
+ },
+ "Started {0}": {
+  "zh": "已启动 {0}",
+  "ja": ""
+ },
+ "Subject detection process exited abnormally (code {0})": {
+  "zh": "主体检测进程异常退出（代码 {0}）",
+  "ja": ""
+ },
+ "Subject detection returned no result": {
+  "zh": "主体检测没有返回结果",
+  "ja": ""
+ },
+ "Subject detection timed out (over {0} seconds) and was force-stopped.": {
+  "zh": "主体检测超时(超过 {0} 秒),已强制结束。",
+  "ja": ""
+ },
+ "Subject detection was cancelled": {
+  "zh": "主体检测已被取消",
+  "ja": ""
+ },
+ "Sunny guy": {
+  "zh": "阳光男生",
+  "ja": ""
+ },
+ "Sunny youth": {
+  "zh": "阳光少年",
+  "ja": ""
+ },
+ "Surprised": {
+  "zh": "惊讶",
+  "ja": ""
+ },
+ "Sweet woman": {
+  "zh": "甜美女性",
+  "ja": ""
+ },
+ "Syntax error": {
+  "zh": "语法错误",
+  "ja": ""
+ },
+ "System protected storage response invalid": {
+  "zh": "系统保护存储响应无效",
+  "ja": ""
+ },
+ "System protected storage unavailable": {
+  "zh": "系统保护存储不可用",
+  "ja": ""
+ },
+ "Task does not exist": {
+  "zh": "任务不存在",
+  "ja": ""
+ },
+ "Text too long ({0} chars). {1} allows at most {2} chars per request; split it into several parts and voice them separately.": {
+  "zh": "文字太长（{0} 字），{1} 单次最多 {2} 字，拆成几段分别配。",
+  "ja": ""
+ },
+ "The API key is invalid or does not have access to this model (HTTP {0}). Check the API key in \"Voiceover settings\".": {
+  "zh": "API Key 无效或没有开通这个模型（HTTP {0}）。检查「配音设置」里的 API Key。",
+  "ja": ""
+ },
+ "The Codex login state record cannot be confirmed, please log in again.": {
+  "zh": "Codex 登录状态记录无法确认，请重新登录。",
+  "ja": ""
+ },
+ "The [mcp_servers] table in config.toml defines {0} in another form (line {1}); to avoid corrupting it, nothing was modified. Delete that entry manually, then register again.": {
+  "zh": "config.toml 的 [mcp_servers] 表里用别的写法定义了 {0}(第 {1} 行),为了不写坏它,没有改动。请手动删掉那一条后再登记。",
+  "ja": ""
+ },
+ "The address entered manually is empty": {
+  "zh": "手填地址是空的",
+  "ja": ""
+ },
+ "The address must be http(s):// or ws(s)://": {
+  "zh": "地址必须是 http(s):// 或 ws(s)://",
+  "ja": ""
+ },
+ "The arguments contain cmd metacharacters ({0}), which the batch interpreter cannot handle -- ": {
+  "zh": "参数里有 cmd 元字符({0}),批处理解释器接不住 —— ",
+  "ja": ""
+ },
+ "The asset service ingest response has no content hash ({0})": {
+  "zh": "素材服务的入库回包里没有内容哈希({0})",
+  "ja": ""
+ },
+ "The asset service refused the read (HTTP {0})": {
+  "zh": "素材服务拒绝了读取(HTTP {0})",
+  "ja": ""
+ },
+ "The audio for cloning must be smaller than 20MB.": {
+  "zh": "复刻用的音频要小于 20MB。",
+  "ja": ""
+ },
+ "The audio to measure exceeds the sample limit {0} (at most {3} s at {1} Hz, {2} channels). Lower sampleRate, pass mono: true, or measure only one segment with start / duration.": {
+  "zh": "要测的声音超过样本上限 {0}({1} Hz、{2} 声道下最多 {3} 秒)。降 sampleRate、传 mono: true,或用 start / duration 只测一段。",
+  "ja": ""
+ },
+ "The card audio size is wrong": {
+  "zh": "卡片声音的大小不对",
+  "ja": ""
+ },
+ "The close request succeeded, but the server still reports SKILL mode as on. Another instance may be changing the state at the same time, try again": {
+  "zh": "关闭请求成功了,但服务端仍报告 SKILL 模式开着 —— 可能有别的实例在同时改状态,再点一次试试",
+  "ja": ""
+ },
+ "The collaboration recovery record is being saved by another instance, please retry": {
+  "zh": "协作恢复记录正在被另一个实例保存，请重试",
+  "ja": ""
+ },
+ "The content of {0} is not an object; it was not modified.": {
+  "zh": "{0} 的内容不是一个对象,没有改动它。",
+  "ja": ""
+ },
+ "The cost records of this project are full ({0} records)": {
+  "zh": "这个项目的成本记录已满（{0} 条）",
+  "ja": ""
+ },
+ "The document service address must be ws(s):// or http(s)://": {
+  "zh": "文档服务地址必须是 ws(s):// 或 http(s)://",
+  "ja": ""
+ },
+ "The document service does not accept this file ({0})": {
+  "zh": "文档服务不收这个文件({0})",
+  "ja": ""
+ },
+ "The download process reported the file \"{0}\", but it is not in the temp directory": {
+  "zh": "下载进程报了文件「{0}」,临时目录里却没有它",
+  "ja": ""
+ },
+ "The endpoint URL is empty": {
+  "zh": "接口地址是空的",
+  "ja": ""
+ },
+ "The endpoint rejected this key (HTTP {0})": {
+  "zh": "接口拒绝了这个 Key(HTTP {0})",
+  "ja": ""
+ },
+ "The file to ingest is missing: {0} ({1})": {
+  "zh": "要入库的文件不见了:{0}({1})",
+  "ja": ""
+ },
+ "The history file of this session has a bad format, starting from empty.": {
+  "zh": "这个会话的历史文件格式不对,已从空白开始。",
+  "ja": ""
+ },
+ "The hosted address ({0}) is not a valid address": {
+  "zh": "托管地址（{0}）不是合法的地址",
+  "ja": ""
+ },
+ "The hosted address ({0}) must be http(s):// or ws(s)://": {
+  "zh": "托管地址（{0}）必须是 http(s):// 或 ws(s)://",
+  "ja": ""
+ },
+ "The local device identity record is corrupted; the original record was kept, please restore a backup": {
+  "zh": "本机设备身份记录损坏；保留原记录，请恢复备份",
+  "ja": ""
+ },
+ "The lock file was repeatedly taken by others, please try again later": {
+  "zh": "锁文件反复被别人抢走,请稍后再试",
+  "ja": ""
+ },
+ "The login program has ended, but login success is not yet confirmed. Please retry.": {
+  "zh": "登录程序已结束，但尚未确认登录成功。请重试。",
+  "ja": ""
+ },
+ "The login state has changed. Please re-confirm the current login.": {
+  "zh": "登录状态已更新，请重新确认当前登录。",
+  "ja": ""
+ },
+ "The login state in the browser has expired, log in again in the window": {
+  "zh": "浏览器里的登录态已过期,请在窗口里重新登录",
+  "ja": ""
+ },
+ "The mix is stereo, as in export: {0} mono media clips are spread across both channels, each 3 dB lower (ffmpeg's default center mix coefficient)": {
+  "zh": "混音按导出的做法是立体声:{0} 段单声道素材摊到两个声道,每路低 3 dB(ffmpeg 缺省的中置混音系数)",
+  "ja": ""
+ },
+ "The old collaboration service contains external links; the original data is kept, restore the backup explicitly": {
+  "zh": "旧协作服务含外部链接，保留原数据，请显式恢复备份",
+  "ja": ""
+ },
+ "The prerender process was not ready within {0} seconds{1}": {
+  "zh": "预渲染进程 {0} 秒内没有就绪{1}",
+  "ja": ""
+ },
+ "The render queue is not attached yet": {
+  "zh": "渲染任务队列还没有挂上",
+  "ja": ""
+ },
+ "The report is over 64MB and was not saved": {
+  "zh": "报告超过 64MB,没有保存",
+  "ja": ""
+ },
+ "The request is not valid JSON": {
+  "zh": "请求不是有效的 JSON",
+  "ja": ""
+ },
+ "The response has no quota window (not logged in?)": {
+  "zh": "返回里没有额度窗口(没登录?)",
+  "ja": ""
+ },
+ "The saved login state has expired, log in again": {
+  "zh": "存盘的登录态已过期,重新登录一次",
+  "ja": ""
+ },
+ "The segment to measure is {0} s, {1} Hz, {2} channels, {3} samples in total, over the limit of {4}": {
+  "zh": "要测的这段 {0} 秒、{1} Hz、{2} 声道,共 {3} 个样本,超过上限 {4}",
+  "ja": ""
+ },
+ "The source file must be uploaded to the media library first (the clone form on the start page does this automatically); include the media id in the request as media.": {
+  "zh": "源文件要先上传进素材库（开始页的复刻表单会自动做），请求里带素材标识 media。",
+  "ja": ""
+ },
+ "The specified port {0} is invalid": {
+  "zh": "指定的端口 {0} 不合法",
+  "ja": ""
+ },
+ "The text to voice is empty.": {
+  "zh": "要配音的文字是空的。",
+  "ja": ""
+ },
+ "The {1} entry in {0} has been modified and is not the one written by PromptCut; to avoid overwriting your changes, it was not undone. Edit or delete it manually if needed.": {
+  "zh": "{0} 里的 {1} 条目已经被改过,不是 PromptCut 写的那一条;为了不覆盖你的改动,没有撤销。需要的话请手动删改。",
+  "ja": ""
+ },
+ "This QR code does not exist or the service has restarted": {
+  "zh": "这张二维码不存在或服务已重启",
+  "ja": ""
+ },
+ "This QR code does not exist or the service was restarted. Generate a new one": {
+  "zh": "这张二维码不存在或服务已重启,重新生成一张",
+  "ja": ""
+ },
+ "This connection cannot read or write cost records": {
+  "zh": "这条连接不能读写成本记录",
+  "ja": ""
+ },
+ "This export is still in progress. Wait for it to finish or cancel it, then delete.": {
+  "zh": "这份导出还在进行，等它结束或取消后再删。",
+  "ja": ""
+ },
+ "This export no longer exists": {
+  "zh": "这份导出已经不在了",
+  "ja": ""
+ },
+ "This file has no audio stream": {
+  "zh": "该文件没有音频流",
+  "ja": ""
+ },
+ "This file is not a PromptCut project": {
+  "zh": "这个文件不是 PromptCut 项目",
+  "ja": ""
+ },
+ "This is a link, not an export directory": {
+  "zh": "这是一个链接，不是导出目录",
+  "ja": ""
+ },
+ "This media is not on the asset service: {0} (if it is still uploading, wait for the upload to finish and retry; otherwise import it again)": {
+  "zh": "素材服务上没有这份素材:{0}(还在上传就等传完再试;否则重新导入一次)",
+  "ja": ""
+ },
+ "This project does not have Cloud Agent enabled": {
+  "zh": "这个项目没有开云端 Agent",
+  "ja": ""
+ },
+ "This project file is already open in another PromptCut": {
+  "zh": "这个项目文件正被另一个 PromptCut 打开",
+  "ja": ""
+ },
+ "This project file is already open in another PromptCut (process {0}, since {1})": {
+  "zh": "这个项目文件正被另一个 PromptCut 打开(进程 {0},自 {1})",
+  "ja": ""
+ },
+ "This provider has no command to list models, please enter one manually above": {
+  "zh": "这一家没有列出模型的命令,请在上面手填",
+  "ja": ""
+ },
+ "This service has no CLI login method.": {
+  "zh": "此服务没有 CLI 登录方式。",
+  "ja": ""
+ },
+ "This storage does not support project snapshots": {
+  "zh": "这个存储不支持项目快照",
+  "ja": ""
+ },
+ "This week": {
+  "zh": "本周",
+  "ja": ""
+ },
+ "This week (all models)": {
+  "zh": "本周(全部模型)",
+  "ja": ""
+ },
+ "This week ({0})": {
+  "zh": "本周({0})",
+  "ja": ""
+ },
+ "Thumbnail not found": {
+  "zh": "缩略图不存在",
+  "ja": ""
+ },
+ "Too many authorization code submissions. Cancel and log in again.": {
+  "zh": "授权码提交次数太多，请取消后重新登录。",
+  "ja": ""
+ },
+ "Too many requests, rate limited (HTTP 429). Wait a minute or two and try again.": {
+  "zh": "请求太频繁被限流了（HTTP 429），等一两分钟再试。",
+  "ja": ""
+ },
+ "Too many wrong passwords, try again later": {
+  "zh": "口令错误太多，稍后再试",
+  "ja": ""
+ },
+ "Tracking failed": {
+  "zh": "追踪失败",
+  "ja": ""
+ },
+ "Tracking process exited abnormally (code {0})": {
+  "zh": "追踪进程异常退出（代码 {0}）",
+  "ja": ""
+ },
+ "Tracking process exited abnormally (code {0}): {1}": {
+  "zh": "追踪进程异常退出（代码 {0}）：{1}",
+  "ja": ""
+ },
+ "Unable to confirm the connection for now, please check your network or log in again.": {
+  "zh": "暂时无法确认连接，请检查网络或重新登录。",
+  "ja": ""
+ },
+ "Unknown AI service.": {
+  "zh": "未知的 AI 服务。",
+  "ja": ""
+ },
+ "Unknown CLI operation.": {
+  "zh": "未知的 CLI 操作。",
+  "ja": ""
+ },
+ "Unknown clip": {
+  "zh": "未知片段",
+  "ja": ""
+ },
+ "Unknown desktop app": {
+  "zh": "未知的桌面 APP",
+  "ja": ""
+ },
+ "Unknown registration target: {0}": {
+  "zh": "不认识的登记目标:{0}",
+  "ja": ""
+ },
+ "Unknown registration target: {0} (only {1})": {
+  "zh": "不认识的登记目标:{0}(只有 {1})",
+  "ja": ""
+ },
+ "Unknown vendor": {
+  "zh": "不认识的 vendor",
+  "ja": ""
+ },
+ "Unknown voiceover service: {0} (only minimax / kling / vidu)": {
+  "zh": "不认识的配音服务：{0}（只有 minimax / kling / vidu）",
+  "ja": ""
+ },
+ "Unrecognized backup": {
+  "zh": "不认识的备份",
+  "ja": ""
+ },
+ "Untitled chat": {
+  "zh": "未命名对话",
+  "ja": ""
+ },
+ "Upstream is string[], separated by |, the component does split(\"|\")": {
+  "zh": "上游是 string[],用 | 分隔,组件里 split(\"|\")",
+  "ja": ""
+ },
+ "Verifying the installation…": {
+  "zh": "正在验证安装结果…",
+  "ja": ""
+ },
+ "Vidu synthesis failed: {0}": {
+  "zh": "Vidu 合成失败：{0}",
+  "ja": ""
+ },
+ "Voice design returned no voice_id.": {
+  "zh": "音色设计没有返回 voice_id。",
+  "ja": ""
+ },
+ "Voice id may only contain letters, digits and - _ .": {
+  "zh": "音色 id 只能含字母数字和 - _ .",
+  "ja": ""
+ },
+ "Voice id must be 8-256 characters, start with a letter, and contain only letters, digits and - _.": {
+  "zh": "音色 id 要 8~256 位、字母开头、只含字母数字和 - _。",
+  "ja": ""
+ },
+ "Voice id must be 8~256 characters, start with a letter, contain only letters, digits, - and _, and must not end with - or _.": {
+  "zh": "音色 id 要 8~256 位、字母开头、只含字母数字和 - _，结尾不能是 - 或 _。",
+  "ja": ""
+ },
+ "Young college student": {
+  "zh": "青年大学生",
+  "ja": ""
+ },
+ "Young girl": {
+  "zh": "少女",
+  "ja": ""
+ },
+ "agy rejected the MCP tool call. Open AI settings (gear in the right rail), click \"Authorize PromptCut tools\", then retry.": {
+  "zh": "agy 拒绝了 MCP 工具调用。请打开 AI 设置（右栏齿轮），点『授权 PromptCut 工具』，然后重试。",
+  "ja": ""
+ },
+ "api runner is not ready yet": {
+  "zh": "api runner 还没就绪",
+  "ja": ""
+ },
+ "api.profiles must be an object": {
+  "zh": "api.profiles 必须是对象",
+  "ja": ""
+ },
+ "api.source must be one of {0}": {
+  "zh": "api.source 只能是 {0}",
+  "ja": ""
+ },
+ "apiKey must be a string": {
+  "zh": "apiKey 必须是字符串",
+  "ja": ""
+ },
+ "baseUrl must be an http(s) address or empty": {
+  "zh": "baseUrl 必须是 http(s) 地址或留空",
+  "ja": ""
+ },
+ "claude failed to run: {0}": {
+  "zh": "claude 没跑起来:{0}",
+  "ja": ""
+ },
+ "cliModels must be an object": {
+  "zh": "cliModels 必须是对象",
+  "ja": ""
+ },
+ "cliModels.{0} must be a string": {
+  "zh": "cliModels.{0} 必须是字符串",
+  "ja": ""
+ },
+ "clone audio upload": {
+  "zh": "上传复刻音频",
+  "ja": ""
+ },
+ "code is empty: write a function body that receives input (channels, sampleRate, duration, ...) and returns the result with return": {
+  "zh": "code 是空的:写一个函数体,收到 input(channels、sampleRate、duration……),用 return 返回结果",
+  "ja": ""
+ },
+ "codex app-server did not respond within 20 seconds": {
+  "zh": "codex app-server 20 秒没回应",
+  "ja": ""
+ },
+ "codex app-server exited early": {
+  "zh": "codex app-server 提前退出",
+  "ja": ""
+ },
+ "codex failed to run: {0}": {
+  "zh": "codex 没跑起来:{0}",
+  "ja": ""
+ },
+ "config.toml defines mcp_servers.{0} at the top level with a dotted key (line {1}); to avoid corrupting it, nothing was modified. Delete that entry manually, then register again.": {
+  "zh": "config.toml 顶层用点号键定义了 mcp_servers.{0}(第 {1} 行),为了不写坏它,没有改动。请手动删掉那一条后再登记。",
+  "ja": ""
+ },
+ "deepAutoRounds must be an integer from 0 to 100000 (0 = unlimited rounds)": {
+  "zh": "deepAutoRounds 是 0~100000 的整数(0 = 不限轮次)",
+  "ja": ""
+ },
+ "defaultProvider must be claude, agy, codex, api or null": {
+  "zh": "defaultProvider 必须是 claude, agy, codex, api 或 null",
+  "ja": ""
+ },
+ "deleted": {
+  "zh": "删掉",
+  "ja": ""
+ },
+ "ffmpeg decoding failed: ": {
+  "zh": "ffmpeg 解码失败: ",
+  "ja": ""
+ },
+ "ffmpeg exit code {0}": {
+  "zh": "ffmpeg 退出码 {0}",
+  "ja": ""
+ },
+ "ffmpeg failed to run: ": {
+  "zh": "ffmpeg 运行失败: ",
+  "ja": ""
+ },
+ "ffmpeg not found": {
+  "zh": "找不到 ffmpeg",
+  "ja": ""
+ },
+ "ffmpeg not found, cannot convert the source file to the audio needed for cloning.": {
+  "zh": "找不到 ffmpeg，没法把源文件转成复刻要的音频。",
+  "ja": ""
+ },
+ "ffmpeg produced no output": {
+  "zh": "ffmpeg 没有输出",
+  "ja": ""
+ },
+ "ffprobe could not read video info from this file": {
+  "zh": "ffprobe 读不出这个文件的视频信息",
+  "ja": ""
+ },
+ "initialize failed: {0}": {
+  "zh": "initialize 失败:{0}",
+  "ja": ""
+ },
+ "not ready": {
+  "zh": "未就绪",
+  "ja": ""
+ },
+ "points must be written as [[frame number, x, y], ...], with at least one point": {
+  "zh": "points 要写成 [[帧号, x, y], ...]，且至少一个点",
+  "ja": ""
+ },
+ "prerender address unknown": {
+  "zh": "预渲染地址未知",
+  "ja": ""
+ },
+ "progress": {
+  "zh": "进度",
+  "ja": ""
+ },
+ "provider must be one of {0}": {
+  "zh": "provider 只能是 {0}",
+  "ja": ""
+ },
+ "quota must be an object": {
+  "zh": "quota 必须是对象",
+  "ja": ""
+ },
+ "quota.checkEveryBytes must be at least 16384 (16KB)": {
+  "zh": "quota.checkEveryBytes 至少 16384(16KB)",
+  "ja": ""
+ },
+ "quota.thresholdPercent must be a percentage from 1 to 100": {
+  "zh": "quota.thresholdPercent 是 1~100 的百分数",
+  "ja": ""
+ },
+ "read": {
+  "zh": "读取",
+  "ja": ""
+ },
+ "start {0} s is beyond the length of this audio ({1} s)": {
+  "zh": "start {0} 秒超出了这段声音的长度({1} 秒)",
+  "ja": ""
+ },
+ "the server gave no reason": {
+  "zh": "服务端没有说明原因",
+  "ja": ""
+ },
+ "unexpected response format": {
+  "zh": "返回格式不对",
+  "ja": ""
+ },
+ "upload not finished after {0} seconds": {
+  "zh": "{0} 秒没有传完",
+  "ja": ""
+ },
+ "vendor must be anthropic / openai / gemini": {
+  "zh": "vendor 只能是 anthropic / openai / gemini",
+  "ja": ""
+ },
+ "voice design": {
+  "zh": "音色设计",
+  "ja": ""
+ },
+ "window": {
+  "zh": "窗口",
+  "ja": ""
+ },
+ "write": {
+  "zh": "写入",
+  "ja": ""
+ },
+ "{0} (current user)": {
+  "zh": "{0}（当前用户）",
+  "ja": ""
+ },
+ "{0} is not valid JSON ({1}); it was not modified. Fix the file first, then register again.": {
+  "zh": "{0} 不是合法的 JSON({1}),没有改动它。请先修好这个文件再登记。",
+  "ja": ""
+ },
+ "{0} items are in use by another program and were not {1} (for example {2}). Close the program using them and try again.": {
+  "zh": "有 {0} 项正被别的程序占用，没{1}（例如 {2}）。关掉正在用它的程序后再试。",
+  "ja": ""
+ },
+ "{0} just edited": {
+  "zh": "{0}刚改过",
+  "ja": ""
+ },
+ "{0} links were left untouched (for example {1}). Please handle them yourself in the file manager.": {
+  "zh": "有 {0} 个链接没有动（例如 {1}），请在文件管理器里自己处理。",
+  "ja": ""
+ },
+ "{0} must be an object": {
+  "zh": "{0} 必须是对象",
+  "ja": ""
+ },
+ "{0} quota used {1}% ({2}), over the {3}% threshold, interrupted{4}. To continue, raise the threshold or turn off the circuit breaker in AI settings.": {
+  "zh": "{0} 额度已用 {1}%({2}),超过阈值 {3}%,已中断{4}。要继续可以在 AI 设置里调高阈值或关掉熔断。",
+  "ja": ""
+ },
+ "{0} request was not sent: {1}": {
+  "zh": "{0}请求没发出去:{1}",
+  "ja": ""
+ },
+ "{0} request was rejected (HTTP {1}): {2}": {
+  "zh": "{0}请求被拒(HTTP {1}):{2}",
+  "ja": ""
+ },
+ "{0}-day window": {
+  "zh": "{0} 天窗口",
+  "ja": ""
+ },
+ "{0}-hour window": {
+  "zh": "{0} 小时窗口",
+  "ja": ""
+ },
+ "{0}.baseUrl must be a string": {
+  "zh": "{0}.baseUrl 必须是字符串",
+  "ja": ""
+ },
+ "{0}.model must be a string": {
+  "zh": "{0}.model 必须是字符串",
+  "ja": ""
  }
 }

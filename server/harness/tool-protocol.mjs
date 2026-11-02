@@ -91,7 +91,7 @@ export function parseToolBlocks(text) {
       });
     } catch (e) {
       blocks.push({
-        error: `JSON 解析失败: ${e.message}`,
+        error: `JSON parse failed: ${e.message}`,
         raw
       });
     }
@@ -115,7 +115,7 @@ export async function executeToolBlocks(blocks, callTool) {
     }
     
     if (!toolNames.includes(block.name)) {
-      results.push({ name: block.name, ok: false, error: `未注册的工具 ${block.name}` });
+      results.push({ name: block.name, ok: false, error: `Unregistered tool ${block.name}` });
       continue;
     }
     
@@ -142,13 +142,13 @@ export async function executeToolBlocks(blocks, callTool) {
 }
 
 export function formatResultsAsUserMessage(results) {
-  let output = '工具执行结果：\n\n';
+  let output = 'Tool results:\\n\\n';
   for (const res of results) {
     if (res.ok) {
       const t = res.text ? res.text.substring(0, 4000) : '';
-      output += `[工具 ${res.name} 执行成功]\n${t}\n\n`;
+      output += `[Tool ${res.name} succeeded]\\n${t}\\n\\n`;
     } else {
-      output += `[工具 ${res.name} 执行失败]\n${res.error}\n\n`;
+      output += `[Tool ${res.name} failed]\\n${res.error}\\n\\n`;
     }
   }
   return output.trim();
@@ -162,7 +162,7 @@ export async function renderProtocolPrompt() {
   
   let toolsDesc = '';
   for (const t of tools) {
-    toolsDesc += `### ${t.name}\n- 描述：${t.description}\n- 参数：${JSON.stringify(t.inputSchema)}\n\n`;
+    toolsDesc += `### ${t.name}\\n- Description: ${t.description}\\n- Parameters: ${JSON.stringify(t.inputSchema)}\\n\\n`;
   }
   
   return md.replace('<!--TOOLS-->', toolsDesc.trim());
@@ -273,7 +273,7 @@ export function runTextProtocolLoop({ startRun, opts, onEvent }) {
       
       // 这句只发给界面,不进模型上下文 —— 深度自主要的是「模型看不见轮次」,
       // 不是「用户也看不见为什么停了」
-      onEvent({ type: 'status', text: `文本协议已达 ${maxLoops} 轮上限` });
+      onEvent({ type: 'status', text: `Text protocol reached the limit of ${maxLoops} rounds` });
       onEvent({ type: 'done', sessionId: currentOpts.sessionId });
       resolve();
     } catch (e) {

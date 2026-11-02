@@ -47,7 +47,7 @@ const easeInOutOf = (e: EasingFn): EasingFn => (p) => (p < 0.5 ? e(p * 2) / 2 : 
  */
 function bezier(x1: number, y1: number, x2: number, y2: number): EasingFn {
   if (![x1, y1, x2, y2].every(Number.isFinite) || x1 < 0 || x1 > 1 || x2 < 0 || x2 > 1) {
-    throw new Error(`Easing.bezier 的参数不对：x1、x2 要在 0～1 之间，收到 (${x1}, ${y1}, ${x2}, ${y2})`);
+    throw new Error(`Invalid arguments for Easing.bezier: x1 and x2 must be between 0 and 1, got (${x1}, ${y1}, ${x2}, ${y2})`);
   }
   const cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx;
   const cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by;
@@ -79,7 +79,7 @@ function bezier(x1: number, y1: number, x2: number, y2: number): EasingFn {
 
 /** 分成 `count` 级台阶跳着走；`atEnd` 为真时每一级在这一段的末尾才跳（同 CSS 的 `steps(n, end)`） */
 function steps(count: number, atEnd = true): EasingFn {
-  if (!Number.isInteger(count) || count < 1) throw new Error(`Easing.steps 的级数要是正整数，收到 ${count}`);
+  if (!Number.isInteger(count) || count < 1) throw new Error(`Easing.steps count must be a positive integer, got ${count}`);
   return (p) => {
     const q = Math.min(1, Math.max(0, p));
     const n = atEnd ? Math.floor(q * count) : Math.ceil(q * count);
@@ -90,7 +90,7 @@ function steps(count: number, atEnd = true): EasingFn {
 /** `p` 的 `n` 次方（`poly(2)` 就是 `quad`，`poly(4)` 就是 `quart`） */
 function poly(n: number): EasingFn {
   if (typeof n !== "number" || !Number.isFinite(n)) {
-    throw new Error(`Easing.poly 的次数要是一个数，收到 ${describe(n)}。写法：\`Easing.poly(4)\`，等于 \`Easing.quart\`。`);
+    throw new Error(`Easing.poly exponent must be a number, got ${describe(n)}. Usage: \`Easing.poly(4)\`, which equals \`Easing.quart\`.`);
   }
   return (p) => Math.pow(p, n);
 }
@@ -99,7 +99,7 @@ function poly(n: number): EasingFn {
 function describe(value: unknown): string {
   if (typeof value === "string") return JSON.stringify(value);
   if (typeof value === "number" || value == null || typeof value === "boolean") return String(value);
-  return Array.isArray(value) ? "数组" : typeof value === "function" ? "函数" : "对象";
+  return Array.isArray(value) ? "array" : typeof value === "function" ? "function" : "Target";
 }
 
 /**

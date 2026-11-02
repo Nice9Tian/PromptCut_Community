@@ -65,16 +65,16 @@ export function parseSkillMd(text) {
 function readSkill(dir, folder) {
   const file = path.join(dir, SKILL_FILE);
   // 按字节先挡一道:一个字最少占一个字节,4 倍以内才值得读进来再数字数
-  if (fs.statSync(file).size > SKILL_LIMITS.chars * 4) throw new Error(`${SKILL_FILE} 太大`);
+  if (fs.statSync(file).size > SKILL_LIMITS.chars * 4) throw new Error(`${SKILL_FILE} is too large`);
   const text = fs.readFileSync(file, 'utf8');
-  if (text.length > SKILL_LIMITS.chars) throw new Error(`${SKILL_FILE} 超过 ${SKILL_LIMITS.chars} 字`);
+  if (text.length > SKILL_LIMITS.chars) throw new Error(`${SKILL_FILE} exceeds ${SKILL_LIMITS.chars} characters`);
   const parsed = parseSkillMd(text);
-  if (!parsed) throw new Error('开头没有 --- 包着的字段');
+  if (!parsed) throw new Error('No fields wrapped in --- at the start');
   const { name } = parsed.fields;
   const description = parsed.fields.description?.trim();
-  if (!name || name.length > 64 || !NAME.test(name)) throw new Error('name 不合格:只用小写字母、数字和单个连字符,1～64 字');
-  if (name !== folder) throw new Error(`name(${name})和文件夹名不一样`);
-  if (!description || description.length > SKILL_LIMITS.descriptionChars) throw new Error(`description 要有,且不超过 ${SKILL_LIMITS.descriptionChars} 字`);
+  if (!name || name.length > 64 || !NAME.test(name)) throw new Error('Invalid name: use only lowercase letters, digits and single hyphens, 1-64 characters');
+  if (name !== folder) throw new Error(`name (${name}) differs from the folder name`);
+  if (!description || description.length > SKILL_LIMITS.descriptionChars) throw new Error(`description is required and must not exceed ${SKILL_LIMITS.descriptionChars} characters`);
   return { name, description, dir, body: parsed.body };
 }
 
@@ -89,7 +89,7 @@ export function loadSkillCatalog({ dirs = [] } = {}) {
   const seen = new Set();
   const skipped = [];
   const skip = (folder, reason) => { if (skipped.length < SKILL_LIMITS.skipped) skipped.push({ folder, reason }); };
-  const why = (e) => (e?.code ? `读不了(${e.code})` : e?.message || String(e));
+  const why = (e) => (e?.code ? `Cannot read (${e.code})` : e?.message || String(e));
   const absent = (e) => e?.code === 'ENOENT' || e?.code === 'ENOTDIR';
   for (const root of dirs) {
     let names;
@@ -100,7 +100,7 @@ export function loadSkillCatalog({ dirs = [] } = {}) {
       // 没有 SKILL.md 的不是技能文件夹(说明文件、别的目录),不算跳过;查不了的要记原因,所以不用 existsSync
       try { fs.lstatSync(path.join(dir, SKILL_FILE)); } catch (e) { if (!absent(e)) { seen.add(folder); skip(folder, why(e)); } continue; }
       seen.add(folder);
-      if (skills.size >= SKILL_LIMITS.skills) { skip(folder, `超过 ${SKILL_LIMITS.skills} 个的上限`); continue; }
+      if (skills.size >= SKILL_LIMITS.skills) { skip(folder, `Exceeds the limit of ${SKILL_LIMITS.skills}`); continue; }
       try { skills.set(folder, readSkill(dir, folder)); } catch (e) { skip(folder, why(e)); }
     }
   }
@@ -111,8 +111,8 @@ export function loadSkillCatalog({ dirs = [] } = {}) {
 export function skillCatalogPrompt(skills) {
   if (!skills?.length) return '';
   const clip = (s) => { const one = s.replace(/\s+/g, ' ').trim(); return one.length > SKILL_LIMITS.listedChars ? `${one.slice(0, SKILL_LIMITS.listedChars)}…` : one; };
-  return '\n\n## 技能\n\n下面是这里能用的技能,每个是一份写好的做事说明。任务和某个技能的用途对得上时,动手之前先调 `load_skill` 读全文,再照着做;对不上的不用读。' +
-    '技能只是说明,不放宽任何限制:创造力等级、工具范围都照旧,技能里带的脚本不能运行。\n\n' +
+  return '\n\n## Skills\n\nBelow are the skills available here, each a written guide for doing a kind of work. When a task matches a skill\'s purpose, call `load_skill` to read the full text before you start, then follow it; skip the ones that don\'t match.' +
+    'A skill is only guidance and loosens no restriction: the creativity level and tool scope stay as they are, and scripts bundled with a skill must not be run.\n\n' +
     skills.map((s) => `- ${s.name}:${clip(s.description)}`).join('\n');
 }
 
@@ -146,23 +146,23 @@ function readBundled(skill, file) {
   const parts = rel.split('/');
   // 冒号挡 Windows 的盘符和备用数据流(`run.py:a.md`)
   if (!rel || rel.startsWith('/') || rel.includes(':') || parts.includes('..') || !TEXT_FILE.test(rel)) {
-    throw skillError('skill-file-denied', `不能读 ${rel || '(空路径)'}:只能读这个技能文件夹里的 .md、.txt 文件,路径写相对路径。`);
+    throw skillError('skill-file-denied', `Cannot read ${rel || '(empty path)'}: only .md and .txt files inside this skill folder can be read, and the path must be relative.`);
   }
   let real, base;
   try { real = fs.realpathSync(path.join(skill.dir, ...parts)); base = fs.realpathSync(skill.dir); }
-  catch { throw skillError('skill-file-not-found', `技能 ${skill.name} 里没有 ${rel}。`); }
+  catch { throw skillError('skill-file-not-found', `Skill ${skill.name} has no ${rel}.`); }
   const inside = path.relative(base, real);
-  if (!inside || inside.split(path.sep)[0] === '..' || path.isAbsolute(inside)) throw skillError('skill-file-denied', `不能读 ${rel}:它指向这个技能文件夹外面。`);
+  if (!inside || inside.split(path.sep)[0] === '..' || path.isAbsolute(inside)) throw skillError('skill-file-denied', `Cannot read ${rel}: it points outside this skill folder.`);
   // 文件夹里的链接可以指向 .py:解析之后再查一次
-  if (!TEXT_FILE.test(real)) throw skillError('skill-file-denied', `不能读 ${rel}:它指向的不是 .md、.txt 文件。`);
+  if (!TEXT_FILE.test(real)) throw skillError('skill-file-denied', `Cannot read ${rel}: it does not point to an .md or .txt file.`);
   let stat, text;
   // 报错原文带磁盘路径,工具结果会进事件和诊断,只留错误代号
   try {
     stat = fs.statSync(real);
     if (stat.isFile() && stat.size <= SKILL_LIMITS.chars * 4) text = fs.readFileSync(real, 'utf8');
-  } catch (e) { throw skillError('skill-file-unreadable', `读不了 ${rel}(${e?.code || '未知错误'})。`); }
-  if (!stat.isFile()) throw skillError('skill-file-not-found', `技能 ${skill.name} 里没有 ${rel}。`);
-  if (text === undefined || text.length > SKILL_LIMITS.chars) throw skillError('skill-file-too-large', `${rel} 超过 ${SKILL_LIMITS.chars} 字,读不了。`);
+  } catch (e) { throw skillError('skill-file-unreadable', `Cannot read ${rel} (${e?.code || 'unknown error'}).`); }
+  if (!stat.isFile()) throw skillError('skill-file-not-found', `Skill ${skill.name} has no ${rel}.`);
+  if (text === undefined || text.length > SKILL_LIMITS.chars) throw skillError('skill-file-too-large', `${rel} exceeds ${SKILL_LIMITS.chars} characters and cannot be read.`);
   return text;
 }
 
@@ -170,18 +170,18 @@ function readBundled(skill, file) {
 export function loadSkillTool(skills) {
   return {
     name: 'load_skill',
-    description: '读一个技能的全文。系统提示词的「技能」一节列着能用的技能;任务对得上时,动手之前先读。全文里提到附带文档时,用 file 读。',
+    description: 'Read the full text of a skill. The "Skills" section of the system prompt lists the available skills; when a task matches, read before you start. When the full text mentions an attached document, read it with file.',
     inputSchema: {
       type: 'object',
       properties: {
-        name: { type: 'string', description: '技能名称' },
-        file: { type: 'string', description: '可选:这个技能文件夹里的一份 .md、.txt 附带文档(相对路径,比如 references/style.md)。不给就读技能全文。' },
+        name: { type: 'string', description: 'Skill name' },
+        file: { type: 'string', description: 'Optional: an attached .md or .txt document in this skill folder (relative path, e.g. references/style.md). If omitted, the full skill text is read.' },
       },
       required: ['name'],
     },
     async execute(input) {
       const skill = skills.find((s) => s.name === input.name);
-      if (!skill) throw skillError('skill-not-found', `没有叫 ${input.name} 的技能。能用的有:${skills.map((s) => s.name).join('、')}。`);
+      if (!skill) throw skillError('skill-not-found', `No skill named ${input.name}. Available: ${skills.map((s) => s.name).join(', ')}.`);
       // 模型常把没用到的可选参数写成 null,当作没给
       if (input.file !== undefined && input.file !== null) return { ok: true, name: skill.name, file: input.file, text: readBundled(skill, input.file) };
       const files = bundledFiles(skill.dir);
@@ -190,7 +190,7 @@ export function loadSkillTool(skills) {
         name: skill.name,
         text: skill.body,
         ...(files.length ? { files } : {}),
-        ...(hasScripts(skill.dir) ? { scripts: '这个技能带了 scripts/,这里不能运行。全文里要跑脚本的步骤做不了,用现有工具完成,做不到的在收尾汇报里写明。' } : {}),
+        ...(hasScripts(skill.dir) ? { scripts: 'This skill comes with scripts/, which cannot be run here. Steps in the full text that need a script cannot be done: complete them with the existing tools, and state in the final report what could not be done.' } : {}),
       };
     },
   };

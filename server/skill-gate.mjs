@@ -18,6 +18,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { tr } from "./i18n.mjs";
 
 /** SKILL 的状态目录;测试与探针用 `PROMPTCUT_SKILL_DIR` 指到临时目录 */
 export function skillRoot() {
@@ -78,14 +79,14 @@ export function closeGate(by = "user") {
  */
 export function gateMessage(tool) {
   return [
-    "PromptCut 现在不在 SKILL 模式,桌面 APP 的会话不能操作项目。",
+    tr("PromptCut is not in SKILL mode right now. Sessions in the desktop app cannot operate on projects."),
     "",
-    `\`${tool}\` 没有执行,项目**没有**任何改动。PromptCut 有两种工作方式:传统式由用户和编辑界面 AI 栏里的 Agent 动手,SKILL 才交给桌面 APP 里的 Agent。`,
+    `\`${tool}\` was not executed and the project was **not** changed at all. PromptCut has two working modes: in Classic mode the user and the Agent in the editor's AI panel do the work, and only SKILL mode hands work to the Agent in the desktop app.`,
     "",
-    "接下来请这样做:",
-    "1. **不要重试**这个工具,也不要换个工具再试 —— SKILL 模式没开时所有工具调用都会被同样拦下,包括只读的;",
-    "2. 如果你已经做了一部分,把做完的和还差的告诉用户;",
-    "3. 告诉用户:想让你继续,请在 PromptCut 顶栏把「传统式 / SKILL」切到 SKILL,然后回来跟你说一声。",
+    "Please do the following:",
+    "1. **Do not retry** this tool, and do not try a different tool either: when SKILL mode is off, all tool calls are blocked the same way, including read-only ones;",
+    "2. If you have already done part of the work, tell the user what is done and what is still left;",
+    "3. Tell the user: to let you continue, switch \"Classic mode / SKILL\" to SKILL in the PromptCut top bar, then come back and tell you.",
   ].join("\n");
 }
 

@@ -58,10 +58,10 @@ export function createContentClient(endpoint, {
   clearTimeout: clearTimer = globalThis.clearTimeout,
 } = {}) {
   if (!endpoint || typeof endpoint.send !== 'function' || typeof endpoint.onMessage !== 'function') {
-    throw new TypeError('createContentClient：endpoint 必须有 send 与 onMessage');
+    throw new TypeError('createContentClient: endpoint must have send and onMessage');
   }
   if (!(Number.isFinite(timeoutMs) && timeoutMs > 0)) {
-    throw new TypeError('createContentClient：timeoutMs 必须是正数');
+    throw new TypeError('createContentClient: timeoutMs must be a positive number');
   }
 
   const instance = randomUUID().slice(0, 8);
@@ -83,11 +83,11 @@ export function createContentClient(endpoint, {
     const entry = settle(reqId);
     if (message.type === 'error') {
       const reason = typeof message.reason === 'string' ? message.reason : 'error';
-      entry.reject(clientError(reason, `内容库 ${entry.type} 失败：${reason}`, { reason, detail: message.detail }));
+      entry.reject(clientError(reason, `Content store ${entry.type} failed: ${reason}`, { reason, detail: message.detail }));
       return;
     }
     if (message.type !== REPLY_TYPE[entry.type]) {
-      entry.reject(clientError('bad-reply', `内容库 ${entry.type} 回了意外的 ${String(message.type)}`));
+      entry.reject(clientError('bad-reply', `Content store ${entry.type} returned an unexpected ${String(message.type)}`));
       return;
     }
     entry.resolve(message);
@@ -97,7 +97,7 @@ export function createContentClient(endpoint, {
     endpoint.onClose(() => {
       for (const reqId of [...inflight.keys()]) {
         const entry = settle(reqId);
-        entry.reject(clientError('disconnected', `内容库 ${entry.type}：连接已断开`));
+        entry.reject(clientError('disconnected', `Content store ${entry.type}: connection closed`));
       }
     });
   }
@@ -109,12 +109,12 @@ export function createContentClient(endpoint, {
       try {
         JSON.stringify(message);
       } catch {
-        reject(clientError('bad-message', `内容库 ${type}：消息无法序列化`));
+        reject(clientError('bad-message', `Content store ${type}: message cannot be serialized`));
         return;
       }
       const timer = setTimer(() => {
         const entry = settle(reqId);
-        if (entry) entry.reject(clientError('timeout', `内容库 ${type}：${timeoutMs} ms 内没有回包`));
+        if (entry) entry.reject(clientError('timeout', `Content store ${type}: no reply within ${timeoutMs} ms`));
       }, timeoutMs);
       timer?.unref?.();
       inflight.set(reqId, { type, resolve, reject, timer });
@@ -127,7 +127,7 @@ export function createContentClient(endpoint, {
       // 端点可能在 send 里同步收到回包（测试替身），这时已经 settle 过了
       if (!sent && inflight.has(reqId)) {
         settle(reqId);
-        reject(clientError('disconnected', `内容库 ${type}：连接未就绪，没有发出`));
+        reject(clientError('disconnected', `Content store ${type}: connection not ready, nothing sent`));
       }
     });
   }

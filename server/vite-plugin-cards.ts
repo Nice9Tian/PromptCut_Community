@@ -40,6 +40,7 @@ const { checkSyncedSource, rejectedStub, hostedWorkerKind, normalizeBrowserCssIm
 })();
 import { remotionStyleErrors } from './remotion-style-check.mjs';
 import { remotionLockSuffix } from '../src/online/cardRuntime/remotionLock.mjs';
+import { tr } from "./i18n.mjs";
 
 /* ────────────────────────────────────────────────────────────────────
  * 0.4 起:Agent 能读、能改**所有**卡片的原始源码(内置卡也算),但改不了 HTML。
@@ -148,18 +149,18 @@ export function hasCardDefObject(source: string): boolean {
 
 /** 改完之后不许**新**出现的写法:导出按帧推时间,这些东西不跟着帧走。已有的不追究(那是原作者的事) */
 const RISKY_PATTERNS: [RegExp, string][] = [
-  [/\bDate\.now\s*\(/g, 'Date.now():要读时间就用组件收到的 t'],
-  [/\bnew\s+Date\s*\(\s*\)/g, 'new Date():要读时间就用组件收到的 t'],
-  [/\bsetTimeout\s*\(|\bsetInterval\s*\(/g, 'setTimeout / setInterval 驱动动画:用 motion 的 animate,或者读 t'],
-  [/\bIntersectionObserver\b/g, 'IntersectionObserver:卡片挂载即播放,没有「滚进视口」'],
-  [/\bsetAnimationLoop\b/g, 'setAnimationLoop:三维画面写成 t 的纯函数,t 变了再显式 render 一次(照 scene-3d.tsx)'],
-  [COMPOSITING_INDEPENDENT, "compositing: 'independent':「只画自己、能单独预渲染上云」是审阅结论,只能写进审阅表 src/cards/capabilities.json(A0.2),源码里声明不作数"],
+  [/\bDate\.now\s*\(/g, 'Date.now(): to read the time, use the t passed to the component'],
+  [/\bnew\s+Date\s*\(\s*\)/g, 'new Date(): to read the time, use the t passed to the component'],
+  [/\bsetTimeout\s*\(|\bsetInterval\s*\(/g, 'setTimeout / setInterval driving animation: use motion\'s animate, or read t'],
+  [/\bIntersectionObserver\b/g, 'IntersectionObserver: a card plays as soon as it mounts, there is no "scroll into viewport"'],
+  [/\bsetAnimationLoop\b/g, 'setAnimationLoop: write the 3D scene as a pure function of t, and call render explicitly again when t changes (follow scene-3d.tsx)'],
+  [COMPOSITING_INDEPENDENT, "compositing: 'independent': \"draws only itself, can be prerendered separately and moved to the cloud\" is a review conclusion and can only be written in the review table src/cards/capabilities.json (A0.2); a declaration in the source does not count"],
 ];
 
 /** 内置 / 共用文件的一次编辑能不能落盘 */
 export function checkSourceEdit(rel: string, before: string, after: string): { ok: boolean; errors: string[] } {
   const errors: string[] = [];
-  if (Buffer.byteLength(after, 'utf8') > MAX_EDIT_BYTES) errors.push(`改完超过 ${MAX_EDIT_BYTES / 1024}KB,太大了。`);
+  if (Buffer.byteLength(after, 'utf8') > MAX_EDIT_BYTES) errors.push(`The edit is over ${MAX_EDIT_BYTES / 1024}KB, too large.`);
   if (/\.(tsx|ts)$/.test(rel)) {
     const out = ts.transpileModule(after, {
       reportDiagnostics: true,
@@ -168,7 +169,7 @@ export function checkSourceEdit(rel: string, before: string, after: string): { o
     });
     for (const d of out.diagnostics || []) {
       const pos = d.start !== undefined ? after.slice(0, d.start).split('\n').length : undefined;
-      errors.push(`语法错误${pos ? `(第 ${pos} 行)` : ''}:${ts.flattenDiagnosticMessageText(d.messageText, ' ')}`);
+      errors.push(`Syntax error${pos ? ` (line ${pos})` : ''}: ${ts.flattenDiagnosticMessageText(d.messageText, ' ')}`);
     }
   }
   /*
@@ -184,17 +185,17 @@ export function checkSourceEdit(rel: string, before: string, after: string): { o
     if (remotion?.remotionStyle && re !== COMPOSITING_INDEPENDENT) continue;
     const n0 = (before.match(re) || []).length;
     const n1 = (after.match(re) || []).length;
-    if (n1 > n0) errors.push(`这次编辑新加了 ${why}。`);
+    if (n1 > n0) errors.push(`This edit newly added ${why}.`);
   }
   // 卡片定义文件:CardDef 的具名导出和 id 不能被改掉,不然注册表认不出它、或者换了身份
   if (/export\s+const\s+\w+\s*:\s*CardDef/.test(before)) {
-    if (!/export\s+const\s+\w+\s*:\s*CardDef/.test(after)) errors.push('改完没有 `export const xxx: CardDef` 了 —— 注册表靠它认卡。');
+    if (!/export\s+const\s+\w+\s*:\s*CardDef/.test(after)) errors.push('After the edit there is no `export const xxx: CardDef` anymore. The registry relies on it to recognize the card.');
     const idOf = (s: string) => (s.match(/\bid:\s*["'`]([^"'`]+)["'`]/) || [])[1];
-    if (idOf(before) !== idOf(after)) errors.push(`CardDef 的 id 从 "${idOf(before)}" 变成了 "${idOf(after)}" —— 卡片 id 不能改,时间轴上的片段靠它找卡。`);
+    if (idOf(before) !== idOf(after)) errors.push(`The id of CardDef changed from "${idOf(before)}" to "${idOf(after)}". A card id cannot change, clips on the timeline use it to find the card.`);
     // frameMode 是绝对检查,不是差量:A0.1 已经把 31 个 CardDef 对象文件全写上了,
     // 改完不能把它丢掉 —— 丢了就退回「按 timing 动态推导」,调度会静悄悄换一条路。
     if ((hasCardDefObject(before) || hasCardDefObject(after)) && !/\bframeMode\s*:/.test(after)) {
-      errors.push('CardDef 里缺少 frameMode 字段 —— 帧怎么得到(direct / stateful)必须写死,不能靠推导。');
+      errors.push('The frameMode field is missing in CardDef. How frames are obtained (direct / stateful) must be hard-coded, not inferred.');
     }
   }
   return { ok: errors.length === 0, errors };
@@ -293,16 +294,16 @@ export function formatDomTree(nodes: DomNode[], fromRef: number, depth: number, 
       n.text ? JSON.stringify(n.text) : '',
       n.owner ? `‹${n.owner}›` : '',
       n.where || '',
-      sameSite > 1 ? `(同一行源码生成了 ${sameSite} 个兄弟节点)` : '',
-      n.wrap ? `(折叠了 ${n.wrap} 层包装)` : '',
+      sameSite > 1 ? `(the same source line produced ${sameSite} sibling nodes)` : '',
+      n.wrap ? `(collapsed ${n.wrap} wrapper layers)` : '',
       `${n.rect[2]}×${n.rect[3]}@${n.rect[0]},${n.rect[1]}`,
     ].filter(Boolean);
-    if (d >= depth && n.children.length) parts.push(`…还有 ${n.desc} 个后代,传 ref:${n.ref} 往下看`);
+    if (d >= depth && n.children.length) parts.push(`...${n.desc} more descendants, pass ref:${n.ref} to look further down`);
     out.push('  '.repeat(d) + parts.join(' '));
     if (d < depth) for (const c of n.children) walk(c, d + 1);
   };
   walk(fromRef, 0);
-  if (truncated) out.push(`…输出到 ${maxLines} 行为止,还有 ${truncated} 个节点没列出;挑一个 ref 往下看`);
+  if (truncated) out.push(`...output stops at ${maxLines} lines, ${truncated} more nodes are not listed; pick a ref to look further down`);
   return out.join('\n');
 }
 
@@ -498,16 +499,16 @@ export function renderCatalog(): string {
   const groups: Record<string, CatalogEntry[]> = { 1: [], deps: [], 3: [], 2: [] };
   for (const c of cat.components) (groups[String(c.tier)] ||= []).push(c);
   const line = (c: CatalogEntry) =>
-    `- \`${c.id}\` —— ${c.description}${c.imported ? `(已在库里:\`${c.imported}\`)` : ''}${c.props.length ? `;上游 props:${c.props.join('、')}` : ''}${c.blockers.length ? `;要处理:${c.blockers.join('、')}` : ''}`;
+    `- \`${c.id}\` —— ${c.description}${c.imported ? `(already in the library: \`${c.imported}\`)` : ''}${c.props.length ? `; upstream props: ${c.props.join(', ')}` : ''}${c.blockers.length ? `; to handle: ${c.blockers.join(', ')}` : ''}`;
   return [
-    '## 附:Magic UI 可搬目录',
+    '## Appendix: movable Magic UI catalog',
     '',
-    `来源 ${cat.license},${cat.components.length} 个组件,源码在本地。想用其中一个:\`get_card_source({ cardId: "mu-<name>" })\` 读原始源码 → 按上面「搬第三方组件」包成 CardDef、文件头写来源 → \`create_card\` 用同一个 id 建卡。档位是审查门跑出来的。`,
+    `Source ${cat.license}, ${cat.components.length} components, source code is local. To use one: read the original source with \`get_card_source({ cardId: "mu-<name>" })\` → wrap it into a CardDef following "Moving third-party components" above, write the source in the file header → create the card with the same id using \`create_card\`. The tier comes from the review gate.`,
     '',
-    `### 现在就能搬(${groups[1].length})`, ...groups[1].map(line), '',
-    `### 引了没装的库,搬时要把用到的几行带进来或去掉(${groups.deps.length})`, ...groups.deps.map(line), '',
-    `### 交互 / 滚动驱动,要改成由 t 驱动的参数才能进导出(${groups[3].length})`, ...groups[3].map(line), '',
-    `### 管线暂不支持(${groups[2].length})`, ...groups[2].map(line), '',
+    `### Ready to move now (${groups[1].length})`, ...groups[1].map(line), '',
+    `### Imports libraries that are not installed; when moving, bring in the lines used or remove them (${groups.deps.length})`, ...groups.deps.map(line), '',
+    `### Interaction / scroll driven; must be changed to parameters driven by t to enter export (${groups[3].length})`, ...groups[3].map(line), '',
+    `### Not supported by the pipeline yet (${groups[2].length})`, ...groups[2].map(line), '',
     renderAssets(),
   ].join('\n');
 }
@@ -522,19 +523,19 @@ function renderAssets(): string {
   const desc = (i: any) => (i.note ? `${i.note}${i.use ? `(${i.use})` : ''}` : i.description);
   const lottie = read('lottie');
   if (lottie) {
-    out.push(`## 附:Lottie 素材(${lottie.items.length},${lottie.license})`, '',
-      '用法:`add_clip({ cardId: "lottie", params: { src: "<url>" } })`,clip 时长照着 seconds 给;想循环就加 `loop: "yes"`。', '',
+    out.push(`## Appendix: Lottie assets (${lottie.items.length}, ${lottie.license})`, '',
+      'Usage: `add_clip({ cardId: "lottie", params: { src: "<url>" } })`; set the clip duration to match seconds; to loop, add `loop: "yes"`.', '',
       ...lottie.items.map((i: any) => `- \`${i.url}\` —— ${desc(i)};${i.seconds}s,${i.w}×${i.h}`), '');
   }
   const particles = read('particles');
   if (particles) {
     const featured = particles.items.filter((i: any) => i.featured);
     const rest = particles.items.filter((i: any) => !i.featured);
-    out.push(`## 附:粒子配置(${particles.items.length},${particles.license})`, '',
-      '用法:`add_clip({ cardId: "particles", params: { config: "<url>", seed: 1 } })`。都是背景,通常盖住整段时长放最底层;换 seed 换排布。每个都在导出管线上实跑验证过。', '',
-      `### 推荐(${featured.length})`, ...featured.map((i: any) => `- \`${i.url}\` —— ${desc(i)}`), '',
-      `### 其他(${rest.length},多是同一外观的变体)`,
-      rest.map((i: any) => `\`${i.name}\`(${i.note || i.description})`).join('、'), '');
+    out.push(`## Appendix: particle configs (${particles.items.length}, ${particles.license})`, '',
+      'Usage: `add_clip({ cardId: "particles", params: { config: "<url>", seed: 1 } })`. All are backgrounds, usually placed on the bottom track covering the whole duration; change seed to change the layout. Each one has been verified by running it on the export pipeline.', '',
+      `### Recommended (${featured.length})`, ...featured.map((i: any) => `- \`${i.url}\` —— ${desc(i)}`), '',
+      `### Others (${rest.length}, mostly variants of the same look)`,
+      rest.map((i: any) => `\`${i.name}\`(${i.note || i.description})`).join(', '), '');
   }
   return out.join('\n');
 }
@@ -550,12 +551,12 @@ export function translateCardSource(source: string): { source: string; rewrites:
   // Next.js 的客户端指令,Vite 里没意义,留着会被当成一个没用的字符串表达式
   if (/^\s*["']use client["'];?\s*$/m.test(out)) {
     out = out.replace(/^\s*["']use client["'];?\s*\n?/m, '');
-    rewrites.push('去掉了 "use client" 指令(Next.js 专用)');
+    rewrites.push('Removed the "use client" directive (Next.js only)');
   }
   // shadcn / MagicUI 生态的 cn 别名 → 本地那份(文件落在 src/cards/user/,所以往上一级再进 magicui)
   if (/from\s+["']@\/lib\/utils["']/.test(out)) {
     out = out.replace(/from\s+["']@\/lib\/utils["']/g, 'from "../magicui/vendor/cn"');
-    rewrites.push('@/lib/utils → ../magicui/vendor/cn(本地的 cn)');
+    rewrites.push('@/lib/utils → ../magicui/vendor/cn (local cn)');
   }
   return { source: out, rewrites };
 }
@@ -646,25 +647,25 @@ export function reviewCardSource(source: string, hints?: { vendored?: boolean; r
   const usesRaf = /\brequestAnimationFrame\b|\bsetAnimationLoop\b/.test(code);
   const uses3D = /\bfrom\s+["']three(\/[^"']*)?["']|\bnew\s+THREE\.|\bWebGLRenderer\b|getContext\s*\(\s*["']webgl2?["']/.test(code);
   if (/\bsetAnimationLoop\b/.test(code) || (usesRaf && uses3D)) {
-    push(2, '自带帧循环', '三维场景自己跑帧循环(setAnimationLoop / requestAnimationFrame)在这条管线上接不住:导出时截图窗口里那段自由跑的虚拟时间会让它多走不确定的步数,两趟导出对不上;往回拖播放头也回不到原样。把画面写成 t 的纯函数(比如 rotation.y = t * 转速 * 2π),在 t 变了的时候显式 render 一次 —— 照 src/cards/native/scene-3d.tsx 的写法,那张卡一次 rAF 都不注册。');
+    push(2, 'Own frame loop', 'A 3D scene running its own frame loop (setAnimationLoop / requestAnimationFrame) cannot be handled by this pipeline: during export, the freely running virtual time inside the screenshot window makes it advance an uncertain number of steps, so two export passes do not match; dragging the playhead back also does not restore the original state. Write the picture as a pure function of t (e.g. rotation.y = t * rotation speed * 2π) and call render explicitly once when t changes. Follow the approach in src/cards/native/scene-3d.tsx, whose card never registers a single rAF.');
   }
   if (/\bfrom\s+["'](@react-three\/[^"']+|cobe|@react-three-fiber[^"']*)["']/.test(source)) {
-    push(2, '三维框架', '@react-three/fiber 和 cobe 都自带 rAF 帧循环(理由同上),而且都没装。要做三维直接用 three(已装),照 src/cards/native/scene-3d.tsx 那样按 t 渲染。');
+    push(2, '3D framework', '@react-three/fiber and cobe both ship their own rAF frame loop (same reason as above), and neither is installed. For 3D, use three directly (installed) and render by t as in src/cards/native/scene-3d.tsx.');
   }
 
   // ── 第三档:靠输入驱动,导出里没有输入 ──
   if (/addEventListener\s*\(\s*["'](mousemove|pointermove|mouseenter|mouseleave|wheel|scroll|touchmove)["']/.test(source)
     || /\bon(MouseMove|PointerMove|MouseEnter|MouseLeave|Wheel|TouchMove)\s*=/.test(source)) {
-    push(3, '鼠标/滚动事件', '导出时没有鼠标也没有滚动,这类效果只会停在初态。把「光标在哪」「滚到哪」改成一个由 t 驱动的参数,效果就能进导出。');
+    push(3, 'Mouse/scroll events', 'There is no mouse and no scrolling during export, so such effects only stay in their initial state. Change "where the cursor is" and "how far it is scrolled" into a parameter driven by t, and the effect can enter export.');
   }
   if (/\bwhile(Hover|Tap|Drag|Focus|InView)\s*=/.test(source)) {
     // remotion 式的卡不许用 Motion,文案不往 Motion 上引(那边另有带行号的一条,见 remotion-style-check.mjs)
     push(3, 'whileHover/whileTap/whileInView', hints?.remotionStyle
-      ? '同上:hover / tap / 进入视口在导出里都不会发生。要它出现就写成 t 的条件,不要挂在交互上。'
-      : '同上:hover / tap / 进入视口在导出里都不会发生。要它播就用 initial + animate,不要挂在交互上。');
+      ? 'Same as above: hover / tap / entering the viewport never happen in export. To make it appear, write it as a condition on t; do not hang it on interaction.'
+      : 'Same as above: hover / tap / entering the viewport never happen in export. To make it play, use initial + animate; do not hang it on interaction.');
   }
   if (/\buse(Scroll|Velocity)\s*\(|window\.scrollY|scrollTop/.test(source)) {
-    push(3, '滚动驱动', '同上:导出页不会滚动。');
+    push(3, 'Scroll driven', 'Same as above: the export page does not scroll.');
   }
 
   // ── 依赖:没装的库 ──
@@ -672,10 +673,10 @@ export function reviewCardSource(source: string, hints?: { vendored?: boolean; r
     const spec = m[1];
     if (!ALLOWED_IMPORTS.some((re) => re.test(spec))) {
       push('deps', `import "${spec}"`, spec.startsWith('@/')
-        ? `别名 ${spec} 指向的是原项目的文件,这里没有。@/lib/utils 会自动改到本地的 cn;别的要么去掉,要么把用到的那几行搬进来。`
+        ? `Alias ${spec} points to a file in the original project, which is not present here. @/lib/utils is automatically rewritten to the local cn; for anything else, either remove it or move the lines used into this file.`
         : hints?.remotionStyle
-          ? `没装 ${spec}。remotion 式的卡能引用的是框架 "../../kernel/remotionStyle"、react,以及相对路径引的 kernel/types、kernel/frameReady、kernel/soundEffects、render/cards/graphValues、native/hud、native/sound-effects、magicui/vendor/cn。`
-          : `没装 ${spec}。装了的是 react、motion/react、three、lottie-web、@tsparticles/engine|slim,加上 Tailwind class 和相对路径引的 kernel/types、native/hud、magicui/vendor/*。`);
+          ? `${spec} is not installed. A remotion-style card can import the framework "../../kernel/remotionStyle", react, and, by relative path, kernel/types, kernel/frameReady, kernel/soundEffects, render/cards/graphValues, native/hud, native/sound-effects, magicui/vendor/cn.`
+          : `${spec} is not installed. Installed are react, motion/react, three, lottie-web, @tsparticles/engine|slim, plus Tailwind classes and, by relative path, kernel/types, native/hud, magicui/vendor/*.`);
     }
   }
 
@@ -685,19 +686,19 @@ export function reviewCardSource(source: string, hints?: { vendored?: boolean; r
   for (const name of usedAnimates) {
     if (BUILTIN_ANIMATES.has(name) || VENDORED_ANIMATES.has(name)) continue;
     push('keyframes', `animate-${name}`, hints?.remotionStyle
-      ? `这个动画 class 没有定义(Tailwind 自带的只有 spin/ping/pulse/bounce,MagicUI 那 22 组已经搬进 magicui-animations.css)。remotion 式的卡不用 CSS 动画:把随时间变的样式写成 t 的函数。`
-      : `这个动画 class 没有定义(Tailwind 自带的只有 spin/ping/pulse/bounce,MagicUI 那 22 组已经搬进 magicui-animations.css)。把它的 @keyframes 和 .animate-${name} 写进那个文件,或改用 motion/react。`);
+      ? `This animation class is not defined (Tailwind only ships spin/ping/pulse/bounce; the 22 MagicUI groups have already been moved into magicui-animations.css). Remotion-style cards do not use CSS animation: write time-varying styles as functions of t.`
+      : `This animation class is not defined (Tailwind only ships spin/ping/pulse/bounce; the 22 MagicUI groups have already been moved into magicui-animations.css). Write its @keyframes and .animate-${name} into that file, or switch to motion/react.`);
   }
 
   // ── 来源与许可证:搬来的代码必须声明,且许可证要能分发 ──
   const p = provenance(source);
   if (p.declared || p.looksVendored || hints?.vendored) {
     if (!p.declared) {
-      push('license', '来源未声明', '这段代码看起来是从 shadcn / MagicUI 生态搬来的。文件头必须写「来源: <URL>」和许可证(照 src/cards/magicui/vendor/word-rotate.tsx 的写法),否则不知道能不能随安装包分发。');
+      push('license', 'Source not declared', 'This code looks like it was moved over from the shadcn / MagicUI ecosystem. The file header must state "Source: <URL>" and the license (follow src/cards/magicui/vendor/word-rotate.tsx), otherwise we cannot know whether it may be distributed with the installer.');
     } else if (LICENSE_BAD.test(p.header)) {
-      push('license', '许可证不允许分发', '声明的许可证不能搬:React Bits 的 Commons Clause 禁止再分发组件本身,Aceternity 是专有协议,animate.css 的 Hippocratic 不是 OSI 许可,GSAP 禁止用于无代码动画工具。换一个来源。');
+      push('license', 'License does not allow distribution', 'The declared license cannot be moved: React Bits\' Commons Clause forbids redistributing the components themselves, Aceternity is a proprietary license, animate.css\'s Hippocratic is not an OSI license, and GSAP forbids use in no-code animation tools. Use a different source.');
     } else if (!LICENSE_OK.test(p.header)) {
-      push('license', '许可证不在白名单', '文件头没有写出能识别的许可证。能搬的是 MIT / Apache-2.0 / BSD / ISC / CC0;把原仓库 LICENSE 里的名字写进来源那一行。');
+      push('license', 'License not on the allowlist', 'The file header does not state a recognizable license. Allowed are MIT / Apache-2.0 / BSD / ISC / CC0; write the name from the original repo\'s LICENSE on the source line.');
     }
   }
 
@@ -720,7 +721,7 @@ export function suggestControls(source: string): { key: string; label: string; t
         if (t.kind === ts.SyntaxKind.StringKeyword) out.push({ key, label: key, type: 'text' });
         else if (t.kind === ts.SyntaxKind.NumberKeyword) out.push({ key, label: key, type: 'number' });
         else if (t.kind === ts.SyntaxKind.BooleanKeyword) out.push({ key, label: key, type: 'select', hint: 'options: true / false' });
-        else if (ts.isArrayTypeNode(t) && t.elementType.kind === ts.SyntaxKind.StringKeyword) out.push({ key, label: key, type: 'text', hint: '上游是 string[],用 | 分隔,组件里 split("|")' });
+        else if (ts.isArrayTypeNode(t) && t.elementType.kind === ts.SyntaxKind.StringKeyword) out.push({ key, label: key, type: 'text', hint: tr("Upstream is string[], separated by |, the component does split(\"|\")") });
         else if (ts.isUnionTypeNode(t) && t.types.every((u) => ts.isLiteralTypeNode(u) && ts.isStringLiteral(u.literal))) {
           const opts = t.types.map((u) => ((u as ts.LiteralTypeNode).literal as ts.StringLiteral).text);
           out.push({ key, label: key, type: 'select', hint: 'options: ' + opts.join(' / ') });
@@ -756,7 +757,7 @@ export function checkCardSource(
   const authoring = hints.mode === 'author';
 
   if (!ID_RE.test(id)) {
-    errors.push(`卡片 id "${id}" 不合法:要用小写 kebab-case(例如 my-title-card),只能有字母、数字和连字符。`);
+    errors.push(`Card id "${id}" is invalid: use lowercase kebab-case (e.g. my-title-card), with only letters, digits and hyphens.`);
   }
   // mu- 是 Magic UI 的命名空间。手写的卡不能占;翻译器从 magicui.design 搬来、
   // 文件头声明了来源的可以用 —— 这样 id 前缀仍然可信:mu- 就是「来自 MagicUI」,不论谁搬的。
@@ -765,31 +766,31 @@ export function checkCardSource(
   }
   // lottie- / particles- 是素材封装卡(src/cards/assets,由素材目录构建时生成)的命名空间,手写的卡不能占
   if (/^(lottie|particles)-/.test(id)) {
-    errors.push('lottie- / particles- 前缀留给素材目录翻译出来的封装卡,换一个 id。');
+    errors.push('The lottie- / particles- prefixes are reserved for wrapper cards generated from the asset catalog, pick another id.');
   }
   if (existingIds.includes(id)) {
-    errors.push(`已经有 id 为 "${id}" 的卡片了。卡片 id 必须唯一,换一个;想改现有的卡请直接改它的文件。`);
+    errors.push(`A card with id "${id}" already exists. Card ids must be unique, pick another; to change the existing card, edit its file directly.`);
   }
   if (Buffer.byteLength(source, 'utf8') > MAX_SOURCE_BYTES) {
-    errors.push(`源码超过 ${MAX_SOURCE_BYTES / 1024}KB,太大了。`);
+    errors.push(`The source is over ${MAX_SOURCE_BYTES / 1024}KB, which is too large.`);
   }
 
   // 必须真的导出一个 CardDef,否则 glob 收集时会静默跳过,建了个寂寞
   if (!/export\s+const\s+\w+\s*:\s*CardDef/.test(source)) {
-    errors.push('源码里没有 `export const xxx: CardDef<Params> = { ... }` 形式的具名导出 —— 自动注册靠它识别卡片。');
+    errors.push('The source has no named export of the form `export const xxx: CardDef<Params> = { ... }`; auto-registration relies on it to recognize cards.');
   }
   const idInSource = source.match(/\bid:\s*["'`]([^"'`]+)["'`]/);
   if (!idInSource) {
-    errors.push('CardDef 里没有 id 字段。');
+    errors.push('CardDef has no id field.');
   } else if (idInSource[1] !== id) {
-    errors.push(`CardDef 里的 id 是 "${idInSource[1]}",和传进来的 id "${id}" 不一致,两者必须相同。`);
+    errors.push(`The id in CardDef is "${idInSource[1]}", which does not match the id passed in, "${id}"; they must be the same.`);
   }
   const required = ['name', 'description', 'defaults', 'controls'];
   // frameMode:现写的卡必须自己声明帧怎么得到;装机铺开随包卡时不查(A0.1(c))
   if (authoring) required.push('frameMode');
   for (const field of required) {
     if (!new RegExp(`\\b${field}\\s*:`).test(source)) {
-      errors.push(`CardDef 里缺少 ${field} 字段。`);
+      errors.push(`CardDef is missing the ${field} field.`);
     }
   }
 
@@ -798,7 +799,7 @@ export function checkCardSource(
    * 不能只认 `Component` —— 素材效果卡按 H1 就是不写它的,认死了三张示例素材效果卡在 create_card 就被 400 拒掉。
    */
   if (!/\bComponent\s*:/.test(source) && !/\bcard\s*:/.test(source) && !/\baudio\s*:/.test(source)) {
-    errors.push('CardDef 里 Component / card / audio 一个都没有 —— DOM 卡写 Component,素材效果卡写 card(视觉)或 audio(音频),三者至少出现一个。');
+    errors.push('CardDef has none of Component / card / audio: a DOM card uses Component, a media effect card uses card (visual) or audio (audio); at least one of the three must be present.');
   }
 
   // 和 checkSourceEdit 同一条差量规则:新建卡 before = '',所以出现即拒
@@ -806,7 +807,7 @@ export function checkCardSource(
     const n0 = ((hints.before ?? '').match(COMPOSITING_INDEPENDENT) || []).length;
     const n1 = (source.match(COMPOSITING_INDEPENDENT) || []).length;
     if (n1 > n0) {
-      errors.push("不要在源码里写 compositing: 'independent':「只画自己、能单独预渲染上云」是审阅结论,由审阅表 src/cards/capabilities.json 说了算,写在这里不作数。");
+      errors.push("Do not write compositing: 'independent' in the source: \"draws only itself, can be prerendered alone in the cloud\" is a review conclusion decided by the review sheet src/cards/capabilities.json; writing it here has no effect.");
     }
   }
 
@@ -824,13 +825,13 @@ export function checkCardSource(
   // remotion 式的卡由上面那一套查(同样出现即拒,带行号,文案不往 Motion 上引),这里不重复报
   if (!remotionStyle) {
     if (/\bDate\.now\s*\(/.test(source)) {
-      errors.push('不要用 Date.now():导出时走的是虚拟时间,会和画面对不上。动画交给 motion/react,需要读时间就用组件收到的 t。');
+      errors.push('Do not use Date.now(): export runs on virtual time, so it will not line up with the frames. Leave animation to motion/react, and to read the time use the t the component receives.');
     }
     if (/\bsetTimeout\s*\(|\bsetInterval\s*\(/.test(source)) {
-      errors.push('不要用 setTimeout / setInterval 驱动动画:导出时它们不受虚拟时钟控制。用 motion/react 的 animate,或读组件参数 t。');
+      errors.push('Do not drive animation with setTimeout / setInterval: during export they are not controlled by the virtual clock. Use animate from motion/react, or read the component parameter t.');
     }
     if (/\bIntersectionObserver\b/.test(source)) {
-      errors.push('不要用 IntersectionObserver:卡片挂载即播放,不存在「滚动进入视口」这回事。');
+      errors.push('Do not use IntersectionObserver: a card plays as soon as it mounts, there is no such thing as "scrolling into the viewport".');
     }
   }
 
@@ -842,7 +843,7 @@ export function checkCardSource(
   for (const d of out.diagnostics || []) {
     const msg = ts.flattenDiagnosticMessageText(d.messageText, ' ');
     const pos = d.start !== undefined ? source.slice(0, d.start).split('\n').length : undefined;
-    errors.push(`语法错误${pos ? `(第 ${pos} 行)` : ''}:${msg}`);
+    errors.push(`Syntax error${pos ? ` (line ${pos})` : ''}: ${msg}`);
   }
 
   // 审查门:分档的发现也算拒绝理由,并且把档位写进文案 —— 模型只看得到 error 字符串,
@@ -855,7 +856,7 @@ export function checkCardSource(
     || (x.tier === 'keyframes' && rejectedRules.has('css-animation'))
   ));
   const TIER_LABEL: Record<string, string> = {
-    2: '[第二档·管线暂不支持]', 3: '[第三档·交互驱动]', deps: '[依赖]', keyframes: '[动画 class]', license: '[来源/许可证]',
+    2: '[Tier 2·pipeline not supported yet]', 3: '[Tier 3·interaction-driven]', deps: '[Dependencies]', keyframes: '[Animation class]', license: '[Source/license]',
   };
   for (const x of findings) errors.push(`${TIER_LABEL[String(x.tier)]} ${x.rule}:${x.detail}`);
 
@@ -874,19 +875,19 @@ export function applyCardPatch(
   replace: string,
   replaceAll?: boolean,
 ): { ok: true; after: string; replaced: number } | { ok: false; error: string } {
-  if (!find) return { ok: false, error: 'find 不能是空串,那会匹配到每一个位置。' };
+  if (!find) return { ok: false, error: 'find cannot be an empty string, it would match every position.' };
 
   const hits = before.split(find).length - 1;
   if (hits === 0) {
     return {
       ok: false,
-      error: 'find 在源码里一次都没匹配到 —— 你手上的版本和文件里的对不上。先调 get_card_source 读回当前源码,照着它写 find(缩进和空格都要一致)。',
+      error: 'find did not match anywhere in the source: your version does not match the file. Call get_card_source first to read back the current source, and write find from it (indentation and spaces must match).',
     };
   }
   if (hits > 1 && !replaceAll) {
     return {
       ok: false,
-      error: `find 匹配到 ${hits} 处,分不清要改哪一处。把 find 写长一点、带上周围几行让它唯一;确实要全改就传 replaceAll: true。`,
+      error: `find matched ${hits} places, so it is unclear which one to change. Make find longer and include the surrounding lines to make it unique; to change them all, pass replaceAll: true.`,
     };
   }
 
@@ -894,7 +895,7 @@ export function applyCardPatch(
   // 「引用匹配内容」的替换记号展开,而这里的 replace 是模型逐字写好的源码,必须原样落盘。
   const after = before.split(find).join(replace);
   if (after === before) {
-    return { ok: false, error: 'replace 和 find 完全一样,这次编辑什么都没改。' };
+    return { ok: false, error: 'replace is identical to find, so this edit changed nothing.' };
   }
   return { ok: true, after, replaced: hits };
 }
@@ -940,12 +941,12 @@ export function installBundledCards(opts: {
     const id = (raw as { id?: unknown })?.id;
     const source = (raw as { source?: unknown })?.source;
     if (typeof id !== 'string' || typeof source !== 'string') {
-      out.push({ id: String(id ?? '?'), status: 'rejected', error: 'id 和 source 都必须是字符串' });
+      out.push({ id: String(id ?? '?'), status: 'rejected', error: 'id and source must both be strings' });
       continue;
     }
     // 先过 id 白名单再碰文件系统:这道校验挡的是路径穿越
     if (!ID_RE.test(id)) {
-      out.push({ id, status: 'rejected', error: `卡片 id "${id}" 不合法` });
+      out.push({ id, status: 'rejected', error: `Card id "${id}" is invalid` });
       continue;
     }
     if (seen.has(id)) continue;
@@ -961,7 +962,7 @@ export function installBundledCards(opts: {
 
     const abs = path.join(userDir, `${id}.tsx`);
     if (path.dirname(path.resolve(abs)) !== path.resolve(userDir)) {
-      out.push({ id, status: 'rejected', error: '非法的文件路径' });
+      out.push({ id, status: 'rejected', error: 'Invalid file path' });
       continue;
     }
 
@@ -1008,13 +1009,13 @@ export type CreateUserCardResult =
 export function createUserCard(opts: { root: string; id: unknown; source: unknown; existingIds?: unknown; overwrite?: unknown }): CreateUserCardResult {
   const { root, id, source, existingIds, overwrite } = opts;
   if (typeof id !== 'string' || typeof source !== 'string') {
-    return { ok: false, code: 400, body: { ok: false, error: 'id 和 source 都必须是字符串' } };
+    return { ok: false, code: 400, body: { ok: false, error: 'id and source must both be strings' } };
   }
   const userDir = path.join(root, 'src', 'cards', 'user');
   const target = path.join(userDir, `${id}.tsx`);
   // id 已经过 kebab-case 白名单,这里再确认一次落点没跑出 user 目录
   if (path.dirname(path.resolve(target)) !== path.resolve(userDir)) {
-    return { ok: false, code: 400, body: { ok: false, error: '非法的文件路径' } };
+    return { ok: false, code: 400, body: { ok: false, error: 'Invalid file path' } };
   }
 
   // 已存在按生效的那一份判:有改动层时,本机原来没有的用户卡只在改动层里
@@ -1028,7 +1029,7 @@ export function createUserCard(opts: { root: string; id: unknown; source: unknow
       code: 409,
       body: {
         ok: false,
-        error: `src/cards/user/${id}.tsx 已存在。要改它请用 get_card_source 读回源码、再用 edit_card 改那一处;确实要整张推倒重来才传 overwrite: true。`,
+        error: `src/cards/user/${id}.tsx already exists. To change it, read the source back with get_card_source and then change that spot with edit_card; pass overwrite: true only if you really want to redo the whole card.`,
       },
     };
   }
@@ -1105,8 +1106,8 @@ export interface SyncedInstallResult {
  */
 export function installSyncedFile(opts: { root: string; historyDir: string; rel: string; source: string; existingIds?: string[] }): SyncedInstallResult {
   const { root, rel } = opts;
-  if (!isEditablePath(rel)) return { ok: false, status: 'rejected', error: `"${rel}" 不是可同步的卡片文件` };
-  if (typeof opts.source !== 'string') return { ok: false, status: 'rejected', error: 'source 必须是字符串' };
+  if (!isEditablePath(rel)) return { ok: false, status: 'rejected', error: `"${rel}" is not a syncable card file` };
+  if (typeof opts.source !== 'string') return { ok: false, status: 'rejected', error: 'source must be a string' };
   const after = opts.source.replace(/\r\n/g, '\n');
   const user = /^src\/cards\/user\/([^/]+)\.tsx$/.exec(rel);
   if (user && ID_RE.test(user[1])) {
@@ -1116,11 +1117,11 @@ export function installSyncedFile(opts: { root: string; historyDir: string; rel:
       cards: [{ id: user[1], source: after }],
       existingIds: opts.existingIds ?? builtinCardIds(root),
     });
-    if (!r) return { ok: false, status: 'rejected', error: '没有装卡结果' };
+    if (!r) return { ok: false, status: 'rejected', error: 'No card install result' };
     return { ok: r.status !== 'rejected', status: r.status, error: r.error, abs: r.abs, written: r.written, userCardId: user[1] };
   }
   const abs = path.join(root, rel);
-  if (!path.resolve(abs).startsWith(path.resolve(root) + path.sep)) return { ok: false, status: 'rejected', error: '非法的文件路径' };
+  if (!path.resolve(abs).startsWith(path.resolve(root) + path.sep)) return { ok: false, status: 'rejected', error: 'Invalid file path' };
   let before: string | null = null;
   try { before = readEffective(root, abs); } catch { before = null; }
   if (before !== null && before.replace(/\r\n/g, '\n') === after) return { ok: true, status: 'unchanged' };
@@ -1255,7 +1256,7 @@ export function createHostCardSync(opts: {
         if (opts.precheck) {
           let verdict: { ok: boolean; errors: string[] };
           try { verdict = opts.precheck(rel, source); } catch (error: any) { verdict = { ok: false, errors: [String(error?.message ?? error)] }; }
-          if (!verdict.ok) return { ok: false, error: `同步文件预检不过:${verdict.errors.slice(0, 5).join(';')}` };
+          if (!verdict.ok) return { ok: false, error: `Sync file preflight failed: ${verdict.errors.slice(0, 5).join(';')}` };
         }
         try { opts.before?.(); } catch { /* 计时出错不挡装卡 */ }
         const r = installSyncedFile({ root, historyDir: path.join(dataDir, 'card-history'), rel, source });
@@ -1328,7 +1329,7 @@ export function userOverlayModuleCode(root: string): string {
     deps.push(`${key}: r${i}`);
   });
   return [
-    '// 由 vite-plugin-cards 的 cardOverridesLoader 生成:改动层里有、底版没有的用户卡',
+    '// Generated by cardOverridesLoader in vite-plugin-cards: user cards that exist in the changes layer but not in the base version',
     ...lines,
     `export const overlayModules = { ${modules.join(', ')} };`,
     `export const overlayRaws = { ${raws.join(', ')} };`,
@@ -1375,7 +1376,7 @@ function cardOverridesLoader(): Plugin {
        */
       if (hostedKind) {
         const rel = toRel(projectRoot, file);
-        const verdict = hostedKind === 'isolated' ? checkSyncedSource(rel, text, { rootHas: (p: string) => fs.existsSync(path.join(projectRoot, p)) }) : { ok: false, errors: ['常驻工作进程不载入任何项目带来的代码'] };
+        const verdict = hostedKind === 'isolated' ? checkSyncedSource(rel, text, { rootHas: (p: string) => fs.existsSync(path.join(projectRoot, p)) }) : { ok: false, errors: ['The resident worker process does not load any code brought in by projects'] };
         if (!verdict.ok) {
           console.log(`[page-gate] source-rejected ${JSON.stringify({ rel, errors: verdict.errors.slice(0, 3) })}`);
           return rejectedStub(rel, verdict.errors, { raw: /[?&]raw\b/.test(id) });
@@ -1583,7 +1584,7 @@ export default function vitePluginCards(): Plugin[] {
         const reqId = `ct${++ticketSeq}`;
         const timer = setTimeout(() => {
           ticketWaiters.delete(reqId);
-          reject(new Error('页面 10 秒内没有交回连接票据'));
+          reject(new Error('The page did not return a connection ticket within 10 seconds'));
         }, 10_000);
         ticketWaiters.set(reqId, { resolve, reject, timer });
         server.ws.send({ type: 'custom', event: 'pc:card-sync', data: { type: 'ticket', reqId, projectId } });
@@ -1649,7 +1650,7 @@ export default function vitePluginCards(): Plugin[] {
        */
       const fromStage = (req: any, res: any): boolean => {
         if (!viaStagePort(req)) return false;
-        sendJson(res, 403, { ok: false, error: '舞台窗口不能调这个接口' });
+        sendJson(res, 403, { ok: false, error: tr("Stage windows cannot call this endpoint") });
         return true;
       };
       server.middlewares.use('/api/cards/sync/bind', (req, res) => {
@@ -1668,10 +1669,10 @@ export default function vitePluginCards(): Plugin[] {
               return sendJson(res, 200, { ok: true, enabled: true, ...cardSync.status(), notices: undefined });
             }
             const projectId = typeof input.projectId === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(input.projectId) ? input.projectId : null;
-            if (!projectId) return sendJson(res, 400, { ok: false, error: 'projectId 不合法' });
-            if (typeof input.url !== 'string' || !/^wss?:\/\//.test(input.url)) return sendJson(res, 400, { ok: false, error: 'mode 为 ticket 时要给文档服务的 ws(s):// 地址' });
+            if (!projectId) return sendJson(res, 400, { ok: false, error: 'projectId is invalid' });
+            if (typeof input.url !== 'string' || !/^wss?:\/\//.test(input.url)) return sendJson(res, 400, { ok: false, error: 'When mode is ticket, provide the document service\'s ws(s):// address' });
             // 账号项目:只能连账号云端的文档服务(票据是成员本人权限的凭证,不能送到绑定请求随便说的地址去)
-            if (mode === 'account' && !accountDocUrlAllowed(input.url)) return sendJson(res, 400, { ok: false, error: '账号项目只能连账号云端的文档服务' });
+            if (mode === 'account' && !accountDocUrlAllowed(input.url)) return sendJson(res, 400, { ok: false, error: tr("Account projects can only connect to the account's cloud document service") });
             let first: string | null = typeof input.ticket === 'string' && input.ticket.length > 0 && input.ticket.length <= 2048 ? input.ticket : null;
             syncProjectId = projectId;
             cardSync.bind({
@@ -1711,13 +1712,13 @@ export default function vitePluginCards(): Plugin[] {
         req.on('data', (c) => { body += c; if (body.length > 8192) req.destroy(); });
         req.on('end', () => {
           let data: any = {};
-          try { data = JSON.parse(body || '{}'); } catch { return sendJson(res, 400, { ok: false, error: '请求体不是 JSON' }); }
+          try { data = JSON.parse(body || '{}'); } catch { return sendJson(res, 400, { ok: false, error: 'Request body is not JSON' }); }
           const w = typeof data?.reqId === 'string' ? ticketWaiters.get(data.reqId) : undefined;
-          if (!w) return sendJson(res, 404, { ok: false, error: '没有在等这张票据' });
+          if (!w) return sendJson(res, 404, { ok: false, error: 'Nothing is waiting for this ticket' });
           ticketWaiters.delete(data.reqId);
           clearTimeout(w.timer);
           if (typeof data.ticket === 'string' && data.ticket.length > 0 && data.ticket.length <= 2048) w.resolve({ ticket: data.ticket, ...(Number.isSafeInteger(data.expiresAt) ? { expiresAt: data.expiresAt } : {}) });
-          else w.reject(new Error(typeof data.error === 'string' ? `页面没签出票据:${data.error}` : '页面交回的票据不合法'));
+          else w.reject(new Error(typeof data.error === 'string' ? `Page failed to sign a ticket: ${data.error}` : 'Ticket returned by the page is invalid'));
           sendJson(res, 200, { ok: true });
         });
       });
@@ -1730,8 +1731,8 @@ export default function vitePluginCards(): Plugin[] {
         req.on('data', (c) => { body += c; if (body.length > MAX_SOURCE_BYTES * 2) req.destroy(); });
         req.on('end', () => {
           let data: any = {};
-          try { data = JSON.parse(body || '{}'); } catch { return sendJson(res, 400, { ok: false, error: '请求体不是 JSON' }); }
-          if (!cardSync) return sendJson(res, 409, { ok: false, error: '卡片源码同步没开' });
+          try { data = JSON.parse(body || '{}'); } catch { return sendJson(res, 400, { ok: false, error: 'Request body is not JSON' }); }
+          if (!cardSync) return sendJson(res, 409, { ok: false, error: tr("Card source sync is not enabled") });
           void cardSync.takeMine(String(data?.key ?? ''), data?.source).then((r: { ok: boolean; error?: string }) => sendJson(res, r.ok ? 200 : 400, r));
         });
       });
@@ -1752,7 +1753,7 @@ export default function vitePluginCards(): Plugin[] {
           try {
             const { cardId, scope, projectId } = JSON.parse(body || '{}');
             if (typeof cardId !== 'string' || (scope !== 'project' && scope !== 'custom')) {
-              return sendJson(res, 400, { ok: false, error: 'cardId 必填,scope 只能是 project 或 custom' });
+              return sendJson(res, 400, { ok: false, error: 'cardId is required, and scope must be project or custom' });
             }
             const m = readScopes();
             m[cardId] = { ...m[cardId], scope, ...(projectId ? { projectId } : {}) };
@@ -1778,7 +1779,7 @@ export default function vitePluginCards(): Plugin[] {
         const [, kind, name] = m;
         try {
           const index = JSON.parse(fs.readFileSync(new URL(`./catalog/${kind}/index.json`, import.meta.url), 'utf8'));
-          if (!index.items.some((it: { name: string }) => it.name === name)) return sendJson(res, 404, { ok: false, error: `${kind} 素材目录里没有 "${name}"` });
+          if (!index.items.some((it: { name: string }) => it.name === name)) return sendJson(res, 404, { ok: false, error: `The ${kind} asset catalog has no "${name}"` });
           const body = fs.readFileSync(new URL(`./catalog/${kind}/${name}.json`, import.meta.url));
           res.statusCode = 200;
           res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -1818,7 +1819,7 @@ export default function vitePluginCards(): Plugin[] {
         const q = new URL(req.url || '', 'http://x').searchParams;
         const id = q.get('id') || '';
         const wantFile = q.get('file') || '';
-        if (!ID_RE.test(id)) return sendJson(res, 400, { ok: false, error: `卡片 id "${id}" 不合法。` });
+        if (!ID_RE.test(id)) return sendJson(res, 400, { ok: false, error: `Card id "${id}" is invalid.` });
         const root = server.config.root;
         const defFile = findCardFile(root, id);
         if (!defFile) {
@@ -1829,18 +1830,18 @@ export default function vitePluginCards(): Plugin[] {
             return sendJson(res, 200, {
               ok: true, id, file: cat.entry.file, source: cat.source, lines: cat.source.split('\n').length,
               catalog: true, tier: cat.entry.tier, blockers: cat.entry.blockers, props: cat.entry.props,
-              hint: `这是 Magic UI 目录里的原始源码(MIT),还不是卡。包成 CardDef、文件头写「来源: https://magicui.design/docs/components/${cat.name}」和 MIT,再用 create_card 以 id "${id}" 建卡。${cat.entry.blockers.length ? '要先处理:' + cat.entry.blockers.join('、') : ''}`,
+              hint: `This is raw source from the Magic UI catalog (MIT), not a card yet. Wrap it as a CardDef, write "Source: https://magicui.design/docs/components/${cat.name}" and MIT in the file header, then create the card with create_card using id "${id}". ${cat.entry.blockers.length ? 'Handle this first:' + cat.entry.blockers.join(', ') : ''}`,
             });
           }
           return sendJson(res, 404, {
             ok: false,
-            error: `找不到卡片 "${id}" 的源码。先用 list_cards 确认 id;Magic UI 目录里还没搬的组件用 mu-<name> 读(见 card_authoring_guide 末尾的目录)。素材封装卡(lottie-* / particles-*)是按素材目录生成的,没有单独的源码文件 —— 要改它们的画法,读 lottie / particles 这两张卡。`,
+            error: `Cannot find the source of card "${id}". Use list_cards to confirm the id; for components in the Magic UI catalog that have not been ported yet, read them as mu-<name> (see the catalog at the end of card_authoring_guide). Media wrapper cards (lottie-* / particles-*) are generated per asset catalog and have no separate source file; to change how they draw, read the lottie / particles cards.`,
           });
         }
         const closure = importClosure(root, defFile);
         const target = wantFile || defFile;
         if (!closure.includes(target)) {
-          return sendJson(res, 400, { ok: false, error: `"${target}" 不在卡片 ${id} 的源码文件里。能读的是:${closure.join('、')}` });
+          return sendJson(res, 400, { ok: false, error: `"${target}" is not in the source files of card ${id}. Readable files: ${closure.join(', ')}` });
         }
         const counts = sharedByCounts(root);
         // 生效内容:装机版里改过的卡读的是改动层那一份(见 card-overrides.mjs)
@@ -1849,7 +1850,7 @@ export default function vitePluginCards(): Plugin[] {
         sendJson(res, 200, {
           ok: true, id, file: target, source, lines: source.split('\n').length, builtin,
           files: closure.map((f) => ({ file: f, sharedBy: counts.get(f) || 1 })),
-          ...(builtin ? { hint: '这是内置卡。改它用 edit_card(可以带 file 改它用到的部件 / vendor 文件);sharedBy > 1 的文件是多张卡共用的,改了它们都会跟着变。改完用 see_frames 看一眼画面。' } : {}),
+          ...(builtin ? { hint: 'This is a built-in card. Change it with edit_card (you can pass file to change the parts / vendor files it uses); files with sharedBy > 1 are shared by several cards, and changing them changes all of them. After editing, check the result with see_frames.' } : {}),
         });
       });
 
@@ -1878,19 +1879,19 @@ export default function vitePluginCards(): Plugin[] {
             const input = JSON.parse(body || '{}');
             const { id, file, find, replace, replaceAll } = input;
             if (typeof id !== 'string' || typeof find !== 'string' || typeof replace !== 'string') {
-              return sendJson(res, 400, { ok: false, error: 'id、find、replace 都必须是字符串' });
+              return sendJson(res, 400, { ok: false, error: 'id, find and replace must all be strings' });
             }
-            if (!ID_RE.test(id)) return sendJson(res, 400, { ok: false, error: `卡片 id "${id}" 不合法。` });
+            if (!ID_RE.test(id)) return sendJson(res, 400, { ok: false, error: `Card id "${id}" is invalid.` });
 
             const root = server.config.root;
             const defFile = findCardFile(root, id);
             if (!defFile) {
-              return sendJson(res, 404, { ok: false, error: `找不到卡片 "${id}" 的源码。先用 get_card_source 确认 id 和能改的文件。` });
+              return sendJson(res, 404, { ok: false, error: `Cannot find the source of card "${id}". Confirm the id and the editable files with get_card_source first.` });
             }
             const closure = importClosure(root, defFile);
             const target = typeof file === 'string' && file ? file : defFile;
             if (!closure.includes(target) || !isEditablePath(target)) {
-              return sendJson(res, 400, { ok: false, error: `"${target}" 不是卡片 ${id} 的源码文件,不能改。能改的是:${closure.join('、')}` });
+              return sendJson(res, 400, { ok: false, error: `"${target}" is not a source file of card ${id} and cannot be changed. Editable files: ${closure.join(', ')}` });
             }
 
             const abs = path.join(root, target);
@@ -1928,8 +1929,8 @@ export default function vitePluginCards(): Plugin[] {
               sharedBy,
               ...(backup ? { backup } : {}),
               hint: sharedBy > 1
-                ? `已改写并热更新。这个文件被 ${sharedBy} 张卡共用,它们都会跟着变。改完用 see_frames 看一眼画面。`
-                : '已改写并热更新。改完用 see_frames 看一眼画面,再决定要不要接着调。',
+                ? `Rewritten and hot-reloaded. This file is shared by ${sharedBy} cards, and all of them will change with it. After editing, check the result with see_frames.`
+                : 'Rewritten and hot-reloaded. After editing, check the result with see_frames, then decide whether to keep tuning.',
             });
           } catch (e: any) {
             sendJson(res, 400, { ok: false, error: e?.message || String(e) });
@@ -2006,7 +2007,7 @@ export default function vitePluginCards(): Plugin[] {
           if (!n.site) continue;
           const dec = await mapFor(n.site.path);
           const o = dec ? originalPosition(dec, n.site.line, n.site.col) : null;
-          n.where = `${n.site.path.slice(1)}:${o ? o.line : `${n.site.line}(转换后行号)`}`;
+          n.where = `${n.site.path.slice(1)}:${o ? o.line : `${n.site.line}(line number after transform)`}`;
         }
         return nodes;
       };
@@ -2026,9 +2027,9 @@ export default function vitePluginCards(): Plugin[] {
           void agentPipeline().then(pipeline => pipeline.runAgentTask(async (lease: any) => {
             try {
               const { project, clipId, t, ref, depth } = JSON.parse(body || '{}');
-              if (!project || typeof clipId !== 'string') return sendJson(res, 400, { ok: false, error: 'project 和 clipId 必填' });
+              if (!project || typeof clipId !== 'string') return sendJson(res, 400, { ok: false, error: 'project and clipId are required' });
               const iso = isolateClipForDom(project, clipId);
-              if (!iso) return sendJson(res, 404, { ok: false, error: `项目里找不到片段 ${clipId}` });
+              if (!iso) return sendJson(res, 404, { ok: false, error: `Clip ${clipId} not found in the project` });
               const fps = Number(project.fps) || 30;
               const { clip } = iso;
               const tt = typeof t === 'number' && Number.isFinite(t)
@@ -2057,7 +2058,7 @@ export default function vitePluginCards(): Plugin[] {
               const cached = !!entry;
               if (!entry) {
                 const nodes = await renderDomTree(`http://${req.headers.host}`, renderProject, renderFrame, lease);
-                entry = { nodes, header: `片段 ${clipId}(${clip.cardId ?? '素材'})第 ${frame} 帧(t=${(frame / fps).toFixed(3)}s,片内第 ${inClip} 帧),折叠包装层后 ${nodes.length} 个节点。` };
+                entry = { nodes, header: `Clip ${clipId} (${clip.cardId ?? 'media'}), frame ${frame} (t=${(frame / fps).toFixed(3)}s, frame ${inClip} within the clip), ${nodes.length} nodes after collapsing wrapper layers.` };
                 domTrees.set(key, entry);
                 if (domTrees.size > 20) domTrees.delete(domTrees.keys().next().value as string);
               }
@@ -2066,11 +2067,11 @@ export default function vitePluginCards(): Plugin[] {
               const d = Math.max(1, Math.min(8, Number(depth) || 3));
               const text = entry.nodes.length
                 ? formatDomTree(entry.nodes, from, d)
-                : '(舞台上什么都没有 —— 这一刻这张卡还没进场或已经退场)';
+                : '(Nothing on the stage: at this moment the card has not entered yet or has already exited)';
               sendJson(res, 200, {
                 ok: true, clipId, frame, t: frame / fps, nodes: entry.nodes.length, cached,
-                text: `${entry.header}${from ? `从 ref_${from} ` : ''}往下 ${d} 层:\n${text}`,
-                hint: '这棵树只能看、不能改:舞台上的 HTML 是源码渲染出来的。要改哪个节点,用 get_card_source 读它标出的那个文件,再用 edit_card(带 file)改那一行。',
+                text: `${entry.header}${from ? `from ref_${from} ` : ''}down ${d} levels:\n${text}`,
+                hint: 'This tree is read-only: the HTML on the stage is rendered from source. To change a node, read the file it points to with get_card_source, then edit that line with edit_card (with file).',
               });
             } catch (e: any) {
               sendJson(res, 500, { ok: false, error: e?.message || String(e) });
@@ -2104,7 +2105,7 @@ export default function vitePluginCards(): Plugin[] {
           void agentPipeline().then(pipeline => pipeline.runAgentTask(async (lease: any) => {
             try {
               const { project, clipId, force } = JSON.parse(body || '{}');
-              if (!project || typeof clipId !== 'string') return sendJson(res, 400, { ok: false, error: 'project 和 clipId 必填' });
+              if (!project || typeof clipId !== 'string') return sendJson(res, 400, { ok: false, error: 'project and clipId are required' });
               const pid = crypto.randomBytes(8).toString('hex');
               domProjects.clear();
               domProjects.set(pid, JSON.stringify(project));
@@ -2117,10 +2118,10 @@ export default function vitePluginCards(): Plugin[] {
                 const p = await (await fetch(a.url)).json();
                 return await mod.renderClipCardAudio(p, a.clipId, { force: a.force, maxBytes: a.maxBytes });
               } catch (e) { return { ok: false, error: String((e && e.message) || e).slice(0, 400) }; } })()`);
-              if (!meta || meta.ok !== true) return sendJson(res, 200, { ok: false, code: 'CARD_AUDIO_FAILED', error: meta?.error || '卡片声音没有生成' });
+              if (!meta || meta.ok !== true) return sendJson(res, 200, { ok: false, code: 'CARD_AUDIO_FAILED', error: meta?.error || tr("Card audio was not generated") });
               if (meta.reusable) return sendJson(res, 200, meta);
               const total = Number(meta.bytes);
-              if (!Number.isSafeInteger(total) || total < 45 || total > CARD_AUDIO_MAX_BYTES) return sendJson(res, 200, { ok: false, code: 'CARD_AUDIO_FAILED', error: '卡片声音的大小不对' });
+              if (!Number.isSafeInteger(total) || total < 45 || total > CARD_AUDIO_MAX_BYTES) return sendJson(res, 200, { ok: false, code: 'CARD_AUDIO_FAILED', error: tr("The card audio size is wrong") });
               const CHUNK = 3 * 1024 * 1024;
               const parts: string[] = [];
               for (let from = 0; from < total; from += CHUNK) {
@@ -2229,7 +2230,7 @@ export default function vitePluginCards(): Plugin[] {
               // 一次就漂一点(同一张卡的字号一路 42→56→42→32)。
               source: finalSource,
               lines: finalSource.split('\n').length,
-              hint: '已写入并热更新。要再改它请用 edit_card 做局部替换,不要用 create_card 整篇重写。',
+              hint: 'Written and hot-reloaded. To change it again, use edit_card for a partial replacement; do not rewrite the whole file with create_card.',
             });
           } catch (e: any) {
             sendJson(res, 400, { ok: false, error: e?.message || String(e) });

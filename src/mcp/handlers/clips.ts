@@ -28,7 +28,7 @@ export const clipsHandlers = {
       trackId,
       params: args.params
     });
-    if (!clip) throw new Error("添加卡片失败");
+    if (!clip) throw new Error("Failed to add card");
     clipGuard.noteCreated(clip.id);
     // look:去看这张卡真实画面的现成调用;timeline:当前全部 clip 的 id 和起止,
     // 之后模型引用 clipId 以它为准,不再凭几步前的记忆。理由见 toolEcho.ts。
@@ -56,16 +56,16 @@ export const clipsHandlers = {
       const wantStart = args.start ?? cur.start;
       const wantEnd = args.end ?? cur.end;
       if (Math.abs(wantEnd - wantStart - (cur.end - cur.start)) > 1e-3) {
-        throw new Error(`改不了时长:${lock.message}`);
+        throw new Error(`Can't change duration: ${lock.message}`);
       }
       if (args.trackId !== undefined && args.trackId !== findClip(getState().project, args.clipId)!.track.id) {
-        throw new Error(`换不了序列:${lock.message}`);
+        throw new Error(`Can't change track: ${lock.message}`);
       }
       for (const side of ["fadeIn", "fadeOut"] as const) {
         if (args[side] !== undefined && lock.transitions.some((tr) =>
           (tr.kind === "crossfade" && ((side === "fadeOut" && tr.aId === args.clipId) || (side === "fadeIn" && tr.bId === args.clipId))) ||
           (tr.kind === side && tr.aId === args.clipId))) {
-          throw new Error(`${side} 是转场的时长,不能单独改:${lock.message}`);
+          throw new Error(`${side} is the transition's duration and can't be changed alone: ${lock.message}`);
         }
       }
     }
@@ -78,15 +78,15 @@ export const clipsHandlers = {
     for (const k of ["opacity", "fadeIn", "fadeOut"] as const) {
       const v = args[k];
       if (v === undefined) continue;
-      if (typeof v !== "number" || !Number.isFinite(v)) throw new Error(`${k} 必须是有限数字,收到 ${JSON.stringify(v)}`);
-      if (k === "opacity" && (v < 0 || v > 1)) throw new Error(`opacity 是 0~1,收到 ${v}`);
-      if (k !== "opacity" && v < 0) throw new Error(`${k} 是秒数,不能为负,收到 ${v}`);
+      if (typeof v !== "number" || !Number.isFinite(v)) throw new Error(`${k} must be a finite number, got ${JSON.stringify(v)}`);
+      if (k === "opacity" && (v < 0 || v > 1)) throw new Error(`opacity must be 0~1, got ${v}`);
+      if (k !== "opacity" && v < 0) throw new Error(`${k} is in seconds and can't be negative, got ${v}`);
       patch[k] = v;
     }
     if (args.label !== undefined) patch.label = String(args.label);
     if (Object.keys(patch).length) actions.updateClip(args.clipId, patch);
     if (args.trackId !== undefined && !getState().project.tracks.some((t) => t.id === args.trackId)) {
-      throw new Error(`找不到序列 ${args.trackId};get_project 里 tracks 的 id 才是有效值`);
+      throw new Error(`Track ${args.trackId} not found; only the ids of tracks in get_project are valid`);
     }
     if (args.start !== undefined || args.end !== undefined || args.trackId !== undefined) {
       actions.moveClip(args.clipId, { start: args.start, end: args.end, trackId: args.trackId });
@@ -96,7 +96,7 @@ export const clipsHandlers = {
     return {
       ok: true, clipId: args.clipId, look: lookHint(args.clipId), timeline: timelineDigest(getState().project),
       ...(args.params ? paramsEcho(paramsBefore, findClip(getState().project, args.clipId)?.clip.params) : null),
-      ...(lock ? { movedGroup: lock.members, note: "这段挂着转场,整组一起挪了" } : {}),
+      ...(lock ? { movedGroup: lock.members, note: "This clip has a transition attached, so the whole group moved together" } : {}),
     };
   }),
   removeClip: (args) => {
@@ -142,35 +142,35 @@ export const clipsHandlers = {
   splitClip: (args) => {
     assertClipNotParked(args.clipId);
     const lock = timingLock(getState().project, args.clipId);
-    if (lock) throw new Error(`切不开:${lock.message}`);
+    if (lock) throw new Error(`Can't split: ${lock.message}`);
     const c = actions.splitClip(args.clipId, args.t);
-    if (!c) throw new Error("切分失败");
+    if (!c) throw new Error("Split failed");
     clipGuard.noteCreated(c.id);
     return c;
   },
-  duplicateClip: (args) => { assertClipNotParked(args.clipId); const c = actions.duplicateClip(args.clipId); if (!c) throw new Error("复制失败"); clipGuard.noteCreated(c.id); return c; },
+  duplicateClip: (args) => { assertClipNotParked(args.clipId); const c = actions.duplicateClip(args.clipId); if (!c) throw new Error("Duplicate failed"); clipGuard.noteCreated(c.id); return c; },
   setEmphasis: /* @__PURE__ */ inClipCut((args: Args<"setEmphasis">) => {
     const clipId = String(args.clipId ?? "");
     const kind = String(args.kind ?? "");
-    if (!clipId) throw new Error("要 clipId");
+    if (!clipId) throw new Error("clipId is required");
     if (kind === "none") {
       const r = actions.setClipEmphasis(clipId, null);
-      if (!r.ok) throw new Error(r.error ?? "去不掉");
+      if (!r.ok) throw new Error(r.error ?? "Can't remove");
       clipGuard.noteMutation();
-      return { ok: true, clipId, emphasis: null, note: "强调去掉了" };
+      return { ok: true, clipId, emphasis: null, note: "Emphasis removed" };
     }
     if (kind !== "shadow" && kind !== "outline") {
-      throw new Error(`kind 只能是 shadow(阴影)/ outline(描边)/ none(去掉),收到 ${JSON.stringify(args.kind)}`);
+      throw new Error(`kind must be shadow / outline / none (remove), got ${JSON.stringify(args.kind)}`);
     }
     const r = actions.setClipEmphasis(clipId, {
       kind, color: args.color, size: args.size, opacity: args.opacity, dx: args.dx, dy: args.dy,
     });
-    if (!r.ok) throw new Error(r.error ?? "加不上");
+    if (!r.ok) throw new Error(r.error ?? "Can't add");
     clipGuard.noteMutation();
     return {
       ok: true, clipId, emphasis: r.emphasis, describe: describeEmphasis(r.emphasis),
       look: lookHint(clipId),
-      note: "强调沿着画面里不透明部分的边缘走(按 alpha 算),透明底的卡片、抠好的人物最明显;整块不透明的画面只会在方框外圈看到一条边。",
+      note: "Emphasis follows the edge of the opaque part of the picture (by alpha), most visible on cards with a transparent background and cut-out people; a fully opaque picture only shows an edge around the outside of its box.",
     };
   }),
 } satisfies Partial<EditorApi>;

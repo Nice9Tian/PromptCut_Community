@@ -63,7 +63,7 @@ export function buildAudioPlan(source, outDir, exists = fs.existsSync, sourceOf 
     const file = missingMaterial ? MISSING_MATERIAL_WAV : sourceOf(m);
     const soundEffect = !!(sourceClip?.cardAudio || m?.soundEffect || sourceClip?.soundEffect);
     if (!file || (!/^https?:/i.test(file) && !exists(file))) {
-      if (soundEffect) throw new Error(`${e.clipId} 的合成音效文件缺失，请恢复素材或重新生成`);
+      if (soundEffect) throw new Error(`The generated sound effect file for ${e.clipId} is missing, restore the media or regenerate it`);
       continue;
     }
     out.push({ file, clipId: e.clipId, start: e.start, dur: e.dur, offset: missingMaterial ? 0 : e.offset, volume: e.volume, fadeIn: e.fadeIn, fadeOut: e.fadeOut, fx: e.fx,
@@ -141,7 +141,7 @@ export function playableAudioPlan(plan, ffprobeCmd, probe = hasAudioStream, rend
   return plan.filter((entry) => {
     if (entry.cardAudio) return true;
     const playable = probe(entry.file, ffprobeCmd);
-    if (!playable && entry.soundEffect) throw new Error(`${entry.clipId} 的合成音效无法读取音轨，请恢复素材或重新生成`);
+    if (!playable && entry.soundEffect) throw new Error(`The generated sound effect for ${entry.clipId} has no readable audio track, restore the media or regenerate it`);
     return playable;
   }).map((entry, i) => {
     if (!entry.speed || entry.cardAudio) return entry;

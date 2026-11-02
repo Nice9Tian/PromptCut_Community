@@ -18,7 +18,7 @@ export function findCard(cardId: string): CardDef<any> {
   const card = allCards().find((c) => c.id === cardId);
   if (!card) {
     const ids = allCards().map((c) => c.id).join(", ");
-    throw new Error(`没有 id 为 "${cardId}" 的卡片。可用的卡片 id:${ids}`);
+    throw new Error(`No card with id "${cardId}". Available card ids: ${ids}`);
   }
   return card;
 }
@@ -32,9 +32,9 @@ function isFilled(value: unknown): boolean {
 
 function describeControl(c: Control): string {
   const bits = [`${c.key}(${c.label},${c.type}`];
-  if (c.type === "select") bits.push(`取值 ${c.options.map((o) => o.value).join("/")}`);
-  if (c.type === "asset") bits.push(`素材目录里的 URL(${c.options.length} 个,见 controls 的 options),也可以填别的 URL 或内联 JSON`);
-  if (c.required) bits.push("必填");
+  if (c.type === "select") bits.push(`values ${c.options.map((o) => o.value).join("/")}`);
+  if (c.type === "asset") bits.push(`URLs from the asset catalog (${c.options.length} items, see options in controls), or any other URL or inline JSON`);
+  if (c.required) bits.push("required");
   return bits.join(",") + ")";
 }
 
@@ -61,14 +61,14 @@ export function validateCardParams(
     const control = known.get(key);
     if (!control) {
       // 键名写错是最常见的静默失败:合并时它只是多出来的一项,谁也不读。
-      problems.push(`参数 "${key}" 不是 ${cardId} 的参数。它接受:${card.controls.map(describeControl).join("、")}`);
+      problems.push(`Parameter "${key}" is not a parameter of ${cardId}. It accepts: ${card.controls.map(describeControl).join(", ")}`);
       continue;
     }
     if (control.type === "number" && typeof value !== "number") {
-      problems.push(`参数 "${key}" 要数字,收到 ${JSON.stringify(value)}`);
+      problems.push(`Parameter "${key}" needs a number, got ${JSON.stringify(value)}`);
     }
     if (control.type === "select" && !control.options.some((o) => o.value === value)) {
-      problems.push(`参数 "${key}" 只能是 ${control.options.map((o) => o.value).join(" / ")},收到 ${JSON.stringify(value)}`);
+      problems.push(`Parameter "${key}" can only be ${control.options.map((o) => o.value).join(" / ")}, got ${JSON.stringify(value)}`);
     }
   }
 
@@ -77,7 +77,7 @@ export function validateCardParams(
   for (const control of card.controls) {
     if (control.required && !isFilled(merged[control.key])) {
       problems.push(
-        `${cardId} 的 "${control.key}"(${control.label})是必填的,不能为空。` +
+        `"${control.key}" (${control.label}) of ${cardId} is required and cannot be empty.` +
           (control.hint ? `${control.hint}` : ""),
       );
     }

@@ -122,7 +122,7 @@ export class CardMediaSource {
       }
       if (covered === false) {
         this.settleMisses.set(url, misses + 1);
-        if (misses + 1 >= SETTLE_GIVE_UP) console.warn(`素材效果卡视频源的帧时间戳连续对不上 currentTime,暂停核对直到再次对上:${url}`);
+        if (misses + 1 >= SETTLE_GIVE_UP) console.warn(`Frame timestamps of the media effect card video source keep failing to match currentTime; pausing checks until they match again: ${url}`);
       }
     }
     // 对上一次就清零(放弃核对期间也照常看一眼,对上了就恢复核对)

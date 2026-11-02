@@ -24,7 +24,7 @@ export function lessonsStore() {
         const merged = [...read().filter((s) => !list.includes(s)), ...list].slice(-30);
         fs.mkdirSync(dir, { recursive: true });
         fs.writeFileSync(file, JSON.stringify(merged, null, 2), 'utf8');
-      } catch (e) { console.error('[api] 审查教训没写成:', e?.message || e); }
+      } catch (e) { console.error('[api] Failed to write the review lesson:', e?.message || e); }
     },
   };
 }
@@ -62,8 +62,9 @@ export function localOutputSpeedFile() {
  * 还没收到任何数据就被网关断开的那几句(流已经出过数据的按截断处理,不会走到这里,见 providers/base.mjs):
  * 和超时一样可以接着说 —— 上下文都在历史里,只是这一次没拿到回复。
  */
-const STREAM_DROPPED = /upstream stream ended|before the response was complete|响应流提前结束|terminated|other side closed|socket hang up/i;
+const STREAM_DROPPED = /upstream stream ended|before the response was complete|response stream ended early|terminated|other side closed|socket hang up/i;
 import { withIdleTimeout } from '../harness/idle-timeout.mjs';
+import { tr } from "../i18n.mjs";
 
 /**
  * 把「有 tool_use、没有配对 tool_result」的半截回合补平,再落盘。
@@ -102,7 +103,7 @@ function healDanglingToolUse(messages) {
     if (!missing.length) continue;
     const patch = missing.map(id => ({
       type: 'tool_result', tool_use_id: id, is_error: true,
-      content: '已中断,这次调用没有执行完。',
+      content: tr("Interrupted, this call did not finish."),
     }));
     if (next?.role === 'user' && Array.isArray(next.content)) {
       out[i + 1] = { ...next, content: [...patch, ...next.content] };
@@ -121,14 +122,14 @@ export async function getApiProvider() {
   } catch {
     return {
       id: 'api',
-      label: 'API 直连',
+      label: tr("Direct API"),
       available: false,
       version: undefined,
       auth: {
         loggedIn: false,
-        detail: '配置模块缺失'
+        detail: tr("Config module is missing")
       },
-      note: '配置模块缺失'
+      note: tr("Config module is missing")
     };
   }
 
@@ -138,12 +139,12 @@ export async function getApiProvider() {
     const version = cfg.vendor && cfg.model ? `${cfg.vendor}/${cfg.model}` : undefined;
     return {
       id: 'api',
-      label: 'API 直连',
+      label: tr("Direct API"),
       available,
       version,
       auth: {
         loggedIn: available,
-        detail: available ? undefined : '还没填 API Key'
+        detail: available ? undefined : tr("API key not set yet")
       },
       note: undefined
     };
@@ -151,14 +152,14 @@ export async function getApiProvider() {
     let msg = e.message || String(e);
     return {
       id: 'api',
-      label: 'API 直连',
+      label: tr("Direct API"),
       available: false,
       version: undefined,
       auth: {
         loggedIn: false,
-        detail: `读取配置失败: ${msg}`
+        detail: tr("Failed to read config: {0}", msg)
       },
-      note: `读取配置失败: ${msg}`
+      note: tr("Failed to read config: {0}", msg)
     };
   }
 }
@@ -191,7 +192,7 @@ export function startRun(opts) {
       try {
         configModule = await import('../ai-config.mjs');
       } catch {
-        safeOnEvent({ type: 'error', message: 'API 直连不可用:配置模块缺失' });
+        safeOnEvent({ type: 'error', message: tr("Direct API unavailable: config module is missing") });
         return;
       }
       try {
@@ -203,7 +204,7 @@ export function startRun(opts) {
     }
 
     if (cfg.vendor !== 'mock' && !currentApiKey) {
-      safeOnEvent({ type: 'error', message: 'API 直连不可用:还没填 API Key' });
+      safeOnEvent({ type: 'error', message: tr("Direct API unavailable: API key not set yet") });
       return;
     }
 
@@ -240,7 +241,7 @@ export function startRun(opts) {
         if (Array.isArray(parsed)) initialMessages = parsed;
         // 是合法 JSON 但不是消息数组(文件被外部改过)。静默丢空的话,用户看到的是
         // 「它忘了刚才说过的话」而没有任何线索 —— 说一声,至少知道往哪儿查。
-        else safeOnEvent({ type: 'status', text: '这个会话的历史文件格式不对,已从空白开始。' });
+        else safeOnEvent({ type: 'status', text: tr("The history file of this session has a bad format, starting from empty.") });
       } catch {}
     }
     
@@ -263,7 +264,7 @@ export function startRun(opts) {
     } else if (cfg.vendor === 'mock') {
       providerModule = await import('../harness/providers/mock.mjs');
     } else {
-      safeOnEvent({ type: 'error', message: '不认识的 vendor' });
+      safeOnEvent({ type: 'error', message: tr("Unknown vendor") });
       return;
     }
 
@@ -322,7 +323,7 @@ export function startRun(opts) {
         signal: abortController.signal,
         onRetry: ({ attempt, of, reason, delayMs }) => {
           opts.retryForTest?.onRetry?.({ attempt, of, reason, delayMs });
-          console.error(`[api] ${reason},${delayMs}ms 后重试(第 ${attempt}/${of} 次)`);
+          console.error(`[api] ${reason}, retrying in ${delayMs}ms (attempt ${attempt}/${of})`);
         },
       },
     );
@@ -348,7 +349,7 @@ export function startRun(opts) {
       : 48;
     // 单次输出上限:配置里的 maxTokens 是上限的上限,真正发的数按模型定(harness/model-limits.mjs,A07 2026-10-22);
     // 再按实测速度压一道(上面的 speedBook),每次请求实际发的数见 `output-speed` 诊断
-    safeOnEvent({ type: 'diagnostic', stage: 'configuration', data: { vendor: cfg.vendor, model: cfg.model, effort: cfg.effort || '(默认)', maxTokens: cfg.maxTokens, maxOutput, speedCap: speedBook ? speedBook.capFor(cfg.model) : null, protocol: 'native-tools', schemaCompat, maxRounds: Number.isFinite(maxIterations) ? maxIterations : null, deepAuto: !!opts.deepAuto } });
+    safeOnEvent({ type: 'diagnostic', stage: 'configuration', data: { vendor: cfg.vendor, model: cfg.model, effort: cfg.effort || '(default)', maxTokens: cfg.maxTokens, maxOutput, speedCap: speedBook ? speedBook.capFor(cfg.model) : null, protocol: 'native-tools', schemaCompat, maxRounds: Number.isFinite(maxIterations) ? maxIterations : null, deepAuto: !!opts.deepAuto } });
     /*
      * 代码块空间(server/tools/code-cache.mjs):目录由宿主给(`opts.codeCacheDir`,按项目);没给就放在这个对话的历史文件旁边,
      * 只在这个对话里有效。建不出来(目录写不了)就不给这组工具,这一轮照常跑。
@@ -359,7 +360,7 @@ export function startRun(opts) {
         : path.join(path.dirname(historyFile), `${path.basename(historyFile, '.json')}.code-cache`);
       codeCache = createCodeCacheStore({ dir, writer: String(opts.codeCacheWriter || sessionId) });
     } catch (e) {
-      safeOnEvent({ type: 'status', text: `代码块空间用不了:${e?.message || e}` });
+      safeOnEvent({ type: 'status', text: tr("Code sandbox unavailable: {0}", e?.message || e) });
     }
     /*
      * 技能(issue 46):每一轮开头扫一次,外部根排在内置的前面,同名时外部的算数。
@@ -433,7 +434,7 @@ export function startRun(opts) {
         );
       } catch (e) {
         // 存不下也不该把这一轮的结果盖掉,记一句就够了
-        console.error('[api] 会话历史没写成:', e?.message || e);
+        console.error('[api] failed to write session history:', e?.message || e);
       }
     };
 
@@ -463,7 +464,7 @@ export function startRun(opts) {
 
       if (abortController.signal.aborted) {
         // 用户点了停止 —— 这是他的决定,不报错也不自动续
-        safeOnEvent({ type: 'status', text: '已中止' });
+        safeOnEvent({ type: 'status', text: tr("Aborted") });
       } else {
         let msg = err.message || String(err);
         if (currentApiKey && msg.includes(currentApiKey)) {
@@ -488,9 +489,10 @@ export function startRun(opts) {
           type: 'error',
           message: msg,
           retryable: true,
-          retryPrompt: `接着上面继续做。上一轮没做完就断了,原因是:${msg}。\n`
-            + `之前的进度都还在,不用重头再来,从刚才停下的地方接着做就行。\n`
-            + `如果上一步是在等某个后台作业,用 wait 工具等几秒再查它的状态。`,
+          retryPrompt: `Continue from above. The previous turn was cut off before finishing, because: ${msg}.\n`
+            + `All earlier progress is still there, no need to start over, just continue from where you stopped.
+`
+            + `If the previous step was waiting on a background job, use the wait tool to wait a few seconds, then check its status again.`,
         } : { type: 'error', message: msg, ...(typeof err?.runErrorCode === 'string' ? { code: err.runErrorCode } : {}) });
       }
     }

@@ -190,7 +190,7 @@ export function createPrerenderExecutor({ pipeline, projects, prepareProject = p
     const projectId = task?.source?.projectId;
     const projectRev = task?.source?.projectRev;
     if (typeof projectId !== 'string' || !projectId || !Number.isSafeInteger(projectRev)) {
-      throw fail('bad-task', `任务的 source 不对:${JSON.stringify(task?.source ?? null)}`, false);
+      throw fail('bad-task', `Task source is invalid: ${JSON.stringify(task?.source ?? null)}`, false);
     }
     return { projectId, projectRev, id: `${projectId}@${projectRev}` };
   };
@@ -229,12 +229,12 @@ export function createPrerenderExecutor({ pipeline, projects, prepareProject = p
     const work = (async () => {
       let found;
       try { found = await fetchProject(projectId, projectRev); }
-      catch (error) { throw fail(error?.code === 'digest-mismatch' ? 'bad-snapshot' : 'no-snapshot', `取不到项目快照 ${version}:${error?.message || error}`, true); }
+      catch (error) { throw fail(error?.code === 'digest-mismatch' ? 'bad-snapshot' : 'no-snapshot', `Cannot get project snapshot ${version}: ${error?.message || error}`, true); }
       const json = found.json;
-      if (!json) throw Object.assign(fail('no-snapshot', `文档服务上没有项目快照 ${version}`, true), { currentRev: found.currentRev });
+      if (!json) throw Object.assign(fail('no-snapshot', `The document service has no project snapshot ${version}`, true), { currentRev: found.currentRev });
       const project = prepareProject(json);
       if (!Array.isArray(project?.tracks) || !Number.isFinite(project?.duration) || project.duration <= 0) {
-        throw fail('bad-snapshot', `项目快照 ${version} 不是能渲的项目`, false);
+        throw fail('bad-snapshot', `Project snapshot ${version} is not a renderable project`, false);
       }
       const out = await onLane(pipeline, () => pipeline.planForQueue(project, { signal }));
       if (projectRev > (newest.get(projectId) ?? -1)) newest.set(projectId, projectRev);
@@ -314,27 +314,27 @@ export function createPrerenderExecutor({ pipeline, projects, prepareProject = p
     if (drifted) {
       const tier = control ? (control.tier || snapshotTier(control.capabilities)) : null;
       const current = !control ? null : tier === 'local' ? `${entry.key}/${control.contentKey}` : control.contentKey;
-      if (!control || input.contentKey !== current) throw superseded(!control ? `新版本里没有片段 ${input.clipId}` : `片段 ${input.clipId} 的内容在新版本里换了`);
+      if (!control || input.contentKey !== current) throw superseded(!control ? `The new version has no clip ${input.clipId}` : `The content of clip ${input.clipId} changed in the new version`);
     }
-    if (!control) why.push(`这一版没有片段 ${input.clipId}`);
+    if (!control) why.push(`This version has no clip ${input.clipId}`);
     else {
       const tier = control.tier || snapshotTier(control.capabilities);
       const from = task.range?.from, to = task.range?.to;
-      if (tier !== task.tier) why.push(`档位 ${task.tier} ≠ ${tier}`);
-      if (!pipeline.queueHandles(control)) why.push('这张卡不由队列产');
-      if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < from || to > control.count - 1) why.push(`帧范围 ${JSON.stringify(task.range)} 超出 0..${control.count - 1}`);
+      if (tier !== task.tier) why.push(`tier ${task.tier} ≠ ${tier}`);
+      if (!pipeline.queueHandles(control)) why.push('This card is not produced by the queue');
+      if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < from || to > control.count - 1) why.push(`Frame range ${JSON.stringify(task.range)} is outside 0..${control.count - 1}`);
       const own = pipeline.envFingerprint;
-      if (!own) why.push('本机还没有环境指纹');
+      if (!own) why.push('This machine has no environment fingerprint yet');
       if (tier === 'shared') {
-        if (input.contentKey !== control.contentKey) why.push('内容键不同');
-        else if (own && task.resultKey !== resultKeyOf(control.contentKey, own)) why.push('结果键不是本机指纹的键');
+        if (input.contentKey !== control.contentKey) why.push('Content keys differ');
+        else if (own && task.resultKey !== resultKeyOf(control.contentKey, own)) why.push('The result key is not the key of this machine\'s fingerprint');
       } else if (tier === 'local') {
-        if (input.entryKey !== entry.key) why.push(`entry.key 不同(本机 ${entry.key})`);
-        if (input.contentKey !== `${entry.key}/${control.contentKey}`) why.push('内容键不同');
-        else if (own && task.resultKey !== resultKeyOf(input.contentKey, own)) why.push('结果键不是本机指纹的键');
+        if (input.entryKey !== entry.key) why.push(`entry.key differs (local ${entry.key})`);
+        if (input.contentKey !== `${entry.key}/${control.contentKey}`) why.push('Content keys differ');
+        else if (own && task.resultKey !== resultKeyOf(input.contentKey, own)) why.push('The result key is not the key of this machine\'s fingerprint');
       }
     }
-    if (why.length) throw fail('plan-mismatch', `任务 ${task.id} 对不上这一版的计划:${why.join(';')}`, false);
+    if (why.length) throw fail('plan-mismatch', `Task ${task.id} does not match this version's plan: ${why.join(';')}`, false);
     return control;
   }
 
@@ -356,21 +356,21 @@ export function createPrerenderExecutor({ pipeline, projects, prepareProject = p
       try { listed = pipeline.listStreamSpecs(entry, [input.clipId]) ?? []; } catch { listed = []; }
       spec = listed.find(item => (item?.kind === 'card' || item?.kind === 'below') && item.contentKey === input.contentKey) ?? null;
     }
-    if (!spec && drifted) throw superseded('新版本里没有这条流');
+    if (!spec && drifted) throw superseded('The new version has no such stream');
     const why = [];
     const wantsBelow = task.requires?.belowDependent === true;
-    if (!spec) why.push(`这一版没有内容键为 ${String(input.contentKey).slice(0, 16)}… 的${wantsBelow ? '依赖下层的流(本机没有打开这种流,或目标卡、下层和切分时不同)' : '流'}`);
-    else if (wantsBelow !== (spec.kind === 'below')) why.push(`流的种类对不上(任务${wantsBelow ? '要' : '不要'}整场景的下层,这一版的流是 ${spec.kind})`);
+    if (!spec) why.push(`This version has no ${wantsBelow ? 'stream that depends on the lower layer (this machine has not opened this kind of stream, or the target card, lower layer and splitting differ)' : 'stream'} with content key ${String(input.contentKey).slice(0, 16)}…`);
+    else if (wantsBelow !== (spec.kind === 'below')) why.push(`Stream kind mismatch (task ${wantsBelow ? 'wants' : 'does not want'} the whole-scene lower layer, this version's stream is ${spec.kind})`);
     else {
       const own = pipeline.envFingerprint;
       const from = task.range?.from, to = task.range?.to;
-      if (!own) why.push('本机还没有环境指纹');
-      else if (task.resultKey !== resultKeyOf(spec.contentKey, own)) why.push('结果键不是本机指纹的键');
+      if (!own) why.push('This machine has no environment fingerprint yet');
+      else if (task.resultKey !== resultKeyOf(spec.contentKey, own)) why.push('The result key is not the key of this machine\'s fingerprint');
       if (!Number.isInteger(from) || !Number.isInteger(to) || from < spec.firstSegment || to < from || to > spec.lastSegment) {
-        why.push(`分段范围 ${JSON.stringify(task.range)} 超出 ${spec.firstSegment}..${spec.lastSegment}`);
+        why.push(`Segment range ${JSON.stringify(task.range)} is outside ${spec.firstSegment}..${spec.lastSegment}`);
       }
     }
-    if (why.length) throw fail('plan-mismatch', `任务 ${task.id} 对不上这一版的流:${why.join(';')}`, false);
+    if (why.length) throw fail('plan-mismatch', `Task ${task.id} does not match this version's stream: ${why.join(';')}`, false);
     return spec;
   }
 
@@ -380,22 +380,22 @@ export function createPrerenderExecutor({ pipeline, projects, prepareProject = p
    */
   async function renderExport(task, { signal, progress }) {
     if (typeof pipeline.exportStreamSpecs !== 'function' || typeof pipeline.renderExportFrames !== 'function') {
-      throw fail('no-export-frames', '本机不会取导出位图', false);
+      throw fail('no-export-frames', 'This machine cannot fetch export bitmaps', false);
     }
     const { entry, drifted } = await contextFor(task, signal);
     const input = task.input ?? {};
     let specs = [];
     try { specs = pipeline.exportStreamSpecs(entry, [input.clipId], input.exportSalt)?.specs ?? []; } catch { specs = []; }
     const spec = specs.find(item => item?.exportKey === input.exportKey) ?? null;
-    if (!spec && drifted) throw superseded(`新版本里片段 ${input.clipId} 的内容换了`);
+    if (!spec && drifted) throw superseded(`The content of clip ${input.clipId} changed in the new version`);
     const why = [];
     const from = task.range?.from, to = task.range?.to;
-    if (!spec) why.push(`这一版没有内容键为 ${String(input.exportKey).slice(0, 16)}… 的导出位图`);
+    if (!spec) why.push(`This version has no export bitmap with content key ${String(input.exportKey).slice(0, 16)}…`);
     else {
-      if (task.resultKey !== spec.exportResultKey) why.push('结果键不是本机指纹的键');
-      if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < from || to > spec.lastSegment) why.push(`分段范围 ${JSON.stringify(task.range)} 超出 0..${spec.lastSegment}`);
+      if (task.resultKey !== spec.exportResultKey) why.push('The result key is not the key of this machine\'s fingerprint');
+      if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < from || to > spec.lastSegment) why.push(`Segment range ${JSON.stringify(task.range)} is outside 0..${spec.lastSegment}`);
     }
-    if (why.length) throw fail('plan-mismatch', `任务 ${task.id} 对不上这一版的导出位图:${why.join(';')}`, false);
+    if (why.length) throw fail('plan-mismatch', `Task ${task.id} does not match this version's export bitmap: ${why.join(';')}`, false);
     const started = Date.now();
     await pipeline.renderExportFrames(entry, spec, { from, to }, { signal, progress });
     say('executor.render', { id: task.id, kind: 'export-frames', clipId: input.clipId, ms: Date.now() - started });
@@ -404,7 +404,7 @@ export function createPrerenderExecutor({ pipeline, projects, prepareProject = p
 
   async function renderStream(task, { signal, progress }) {
     if (typeof pipeline.streamCapable === 'function' && !(await pipeline.streamCapable())) {
-      throw fail('no-streams', '本机不能产轨道流(PROMPTCUT_STREAMS=0 或没有能用的 H.264 编码器)', false);
+      throw fail('no-streams', 'This machine cannot produce track streams (PROMPTCUT_STREAMS=0 or no usable H.264 encoder)', false);
     }
     const { entry, streamSpecs, drifted } = await contextFor(task, signal);
     const spec = matchStream(task, streamSpecs, { drifted, entry });
@@ -450,7 +450,7 @@ export function createPrerenderExecutor({ pipeline, projects, prepareProject = p
     const say = (name, fields) => { try { phase?.(name, fields); } catch { /* 诊断回调出错不影响执行 */ } };
     if (isExportFramesTask(task)) return renderExport(task, { signal, progress });
     if (task?.kind === 'stream') return renderStream(task, { signal, progress });
-    if (task?.kind !== 'snapshot') throw fail('bad-task', `不认识的任务 kind:${task?.kind}`, false);
+    if (task?.kind !== 'snapshot') throw fail('bad-task', `Unknown task kind: ${task?.kind}`, false);
     say('project');
     const { entry, drifted } = await contextFor(task, signal);
     const control = matchControl(task, entry, { drifted });

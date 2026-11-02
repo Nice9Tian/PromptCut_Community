@@ -8,7 +8,7 @@
 import { apiPath } from "./http-guard.mjs";
 import { stagePortsOf } from "./stage-ports.mjs";
 
-export const PRERENDER_DENY_BODY = JSON.stringify({ ok: false, error: "舞台或未经授权的跨源请求禁止访问预渲染接口" });
+export const PRERENDER_DENY_BODY = JSON.stringify({ ok: false, error: "Stage or unauthorized cross-origin requests are not allowed to access the prerender endpoint" });
 
 /** 舞台唯二允许向预渲染进程只读拉取的字节前缀（轨道流与快照字节） */
 const STAGE_PRERENDER_READ_PREFIXES = ["/api/frames/stream/", "/api/frames/snapshot/"];

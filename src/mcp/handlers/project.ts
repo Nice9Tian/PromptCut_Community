@@ -16,17 +16,17 @@ export const SET_PROJECT_META_FIELDS = ["name", "width", "height", "fps", "durat
 /** 参数里不认的键(按出现顺序) */
 export function undeclaredProjectMetaKeys(args: unknown): string[] {
   if (args === undefined || args === null) return [];
-  if (typeof args !== "object" || Array.isArray(args)) return ["(参数不是对象)"];
+  if (typeof args !== "object" || Array.isArray(args)) return ["(arguments are not an object)"];
   return Object.keys(args).filter((k) => !(SET_PROJECT_META_FIELDS as readonly string[]).includes(k));
 }
 
 export function projectMetaRejection(unknown: string[]): string {
   const creativity = unknown.includes("creativity")
-    ? "创造力等级只能由用户在项目设置或 AI 栏里改,Agent 不能写。"
+    ? "Creativity level can only be changed by the user in project settings or the AI panel; the Agent cannot write it."
     : "";
-  return `set_project_meta 不认这些字段:${unknown.join("、")}。这次调用整个没有执行,一个字段都没写。` +
-    `它只收 ${SET_PROJECT_META_FIELDS.join("、")}。${creativity}` +
-    "三维透视用 set_camera3d;别的项目内容用对应的工具改,不能经 set_project_meta 直接写。";
+  return `set_project_meta does not accept these fields: ${unknown.join(", ")}. This call was not executed at all, no field was written.` +
+    `It only accepts ${SET_PROJECT_META_FIELDS.join(", ")}. ${creativity}` +
+    "Use set_camera3d for 3D perspective; change other project content with the matching tool, it cannot be written directly through set_project_meta.";
 }
 
 
@@ -48,7 +48,7 @@ export const projectHandlers = {
               language: m.transcript.language,
               createdAt: m.transcript.createdAt,
               segments: m.transcript.segments.length,
-              hint: "完整文字稿请用 get_transcript"
+              hint: "Use get_transcript for the full transcript"
             }
           };
         }
@@ -112,7 +112,7 @@ export const projectHandlers = {
      * 同一个仓库里 framePatchFromArgs 对非数字就是直接抛,两处要一个标准。
      */
     if (hasFov && (typeof args.fovDeg !== "number" || !Number.isFinite(args.fovDeg))) {
-      throw new Error(`fovDeg 必须是有限数字(${MIN_FOV_DEG}~${MAX_FOV_DEG}),收到 ${JSON.stringify(args.fovDeg)}`);
+      throw new Error(`fovDeg must be a finite number (${MIN_FOV_DEG}~${MAX_FOV_DEG}), got ${JSON.stringify(args.fovDeg)}`);
     }
     const turnOff = args?.enabled === false;
     if (turnOff) {
@@ -127,7 +127,7 @@ export const projectHandlers = {
       return {
         ok: true,
         enabled: false,
-        hint: `三维已关。卡片上的 rotateX/rotateY/translateZ 还在,只是不再有透视${remembered ? `;再打开(enabled:true)会回到 ${remembered}°` : ""}`,
+        hint: `3D is off. rotateX/rotateY/translateZ on cards are kept, there is just no perspective anymore${remembered ? `; turning it back on (enabled:true) restores ${remembered}°` : ""}`,
       };
     }
     if (!hasFov && args?.enabled !== true) {
@@ -136,7 +136,7 @@ export const projectHandlers = {
         ok: true,
         enabled: !!cur.camera3dFov,
         fovDeg: cur.camera3dFov ?? null,
-        hint: "什么都没传,这里只是报了下当前状态。要打开传 fovDeg(或 enabled:true),要关掉传 enabled:false",
+        hint: "Nothing was passed, this only reported the current state. To turn it on pass fovDeg (or enabled:true), to turn it off pass enabled:false",
       };
     }
     const fov = clampFov(hasFov ? args.fovDeg : (getState().project.camera3dFov ?? getState().lastCamera3dFov ?? DEFAULT_FOV_DEG));
@@ -148,10 +148,10 @@ export const projectHandlers = {
       enabled: true,
       fovDeg: fov,
       ...(hasFov && fov !== args.fovDeg
-        ? { clamped: `fovDeg 被夹到 ${fov}(允许 ${MIN_FOV_DEG}~${MAX_FOV_DEG})` }
+        ? { clamped: `fovDeg was clamped to ${fov} (allowed ${MIN_FOV_DEG}~${MAX_FOV_DEG})` }
         : null),
       cameraDistancePx: Math.round(cam.distance),
-      hint: "现在 set_position 的 rotateX / rotateY / translateZ 会走真透视了。改完用 see_frames 看一眼 —— 透视强度只能看,算不出来",
+      hint: "set_position rotateX / rotateY / translateZ now use true perspective. After changing, check with see_frames: perspective strength can only be judged by eye, not computed",
     };
   },
   setTheme: (args) => { actions.setProjectMeta({ themeId: args.themeId }); return { ok: true }; },

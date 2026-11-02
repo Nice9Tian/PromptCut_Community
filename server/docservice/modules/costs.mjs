@@ -45,6 +45,7 @@
 import { createMemoryStore } from '../store/index.mjs';
 import { describeEnvironment } from '../../render-node/fingerprint.mjs';
 import { LOCAL_SPACE } from '../spaces.mjs';
+import { tr } from "../../i18n.mjs";
 
 export const COSTS_MODULE = 'costs';
 
@@ -80,15 +81,15 @@ class Refused extends Error {
 const bad = (detail) => { throw new Refused('bad-message', detail); };
 
 function checkProjectId(v) {
-  if (typeof v !== 'string' || !PROJECT_ID_RE.test(v)) bad('projectId 不合法');
+  if (typeof v !== 'string' || !PROJECT_ID_RE.test(v)) bad('projectId is invalid');
   return v;
 }
 
 /** 页面报的原始环境 → 指纹；形状不对抛 bad-message */
 function fingerprintOfEnvironment(env) {
-  if (!isObj(env)) bad('environment 必须是对象');
+  if (!isObj(env)) bad('environment must be an object');
   for (const k of ['platform', 'userAgent', 'renderer', 'vendor']) {
-    if (env[k] !== undefined && (typeof env[k] !== 'string' || env[k].length > 1024)) bad(`environment.${k} 必须是不超过 1024 个字符的字符串`);
+    if (env[k] !== undefined && (typeof env[k] !== 'string' || env[k].length > 1024)) bad(`environment.${k} must be a string of at most 1024 characters`);
   }
   return describeEnvironment({ platform: env.platform, renderer: env.renderer, vendor: env.vendor, chromeVersion: env.userAgent }).fingerprint;
 }
@@ -97,9 +98,9 @@ function fingerprintOfEnvironment(env) {
 function envOfPut(msg) {
   const hasEnv = msg.environment !== undefined;
   const hasFp = msg.envFingerprint !== undefined;
-  if (hasEnv === hasFp) bad('environment 与 envFingerprint 恰好给一个');
+  if (hasEnv === hasFp) bad('Provide exactly one of environment and envFingerprint');
   if (hasFp) {
-    if (typeof msg.envFingerprint !== 'string' || !FINGERPRINT_RE.test(msg.envFingerprint)) bad('envFingerprint 必须是 16 位小写十六进制');
+    if (typeof msg.envFingerprint !== 'string' || !FINGERPRINT_RE.test(msg.envFingerprint)) bad('envFingerprint must be 16 lowercase hex digits');
     return msg.envFingerprint;
   }
   return fingerprintOfEnvironment(msg.environment);
@@ -108,12 +109,12 @@ function envOfPut(msg) {
 /** 一条记录的形状；只留认得的字段 */
 function checkRecord(r, i) {
   const at = `records[${i}]`;
-  if (!isObj(r)) bad(`${at} 必须是对象`);
-  if (typeof r.identityKey !== 'string' || !IDENTITY_RE.test(r.identityKey)) bad(`${at}.identityKey 不合法`);
-  if (typeof r.stepMs !== 'number' || !Number.isFinite(r.stepMs) || r.stepMs < 0 || r.stepMs > COSTS_LIMITS.MAX_STEP_MS) bad(`${at}.stepMs 必须是 0～${COSTS_LIMITS.MAX_STEP_MS} 的数`);
-  if (!Number.isSafeInteger(r.samples) || r.samples < 1 || r.samples > COSTS_LIMITS.MAX_SAMPLES) bad(`${at}.samples 必须是 1～${COSTS_LIMITS.MAX_SAMPLES} 的整数`);
-  if (typeof r.measuredAt !== 'number' || !Number.isFinite(r.measuredAt) || r.measuredAt <= 0) bad(`${at}.measuredAt 必须是正数（毫秒时间戳）`);
-  if (!MODES.has(r.mode)) bad(`${at}.mode 只能是 dev / build`);
+  if (!isObj(r)) bad(tr("{0} must be an object", at));
+  if (typeof r.identityKey !== 'string' || !IDENTITY_RE.test(r.identityKey)) bad(`${at}.identityKey is invalid`);
+  if (typeof r.stepMs !== 'number' || !Number.isFinite(r.stepMs) || r.stepMs < 0 || r.stepMs > COSTS_LIMITS.MAX_STEP_MS) bad(`${at}.stepMs must be a number from 0 to ${COSTS_LIMITS.MAX_STEP_MS}`);
+  if (!Number.isSafeInteger(r.samples) || r.samples < 1 || r.samples > COSTS_LIMITS.MAX_SAMPLES) bad(`${at}.samples must be an integer from 1 to ${COSTS_LIMITS.MAX_SAMPLES}`);
+  if (typeof r.measuredAt !== 'number' || !Number.isFinite(r.measuredAt) || r.measuredAt <= 0) bad(`${at}.measuredAt must be a positive number (millisecond timestamp)`);
+  if (!MODES.has(r.mode)) bad(`${at}.mode must be dev / build`);
   return { identityKey: r.identityKey, stepMs: r.stepMs, samples: r.samples, measuredAt: r.measuredAt, mode: r.mode };
 }
 
@@ -155,8 +156,8 @@ export function costsModule({ space = LOCAL_SPACE, store = createMemoryStore(), 
   /** 成员才能读写本项目的记录：共享项目的空间里 projectId 必须就是空间名 */
   function checkAccess(connId, projectId) {
     const principal = principals.get(connId);
-    if (!principal || principal.scope === 'admin') throw new Refused('forbidden', '这条连接不能读写成本记录');
-    if (space !== LOCAL_SPACE && projectId !== space) throw new Refused('forbidden', '只有这个项目的成员能读写它的成本记录');
+    if (!principal || principal.scope === 'admin') throw new Refused('forbidden', tr("This connection cannot read or write cost records"));
+    if (space !== LOCAL_SPACE && projectId !== space) throw new Refused('forbidden', tr("Only members of this project can read or write its cost records"));
   }
 
   function reply(ctx, connId, message, reqId) {
@@ -168,15 +169,15 @@ export function costsModule({ space = LOCAL_SPACE, store = createMemoryStore(), 
     const projectId = checkProjectId(msg.projectId);
     checkAccess(connId, projectId);
     const envFingerprint = envOfPut(msg);
-    if (!Array.isArray(msg.records) || msg.records.length < 1) bad('records 必须是非空数组');
-    if (msg.records.length > L.MAX_PUT) throw new Refused('too-large', `一次最多写 ${L.MAX_PUT} 条`);
+    if (!Array.isArray(msg.records) || msg.records.length < 1) bad('records must be a non-empty array');
+    if (msg.records.length > L.MAX_PUT) throw new Refused('too-large', `At most ${L.MAX_PUT} records can be written at a time`);
     // 先整批校验，有一条不对就整条不落
     const records = msg.records.map(checkRecord);
     const table = tableOf(projectId);
     let added = 0, updated = 0, ignored = 0;
     const at = typeof now === 'function' ? now() : ctx.now();
     const fresh = records.filter((r) => !table.has(keyOf(r.identityKey, envFingerprint)));
-    if (table.size + new Set(fresh.map((r) => r.identityKey)).size > L.MAX_RECORDS) throw new Refused('too-large', `这个项目的成本记录已满（${L.MAX_RECORDS} 条）`);
+    if (table.size + new Set(fresh.map((r) => r.identityKey)).size > L.MAX_RECORDS) throw new Refused('too-large', tr("The cost records of this project are full ({0} records)", L.MAX_RECORDS));
     for (const r of records) {
       const key = keyOf(r.identityKey, envFingerprint);
       const prev = table.get(key);
@@ -221,7 +222,7 @@ export function costsModule({ space = LOCAL_SPACE, store = createMemoryStore(), 
     handle(ctx, connId, msg) {
       const reqId = isReqId(msg.reqId) ? msg.reqId : undefined;
       const fn = HANDLERS[msg.type];
-      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: '成本记录模块不支持这种消息' }, reqId);
+      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: 'The cost records module does not support this message' }, reqId);
       try {
         fn(ctx, connId, msg, reqId);
       } catch (err) {

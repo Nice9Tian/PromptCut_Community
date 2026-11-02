@@ -69,7 +69,7 @@ function readBody(req: IncomingMessage, res: ServerResponse, then: (d: any) => v
   req.on("data", (c: Buffer) => {
     if (over) return;
     size += c.length;
-    if (size > MAX_BODY) { over = true; sendJson(res, 413, { ok: false, error: "探针记录太大" }); req.destroy(); return; }
+    if (size > MAX_BODY) { over = true; sendJson(res, 413, { ok: false, error: "Probe record too large" }); req.destroy(); return; }
     body += c;
   });
   req.on("end", () => {
@@ -137,7 +137,7 @@ export function costsPlugin(): Plugin {
             }
           });
         }
-        if (sub !== "/") return sendJson(res, 404, { ok: false, error: `没有这个接口:${sub}` });
+        if (sub !== "/") return sendJson(res, 404, { ok: false, error: `No such endpoint: ${sub}` });
 
         if (method === "GET") {
           const device = query(req, "device");
@@ -150,7 +150,7 @@ export function costsPlugin(): Plugin {
         if (method !== "PUT" && method !== "POST") return sendJson(res, 405, { ok: false, error: "GET / PUT only" });
         readBody(req, res, (d) => {
           const records = Array.isArray(d?.records) ? d.records : Array.isArray(d) ? d : null;
-          if (!records) return sendJson(res, 400, { ok: false, error: "缺 records:[]" });
+          if (!records) return sendJson(res, 400, { ok: false, error: "Missing records:[]" });
           try {
             const out = upsertCosts(root, records);
             sendJson(res, 200, { ok: true, count: out.count, added: out.added, updated: out.updated });

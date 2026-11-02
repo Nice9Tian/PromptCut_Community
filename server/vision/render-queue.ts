@@ -101,7 +101,7 @@ function pumpRenderQueue() {
  */
 /** 调用方不要了(连接断开 / 被取消)时抛的错。带 cancelled,调用方据此不当成渲染失败 */
 export function cancelError(): Error {
-  return Object.assign(new Error("请求方已经不要这张图了,渲染已取消"), { cancelled: true });
+  return Object.assign(new Error("The requester no longer wants this image; render cancelled"), { cancelled: true });
 }
 
 // 导出一结束,被暂停的预渲染接着派
@@ -129,8 +129,8 @@ export function enqueue<T>(job: () => Promise<T>, priority = 0, queueTimeoutMs =
         if (at < 0) return; // 已经开跑了,轮不到这里管
         renderWaiting.splice(at, 1);
         fail(new Error(
-          `排队等渲染超过 ${Math.round(queueTimeoutMs / 1000)} 秒还没轮到(前面有 ${renderRunning} 个正在渲)。`
-          + `不是这张卡的问题 —— 过一会儿再看,或者等手上的导出 / 预渲染跑完。`,
+          `Waited more than ${Math.round(queueTimeoutMs / 1000)} seconds in the render queue without getting a turn (${renderRunning} still rendering ahead).`
+          + `This is not a problem with this card: look again in a while, or wait for the current export / prerender to finish.`,
         ));
       }, queueTimeoutMs);
     }

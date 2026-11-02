@@ -1,3 +1,4 @@
+import { tr } from "../i18n.mjs";
 /**
  * 「用户正在编辑」本机版(计划 `docs/plan/agent-workflow-plan.md` A2;语义 `user-workflow.md`「保护」)。
  *
@@ -33,7 +34,7 @@ export const USER_EDITING_DEFAULTS = Object.freeze({
 });
 
 export const EDITING_KINDS = Object.freeze(['drag', 'text', 'recent']);
-const KIND_TEXT = Object.freeze({ drag: '拖动中', text: '文字编辑中', recent: '刚动过' });
+const KIND_TEXT = Object.freeze({ drag: 'dragging', text: 'editing text', recent: 'just modified' });
 const KIND_RANK = Object.freeze({ drag: 0, text: 1, recent: 2 });
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -71,8 +72,8 @@ export function createUserEditingBoard(options = {}) {
      * 格式不对的条目跳过;回这次记下的条数。
      */
     report(session, entities) {
-      if (typeof session !== 'string' || !SESSION_RE.test(session)) throw new Error('session 不合法');
-      if (!Array.isArray(entities)) throw new Error('entities 要是数组');
+      if (typeof session !== 'string' || !SESSION_RE.test(session)) throw new Error('session is invalid');
+      if (!Array.isArray(entities)) throw new Error('entities must be an array');
       const t = now();
       const prev = sessions.get(session);
       const next = new Map();
@@ -238,16 +239,16 @@ export function userEditingFor({ tool, args, written = [], editing = [] }) {
 export function userEditingNotice(list, limits = USER_EDITING_DEFAULTS) {
   if (!Array.isArray(list) || !list.length) return '';
   const capped = list.slice(0, limits.showMax);
-  const more = list.length > capped.length ? ` 等 ${list.length} 个` : '';
+  const more = list.length > capped.length ? ` and ${list.length} more` : '';
   // 本机用户一句;共享项目里别的成员各一句「用户 <成员>正在编辑……」(A3 第二阶段)
   const groups = new Map();
   for (const e of capped) {
     const who = typeof e.who === 'string' && e.who ? e.who : '';
     if (!groups.has(who)) groups.set(who, []);
-    groups.get(who).push(`片段 ${e.clipId}(${KIND_TEXT[e.kind] ?? e.kind})`);
+    groups.get(who).push(`clip ${e.clipId} (${KIND_TEXT[e.kind] ?? e.kind})`);
   }
-  const parts = [...groups].map(([who, items]) => `${who ? `用户 ${who} ` : '用户'}正在编辑${items.join('、')}`);
-  return `${parts.join(';')}${more}。这是提示不是禁止:用户可能正是在这里给你下指令;要改之前先确认不会覆盖用户手上的修改,拿不准就停下问用户。`;
+  const parts = [...groups].map(([who, items]) => `${who ? `User ${who} ` : 'User'} is editing ${items.join(', ')}`);
+  return `${parts.join(';')}${more}. This is a hint, not a prohibition: the user may be giving you instructions right here; before changing anything, make sure you will not overwrite the user's edits, and if unsure, stop and ask the user.`;
 }
 
 /**
@@ -256,20 +257,20 @@ export function userEditingNotice(list, limits = USER_EDITING_DEFAULTS) {
  * @param {(key: string) => string | null} [agentLabel] 对话 id → 给人看的名字(可选)
  */
 export function writerOf(actor, agentLabel) {
-  if (!isPlainObject(actor)) return { by: 'unknown', who: '未知的写入方' };
+  if (!isPlainObject(actor)) return { by: 'unknown', who: 'Unknown writer' };
   if (actor.role === 'page') {
     const other = actor.userId && actor.userId !== 'local' ? actor.userId : null;
-    return other ? { by: 'user', who: `用户 ${other}`, userId: other } : { by: 'user', who: '用户' };
+    return other ? { by: 'user', who: `User ${other}`, userId: other } : { by: 'user', who: 'User' };
   }
   if (actor.role === 'agent') {
     const key = typeof actor.session === 'string' && actor.session.startsWith('agent:') ? actor.session.slice('agent:'.length) : null;
-    const id = key || (actor.conversation != null ? `对话 ${actor.conversation}` : '?');
+    const id = key || (actor.conversation != null ? `chat ${actor.conversation}` : '?');
     let label = null;
     try { label = key && typeof agentLabel === 'function' ? agentLabel(key) : null; } catch { label = null; }
     return { by: 'agent', who: `Agent ${id}${label ? `(${label})` : ''}`, agent: key ?? null };
   }
-  if (actor.role === 'render') return { by: 'render', who: '渲染节点' };
-  return { by: 'unknown', who: actor.userId ? `用户 ${actor.userId}` : '未知的写入方' };
+  if (actor.role === 'render') return { by: 'render', who: 'Render node' };
+  return { by: 'unknown', who: actor.userId ? `User ${actor.userId}` : 'Unknown writer' };
 }
 
 /**
@@ -287,7 +288,7 @@ export function overwroteView(overwrote, { now = Date.now(), agentLabel } = {}) 
       ...(clipId ? { clipId } : {}),
       by: w.by,
       who: w.who,
-      label: `${w.who}刚改过`,
+      label: tr("{0} just edited", w.who),
       ...(Number.isSafeInteger(x.rev) ? { rev: x.rev } : {}),
       ...(Number.isFinite(x.at) ? { agoMs: Math.max(0, now - x.at) } : {}),
     };
@@ -298,17 +299,17 @@ export function overwroteView(overwrote, { now = Date.now(), agentLabel } = {}) 
 export function overwroteNotice(view, limits = USER_EDITING_DEFAULTS) {
   if (!Array.isArray(view) || !view.length) return '';
   const shown = view.slice(0, limits.showMax).map((v) => {
-    const what = v.clipId ? `片段 ${v.clipId}` : v.entity;
-    const ago = Number.isFinite(v.agoMs) ? `,${Math.max(1, Math.round(v.agoMs / 1000))} 秒前` : '';
+    const what = v.clipId ? `clip ${v.clipId}` : v.entity;
+    const ago = Number.isFinite(v.agoMs) ? `, ${Math.max(1, Math.round(v.agoMs / 1000))} s ago` : '';
     return `${what}(${v.label}${v.rev != null ? `,rev ${v.rev}` : ''}${ago})`;
   });
-  const more = view.length > shown.length ? ` 等 ${view.length} 处` : '';
+  const more = view.length > shown.length ? ` and ${view.length} more` : '';
   const hasUser = view.some((v) => v.by === 'user');
   const hasAgent = view.some((v) => v.by === 'agent');
   const tail = hasUser
-    ? '用户刚改过的地方被你这次写入盖掉了:确认这是用户要的,不是的话撤回或改回用户的版本,并告诉用户。'
-    : hasAgent ? '别的 Agent 刚改过的地方被你这次写入盖掉了:确认你们没有在抢同一处,需要时和它协调。' : '确认这次覆盖是有意的。';
-  return `这次写入覆盖了别人刚写的内容:${shown.join('、')}${more}。${tail}`;
+    ? 'Something the user just edited was overwritten by this write: confirm this is what the user wants; if not, undo it or restore the user\'s version, and tell the user.'
+    : hasAgent ? 'Something another Agent just edited was overwritten by this write: make sure you are not fighting over the same spot, and coordinate with it if needed.' : 'Confirm this overwrite is intentional.';
+  return `This write overwrote content someone else just wrote: ${shown.join(', ')}${more}. ${tail}`;
 }
 
 /**

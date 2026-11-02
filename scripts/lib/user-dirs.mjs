@@ -73,10 +73,10 @@ export function scrubUserDirEnv(env = process.env) {
  * @param {Record<string, string | undefined>} env
  * @param {string} [who] 报错时说是谁
  */
-export function assertNoUserExportDir(env, who = '子进程') {
+export function assertNoUserExportDir(env, who = 'child process') {
   for (const key of USER_DIR_ENV_KEYS) {
     if (isUnderUserExportDir(env[key])) {
-      throw new Error(`${who} 的 ${key}=${env[key]} 指向用户的 ${userExportDir()}，测试与探针不得写那里`);
+      throw new Error(`${who}'s ${key}=${env[key]} points to the user's ${userExportDir()}, tests and probes must not write there`);
     }
   }
 }

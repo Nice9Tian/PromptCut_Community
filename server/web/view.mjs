@@ -204,9 +204,9 @@ export async function captureView(page, { maxItems = MAX_ITEMS, quality = 70 } =
     image: { width: img.width, height: img.height },
     clickable: items,
     ...(total > items.length
-      ? { omitted: total - items.length, note: `视口内还有 ${total - items.length} 个可交互元素没列出(按面积留了最大的 ${items.length} 个)。滚动后重新 web_view,或者告诉我你要找什么。` }
+      ? { omitted: total - items.length, note: `${total - items.length} more interactive elements in the viewport are not listed (the largest ${items.length} by area were kept). Scroll and run web_view again, or tell me what you are looking for.` }
       : {}),
-    hint: `图是 ${img.width}x${img.height};clickable 里的 b 是元素在这张图上的像素包围盒 [x1,y1,x2,y2]。编号只对本次截图有效,滚动或跳转后必须重新 web_view。`,
+    hint: `The image is ${img.width}x${img.height}; b in clickable is the element's pixel bounding box on this image [x1,y1,x2,y2]. The numbers are valid only for this screenshot; after scrolling or navigating you must run web_view again.`,
     __image: { base64, mime: 'image/webp' },
   };
 }

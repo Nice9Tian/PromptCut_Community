@@ -54,11 +54,11 @@ const PRUNED: Readonly<Record<string, readonly string[]>> = Object.freeze({
 
 function stubFor(rel: string, names: readonly string[]): string {
   const lines = [
-    `/* 在线构建剪枝后的空桩（server/vite-plugin-online-prune.ts）。真实现：${rel} */`,
+    `/* Empty stub after online build pruning (server/vite-plugin-online-prune.ts). Real implementation: ${rel} */`,
     // 真渲染到就是出错了：那说明有人让这个分支在在线构建里变可达了，上面那张表的前提就不成立了
     `function pruned(name) {`,
     `  if (typeof console !== "undefined") {`,
-    `    console.error("[promptcut] 在线构建里渲染了桌面专用组件 " + name + "（${rel}），它本该不可达");`,
+    `    console.error("[promptcut] desktop-only component " + name + " (${rel}) was rendered in the online build, it should be unreachable");`,
     `  }`,
     `  return null;`,
     `}`,

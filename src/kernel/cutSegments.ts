@@ -52,7 +52,7 @@ export function isCutSegment(c: { cutId?: unknown } | null | undefined): boolean
  * 剪辑段放好以后引用哪条剪辑不能改(2026-10-21 用户定,`workflow/editing.md`「剪辑段的属性」、`product/project-model.md`「片段」)。
  * 属性面板没有换引用的入口;Agent 的 set_cut_segment 带了 cutId / name、store 动作带了 cutId 都回这句。
  */
-export const CUT_SEGMENT_REF_FIXED = "剪辑段引用的剪辑不能改，要换就删掉这段，用 add_cut_segment 放一段新的";
+export const CUT_SEGMENT_REF_FIXED = "The cut referenced by a cut segment cannot be changed; to replace it, delete this segment and place a new one with add_cut_segment";
 
 /** 当前激活的剪辑 id(没有 cuts 的老项目返回 undefined) */
 export function activeCutIdOf(p: Pick<Project, "cuts" | "activeCutId">): string | undefined {
@@ -137,14 +137,14 @@ export function reachableCuts(p: Project, from: string, edges: Map<string, strin
  */
 export function cutCycleReason(p: Project, hostCutId: string, childCutId: string): string | null {
   const name = (id: string) => (Array.isArray(p.cuts) ? p.cuts.find((c) => c.id === id)?.name : undefined) ?? id;
-  if (hostCutId === childCutId) return `不能把剪辑「${name(childCutId)}」放进它自己`;
+  if (hostCutId === childCutId) return `Cannot place cut "${name(childCutId)}" inside itself`;
   const edges = cutEdges(p);
   const reach = reachableCuts(p, childCutId, edges);
   if (reach.has(hostCutId)) {
     const direct = (edges.get(childCutId) ?? []).includes(hostCutId);
     return direct
-      ? `剪辑「${name(childCutId)}」已经引用了「${name(hostCutId)}」,再放进来会循环引用`
-      : `剪辑「${name(childCutId)}」间接引用了「${name(hostCutId)}」,再放进来会循环引用`;
+      ? `Cut "${name(childCutId)}" already references "${name(hostCutId)}"; placing it here would create a circular reference`
+      : `Cut "${name(childCutId)}" indirectly references "${name(hostCutId)}"; placing it here would create a circular reference`;
   }
   return null;
 }

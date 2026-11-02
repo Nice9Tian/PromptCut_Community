@@ -205,7 +205,7 @@ export async function getBrowser({ dataDir, puppeteer, executablePath } = {}) {
       const inst = await connectShell(pptr, shellPort, process.env.PROMPTCUT_AGENT_URL || 'about:blank#promptcut-agent');
       if (inst) { instance = inst; return inst; }
       // 连不上就照常起 Chrome:壳没把 webview 建起来时至少还有旧路可走
-      process.stderr.write(`[web] 连不上壳里的 agent webview(端口 ${shellPort}),退回 Chrome\n`);
+      process.stderr.write(`[web] cannot connect to the agent webview in the shell (port ${shellPort}), falling back to Chrome\n`);
     }
 
     const userDataDir = dataDir ? path.join(dataDir, 'web-profile') : undefined;
@@ -240,8 +240,8 @@ export async function getBrowser({ dataDir, puppeteer, executablePath } = {}) {
     const launch = (opts) => pptr.launch(opts).catch((e) => {
       if (/already running for/i.test(String(e.message))) {
         throw new Error(
-          '浏览器已经被另一个 PromptCut 实例占着了(它们共用同一份登录态,不能同时开)。'
-          + '关掉另一个窗口,或者在那边先调 web_close 再试。',
+          'The browser is already in use by another PromptCut instance (they share the same login state and cannot be open at the same time).'
+          + 'Close the other window, or call web_close there first and try again.',
         );
       }
       throw e;

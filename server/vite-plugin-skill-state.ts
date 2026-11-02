@@ -2,6 +2,7 @@ import type { Plugin, ViteDevServer } from "vite";
 import type { ServerResponse, IncomingMessage } from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { tr } from "./i18n.mjs";
 
 /**
  * SKILL 模式的开关接口,外加 .proc 的独占锁。
@@ -33,11 +34,11 @@ function readBody(req: IncomingMessage): Promise<string> {
       body += c;
       if (body.length > 1024 * 1024) {
         req.destroy();
-        reject(new Error("请求太大"));
+        reject(new Error("Request too large"));
       }
     });
     req.on("end", () => resolve(body));
-    req.on("error", () => reject(new Error("读取请求体失败")));
+    req.on("error", () => reject(new Error(tr("Failed to read request body"))));
   });
 }
 
@@ -102,10 +103,10 @@ export function acquireLock(procPath: string, retriesLeft = 3): { ok: boolean; e
       fs.closeSync(fs.openSync(file, "r+"));
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === "EBUSY") {
-        return { ok: false, by: "kernel", error: "这个项目文件正被另一个 PromptCut 打开" };
+        return { ok: false, by: "kernel", error: tr("This project file is already open in another PromptCut") };
       }
       // 别的错(权限之类)当作拿不到锁,但说清楚原因
-      return { ok: false, error: `锁文件读不了:${(e as Error).message}` };
+      return { ok: false, error: tr("Cannot read lock file: {0}", (e as Error).message) };
     }
 
     // 没人握句柄,退到 pid 那条弱判据。
@@ -122,7 +123,7 @@ export function acquireLock(procPath: string, retriesLeft = 3): { ok: boolean; e
 
     if (cur && cur.pid === process.pid) return { ok: true };
     if (cur && pidAlive(cur.pid)) {
-      return { ok: false, by: "pid", error: `这个项目文件正被另一个 PromptCut 打开(进程 ${cur.pid},自 ${cur.at})` };
+      return { ok: false, by: "pid", error: tr("This project file is already open in another PromptCut (process {0}, since {1})", cur.pid, cur.at) };
     }
 
     /*
@@ -151,7 +152,7 @@ export function acquireLock(procPath: string, retriesLeft = 3): { ok: boolean; e
      * 所以下面对 claim 也判一次活,死的就清掉,不让一个残留文件把项目永久锁死。
      */
     if (retriesLeft <= 0) {
-      return { ok: false, error: "锁文件反复被别人抢走,请稍后再试" };
+      return { ok: false, error: tr("The lock file was repeatedly taken by others, please try again later") };
     }
 
     const claim = file + ".claim";
@@ -180,7 +181,7 @@ export function acquireLock(procPath: string, retriesLeft = 3): { ok: boolean; e
       } catch (e) {
         // 删不掉多半是这一瞬间被别人(外壳的内核句柄)握住了 —— 那就是活锁,不是死锁
         if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
-          return { ok: false, by: "kernel", error: "这个项目文件正被另一个 PromptCut 打开" };
+          return { ok: false, by: "kernel", error: tr("This project file is already open in another PromptCut") };
         }
       }
       const again = acquireLock(procPath, retriesLeft - 1);
@@ -244,7 +245,7 @@ export function skillStatePlugin(): Plugin {
             const base64 = typeof body.base64 === "string" ? body.base64 : "";
             const png = Buffer.from(base64, "base64");
             if (png.length < 8 || png.subarray(0, 8).toString("binary") !== "\x89PNG\r\n\x1a\n") {
-              return sendJson(res, 400, { ok: false, error: "base64 不是一张 png" });
+              return sendJson(res, 400, { ok: false, error: "base64 is not a png" });
             }
             const root = gate.skillRoot();
             fs.mkdirSync(root, { recursive: true });
@@ -270,7 +271,7 @@ export function skillStatePlugin(): Plugin {
             console.log(`[skill-mode] close by=${body.by || "user"} at=${state.closedAt}`);
             return sendJson(res, 200, { ok: true, state });
           }
-          return sendJson(res, 404, { ok: false, error: "没有这个接口" });
+          return sendJson(res, 404, { ok: false, error: "API not available" });
         } catch (e) {
           return sendJson(res, 400, { ok: false, error: (e as Error).message });
         }
@@ -291,9 +292,9 @@ export function skillStatePlugin(): Plugin {
           if (!raw && body.draftId) {
             const { draftFileFor } = await import(new URL("./vite-plugin-projects.ts", import.meta.url).href);
             raw = draftFileFor(server.config.root || process.cwd(), String(body.draftId));
-            if (!raw) return sendJson(res, 400, { ok: false, error: "草稿 id 不合法" });
+            if (!raw) return sendJson(res, 400, { ok: false, error: "Invalid draft id" });
           }
-          if (!raw) return sendJson(res, 400, { ok: false, error: "path 或 draftId 必填" });
+          if (!raw) return sendJson(res, 400, { ok: false, error: "path or draftId is required" });
           const target = path.resolve(String(raw));
           if (action === "acquire") {
             const out = acquireLock(target);
@@ -306,7 +307,7 @@ export function skillStatePlugin(): Plugin {
             held.delete(target);
             return sendJson(res, 200, { ok: true });
           }
-          return sendJson(res, 404, { ok: false, error: "没有这个接口" });
+          return sendJson(res, 404, { ok: false, error: "API not available" });
         } catch (e) {
           return sendJson(res, 400, { ok: false, error: (e as Error).message });
         }

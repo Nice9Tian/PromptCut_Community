@@ -620,14 +620,14 @@ export function createPageControlTools({ bridge, onPlayhead = null, now = Date.n
     let send;
     try { send = checkedPageArgs(wire, args, bridge.limits); } catch (error) {
       if (error?.code !== 'bad-args') throw error;
-      return { ok: false, error: wire === 'seek' ? `${name} 要给 t(秒,不小于 0 的数)。` : `${name} 不接受参数。` };
+      return { ok: false, error: wire === 'seek' ? `${name} needs t (seconds, a number not less than 0).` : `${name} does not accept parameters.` };
     }
     const who = await bridge.initiator(context);
     const out = await bridge.requestPage({ run: context, initiatorAccountId: who.initiatorAccountId, pageId: who.pageId, tool: wire, args: send,
       requestId: options.requestId ?? newRequestId(), deadline: Number(now()) + bridge.limits.pageMs, ...(options.signal ? { signal: options.signal } : {}) });
     if (!out.delivered) return initiatorOffline(name);
     const answer = out.answer;
-    if (answer.ok !== true) return { ok: false, error: String(answer.error || `${name} 在发起人的页面上没有做成`) };
+    if (answer.ok !== true) return { ok: false, error: String(answer.error || `${name} did not succeed on the initiator's page`) };
     if (wire === 'seek' && typeof onPlayhead === 'function') { try { await onPlayhead(context, send.t); } catch { /* 宿主的事 */ } }
     return answer.result && typeof answer.result === 'object' && !Array.isArray(answer.result) ? answer.result : { ok: true };
   }

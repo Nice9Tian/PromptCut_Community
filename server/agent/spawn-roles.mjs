@@ -9,7 +9,7 @@ export const SPAWN_ROLE_IDS = Object.freeze(['director', 'fx-assistant', 'collec
 
 /** 工具表里给模型看的一句话说明 */
 export const SPAWN_ROLE_HINTS = Object.freeze({
-  director: '剪辑导演:看齐素材,排顺序放上时间轴,编排剧本',
-  'fx-assistant': '特效助理:给视频配字幕,按内容配动效卡',
-  collector: '素材收集员:把网页链接里的视频抓进素材库',
+  director: 'Cut director: lines up the media, orders it onto the timeline, and arranges the script',
+  'fx-assistant': 'Effects assistant: adds captions to the video and adds motion graphics cards based on the content',
+  collector: 'Media collector: grabs videos from web links into the media library',
 });

@@ -117,7 +117,7 @@ function partsOf(card: CardDef<any> | undefined, params: Record<string, unknown>
     };
   };
   if (card?.parts?.length) return card.parts.map(fill);
-  return [{ id: "root", label: card?.name ?? "卡片", role: "group", params: { ...params } }];
+  return [{ id: "root", label: card?.name ?? "Cards", role: "group", params: { ...params } }];
 }
 
 /** 组合卡:部件实例树 → 封装里的 parts,带每个实例的画面位置和时序 */
@@ -262,7 +262,7 @@ export function rejectAudioVolumeKeys(obj: unknown, where: string): void {
   if (!isObj(obj)) return;
   const hit = AUDIO_VOLUME_KEYS.filter((k) => obj[k] !== undefined);
   if (hit.length) {
-    throw new Error(`${where} 里没有声音音量(收到 ${hit.join(" / ")})。调音量用 set_clip_volume({ clipId, volume: 0~1 }),0 无声、1 原声;opacity 是画面不透明度`);
+    throw new Error(`${where} has no audio volume (received ${hit.join(" / ")}). To adjust volume use set_clip_volume({ clipId, volume: 0~1 }), 0 is silent, 1 is original sound; opacity is the picture opacity`);
   }
 }
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
@@ -291,25 +291,25 @@ export function assertNo3dOnMedia(clip: TrackClip, frame: ClipFrame | undefined)
   const used = (["rotateX", "rotateY", "translateZ"] as const).filter((k) => frame[k] !== undefined && frame[k] !== 0);
   if (!used.length) return;
   throw new Error(
-    `${used.join(" / ")} 只对卡片生效,这个 clip 是素材段(视频 / 图片)。` +
-    `默认 Chrome 预览、导出、see_frames 虽然共用同一条管线,显式 --media=ffmpeg 的兼容旁路仍不支持素材三维。` +
-    `要让素材立体,把它放进一张卡里再摆,或者先导出成图片素材。位置 / 大小 / 平面旋转对素材是正常支持的。`,
+    `${used.join(" / ")} only works on cards; this clip is a media clip (video / image).` +
+    `The default Chrome preview, export and see_frames share the same pipeline, but the compatibility bypass with explicit --media=ffmpeg still does not support media 3D.` +
+    `To make media look 3D, put it inside a card and arrange it there, or export it as an image asset first. Position / size / flat rotation are fully supported for media.`,
   );
 }
 function validateFrame(raw: unknown): ClipFrame | undefined {
   if (raw === null || raw === undefined) return undefined;
-  if (!isObj(raw)) throw new Error("frame.local 要是对象或 null(null = 铺满舞台)");
-  for (const k of Object.keys(raw)) if (!FRAME_KEYS.has(k)) throw new Error(`frame.local 不认识 "${k}",只有 x / y / w / h / anchor / scale / rotate / rotateX / rotateY / translateZ;world 是算出来的,不能写`);
-  if (!isNum(raw.x) || !isNum(raw.y)) throw new Error("frame.local 的 x、y 必须是数字(锚点在舞台上的位置)");
+  if (!isObj(raw)) throw new Error("frame.local must be an object or null (null = fill the stage)");
+  for (const k of Object.keys(raw)) if (!FRAME_KEYS.has(k)) throw new Error(`frame.local does not recognize "${k}", only x / y / w / h / anchor / scale / rotate / rotateX / rotateY / translateZ are allowed; world is computed and cannot be written`);
+  if (!isNum(raw.x) || !isNum(raw.y)) throw new Error("x and y of frame.local must be numbers (the anchor position on the stage)");
   for (const k of ["w", "h", "scale", "rotate", "rotateX", "rotateY", "translateZ"] as const) {
-    if (raw[k] !== undefined && !isNum(raw[k])) throw new Error(`frame.local.${k} 要是数字`);
+    if (raw[k] !== undefined && !isNum(raw[k])) throw new Error(`frame.local.${k} must be a number`);
   }
-  if (raw.w !== undefined && (raw.w as number) <= 0) throw new Error("frame.local.w 要大于 0");
-  if (raw.h !== undefined && (raw.h as number) <= 0) throw new Error("frame.local.h 要大于 0");
-  if (raw.scale !== undefined && (raw.scale as number) <= 0) throw new Error("frame.local.scale 要大于 0");
+  if (raw.w !== undefined && (raw.w as number) <= 0) throw new Error("frame.local.w must be greater than 0");
+  if (raw.h !== undefined && (raw.h as number) <= 0) throw new Error("frame.local.h must be greater than 0");
+  if (raw.scale !== undefined && (raw.scale as number) <= 0) throw new Error("frame.local.scale must be greater than 0");
   if (raw.anchor !== undefined) {
     const a = raw.anchor;
-    if (!Array.isArray(a) || a.length !== 2 || !isNum(a[0]) || !isNum(a[1])) throw new Error("frame.local.anchor 要是 [ax, ay] 两个数字,0~1");
+    if (!Array.isArray(a) || a.length !== 2 || !isNum(a[0]) || !isNum(a[1])) throw new Error("frame.local.anchor must be [ax, ay], two numbers in 0~1");
   }
   return raw as unknown as ClipFrame;
 }
@@ -331,9 +331,9 @@ export function applyEnvelope(
   findCardById: (id: string) => CardDef<any> | undefined,
   partLookup: PartLookup = getPart,
 ): ApplyReport {
-  if (!isObj(input)) throw new Error("封装要是一个对象 { ... }");
+  if (!isObj(input)) throw new Error("The envelope must be an object { ... }");
   const hit = findClip(project, clipId);
-  if (!hit) throw new Error(`找不到 clip ${clipId}`);
+  if (!hit) throw new Error(`clip ${clipId} not found`);
   const current = envelopeOf(project, hit.clip, card, stage, partLookup);
   const composite = isComposite(hit.clip);
   const env = input as Partial<ClipEnvelope> & Record<string, unknown>;
@@ -342,18 +342,18 @@ export function applyEnvelope(
   // ── 1. 校验(全部做完再写)──
   let nextCardId: string | undefined;
   if (isObj(env.card) && env.card.id !== undefined) {
-    if (typeof env.card.id !== "string" || !findCardById(env.card.id)) throw new Error(`没有这张卡: ${String(env.card.id)}`);
+    if (typeof env.card.id !== "string" || !findCardById(env.card.id)) throw new Error(`No such card: ${String(env.card.id)}`);
     if (env.card.id !== current.card.id) nextCardId = env.card.id;
   }
 
   let nextParams: Record<string, unknown> | undefined;
-  if (env.params !== undefined && !isObj(env.params)) throw new Error("params 要是一个对象");
+  if (env.params !== undefined && !isObj(env.params)) throw new Error("params must be an object");
   const fromParams = isObj(env.params) ? env.params : undefined;
   const fromParts: Record<string, unknown> = {};
   // 组合卡:parts 是可写的实例树,整棵校验、整棵替换;普通卡:parts 里的值只是 params 的另一种视图
   let nextTree: PartInstance[] | undefined;
   if (env.parts !== undefined) {
-    if (!Array.isArray(env.parts)) throw new Error("parts 要是数组");
+    if (!Array.isArray(env.parts)) throw new Error("parts must be an array");
     if (composite) {
       const tree = validatePartTree(instancesFromEnvelope(env.parts, partLookup), partLookup);
       // 现有的树也过一遍同样的归一化(键序、默认值),不然键序不同就会被判成改了
@@ -379,16 +379,16 @@ export function applyEnvelope(
 
   let nextTime: { start?: number; end?: number } | undefined;
   if (env.time !== undefined) {
-    if (!isObj(env.time)) throw new Error("time 要是对象 { start, end }");
+    if (!isObj(env.time)) throw new Error("time must be an object { start, end }");
     const s = env.time.start !== undefined ? env.time.start : current.time.start;
     const e = env.time.end !== undefined ? env.time.end : current.time.end;
-    if (!isNum(s) || !isNum(e) || e <= s) throw new Error("time.start / time.end 要是数字且 end > start(duration 是算出来的,改 end 就行)");
+    if (!isNum(s) || !isNum(e) || e <= s) throw new Error("time.start / time.end must be numbers with end > start (duration is computed, just change end)");
     if (s !== current.time.start || e !== current.time.end) nextTime = { start: s, end: e };
   }
 
   let nextFrame: { set: boolean; frame: ClipFrame | undefined } | undefined;
   if (env.frame !== undefined) {
-    if (!isObj(env.frame)) throw new Error("frame 要是对象 { local, world };只有 local 能写");
+    if (!isObj(env.frame)) throw new Error("frame must be an object { local, world }; only local is writable");
     if ("local" in env.frame) {
       const f = validateFrame(env.frame.local);
       assertNo3dOnMedia(hit.clip, f);
@@ -398,15 +398,15 @@ export function applyEnvelope(
 
   let nextBlend: { opacity?: number; fadeIn?: number; fadeOut?: number } | undefined;
   if (env.blend !== undefined) {
-    if (!isObj(env.blend)) throw new Error("blend 要是对象 { opacity, fadeIn, fadeOut }");
-    rejectAudioVolumeKeys(env.blend, "set_clip 的 blend");
+    if (!isObj(env.blend)) throw new Error("blend must be an object { opacity, fadeIn, fadeOut }");
+    rejectAudioVolumeKeys(env.blend, "blend of set_clip");
     const patch: { opacity?: number; fadeIn?: number; fadeOut?: number } = {};
     for (const k of ["opacity", "fadeIn", "fadeOut"] as const) {
       const v = env.blend[k];
       if (v === undefined) continue;
-      if (!isNum(v)) throw new Error(`blend.${k} 要是数字`);
-      if (k === "opacity" && (v < 0 || v > 1)) throw new Error(`blend.opacity 是 0~1,收到 ${v}`);
-      if (k !== "opacity" && v < 0) throw new Error(`blend.${k} 是秒数,不能为负`);
+      if (!isNum(v)) throw new Error(`blend.${k} must be a number`);
+      if (k === "opacity" && (v < 0 || v > 1)) throw new Error(`blend.opacity is 0~1, got ${v}`);
+      if (k !== "opacity" && v < 0) throw new Error(`blend.${k} is in seconds and cannot be negative`);
       if (v !== current.blend[k]) patch[k] = v;
     }
     if (Object.keys(patch).length) nextBlend = patch;
@@ -422,7 +422,7 @@ export function applyEnvelope(
     changed.push("params");
   }
   if (nextTree) {
-    if (!writer.setClipParts) throw new Error("这里不支持改组合卡的部件树");
+    if (!writer.setClipParts) throw new Error("Editing the part tree of a composite card is not supported here");
     writer.setClipParts(clipId, nextTree);
     changed.push("parts");
   }
@@ -444,9 +444,9 @@ export function applyEnvelope(
 /** 代码页 / 工具里给人看的一行说明 */
 export function describeLifecycle(env: ClipEnvelope): string {
   const lc = env.card.lifecycle;
-  const settle = lc.settleMs !== undefined ? `进场约 ${(lc.settleMs / 1000).toFixed(1)}s 落定` : "进场时长不定";
-  const after = lc.after === "hold" ? "之后停住" : lc.after === "loop" ? "之后循环" : "之后持续变化";
+  const settle = lc.settleMs !== undefined ? `entrance settles in about ${(lc.settleMs / 1000).toFixed(1)}s` : "entrance duration varies";
+  const after = lc.after === "hold" ? "then holds" : lc.after === "loop" ? "then loops" : "then keeps changing";
   const idle = lc.settleMs !== undefined && lc.after === "hold" ? Math.max(0, env.time.duration - lc.settleMs / 1000) : null;
-  const idleNote = idle !== null && idle > 0.5 ? `;这段 clip 有 ${idle.toFixed(1)}s 是静止的` : "";
-  return `${settle},${after},退场:${lc.exit.join("/") || "无"}${idleNote}`;
+  const idleNote = idle !== null && idle > 0.5 ? `; this clip is static for ${idle.toFixed(1)}s` : "";
+  return `${settle}, ${after}, exit: ${lc.exit.join("/") || "none"}${idleNote}`;
 }

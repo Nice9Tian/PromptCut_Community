@@ -70,12 +70,12 @@ function unlinkJunctions() {
     const link = path.join(app, folder);
     const st = lstatSync(link, { throwIfNoEntry: false });
     if (!st) continue;
-    if (!st.isSymbolicLink()) { fail(`${link} 不是链接,没动它`); continue; }
-    try { unlinkSync(link); } catch (e) { fail(`拆不掉 ${link}(${e.code || e}):删 ${out} 之前先在 PowerShell 里 [System.IO.Directory]::Delete('${link}')`); continue; }
-    if (lstatSync(link, { throwIfNoEntry: false })) fail(`${link} 拆过了还在`);
+    if (!st.isSymbolicLink()) { fail(`${link} is not a link, left untouched`); continue; }
+    try { unlinkSync(link); } catch (e) { fail(`Cannot remove ${link} (${e.code || e}): before deleting ${out}, run [System.IO.Directory]::Delete('${link}') in PowerShell`); continue; }
+    if (lstatSync(link, { throwIfNoEntry: false })) fail(`${link} is still there after removal`);
     else removed.push(folder);
   }
-  for (const target of targets) if (!existsSync(target)) fail(`拆完之后仓库里的 ${target} 不见了`);
+  for (const target of targets) if (!existsSync(target)) fail(`${target} in the repository is gone after removal`);
   if (removed.length) console.log('UNLINKED', removed.join(','));
 }
 

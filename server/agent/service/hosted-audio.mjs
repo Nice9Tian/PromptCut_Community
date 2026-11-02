@@ -78,13 +78,13 @@ export function createAudioTools({ workspace, host, read, fetchAsset, slot, tool
 
   async function measureAudio(args) {
     const bins = tools();
-    if (!bins) throw new ToolError('这台云节点没有装 ffmpeg / ffprobe,云端 Agent 测不了响度。请告诉用户联系托管方,或在电脑上的 PromptCut 里测。', { code: 'no-ffmpeg' });
+    if (!bins) throw new ToolError('This cloud node has no ffmpeg / ffprobe installed, so the Cloud Agent cannot measure loudness. Tell the user to contact the host, or measure in PromptCut on their computer.', { code: 'no-ffmpeg' });
     const h = await host();
     let req = null;
     await read((hh) => { req = hh.audio.measureRequest(args ?? {}); return { ok: true }; });
     if (!req.body) return req.empty;
     const entries = req.scope === 'timeline' ? req.body.entries : [{ media: req.body.media }];
-    if (entries.length > limits.maxEntries) throw new ToolError(`时间轴上出声的片段超过 ${limits.maxEntries} 段,云端一次量不了这么多;请按片段(clipId)分开量。`);
+    if (entries.length > limits.maxEntries) throw new ToolError(`More than ${limits.maxEntries} clips on the timeline produce sound; the cloud cannot measure that many at once. Measure them separately by clip (clipId).`);
 
     const ws = workspace();
     const release = await slot.acquire();
@@ -105,7 +105,7 @@ export function createAudioTools({ workspace, host, read, fetchAsset, slot, tool
         try {
           res = await fetchAsset(hash, (chunk) => {
             size += chunk.length;
-            if (size > budget) throw new ToolError('要测的素材太大了,云端一次量不了;请只量其中一段(clipId)。', { code: 'too-large' });
+            if (size > budget) throw new ToolError('The media to measure is too large for the cloud to measure at once; measure just one clip of it (clipId).', { code: 'too-large' });
             digest.update(chunk);
             writer.write(chunk);
           }, { maxBytes: budget, timeoutMs: limits.fetchMs });
@@ -116,10 +116,10 @@ export function createAudioTools({ workspace, host, read, fetchAsset, slot, tool
         if (res.status === 404) { writer.abort(); fetched.set(hash, null); return null; }
         if (res.status < 200 || res.status >= 300) {
           writer.abort();
-          throw new ToolError(`素材服务拒绝了读取(HTTP ${res.status})。`, { code: res.status === 401 || res.status === 403 ? 'forbidden' : 'asset-error' });
+          throw new ToolError(`The asset service refused the read (HTTP ${res.status}).`, { code: res.status === 401 || res.status === 403 ? 'forbidden' : 'asset-error' });
         }
         writer.end();
-        if (digest.digest('hex') !== hash) { ws.remove(rel); throw new ToolError('取回的素材与它的内容哈希不符,没有量。'); }
+        if (digest.digest('hex') !== hash) { ws.remove(rel); throw new ToolError('The fetched asset does not match its content hash; not measured.'); }
         budget -= size;
         const abs = ws.resolve(rel);
         fetched.set(hash, abs);
@@ -140,7 +140,7 @@ export function createAudioTools({ workspace, host, read, fetchAsset, slot, tool
       if (out.status !== 200 || out.body?.ok === false) {
         // 报错里不带工作目录的磁盘路径
         const root = ws.dir();
-        throw new ToolError(String(out.body?.error ?? `测响度失败(${out.status})`).split(root).join('<工作目录>').slice(0, 400));
+        throw new ToolError(String(out.body?.error ?? `Loudness measurement failed (${out.status})`).split(root).join('<working directory>').slice(0, 400));
       }
       return h.audio.measureFinish(req, out.body);
     } finally {

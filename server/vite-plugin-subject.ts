@@ -26,6 +26,7 @@ import { pythonInput, resolveMediaSource } from "./perception-source.mjs";
 // 采样上限和前端共用同一个常数 —— 以前服务端写 200、kernel 那边没有上限,
 // 于是「不传 times 就自动算」这条默认路径在长素材上必然撞这个 400。
 import { MAX_SUBJECT_TIMES } from "../src/kernel/project";
+import { tr } from "./i18n.mjs";
 
 export type SafeSide = "left" | "right" | "top" | "bottom";
 
@@ -105,7 +106,7 @@ async function readStatus(root: string): Promise<
   { ok: true; info: Record<string, unknown> } | { ok: false; reason: string }
 > {
   const python = findPython(root);
-  if (!python) return { ok: false, reason: "没有可用的 Python" };
+  if (!python) return { ok: false, reason: "No usable Python" };
   const env = await buildEnv(root, python);
   return new Promise((resolve) => {
     const child = spawnPython(python, ["-m", "promptcut_subject", "status"], env);
@@ -113,19 +114,19 @@ async function readStatus(root: string): Promise<
     let err = "";
     child.stdout?.on("data", (d: Buffer) => { out += d.toString(); });
     child.stderr?.on("data", (d: Buffer) => { err += d.toString(); });
-    child.on("error", (e) => resolve({ ok: false, reason: `解释器启动失败：${e.message}` }));
+    child.on("error", (e) => resolve({ ok: false, reason: `Interpreter failed to start: ${e.message}` }));
     child.on("close", () => {
       const line = out.split(/\r?\n/).find((l) => l.includes('"event"'));
       if (!line) {
         // stderr 的最后一行通常就是 traceback 的那句 —— 只回一句「没返回状态」
         // 等于让用户对着空白排查。
         const tail = err.split(/\r?\n/).filter((l) => l.trim()).slice(-2).join(" ");
-        return resolve({ ok: false, reason: tail || "解释器没有返回可解析的状态" });
+        return resolve({ ok: false, reason: tail || "The interpreter returned no parseable status" });
       }
       try {
         resolve({ ok: true, info: JSON.parse(line) });
       } catch {
-        resolve({ ok: false, reason: "状态不是合法 JSON" });
+        resolve({ ok: false, reason: "Status is not valid JSON" });
       }
     });
   });
@@ -149,7 +150,7 @@ async function runDetection(
   const python = findPython(root);
   if (!python) {
     job.status = "error";
-    job.message = "没有可用的 Python，装不了也跑不了主体检测";
+    job.message = tr("No usable Python, so subject detection can be neither installed nor run");
     return;
   }
   const env = await buildEnv(root, python);
@@ -198,8 +199,8 @@ async function runDetectionOn(
     job.timer = setTimeout(() => {
       job.killed = true;
       job.status = "error";
-      job.message = `主体检测超时(超过 ${Math.round(limitMs / 1000)} 秒),已强制结束。`
-        + "可以减少 times 的个数,或先用 subject_status 确认档位(full 档很慢)。";
+      job.message = tr("Subject detection timed out (over {0} seconds) and was force-stopped.", Math.round(limitMs / 1000))
+        + tr("Reduce the number of times, or first confirm the tier with subject_status (the full tier is very slow).");
       killTree(child.pid);
     }, limitMs);
     let buf = "";
@@ -261,7 +262,7 @@ async function runDetectionOn(
       if (job.status !== "error" && !job.samples) {
         job.status = "error";
         job.message = stderrTail.join("\n").trim()
-          || (code === 0 ? "主体检测没有返回结果" : `主体检测进程异常退出（代码 ${code}）`);
+          || (code === 0 ? tr("Subject detection returned no result") : tr("Subject detection process exited abnormally (code {0})", code));
       }
       resolve();
     });
@@ -334,7 +335,7 @@ export function subjectPlugin(): Plugin {
         // full 档是 torch + transformers + 690 MB 权重，不走在线装，只随拓展库包发。
         if (req.method === "POST" && url === "/api/subject/install") {
           const python = findPython(root);
-          if (!python) return sendJson(res, 400, { ok: false, error: "没有可用的 Python" });
+          if (!python) return sendJson(res, 400, { ok: false, error: tr("No usable Python") });
           const env = await buildEnv(root, python);
           // 不能带 -I：-I 隐含 -E,会**完全忽略 PYTHONPATH**,而 buildEnv 对非
           // embeddable 解释器(python/.venv、或 PROMPTCUT_PYTHON 指向 conda 环境)
@@ -352,19 +353,19 @@ export function subjectPlugin(): Plugin {
             const body = JSON.parse((await readBody(req)).toString("utf-8") || "{}");
             const raw: unknown = body.times;
             if (!Array.isArray(raw) || raw.length === 0) {
-              return sendJson(res, 400, { ok: false, error: "times 至少要有一个时刻(秒),写成 [1.2, 5.4]" });
+              return sendJson(res, 400, { ok: false, error: "times needs at least one timestamp (in seconds), written as [1.2, 5.4]" });
             }
             const times = raw
               .map(Number)
               .filter((t) => Number.isFinite(t) && t >= 0)
               .sort((a, b) => a - b);
             if (times.length === 0) {
-              return sendJson(res, 400, { ok: false, error: "times 里没有一个合法的秒数" });
+              return sendJson(res, 400, { ok: false, error: "None of the values in times is a valid number of seconds" });
             }
             if (times.length > MAX_TIMES) {
               return sendJson(res, 400, {
                 ok: false,
-                error: `一次最多 ${MAX_TIMES} 个采样时刻(收到 ${times.length} 个)，请分批`,
+                error: `At most ${MAX_TIMES} sample times per request (received ${times.length}), please split into batches`,
               });
             }
             const source = await resolveMediaSource(body, resolveSource);
@@ -399,13 +400,13 @@ export function subjectPlugin(): Plugin {
         const cancelMatch = req.method === "POST" && url.match(/^\/api\/subject\/job\/([\w-]+)\/cancel$/);
         if (cancelMatch) {
           const job = jobs.get(cancelMatch[1]);
-          if (!job) return sendJson(res, 404, { ok: false, error: "作业不存在,可能服务已重启" });
+          if (!job) return sendJson(res, 404, { ok: false, error: tr("Job not found, the service may have restarted") });
           if (job.status !== "running") {
-            return sendJson(res, 200, { ok: true, cancelled: false, status: job.status, message: "作业已经结束了" });
+            return sendJson(res, 200, { ok: true, cancelled: false, status: job.status, message: "The job has already finished" });
           }
           job.killed = true;
           job.status = "error";
-          job.message = "主体检测已被取消";
+          job.message = tr("Subject detection was cancelled");
           if (job.timer) { clearTimeout(job.timer); job.timer = undefined; }
           killTree(job.pid);
           retireLater(job.id);
@@ -416,7 +417,7 @@ export function subjectPlugin(): Plugin {
         const jobMatch = req.method === "GET" && url.match(/^\/api\/subject\/job\/([\w-]+)$/);
         if (jobMatch) {
           const job = jobs.get(jobMatch[1]);
-          if (!job) return sendJson(res, 404, { ok: false, error: "作业不存在,可能服务已重启" });
+          if (!job) return sendJson(res, 404, { ok: false, error: tr("Job not found, the service may have restarted") });
           // timer 是 Node 的 Timeout 对象,JSON.stringify 出来是个空壳,pid 也不该
           // 透给前端 —— 只回契约里的那些字段。
           const { timer: _timer, pid: _pid, killed: _killed, ...safe } = job;

@@ -42,7 +42,7 @@ const ITERATIONS = 600_000;
 
 function scheme(kind) {
   const s = SCHEMES[kind];
-  if (!s) throw new Error(`未知的密钥类型: ${kind}`);
+  if (!s) throw new Error(`Unknown key type: ${kind}`);
   return s;
 }
 
@@ -83,7 +83,7 @@ export function sealKey(plain, kind = "custom") {
   const s = scheme(kind);
   if (!plain) return "";
   if (sealedKind(plain) === kind) return plain;
-  if (isSealed(plain)) throw new Error("另一路的密文不能直接改标签,先解开再封");
+  if (isSealed(plain)) throw new Error("Ciphertext from the other path cannot have its label changed directly, decrypt it first and then seal it again");
   const salt = randomBytes(SALT_BYTES);
   const iv = randomBytes(IV_BYTES);
   const cipher = createCipheriv("aes-256-gcm", deriveKey(s.label, salt, ITERATIONS), iv);

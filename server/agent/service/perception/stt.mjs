@@ -56,20 +56,20 @@ export const STT_DEFAULTS = Object.freeze({
 
 /** 给模型看的错误说明;作业记录里只存码(ToolJobs 的 errorCode),这里是码对应的人话 */
 export const STT_ERROR_TEXT = Object.freeze({
-  ENGINE_NOT_INSTALLED: '这台云节点上没有安装所选的语音识别引擎。先用 stt_status 看哪些引擎已装;能装的话用 stt_install。',
-  MODEL_NOT_INSTALLED: '这台云节点上没有所选模型的权重(云端不联网下载权重,由托管方预先放好)。先用 stt_status 看 availableModels,换一个已有的模型。',
-  FFMPEG_MISSING: '这台云节点没有装 ffmpeg,抽不了音轨,转写不了。请告诉用户联系托管方。',
-  NO_AUDIO: '这份素材里没有音轨(或是图片),没有可转写的声音。',
-  MEDIA_UNAVAILABLE: '素材取不到:它不在本项目里,或你此刻没有读它的权限。',
-  MEDIA_TOO_LARGE: '素材太大,云端放不下这个文件,没有转写。',
-  MEDIA_CHANGED: '转写期间这份素材在项目里被换掉或删掉了,结果没有写入项目。',
-  TIMEOUT: '转写超过了云端允许的时限,已经停掉。可以换更小的模型,或只转写更短的素材。',
-  TRANSCRIBE_FAILED: '转写失败。可以换一个模型再试;反复失败请告诉用户。',
-  TRANSCRIPT_TOO_LARGE: '转写出来的段数异常地多,没有写入项目。',
-  INSTALL_FAILED: '安装失败(依赖没装全)。请告诉用户联系托管方查看节点。',
-  FENCE_CANCELLED: '这一轮对话的权限被收回(设为私有、被停止或 Agent 被关闭),作业已取消。',
-  INTERRUPTED_ON_RESTART: 'Agent 服务重启时这个作业正在跑,已中断;可以重新发起。',
-  FORBIDDEN: '没有权限:此刻你不能改这个项目。',
+  ENGINE_NOT_INSTALLED: 'The selected speech-to-text engine is not installed on this cloud node. First use stt_status to see which engines are installed; if one can be installed, use stt_install.',
+  MODEL_NOT_INSTALLED: 'This cloud node does not have the weights of the selected model (the cloud does not download weights over the network; the host places them in advance). First use stt_status to see availableModels and switch to a model that is available.',
+  FFMPEG_MISSING: 'This cloud node does not have ffmpeg installed, so it cannot extract the audio track and cannot transcribe. Tell the user to contact the host.',
+  NO_AUDIO: 'This media has no audio track (or is an image), so there is no sound to transcribe.',
+  MEDIA_UNAVAILABLE: 'The media cannot be fetched: it is not in this project, or you do not have permission to read it right now.',
+  MEDIA_TOO_LARGE: 'The media is too large for the cloud to hold this file, so it was not transcribed.',
+  MEDIA_CHANGED: 'This media was replaced or deleted in the project during transcription, so the result was not written to the project.',
+  TIMEOUT: 'Transcription exceeded the time limit allowed by the cloud and was stopped. You can switch to a smaller model, or transcribe only shorter media.',
+  TRANSCRIBE_FAILED: 'Transcription failed. You can try again with a different model; if it keeps failing, tell the user.',
+  TRANSCRIPT_TOO_LARGE: 'The transcription produced an abnormally large number of segments, so it was not written to the project.',
+  INSTALL_FAILED: 'Installation failed (dependencies were not fully installed). Tell the user to contact the host to check the node.',
+  FENCE_CANCELLED: 'Permission for this chat turn was revoked (set to private, stopped, or the Agent was turned off); the job was cancelled.',
+  INTERRUPTED_ON_RESTART: 'This job was running when the Agent service restarted and was interrupted; you can start it again.',
+  FORBIDDEN: 'No permission: you cannot modify this project right now.',
 });
 
 export class SttToolError extends Error {
@@ -128,7 +128,7 @@ export function createSttTools({ resources, assets, jobs, workspace, commitTrans
       typeof assets?.openRead !== 'function' ||
       !['start', 'update', 'get', 'checkpointRetained'].every((k) => typeof jobs?.[k] === 'function') ||
       typeof workspace !== 'function' || typeof commitTranscript !== 'function') {
-    throw new SttToolError('云端语音转写没有配置全(缺运行资源登记器、素材、作业表、工作区或项目写入口)。', { code: 'stt-unconfigured', status: 503 });
+    throw new SttToolError('Cloud speech-to-text is not fully configured (missing the run-resource registrar, media, job table, workspace, or project write entry).', { code: 'stt-unconfigured', status: 503 });
   }
   const cfg = { ...STT_DEFAULTS, ...limits };
   const allowedEngines = (cfg.engines ?? []).filter((e) => STT_ENGINES.includes(e));
@@ -145,7 +145,7 @@ export function createSttTools({ resources, assets, jobs, workspace, commitTrans
   let closePromise = null;
 
   const authorize = async (context, action) => {
-    if (closing) throw new SttToolError('云端语音转写正在关闭。', { code: 'stt-closed', status: 503 });
+    if (closing) throw new SttToolError('Cloud speech-to-text is shutting down.', { code: 'stt-closed', status: 503 });
     await resources.authorize(context, action);
   };
 
@@ -184,11 +184,11 @@ export function createSttTools({ resources, assets, jobs, workspace, commitTrans
    * 子进程先挂到运行资源登记器:撤销/停止/关闭时登记器杀它(我们把它的 kill 换成杀整棵树)。
    */
   async function runPython(context, cwd, sub, { timeoutMs, onEvent, extraEnv } = {}) {
-    if (!pythonReady()) throw new SttToolError('这台云节点没有配置语音识别用的 Python。', { code: 'python-missing', status: 503 });
+    if (!pythonReady()) throw new SttToolError('This cloud node has no Python configured for speech recognition.', { code: 'python-missing', status: 503 });
     // 这一轮的授权已经被收回(私有/停止/关闭)就不起子进程了
     let fenced = false;
     try { fenced = resources.signalFor(context).aborted; } catch { /* 这个对话还没登记过资源:没被收回 */ }
-    if (fenced) throw new SttToolError('这一轮对话的权限已被收回。', { code: 'run-resource-fenced', status: 403 });
+    if (fenced) throw new SttToolError('The permissions for this round of chat have been revoked.', { code: 'run-resource-fenced', status: 403 });
     const child = spawnTree(runtime.pythonPath, pythonArgs(sub), { cwd, env: pythonEnv(cwd, extraEnv) }, { spawnImpl });
     const killer = () => killTree(child);
     killers.add(killer);
@@ -221,7 +221,7 @@ export function createSttTools({ resources, assets, jobs, workspace, commitTrans
       killers.delete(killer);
     }
     if (buffer.trim()) handleLine(buffer);
-    if (end.spawnError) throw new SttToolError('语音识别的 Python 起不来。', { code: 'python-missing', status: 503 });
+    if (end.spawnError) throw new SttToolError('The Python for speech recognition cannot start.', { code: 'python-missing', status: 503 });
     outcome.code = end.code;
     outcome.timedOut = end.timedOut;
     outcome.aborted = end.aborted;
@@ -234,7 +234,7 @@ export function createSttTools({ resources, assets, jobs, workspace, commitTrans
     const out = await runPython(context, ws.dir(), ['status'], { timeoutMs: cfg.statusMs });
     const status = [...out.events].reverse().find((e) => e && typeof e === 'object' && e.engines);
     if (out.code !== 0 || !status) {
-      throw new SttToolError('语音识别环境探测失败。', { code: 'status-failed', status: 503 });
+      throw new SttToolError('The speech recognition environment probe failed.', { code: 'status-failed', status: 503 });
     }
     return status;
   }
@@ -276,7 +276,7 @@ export function createSttTools({ resources, assets, jobs, workspace, commitTrans
       const started = await jobs.start(context, kind, digest, `${base}-${attempt}`);
       if (!BAD_JOB.has(started.state)) return started;
     }
-    throw new SttToolError('同样的请求已经失败多次,换个参数或稍后再试。', { code: 'too-many-attempts', status: 429 });
+    throw new SttToolError('The same request has already failed several times; change the parameters or try again later.', { code: 'too-many-attempts', status: 429 });
   }
 
   /**
@@ -312,10 +312,10 @@ export function createSttTools({ resources, assets, jobs, workspace, commitTrans
   async function sttStatus(args, context) {
     rejectUnknown(args, []);
     await authorize(context, 'read');
-    if (!pythonReady()) return unavailable('PYTHON_MISSING', '这台云节点没有配置语音识别用的 Python,云端 Agent 做不了语音转写。请告诉用户联系托管方,或在电脑上的 PromptCut 里转写。');
+    if (!pythonReady()) return unavailable('PYTHON_MISSING', 'This cloud node has no Python configured for speech recognition, so the Cloud Agent cannot do speech-to-text. Tell the user to contact the host, or transcribe in PromptCut on their computer.');
     let raw;
     try { raw = await probeStatus(context); } catch (error) {
-      if (isProbeFailure(error)) return unavailable('STATUS_FAILED', '语音识别环境探测失败,这台节点的 Python 没能正常运行。请告诉用户联系托管方。');
+      if (isProbeFailure(error)) return unavailable('STATUS_FAILED', 'The speech recognition environment probe failed, and Python on this node could not run properly. Tell the user to contact the host.');
       throw error;
     }
     return publicStatus(raw);
@@ -326,22 +326,22 @@ export function createSttTools({ resources, assets, jobs, workspace, commitTrans
   async function sttInstall(args, context) {
     rejectUnknown(args, ['engine']);
     const engine = args?.engine;
-    if (!STT_ENGINES.includes(engine)) throw new SttToolError(`engine 必须是 ${STT_ENGINES.join(' 或 ')}。`, { code: 'bad-args' });
+    if (!STT_ENGINES.includes(engine)) throw new SttToolError(`engine must be ${STT_ENGINES.join(' or ')}.`, { code: 'bad-args' });
     await authorize(context, 'write');
-    if (!allowedEngines.includes(engine)) return unavailable('ENGINE_NOT_ALLOWED', `这台云节点不开放 ${engine} 引擎。`, { engine });
-    if (!pythonReady()) return unavailable('PYTHON_MISSING', '这台云节点没有配置语音识别用的 Python,装不了引擎。请告诉用户联系托管方。', { engine });
+    if (!allowedEngines.includes(engine)) return unavailable('ENGINE_NOT_ALLOWED', `This cloud node does not offer the ${engine} engine.`, { engine });
+    if (!pythonReady()) return unavailable('PYTHON_MISSING', 'This cloud node has no Python configured for speech recognition, so the engine cannot be installed. Tell the user to contact the host.', { engine });
     const requirements = runtime.requirements?.[engine];
     let raw;
     try { raw = await probeStatus(context); } catch (error) {
-      if (isProbeFailure(error)) return unavailable('STATUS_FAILED', '语音识别环境探测失败,这台节点的 Python 没能正常运行。', { engine });
+      if (isProbeFailure(error)) return unavailable('STATUS_FAILED', 'Speech recognition environment probe failed: Python on this node did not run properly.', { engine });
       throw error;
     }
-    if (raw.engines?.[engine]?.installed === true) return { ok: true, started: false, alreadyInstalled: true, engine, hint: '这个引擎已经装好了,不用再装。' };
+    if (raw.engines?.[engine]?.installed === true) return { ok: true, started: false, alreadyInstalled: true, engine, hint: 'This engine is already installed, no need to install it again.' };
     if (!requirements || !fs.existsSync(requirements)) {
-      return unavailable('INSTALL_NOT_ENABLED', `这台云节点不开放自助安装 ${engine}(托管方没有配置锁定依赖)。请告诉用户联系托管方安装。`, { engine });
+      return unavailable('INSTALL_NOT_ENABLED', `This cloud node does not allow self-service installation of ${engine} (the host has not configured pinned dependencies). Tell the user to contact the host to install it.`, { engine });
     }
-    if (raw.pylibs?.writable !== true) return unavailable('INSTALL_NOT_ENABLED', '这台云节点的第三方库目录不可写,不开放自助安装。请告诉用户联系托管方。', { engine });
-    if (installing) return { ok: true, started: false, alreadyRunning: true, engine, hint: '这台节点上已经有一个安装在进行,稍后用 stt_status 看 installed。不要重复启动。' };
+    if (raw.pylibs?.writable !== true) return unavailable('INSTALL_NOT_ENABLED', 'The third-party library directory on this cloud node is not writable, so self-service installation is disabled. Tell the user to contact the host.', { engine });
+    if (installing) return { ok: true, started: false, alreadyRunning: true, engine, hint: 'An install is already running on this node. Check installed with stt_status later. Do not start it again.' };
 
     const controller = { engine };
     installing = controller;                                     // 同步占位:并发的第二个调用走上面那一行
@@ -353,11 +353,11 @@ export function createSttTools({ resources, assets, jobs, workspace, commitTrans
     } catch (error) { release(); throw error; }
     if (started.state !== 'queued') {
       release();
-      return { ok: true, started: false, jobId: started.jobId, state: started.state, engine, hint: '这一轮里已经发起过同样的安装,用 background_job_status 查这个 jobId。' };
+      return { ok: true, started: false, jobId: started.jobId, state: started.state, engine, hint: 'The same install was already started in this turn. Check this jobId with background_job_status.' };
     }
     const state = { context, jobId: started.jobId, revision: 0 };
     track(runInstall(state, engine, requirements, context).finally(release));
-    return { ok: true, started: true, jobId: started.jobId, engine, hint: '安装已在后台开始。用 background_job_status 查这个 jobId,或用 stt_status 看该引擎的 installed 字段。不要重复启动。' };
+    return { ok: true, started: true, jobId: started.jobId, engine, hint: 'The install has started in the background. Check this jobId with background_job_status, or check the installed field of the engine with stt_status. Do not start it again.' };
   }
 
   async function runInstall(state, engine, requirements, context) {
@@ -398,14 +398,14 @@ export function createSttTools({ resources, assets, jobs, workspace, commitTrans
   function parseTranscribeArgs(args) {
     rejectUnknown(args, ['mediaId', 'engine', 'model', 'language']);
     const mediaId = args?.mediaId;
-    if (typeof mediaId !== 'string' || !MEDIA_ID_RE.test(mediaId)) throw new SttToolError('mediaId 必须是素材库里的素材 id。', { code: 'bad-args' });
+    if (typeof mediaId !== 'string' || !MEDIA_ID_RE.test(mediaId)) throw new SttToolError('mediaId must be the id of an asset in the media library.', { code: 'bad-args' });
     const engine = args.engine ?? cfg.defaultEngine;
-    if (!STT_ENGINES.includes(engine)) throw new SttToolError(`engine 必须是 ${STT_ENGINES.join(' 或 ')}。`, { code: 'bad-args' });
+    if (!STT_ENGINES.includes(engine)) throw new SttToolError(`engine must be ${STT_ENGINES.join(' or ')}.`, { code: 'bad-args' });
     const model = args.model ?? cfg.defaultModel;
-    if (!STT_MODELS.includes(model)) throw new SttToolError(`model 必须是 ${STT_MODELS.join('、')} 之一。`, { code: 'bad-args' });
+    if (!STT_MODELS.includes(model)) throw new SttToolError(`model must be one of ${STT_MODELS.join(', ')}.`, { code: 'bad-args' });
     let language = args.language;
     if (language !== undefined && (typeof language !== 'string' || !(language === 'auto' || LANGUAGE_RE.test(language)))) {
-      throw new SttToolError('language 必须是语言代码(如 zh、en),或不填让引擎自动检测。', { code: 'bad-args' });
+      throw new SttToolError('language must be a language code (such as zh, en), or omitted to let the engine detect it automatically.', { code: 'bad-args' });
     }
     if (language === '' || language === 'auto') language = undefined;
     return { mediaId, engine, model, language };
@@ -413,11 +413,11 @@ export function createSttTools({ resources, assets, jobs, workspace, commitTrans
 
   /** 开工前的环境检查:没装、没权重、没 ffmpeg 就当场如实回,不开作业 */
   async function preflight(context, input) {
-    if (!allowedEngines.includes(input.engine)) return unavailable('ENGINE_NOT_ALLOWED', `这台云节点不开放 ${input.engine} 引擎。`);
-    if (!pythonReady()) return unavailable('PYTHON_MISSING', '这台云节点没有配置语音识别用的 Python,云端 Agent 做不了语音转写。请告诉用户联系托管方,或在电脑上的 PromptCut 里转写。');
+    if (!allowedEngines.includes(input.engine)) return unavailable('ENGINE_NOT_ALLOWED', `This cloud node does not offer the ${input.engine} engine.`);
+    if (!pythonReady()) return unavailable('PYTHON_MISSING', 'This cloud node has no Python configured for speech recognition, so the Cloud Agent cannot do speech-to-text. Tell the user to contact the host, or transcribe in PromptCut on their computer.');
     let raw;
     try { raw = await probeStatus(context); } catch (error) {
-      if (isProbeFailure(error)) return unavailable('STATUS_FAILED', '语音识别环境探测失败,这台节点的 Python 没能正常运行。请告诉用户联系托管方。');
+      if (isProbeFailure(error)) return unavailable('STATUS_FAILED', 'The speech recognition environment probe failed, and Python on this node could not run properly. Tell the user to contact the host.');
       throw error;
     }
     const engine = raw.engines?.[input.engine];
@@ -463,7 +463,7 @@ export function createSttTools({ resources, assets, jobs, workspace, commitTrans
     if (started.state !== 'queued' || transcribing.has(started.jobId)) {
       await discard(read);
       return { ok: true, started: false, jobId: started.jobId, mediaId: input.mediaId, state: started.state,
-        hint: '这一轮里已经发起过同样的转写,不要重复启动。用 get_transcript 取结果,或用 background_job_status 查这个 jobId。' };
+        hint: 'The same transcription was already started in this turn, do not start it again. Get the result with get_transcript, or check this jobId with background_job_status.' };
     }
     transcribing.add(started.jobId);
     let revision = 0;
@@ -471,7 +471,7 @@ export function createSttTools({ resources, assets, jobs, workspace, commitTrans
     const state = { context, jobId: started.jobId, revision };
     track(runTranscription(state, input, read).catch(() => { /* 内部已处理 */ }).finally(() => transcribing.delete(started.jobId)));
     return { ok: true, started: true, jobId: started.jobId, mediaId: input.mediaId, engine: input.engine, model: input.model,
-      hint: '转写已在后台开始,请用 get_transcript 轮询该 mediaId(出现 segments 即完成),或用 background_job_status 查这个 jobId。不要重复启动。' };
+      hint: 'Transcription has started in the background. Poll get_transcript for this mediaId (it is done when segments appear), or check this jobId with background_job_status. Do not start it again.' };
   }
 
   function normalizeSegments(raw) {
@@ -601,15 +601,15 @@ export function createSttTools({ resources, assets, jobs, workspace, commitTrans
 
   function rejectUnknown(args, allowed) {
     if (args === undefined || args === null) return;
-    if (typeof args !== 'object' || Array.isArray(args)) throw new SttToolError('参数必须是一个对象。', { code: 'bad-args' });
+    if (typeof args !== 'object' || Array.isArray(args)) throw new SttToolError('Arguments must be an object.', { code: 'bad-args' });
     const extra = Object.keys(args).filter((k) => !allowed.includes(k));
-    if (extra.length) throw new SttToolError(`不认识的参数:${extra.join('、')}。可用的参数:${allowed.length ? allowed.join('、') : '无'}。`, { code: 'bad-args' });
+    if (extra.length) throw new SttToolError(`Unknown parameters: ${extra.join(', ')}. Available parameters: ${allowed.length ? allowed.join(', ') : 'none'}.`, { code: 'bad-args' });
   }
 
   /* ------------------------------------------------------------------ 对外 */
 
   async function call(name, args, context) {
-    if (!handles.has(name)) throw new SttToolError(`语音转写不处理 ${name}。`, { code: 'unknown-tool', status: 404 });
+    if (!handles.has(name)) throw new SttToolError(`Speech-to-text does not handle ${name}.`, { code: 'unknown-tool', status: 404 });
     if (name === 'stt_status') return sttStatus(args, context);
     if (name === 'stt_install') return sttInstall(args, context);
     return transcribeMedia(args, context);

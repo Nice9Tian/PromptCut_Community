@@ -40,7 +40,7 @@ export async function listProviders(opts = {}) {
   ]);
   
   await Promise.all(baseProviders.map(async (p) => {
-    p.auth = p.available ? await probeAuth(p.id, { refresh: !!opts.refresh }) : { loggedIn: false, detail: '请先安装' };
+    p.auth = p.available ? await probeAuth(p.id, { refresh: !!opts.refresh }) : { loggedIn: false, detail: tr("Please install first") };
   }));
 
   const providers = [...baseProviders];
@@ -48,14 +48,14 @@ export async function listProviders(opts = {}) {
   try {
     const mod = await import('./api.mjs');
     const p = await mod.getApiProvider();
-    providers.push({ label: 'API 直连', ...p, id: 'api' });
+    providers.push({ label: tr("Direct API"), ...p, id: 'api' });
   } catch {
     providers.push({
       id: 'api',
-      label: 'API 直连',
+      label: tr("Direct API"),
       available: false,
-      note: 'api runner 缺失',
-      auth: { loggedIn: false, detail: 'api runner 还没就绪' }
+      note: 'api runner missing',
+      auth: { loggedIn: false, detail: tr("api runner is not ready yet") }
     });
   }
 
@@ -66,10 +66,10 @@ export async function listProviders(opts = {}) {
       const cfg = aiConfig.publicConfig();
       apiEntry.auth = {
         loggedIn: cfg.api.apiKey.set,
-        detail: cfg.api.apiKey.set ? '' : '还没填 API Key'
+        detail: cfg.api.apiKey.set ? '' : tr("API key not set yet")
       };
     } catch {
-      apiEntry.auth = { loggedIn: false, detail: '获取配置失败' };
+      apiEntry.auth = { loggedIn: false, detail: tr("Failed to get config") };
     }
   }
 
@@ -86,6 +86,7 @@ export async function listProviders(opts = {}) {
 }
 
 import { startCliLoop } from './cli-loop.mjs';
+import { tr } from "../i18n.mjs";
 
 export function startRun(opts) {
   if (opts.provider === 'claude') return startClaude(opts);
@@ -101,7 +102,7 @@ export function startRun(opts) {
       try {
         mod = await import('./api.mjs');
       } catch {
-        try { opts.onEvent({ type: 'error', message: 'API 直连还没就绪:server/runners/api.mjs 缺失或加载失败' }); } catch {}
+        try { opts.onEvent({ type: 'error', message: tr("Direct API is not ready: server/runners/api.mjs is missing or failed to load") }); } catch {}
         return;
       }
       if (aborted) return;
@@ -165,7 +166,7 @@ export function spawnCli(exePath, args, opts, onEvent, providerName) {
     shell: false
   });
 
-  safeOnEvent({ type: 'status', text: `已启动 ${providerName || 'CLI'}` });
+  safeOnEvent({ type: 'status', text: tr("Started {0}", providerName || 'CLI') });
 
   let stderrBuffer = '';
   let hasDone = false;
@@ -244,7 +245,7 @@ export function spawnCli(exePath, args, opts, onEvent, providerName) {
   const abort = () => {
     if (isAborted || hasDone) return;
     isAborted = true;
-    safeOnEvent({ type: 'status', text: '已中止' });
+    safeOnEvent({ type: 'status', text: tr("Aborted") });
     
     try { stopChild(); } catch {}
 

@@ -109,15 +109,15 @@ try {
     }
   }
 
-  console.log(`审了 ${clips.length} 个片段、${nodesChecked} 个文本节点次。`);
+  console.log(`Audited ${clips.length} clips, ${nodesChecked} text node passes.`);
   if (!violations.size) {
-    console.log('字体审计通过:所有字形都落在显式写出的字体上。');
+    console.log('Font audit passed: every glyph falls on an explicitly listed font.');
   } else {
-    console.log(`\n${violations.size} 处落进了系统回退(白名单以外的字体):`);
+    console.log(`\n${violations.size} fell back to the system font (fonts outside the whitelist):`);
     for (const v of violations.values()) {
-      console.log(`  [${v.card}] "${v.text}" → ${v.font}×${v.glyphs}   字体栈: ${v.family}`);
+      console.log(`  [${v.card}] "${v.text}" → ${v.font}×${v.glyphs}   font stack: ${v.family}`);
     }
-    console.log('\n修法:在对应字体栈里显式加上能覆盖这些字形的字体(见 src/themes/index.ts 的说明),不要放宽白名单。');
+    console.log('\nFix: explicitly add a font that covers these glyphs to the matching font stack (see the notes in src/themes/index.ts), and do not loosen the whitelist.');
     process.exitCode = 1;
   }
 } finally {

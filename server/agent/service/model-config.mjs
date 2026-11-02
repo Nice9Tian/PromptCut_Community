@@ -88,7 +88,7 @@ export function readModelConfig(dataDir) {
 
 /** 写配置;`key` 给了(非空字符串)就封装后写进 Key 文件,`null` 表示不动 Key 文件 */
 export function writeModelConfig(dataDir, { vendor, baseUrl = '', model = '', maxTokens = 0 }, key = null) {
-  if (!MODEL_VENDORS.includes(vendor)) throw new Error(`厂商只能是 ${MODEL_VENDORS.join(' / ')}`);
+  if (!MODEL_VENDORS.includes(vendor)) throw new Error(`Vendor must be one of ${MODEL_VENDORS.join(' / ')}`);
   const { file, keyFile } = modelConfigPaths(dataDir);
   if (typeof key === 'string' && key) writePrivate(keyFile, `${sealKey(key, 'custom')}\n`);
   writePrivate(file, `${JSON.stringify({ v: 1, api: { vendor, baseUrl: String(baseUrl || ''), model: String(model || ''), maxTokens } }, null, 2)}\n`);

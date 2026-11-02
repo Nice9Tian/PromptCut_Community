@@ -26,7 +26,7 @@ const REPORT_TOOL = 'report_progress';
 /** 调用结果里的一句话错误(拒绝、失败) */
 function errorText(out) {
   if (!out || typeof out !== 'object') return null;
-  if (out.ok === false) return String(out.error || out.message || '失败').slice(0, 300);
+  if (out.ok === false) return String(out.error || out.message || 'failed').slice(0, 300);
   return null;
 }
 

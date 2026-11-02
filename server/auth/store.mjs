@@ -83,7 +83,7 @@ const clone = (v) => structuredClone(v);
  * @param {(event: string, fields: object) => void} [options.log]
  */
 export function openCredentialStore({ dir, now = Date.now, log = () => {} } = {}) {
-  if (typeof dir !== 'string' || dir === '') throw new TypeError('openCredentialStore: dir 必须是非空字符串');
+  if (typeof dir !== 'string' || dir === '') throw new TypeError('openCredentialStore: dir must be a non-empty string');
   const root = path.resolve(dir);
   const projectsDir = path.join(root, 'projects');
   fs.mkdirSync(projectsDir, { recursive: true });
@@ -93,7 +93,7 @@ export function openCredentialStore({ dir, now = Date.now, log = () => {} } = {}
   let secret;
   if (fs.existsSync(serverFile)) {
     const j = JSON.parse(fs.readFileSync(serverFile, 'utf8'));
-    if (!j || j.v !== 1 || typeof j.secret !== 'string' || j.secret.length < 32) throw new Error('auth/server.json 格式不对');
+    if (!j || j.v !== 1 || typeof j.secret !== 'string' || j.secret.length < 32) throw new Error('Invalid auth/server.json format');
     secret = j.secret;
   } else {
     secret = b64urlEncode(randomBytes(32));
@@ -121,7 +121,7 @@ export function openCredentialStore({ dir, now = Date.now, log = () => {} } = {}
     if (!isProjectId(id)) continue;
     const rec = JSON.parse(fs.readFileSync(path.join(projectsDir, entry), 'utf8'));
     if (!rec || rec.v !== 1 || rec.projectId !== id || typeof rec.name !== 'string' || typeof rec.ticketKey !== 'string') {
-      throw new Error(`auth/projects/${entry} 格式不对`);
+      throw new Error(`Invalid auth/projects/${entry} format`);
     }
     records.set(id, rec);
     names.set(nameKey(rec.name), id);
@@ -149,7 +149,7 @@ export function openCredentialStore({ dir, now = Date.now, log = () => {} } = {}
 
     /** 订阅记录变化：`fn({ type: 'create' | 'update' | 'remove' | 'install', projectId })`，落盘并换进内存之后调。回退订函数 */
     onChange(fn) {
-      if (typeof fn !== 'function') throw new TypeError('onChange: 要给函数');
+      if (typeof fn !== 'function') throw new TypeError('onChange: a function is required');
       listeners.add(fn);
       return () => { listeners.delete(fn); };
     },

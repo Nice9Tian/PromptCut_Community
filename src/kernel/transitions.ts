@@ -102,7 +102,7 @@ function clipName(p: Project, clipId: string): string {
   return clipId;
 }
 
-const KIND_LABEL: Record<TransitionKind, string> = { crossfade: "交叉溶解", fadeIn: "淡入", fadeOut: "淡出" };
+const KIND_LABEL: Record<TransitionKind, string> = { crossfade: "crossfade", fadeIn: "Fade in", fadeOut: "Fade out" };
 
 /**
  * 这个片段的时间关系被转场锁住了吗?锁住了就返回一句能直接回给 Agent 的说明。
@@ -115,17 +115,17 @@ export function timingLock(p: Project, clipId: string): { transitions: Transitio
   if (hits.length === 0) return null;
   const { members } = groupOf(p, clipId);
   const parts = hits.map((tr) => {
-    const who = tr.kind === "crossfade" ? `和「${clipName(p, tr.aId === clipId ? tr.bId! : tr.aId)}」` : "";
+    const who = tr.kind === "crossfade" ? `and "${clipName(p, tr.aId === clipId ? tr.bId! : tr.aId)}"` : "";
     return `${KIND_LABEL[tr.kind]}${who}(transitionId ${tr.id})`;
   });
   const others = members.filter((id) => id !== clipId);
-  const groupNote = others.length ? `这一组还有:${others.map((id) => `${clipName(p, id)}(${id})`).join("、")}。` : "";
+  const groupNote = others.length ? `Others in this group: ${others.map((id) => `${clipName(p, id)}(${id})`).join(", ")}.` : "";
   return {
     transitions: hits,
     members,
     message:
-      `这段挂着转场:${parts.join(";")},转场把它和相关片段绑成了一组,单独改时间会把转场弄坏。${groupNote}` +
-      `要改就先 remove_transition({transitionId})。整组一起平移不受限制 —— 用 update_clip 挪其中任意一段,同组的会跟着一起走。`,
+      `This clip has transitions attached: ${parts.join(";")}. The transitions bind it with related clips into one group, so changing its time alone would break them. ${groupNote}` +
+      `To change it, first call remove_transition({transitionId}). Shifting the whole group together is not restricted: move any one clip with update_clip and the rest of the group follows.`,
   };
 }
 
@@ -149,28 +149,28 @@ export function checkCrossfade(
   bId: string,
   dur: number,
 ): { ok: true; a: TrackClip; b: TrackClip; dur: number } | { ok: false; error: string } {
-  if (aId === bId) return { ok: false, error: "交叉溶解要两段不同的片段" };
+  if (aId === bId) return { ok: false, error: "A crossfade needs two different clips" };
   const A = findClipIn(p, aId);
   const B = findClipIn(p, bId);
-  if (!A) return { ok: false, error: `找不到片段 ${aId}` };
-  if (!B) return { ok: false, error: `找不到片段 ${bId}` };
+  if (!A) return { ok: false, error: `Clip ${aId} not found` };
+  if (!B) return { ok: false, error: `Clip ${bId} not found` };
   // 谁在前谁就是 a:参数顺序写反是常事,这里自己排,不劳 Agent 重来一次
   const [first, second] = A.clip.start <= B.clip.start ? [A, B] : [B, A];
   for (const hit of [first, second]) {
     const lock = transitionsOfClip(p, hit.clip.id).find((tr) => tr.kind === "crossfade");
     if (lock) {
-      return { ok: false, error: `「${clipName(p, hit.clip.id)}」已经有交叉溶解了(transitionId ${lock.id});一段最多参与一处交叉溶解,先删掉那条` };
+      return { ok: false, error: `"${clipName(p, hit.clip.id)}" already has a crossfade (transitionId ${lock.id}); a clip can take part in at most one crossfade, so delete that one first` };
     }
   }
   const d = clampDur(dur);
   const shortest = Math.min(first.clip.end - first.clip.start, second.clip.end - second.clip.start);
   if (d >= shortest) {
-    return { ok: false, error: `转场 ${d} 秒比其中一段还长(最短的一段 ${shortest.toFixed(1)} 秒),换个更短的时长` };
+    return { ok: false, error: `Transition of ${d}s is longer than one of the clips (shortest clip is ${shortest.toFixed(1)}s), use a shorter duration` };
   }
   // 必须首尾相接(或已经重叠):中间空着一大段的两个片段接不成转场
   const gap = second.clip.start - first.clip.end;
   if (gap > 0.001) {
-    return { ok: false, error: `两段中间还空着 ${gap.toFixed(1)} 秒,交叉溶解只能接在首尾相接的两段之间。先把后一段挪到前一段的末尾` };
+    return { ok: false, error: `There is a ${gap.toFixed(1)}s gap between the two clips, and a crossfade can only join two clips that touch end to start. First move the later clip to the end of the earlier one` };
   }
   return { ok: true, a: first.clip, b: second.clip, dur: d };
 }
@@ -183,18 +183,18 @@ export function checkFade(
   dur: number,
 ): { ok: true; clip: TrackClip; dur: number } | { ok: false; error: string } {
   const hit = findClipIn(p, clipId);
-  if (!hit) return { ok: false, error: `找不到片段 ${clipId}` };
+  if (!hit) return { ok: false, error: `Clip ${clipId} not found` };
   const already = transitionsOfClip(p, clipId).find((tr) => tr.kind === kind && tr.aId === clipId);
-  if (already) return { ok: false, error: `这段已经有${KIND_LABEL[kind]}了(transitionId ${already.id})` };
+  if (already) return { ok: false, error: `This clip already has a ${KIND_LABEL[kind]} (transitionId ${already.id})` };
   // 淡入只能加在开头、淡出只能加在结尾 —— 这是它们的定义,不是可选项。
   // 已经参与交叉溶解的那一端不能再叠一个淡化:同一端两套淡化会互相打架。
   const owner = fadeOwner(p, clipId, kind);
   if (owner) {
-    return { ok: false, error: `这段的${kind === "fadeIn" ? "开头" : "结尾"}已经被交叉溶解占着了(transitionId ${owner.id}),不能再加${KIND_LABEL[kind]}` };
+    return { ok: false, error: `The ${kind === "fadeIn" ? "Start" : "end"} of this clip is already taken by a crossfade (transitionId ${owner.id}), so a ${KIND_LABEL[kind]} cannot be added` };
   }
   const d = clampDur(dur);
   const len = hit.clip.end - hit.clip.start;
-  if (d >= len) return { ok: false, error: `${KIND_LABEL[kind]} ${d} 秒比这段本身还长(${len.toFixed(1)} 秒)` };
+  if (d >= len) return { ok: false, error: `${KIND_LABEL[kind]} of ${d}s is longer than the clip itself (${len.toFixed(1)}s)` };
   return { ok: true, clip: hit.clip, dur: d };
 }
 
@@ -233,7 +233,7 @@ export function planTransitionDrop(
 
 /** 给界面看的一行说明 */
 export function describeTransition(p: Project, tr: Transition): string {
-  if (tr.kind === "crossfade") return `${clipName(p, tr.aId)} → ${clipName(p, tr.bId ?? "")} 交叉溶解 ${tr.dur.toFixed(1)}s`;
+  if (tr.kind === "crossfade") return `${clipName(p, tr.aId)} → ${clipName(p, tr.bId ?? "")} crossfade ${tr.dur.toFixed(1)}s`;
   return `${clipName(p, tr.aId)} ${KIND_LABEL[tr.kind]} ${tr.dur.toFixed(1)}s`;
 }
 

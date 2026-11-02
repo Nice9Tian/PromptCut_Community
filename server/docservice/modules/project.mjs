@@ -41,6 +41,7 @@ import { createMemoryStore, fileNameOf } from '../store/index.mjs';
 import { actorOf } from './actor.mjs';
 import { applyOps, entitiesOf, normalizeEntity, parsePath, formatPath, idSegment, OpError } from '../json-ops.mjs';
 import { canonical, digest as historyDigest, historyError } from './operation-history.mjs';
+import { tr } from "../../i18n.mjs";
 export const ROLLBACK_OP_PREFIX = 'logout-rollback:';
 let customRollbackPolicy = null;
 export function registerProjectRollbackPolicy(policy) {
@@ -127,30 +128,30 @@ class Refused extends Error {
 }
 
 function checkProjectId(v) {
-  if (typeof v !== 'string' || !PROJECT_ID_RE.test(v)) bad('projectId 不合法');
+  if (typeof v !== 'string' || !PROJECT_ID_RE.test(v)) bad('projectId is invalid');
   return v;
 }
 
 function checkDigest(v) {
-  if (typeof v !== 'string' || !DIGEST_RE.test(v)) bad('digest 必须是 16～128 位小写十六进制');
+  if (typeof v !== 'string' || !DIGEST_RE.test(v)) bad('digest must be 16-128 lowercase hex characters');
   return v;
 }
 
 function checkRev(v) {
-  if (!Number.isSafeInteger(v) || v < 1) bad('projectRev 必须是正整数');
+  if (!Number.isSafeInteger(v) || v < 1) bad('projectRev must be a positive integer');
   return v;
 }
 
 /** `session` 可选：没给（或 null）记为 null；给了就得是 1～128 个字符的字符串 */
 function checkSession(v) {
   if (v === undefined || v === null) return null;
-  if (typeof v !== 'string' || v.length < 1 || v.length > 128) bad('session 必须是 1～128 个字符的字符串');
+  if (typeof v !== 'string' || v.length < 1 || v.length > 128) bad('session must be a string of 1-128 characters');
   return v;
 }
 
 /** `opId`、`undoOf`、`uploadId`：1～128 个字符的字符串（不限字符集，客户端自己保证全局唯一） */
 function checkToken(v, name) {
-  if (typeof v !== 'string' || v.length < 1 || v.length > 128) bad(`${name} 必须是 1～128 个字符的字符串`);
+  if (typeof v !== 'string' || v.length < 1 || v.length > 128) bad(`${name} must be a string of 1-128 characters`);
   return v;
 }
 
@@ -611,7 +612,7 @@ export function projectModule({
       if (!isObj(op) || op.op !== 'set' || op.path !== '' || !Object.hasOwn(op, 'upload') || Object.hasOwn(op, 'value')) return op;
       const key = `${projectId}|${op.upload}`;
       const up = typeof op.upload === 'string' ? bodyUploads.get(key) : undefined;
-      if (!up || !Object.hasOwn(up, 'value')) throw new OpError('bad-path', ops.indexOf(op), `上传 ${String(op.upload)} 不存在或没收齐`);
+      if (!up || !Object.hasOwn(up, 'value')) throw new OpError('bad-path', ops.indexOf(op), `Upload ${String(op.upload)} does not exist or was not fully received`);
       (used ??= []).push(key);
       const { upload, ...rest } = op;
       return { ...rest, value: up.value };
@@ -648,7 +649,7 @@ export function projectModule({
     const undoOf = msg.undoOf === undefined || msg.undoOf === null ? undefined : checkToken(msg.undoOf, 'undoOf');
     let expectRev;
     if (msg.expectRev !== undefined && msg.expectRev !== null) {
-      if (!Number.isSafeInteger(msg.expectRev) || msg.expectRev < 0) bad('expectRev 必须是非负整数');
+      if (!Number.isSafeInteger(msg.expectRev) || msg.expectRev < 0) bad('expectRev must be a non-negative integer');
       expectRev = msg.expectRev;
     }
     const st = stateOf(projectId);
@@ -658,9 +659,9 @@ export function projectModule({
     };
 
     const principal = principals.get(connId);
-    if (principal?.role === 'render') return reject('forbidden', { detail: '渲染节点的连接不能改项目' });
+    if (principal?.role === 'render') return reject('forbidden', { detail: 'A render node connection cannot modify the project' });
     // 只读成员的云端 Agent 连接（principal 带 `access: 'r'`，`docs/plan/cloud-agent-contract.md` 第 4.6 节）；组装层的 gate 已经挡过一次
-    if (principal?.access === 'r') return reject('forbidden', { detail: '只读的连接不能改项目' });
+    if (principal?.access === 'r') return reject('forbidden', { detail: tr("A read-only connection cannot modify the project") });
 
     const done = st.opIds.get(opId);
     if (done !== undefined) {
@@ -668,9 +669,9 @@ export function projectModule({
       return reply(ctx, connId, { type: 'project.op.ok', projectId, opId, rev: done, overwrote: [], duplicate: true }, reqId);
     }
 
-    if (!Array.isArray(msg.ops) || msg.ops.length === 0) return reject('bad-path', { detail: 'ops 必须是非空数组', index: -1 });
+    if (!Array.isArray(msg.ops) || msg.ops.length === 0) return reject('bad-path', { detail: 'ops must be a non-empty array', index: -1 });
     if (Buffer.byteLength(JSON.stringify(msg.ops), 'utf8') > maxOpsBytes) {
-      return reject('too-large', { detail: `ops 序列化后超过 ${maxOpsBytes} 字节` });
+      return reject('too-large', { detail: `ops exceeds ${maxOpsBytes} bytes when serialized` });
     }
 
     if (expectRev !== undefined && expectRev !== st.projectRev) {
@@ -746,7 +747,7 @@ export function projectModule({
     if (principal.role === 'render' || principal.access === 'r') throw historyError('operation-forbidden', 403);
     if (!Array.isArray(msg.ops) || !msg.ops.length) throw historyError('bad-path', 400);
     if (Buffer.byteLength(JSON.stringify(msg.ops)) > maxOpsBytes) throw historyError('too-large', 413);
-    if (msg.expectRev != null && (!Number.isSafeInteger(msg.expectRev) || msg.expectRev < 0)) bad('expectRev 必须是非负整数');
+    if (msg.expectRev != null && (!Number.isSafeInteger(msg.expectRev) || msg.expectRev < 0)) bad('expectRev must be a non-negative integer');
     const undoOf = msg.undoOf == null ? null : checkToken(msg.undoOf, 'undoOf');
     const request = { opId, ops: msg.ops, expectRev: msg.expectRev ?? null, undoOf, session };
     /*
@@ -842,10 +843,10 @@ export function projectModule({
   function follow(ctx, connId, msg, reqId) {
     const projectId = checkProjectId(msg.projectId);
     const session = checkSession(msg.session);
-    if (typeof msg.entity !== 'string') bad('entity 必须是路径字符串');
+    if (typeof msg.entity !== 'string') bad('entity must be a path string');
     const entity = normalizeEntity(msg.entity, entityOpts);
-    if (entity === null) bad('entity 必须是空串或以 / 开头的 JSON 指针');
-    if (typeof msg.on !== 'boolean') bad('on 必须是布尔值');
+    if (entity === null) bad('entity must be an empty string or a JSON pointer starting with /');
+    if (typeof msg.on !== 'boolean') bad('on must be a boolean');
     const identity = identityOf(actorOf(principals.get(connId), session));
     let byIdentity = unfollowed.get(projectId);
     if (!byIdentity) unfollowed.set(projectId, (byIdentity = new Map()));
@@ -863,12 +864,12 @@ export function projectModule({
   function upload(ctx, connId, msg, reqId) {
     const projectId = checkProjectId(msg.projectId);
     const uploadId = checkToken(msg.uploadId, 'uploadId');
-    if (principals.get(connId)?.access === 'r') return reply(ctx, connId, { type: 'error', reason: 'forbidden', detail: '只读的连接不能上传项目' }, reqId);
+    if (principals.get(connId)?.access === 'r') return reply(ctx, connId, { type: 'error', reason: 'forbidden', detail: tr("A read-only connection cannot upload the project") }, reqId);
     const { index, count, data } = msg;
-    if (!Number.isSafeInteger(count) || count < 1 || count > PROJECT_LIMITS.UPLOAD_MAX_PARTS) bad(`count 必须是 1～${PROJECT_LIMITS.UPLOAD_MAX_PARTS} 的整数`);
-    if (!Number.isSafeInteger(index) || index < 0 || index >= count) bad('index 必须是 0～count-1 的整数');
-    if (typeof data !== 'string') bad('data 必须是字符串');
-    if (Buffer.byteLength(data, 'utf8') > PROJECT_LIMITS.UPLOAD_PART_BYTES) bad(`每片不能超过 ${PROJECT_LIMITS.UPLOAD_PART_BYTES} 字节`);
+    if (!Number.isSafeInteger(count) || count < 1 || count > PROJECT_LIMITS.UPLOAD_MAX_PARTS) bad(`count must be an integer from 1 to ${PROJECT_LIMITS.UPLOAD_MAX_PARTS}`);
+    if (!Number.isSafeInteger(index) || index < 0 || index >= count) bad('index must be an integer from 0 to count-1');
+    if (typeof data !== 'string') bad('data must be a string');
+    if (Buffer.byteLength(data, 'utf8') > PROJECT_LIMITS.UPLOAD_PART_BYTES) bad(`Each part cannot exceed ${PROJECT_LIMITS.UPLOAD_PART_BYTES} bytes`);
     const key = `${projectId}|${uploadId}`;
     const nowMs = Date.now();
     let up = bodyUploads.get(key);
@@ -897,11 +898,11 @@ export function projectModule({
       value = JSON.parse(text);
     } catch {
       bodyUploads.delete(key);
-      bad('收齐的内容不是合法的 JSON');
+      bad('The received content is not valid JSON');
     }
     if (!isObj(value)) {
       bodyUploads.delete(key);
-      bad('收齐的内容必须是 JSON 对象');
+      bad('The received content must be a JSON object');
     }
     up.parts.clear();
     up.value = value;
@@ -912,7 +913,7 @@ export function projectModule({
 
   function requireBlobStore() {
     if (typeof store.writeBlob !== 'function' || typeof store.readBlob !== 'function') {
-      throw new Refused('unsupported', '这个存储不支持项目快照');
+      throw new Refused('unsupported', tr("This storage does not support project snapshots"));
     }
   }
 
@@ -941,22 +942,22 @@ export function projectModule({
     const projectRev = checkRev(msg.projectRev);
     const digest = checkDigest(msg.digest);
     const { index, count, data } = msg;
-    if (!Number.isSafeInteger(count) || count < 1 || count > SNAPSHOT_LIMITS.MAX_PARTS) bad(`count 必须是 1～${SNAPSHOT_LIMITS.MAX_PARTS} 的整数`);
-    if (!Number.isSafeInteger(index) || index < 0 || index >= count) bad('index 必须是 0～count-1 的整数');
-    if (typeof data !== 'string') bad('data 必须是字符串');
-    if (Buffer.byteLength(data, 'utf8') > SNAPSHOT_LIMITS.PART_BYTES) bad(`每片不能超过 ${SNAPSHOT_LIMITS.PART_BYTES} 字节`);
+    if (!Number.isSafeInteger(count) || count < 1 || count > SNAPSHOT_LIMITS.MAX_PARTS) bad(`count must be an integer from 1 to ${SNAPSHOT_LIMITS.MAX_PARTS}`);
+    if (!Number.isSafeInteger(index) || index < 0 || index >= count) bad('index must be an integer from 0 to count-1');
+    if (typeof data !== 'string') bad('data must be a string');
+    if (Buffer.byteLength(data, 'utf8') > SNAPSHOT_LIMITS.PART_BYTES) bad(`Each part cannot exceed ${SNAPSHOT_LIMITS.PART_BYTES} bytes`);
     requireBlobStore();
 
     const key = `${projectId}@${projectRev}`;
     const announced = digestOfRev(projectId, projectRev);
     if (announced === undefined) {
       uploads.delete(key);
-      throw new Refused('unknown-rev', `项目 ${projectId} 没有登记过版本 ${projectRev}`);
+      throw new Refused('unknown-rev', tr("Project {0} has no registered version {1}", projectId, projectRev));
     }
     if (announced !== digest) {
       uploads.delete(key);
       stats.digestMismatches += 1;
-      throw new Refused('digest-mismatch', '摘要与这一版登记的不一致');
+      throw new Refused('digest-mismatch', 'The digest does not match the one registered for this version');
     }
 
     const nowMs = Date.now();
@@ -983,7 +984,7 @@ export function projectModule({
     for (let i = 0; i < up.count; i += 1) text += up.parts.get(i);
     if (sha256(text) !== digest) {
       stats.digestMismatches += 1;
-      throw new Refused('digest-mismatch', '收齐后的内容与摘要不符');
+      throw new Refused('digest-mismatch', 'The received content does not match the digest');
     }
     store.writeBlob(snapshotBlobName(projectId, projectRev), text);
     stats.snapshotsStored += 1;
@@ -1111,7 +1112,7 @@ export function projectModule({
       lastCtx = ctx;
       const reqId = isReqId(msg.reqId) ? msg.reqId : undefined;
       const fn = HANDLERS[msg.type];
-      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: '项目模块不支持这种消息' }, reqId);
+      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: 'The project module does not support this message' }, reqId);
       const principal = principals.get(connId);
       if (principal?.realm === 'account' || principal?.identityVersion === 2) {
         return Promise.resolve().then(async () => {

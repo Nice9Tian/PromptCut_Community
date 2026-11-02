@@ -50,5 +50,5 @@ export function isUserInterfaceTool(name) {
 
 /** 系统提示词里的那一句(本机与云端共用) */
 export const UI_TOOLS_PROMPT_LINE =
-  '- **名字带 `user_interface_` 的工具会动用户的界面**(切换所有成员共享的激活剪辑、移动播放头、开始或暂停播放、把窗口或登录框弹到用户面前),能不用就不用:' +
-  '看别的剪辑的画面用 `see_frames` 的 `cutId`,改别的剪辑里已有的片段直接按 clipId 改,都不用切换;只有用户明说要切、要跳、要播,或这一步非得用户本人操作时才用。';
+  '- **Tools whose name contains `user_interface_` act on the user\'s interface** (switching the active cut shared by all members, moving the playhead, starting or pausing playback, bringing a window or login dialog in front of the user). Avoid them whenever you can:' +
+  'To view the frames of another cut, use `cutId` of `see_frames`; to change existing clips in another cut, edit them directly by clipId; neither needs a switch. Use these only when the user explicitly asks to switch, jump or play, or when this step can only be done by the user in person.';

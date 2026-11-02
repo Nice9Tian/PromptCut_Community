@@ -36,6 +36,7 @@ import { setBakeRemote } from "./bake-store.mjs";
 import { ALL as SCOPE_ALL, createPushScope } from "./push-scope.mjs";
 import { closeStorage, createExportSummary, storageDataDir, storageFor } from "./frame-library-storage.mjs";
 import { createStorageHandler, storageRouteOf } from "./storage-routes.mjs";
+import { tr } from "./i18n.mjs";
 
 const services = new Map<string, FramePipeline>();
 /**
@@ -502,7 +503,7 @@ async function startQueueNode(root: string, service: FramePipeline, auto: AutoLi
         else if (event?.type === "discarded") stats.discarded++;
         else if (event?.type === "lost") stats.lost++;
         else if (event?.type === "plan-split") { stats.planSplit++; planDerived.set(id, [...(event.derived ?? [])]); }
-        if (event?.type === "quota-paused") queueLog("render.quota", { profile: "host", projectId: event.projectId, until: event.until, detail: "素材服务回 507 service-quota:渲染服务的产物到了容量上限,暂停认领" });
+        if (event?.type === "quota-paused") queueLog("render.quota", { profile: "host", projectId: event.projectId, until: event.until, detail: "Asset service returned 507 service-quota: render service output reached its capacity limit, pausing claims" });
       if (event?.type && event.type !== "publish-result") note(`node.${event.type}`, { id, ...(event.error ? { error: event.error } : {}), ...(event.derived ? { derived: event.derived.length } : {}) });
         taskEventLog(event);
       },
@@ -612,7 +613,7 @@ async function startQueueNode(root: string, service: FramePipeline, auto: AutoLi
       waiting.delete(reqId);
       clearTimeout(timeout);
       if (message.type === "task.published") resolve(message.results);
-      else reject(Object.assign(new Error(`发布 plan 没成:${message.reason}`), { code: message.reason }));
+      else reject(Object.assign(new Error(`Publishing plan failed: ${message.reason}`), { code: message.reason }));
     };
     waiting.set(reqId, settle);
     if (!endpoint.send({ type: "task.publish", tasks: [task], reqId })) settle({ type: "error", reason: "disconnected" });
@@ -662,7 +663,7 @@ async function startQueueNode(root: string, service: FramePipeline, auto: AutoLi
         task.requires = { ...(task.requires ?? {}), codeVersion: frameCode(root), envFingerprint, preferNode: nodeId };
         const results = await publishPlan(task);
         const result = Array.isArray(results) ? results.find((r: any) => r?.id === task.id) : null;
-        if (!result || result.error) throw Object.assign(new Error(`plan 没发布成:${result?.error ?? "no-result"}`), { code: result?.error ?? "no-result" });
+        if (!result || result.error) throw Object.assign(new Error(`plan was not published: ${result?.error ?? "no-result"}`), { code: result?.error ?? "no-result" });
         published.set(key, { projectId, projectRev, planId: task.id, digest, at: Date.now(), ...(entryKey ? { entryKey } : {}) });
         // plan 在发布回包之前就已经完成过(同一版别人发布过):按已知的切分结果补判一次流的空档
         if (planDerived.has(task.id)) streamsFallback(task.id, planDerived.get(task.id));
@@ -1188,7 +1189,7 @@ export function frameService(root: string, origin: string) {
     /* C6.4:连得上素材服务和文档服务时建推送队列(只在预渲染进程里;连不上就什么都不建) */
     /* `agent` 模式不预渲染:不建推送队列、不起渲染节点(下面两处) */
     if (servesPrerender) void startArtifactPush(root, service).catch(error => pushLog("push.skip", { reason: "error", message: String(error?.message ?? error) }));
-    else console.info(`[frames] 预渲染进程是 ${prerenderMode} 模式:只接 Agent 的查询,不预渲染、不起渲染节点`);
+    else console.info(`[frames] The prerender process is in ${prerenderMode} mode: it only serves Agent queries, and does not prerender or start render nodes`);
     /* J.5:`PROMPTCUT_QUEUE_NODE=1` 又连得上文档服务时起本机渲染节点(开关关着时这里立即返回,什么都不建) */
     if (servesPrerender && queueNodeSwitch()) void startQueueNode(root, service).catch(error => queueLog("queue.skip", { reason: "error", message: String(error?.message ?? error) }));
   }
@@ -1212,11 +1213,11 @@ const AUTO_BACKFILL_TICK_MS = 5_000;
  */
 async function requestPageTicket(projectId: string): Promise<string> {
   const editor = String(process.env.PROMPTCUT_EDITOR_URL || "").replace(/\/+$/, "");
-  if (!editor) throw new Error("没有编辑器进程可问");
+  if (!editor) throw new Error("No editor process to query");
   const r = await fetch(`${editor}/api/render-node/ticket-request`, { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ projectId }), signal: AbortSignal.timeout(15_000) });
   const data: any = await r.json().catch(() => null);
-  if (!r.ok || typeof data?.ticket !== "string") throw new Error(`编辑器没要到连接票据:${data?.code ?? r.status}`);
+  if (!r.ok || typeof data?.ticket !== "string") throw new Error(`The editor failed to get a connection ticket: ${data?.code ?? r.status}`);
   return data.ticket;
 }
 
@@ -1350,7 +1351,7 @@ export function framesPlugin(): Plugin {
     server.middlewares.use("/api/cards/layout", (req, res, next) => {
       if (req.method !== "POST") return next();
       if (!isPrerender) return proxyToPrerender(req, res, { unavailable: { status: 503, code: "NO_AGENT_LANE",
-        error: "编辑器进程没有 Agent lane,/api/cards/layout 只在预渲染进程里答,而预渲染进程现在够不着" } });
+        error: "The editor process has no Agent lane; /api/cards/layout is only answered by the prerender process, which is currently unreachable" } });
       const origin = `http://127.0.0.1:${(server.httpServer?.address() as any)?.port}`;
       const json = (status: number, data: unknown) => { res.statusCode = status; res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(data)); };
       let body = "", over = false;
@@ -1362,14 +1363,14 @@ export function framesPlugin(): Plugin {
           let source = input.project;
           if (!source) {
             const version = await ensureMirror(String(input.session || ""), input.localRev);
-            if (!version) return json(409, { error: `镜像里没有这一版项目(session=${input.session}, localRev=${input.localRev})，请整份重推后重试。`, code: "MIRROR_MISSING", retryable: true });
+            if (!version) return json(409, { error: `This project version is not in the mirror (session=${input.session}, localRev=${input.localRev}). Push the whole project again and retry.`, code: "MIRROR_MISSING", retryable: true });
             source = version.project;
           }
           const project = renderProject(source);
           if (!Array.isArray(project.tracks) || !Number.isFinite(project.duration) || project.duration <= 0) throw new Error("Invalid project");
-          if (input.t !== undefined && !Number.isFinite(input.t)) throw new Error("t 要是秒数");
+          if (input.t !== undefined && !Number.isFinite(input.t)) throw new Error("t must be a number of seconds");
           if (input.clipIds !== undefined && input.clipIds !== null && (!Array.isArray(input.clipIds) || input.clipIds.some((id: unknown) => typeof id !== "string")))
-            throw new Error("clipIds 要是字符串数组");
+            throw new Error("clipIds must be an array of strings");
           const service = frameService(root, origin);
           return json(200, await service.layout(project, { t: Number(input.t) || 0, clipIds: input.clipIds ?? null, signal: requestSignal(req, res) }));
         } catch (error: any) {
@@ -1377,7 +1378,7 @@ export function framesPlugin(): Plugin {
           const cancelled = Boolean(error?.cancelled || error?.name === "AbortError");
           const status = timedOut ? 504 : cancelled ? 499 : Number(error?.status) >= 500 ? Number(error.status) : 400;
           json(status, { ok: false, code: timedOut ? "FRAME_TIMEOUT" : cancelled ? "FRAME_CANCELLED" : (error?.code || "LAYOUT_ERROR"),
-            retryable: timedOut || status >= 500, error: error?.message || "实体框测量失败" });
+            retryable: timedOut || status >= 500, error: error?.message || "Entity box measurement failed" });
         }
       });
     });
@@ -1410,7 +1411,7 @@ export function framesPlugin(): Plugin {
         req.on("data", (c: Buffer) => { raw += c; if (raw.length > 16 * 1024) req.destroy(); });
         req.on("end", async () => {
           let input: any;
-          try { input = JSON.parse(raw || "{}"); } catch { return json(400, { ok: false, error: "请求体不是 JSON" }); }
+          try { input = JSON.parse(raw || "{}"); } catch { return json(400, { ok: false, error: "Request body is not JSON" }); }
           if (queuePath === "/render-node/unbind") {
             const ctl = autoNodes.get(root);
             if (!ctl) return json(200, { ok: true, action: "none" });
@@ -1457,7 +1458,7 @@ export function framesPlugin(): Plugin {
       if (req.method === "GET" && url.pathname === "/ready") {
         // Item 4:按 `session` 分片订阅,只收自己这个页面会话的层(不带 session 的是缺省会话)
         const session = readySessionOf(url.searchParams.get("session") ?? undefined);
-        if (session === null) return json(400, { error: "session 参数不合法" });
+        if (session === null) return json(400, { error: "Invalid session parameter" });
         res.statusCode = 200;
         res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
         res.setHeader("Cache-Control", "no-store");
@@ -1499,7 +1500,7 @@ export function framesPlugin(): Plugin {
         const snapshot = /^\/snapshot\/(html|local)\/([a-f0-9]{64})(?:\/([a-f0-9]{64}))?\/(\d{1,8})$/.exec(url.pathname);
         if (snapshot) {
           const local = snapshot[1] === "local";
-          if (local && !snapshot[3]) return json(404, { error: "本地档的键是 <entry.key>/<共享键>" });
+          if (local && !snapshot[3]) return json(404, { error: "The key for a local tier is <entry.key>/<shared key>" });
           void service.snapshots().readSnapshot({
             tier: local ? "local" : "shared",
             entryKey: local ? snapshot[2] : undefined,
@@ -1571,7 +1572,7 @@ export function framesPlugin(): Plugin {
           let preloadSession: string | null = null, preloadTicket: number | undefined;
           if (url.pathname === "/preload") {
             preloadSession = readySessionOf(input.session);
-            if (preloadSession === null) throw new Error("session 参数不合法");
+            if (preloadSession === null) throw new Error("Invalid session parameter");
             preloadTicket = service.ready.request(preloadSession);
           }
           if (url.pathname === "/yield") {
@@ -1589,7 +1590,7 @@ export function framesPlugin(): Plugin {
           let source = input.project;
           if (!source) {
             const version = await ensureMirror(String(input.session || ""), input.localRev);
-            if (!version) return json(409, { error: `镜像里没有这一版项目(session=${input.session}, localRev=${input.localRev})，请整份重推后重试。`, code: "MIRROR_MISSING", retryable: true });
+            if (!version) return json(409, { error: `This project version is not in the mirror (session=${input.session}, localRev=${input.localRev}). Push the whole project again and retry.`, code: "MIRROR_MISSING", retryable: true });
             source = version.project;
           }
           const project = renderProject(source);
@@ -1662,7 +1663,7 @@ export function framesPlugin(): Plugin {
             ok: false,
             code,
             retryable: timedOut || status >= 500,
-            error: error?.message || "帧渲染失败",
+            error: error?.message || tr("Frame render failed"),
           });
         }
       });

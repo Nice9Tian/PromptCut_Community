@@ -11,6 +11,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { tr } from "./i18n.mjs";
 
 /**
  * 站点定义。加站点就加一项:
@@ -22,7 +23,7 @@ import path from 'node:path';
  */
 export const SITES = {
   bilibili: {
-    name: '哔哩哔哩',
+    name: tr("Bilibili"),
     loginUrl: 'https://passport.bilibili.com/login',
     domains: /(^|\.)(bilibili\.com|bilibili\.tv|biliapi\.net|bigfun\.cn)$/i,
     required: ['SESSDATA', 'bili_jct', 'DedeUserID'],
@@ -58,7 +59,7 @@ export function cookieFilePath(dataDir, siteId) {
  * 会话 cookie(expires 为 -1)写 0,yt-dlp 会当成会话 cookie 照发。
  */
 export function toNetscape(cookies) {
-  const lines = ['# Netscape HTTP Cookie File', '# 由 PromptCut 素材收集在登录后导出;删掉这个文件就等于退出登录。', ''];
+  const lines = ['# Netscape HTTP Cookie File', '# Exported by PromptCut media collection after login; deleting this file is the same as logging out.', ''];
   for (const c of cookies) {
     const domain = String(c.domain || '');
     const expires = typeof c.expires === 'number' && c.expires > 0 ? Math.floor(c.expires) : 0;
@@ -100,7 +101,7 @@ export function parseNetscape(text) {
  */
 export function assessLogin(siteId, cookies, now = Date.now()) {
   const site = SITES[siteId];
-  if (!site) throw new Error(`没有叫 ${siteId} 的站点,可选:${siteNames().join(', ')}`);
+  if (!site) throw new Error(tr("No site named {0}, available: {1}", siteId, siteNames().join(', ')));
   const mine = (cookies || []).filter((c) => site.domains.test(String(c.domain || '').replace(/^\./, '')));
   const byName = new Map(mine.map((c) => [c.name, c]));
   const missing = site.required.filter((n) => !byName.get(n)?.value);
@@ -164,13 +165,13 @@ export function forgetCookies(dataDir, siteId) {
 export function pickCookies(dataDir, url, explicitPath) {
   if (explicitPath) {
     return fs.existsSync(explicitPath)
-      ? { path: explicitPath, site: siteOfUrl(url), reason: '用调用方给的 cookies 文件' }
-      : { path: null, site: siteOfUrl(url), reason: `调用方给的 cookies 文件不存在:${explicitPath},按未登录处理` };
+      ? { path: explicitPath, site: siteOfUrl(url), reason: 'Using the cookies file given by the caller' }
+      : { path: null, site: siteOfUrl(url), reason: `The cookies file given by the caller does not exist: ${explicitPath}, treated as not logged in` };
   }
   const site = siteOfUrl(url);
   if (!site) return { path: null, site: null, reason: null };
   const st = savedCookieStatus(dataDir, site);
-  if (!st.exists) return { path: null, site, reason: `${SITES[site].name}未登录,按未登录画质下载;要登录才有的画质先 user_interface_collect_login` };
-  if (st.expired) return { path: null, site, reason: `${SITES[site].name}的登录态已过期,按未登录画质下载;重新 user_interface_collect_login 可续上` };
-  return { path: st.path, site, reason: `带上${SITES[site].name}的登录态(用户 ${st.userId ?? '?'})` };
+  if (!st.exists) return { path: null, site, reason: `Not logged in to ${SITES[site].name}, downloading at logged-out quality; to get quality that needs login, run user_interface_collect_login first` };
+  if (st.expired) return { path: null, site, reason: `The login state for ${SITES[site].name} has expired, downloading at logged-out quality; run user_interface_collect_login again to resume it` };
+  return { path: st.path, site, reason: `Using the login state for ${SITES[site].name} (user ${st.userId ?? '?'})` };
 }

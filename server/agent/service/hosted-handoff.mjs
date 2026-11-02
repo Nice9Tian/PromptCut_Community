@@ -27,13 +27,13 @@ export const HANDOFF_TOOL_NAMES = Object.freeze(['user_interface_web_handoff']);
 
 /** 给模型看的工具结果(草稿,见报告「要用户定的事」)。宿主可以用 `texts` 整体或逐条替换 */
 export const HANDOFF_TEXT = Object.freeze({
-  shown: (reason) => `已经请发起人在他自己的电脑上处理${reason ? `(${reason})` : ''}。登录信息只留在他的电脑上,云端拿不到。`
-    + '现在停下来,用中文告诉用户要做什么、做完了怎么说。**不要继续调工具**,等用户回话之后再 web_view 看当前状态。',
-  hidden: '发起人电脑上的浏览器已经收回。',
-  noPage: '云端的浏览器还没有打开网页,没有可以交给用户的页面。先用 web_open 打开要处理的网页。',
-  unmounted: '云端的网页操作还没接上,user_interface_web_handoff 现在用不了。请按项目内容继续,需要的话告诉用户自己在电脑上的 PromptCut 里做这一步。',
-  unsupported: '发起人现在用的是网页版,没有可以交给他的本机浏览器。请告诉用户到电脑上的 PromptCut 里处理这一步,或者换一个不需要登录的做法。',
-  failed: 'user_interface_web_handoff 在发起人的电脑上没有做成。',
+  shown: (reason) => `The delegator has been asked to handle this on their own computer${reason ? `(${reason})` : ''}. Login information stays on their computer and is not available to the cloud.`
+    + 'Stop now and tell the user in Chinese what to do and what to say when done. **Do not keep calling tools**; after the user replies, use web_view to check the current state.',
+  hidden: 'The browser on the delegator\'s computer has been taken back.',
+  noPage: 'The cloud browser has not opened a web page yet, so there is no page to hand to the user. Use web_open first to open the page to work on.',
+  unmounted: 'Cloud web actions are not connected yet, so user_interface_web_handoff is unavailable. Continue based on the project content, and if needed tell the user to do this step themselves in PromptCut on their computer.',
+  unsupported: 'The delegator is using the web version, so there is no local browser to hand over. Tell the user to handle this step in PromptCut on their computer, or use an approach that does not require login.',
+  failed: 'user_interface_web_handoff did not succeed on the delegator\'s computer.',
 });
 
 const plain = (value) => !!value && typeof value === 'object' && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
@@ -55,11 +55,11 @@ export function createHandoffTools({ bridge, browser = null, texts = {}, now = D
     if (!handles.has(name)) throw new PageBridgeError('page-tool-unknown', 404);
     // 模型能给的只有 reason 与 hide;地址由云端浏览器给,模型不能指定把用户带到哪
     const a = args === undefined || args === null ? {} : args;
-    if (!plain(a) || Object.keys(a).some((key) => key !== 'reason' && key !== 'hide')) return { ok: false, error: 'user_interface_web_handoff 只接受 reason(文字)与 hide(是否收回)。' };
+    if (!plain(a) || Object.keys(a).some((key) => key !== 'reason' && key !== 'hide')) return { ok: false, error: 'user_interface_web_handoff only accepts reason (text) and hide (whether to take back).' };
     let send;
     try { send = checkedPageArgs('web_handoff', a, bridge.limits); } catch (error) {
       if (error?.code !== 'bad-args') throw error;
-      return { ok: false, error: 'user_interface_web_handoff 的 reason 要是一句不太长的话,hide 要是 true 或 false。' };
+      return { ok: false, error: 'The reason of user_interface_web_handoff must be a reasonably short sentence, and hide must be true or false.' };
     }
     if (!browser) return { ok: false, cloudUnavailable: true, code: 'handoff-browser-unmounted', error: text.unmounted };
     // 先确认这一轮此刻有效、取到发起人与发起页(授权已经不在会在这里抛出去)

@@ -83,8 +83,8 @@ function pngChunk(type, data) {
 }
 /** straight RGBA 原始像素 → PNG(8 位 RGBA,每行滤波 0)。画布直取与差分取层交出来的是原始像素,不是 PNG */
 export function rgbaToPng(rgba, width, height) {
-  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) throw new Error('rgbaToPng 要正整数宽高');
-  if (!rgba || rgba.length !== width * height * 4) throw new Error(`rgbaToPng 像素长度不对:${rgba?.length} ≠ ${width}×${height}×4`);
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) throw new Error('rgbaToPng requires a positive integer width and height');
+  if (!rgba || rgba.length !== width * height * 4) throw new Error(`rgbaToPng pixel length is wrong: ${rgba?.length} ≠ ${width}×${height}×4`);
   const src = Buffer.isBuffer(rgba) ? rgba : Buffer.from(rgba.buffer, rgba.byteOffset, rgba.byteLength);
   const raw = Buffer.alloc((width * 4 + 1) * height);
   for (let y = 0; y < height; y++) src.copy(raw, y * (width * 4 + 1) + 1, y * width * 4, (y + 1) * width * 4);
@@ -99,7 +99,7 @@ export function rgbaToPng(rgba, width, height) {
 export function shotToPng(shot) {
   if (shot && typeof shot === 'object' && shot.rgba) return rgbaToPng(shot.rgba, shot.width, shot.height);
   if (Buffer.isBuffer(shot) || shot instanceof Uint8Array) return Buffer.isBuffer(shot) ? shot : Buffer.from(shot);
-  throw new Error('取到的这一帧既不是 PNG 也不是原始像素');
+  throw new Error('The captured frame is neither PNG nor raw pixels');
 }
 
 /* ------------------------------------------------------------------ 计划 */
@@ -137,7 +137,7 @@ const frameFile = (dir, frame) => path.join(dir, `${frame}.png`);
 
 /** 存一帧(先写临时名再改名,读的一侧不会读到半张) */
 export async function storeExportFrame(root, resultKey, frame, png) {
-  if (!KEY_RE.test(String(resultKey))) throw fail(`导出位图的结果键不对:${resultKey}`, { retryable: false });
+  if (!KEY_RE.test(String(resultKey))) throw fail(`Wrong result key for bitmap export: ${resultKey}`, { retryable: false });
   const dir = exportFramesDir(root, resultKey);
   await fs.mkdir(dir, { recursive: true });
   const tmp = path.join(dir, `.${frame}.${process.pid}.tmp`);
@@ -163,9 +163,9 @@ const headerOf = task => {
 /** 本机这一段已有的帧 → 清单(缺的帧不列)。回 `{ result, readBlob }` */
 export async function collectExportResult(root, task) {
   const key = task?.resultKey;
-  if (!KEY_RE.test(String(key))) throw fail(`导出位图任务的 resultKey 不对:${key}`, { retryable: false });
+  if (!KEY_RE.test(String(key))) throw fail(`Wrong resultKey for bitmap export task: ${key}`, { retryable: false });
   const span = exportTaskFrames(task);
-  if (!span) throw fail('导出位图任务缺流的形状', { retryable: false });
+  if (!span) throw fail('Bitmap export task is missing the stream shape', { retryable: false });
   const dir = exportFramesDir(root, key);
   const files = new Map();
   const frames = [];
@@ -342,9 +342,9 @@ export function createExportFramesSink({ root, client, content = null, log = () 
         tell({ stage, blocks, pushed, bytes });
         await settleLimited(unique, PUSH_CONCURRENCY, async ([, hash]) => {
           const buf = await readBlob(hash);
-          if (!buf || sha256(buf) !== hash) throw fail(`块 ${hash} 的内容和清单对不上`);
+          if (!buf || sha256(buf) !== hash) throw fail(`Content of chunk ${hash} does not match the manifest`);
           const put = await client.put('px', buf, { ext: 'png' });
-          if (put?.hash && put.hash !== hash) throw fail(`素材服务回的哈希 ${put.hash} 和清单里的 ${hash} 不同`);
+          if (put?.hash && put.hash !== hash) throw fail(`The hash ${put.hash} returned by the asset service differs from ${hash} in the manifest`);
           pushed++; bytes += buf.length;
           tell({ stage, blocks, pushed, bytes });
         });

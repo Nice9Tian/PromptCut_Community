@@ -13,5 +13,5 @@ import { scrubUserDirEnv, markNoPortFile } from './user-dirs.mjs';
 markNoPortFile(process.env);
 
 for (const { key, value } of scrubUserDirEnv(process.env)) {
-  console.error(`[no-user-dirs] 不继承外部的 ${key}=${value}（测试与探针不写用户目录，见 scripts/lib/user-dirs.mjs）`);
+  console.error(`[no-user-dirs] not inheriting external ${key}=${value} (tests and probes do not write to user directories, see scripts/lib/user-dirs.mjs)`);
 }

@@ -6,6 +6,7 @@ import path from "node:path";
 import type { ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { ViteDevServer } from "vite";
+import { tr } from "../i18n.mjs";
 
 export function sendJson(res: ServerResponse, code: number, data: unknown) {
   if (res.headersSent) return;
@@ -56,7 +57,7 @@ export function resolveMediaUrls(project: any): { project: any; unresolved: stri
     if (!url || (!url.startsWith("blob:") && !url.startsWith("data:"))) return m;
     const base = m?.path ? String(m.path).split(/[/\\]/).pop() : "";
     if (!base) {
-      unresolved.push(m?.name || m?.id || "(未命名素材)");
+      unresolved.push(m?.name || m?.id || tr("(Unnamed media)"));
       return { ...m, url: "" };
     }
     return { ...m, url: `/@media/${encodeURIComponent(base)}` };

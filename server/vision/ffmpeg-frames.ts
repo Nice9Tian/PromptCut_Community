@@ -66,11 +66,11 @@ function extractFrame(ffmpeg: string, opts: { file: string; kind: string; second
     const child = spawn(ffmpeg, extractArgs(opts), { stdio: ["ignore", "ignore", "pipe"], windowsHide: true });
     let err = "";
     child.stderr.on("data", (c) => { err += c; });
-    const timer = setTimeout(() => { child.kill(); reject(new Error("ffmpeg 抽帧超时")); }, EXTRACT_TIMEOUT_MS);
+    const timer = setTimeout(() => { child.kill(); reject(new Error("ffmpeg frame extraction timed out")); }, EXTRACT_TIMEOUT_MS);
     child.on("error", (e) => { clearTimeout(timer); reject(e); });
     child.on("close", (code) => {
       clearTimeout(timer);
-      if (code !== 0) return reject(new Error(`ffmpeg 退出码 ${code}${err ? `:${err.trim().slice(-300)}` : ""}`));
+      if (code !== 0) return reject(new Error(`ffmpeg exit code ${code}${err ? `:${err.trim().slice(-300)}` : ""}`));
       resolve();
     });
   });
@@ -88,7 +88,7 @@ async function renderMediaLayers(root: string, project: any, t: number, dir: str
   if (layers.length === 0) return [];
   const ffmpeg = ffmpegCommand();
   if (!ffmpeg) {
-    notes.push("这台机器上找不到 ffmpeg,画面里素材那一层是空的(不是素材的问题)。");
+    notes.push("ffmpeg was not found on this machine, so the media layer in the picture is empty (not a problem with the media).");
     return [];
   }
   const width = project.width || 1920;
@@ -98,7 +98,7 @@ async function renderMediaLayers(root: string, project: any, t: number, dir: str
   for (const layer of layers) {
     const file = mediaSourceOf(layer.media);
     if (!file) {
-      notes.push(`素材「${layer.media.name || layer.media.id}」取不到(素材服务不可达),画面里它那一层是空的。`);
+      notes.push(`Media "${layer.media.name || layer.media.id}" could not be fetched (asset service unreachable), so its layer in the picture is empty.`);
       continue;
     }
     try {
@@ -110,7 +110,7 @@ async function renderMediaLayers(root: string, project: any, t: number, dir: str
       });
       out.push(layerOut);
     } catch (e: any) {
-      notes.push(`素材「${layer.media.name || layer.media.id}」第 ${layer.mediaTime.toFixed(2)} 秒抽帧失败(${e?.message || e}),画面里它那一层是空的。`);
+      notes.push(`Frame extraction failed for media "${layer.media.name || layer.media.id}" at second ${layer.mediaTime.toFixed(2)} (${e?.message || e}), so its layer in the picture is empty.`);
     }
   }
   return out;

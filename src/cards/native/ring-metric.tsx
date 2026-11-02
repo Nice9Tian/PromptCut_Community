@@ -79,10 +79,10 @@ function RingMetricCard({ params }: CardProps<Params>) {
 
 export const ringMetric: CardDef<Params> = {
   id: "ring-metric",
-  name: "环形指标",
-  description: "环形进度与数字同步增加",
-  useWhen: "单个百分比或完成度指标,用环形进度加中心数字表现。",
-  tags: ["百分比","环形","进度","指标"],
+  name: "Ring metric",
+  description: "Ring progress and number increase in sync",
+  useWhen: "A single percentage or completion metric, shown as ring progress with a number in the center.",
+  tags: ["percentage","circular","progress","metric"],
   source: "native",
   // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
   frameMode: "stateful",
@@ -93,12 +93,12 @@ export const ringMetric: CardDef<Params> = {
   },
   controls: [
     ...hudControls,
-    { key: "value", label: "数值(0-100)", type: "number" },
-    { key: "label", label: "说明", type: "text" },
+    { key: "value", label: "Value (0-100)", type: "number" },
+    { key: "label", label: "notes", type: "text" },
   ],
   parts: [
-    { id: "metric", label: "指标", role: "group", params: ["value"], enterMs: 0, settleMs: 1500 },
-    { id: "label", label: "说明", role: "text", params: ["label"], enterMs: 0, settleMs: 0 },
+    { id: "metric", label: "metric", role: "group", params: ["value"], enterMs: 0, settleMs: 1500 },
+    { id: "label", label: "notes", role: "text", params: ["label"], enterMs: 0, settleMs: 0 },
   ],
   lifecycle: { settleMs: 1500, after: "hold", exit: ["fade"] },
   Component: RingMetricCard,

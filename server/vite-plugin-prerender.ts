@@ -15,6 +15,7 @@ import { createSessionLineForwarder } from "./render-node/session-diag.mjs";
 import { autoRenderNodeOffReason, normalizeBinding, ticketOk } from "./auto-render-node.mjs";
 import { createBindingMemory, createTicketRelay } from "./render-node-relay.mjs";
 import { localPrerenderMode } from "./prerender-mode.mjs";
+import { tr } from "./i18n.mjs";
 
 /**
  * 拉起并看护预渲染进程(docs/archive/topics/decoupling-plan.md 第 3 节「预渲染」,阶段 2)。
@@ -137,8 +138,8 @@ export function prerenderPlugin(): Plugin {
       };
       const rnBody = (req: any, limit = 16 * 1024) => new Promise<any>((resolve, reject) => {
         let body = "";
-        req.on("data", (c: Buffer) => { body += c; if (body.length > limit) { req.destroy(); reject(new Error("请求体太大")); } });
-        req.on("end", () => { try { resolve(JSON.parse(body || "{}")); } catch { reject(new Error("请求体不是 JSON")); } });
+        req.on("data", (c: Buffer) => { body += c; if (body.length > limit) { req.destroy(); reject(new Error(tr("Request body too large"))); } });
+        req.on("end", () => { try { resolve(JSON.parse(body || "{}")); } catch { reject(new Error("Request body is not JSON")); } });
         req.on("error", reject);
       });
       /** 转给预渲染进程;它没就绪就算了(就绪后照记下的再转) */
@@ -149,7 +150,7 @@ export function prerenderPlugin(): Plugin {
           const headers: Record<string, string> = { "Content-Type": "application/json" };
           if (process.env.PROMPTCUT_INTERNAL_TOKEN) headers["x-pc-internal-token"] = process.env.PROMPTCUT_INTERNAL_TOKEN;
           const r = await fetch(s.url + pathname, { method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(15_000) });
-          return await r.json().catch(() => ({ ok: false, error: `预渲染进程回了非 JSON(HTTP ${r.status})` }));
+          return await r.json().catch(() => ({ ok: false, error: `The prerender process returned non-JSON (HTTP ${r.status})` }));
         } catch (e: any) {
           return { ok: false, pending: true, error: String(e?.message ?? e) };
         }
@@ -191,10 +192,10 @@ export function prerenderPlugin(): Plugin {
           }
           if (route === "/ticket-request") {
             // 只给本机的预渲染进程(不带 Origin 的服务端请求);浏览器里的页面发来的一律拒(api 守卫之外再挡一道)
-            if (req.headers.origin) return rnSend(res, 403, { ok: false, error: "只给本机进程" });
+            if (req.headers.origin) return rnSend(res, 403, { ok: false, error: "Local processes only" });
             const projectId = typeof input?.projectId === "string" ? input.projectId : "";
             const b = rnMemory.get();
-            if (!b || b.projectId !== projectId) return rnSend(res, 409, { ok: false, code: "not-bound", error: "编辑器没有绑这个项目" });
+            if (!b || b.projectId !== projectId) return rnSend(res, 409, { ok: false, code: "not-bound", error: "The editor is not bound to this project" });
             try {
               const ticket = await rnRelay.request(projectId);
               return rnSend(res, 200, { ok: true, ticket });
@@ -283,7 +284,7 @@ export function prerenderPlugin(): Plugin {
         const me = child;
         me.on("exit", (code) => {
           if (child === me) child = null;
-          setPrerender({ ready: false, error: `预渲染进程退出(代码 ${code}):${tail.join("").trim().slice(-400)}` });
+          setPrerender({ ready: false, error: `Prerender process exited (code ${code}): ${tail.join("").trim().slice(-400)}` });
           if (closing) return;
           const n = prerenderState().restarts + 1;
           setPrerender({ restarts: n });
@@ -309,7 +310,7 @@ export function prerenderPlugin(): Plugin {
                */
               void repushMirror(url)
                 .then(() => replayReadySessions(url, () => child === me))
-                .then((results) => { if (results.length) console.log(`[prerender] 重启后重放 preload:${JSON.stringify(results)}`); })
+                .then((results) => { if (results.length) console.log(`[prerender] Replaying preload after restart: ${JSON.stringify(results)}`); })
                 .catch(() => {})
                 // 页面交过共享配置(自动渲染节点):它刚起来,手里没有,照记下的再转一次(不带票据,建会话时它自己来要)
                 .then(() => { if (child === me) rnDeliverRemembered(); });

@@ -2,6 +2,7 @@ import type { Plugin, ViteDevServer } from "vite";
 import type { ServerResponse, IncomingMessage } from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { tr } from "./i18n.mjs";
 
 /**
  * SKILL:桌面 APP 经 MCP 直连用户正在用的项目(计划 `docs/plan/agent-workflow-plan.md` A4)。这里管两件事:
@@ -33,11 +34,11 @@ function readBody(req: IncomingMessage, limit = 64 * 1024 * 1024): Promise<strin
       body += c;
       if (body.length > limit) {
         req.destroy();
-        reject(new Error("请求太大"));
+        reject(new Error("Request too large"));
       }
     });
     req.on("end", () => resolve(body));
-    req.on("error", () => reject(new Error("读取请求体失败")));
+    req.on("error", () => reject(new Error(tr("Failed to read request body"))));
   });
 }
 
@@ -49,8 +50,8 @@ function readBody(req: IncomingMessage, limit = 64 * 1024 * 1024): Promise<strin
 async function openPath(root: string, req: IncomingMessage, res: ServerResponse) {
   const { path: raw } = JSON.parse((await readBody(req)) || "{}");
   const src = path.resolve(String(raw || ""));
-  if (!/\.(proc|json)$/i.test(src)) return sendJson(res, 400, { ok: false, error: "只认 .proc / .json" });
-  if (!fs.existsSync(src)) return sendJson(res, 404, { ok: false, error: `文件不存在:${src}` });
+  if (!/\.(proc|json)$/i.test(src)) return sendJson(res, 400, { ok: false, error: "Only .proc / .json are accepted" });
+  if (!fs.existsSync(src)) return sendJson(res, 404, { ok: false, error: `File does not exist: ${src}` });
   const text = fs.readFileSync(src, "utf8");
   /*
    * 内容必须**长得像一份 PromptCut 项目**才回给调用方。
@@ -67,7 +68,7 @@ async function openPath(root: string, req: IncomingMessage, res: ServerResponse)
     (doc?.project && typeof doc.project === "object") ||
     (doc?.version === 1 && Array.isArray(doc?.tracks));
   if (!looksLikeProject) {
-    return sendJson(res, 400, { ok: false, error: "这个文件不是 PromptCut 项目" });
+    return sendJson(res, 400, { ok: false, error: tr("This file is not a PromptCut project") });
   }
   const name = path.basename(src);
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "").replace("T", "-");
@@ -108,13 +109,13 @@ export function skillPlugin(): Plugin {
             if (req.method === "POST") {
               const body = JSON.parse((await readBody(req, 8192)) || "{}");
               const target = String(body.target || "");
-              if (!reg.TARGETS.includes(target)) return sendJson(res, 400, { ok: false, error: `target 只能是 ${reg.TARGETS.join(" / ")}` });
+              if (!reg.TARGETS.includes(target)) return sendJson(res, 400, { ok: false, error: `target must be one of ${reg.TARGETS.join(" / ")}` });
               if (body.action === "register") return sendJson(res, 200, reg.register(target, want));
               if (body.action === "unregister") return sendJson(res, 200, reg.unregister(target, want));
-              return sendJson(res, 400, { ok: false, error: "action 只能是 register / unregister" });
+              return sendJson(res, 400, { ok: false, error: "action must be register / unregister" });
             }
           }
-          return sendJson(res, 404, { ok: false, error: "没有这个接口" });
+          return sendJson(res, 404, { ok: false, error: "API not available" });
         } catch (e) {
           return sendJson(res, 400, { ok: false, error: (e as Error).message });
         }

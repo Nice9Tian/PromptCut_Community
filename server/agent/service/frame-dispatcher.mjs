@@ -212,5 +212,5 @@ export async function dispatchFrameSnapshot({
   }
   if (cloudOutcome?.error) throw cloudOutcome.error;
   if (cloudOutcome?.result) return cloudOutcome.result;
-  throw new Error('这次没看成：没有可用的出图节点（成员设备离线或不合格，云端渲染服务不可用）。');
+  throw new Error('Could not view this time: no render node is available (member devices are offline or ineligible, or the cloud render service is unavailable).');
 }

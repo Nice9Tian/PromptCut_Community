@@ -24,6 +24,7 @@
  * 只在内存里:编辑器进程重启就清空,页签和会话下一次动作时重新出现。
  */
 import { diffScopes, overlappingScopes, splitScopes, scopeOverlaps } from './ssr-host.mjs';
+import { tr } from "../i18n.mjs";
 
 export const BOARD_DEFAULTS = Object.freeze({
   /** 自动投递最多连锁几层;超过就留在信箱里,等用户下一次和它说话时一并带上 */
@@ -117,19 +118,19 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
 
   /** 「Agent <对话>(<厂商>)」;共享项目别的成员那边的带上成员名 */
   function agentText(key) {
-    if (key === '' || key === null || key === undefined) return '某个没带对话 ID 的 Agent';
+    if (key === '' || key === null || key === undefined) return 'An Agent without a chat ID';
     const a = agents.get(key);
     const vendor = a?.remote?.vendor ?? label(key);
-    const member = a?.remote?.member ? `,成员 ${a.remote.member} 那边` : '';
+    const member = a?.remote?.member ? `, on member ${a.remote.member}'s side` : '';
     return `Agent ${key}${vendor || member ? `(${[vendor, member.slice(1)].filter(Boolean).join(',')})` : ''}`;
   }
 
   function byText(by) {
-    if (!by) return '未知的写入方';
-    if (by.kind === 'user') return by.userId ? `用户 ${by.userId}` : '用户';
+    if (!by) return 'Unknown writer';
+    if (by.kind === 'user') return by.userId ? `User ${by.userId}` : 'User';
     if (by.kind === 'agent') return agentText(by.agent);
-    if (by.kind === 'render') return '渲染节点';
-    return by.userId ? `用户 ${by.userId}` : '未知的写入方';
+    if (by.kind === 'render') return 'Render node';
+    return by.userId ? `User ${by.userId}` : 'Unknown writer';
   }
 
   const isBusy = (key) => {
@@ -161,10 +162,10 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
 
   function fmtChange(c) {
     const who = byText(c.by);
-    if (c.kind === 'declare') return `${fmtTime(c.at)} ${who} 声明了修改范围:${c.scopes.join(',')}`;
+    if (c.kind === 'declare') return `${fmtTime(c.at)} ${who} declared edit scope: ${c.scopes.join(',')}`;
     const scopeOf = c.by?.kind === 'agent' ? agents.get(c.by.agent)?.scope : null;
-    const whoScope = scopeOf ? `(声明范围「${scopeOf}」)` : '';
-    return `${fmtTime(c.at)} ${who}${whoScope}${c.tool ? ` 用 ${c.tool}` : ''} 改了 ${c.scopes.join(',')}`;
+    const whoScope = scopeOf ? `(declared scope "${scopeOf}")` : '';
+    return `${fmtTime(c.at)} ${who}${whoScope}${c.tool ? ` using ${c.tool}` : ''} changed ${c.scopes.join(',')}`;
   }
 
   function markNotified(key, s) {
@@ -336,9 +337,9 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
 
     declareScope(key, args) {
       const scope = typeof args?.scope === 'string' ? args.scope.trim().slice(0, 120) : '';
-      if (!scope) throw new Error('scope 必填,写成「剪辑X->序列X」,多个用逗号分开');
+      if (!scope) throw new Error('scope is required, write it as "cut X->track X", separate multiple with commas');
       if (!key) {
-        return { ok: false, error: '这条调用没带 Agent 对话 ID(可能是走 agy 或外部命令行调的),范围没法记到页签上;别的 Agent 也看不到这次声明' };
+        return { ok: false, error: 'This call carries no Agent chat ID (it may have come through agy or an external command line), so the scope cannot be recorded on the tab; other Agents will not see this declaration either' };
       }
       const a = entry(key);
       a.scope = scope;
@@ -354,7 +355,7 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
         you: key,
         tab: a.title,
         otherAgents: others,
-        ...(clash.length ? { warning: `范围和 ${clash.map((c) => `${c.id}(${c.scope})`).join('、')} 有重叠,先用 send_message 商量好谁改哪部分` } : {}),
+        ...(clash.length ? { warning: `The scope overlaps with ${clash.map((c) => `${c.id}(${c.scope})`).join(', ')}; use send_message first to agree on who edits which part` } : {}),
       };
     },
 
@@ -363,7 +364,7 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
         const info = (() => { try { return infoOf(a.id) ?? null; } catch { return null; } })();
         return {
           id: a.id,
-          title: a.title ?? (a.remote ? `成员 ${a.remote.member} 的 Agent` : null),
+          title: a.title ?? (a.remote ? tr("Member {0}'s Agent", a.remote.member) : null),
           scope: a.scope,
           busy: a.remote ? !!a.remote.busy : isBusy(a.id),
           you: a.id === key,
@@ -383,12 +384,12 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
     sendMessage(key, args) {
       const text = typeof args?.text === 'string' ? args.text.trim().slice(0, 4000) : '';
       const to = typeof args?.to === 'string' ? args.to.trim() : '';
-      if (!text) throw new Error('text 必填');
-      if (!to) throw new Error('to 必填:收件 Agent 的对话 ID,用 list_agents 查;写 all 就是发给所有其他 Agent;写 user 是对用户说话');
+      if (!text) throw new Error('text is required');
+      if (!to) throw new Error('to is required: the chat ID of the recipient Agent, look it up with list_agents; use all to send to every other Agent; use user to speak to the user');
       // 对用户说话(2026-10-20 用户定):界面按工具调用里的 text 画进这一轮的气泡,公告板不投递(server/harness/tools/userMessage.mjs)
-      if (to.toLowerCase() === 'user') return { ok: true, shown: true, note: '已显示在用户的对话气泡里' };
+      if (to.toLowerCase() === 'user') return { ok: true, shown: true, note: 'Shown in the user\'s chat bubble' };
       const targets = to === 'all' ? liveAgents().filter((a) => a.id !== key).map((a) => a.id) : [to];
-      if (targets.length === 0) return { ok: false, error: '没有别的 Agent 在跑' };
+      if (targets.length === 0) return { ok: false, error: 'No other Agent is running' };
       const hops = (key && agents.get(key)?.hops) || 0;
       const delivered = [];
       const unknown = [];
@@ -405,19 +406,19 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
         delivered.push(t);
       }
       emit();
-      if (delivered.length === 0) throw new Error(`没有这个 Agent:${unknown.join('、')}(用 list_agents 看有哪些)`);
+      if (delivered.length === 0) throw new Error(`No such Agent: ${unknown.join(', ')} (use list_agents to see which exist)`);
       const busyTargets = delivered.filter((t) => !remote.includes(t) && isBusy(t));
       return {
         ok: true,
         delivered,
         ...(unknown.length ? { unknown } : {}),
         note: busyTargets.length
-          ? `${busyTargets.join('、')} 正在跑,消息会带在它下一次工具调用的结果里,这一轮结束后没看到的再自动送到;空闲的那些已经作为一条消息发给它了`
+          ? `${busyTargets.join(', ')} is running; the message will be included in the result of its next tool call, and anything it has not seen after this turn ends will be delivered automatically; the idle ones have already been sent it as a message`
           : hops + 1 >= L.MAX_AUTO_HOPS
-            ? '已经连续互发好几轮了,这条会留在对方信箱里,等用户下一次和它说话时一并带上,不再自动触发它跑'
+            ? 'The Agents have already messaged each other for several rounds in a row; this message will stay in the recipient\'s mailbox and be delivered together the next time the user talks to it, and will no longer trigger it to run automatically'
             : remote.length === delivered.length
-              ? '对方在共享项目别的成员那边,消息已经经文档服务转过去'
-              : '对方空闲,消息已作为一条用户消息发给它,它会开始处理',
+              ? 'The recipient is with another member of the shared project; the message has been forwarded through the document service'
+              : 'The recipient is idle; the message was sent to it as a user message and it will start processing',
       };
     },
 
@@ -432,7 +433,7 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
 
     /** 自己信箱里还没处理的消息(不取走)与自上次以来别人改了什么 */
     checkMessages(key) {
-      if (!key) return { ok: false, error: '这条调用没带 Agent 对话 ID' };
+      if (!key) return { ok: false, error: 'This call carries no Agent chat ID' };
       const list = inbox.filter((m) => m.to === key);
       const others = changes.filter((c) => !mine(c, key) && c.seq > (seen.get(key) ?? 0));
       return {
@@ -479,10 +480,10 @@ export function createAgentBoard({ now = () => Date.now(), labelOf = () => null,
       const held = board.takeInbox(key, false);
       seen.set(key, seq);
       if (others.length === 0 && held.length === 0) return '';
-      const lines = ['[其他 Agent 的动态 —— 系统自动附上,不是用户说的话]', `你的 Agent 对话 ID:${key}`];
+      const lines = ['[Activity from other Agents: attached automatically by the system, not something the user said]', `Your Agent chat ID: ${key}`];
       for (const c of others.slice(-L.notesMax)) lines.push(`- ${fmtChange(c)}`);
-      for (const m of held) lines.push(`- ${fmtTime(m.at)} ${m.fromLabel ?? agentText(m.from)} 给你的消息:${m.text}`);
-      lines.push('[/其他 Agent 的动态]');
+      for (const m of held) lines.push(`- Message to you from ${m.fromLabel ?? agentText(m.from)} ${fmtTime(m.at)}: ${m.text}`);
+      lines.push('[/Activity from other Agents]');
       return lines.join('\n');
     },
 
@@ -593,28 +594,28 @@ export function annotateBoard(result, { messages = [], scopeChanges = [], overwr
   const lines = [];
   const fields = {};
   const cap = (arr) => arr.slice(0, limits.showMax);
-  const more = (arr) => (arr.length > limits.showMax ? ` 等 ${arr.length} 条` : '');
+  const more = (arr) => (arr.length > limits.showMax ? ` and ${arr.length} more` : '');
   if (overwrittenBy.length) {
     const shown = cap(overwrittenBy).map((o) => {
       const clip = /\/clips\/@([^/]+)/.exec(o.entity)?.[1];
-      return `${clip ? `片段 ${clip}` : o.entity}(被 ${o.who} 覆盖${o.rev != null ? `,rev ${o.rev}` : ''})`;
+      return `${clip ? `clip ${clip}` : o.entity} (overwritten by ${o.who}${o.rev != null ? `,rev ${o.rev}` : ''})`;
     });
-    lines.push(`你写的 ${shown.join('、')}${more(overwrittenBy)}。先重读确认现在的内容,需要时和对方协调,不要直接改回去。`);
+    lines.push(`You wrote ${shown.join(', ')}${more(overwrittenBy)}. Re-read to confirm the current content, coordinate with them if needed, and do not simply revert it.`);
     fields.overwrittenBy = overwrittenBy;
   }
   if (scopeClash.length) {
-    const shown = cap(scopeClash).map((c) => `${c.who} 声明在改的「${c.scope}」(你写到了 ${c.written.join(',')})`);
-    lines.push(`这次写入落在别的 Agent 正在改的范围里:${shown.join('、')}${more(scopeClash)}。对方下一次工具调用会得知;先用 send_message 和它商量谁改哪部分。`);
+    const shown = cap(scopeClash).map((c) => `"${c.scope}" that ${c.who} declared it is editing (you wrote to ${c.written.join(',')})`);
+    lines.push(`This write falls within a scope another Agent is editing: ${shown.join(', ')}${more(scopeClash)}. It will learn of this on its next tool call; first use send_message to agree with it on who edits which part.`);
     fields.scopeClash = scopeClash;
   }
   if (scopeChanges.length) {
-    const shown = cap(scopeChanges).map((c) => `${c.who}${c.tool ? ` 用 ${c.tool}` : ''} 改了 ${c.scopes.join(',')}`);
-    lines.push(`别人正在改你声明的范围:${shown.join(';')}${more(scopeChanges)}。重读后再继续,需要时用 send_message 协调。`);
+    const shown = cap(scopeChanges).map((c) => `${c.who}${c.tool ? ` using ${c.tool}` : ''} changed ${c.scopes.join(',')}`);
+    lines.push(`Someone else is editing a scope you declared: ${shown.join(';')}${more(scopeChanges)}. Re-read before continuing, and coordinate with send_message if needed.`);
     fields.scopeChanges = scopeChanges;
   }
   if (messages.length) {
-    const shown = cap(messages).map((m) => `【${m.fromLabel ?? (m.from ? `Agent ${m.from}` : '未知')}】${m.text}`);
-    lines.push(`别的 Agent 给你的消息(系统附上,不是用户说的话):${shown.join(' ')}${more(messages)}`);
+    const shown = cap(messages).map((m) => `[${m.fromLabel ?? (m.from ? `Agent ${m.from}` : 'unknown')}] ${m.text}`);
+    lines.push(`Message from another Agent (attached by the system, not something the user said): ${shown.join(' ')}${more(messages)}`);
     fields.messages = messages;
   }
   if (!lines.length) return result;

@@ -24,9 +24,9 @@ export function catalogEntries(root) {
     const index = JSON.parse(fs.readFileSync(path.join(dir, 'index.json'), 'utf8'));
     for (const item of index.items ?? []) {
       const name = String(item?.name ?? '');
-      if (!NAME.test(name)) throw new Error(`[online-catalog] ${kind}/index.json 里的名字 "${name}" 不合 [A-Za-z0-9-]+（桌面的 /catalog 路由也取不到它）`);
+      if (!NAME.test(name)) throw new Error(`[online-catalog] The name "${name}" in ${kind}/index.json does not match [A-Za-z0-9-]+ (the desktop app's /catalog route cannot fetch it either)`);
       const source = path.join(dir, `${name}.json`);
-      if (!fs.existsSync(source)) throw new Error(`[online-catalog] ${kind}/index.json 登记了 "${name}"，但 ${source} 不在`);
+      if (!fs.existsSync(source)) throw new Error(`[online-catalog] ${kind}/index.json registers "${name}", but ${source} does not exist`);
       out.push({ kind, name, fileName: `catalog/${kind}/${name}.json`, source });
     }
   }

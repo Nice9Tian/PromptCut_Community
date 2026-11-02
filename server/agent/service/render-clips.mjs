@@ -84,7 +84,7 @@ export const JUDGED_CLIP_IDS = 10;
 export async function loadHeavyJudge(loadModule) {
   for (const id of HEAVY_JUDGE_PRELOAD) await loadModule(id);
   const mod = await loadModule(HEAVY_JUDGE_MODULE);
-  if (typeof mod?.judgeHeavyClips !== 'function') throw new Error('判定模块没有 judgeHeavyClips');
+  if (typeof mod?.judgeHeavyClips !== 'function') throw new Error('The judge module has no judgeHeavyClips');
   const judge = (...args) => mod.judgeHeavyClips(...args);
   if (typeof mod.cardIdentityGroups === 'function') judge.groups = (project) => mod.cardIdentityGroups(project);
   return judge;

@@ -81,7 +81,7 @@ function watchdog(runnerPid) {
       const file = /([^\s"']+\.test\.mjs)/.exec(row.cmd)?.[1];
       if (!file || row.ageMs < WATCHDOG_MS) continue;
       console.error(`
-⏱ 看门：${file} 的进程（pid ${row.pid}）已运行 ${Math.round(row.ageMs / 1000)} 秒仍未结束，超过 ${Math.round(WATCHDOG_MS / 1000)} 秒的限度，强制结束它的进程树`);
+⏱ Watchdog: process of ${file} (pid ${row.pid}) has been running for ${Math.round(row.ageMs / 1000)} seconds without finishing, exceeding the ${Math.round(WATCHDOG_MS / 1000)} second limit; force-killing its process tree`);
       killedByWatchdog.push(file);
       killTree(row.pid);
     }
@@ -97,7 +97,7 @@ async function run(testFiles, attempt) {
     const child = spawn(process.execPath, args, { cwd: root, stdio: 'inherit', windowsHide: true });
     const dog = watchdog(child.pid);
     child.once('close', () => clearInterval(dog));
-    child.once('error', (error) => { console.error(`测试进程启动失败：${error.message}`); resolve(1); });
+    child.once('error', (error) => { console.error(`Failed to start test process: ${error.message}`); resolve(1); });
     child.once('close', (exitCode, signal) => resolve(signal ? 1 : exitCode ?? 1));
   });
   let events = [];
@@ -105,7 +105,7 @@ async function run(testFiles, attempt) {
     try {
       events = fs.readFileSync(report, 'utf8').split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
     } catch (error) {
-      console.error(`测试事件报告读取失败：${error.message}`);
+      console.error(`Failed to read test event report: ${error.message}`);
       return { code: 1, events: [], files: [], reportError: true };
     }
   }
@@ -115,12 +115,12 @@ async function run(testFiles, attempt) {
 function note(file, attempt, retriable) {
   const { exitCode, signal } = file.processFailure;
   const status = signal ? `signal=${signal}` : `exitCode=${exitDescription(exitCode)}`;
-  console.error(`\n${retriable ? '⚠ 测试文件进程异常' : '✖ 文件级失败（不重跑）'}：${file.file}（第 ${attempt} 次）`);
-  console.error(`  ${status}；已报用例=${file.testCases}；stderr=${file.stderrLines} 行${retriable ? '；参考 nodejs/node#65756：https://github.com/nodejs/node/issues/65756' : ''}`);
+  console.error(`\n${retriable ? '⚠ Test file process crashed' : '✖ File-level failure (not retried)'}: ${file.file} (time ${attempt})`);
+  console.error(`  ${status}; reported cases=${file.testCases}; stderr=${file.stderrLines} lines${retriable ? '; see nodejs/node#65756: https://github.com/nodejs/node/issues/65756' : ''}`);
 }
 
 function reportKilled() {
-  if (killedByWatchdog.length) console.error(`⏱ 被看门强制结束的测试文件（记为失败）：${[...new Set(killedByWatchdog)].join('、')}`);
+  if (killedByWatchdog.length) console.error(`⏱ Test files killed by the watchdog (counted as failed): ${[...new Set(killedByWatchdog)].join(', ')}`);
 }
 
 async function main() {
@@ -128,10 +128,10 @@ async function main() {
   if (first.code === 0) {
     const counts = rootSummaryCounts(first.events);
     if (first.reportError || !counts || counts.failed !== 0 || counts.cancelled !== 0) {
-      console.error('✖ 测试根汇总缺失或与退出码不一致，保留失败');
+      console.error('✖ Test root summary is missing or inconsistent with the exit code, keeping the failure');
       return 1;
     }
-    console.log('✓ npm test 最终结果：零失败');
+    console.log('✓ npm test final result: zero failures');
     return 0;
   }
   if (first.reportError) return 1;
@@ -143,18 +143,18 @@ async function main() {
   for (const file of retryable) {
     let recovered = false;
     for (let retry = 1; retry <= 2; retry++) {
-      console.error(`↻ 单独重跑 ${file.file}（${retry}/2）`);
+      console.error(`↻ Rerunning ${file.file} on its own (${retry}/2)`);
       const result = await run([file.file], `${path.basename(file.file)}-${retry}`);
       const retryCounts = rootSummaryCounts(result.events);
       if (result.code === 0 && !result.reportError && retryCounts?.failed === 0 && retryCounts.cancelled === 0) {
-        console.error(`✓ ${file.file} 重跑通过；首次异常已记录`);
+        console.error(`✓ ${file.file} passed on rerun; the first crash was recorded`);
         recovered = true;
         break;
       }
       const next = result.files.find((entry) => path.normalize(entry.file).toLowerCase() === path.normalize(file.file).toLowerCase());
       if (!next || !retryReason(next)) {
         if (next?.processFailure) note(next, retry + 1, false);
-        console.error(`✖ ${file.file} 重跑未得到完整成功结果，保留失败`);
+        console.error(`✖ ${file.file} rerun did not give a fully successful result, keeping the failure`);
         break;
       }
       note(next, retry + 1, true);
@@ -162,10 +162,10 @@ async function main() {
     if (!recovered) unrecovered = true;
   }
   if (unrecovered) {
-    console.error('✖ npm test 最终结果：仍有失败');
+    console.error('✖ npm test final result: failures remain');
     return 1;
   }
-  console.log(`✓ npm test 最终结果：零失败（${retryable.length} 个异常退出文件重跑通过）`);
+  console.log(`✓ npm test final result: zero failures (${retryable.length} crashed files passed on rerun)`);
   return 0;
 }
 
@@ -174,6 +174,6 @@ try {
   reportKilled();
 } finally {
   const relative = path.relative(path.resolve(os.tmpdir()), temp);
-  if (!relative.startsWith('promptcut-test-') || relative.includes(path.sep)) throw new Error(`拒绝清理非本次测试临时目录：${temp}`);
+  if (!relative.startsWith('promptcut-test-') || relative.includes(path.sep)) throw new Error(`Refusing to clean up a temp directory that does not belong to this test run: ${temp}`);
   fs.rmSync(temp, { recursive: true, force: true });
 }

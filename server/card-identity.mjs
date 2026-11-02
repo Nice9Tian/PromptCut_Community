@@ -186,8 +186,8 @@ export function cardSnapshotInputKeys(graph, { style = {}, environment = {}, sou
  */
 export function cardStreamIdentity({ kind = 'card', members = [], fps, stage = {}, codeVersion = '', below = null } = {}) {
   if (kind === 'below') return belowStreamIdentity({ members, fps, stage, codeVersion, below });
-  if (kind !== 'card' && kind !== 'group') throw new Error(`未知的流种类 ${kind}`);
-  if (!members.length) throw new Error('流里至少要有一张卡');
+  if (kind !== 'card' && kind !== 'group') throw new Error(`Unknown stream kind ${kind}`);
+  if (!members.length) throw new Error('A stream needs at least one card');
   return digest({
     stream: 1, kind, fps: ratio(fps), codeVersion,
     stage: { width: stage.width, height: stage.height, camera3dFov: stage.camera3dFov },
@@ -230,13 +230,13 @@ export const BELOW_STREAM_VERSION = 2;
  * 更粗(项目里任何改动都作废),但不会错。`layers` 与 `scene` 都没有、或哪一项缺键就抛。
  */
 function belowStreamIdentity({ members = [], fps, stage = {}, codeVersion = '', below = null } = {}) {
-  if (members.length !== 1) throw new Error('依赖下层的流只有目标卡一个成员');
+  if (members.length !== 1) throw new Error('A stream that depends on lower layers has only the target card as its member');
   const scene = below?.scene;
   const layers = below?.layers;
-  if (scene !== undefined && scene !== null && (typeof scene !== 'string' || !scene)) throw new Error('依赖下层的流:整个项目的键不对');
-  if (!scene && !Array.isArray(layers)) throw new Error('依赖下层的流:要给下层的键,或者整个项目的键');
+  if (scene !== undefined && scene !== null && (typeof scene !== 'string' || !scene)) throw new Error('Stream that depends on lower layers: the key for the whole project is invalid');
+  if (!scene && !Array.isArray(layers)) throw new Error('Stream that depends on lower layers: provide the keys of the lower layers, or the key of the whole project');
   const item = m => {
-    if (typeof m?.key !== 'string' || !m.key) throw new Error('依赖下层的流:有一层没有键');
+    if (typeof m?.key !== 'string' || !m.key) throw new Error('Stream that depends on lower layers: one layer has no key');
     return {
       key: m.key,
       firstFrame: m.sampling?.firstFrame,

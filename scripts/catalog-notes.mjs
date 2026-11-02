@@ -47,7 +47,7 @@ async function sheets(o) {
   const base = process.env.PROMPTCUT_BASE ? `${process.env.PROMPTCUT_BASE.replace(/\/+$/, '')}/?export=1` : '';
   const url = typeof o.url === 'string' ? o.url : base;
   if (!url) {
-    console.error('用法: node scripts/catalog-notes.mjs sheets --url <导出页URL>(或设环境变量 PROMPTCUT_BASE)\n不给地址不跑:不缺省连用户常驻的编辑器。');
+    console.error('Usage: node scripts/catalog-notes.mjs sheets --url <export page URL> (or set the environment variable PROMPTCUT_BASE)\nNo URL, no run: it does not default to connecting to the user\'s resident editor.');
     process.exit(2);
   }
   const out = path.resolve(o.out || path.join(ROOT, 'out', 'catalog-sheets'));
@@ -62,7 +62,7 @@ async function sheets(o) {
       items.push({ kind, name: it.name, seconds: spec.seconds, clip: spec.clip(it) });
     }
   }
-  console.log(`${items.length} 个素材,每个渲染一段再抽 6 帧…`);
+  console.log(`${items.length} assets, rendering a clip for each and then sampling 6 frames…`);
 
   const bakery = await openBakery({ url });
   const sheetBrowser = await puppeteer.launch({ headless: true, args: ['--disable-gpu'] });
@@ -83,7 +83,7 @@ async function sheets(o) {
       const cells = picks.map((fi, i) => {
         const b64 = fs.readFileSync(path.join(r.framesDir, frames[fi])).toString('base64');
         const t = ((fi / (N - 1)) * it.seconds).toFixed(2);
-        return `<div class=c><img src="data:image/png;base64,${b64}"><div class=l>${i + 1}  ·  t=${t}s (第 ${fi} 帧)</div></div>`;
+        return `<div class=c><img src="data:image/png;base64,${b64}"><div class=l>${i + 1}  ·  t=${t}s (frame ${fi})</div></div>`;
       }).join('');
       await page.setContent(
         `<html><body style="margin:0;background:#141414;font-family:system-ui"><div style="display:flex;gap:10px;padding:10px">${cells}</div>` +
@@ -100,11 +100,11 @@ async function sheets(o) {
     await bakery.close();
     fs.rmSync(framesRoot, { recursive: true, force: true });
   }
-  console.log(`拼图完成 → ${out}\n下一步:把这个目录交给会看图的模型写 notes.json,再跑 merge。`);
+  console.log(`Contact sheets done → ${out}\nNext: give this directory to a model that can view images to write notes.json, then run merge.`);
 }
 
 function merge(o) {
-  if (!o.notes) throw new Error('要 --notes <notes.json>');
+  if (!o.notes) throw new Error('--notes <notes.json> is required');
   const notes = JSON.parse(fs.readFileSync(path.resolve(String(o.notes)), 'utf8'));
   let hit = 0;
   const miss = [];
@@ -120,10 +120,10 @@ function merge(o) {
         hit++;
       } else miss.push(`${kind}__${it.name}`);
     }
-    j.notes_by = '模型看 6 帧拼图写的观察(note/use/tags),见 scripts/catalog-notes.mjs;description 是人写的兜底';
+    j.notes_by = 'Observations written by a model from the 6-frame contact sheet (note/use/tags), see scripts/catalog-notes.mjs; description is the human-written fallback';
     fs.writeFileSync(p, JSON.stringify(j, null, 1));
   }
-  console.log(`合并 ${hit} 条${miss.length ? `;没有 note 的 ${miss.length} 条:${miss.join(' ')}` : ''}`);
+  console.log(`merged ${hit}${miss.length ? `; ${miss.length} without a note: ${miss.join(' ')}` : ''}`);
 }
 
 const o = parseArgs(process.argv.slice(2));
@@ -131,6 +131,6 @@ const cmd = o._[0];
 if (cmd === 'sheets') await sheets(o);
 else if (cmd === 'merge') merge(o);
 else {
-  console.log('用法:\n  node scripts/catalog-notes.mjs sheets --url <导出页URL> [--out <dir>] [--only lottie:gatin,particles:snow]\n  node scripts/catalog-notes.mjs merge --notes <notes.json>');
+  console.log('Usage:\n  node scripts/catalog-notes.mjs sheets --url <export page URL> [--out <dir>] [--only lottie:gatin,particles:snow]\n  node scripts/catalog-notes.mjs merge --notes <notes.json>');
   process.exit(1);
 }

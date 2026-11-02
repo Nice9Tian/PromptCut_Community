@@ -52,7 +52,7 @@ export const kidOfPublic = (pub) => createHash('sha256').update(Buffer.from(pub,
 /** 原始 32 字节公钥（base64url）→ KeyObject */
 export function publicKeyOf(pub) {
   const raw = b64urlDecode(pub);
-  if (!raw || raw.length !== 32) throw bad('bad-service-key', '公钥要是 32 字节 base64url');
+  if (!raw || raw.length !== 32) throw bad('bad-service-key', 'The public key must be 32 bytes base64url');
   return createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: Buffer.from(raw).toString('base64url') }, format: 'jwk' });
 }
 
@@ -85,21 +85,21 @@ export function verifyServiceProof(pub, { service, deviceId, nonce }, m) {
 
 /** 校验并规整登记表的内容；不合格抛 `code: 'bad-services-file'` */
 export function parseRegistry(json) {
-  if (!isObj(json) || json.v !== 1 || !isObj(json.services)) throw bad('bad-services-file', '登记表要是 { v: 1, services: {…} }');
+  if (!isObj(json) || json.v !== 1 || !isObj(json.services)) throw bad('bad-services-file', 'The registry must be { v: 1, services: {…} }');
   const services = {};
   for (const [name, entry] of Object.entries(json.services)) {
-    if (!isServiceName(name)) throw bad('bad-services-file', `服务名不合格：${name}`);
-    if (!isObj(entry) || !ROLES.includes(entry.role) || !Array.isArray(entry.keys)) throw bad('bad-services-file', `服务 ${name} 要 { role, keys: […] }`);
+    if (!isServiceName(name)) throw bad('bad-services-file', `Invalid service name: ${name}`);
+    if (!isObj(entry) || !ROLES.includes(entry.role) || !Array.isArray(entry.keys)) throw bad('bad-services-file', `Service ${name} needs { role, keys: […] }`);
     const actsFor = entry.actsFor ?? 'self';
-    if (!ACTS_FOR.includes(actsFor)) throw bad('bad-services-file', `服务 ${name} 的 actsFor 只能是 ${ACTS_FOR.join(' / ')}`);
+    if (!ACTS_FOR.includes(actsFor)) throw bad('bad-services-file', `actsFor of service ${name} must be one of ${ACTS_FOR.join(' / ')}`);
     const keys = [];
     for (const k of entry.keys) {
       if (!isObj(k) || k.alg !== SERVICE_ALG || typeof k.pub !== 'string' || typeof k.kid !== 'string' || !KID_RE.test(k.kid)) {
-        throw bad('bad-services-file', `服务 ${name} 的公钥条目不合格`);
+        throw bad('bad-services-file', `Invalid public key entry for service ${name}`);
       }
       const raw = b64urlDecode(k.pub);
-      if (!raw || raw.length !== 32 || kidOfPublic(k.pub) !== k.kid) throw bad('bad-services-file', `服务 ${name} 的公钥与 kid 对不上`);
-      if (keys.some((x) => x.kid === k.kid)) throw bad('bad-services-file', `服务 ${name} 的 kid 重复`);
+      if (!raw || raw.length !== 32 || kidOfPublic(k.pub) !== k.kid) throw bad('bad-services-file', `Public key of service ${name} does not match its kid`);
+      if (keys.some((x) => x.kid === k.kid)) throw bad('bad-services-file', `Duplicate kid for service ${name}`);
       keys.push({ kid: k.kid, alg: SERVICE_ALG, pub: k.pub, addedAt: Number.isFinite(k.addedAt) ? k.addedAt : 0 });
     }
     services[name] = { role: entry.role, actsFor, keys };
@@ -120,7 +120,7 @@ export function readRegistryFile(file) {
   try {
     json = JSON.parse(text);
   } catch {
-    throw bad('bad-services-file', '登记表不是合法的 JSON');
+    throw bad('bad-services-file', 'The registry is not valid JSON');
   }
   return parseRegistry(json);
 }
@@ -147,13 +147,13 @@ function writeAtomic(file, text, mode = 0o600) {
 
 /** 往登记表里加一把公钥（没有这个服务就建）；角色或 `actsFor` 与已有的不同抛 `code: 'role-conflict'`。回是否新加了 */
 export function addServiceKey(file, { service, role, actsFor = 'self', kid, pub, at = Date.now() }) {
-  if (!isServiceName(service)) throw bad('bad-service-name', '服务名要是 1～32 个 [a-z0-9-]');
-  if (!ROLES.includes(role)) throw bad('bad-role', `role 只能是 ${ROLES.join(' / ')}`);
-  if (kidOfPublic(pub) !== kid) throw bad('bad-service-key', '公钥与 kid 对不上');
+  if (!isServiceName(service)) throw bad('bad-service-name', 'Service name must be 1-32 characters of [a-z0-9-]');
+  if (!ROLES.includes(role)) throw bad('bad-role', `role must be one of ${ROLES.join(' / ')}`);
+  if (kidOfPublic(pub) !== kid) throw bad('bad-service-key', 'Public key does not match kid');
   const reg = readRegistryFile(file);
-  if (!ACTS_FOR.includes(actsFor)) throw bad('bad-acts-for', `actsFor 只能是 ${ACTS_FOR.join(' / ')}`);
+  if (!ACTS_FOR.includes(actsFor)) throw bad('bad-acts-for', `actsFor must be one of ${ACTS_FOR.join(' / ')}`);
   const entry = reg.services[service] ?? { role, actsFor, keys: [] };
-  if (entry.role !== role || entry.actsFor !== actsFor) throw bad('role-conflict', `服务 ${service} 已登记为 ${entry.role} / ${entry.actsFor}`);
+  if (entry.role !== role || entry.actsFor !== actsFor) throw bad('role-conflict', `Service ${service} is already registered as ${entry.role} / ${entry.actsFor}`);
   if (entry.keys.some((k) => k.kid === kid)) return false;
   entry.keys.push({ kid, alg: SERVICE_ALG, pub, addedAt: at });
   reg.services[service] = entry;
@@ -182,7 +182,7 @@ export function retireServiceKey(file, { service, kid }) {
  * @param {(event: string, fields: object) => void} [options.log]
  */
 export function createServiceRegistry({ file, now = Date.now, minCheckMs = 1000, log = () => {} } = {}) {
-  if (typeof file !== 'string' || file === '') throw new TypeError('createServiceRegistry: file 必须是非空字符串');
+  if (typeof file !== 'string' || file === '') throw new TypeError('createServiceRegistry: file must be a non-empty string');
   let services = {};
   let stamp = null;
   let checkedAt = -Infinity;
@@ -295,7 +295,7 @@ export const newInstanceId = () => randomBytes(16).toString('base64url');
 
 /** 写私钥文件 `<dir>/service-key.json`（目录 0700、文件 0600）。回文件路径 */
 export function writeServiceKeyFile(dir, { service, kid, priv, instanceId, instanceName }) {
-  if (!isServiceName(service) || !isDeviceId(instanceId) || !isDeviceName(instanceName)) throw bad('bad-service-key', '私钥文件的字段不合格');
+  if (!isServiceName(service) || !isDeviceId(instanceId) || !isDeviceName(instanceName)) throw bad('bad-service-key', 'Invalid fields in the private key file');
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   if (process.platform !== 'win32') fs.chmodSync(dir, 0o700);
   const file = path.join(dir, SERVICE_KEY_FILE);
@@ -314,15 +314,15 @@ export function readServiceKeyFile(fileOrDir) {
   } catch { /* 下面读的时候报 */ }
   let json;
   try {
-    if (process.platform !== 'win32' && (fs.statSync(file).mode & 0o077) !== 0) throw bad('service-key', '私钥文件的权限比 0600 宽');
+    if (process.platform !== 'win32' && (fs.statSync(file).mode & 0o077) !== 0) throw bad('service-key', 'Private key file permissions are wider than 0600');
     json = JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch (err) {
     if (err?.code === 'service-key') throw err;
-    throw bad('service-key', `读不了私钥文件（${err?.code ?? 'bad-json'}）`);
+    throw bad('service-key', `Cannot read the private key file (${err?.code ?? 'bad-json'})`);
   }
   if (!isObj(json) || json.v !== 1 || json.alg !== SERVICE_ALG || !isServiceName(json.service) || typeof json.kid !== 'string'
     || typeof json.priv !== 'string' || !isDeviceId(json.instanceId) || !isDeviceName(json.instanceName)) {
-    throw bad('service-key', '私钥文件格式不对');
+    throw bad('service-key', 'Invalid private key file format');
   }
   return { service: json.service, kid: json.kid, priv: json.priv, instanceId: json.instanceId, instanceName: json.instanceName };
 }
@@ -349,7 +349,7 @@ export async function buildServiceProtocols({ base, key, fetch: fetchImpl = glob
     body: JSON.stringify({ service: key.service, deviceId: key.instanceId }),
   });
   const body = await res.json().catch(() => null);
-  if (res.status !== 200 || typeof body?.nonce !== 'string') throw bad('service-challenge', `取服务挑战失败（${res.status}）`);
+  if (res.status !== 200 || typeof body?.nonce !== 'string') throw bad('service-challenge', `Failed to get the service challenge (${res.status})`);
   const m = signServiceProof(key.priv, { service: key.service, deviceId: key.instanceId, nonce: body.nonce });
   const json = { v: 1, s: key.service, kid: key.kid, d: key.instanceId, dn: key.instanceName, nonce: body.nonce, m };
   return [PROTOCOL, SERVICE_PREFIX + Buffer.from(JSON.stringify(json), 'utf8').toString('base64url')];

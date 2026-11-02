@@ -87,12 +87,12 @@ class Replica {
       const next = this.rev + 1;
       const { ops, meta } = this.buffered.get(next);
       this.buffered.delete(next);
-      if (!Array.isArray(ops)) return this.resync('远端的提交没带操作（大的根替换）');
+      if (!Array.isArray(ops)) return this.resync('The remote commit carried no operations (large root replace)');
       let root;
       try {
         root = applyOps(this.project, ops).root;
       } catch (err) {
-        return this.resync(`远端操作在副本上落不下去：${err?.message ?? err}`);
+        return this.resync(`Remote operation could not be applied to the replica: ${err?.message ?? err}`);
       }
       const before = this.project;
       this.project = root;
@@ -110,7 +110,7 @@ class Replica {
     if (this.buffered.size > 0) {
       this.gapTimer = setTimeout(() => {
         this.gapTimer = null;
-        if (this.buffered.size > 0) this.resync(`版本有缺口：副本在 ${this.rev}，收到了 ${[...this.buffered.keys()].sort((a, b) => a - b).join(', ')}`);
+        if (this.buffered.size > 0) this.resync(`Version gap: the replica is at ${this.rev}, received ${[...this.buffered.keys()].sort((a, b) => a - b).join(', ')}`);
       }, this.gapTimeoutMs);
       this.gapTimer.unref?.();
     }
@@ -195,11 +195,11 @@ export function createAgentLink({
   onFinalClose = null,
 } = {}) {
   // url 也可以按对话号给(测试里按查询串给写入身份;生产上各对话连同一个地址)
-  if (typeof url !== 'function' && (typeof url !== 'string' || !url)) throw new TypeError('createAgentLink: url 必须是字符串或函数');
+  if (typeof url !== 'function' && (typeof url !== 'string' || !url)) throw new TypeError('createAgentLink: url must be a string or a function');
   const urlFor = (n) => (typeof url === 'function' ? url(n) : url);
-  if (typeof projectId !== 'string' || !projectId) throw new TypeError('createAgentLink: projectId 必须是字符串');
-  if (typeof protocolsFor !== 'function') throw new TypeError('createAgentLink: protocolsFor 必须是函数');
-  if (typeof WebSocketImpl !== 'function') throw new TypeError('createAgentLink: 没有可用的 WebSocket 实现');
+  if (typeof projectId !== 'string' || !projectId) throw new TypeError('createAgentLink: projectId must be a string');
+  if (typeof protocolsFor !== 'function') throw new TypeError('createAgentLink: protocolsFor must be a function');
+  if (typeof WebSocketImpl !== 'function') throw new TypeError('createAgentLink: no WebSocket implementation available');
   const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志失败不影响连接 */ } };
 
   let closed = false;
@@ -259,7 +259,7 @@ export function createAgentLink({
         partial = null;
         let project;
         try {
-          if (part.chunks.length !== part.count || part.chunks.some((c) => typeof c !== 'string')) throw new Error('分片不全');
+          if (part.chunks.length !== part.count || part.chunks.some((c) => typeof c !== 'string')) throw new Error('Incomplete chunks');
           project = JSON.parse(part.chunks.join(''));
         } catch (err) {
           say('agent.replica.state-broken', { message: String(err?.message ?? err) });
@@ -314,7 +314,7 @@ export function createAgentLink({
       conn.retryTimer.unref?.();
     };
     conn.open = () => {
-      if (closed) return Promise.reject(linkError('closed', '到文档服务的连接已关闭'));
+      if (closed) return Promise.reject(linkError('closed', 'The connection to the document service is closed'));
       if (conn.state === 'open') return Promise.resolve();
       if (conn.opening) return conn.opening;
       conn.state = 'connecting';
@@ -325,7 +325,7 @@ export function createAgentLink({
         } catch (err) {
           conn.state = 'idle';
           conn.opening = null;
-          throw linkError('no-credential', `对话 ${n} 拿不到连接文档服务的凭证：${err?.message ?? err}`);
+          throw linkError('no-credential', `Chat ${n} cannot get a credential to connect to the document service: ${err?.message ?? err}`);
         }
         await new Promise((resolve, reject) => {
           // 一个会话一个端点（`renew: false`）：传输断了在会话层里接续，这里看不见；会话结束才算断线，
@@ -349,7 +349,7 @@ export function createAgentLink({
               },
             });
           } catch (err) {
-            reject(linkError('connect-failed', `连不上文档服务：${err?.message ?? err}`));
+            reject(linkError('connect-failed', `Cannot connect to the document service: ${err?.message ?? err}`));
             return;
           }
           conn.ep = ep;
@@ -385,17 +385,17 @@ export function createAgentLink({
             conn.opening = null;
             for (const [reqId, w] of conn.waiters) {
               clearTimeout(w.timer);
-              w.reject(linkError('disconnected', '到文档服务的连接断了'));
+              w.reject(linkError('disconnected', 'The connection to the document service dropped'));
               conn.waiters.delete(reqId);
             }
             if (finalClose) {
               say('agent.link.final-close', { conversation: n, code: info.code, reason: String(info.reason ?? '').slice(0, 40) });
-              if (!opened) reject(linkError('revoked', `文档服务拒绝了这条连接（${info.code} ${info.reason ?? ''}）`));
+              if (!opened) reject(linkError('revoked', `The document service rejected this connection (${info.code} ${info.reason ?? ''})`));
               try { onFinalClose(n, { code: info.code, reason: String(info.reason ?? '') }); } catch { /* 宿主的事 */ }
               return;
             }
             if (!opened) {
-              reject(linkError('connect-failed', '连不上文档服务（握手被拒或网络不通）'));
+              reject(linkError('connect-failed', 'Cannot connect to the document service (handshake rejected or network unreachable)'));
               return;
             }
             say('agent.link.close', { conversation: n });
@@ -422,14 +422,14 @@ export function createAgentLink({
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
           conn.waiters.delete(reqId);
-          reject(linkError('timeout', `${message.type} 在 ${requestTimeoutMs} ms 内没有回包`));
+          reject(linkError('timeout', `${message.type} got no reply within ${requestTimeoutMs} ms`));
         }, requestTimeoutMs);
         timer.unref?.();
         conn.waiters.set(reqId, { resolve, reject, timer, accept });
         if (!conn.sendRaw({ ...message, reqId })) {
           clearTimeout(timer);
           conn.waiters.delete(reqId);
-          reject(linkError('disconnected', '到文档服务的连接没就绪'));
+          reject(linkError('disconnected', 'The connection to the document service is not ready'));
         }
       });
     };
@@ -439,7 +439,7 @@ export function createAgentLink({
       const ep = conn.ep;
       conn.ep = null;
       conn.state = 'closed';
-      for (const w of conn.waiters.values()) { clearTimeout(w.timer); w.reject(linkError('closed', '连接已关闭')); }
+      for (const w of conn.waiters.values()) { clearTimeout(w.timer); w.reject(linkError('closed', 'Connection closed')); }
       conn.waiters.clear();
       try { ep?.close(); } catch { /* 已经断了 */ }
     };
@@ -447,7 +447,7 @@ export function createAgentLink({
   }
 
   function conversation(n) {
-    if (!Number.isSafeInteger(n) || n < 1) throw new TypeError('对话号必须是正整数');
+    if (!Number.isSafeInteger(n) || n < 1) throw new TypeError('The chat number must be a positive integer');
     let conn = conns.get(n);
     if (!conn) {
       conn = makeConn(n);
@@ -470,15 +470,15 @@ export function createAgentLink({
      * 超时抛 `code: 'not-ready'`。
      */
     async ready(timeoutMs = requestTimeoutMs) {
-      if (closed) throw linkError('closed', '到文档服务的连接已关闭');
-      if (feedConv === null) throw linkError('not-ready', '还没有任何对话连接');
+      if (closed) throw linkError('closed', 'The connection to the document service is closed');
+      if (feedConv === null) throw linkError('not-ready', 'No chat connection yet');
       if (replica.hasState && !replica.resyncing) return;
       await conns.get(feedConv).open();
       if (replica.hasState && !replica.resyncing) return;
       await new Promise((resolve, reject) => {
         const w = { resolve, timer: setTimeout(() => {
           stateWaiters = stateWaiters.filter((x) => x !== w);
-          reject(linkError('not-ready', `${timeoutMs} ms 内没有拿到项目 ${projectId} 的内容`));
+          reject(linkError('not-ready', `Did not get the content of project ${projectId} within ${timeoutMs} ms`));
         }, timeoutMs) };
         w.timer.unref?.();
         stateWaiters.push(w);

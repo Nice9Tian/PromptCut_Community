@@ -37,11 +37,11 @@ export function createBlobStore(options) {
   if (kind === 'fs') return createFsStore(options);
   if (kind === 'memory') return createMemoryStore(options);
   if (kind === 'oss') {
-    const err = new Error('createBlobStore：oss 实现还没有（只留插槽）');
+    const err = new Error('createBlobStore: the oss implementation does not exist yet (slot only)');
     /** @type {any} */ (err).code = 'not-implemented';
     throw err;
   }
-  throw new TypeError(`createBlobStore：不认识的 kind ${JSON.stringify(kind)}`);
+  throw new TypeError(`createBlobStore: unknown kind ${JSON.stringify(kind)}`);
 }
 
 /**
@@ -54,7 +54,7 @@ export function createBlobStore(options) {
  * @returns {(hash: string) => Promise<string | null>}
  */
 export function candidateFileResolver(dir, exts) {
-  if (typeof dir !== 'string' || dir === '') throw new TypeError('candidateFileResolver：dir 必须是非空字符串');
+  if (typeof dir !== 'string' || dir === '') throw new TypeError('candidateFileResolver: dir must be a non-empty string');
   const base = path.resolve(dir);
   const suffixes = [...exts.map((e) => '.' + String(e).toLowerCase().replace(/^\./, '')), ''];
   return async function resolveFile(hash) {

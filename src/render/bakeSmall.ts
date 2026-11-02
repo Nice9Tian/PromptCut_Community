@@ -159,7 +159,7 @@ export async function renderSnapshotBitmap({ html, boxWidth, boxHeight, rect, do
   if (Offscreen) {
     const canvas = new Offscreen(rect.w, rect.h);
     const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("拿不到 2D 画布");
+    if (!ctx) throw new Error("Cannot get a 2D canvas");
     ctx.clearRect(0, 0, rect.w, rect.h);
     ctx.drawImage(img, 0, 0, rect.w, rect.h);
     return canvas.transferToImageBitmap();
@@ -168,7 +168,7 @@ export async function renderSnapshotBitmap({ html, boxWidth, boxHeight, rect, do
   canvas.width = rect.w;
   canvas.height = rect.h;
   const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("拿不到 2D 画布");
+  if (!ctx) throw new Error("Cannot get a 2D canvas");
   ctx.clearRect(0, 0, rect.w, rect.h);
   ctx.drawImage(img, 0, 0, rect.w, rect.h);
   return await createImageBitmap(canvas);

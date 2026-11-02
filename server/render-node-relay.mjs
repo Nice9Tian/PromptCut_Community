@@ -32,14 +32,14 @@ export function createTicketRelay({ send, hasPage = () => true, timeoutMs = TICK
     counters.requests++;
     if (!hasPage()) {
       counters.noPage++;
-      return Promise.reject(Object.assign(new Error('没有页面连着编辑器,要不到连接票据'), { code: 'no-page' }));
+      return Promise.reject(Object.assign(new Error('No page is connected to the editor, so a connection ticket cannot be obtained'), { code: 'no-page' }));
     }
     return new Promise((resolve, reject) => {
       const reqId = `rn${++seq}`;
       const timer = setTimer(() => {
         if (!waiting.delete(reqId)) return;
         counters.timeouts++;
-        reject(Object.assign(new Error(`页面 ${Math.round(timeoutMs / 1000)} 秒内没有交回连接票据`), { code: 'timeout' }));
+        reject(Object.assign(new Error(`The page did not return a connection ticket within ${Math.round(timeoutMs / 1000)} seconds`), { code: 'timeout' }));
       }, timeoutMs);
       timer?.unref?.();
       waiting.set(reqId, { resolve, reject, timer, projectId });
@@ -66,7 +66,7 @@ export function createTicketRelay({ send, hasPage = () => true, timeoutMs = TICK
       w.resolve(t);
     } else {
       counters.failed++;
-      w.reject(Object.assign(new Error(typeof input.error === 'string' ? `页面没签出票据:${input.error.slice(0, 200)}` : '页面交回的票据不合格'), { code: 'page-refused' }));
+      w.reject(Object.assign(new Error(typeof input.error === 'string' ? `Page failed to sign a ticket: ${input.error.slice(0, 200)}` : 'The ticket returned by the page is invalid'), { code: 'page-refused' }));
     }
     return true;
   }

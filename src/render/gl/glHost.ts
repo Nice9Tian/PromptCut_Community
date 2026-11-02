@@ -197,7 +197,7 @@ export function createGlHost(opts: {
         if (m.type === "ready" && !settled) {
           settled = true;
           realClearTimeout(timer);
-          if (!m.ok) workerFailed = m.error || "Worker 里拿不到 webgl2";
+          if (!m.ok) workerFailed = m.error || "webgl2 is not available in the Worker";
           resolve(m.ok);
           return;
         }
@@ -217,7 +217,7 @@ export function createGlHost(opts: {
     const send: Transport["send"] = (m, t) => worker.postMessage(m, t ?? []);
     worker.addEventListener("error", (e) => {
       // 模块加载失败 / Worker 崩了:下一拍改走主线程退路
-      workerFailed = workerFailed ?? (e.message || "GL Worker 出错");
+      workerFailed = workerFailed ?? (e.message || "GL Worker error");
       if (transport?.kind === "worker") dropTransport();
     });
     const ready = withInit(send, (h) => { worker.onmessage = (e) => h(e.data as GlFromWorker); });
@@ -311,13 +311,13 @@ export function createGlHost(opts: {
       if (!ok) {
         // 能力不足:丢掉这条路,换主线程退路再来一次
         if (t.kind !== "main") {
-          workerFailed = workerFailed ?? "GL Worker 初始化失败";
+          workerFailed = workerFailed ?? "GL Worker initialization failed";
           dropTransport();
           t = connect();
-          if (!t || !(await t.ready)) { ticket.ready(); return { ...empty, error: "没有可用的 WebGL2" }; }
+          if (!t || !(await t.ready)) { ticket.ready(); return { ...empty, error: "No WebGL2 available" }; }
         } else {
           ticket.ready();
-          return { ...empty, error: "主线程也拿不到 WebGL2" };
+          return { ...empty, error: "WebGL2 is not available on the main thread either" };
         }
       }
       if (transport !== t) { ticket.ready(); return empty; }
@@ -370,7 +370,7 @@ export function createGlHost(opts: {
       if (stats.roundTrips.length > 120) stats.roundTrips.shift();
       if (done === "timeout") {
         stats.timeouts++;
-        if (o.strict) ticket.fail(new Error(`GL Worker ${STRICT_TIMEOUT_MS} ms 没回 done`));
+        if (o.strict) ticket.fail(new Error(`GL Worker did not reply done within ${STRICT_TIMEOUT_MS} ms`));
         else ticket.ready();
         return { seq: mySeq, roundTripMs, cards: cards.length, timedOut: true };
       }
@@ -403,7 +403,7 @@ export function createGlHost(opts: {
       if (done.error === "context-lost") dropTransport();
       const hardErrors = Object.entries(done.skipped ?? {}).filter(([, why]) => why !== "preparing");
       if (o.strict && (done.error || hardErrors.length)) {
-        ticket.fail(new Error(`canvas 卡没画出来:${done.error ?? hardErrors.map(([id, why]) => `${id}: ${why}`).join("; ")}`));
+        ticket.fail(new Error(`canvas card failed to render: ${done.error ?? hardErrors.map(([id, why]) => `${id}: ${why}`).join("; ")}`));
       } else {
         ticket.ready();
       }

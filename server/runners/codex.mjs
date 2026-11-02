@@ -78,6 +78,7 @@ export async function getCodexProvider() {
 }
 
 import { runTextProtocolLoop } from '../harness/tool-protocol.mjs';
+import { tr } from "../i18n.mjs";
 
 export function startRun(opts) {
   if (opts.toolProtocol) {
@@ -108,7 +109,7 @@ export function startRun(opts) {
 
   const donePromise = run.done.then((res) => {
     if (rejected && !authFailed && !cancelled) {
-      opts.onEvent({ type: 'status', text: '原生工具被拒，改用文本协议重试' });
+      opts.onEvent({ type: 'status', text: tr("Native tool was rejected, retrying with text protocol") });
       const nextRun = runTextProtocolLoop({ startRun: _startRun, opts, onEvent: opts.onEvent });
       abortRef.abort = nextRun.abort;
       return nextRun.done;
@@ -162,7 +163,7 @@ function _startRun(opts) {
   const snapshot = state.snapshot();
   if (snapshot.state === 'invalid' || snapshot.state === 'unknown') {
     opts.onEvent(snapshot.state === 'invalid' ? authFailureEvent(snapshot.reason)
-      : { type: 'error', message: 'Codex 登录状态待确认，请重新登录。', authProvider: 'codex', authReason: 'state_unknown', authGeneration: snapshot.revision, retryable: false });
+      : { type: 'error', message: tr("Codex login state needs confirmation, please log in again."), authProvider: 'codex', authReason: 'state_unknown', authGeneration: snapshot.revision, retryable: false });
     return { abort() {}, done: Promise.resolve() };
   }
   let terminal = false;
@@ -175,7 +176,7 @@ function _startRun(opts) {
   const exePath = resolveExe('codex');
   const args = buildCodexArgs(opts);
 
-  const fullPrompt = `<<<系统说明>>>\n${opts.systemPrompt}\n<<<用户消息>>>\n${opts.prompt}`;
+  const fullPrompt = `<<<System instructions>>>\n${opts.systemPrompt}\n<<<User message>>>\n${opts.prompt}`;
   
   const { child, safeOnEvent, finish, abort, donePromise } = spawnCli(exePath, args, { cwd: opts.cwd, env: cliEnv('codex'), stopOnFinish: true }, emit, 'Codex CLI');
   const failAuth = reason => {
@@ -206,7 +207,7 @@ function _startRun(opts) {
       const str = data.toString('utf8');
       if (!warnedConfig && str.includes('config.toml') && (str.includes('unknown variant') || str.includes('unknown field'))) {
           warnedConfig = true;
-          safeOnEvent({ type: 'status', text: 'Codex 无法读取 PromptCut 的独立配置，请根据上一条错误检查配置。' });
+          safeOnEvent({ type: 'status', text: tr("Codex cannot read PromptCut's standalone config, please check the config based on the previous error.") });
       }
   });
 
@@ -227,7 +228,7 @@ function _startRun(opts) {
          pairing.open(`codex:${threadId}`);
          safeOnEvent({ type: 'session', sessionId: ev.thread_id });
       } else if (evType === 'turn.started') {
-         safeOnEvent({ type: 'status', text: 'Codex 开始处理' });
+         safeOnEvent({ type: 'status', text: tr("Codex started working") });
       } else if (evType === 'item.started' || evType === 'item.completed' || evType === 'item.updated') {
          const item = ev.item;
          if (item) {

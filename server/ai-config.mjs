@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { sealKey, openKey, sealedKind, KEY_KINDS, SECRET_KINDS } from './runners/config-crypt.mjs';
+import { tr } from "./i18n.mjs";
 
 /**
  * AI 配置(ai.json)+ 两个密钥文件。
@@ -30,7 +31,7 @@ function getConfigPath() {
 
 /** 某一路 Key 的文件路径(对话两路之外,各功能自己的 Key 也放这里,见文件末尾的 readSecret) */
 export function keyFilePath(kind) {
-  if (!SECRET_KINDS.includes(kind)) throw new Error(`密钥类型只能是 ${SECRET_KINDS.join(' / ')}`);
+  if (!SECRET_KINDS.includes(kind)) throw new Error(tr("Key type must be one of {0}", SECRET_KINDS.join(' / ')));
   return path.join(path.dirname(getConfigPath()), 'keys', `${kind}.key`);
 }
 
@@ -195,13 +196,13 @@ function syncProfile(cfg) {
 }
 
 function checkProfilePatch(patch, where) {
-  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error(`${where} 必须是对象`);
-  if (patch.vendor !== undefined && !['anthropic', 'openai', 'gemini'].includes(patch.vendor)) throw new Error('vendor 只能是 anthropic / openai / gemini');
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error(tr("{0} must be an object", where));
+  if (patch.vendor !== undefined && !['anthropic', 'openai', 'gemini'].includes(patch.vendor)) throw new Error(tr("vendor must be anthropic / openai / gemini"));
   if (patch.baseUrl !== undefined) {
-    if (typeof patch.baseUrl !== 'string') throw new Error(`${where}.baseUrl 必须是字符串`);
-    if (patch.baseUrl !== '' && !patch.baseUrl.startsWith('http://') && !patch.baseUrl.startsWith('https://')) throw new Error('baseUrl 必须是 http(s) 地址或留空');
+    if (typeof patch.baseUrl !== 'string') throw new Error(tr("{0}.baseUrl must be a string", where));
+    if (patch.baseUrl !== '' && !patch.baseUrl.startsWith('http://') && !patch.baseUrl.startsWith('https://')) throw new Error(tr("baseUrl must be an http(s) address or empty"));
   }
-  if (patch.model !== undefined && typeof patch.model !== 'string') throw new Error(`${where}.model 必须是字符串`);
+  if (patch.model !== undefined && typeof patch.model !== 'string') throw new Error(tr("{0}.model must be a string", where));
 }
 
 function deepMerge(target, source, reading = false) {
@@ -250,7 +251,7 @@ export function writeConfig(partial) {
     }
     if (partial.api.profiles !== undefined) {
       const incoming = partial.api.profiles;
-      if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) throw new Error('api.profiles 必须是对象');
+      if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) throw new Error(tr("api.profiles must be an object"));
       for (const face of KEY_KINDS) {
         if (incoming[face] === undefined) continue;
         checkProfilePatch(incoming[face], `api.profiles.${face}`);
@@ -261,7 +262,7 @@ export function writeConfig(partial) {
 
   if (partial.defaultProvider !== undefined) {
     if (!['claude', 'agy', 'codex', 'api', null].includes(partial.defaultProvider)) {
-      throw new Error('defaultProvider 必须是 claude, agy, codex, api 或 null');
+      throw new Error(tr("defaultProvider must be claude, agy, codex, api or null"));
     }
     newConfig.defaultProvider = partial.defaultProvider;
   }
@@ -276,7 +277,7 @@ export function writeConfig(partial) {
   let key = current.api.apiKey;
   const wantSource = partial.api && partial.api.source !== undefined ? partial.api.source : undefined;
   if (wantSource !== undefined && wantSource !== '' && !KEY_KINDS.includes(wantSource)) {
-    throw new Error(`api.source 只能是 ${KEY_KINDS.join(' / ')}`);
+    throw new Error(tr("api.source must be one of {0}", KEY_KINDS.join(' / ')));
   }
   if (partial.api && partial.api.apiKey !== undefined) {
     if (partial.api.apiKey === null) {
@@ -284,13 +285,13 @@ export function writeConfig(partial) {
       key = ''; source = '';
     } else if (partial.api.apiKey !== '') {
       const kind = wantSource || 'custom';
-      if (typeof partial.api.apiKey !== 'string') throw new Error('apiKey 必须是字符串');
+      if (typeof partial.api.apiKey !== 'string') throw new Error(tr("apiKey must be a string"));
       writeKeyFile(kind, partial.api.apiKey);
       key = partial.api.apiKey; source = kind;
     }
   } else if (wantSource !== undefined && wantSource !== source) {
     const k = wantSource ? readKeyFile(wantSource) : '';
-    if (wantSource && !k) throw new Error(`${wantSource} 这一路还没有保存过 Key`);
+    if (wantSource && !k) throw new Error(tr("No key has been saved for {0} yet", wantSource));
     key = k; source = wantSource;
   }
   // 老版本留在 ai.json 里的 Key:搬进文件,ai.json 里不再留
@@ -310,11 +311,11 @@ export function writeConfig(partial) {
   if (partial.cliModels !== undefined) {
     const incoming = partial.cliModels;
     if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
-      throw new Error('cliModels 必须是对象');
+      throw new Error(tr("cliModels must be an object"));
     }
     for (const key of ['claude', 'codex', 'agy']) {
       if (incoming[key] === undefined) continue;
-      if (typeof incoming[key] !== 'string') throw new Error(`cliModels.${key} 必须是字符串`);
+      if (typeof incoming[key] !== 'string') throw new Error(tr("cliModels.{0} must be a string", key));
       newConfig.cliModels[key] = incoming[key];
     }
   }
@@ -327,23 +328,23 @@ export function writeConfig(partial) {
     const v = Number(partial.deepAutoRounds);
     // 0 是「不限」,是有意义的取值,所以下界是 0 不是 1。上界 100000 只为挡住手滑,
     // 真跑到那儿早就被重复操作检测或者用户自己拦下来了。
-    if (!Number.isFinite(v) || v < 0 || v > 100000) throw new Error('deepAutoRounds 是 0~100000 的整数(0 = 不限轮次)');
+    if (!Number.isFinite(v) || v < 0 || v > 100000) throw new Error(tr("deepAutoRounds must be an integer from 0 to 100000 (0 = unlimited rounds)"));
     newConfig.deepAutoRounds = Math.round(v);
   }
 
   if (partial.quota !== undefined) {
     const q = partial.quota;
-    if (!q || typeof q !== 'object' || Array.isArray(q)) throw new Error('quota 必须是对象');
+    if (!q || typeof q !== 'object' || Array.isArray(q)) throw new Error(tr("quota must be an object"));
     const next = { ...(newConfig.quota || {}) };
     if (q.enabled !== undefined) next.enabled = !!q.enabled;
     if (q.thresholdPercent !== undefined) {
       const v = Number(q.thresholdPercent);
-      if (!Number.isFinite(v) || v < 1 || v > 100) throw new Error('quota.thresholdPercent 是 1~100 的百分数');
+      if (!Number.isFinite(v) || v < 1 || v > 100) throw new Error(tr("quota.thresholdPercent must be a percentage from 1 to 100"));
       next.thresholdPercent = Math.round(v);
     }
     if (q.checkEveryBytes !== undefined) {
       const v = Number(q.checkEveryBytes);
-      if (!Number.isFinite(v) || v < 16384) throw new Error('quota.checkEveryBytes 至少 16384(16KB)');
+      if (!Number.isFinite(v) || v < 16384) throw new Error(tr("quota.checkEveryBytes must be at least 16384 (16KB)"));
       next.checkEveryBytes = Math.round(v);
     }
     newConfig.quota = next;
@@ -364,7 +365,7 @@ function removeKeyFile(kind) {
  * 老版本留在 ai.json 里的 Key 也一并抹掉(清 custom 时),不然读回来又冒出来。
  */
 export function clearKey(kind) {
-  if (!KEY_KINDS.includes(kind)) throw new Error(`密钥类型只能是 ${KEY_KINDS.join(' / ')}`);
+  if (!KEY_KINDS.includes(kind)) throw new Error(tr("Key type must be one of {0}", KEY_KINDS.join(' / ')));
   const cfg = readConfig();
   removeKeyFile(kind);
   if (cfg.api.source === kind) { cfg.api.apiKey = ''; cfg.api.source = ''; }

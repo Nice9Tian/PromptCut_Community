@@ -401,7 +401,7 @@ export async function checkExportOriginals(
 /** 「等待上传方」的提示文字(导出被拦时给用户看) */
 export function awaitingUploaderMessage(missing: readonly MissingOriginal[]): string {
   const names = missing.map((m) => m.name);
-  const shown = names.slice(0, 5).join("、") + (names.length > 5 ? ` 等 ${names.length} 个` : "");
+  const shown = names.slice(0, 5).join(", ") + (names.length > 5 ? ` and ${names.length} more` : "");
   // 用词照 glossary.md「素材原尺寸、素材小尺寸」(取代旧词「原片」「小版」),界面上的字与代码注释都用新词
-  return `等待上传方:这些素材的原尺寸还没传完,导出只用素材原尺寸,传完后再导出 —— ${shown}`;
+  return `Waiting for uploader: the original sizes of these media have not finished uploading. Export uses only original media sizes, so export again once the upload is done: ${shown}`;
 }

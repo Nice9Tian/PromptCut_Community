@@ -30,21 +30,21 @@ const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
  *   在项目副本上执行 `apply(host)` 并把改动带期望版本提交给文档服务。生产上是 `agent-exec` 的 `mutate(tool, conversationId, track, apply)`
  */
 export function createMotionTools({ contextAccess, tracks, commit } = {}) {
-  if (typeof contextAccess?.authorize !== 'function') throw new TrackToolError('TRACK_UNCONFIGURED', 'createMotionTools 缺 contextAccess');
-  if (typeof tracks?.readResult !== 'function') throw new TrackToolError('TRACK_UNCONFIGURED', 'createMotionTools 缺 tracks');
-  if (typeof commit !== 'function') throw new TrackToolError('TRACK_UNCONFIGURED', 'createMotionTools 缺 commit');
+  if (typeof contextAccess?.authorize !== 'function') throw new TrackToolError('TRACK_UNCONFIGURED', 'createMotionTools is missing contextAccess');
+  if (typeof tracks?.readResult !== 'function') throw new TrackToolError('TRACK_UNCONFIGURED', 'createMotionTools is missing tracks');
+  if (typeof commit !== 'function') throw new TrackToolError('TRACK_UNCONFIGURED', 'createMotionTools is missing commit');
   let closing = false;
   const pending = new Set();
 
   function parse(args) {
     const clipId = args?.clipId;
-    if (typeof clipId !== 'string' || !ID_RE.test(clipId)) throw new TrackToolError('MOTION_BAD_ARGS', 'clipId 必填:要跟随的卡片段');
+    if (typeof clipId !== 'string' || !ID_RE.test(clipId)) throw new TrackToolError('MOTION_BAD_ARGS', 'clipId is required: the card clip to follow');
     const mediaId = args?.mediaId;
-    if (typeof mediaId !== 'string' || !ID_RE.test(mediaId)) throw new TrackToolError('MOTION_BAD_ARGS', 'mediaId 必填:轨迹来自哪段素材');
+    if (typeof mediaId !== 'string' || !ID_RE.test(mediaId)) throw new TrackToolError('MOTION_BAD_ARGS', 'mediaId is required: which media the trajectory comes from');
     const pointIndex = args?.pointIndex === undefined ? 0 : args.pointIndex;
-    if (!Number.isSafeInteger(pointIndex) || pointIndex < 0) throw new TrackToolError('MOTION_BAD_ARGS', 'pointIndex 是从 0 起的整数(track_points 传了几个点就有几条轨迹)');
+    if (!Number.isSafeInteger(pointIndex) || pointIndex < 0) throw new TrackToolError('MOTION_BAD_ARGS', 'pointIndex is an integer starting from 0 (as many points as track_points was given, that many trajectories)');
     const whenHidden = args?.whenHidden === undefined ? 'hold' : args.whenHidden;
-    if (whenHidden !== 'hold' && whenHidden !== 'hide') throw new TrackToolError('MOTION_BAD_ARGS', 'whenHidden 只能是 hold(目标被挡时停在最后看见的位置)或 hide(整张卡不显示)');
+    if (whenHidden !== 'hold' && whenHidden !== 'hide') throw new TrackToolError('MOTION_BAD_ARGS', 'whenHidden must be hold (stay at the last visible position when the target is occluded) or hide (the whole card is not shown)');
     return { clipId, mediaId, pointIndex, whenHidden };
   }
 
@@ -52,10 +52,10 @@ export function createMotionTools({ contextAccess, tracks, commit } = {}) {
     const args = parse(rawArgs);
     const track = await tracks.readResult(context, { mediaId: args.mediaId });
     const point = track.points[args.pointIndex];
-    if (!point) throw new TrackToolError('MOTION_BAD_POINT', `这次追踪只有 ${track.points.length} 个点,没有第 ${args.pointIndex} 个`);
-    if (point.note) throw new TrackToolError('MOTION_BAD_POINT', `第 ${args.pointIndex} 个点没追成:${point.note}`);
+    if (!point) throw new TrackToolError('MOTION_BAD_POINT', `This tracking has only ${track.points.length} points, no point number ${args.pointIndex}`);
+    if (point.note) throw new TrackToolError('MOTION_BAD_POINT', `Point ${args.pointIndex} failed to track: ${point.note}`);
     const auth = await contextAccess.authorize(context, 'write');
-    if (closing) throw new TrackToolError('TRACK_CLOSED', '服务正在关闭,稍后再试');
+    if (closing) throw new TrackToolError('TRACK_CLOSED', 'Service is shutting down, try again later');
 
     const legacy = {
       engine: track.engine, createdAt: new Date(track.createdAt ?? 0).toISOString(),
@@ -65,10 +65,10 @@ export function createMotionTools({ contextAccess, tracks, commit } = {}) {
       context, fenceRevision: auth.fenceRevision, tool: 'attach_clip_motion',
       apply: async (host) => {
         const media = host.getProject().media.find((m) => m.id === args.mediaId);
-        if (!media) throw new TrackToolError('MOTION_MEDIA_NOT_FOUND', `项目里没有素材 ${args.mediaId}`);
+        if (!media) throw new TrackToolError('MOTION_MEDIA_NOT_FOUND', `No media ${args.mediaId} in the project`);
         // 素材换过版:追踪时看的不是现在这段画面,绑上去会让卡片跟着别的内容走
         if (track.mediaHash && media.hash && media.hash !== track.mediaHash) {
-          throw new TrackToolError('TRACK_STALE', `${media.name ?? args.mediaId} 在追踪之后换过了,这条轨迹是旧版本画面追的。请用 track_points({ force: true }) 重追。`);
+          throw new TrackToolError('TRACK_STALE', `${media.name ?? args.mediaId} was replaced after tracking, so this trajectory was tracked on an older version of the picture. Please re-track with track_points({ force: true }).`);
         }
         // 轨迹放进副本的页面状态槽,让现成的 handler 照旧去读;出锁(或抛错)时撤掉
         const cleanup = host.setPageState({ track: { mediaId: args.mediaId, result: legacy, running: false } });
@@ -87,8 +87,8 @@ export function createMotionTools({ contextAccess, tracks, commit } = {}) {
   return {
     handles: new Set(MOTION_TOOL_NAMES),
     async call(name, args, context) {
-      if (!Object.hasOwn(TOOLS, name)) throw new TrackToolError('TRACK_UNKNOWN_TOOL', `motion 提供者不处理 ${name}`);
-      if (closing) throw new TrackToolError('TRACK_CLOSED', '服务正在关闭,稍后再试');
+      if (!Object.hasOwn(TOOLS, name)) throw new TrackToolError('TRACK_UNKNOWN_TOOL', `The motion provider does not handle ${name}`);
+      if (closing) throw new TrackToolError('TRACK_CLOSED', 'Service is shutting down, try again later');
       return TOOLS[name](context, isPlain(args) ? args : {});
     },
     async close(reason = 'close') {

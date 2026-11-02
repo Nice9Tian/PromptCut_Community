@@ -46,7 +46,7 @@ export function planSequences(all, opts = {}) {
   if (opts.scene !== undefined) {
     const n = Number(opts.scene);
     if (!Number.isInteger(n) || n < 1 || n > totalScenes) {
-      throw new Error(`scene 要在 1~${totalScenes} 之间,收到 ${JSON.stringify(opts.scene)}`);
+      throw new Error(`scene must be between 1 and ${totalScenes}, got ${JSON.stringify(opts.scene)}`);
     }
     const grid = opts.grid === 4 ? 4 : 9;
     return {
@@ -63,9 +63,9 @@ export function planSequences(all, opts = {}) {
   }
   const from = opts.from !== undefined ? Number(opts.from) : -Infinity;
   const to = opts.to !== undefined ? Number(opts.to) : Infinity;
-  if (opts.from !== undefined && !Number.isFinite(from)) throw new Error('from 要是秒数');
-  if (opts.to !== undefined && !Number.isFinite(to)) throw new Error('to 要是秒数');
-  if (from > to) throw new Error('from 不能大于 to');
+  if (opts.from !== undefined && !Number.isFinite(from)) throw new Error('from must be a number of seconds');
+  if (opts.to !== undefined && !Number.isFinite(to)) throw new Error('to must be a number of seconds');
+  if (from > to) throw new Error('from must not be greater than to');
   const matched = all.filter((s) => s.end > from && s.start < to);
   const perPage = Math.max(1, Math.min(MAX_PER_PAGE, Math.round(Number(opts.perPage) || DEFAULT_PER_PAGE)));
   const grid = opts.grid === 9 ? 9 : 4;
@@ -112,7 +112,7 @@ export function sheetFfmpegArgs({ file, start, end, grid = 4, out, localOnly = t
   const s0 = Number(start);
   const s1 = Number(end);
   if (!Number.isFinite(s0) || !Number.isFinite(s1) || s1 <= s0) {
-    throw new Error('start / end 要是秒数且 end > start');
+    throw new Error('start / end must be numbers of seconds and end > start');
   }
   const g = grid === 9 ? 9 : 4;
   const cols = g === 9 ? 3 : 2;

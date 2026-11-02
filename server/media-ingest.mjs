@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { AssetSourceError } from './audio-source.mjs';
+import { tr } from "./i18n.mjs";
 
 /** 一份文件入库的时限。上传是本机回环上的流式写入,几百 MB 的视频也就十几秒;慢盘上留足余量 */
 export const INGEST_TIMEOUT_MS = 10 * 60 * 1000;
@@ -32,12 +33,12 @@ export const INGEST_TIMEOUT_MS = 10 * 60 * 1000;
 export async function ingestFile({ file, name, origin, tiers = true, fetchImpl = globalThis.fetch, timeoutMs = INGEST_TIMEOUT_MS, ownership = null, ticket = null }) {
   await ownership?.assert();
   const token = typeof ticket === 'function' ? await ticket() : ticket;
-  if (ownership && !token) throw new AssetSourceError('项目素材入库缺少授权票据');
+  if (ownership && !token) throw new AssetSourceError(tr("Project asset ingest is missing an authorization ticket"));
   const base = origin();
-  if (!base) throw new AssetSourceError('素材服务不可达:编辑器进程取不到素材服务的地址,没能入库');
+  if (!base) throw new AssetSourceError(tr("Asset service unreachable: the editor process could not get the asset service address, so ingest failed"));
   const fileName = name || path.basename(file);
   let size;
-  try { size = fs.statSync(file).size; } catch (e) { throw new Error(`要入库的文件不见了:${fileName}(${e?.code || e?.message || e})`); }
+  try { size = fs.statSync(file).size; } catch (e) { throw new Error(tr("The file to ingest is missing: {0} ({1})", fileName, e?.code || e?.message || e)); }
   const url = `${base}/api/media/upload/${encodeURIComponent(fileName)}${tiers ? '?tiers=1' : ''}`;
   let res;
   try {
@@ -49,16 +50,16 @@ export async function ingestFile({ file, name, origin, tiers = true, fetchImpl =
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (e) {
-    const why = e?.name === 'TimeoutError' ? `${Math.round(timeoutMs / 1000)} 秒没有传完` : String(e?.cause?.code || e?.message || e);
-    throw new AssetSourceError(`素材服务不可达(${base}),没能入库:${why}`);
+    const why = e?.name === 'TimeoutError' ? tr("upload not finished after {0} seconds", Math.round(timeoutMs / 1000)) : String(e?.cause?.code || e?.message || e);
+    throw new AssetSourceError(tr("Asset service unreachable ({0}), ingest failed: {1}", base, why));
   }
   const text = await res.text().catch(() => '');
-  if (!res.ok) throw new AssetSourceError(`素材服务拒绝了入库(${base},HTTP ${res.status})${text ? `:${text.slice(0, 200)}` : ''}`);
+  if (!res.ok) throw new AssetSourceError(tr("Asset service rejected the ingest ({0}, HTTP {1}){2}", base, res.status, text ? `:${text.slice(0, 200)}` : ''));
   let data;
   try { data = JSON.parse(text); } catch { data = null; }
-  if (!data?.ok || typeof data.hash !== 'string') throw new AssetSourceError(`素材服务的入库回包里没有内容哈希(${base})`);
+  if (!data?.ok || typeof data.hash !== 'string') throw new AssetSourceError(tr("The asset service ingest response has no content hash ({0})", base));
   await ownership?.assert();
-  if (ownership && data.projectId !== ownership.projectId) throw new AssetSourceError('项目素材入库回包归属不匹配');
+  if (ownership && data.projectId !== ownership.projectId) throw new AssetSourceError(tr("Project asset ingest response ownership does not match"));
   return {
     ...(ownership ? { projectId: ownership.projectId } : {}),
     hash: data.hash,

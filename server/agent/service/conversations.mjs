@@ -36,7 +36,7 @@ const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const DEGRADED_TYPES = new Set(['thinking', 'diagnostic']);
 const MERGE_TYPES = new Set(['text', 'thinking']);
 
-export const INTERRUPTED_MESSAGE = '云端 Agent 服务中断,这一轮没有做完。已经落地的改动保留在项目里。';
+export const INTERRUPTED_MESSAGE = 'The Cloud Agent service was interrupted and this turn did not finish. Changes already applied are kept in the project.';
 
 function writeJson(file, value) {
   const tmp = `${file}.tmp-${process.pid}`;
@@ -101,7 +101,7 @@ export function createConversationStore({ dataDir = null, now = () => Date.now()
   const keyOf = (projectId, ownerKey, id) => `${projectId}\n${ownerKey}\n${id}`;
   /** 项目号与主人键要当目录名用:只收不会走出 `tenants/` 的 */
   const seg = (name) => {
-    if (typeof name !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(name) || /^\.+$/.test(name)) throw new Error('不能当目录名的标识');
+    if (typeof name !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(name) || /^\.+$/.test(name)) throw new Error('Identifier that cannot be used as a directory name');
     return name;
   };
   const ownerDir = (projectId, ownerKey) => path.join(dataDir, 'tenants', seg(projectId), 'owners', seg(ownerKey), 'conversations');

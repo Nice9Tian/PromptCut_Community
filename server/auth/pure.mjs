@@ -98,7 +98,7 @@ function toBytes(v) {
   if (v instanceof Uint8Array) return v;
   if (v instanceof ArrayBuffer) return new Uint8Array(v);
   if (ArrayBuffer.isView(v)) return new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
-  throw new TypeError('要 Uint8Array');
+  throw new TypeError('Uint8Array required');
 }
 
 /** HMAC 的内外两层在 ipad / opad 那一块之后的状态 */
@@ -132,8 +132,8 @@ export function hmacSha256(key, data) {
  * @param {number} length 输出字节数
  */
 export function pbkdf2Sha256(password, salt, iterations, length) {
-  if (!Number.isSafeInteger(iterations) || iterations < 1) throw new RangeError('iterations 必须是正整数');
-  if (!Number.isSafeInteger(length) || length < 1) throw new RangeError('length 必须是正整数');
+  if (!Number.isSafeInteger(iterations) || iterations < 1) throw new RangeError('iterations must be a positive integer');
+  if (!Number.isSafeInteger(length) || length < 1) throw new RangeError('length must be a positive integer');
   const { inner, outer } = hmacStates(password);
   const s = toBytes(salt);
   const out = new Uint8Array(length);

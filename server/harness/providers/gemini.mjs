@@ -168,7 +168,7 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
         }
 
         if (event === 'error' || parsed.type === 'error' || parsed.error) {
-          const message = typeof parsed.error === 'string' ? parsed.error : (parsed.error?.message || parsed.message || 'API 流返回错误');
+          const message = typeof parsed.error === 'string' ? parsed.error : (parsed.error?.message || parsed.message || 'API stream returned an error');
           if (stopReason) break; // 已经正常收尾,后面来的错不影响这次回复
           // 流已经出过内容之后来的 error(网关中途掐断):按截断收尾,已经收到的文字和整块到达的工具调用都保留
           if (!started) throw new Error(message);
@@ -227,7 +227,7 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
         if (!stopReason) cut = { how: 'connection', detail: err?.message || String(err) };
       }
 
-      if (!stopReason && !cut && started && !signal?.aborted) cut = { how: 'no-finish', detail: '流在 finishReason 之前结束' };
+      if (!stopReason && !cut && started && !signal?.aborted) cut = { how: 'no-finish', detail: 'Stream ended before finishReason' };
       if (cut) {
         // Gemini 的工具调用整块到达,没有写了一半的调用可保;已经收到的照常执行,文字保留
         yield streamCutNotice('gemini', cut.how, cut.detail);
@@ -237,7 +237,7 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
       }
 
       if (!sawCandidate && !stopReason && !signal?.aborted) {
-        throw new Error('API 响应流提前结束或未返回 SSE 数据，请检查接口协议。');
+        throw new Error('The API response stream ended early or returned no SSE data. Check the API protocol.');
       }
 
       yield { type: 'usage', input: promptTokens, output: candidatesTokens, ...(thoughtsTokens ? { thoughts: thoughtsTokens } : {}) };
@@ -253,8 +253,8 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
        * 而 anthropic.mjs 遇到流内错误走的也是 throw,这里和它保持一致。
        */
       if (stopReason && stopReason !== 'STOP' && stopReason !== 'MAX_TOKENS') {
-        throw new Error(`Gemini 这一轮没有正常收尾(finishReason: ${stopReason})。`
-          + (stopReason === 'MALFORMED_FUNCTION_CALL' ? '模型把工具调用写坏了,通常重试一次就好。' : ''));
+        throw new Error(`Gemini did not finish this turn normally (finishReason: ${stopReason}).`
+          + (stopReason === 'MALFORMED_FUNCTION_CALL' ? 'The model wrote a malformed tool call; retrying once usually fixes it.' : ''));
       }
       yield { type: 'stop', reason: stopReason || 'STOP' };
     }

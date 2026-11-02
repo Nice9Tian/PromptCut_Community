@@ -81,7 +81,7 @@ export function startAssetAnnounce({
   const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志出错不影响登记 */ } };
   if (!url) return noop;
   if (!Array.isArray(urls) || urls.length === 0) {
-    say('asset-announce.skip', { reason: 'no-lan-urls', detail: '本机没有私有网段的 IPv4 地址，不登记素材服务' });
+    say('asset-announce.skip', { reason: 'no-lan-urls', detail: 'This machine has no IPv4 address on a private network range, so the asset service is not registered' });
     return noop;
   }
   const list = [...urls];

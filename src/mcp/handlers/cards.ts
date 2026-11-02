@@ -41,7 +41,7 @@ export const cardsHandlers = {
       return {
         ...base,
         params: c.controls.map((ct) => (ct.required ? `${ct.key}*` : ct.key)),
-        hint: "带 * 的是必填。要完整 schema 就用 list_cards({ cardId })。",
+        hint: "Fields marked * are required. For the full schema use list_cards({ cardId }).",
       };
     });
   },
@@ -64,7 +64,7 @@ export const cardsHandlers = {
       }),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) throw new Error(data.error || `建卡失败(HTTP ${res.status})`);
+    if (!res.ok || !data.ok) throw new Error(data.error || `Failed to create card (HTTP ${res.status})`);
     refreshScopes();
     return data;
   },
@@ -76,7 +76,7 @@ export const cardsHandlers = {
     const q = new URLSearchParams({ id: args.cardId, ...(args.file ? { file: args.file } : {}) });
     const res = await fetch(apiUrl(`/api/cards/source?${q}`));
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) throw new Error(data.error || `读不到卡片源码(HTTP ${res.status})`);
+    if (!res.ok || !data.ok) throw new Error(data.error || `Can't read card source (HTTP ${res.status})`);
     return data;
   },
   /** 局部替换式改卡(带 file 改部件文件)。整篇重写交给 createCard,那条路只该走一次(建卡)。 */
@@ -87,7 +87,7 @@ export const cardsHandlers = {
       body: JSON.stringify({ id: args.cardId, file: args.file, find: args.find, replace: args.replace, replaceAll: args.replaceAll === true }),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) throw new Error(data.error || `改卡失败(HTTP ${res.status})`);
+    if (!res.ok || !data.ok) throw new Error(data.error || `Failed to edit card (HTTP ${res.status})`);
     return data;
   },
   applyCard: (args) => {

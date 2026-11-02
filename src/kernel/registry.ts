@@ -19,7 +19,7 @@ export function registerCards(defs: CardDef<any>[]) {
   registryGen++;
   const seen = new Set<string>();
   for (const d of defs) {
-    if (seen.has(d.id)) throw new Error(`card id 重复: ${d.id}`);
+    if (seen.has(d.id)) throw new Error(`Duplicate card id: ${d.id}`);
     seen.add(d.id);
     const capabilities = cardCapabilities(d);
     // compositing / canvasHeavy 的权威是审阅表(src/cards/capabilities.json),不是卡片源码,
@@ -48,7 +48,7 @@ export function noteCardsUpdated(stamp: number = Date.now()): void {
   cardsGen++;
   cardsStampValue = Math.max(cardsStampValue, stamp);
   for (const l of [...cardListeners]) {
-    try { l(); } catch (err) { console.warn("[registry] 卡片更新的订阅方出错", err); }
+    try { l(); } catch (err) { console.warn("[registry] Card update subscriber failed", err); }
   }
 }
 
@@ -217,7 +217,7 @@ export function setSyncedUserCards(entries: Iterable<SyncedUserCard>): boolean {
   views = nextViews;
   syncedGen++;
   for (const l of [...syncedListeners]) {
-    try { l(); } catch (err) { console.warn("[registry] 同步用户卡的订阅方出错", err); }
+    try { l(); } catch (err) { console.warn("[registry] Synced user card subscriber failed", err); }
   }
   return true;
 }
@@ -345,7 +345,7 @@ export function setRuntimeCards(defs: Iterable<CardDef<any>>): boolean {
   registryGen++;
   runtimeGen++;
   for (const l of [...runtimeListeners]) {
-    try { l(); } catch (err) { console.warn("[registry] 运行时卡片的订阅方出错", err); }
+    try { l(); } catch (err) { console.warn("[registry] Runtime card subscriber failed", err); }
   }
   return true;
 }
@@ -398,7 +398,7 @@ export function setCardRunStates(states: Iterable<readonly [string, CardRunState
   runStates = next;
   runStatesGen++;
   for (const l of [...runStateListeners]) {
-    try { l(); } catch (err) { console.warn("[registry] 卡片运行状态的订阅方出错", err); }
+    try { l(); } catch (err) { console.warn("[registry] Card run state subscriber failed", err); }
   }
   return true;
 }
@@ -441,7 +441,7 @@ export function setLocalCardExec(next: { graph: boolean; blocked?: Iterable<stri
   registryGen++;
   runStatesGen++;
   for (const l of [...runStateListeners]) {
-    try { l(); } catch (err) { console.warn("[registry] 卡片运行状态的订阅方出错", err); }
+    try { l(); } catch (err) { console.warn("[registry] Card run state subscriber failed", err); }
   }
   return true;
 }

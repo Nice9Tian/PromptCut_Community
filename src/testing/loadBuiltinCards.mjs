@@ -53,7 +53,7 @@ export async function loadBuiltinCards(root) {
     const groups = {};
     for (const [name, file] of Object.entries(BUILTIN_CARD_GROUPS)) {
       const cards = (await load(file))[name];
-      if (!Array.isArray(cards)) throw new Error(`${file} 没有导出 ${name}`);
+      if (!Array.isArray(cards)) throw new Error(`${file} does not export ${name}`);
       groups[name] = cards;
     }
     return { groups, cards: Object.values(groups).flat(), load, close: () => vite.close() };

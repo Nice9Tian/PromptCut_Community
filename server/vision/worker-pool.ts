@@ -164,15 +164,15 @@ export function spawnWorker(root: string, reserved = false): RenderWorker {
        * 进程本身还是干净的,所以**不杀**,下一趟它会重新开一个浏览器。
        * 被取消的(cancelled)连 bakery 都没丢,只是换一张页。
        */
-      p.fail(Object.assign(new Error(String(msg.message || "渲染失败")), { cancelled: !!msg.cancelled }));
+      p.fail(Object.assign(new Error(String(msg.message || "Render failed")), { cancelled: !!msg.cancelled }));
     }
   });
   const bury = (code: number | null) => {
     if (w.dead) return;
     const msg = w.tail.join("").trim().slice(-600);
     killWorker(w, new Error(code === 3221225794
-      ? "渲染进程启动失败(0xC0000142)。同时开着的浏览器实例太多,等导出跑完再看图。"
-      : `渲染进程异常退出(代码 ${code})${msg ? `:${msg}` : ""}`));
+      ? "Render process failed to start (0xC0000142). Too many browser instances are open at once; wait for the export to finish before viewing frames."
+      : `Render process exited abnormally (code ${code})${msg ? `:${msg}` : ""}`));
   };
   child.on("error", (e) => { if (!w.dead) killWorker(w, e instanceof Error ? e : new Error(String(e))); });
   child.on("exit", bury);
@@ -260,8 +260,8 @@ function callWorker(
     entry.fail = reject;
     entry.timer = setTimeout(() => {
       w.pending.delete(id);
-      killWorker(w, new Error(`渲染超时(${timeoutMs / 1000} 秒)。`));
-      reject(new Error(`渲染超时(${timeoutMs / 1000} 秒)。`));
+      killWorker(w, new Error(`Render timed out (${timeoutMs / 1000} s).`));
+      reject(new Error(`Render timed out (${timeoutMs / 1000} s).`));
     }, timeoutMs);
     w.pending.set(id, entry);
     if (signal?.aborted) {
@@ -283,7 +283,7 @@ function callWorker(
       entry.timer = setTimeout(() => {
         if (!w.pending.has(id)) return;
         w.pending.delete(id);
-        killWorker(w, new Error(`取消之后 ${CANCEL_GRACE_MS / 1000} 秒 worker 还没停下`));
+        killWorker(w, new Error(`Worker still had not stopped ${CANCEL_GRACE_MS / 1000} s after cancellation`));
         reject(cancelError());
       }, CANCEL_GRACE_MS);
     };

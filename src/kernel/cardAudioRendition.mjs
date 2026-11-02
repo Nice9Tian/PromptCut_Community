@@ -5,7 +5,7 @@ import { cardClockOffset, clipSpeed, speedMutesSource } from './clipTime.mjs';
 export const isAudiovisualCard = def => !!def && typeof def.audio === 'function' &&
   (typeof def.Component === 'function' || typeof def.Component === 'object' && def.Component !== null || typeof def.card === 'function');
 export function assertAudiovisualCardKind(def) {
-  if (isAudiovisualCard(def) && def.kind === 'audio') throw new Error('声画卡不能使用 kind:audio，请声明 animation/filter/transition/emphasis 视觉类型');
+  if (isAudiovisualCard(def) && def.kind === 'audio') throw new Error('Audio-visual cards cannot use kind:audio, declare a visual type: animation/filter/transition/emphasis');
 }
 const nodeOf = (p, c) => p.cardNodes?.find(n => n.id === c.nodeId);
 export function clipHasEmbeddedAudio(project, clip, getCard = () => undefined) {
@@ -56,7 +56,7 @@ export function cardAudioSourceOffset(project, clip) {
 export class CardAudioRenditionError extends Error {
   constructor(code, message) { super(message); this.code = code; }
 }
-const fail = (code, clip, message) => { throw new CardAudioRenditionError(code, `${clip.id} 的卡片声音${message}`); };
+const fail = (code, clip, message) => { throw new CardAudioRenditionError(code, `Card audio for ${clip.id}: ${message}`); };
 
 /** 同步纯数据身份：参数/事件表、所有上游素材哈希与映射、代码版本。没有源码的在线端只读已存快照。 */
 export function cardAudioIdentity(project, clip, hooks = {}, saved = clip.cardAudio?.identity) {
@@ -65,11 +65,11 @@ export function cardAudioIdentity(project, clip, hooks = {}, saved = clip.cardAu
   const clips = (project.tracks ?? []).flatMap(t => t.clips ?? []);
   const root = nodeOf(project, clip) ?? { cardId: clip.cardId, inputs: {} };
   const visit = (node, owner, fallback, seen = new Set()) => {
-    if (seen.has(node)) fail('stale', clip, '输入存在循环，无法生成');
+    if (seen.has(node)) fail('stale', clip, 'inputs form a cycle, cannot generate');
     const nextSeen = new Set(seen).add(node), def = getCard(node.cardId);
     const defaults = def?.defaults ?? fallback?.defaults ?? {};
     const sourceVersion = versions?.(node.cardId) ?? fallback?.sourceVersion;
-    if (!sourceVersion) fail('missing', clip, '缺少源码版本，请在本地重新生成');
+    if (!sourceVersion) fail('missing', clip, 'source version is missing, please regenerate locally');
     const inputs = {};
     for (const [name, raw] of Object.entries(node.inputs ?? {})) {
       const ref = typeof raw === 'string' ? { nodeId: raw } : raw;
@@ -77,7 +77,7 @@ export function cardAudioIdentity(project, clip, hooks = {}, saved = clip.cardAu
       const sourceClip = sourceId ? clips.find(c => c.id === sourceId) : undefined;
       if (sourceId) {
         const media = project.media?.find(m => m.id === sourceClip?.mediaId);
-        if (!media?.hash) fail('missing', clip, '输入素材缺失或没有内容哈希');
+        if (!media?.hash) fail('missing', clip, 'input media is missing or has no content hash');
         // 自己的素材已经按源时钟访问，split 的边补偿不能再使身份变化。
         const offset = sourceClip === owner ? (ref.offset ?? 0) + (node.timeOffset ?? 0) : (ref.offset ?? 0) + (sourceClip?.mediaOffset ?? 0);
         // 输入素材段变了速,声音跟着变速变调(audioSources.ts 的 varispeedBlock),倍率进身份;1 倍不写,身份逐字不变
@@ -85,7 +85,7 @@ export function cardAudioIdentity(project, clip, hooks = {}, saved = clip.cardAu
         inputs[name] = { media: media.hash, offset, rate: ref.rate ?? 1, ...(speed !== 1 ? { speed } : {}) };
       } else {
         const upstream = nodes.get(ref.nodeId);
-        if (!upstream) fail('missing', clip, '输入节点已删除');
+        if (!upstream) fail('missing', clip, 'input node has been deleted');
         const upstreamOwner = clips.find(c => c.nodeId === upstream.id);
         inputs[name] = { offset: ref.offset ?? 0, rate: ref.rate ?? 1,
           value: visit(upstream, upstreamOwner, fallback?.inputs?.[name]?.value, nextSeen) };
@@ -121,18 +121,18 @@ export function resolveCardAudioRendition(project, clip, hooks = {}) {
     return { ...base, offset: base.offset + Math.round(shift * base.rendition.sampleRate) / base.rendition.sampleRate };
   }
   const r = clip.cardAudio;
-  if (!r) fail('missing', clip, '尚未生成，请先生成卡片声音');
+  if (!r) fail('missing', clip, 'not generated yet, please generate the card audio first');
   if (r.version !== 1 || r.cardId !== clip.cardId || r.sampleRate !== 48000 || !Number.isSafeInteger(r.frames) || r.frames < 1 ||
       !Number.isInteger(r.channels) || r.channels < 1 || r.channels > 8 || !Number.isFinite(r.sourceOffset) || !r.identity)
-    fail('stale', clip, '记录无效，请重新生成');
+    fail('stale', clip, 'record is invalid, please regenerate');
   const identity = cardAudioIdentity(project, clip, hooks);
-  if (cardJson(identity) !== cardJson(r.identity)) fail('stale', clip, '已过期（参数、事件、输入或源码已变化），请重新生成');
+  if (cardJson(identity) !== cardJson(r.identity)) fail('stale', clip, 'out of date (parameters, events, inputs or source have changed), please regenerate');
   const offset = cardAudioSourceOffset(project, clip) - r.sourceOffset;
   const frames = Math.round((clip.end - clip.start) * r.sampleRate), start = Math.round(offset * r.sampleRate);
   if (!Number.isFinite(offset) || start < 0 || frames < 1 || start + frames > r.frames)
-    fail('stale', clip, '预渲染结果未覆盖当前范围，请重新生成');
+    fail('stale', clip, 'prerender output does not cover the current range, please regenerate');
   const media = project.media?.find(m => m.id === r.mediaId);
   if (!media || media.kind !== 'audio' || !/^[0-9a-f]{64}$/i.test(media.hash ?? '') || !media.url || /^blob:/.test(media.url) || media.pending)
-    fail('missing', clip, '素材缺失，请恢复素材或重新生成');
+    fail('missing', clip, 'media is missing, please restore the media or regenerate');
   return { media, offset: start / r.sampleRate, rendition: r };
 }

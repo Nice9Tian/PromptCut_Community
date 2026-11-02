@@ -67,11 +67,11 @@ function CaptionTrackCard({ params, t = 0 }: CardProps<Params>) {
 
 export const captionTrack: CardDef<Params> = {
   id: "caption-track",
-  name: "常驻双语字幕",
-  description: "根据时间显示双语字幕",
+  name: "Persistent bilingual captions",
+  description: "Shows bilingual captions based on time",
   source: "native",
-  useWhen: "给一整段口播铺常驻字幕。一张卡覆盖整段时间即可,不要每句话建一张;lines 必填,通常用 fill_captions 从文字稿直接灌进来。",
-  tags: ["字幕", "caption", "subtitle", "转写", "双语"],
+  useWhen: "Lays persistent captions over a whole narration. One card covering the whole time range is enough; do not create one per sentence. lines is required; usually fill it directly from the transcript with fill_captions.",
+  tags: ["Captions", "caption", "subtitle", "transcription", "bilingual"],
   defaults: {
     ...hudDefaults,
     position: "bottom",
@@ -91,25 +91,25 @@ export const captionTrack: CardDef<Params> = {
     // 只有水平方向(靠左/靠右)会变。所以这里换掉标签和选项,只给真能生效的三种,
     // 免得用户选了「居中」以为字幕会挪到画面中间、AI 也照着填。
     {
-      key: "position", label: "水平位置", type: "select",
+      key: "position", label: "Horizontal position", type: "select",
       options: [
-        { value: "bottom", label: "底部居中" },
-        { value: "left", label: "底部靠左" },
-        { value: "right", label: "底部靠右" },
+        { value: "bottom", label: "Bottom center" },
+        { value: "left", label: "Bottom left" },
+        { value: "right", label: "Bottom right" },
       ],
     },
     ...hudControls.filter((c) => c.key !== "position"),
     {
-      key: "lines", label: "字幕(起|止|中|英)", type: "text", required: true,
-      hint: "一行一条字幕,格式 `起|止|中文|英文`(英文可留空),秒数相对本 clip 起点。中文里用 *星号* 包住的词会用主色高亮。可以用 fill_captions 从素材文字稿自动灌入。",
+      key: "lines", label: "Captions (start|end|Chinese|English)", type: "text", required: true,
+      hint: "One caption per line, in the format `start|end|Chinese|English` (English may be left empty); seconds are relative to this clip's start. In the Chinese text, words wrapped in *asterisks* are highlighted in the main color. You can use fill_captions to fill them automatically from the media transcript.",
     },
-    { key: "showEn", label: "显示英文", type: "select", options: [{ value: "true", label: "是" }, { value: "false", label: "否" }] },
-    { key: "strokeOn", label: "开启描边", type: "select", options: [{ value: "true", label: "是" }, { value: "false", label: "否" }] },
-    { key: "strokeW", label: "描边宽度", type: "number" },
-    { key: "strokeColor", label: "描边颜色", type: "color" },
+    { key: "showEn", label: "Show English", type: "select", options: [{ value: "true", label: "yes" }, { value: "false", label: "no" }] },
+    { key: "strokeOn", label: "Enable stroke", type: "select", options: [{ value: "true", label: "yes" }, { value: "false", label: "no" }] },
+    { key: "strokeW", label: "Stroke width", type: "number" },
+    { key: "strokeColor", label: "Stroke color", type: "color" },
   ],
   parts: [
-    { id: "lines", label: "字幕行", role: "list", params: ["lines", "showEn", "strokeOn", "strokeW", "strokeColor"] },
+    { id: "lines", label: "Caption lines", role: "list", params: ["lines", "showEn", "strokeOn", "strokeW", "strokeColor"] },
   ],
   lifecycle: { after: "evolve", exit: ["fade"] },
   frameMode: "direct",

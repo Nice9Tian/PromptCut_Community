@@ -24,6 +24,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { cliCommand, cliEnv, resolveCli, setupRoot } from './cli-runtime.mjs';
 import { codexAuthState, AUTH_RECOVERY } from './codex-auth-state.mjs';
+import { tr } from "../i18n.mjs";
 
 export const QUOTA_PROVIDERS = ['claude', 'codex'];
 
@@ -69,10 +70,10 @@ export function parseClaudeUsage(text) {
 }
 
 function zhLabel(label) {
-  if (/session/i.test(label)) return '当前 5 小时';
-  if (/all models/i.test(label)) return '本周(全部模型)';
+  if (/session/i.test(label)) return tr("Current 5 hours");
+  if (/all models/i.test(label)) return tr("This week (all models)");
   const m = /week\s*\(([^)]+)\)/i.exec(label);
-  if (m) return `本周(${m[1]})`;
+  if (m) return tr("This week ({0})", m[1]);
   return label;
 }
 
@@ -85,8 +86,8 @@ export function parseCodexRateLimits(result) {
     if (!w || typeof w.usedPercent !== 'number') return;
     const mins = Number(w.windowDurationMins) || 0;
     const label = id === 'primary'
-      ? (mins >= 240 && mins <= 360 ? '当前 5 小时' : mins ? `${Math.round(mins / 60)} 小时窗口` : '短期窗口')
-      : (mins >= 10000 && mins <= 10100 ? '本周' : mins ? `${Math.round(mins / 1440)} 天窗口` : '长期窗口');
+      ? (mins >= 240 && mins <= 360 ? tr("Current 5 hours") : mins ? tr("{0}-hour window", Math.round(mins / 60)) : tr("Short-term window"))
+      : (mins >= 10000 && mins <= 10100 ? tr("This week") : mins ? tr("{0}-day window", Math.round(mins / 1440)) : tr("Long-term window"));
     windows.push({
       id: id === 'primary' ? 'session' : 'week',
       label,
@@ -183,7 +184,7 @@ function probeClaude({ timeoutMs = 60000 } = {}) {
       const windows = parseClaudeUsage(text);
       if (windows.length) return resolve(summarize('claude', windows));
       const combined = (text + '\n' + (stderr || '')).trim();
-      const reason = error ? `claude 没跑起来:${error.message}` : /api key|anthropic api/i.test(combined) ? 'API Key 模式没有订阅额度窗口' : `没在输出里找到用量行:${combined.slice(0, 200)}`;
+      const reason = error ? tr("claude failed to run: {0}", error.message) : /api key|anthropic api/i.test(combined) ? tr("API Key mode has no subscription quota window") : tr("No usage line found in the output: {0}", combined.slice(0, 200));
       resolve({ ...summarize('claude', []), ok: false, error: reason });
     });
   });
@@ -198,7 +199,7 @@ function probeCodex({ timeoutMs = 20000 } = {}) {
     try {
       child = spawn(command, args, { cwd: probeDir(), env: cliEnv('codex'), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     } catch (e) {
-      return resolve({ ...summarize('codex', []), ok: false, error: `codex 没跑起来:${e.message}` });
+      return resolve({ ...summarize('codex', []), ok: false, error: tr("codex failed to run: {0}", e.message) });
     }
     let buf = '';
     let done = false;
@@ -210,10 +211,10 @@ function probeCodex({ timeoutMs = 20000 } = {}) {
       try { child.kill(); } catch {}
       resolve(r);
     };
-    const timer = setTimeout(() => finish({ ...summarize('codex', []), ok: false, error: 'codex app-server 20 秒没回应' + (stderrText ? `:${stderrText.slice(0, 200)}` : '') }), timeoutMs);
+    const timer = setTimeout(() => finish({ ...summarize('codex', []), ok: false, error: tr("codex app-server did not respond within 20 seconds") + (stderrText ? `:${stderrText.slice(0, 200)}` : '') }), timeoutMs);
     const send = (o) => { try { child.stdin.write(JSON.stringify(o) + '\n'); } catch {} };
-    child.on('error', (e) => finish({ ...summarize('codex', []), ok: false, error: `codex 没跑起来:${e.message}` }));
-    child.on('exit', () => finish({ ...summarize('codex', []), ok: false, error: 'codex app-server 提前退出' + (stderrText ? `:${stderrText.slice(0, 200)}` : '') }));
+    child.on('error', (e) => finish({ ...summarize('codex', []), ok: false, error: tr("codex failed to run: {0}", e.message) }));
+    child.on('exit', () => finish({ ...summarize('codex', []), ok: false, error: tr("codex app-server exited early") + (stderrText ? `:${stderrText.slice(0, 200)}` : '') }));
     child.stderr.on('data', (d) => { stderrText += d.toString('utf8'); });
     child.stdout.on('data', (d) => {
       buf += d.toString('utf8');
@@ -224,14 +225,14 @@ function probeCodex({ timeoutMs = 20000 } = {}) {
         let msg;
         try { msg = JSON.parse(line); } catch { continue; }
         if (msg.id === 1) {
-          if (msg.error) return finish({ ...summarize('codex', []), ok: false, error: `initialize 失败:${msg.error.message || JSON.stringify(msg.error)}` });
+          if (msg.error) return finish({ ...summarize('codex', []), ok: false, error: tr("initialize failed: {0}", msg.error.message || JSON.stringify(msg.error)) });
           send({ jsonrpc: '2.0', method: 'initialized', params: {} });
           send({ jsonrpc: '2.0', id: 2, method: 'account/rateLimits/read', params: {} });
         } else if (msg.id === 2) {
-          if (msg.error) return finish({ ...summarize('codex', []), ok: false, error: `读不到额度:${msg.error.message || JSON.stringify(msg.error)}(没登录?)` });
+          if (msg.error) return finish({ ...summarize('codex', []), ok: false, error: tr("Cannot read quota: {0} (not logged in?)", msg.error.message || JSON.stringify(msg.error)) });
           const windows = parseCodexRateLimits(msg.result);
           const planType = msg.result?.rateLimits?.planType;
-          if (!windows.length) return finish({ ...summarize('codex', []), ok: false, error: '返回里没有额度窗口(没登录?)' });
+          if (!windows.length) return finish({ ...summarize('codex', []), ok: false, error: tr("The response has no quota window (not logged in?)") });
           return finish(summarize('codex', windows, { planType }));
         }
       }
@@ -262,8 +263,8 @@ export function normalizeQuotaConfig(raw) {
 /** `worst` 传的是**参与判定的那些窗口**里最高的那个,不一定等于 info.worst(那是所有窗口的最高) */
 export function exceededMessage(info, thresholdPercent, worst = info.worst) {
   const w = worst;
-  const reset = w?.resetsText ? `,${w.label}窗口 ${w.resetsText} 重置` : '';
-  return `${info.label} 额度已用 ${w?.usedPercent ?? '?'}%(${w?.label ?? '窗口'}),超过阈值 ${thresholdPercent}%,已中断${reset}。要继续可以在 AI 设置里调高阈值或关掉熔断。`;
+  const reset = w?.resetsText ? tr(", {0} window resets {1}", w.label, w.resetsText) : '';
+  return tr("{0} quota used {1}% ({2}), over the {3}% threshold, interrupted{4}. To continue, raise the threshold or turn off the circuit breaker in AI settings.", info.label, w?.usedPercent ?? '?', w?.label ?? tr("window"), thresholdPercent, reset);
 }
 
 /**

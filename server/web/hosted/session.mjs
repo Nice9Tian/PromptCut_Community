@@ -394,7 +394,7 @@ function withDeadline(promise, ms, what) {
   let timer;
   return Promise.race([
     promise,
-    new Promise((_, reject) => { timer = setTimeout(() => reject(new HostedSessionError('timeout', `${what} 超过 ${Math.round(ms / 1000)} 秒没有完成`)), ms); timer.unref?.(); }),
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new HostedSessionError('timeout', `${what} did not finish within ${Math.round(ms / 1000)} seconds`)), ms); timer.unref?.(); }),
   ]).finally(() => clearTimeout(timer));
 }
 
@@ -432,8 +432,8 @@ function keepInOneTab() {
  */
 export async function launchHostedSession({ sessionDir, executablePath, headless, gate, limits, argPrefix = HOSTED_BROWSER_ARG_PREFIX, extraArgs = [], puppeteer, spawnBrowser = spawnTree, log = () => {}, now = () => Date.now() }) {
   const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志失败不影响 */ } };
-  if (typeof executablePath !== 'string' || !executablePath) throw new HostedSessionError('browser-missing', '这台节点没有配置浏览器');
-  try { if (!fs.statSync(executablePath).isFile()) throw new Error('not a file'); } catch { throw new HostedSessionError('browser-missing', '这台节点没有配置浏览器'); }
+  if (typeof executablePath !== 'string' || !executablePath) throw new HostedSessionError('browser-missing', 'No browser is configured on this node');
+  try { if (!fs.statSync(executablePath).isFile()) throw new Error('not a file'); } catch { throw new HostedSessionError('browser-missing', 'No browser is configured on this node'); }
   const userDataDir = path.join(sessionDir, 'profile');
   fs.mkdirSync(userDataDir, { recursive: true });
   fs.mkdirSync(path.join(sessionDir, '.tmp'), { recursive: true });
@@ -441,7 +441,7 @@ export async function launchHostedSession({ sessionDir, executablePath, headless
   // 上一个进程留下的浏览器还占着这份目录:先清掉;清不掉就不起(两个浏览器不能共用一份目录)
   const orphan = await reapOrphan(sessionDir);
   if (orphan.found) say('agent.web.orphan-reaped', { killed: orphan.killed.length, stillHeld: orphan.stillHeld });
-  if (orphan.stillHeld) throw new HostedSessionError('profile-busy', '这个对话的浏览器目录被一个残留的浏览器进程占着,这次没有打开。');
+  if (orphan.stillHeld) throw new HostedSessionError('profile-busy', 'The browser directory of this chat is held by a leftover browser process, so the browser was not opened this time.');
 
   const mode = headless ?? (/headless[-_]shell/i.test(path.basename(executablePath)) ? 'shell' : 'new');
   const proxy = await startBrowserProxy({ gate, maxTunnels: limits.maxTunnels, log });
@@ -484,13 +484,13 @@ export async function launchHostedSession({ sessionDir, executablePath, headless
     browser = await withDeadline(Promise.race([
       pptr.connect({ transport, defaultViewport: { ...VIEWPORT } }),
       started.then(() => { throw new Error('browser exited during launch'); }),
-    ]), limits.launchMs, '起浏览器');
+    ]), limits.launchMs, 'launching the browser');
   } catch (err) {
     if (proc?.pid) { killTree(proc); await Promise.race([whenClosed(proc), sleep(limits.closeMs)]); }
     try { transport?.close(); } catch { /* 已经关了 */ }
     await proxy.close();
     say('agent.web.launch-failed', { message: String(err?.message ?? err).slice(0, 160) });
-    throw new HostedSessionError('launch-failed', '云端的浏览器没能启动。请告诉用户联系托管方查看节点。');
+    throw new HostedSessionError('launch-failed', 'The cloud browser failed to start. Tell the user to contact the host to check the node.');
   }
 
   const browserPid = proc.pid;
@@ -596,14 +596,14 @@ export async function launchHostedSession({ sessionDir, executablePath, headless
     await Promise.race([processGone(), sleep(limits.closeMs)]);
     await proxy.close();
     say('agent.web.launch-failed', { message: String(err?.message ?? err).slice(0, 160) });
-    throw new HostedSessionError('launch-failed', '云端的浏览器没能启动。请告诉用户联系托管方查看节点。');
+    throw new HostedSessionError('launch-failed', 'The cloud browser failed to start. Tell the user to contact the host to check the node.');
   }
 
   /** 刷新进程树的进程号(渲染进程会随跳转换) */
   async function refreshPids() {
     if (state.closed) return [...pids];
     try {
-      const info = await withDeadline(cdp.send('SystemInfo.getProcessInfo'), 2_000, '取进程表');
+      const info = await withDeadline(cdp.send('SystemInfo.getProcessInfo'), 2_000, 'fetching the process table');
       const current = new Set(browserPid ? [browserPid] : []);
       for (const p of info?.processInfo ?? []) if (Number.isSafeInteger(p?.id) && p.id > 0) current.add(p.id);
       pids = current;
@@ -629,13 +629,13 @@ export async function launchHostedSession({ sessionDir, executablePath, headless
   /** 一个对话的浏览器只有一个页,动作串行;整个动作有时限 */
   function enqueue(job, what) {
     const run = async () => {
-      if (state.closed) throw new HostedSessionError('closed', '浏览器已经关了。');
+      if (state.closed) throw new HostedSessionError('closed', 'The browser is already closed.');
       state.busy += 1;
       // 超时以后这个动作不许再碰页面:它后面每次动手之前都要过 check()
       const token = { dead: false };
       const check = (guard) => {
-        if (token.dead) throw new HostedSessionError('timeout', `${what} 已经超时,后面的步骤没有做`);
-        if (state.closed) throw new HostedSessionError('closed', '浏览器已经关了。');
+        if (token.dead) throw new HostedSessionError('timeout', `${what} has already timed out, and the later steps were not run`);
+        if (state.closed) throw new HostedSessionError('closed', 'The browser is already closed.');
         guard?.();
       };
       try { return await withDeadline(job(check), limits.actionMs, what); }
@@ -669,8 +669,8 @@ export async function launchHostedSession({ sessionDir, executablePath, headless
       // 自上一版清单以来被拦下的东西(含两次动作之间页面自己干的);交出去就清掉
       out.blocked = state.blocked.splice(0);
       // blocked 里的对话框文字、下载文件名是网页给的,只当数据看(结果里带着 dataNotice);这句说明是固定的
-      out.blockedNote = '这一步里有东西被云端拦下了:'
-        + [...new Set(out.blocked.map((b) => ({ download: '下载(云端的浏览器不下载文件)', protocol: '非 http(s) 的地址', popup: '新开的标签页', dialog: '页面弹出的对话框(已自动关掉)', egress: '页面要跳去的地址被出网限制拒绝(云节点本机、内网等不许访问)' })[b.kind] ?? b.kind))].join('、') + '。';
+      out.blockedNote = 'Something in this step was blocked by the cloud: '
+        + [...new Set(out.blocked.map((b) => ({ download: 'download (the cloud browser does not download files)', protocol: 'non-http(s) address', popup: 'newly opened tab', dialog: 'dialog popped up by the page (closed automatically)', egress: 'the address the page tried to navigate to was rejected by the egress restrictions (the cloud node itself, internal network, etc. are not allowed)' })[b.kind] ?? b.kind))].join(', ') + '.';
     }
     return out;
   }
@@ -732,7 +732,7 @@ export async function launchHostedSession({ sessionDir, executablePath, headless
     // 落在了非 http(s) 的地址上(正常到不了这里:入口与请求拦截都挡过):退回空白页
     if (!isWebUrl(landed) && landed !== 'about:blank' && !landed.startsWith('chrome-error://')) {
       try { await page.goto('about:blank', { timeout: 5_000 }); } catch { /* 退不回去也照实报 */ }
-      return { ok: false, error: '没有打开:云端 Agent 的浏览器只打开 http / https 地址。', refused: 'protocol' };
+      return { ok: false, error: 'Not opened: the Cloud Agent\'s browser only opens http / https addresses.', refused: 'protocol' };
     }
     // 被出网闸拒了:明文的(含跳转到的那一跳)最后一个回应带着原因码;https 的是隧道建不起来,原因码在代理的记录里。
     // 代理记录里别的拒绝(浏览器自己的后台请求)不算数:只认「隧道失败」这一种失败。
@@ -742,13 +742,13 @@ export async function launchHostedSession({ sessionDir, executablePath, headless
       const code = proxyRefusedMain ?? tunnelRefused.code;
       // 这次拒绝已经在这里说了,不用再在下一版清单里提一遍
       state.blocked.splice(blockedBefore);
-      return { ok: false, error: `没有打开:这个地址(或它跳转到的地址)被拒绝了。${egressRefusalText(code)}`, egress: code };
+      return { ok: false, error: `Not opened: this address (or the address it redirects to) was refused. ${egressRefusalText(code)}`, egress: code };
     }
     // 下载被拒时浏览器报的是「跳转中止」,「这是个下载」的事件晚一拍才到
     if (failure && /ERR_ABORTED/.test(String(failure?.message ?? '')) && !state.blocked.some((b) => b.kind === 'download')) await sleep(400);
     if (failure && state.blocked.some((b) => b.kind === 'download')) {
       state.blocked.splice(blockedBefore);
-      return { ok: false, refused: 'download', error: '没有打开:这个地址是一个文件下载,云端 Agent 的浏览器不下载文件。要把网上的素材放进项目,用素材采集或按地址导入素材的工具。' };
+      return { ok: false, refused: 'download', error: 'Not opened: this address is a file download, and the Cloud Agent\'s browser does not download files. To bring media from the web into the project, use media collection or the tool that imports media by address.' };
     }
     if (failure) {
       if (failure instanceof HostedSessionError) throw failure;
@@ -758,29 +758,29 @@ export async function launchHostedSession({ sessionDir, executablePath, headless
       const netError = /net::(ERR_[A-Z0-9_]{1,60})/.exec(text)?.[1] ?? null;
       return {
         ok: false,
-        error: timedOut ? `这个页面 ${Math.round(limits.navigationMs / 1000)} 秒没有加载出来,没有打开。` : '没有打开:页面加载失败(连不上、证书不对、地址不存在这一类)。可以换一个地址,或稍后再试。',
+        error: timedOut ? `This page did not finish loading within ${Math.round(limits.navigationMs / 1000)} seconds, so it was not opened.` : 'Not opened: the page failed to load (cannot connect, bad certificate, address does not exist, and the like). Try another address, or try again later.',
         ...(netError ? { netError } : {}),
       };
     }
     return finish({ navigated: target });
-  }, '打开网页');
+  }, 'open web page');
 
   const view = () => enqueue(async () => {
-    if (!state.opened) return { ok: false, error: '浏览器里还没有打开网页。先用 web_open 打开一条链接。' };
+    if (!state.opened) return { ok: false, error: 'No web page is open in the browser yet. Use web_open to open a link first.' };
     return finish();
-  }, '截图');
+  }, 'screenshot');
 
   /**
    * 点击。`u` 是带版本的编号;或 `x,y` 是最近那张图上的坐标(强烈建议带 `expect`)。
    * 点之前核对编号还指着清单里那个元素、点下去不会落到别的元素上。
    */
   const click = ({ u, x, y, expect } = {}, { guard } = {}) => enqueue(async (check) => {
-    if (!state.opened) return { ok: false, error: '浏览器里还没有打开网页。先用 web_open 打开一条链接。' };
+    if (!state.opened) return { ok: false, error: 'No web page is open in the browser yet. Use web_open to open a link first.' };
     let uid = typeof u === 'string' && u ? u : null;
     let positional = false;
     if (!uid) {
       if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y)) {
-        return { ok: false, error: '要么给 u,要么给 x,y。x,y 是上一次 web_view 返回的那张图上的像素坐标。' };
+        return { ok: false, error: 'Give either u, or x,y. x,y are pixel coordinates on the image returned by the last web_view.' };
       }
       if (!state.hasView) return stale('no_view');
       if (state.viewEpoch !== state.epoch) return stale('navigated');
@@ -807,7 +807,7 @@ export async function launchHostedSession({ sessionDir, executablePath, headless
     await page.mouse.click(spot.x, spot.y);
     await settle(epoch, at);
     return finish({ clicked: { u: uid, n: spot.label } });
-  }, '点击');
+  }, 'click');
 
   /**
    * 往输入框里打字。口令、验证码、卡号这类字段不填。
@@ -815,17 +815,17 @@ export async function launchHostedSession({ sessionDir, executablePath, headless
    * 页面中途把焦点挪到别的框(比如口令框)就停,如实回,不按回车。
    */
   const type = ({ u, text, append = false, submit = false } = {}, { guard } = {}) => enqueue(async (check) => {
-    if (!state.opened) return { ok: false, error: '浏览器里还没有打开网页。先用 web_open 打开一条链接。' };
-    if (typeof u !== 'string' || !u) return { ok: false, error: '要给 u:clickable 清单里那个输入框的编号。' };
+    if (!state.opened) return { ok: false, error: 'No web page is open in the browser yet. Use web_open to open a link first.' };
+    if (typeof u !== 'string' || !u) return { ok: false, error: 'u is required: the ID of that input box in the clickable manifest.' };
     const value = String(text ?? '');
-    if (value.length > limits.maxTypeChars) return { ok: false, error: `一次最多输入 ${limits.maxTypeChars} 个字。` };
+    if (value.length > limits.maxTypeChars) return { ok: false, error: `At most ${limits.maxTypeChars} characters can be typed at a time.` };
     const checked = checkUid(u);
     if (checked.reason) return stale(checked.reason, { u });
     const spot = await locate(page, u, checked.mark);
     if (!spot.ok) return stale(spot.reason, { u, by: spot.by });
     if (spot.secret) return { ok: false, refused: 'credentials', error: explainSecret(spot.secret) };
-    if (!spot.editable) return { ok: false, error: '这个编号指的元素不是能打字的输入框。' };
-    if (spot.disabled) return { ok: false, error: '这个输入框现在不能改(禁用或只读)。' };
+    if (!spot.editable) return { ok: false, error: 'The element this ID refers to is not a text input.' };
+    if (spot.disabled) return { ok: false, error: 'This input box cannot be edited right now (disabled or read-only).' };
     check(guard);
     await page.mouse.click(spot.x, spot.y);
     // 焦点没落在这个输入框上就不打:字不能进了别处
@@ -841,7 +841,7 @@ export async function launchHostedSession({ sessionDir, executablePath, headless
       if (focus.ok && focus.secret) return { ok: false, refused: 'credentials', typedChars, error: explainSecret(focus.secret) };
       return {
         ok: false, reason: 'focus_moved', typedChars,
-        error: `输入到一半,焦点已经不在这个输入框上了(页面把它挪走了,或者输入框没了),已经停下:后面的字没有输入,也没有按回车。停下之前已经发出 ${typedChars} 个字的按键。先 web_view 看看页面现在的样子。`,
+        error: `Focus left this input box partway through typing (the page moved it away, or the input box is gone), so typing stopped: the remaining characters were not typed and Enter was not pressed. Keystrokes for ${typedChars} characters had been sent before it stopped. Use web_view first to see what the page looks like now.`,
       };
     };
     check(guard);
@@ -870,15 +870,15 @@ export async function launchHostedSession({ sessionDir, executablePath, headless
       await settle(epoch, at);
     }
     return finish({ typed: { u, submit: submit === true } });
-  }, '输入');
+  }, 'type');
 
   const scroll = ({ dy, to } = {}, { guard } = {}) => enqueue(async (check) => {
-    if (!state.opened) return { ok: false, error: '浏览器里还没有打开网页。先用 web_open 打开一条链接。' };
+    if (!state.opened) return { ok: false, error: 'No web page is open in the browser yet. Use web_open to open a link first.' };
     const args = {};
     if (to === 'top' || to === 'bottom') args.to = to;
-    else if (to !== undefined && to !== null) return { ok: false, error: 'to 只能是 "top" 或 "bottom"。' };
+    else if (to !== undefined && to !== null) return { ok: false, error: 'to can only be "top" or "bottom".' };
     if (dy !== undefined && dy !== null) {
-      if (typeof dy !== 'number' || !Number.isFinite(dy)) return { ok: false, error: 'dy 要是一个数(页面像素,正数往下)。' };
+      if (typeof dy !== 'number' || !Number.isFinite(dy)) return { ok: false, error: 'dy must be a number (page pixels, positive scrolls down).' };
       args.dy = Math.max(-limits.maxScrollPx, Math.min(limits.maxScrollPx, dy));
     }
     check(guard);
@@ -891,19 +891,19 @@ export async function launchHostedSession({ sessionDir, executablePath, headless
     }, amount, args.to ?? null);
     await sleep(500);
     return finish({ scrolled: args.to || amount });
-  }, '滚动');
+  }, 'scroll');
 
   /** 读正文,不返图 */
   const read = ({ limit } = {}) => enqueue(async () => {
-    if (!state.opened) return { ok: false, error: '浏览器里还没有打开网页。先用 web_open 打开一条链接。' };
+    if (!state.opened) return { ok: false, error: 'No web page is open in the browser yet. Use web_open to open a link first.' };
     let n = 8000;
     if (limit !== undefined && limit !== null) {
-      if (typeof limit !== 'number' || !Number.isFinite(limit) || limit < 1) return { ok: false, error: 'limit 要是一个正数。' };
+      if (typeof limit !== 'number' || !Number.isFinite(limit) || limit < 1) return { ok: false, error: 'limit must be a positive number.' };
       n = Math.min(Math.floor(limit), limits.maxReadChars);
     }
     const out = await desktopRead(page, { limit: n });
     return { ...out, dataNotice: PAGE_DATA_NOTICE };
-  }, '读正文');
+  }, 'read body text');
 
   /* ---------------------------------------------------------------- 关闭 */
 
@@ -932,7 +932,7 @@ export async function launchHostedSession({ sessionDir, executablePath, headless
       state.closed = true;
       if (graceful && browser.connected !== false) {
         // 请它自己退,并等它真的退(退之前它把 cookie 落盘);到时限还不退就杀
-        try { await withDeadline(browser.close(), limits.gracefulCloseMs, '关浏览器'); } catch { /* 不肯退就杀 */ }
+        try { await withDeadline(browser.close(), limits.gracefulCloseMs, 'close browser'); } catch { /* 不肯退就杀 */ }
         await Promise.race([processGone(), sleep(limits.gracefulCloseMs)]);
       }
       // 不管它自己退没退,记下的每个进程都直接结束一遍:主进程自己退了以后,子进程在忙的机器上要拖好几秒才跟着退

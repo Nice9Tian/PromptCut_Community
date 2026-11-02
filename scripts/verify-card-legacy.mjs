@@ -54,7 +54,7 @@ try {
   // Existing hud-glass (`blur-text`) sits over the existing colourful punch-pill.  Full-scene
   // captures must retain lower-layer pixels under the glass; this is not an isolated-card render.
   const glassBase = { ...base, tracks: [{ ...base.tracks[0], clips: [clip("glass", "blur-text", { text: "玻璃|仍能读取|背景", staggerMs: 0, position: "center" })] }] };
-  const glassScene = { ...base, tracks: [{ ...base.tracks[0], clips: [clip("pill", "punch-pill", { text: "背景", position: "center" }), clip("glass", "blur-text", { text: "玻璃|仍能读取|背景", staggerMs: 0, position: "center" })] }] };
+  const glassScene = { ...base, tracks: [{ ...base.tracks[0], clips: [clip("pill", "punch-pill", { text: "background", position: "center" }), clip("glass", "blur-text", { text: "玻璃|仍能读取|背景", staggerMs: 0, position: "center" })] }] };
   const withoutBackground = await capture("glass-without-background", glassBase, 15);
   const withBackground = await capture("glass-fullscene-background", glassScene, 15);
   const changed = changedPixels(withoutBackground, withBackground);

@@ -54,7 +54,7 @@ export function httpBaseOf(url) {
   const u = new URL(url);
   if (u.protocol === 'ws:') u.protocol = 'http:';
   else if (u.protocol === 'wss:') u.protocol = 'https:';
-  else if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new TypeError('文档服务地址必须是 http(s):// 或 ws(s)://');
+  else if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new TypeError('The document service address must be http(s):// or ws(s)://');
   return `${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '')}`;
 }
 
@@ -63,7 +63,7 @@ function wsUrlOf(url) {
   const u = new URL(url);
   if (u.protocol === 'http:') u.protocol = 'ws:';
   else if (u.protocol === 'https:') u.protocol = 'wss:';
-  else if (u.protocol !== 'ws:' && u.protocol !== 'wss:') throw new TypeError('文档服务地址必须是 http(s):// 或 ws(s)://');
+  else if (u.protocol !== 'ws:' && u.protocol !== 'wss:') throw new TypeError('The document service address must be http(s):// or ws(s)://');
   return u.toString();
 }
 
@@ -94,7 +94,7 @@ export function httpWebSocketClass(deps = {}) {
   const say = (event, fields) => { try { log(event, fields); } catch { /* 日志出错不影响连接 */ } };
   const doFetch = (url, init) => {
     const f = fetchImpl ?? globalThis.fetch;
-    if (typeof f !== 'function') throw new TypeError('HttpWebSocket：没有可用的 fetch');
+    if (typeof f !== 'function') throw new TypeError('HttpWebSocket: no fetch available');
     return f(url, init);
   };
 
@@ -172,7 +172,7 @@ export function httpWebSocketClass(deps = {}) {
 
     /** 发一条文本。连接中调用抛错（同 WebSocket）；已在关闭或已关闭时丢弃 */
     send(data) {
-      if (this.#state === CONNECTING) throw new Error('InvalidStateError: HttpWebSocket 还没连上');
+      if (this.#state === CONNECTING) throw new Error('InvalidStateError: HttpWebSocket is not connected yet');
       if (this.#state !== OPEN) return;
       const text = typeof data === 'string' ? data : String(data);
       const bytes = byteLen(text);
@@ -424,7 +424,7 @@ export function createHttpEndpoint(options = /** @type {any} */ ({})) {
   try {
     wsUrl = wsUrlOf(url);
   } catch {
-    throw new TypeError('createHttpEndpoint：url 必须是 http(s):// 或 ws(s)://');
+    throw new TypeError('createHttpEndpoint: url must be http(s):// or ws(s)://');
   }
   const WebSocketImpl = httpWebSocketClass({
     fetch,

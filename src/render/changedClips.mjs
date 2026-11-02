@@ -194,13 +194,13 @@ export function isEmptyPatch(patch) {
 export function applyProjectPatch(project, patch) {
   if (!patch) return project;
   if (patch.kind === "full") return patch.project;
-  if (patch.kind !== "tracks") throw new Error(`未知的补丁类型:${patch.kind}`);
+  if (patch.kind !== "tracks") throw new Error(`Unknown patch type: ${patch.kind}`);
 
   const byId = new Map((project.tracks || []).map((t) => [t.id, t]));
   for (const tp of patch.tracks || []) {
     if (tp.track) { byId.set(tp.id, tp.track); continue; }
     const base = byId.get(tp.id);
-    if (!base) throw new Error(`补丁引用了不存在的轨道:${tp.id}`);
+    if (!base) throw new Error(`Patch references a nonexistent track: ${tp.id}`);
     let clips = base.clips || [];
     if (tp.clips) {
       const m = new Map(clips.map((c) => [c.id, c]));
@@ -211,7 +211,7 @@ export function applyProjectPatch(project, patch) {
       const m = new Map(clips.map((c) => [c.id, c]));
       clips = tp.clipOrder.map((id) => {
         const c = m.get(id);
-        if (!c) throw new Error(`补丁引用了不存在的片段:${id}`);
+        if (!c) throw new Error(`Patch references a nonexistent clip: ${id}`);
         return c;
       });
     }
@@ -223,7 +223,7 @@ export function applyProjectPatch(project, patch) {
   const order = patch.order || (project.tracks || []).map((t) => t.id);
   const tracks = order.map((id) => {
     const t = byId.get(id);
-    if (!t) throw new Error(`补丁引用了不存在的轨道:${id}`);
+    if (!t) throw new Error(`Patch references a nonexistent track: ${id}`);
     return t;
   });
   return { ...project, tracks };

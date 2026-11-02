@@ -31,25 +31,25 @@ function bad(detail) { throw new BadMessage(detail); }
 class TooLarge extends Error {}
 
 function checkKind(v) {
-  if (typeof v !== 'string' || !CONTENT_KINDS.includes(v)) bad(`kind 只能是 ${CONTENT_KINDS.join(' / ')}`);
+  if (typeof v !== 'string' || !CONTENT_KINDS.includes(v)) bad(`kind must be one of ${CONTENT_KINDS.join(' / ')}`);
   return v;
 }
 
 function checkKey(v) {
-  if (typeof v !== 'string' || v.length < 1 || v.length > CONTENT_DEFAULTS.MAX_KEY_LENGTH) bad('key 必须是 1～512 个字符的字符串');
+  if (typeof v !== 'string' || v.length < 1 || v.length > CONTENT_DEFAULTS.MAX_KEY_LENGTH) bad('key must be a string of 1-512 characters');
   return v;
 }
 
 function checkPrefix(v) {
   if (v === undefined || v === null) return '';
-  if (typeof v !== 'string' || v.length > CONTENT_DEFAULTS.MAX_KEY_LENGTH) bad('prefix 必须是不超过 512 个字符的字符串');
+  if (typeof v !== 'string' || v.length > CONTENT_DEFAULTS.MAX_KEY_LENGTH) bad('prefix must be a string of at most 512 characters');
   return v;
 }
 
 /** `session` 可选（同项目版本模块）：没给记为 null；给了就得是 1～128 个字符的字符串 */
 function checkSession(v) {
   if (v === undefined || v === null) return null;
-  if (typeof v !== 'string' || v.length < 1 || v.length > 128) bad('session 必须是 1～128 个字符的字符串');
+  if (typeof v !== 'string' || v.length < 1 || v.length > 128) bad('session must be a string of 1-128 characters');
   return v;
 }
 
@@ -108,7 +108,7 @@ export function contentModule({ store = createMemoryStore(), now, maxBodyBytes =
    */
   function write(ctx, kind, key, bodyIn, actor) {
     const text = JSON.stringify(bodyIn);
-    if (Buffer.byteLength(text, 'utf8') > maxBodyBytes) throw new TooLarge(`body 序列化后超过 ${maxBodyBytes} 字节`);
+    if (Buffer.byteLength(text, 'utf8') > maxBodyBytes) throw new TooLarge(`body exceeds ${maxBodyBytes} bytes after serialization`);
     const items = itemsOf(kind);
     const prev = items.get(key);
     const hash = sha256(text);
@@ -131,7 +131,7 @@ export function contentModule({ store = createMemoryStore(), now, maxBodyBytes =
   function put(ctx, connId, msg, reqId) {
     const kind = checkKind(msg.kind);
     const key = checkKey(msg.key);
-    if (!('body' in msg) || msg.body === undefined) bad('缺少 body');
+    if (!('body' in msg) || msg.body === undefined) bad('Missing body');
     const session = checkSession(msg.session);
     const actor = actorOf(principals.get(connId), session);
     const { hash, rev, changed } = write(ctx, kind, key, msg.body, actor);
@@ -160,7 +160,7 @@ export function contentModule({ store = createMemoryStore(), now, maxBodyBytes =
   }
 
   function watch(ctx, connId, msg, reqId) {
-    if (!Array.isArray(msg.kinds)) bad('kinds 必须是字符串数组');
+    if (!Array.isArray(msg.kinds)) bad('kinds must be an array of strings');
     const wanted = [...new Set(msg.kinds.map(checkKind))];
     const before = watching.get(connId) ?? new Set();
     for (const kind of before) {
@@ -193,7 +193,7 @@ export function contentModule({ store = createMemoryStore(), now, maxBodyBytes =
       lastCtx = ctx;
       const reqId = isReqId(msg.reqId) ? msg.reqId : undefined;
       const fn = HANDLERS[msg.type];
-      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: '内容库不支持这种消息' }, reqId);
+      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: 'The content store does not support this message' }, reqId);
       try {
         fn(ctx, connId, msg, reqId);
       } catch (err) {
@@ -217,9 +217,9 @@ export function contentModule({ store = createMemoryStore(), now, maxBodyBytes =
      * @returns {{ kind: string, key: string, hash: string, rev?: number }}
      */
     putFromModule({ kind, key, body, actor } = {}) {
-      if (typeof kind !== 'string' || !CONTENT_KINDS.includes(kind)) throw new TypeError(`kind 只能是 ${CONTENT_KINDS.join(' / ')}`);
-      if (typeof key !== 'string' || key.length < 1 || key.length > CONTENT_DEFAULTS.MAX_KEY_LENGTH) throw new TypeError('key 必须是 1～512 个字符的字符串');
-      if (body === undefined) throw new TypeError('缺少 body');
+      if (typeof kind !== 'string' || !CONTENT_KINDS.includes(kind)) throw new TypeError(`kind must be one of ${CONTENT_KINDS.join(' / ')}`);
+      if (typeof key !== 'string' || key.length < 1 || key.length > CONTENT_DEFAULTS.MAX_KEY_LENGTH) throw new TypeError('key must be a string of 1-512 characters');
+      if (body === undefined) throw new TypeError('Missing body');
       const ctx = lastCtx ?? { now: () => Date.now(), publish: () => 0 };
       let out;
       try {

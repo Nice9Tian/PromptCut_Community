@@ -92,7 +92,7 @@ export function extractSseError(event, parsed) {
   const raw = parsed.error && typeof parsed.error === 'object' ? parsed.error : parsed;
   const message = typeof parsed.error === 'string'
     ? parsed.error
-    : (raw.message || parsed.message || 'API 流返回错误');
+    : (raw.message || parsed.message || 'API stream returned an error');
   const type = String(raw.type || parsed.type || '');
   const code = raw.code ?? parsed.code ?? null;
   const statusNum = Number(raw.status ?? raw.http_status ?? parsed.status ?? (typeof code === 'number' ? code : NaN));
@@ -105,7 +105,7 @@ export function extractSseError(event, parsed) {
 }
 
 const NON_RETRYABLE_SSE_ERROR_RE =
-  /invalid[_ -]?api[_ -]?key|incorrect[_ -]?api[_ -]?key|authentication[_ -]?error|unauthenticated|unauthorized|permission[_ -]?error|permission[_ -]?denied|forbidden|access denied|invalid[_ -]?argument|invalid[_ -]?request|bad[_ -]?request|unknown name|model[_ -]?not[_ -]?found|not[_ -]?found[_ -]?error|context[_ -]?length[_ -]?exceeded|maximum context length|insufficient[_ -]?quota|exceeded your current quota|credit balance is too low|out of credits|payment required|余额不足|配额已用尽/i;
+  /invalid[_ -]?api[_ -]?key|incorrect[_ -]?api[_ -]?key|authentication[_ -]?error|unauthenticated|unauthorized|permission[_ -]?error|permission[_ -]?denied|forbidden|access denied|invalid[_ -]?argument|invalid[_ -]?request|bad[_ -]?request|unknown name|model[_ -]?not[_ -]?found|not[_ -]?found[_ -]?error|context[_ -]?length[_ -]?exceeded|maximum context length|insufficient[_ -]?quota|exceeded your current quota|credit balance is too low|out of credits|payment required|insufficient balance|quota exhausted/i;
 
 const RETRYABLE_SSE_ERROR_RE =
   /timed?\s*out|timeout|overloaded|saturated|rate[_ -]?limit|too many requests|\b(408|429|500|502|503|504|529)\b|bad gateway|service unavailable|gateway timeout|internal[_ -]?(server[_ -]?)?error|server[_ -]?error|api[_ -]?error|upstream|try again( later)?|temporarily unavailable|connection reset|socket hang up|econnreset|etimedout|busy/i;
@@ -332,7 +332,7 @@ async function preflightSseResponse(response, userSignal) {
         return {
           ok: false,
           reason: 'SSE stream ended before first content block',
-          error: new Error('API 响应流提前结束或未返回 SSE 数据，请检查接口协议。'),
+          error: new Error('The API response stream ended early or returned no SSE data. Check the API protocol.'),
           fallbackResponse: rebuildResponse(response, bufferedChunks, null),
         };
       }

@@ -52,7 +52,7 @@ async function waitHttp(target, ms) {
     } catch {
       // 还没起来
     }
-    if (Date.now() > deadline) throw new Error(`等不到 ${target}`);
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${target}`);
     await wait(300);
   }
 }
@@ -75,7 +75,7 @@ async function startVite() {
   });
   const target = `http://127.0.0.1:${PORT}/`;
   await waitHttp(target, 90000);
-  log(`vite 就绪 ${target}`);
+  log(`vite ready ${target}`);
   return target;
 }
 
@@ -112,7 +112,7 @@ async function main() {
   await page.waitForFunction(() => window.__pcReady === true, { timeout: 60000, polling: 100 });
 
   const timeline = await page.evaluate(() => window.__pcTimeline);
-  log(`时间轴 ${timeline.width}x${timeline.height} ${timeline.duration}s,共 ${timeline.clips.length} 个 clip`);
+  log(`timeline ${timeline.width}x${timeline.height} ${timeline.duration}s, ${timeline.clips.length} clips`);
 
   const shots = [];
   for (const [i, clip] of timeline.clips.entries()) {
@@ -146,7 +146,7 @@ async function main() {
     const size = (await fs.stat(file)).size;
     shots.push({ name, file, clip, target, size });
     const bad = errors.slice(before);
-    log(`${name}  t=${target.toFixed(2)}s  ${(size / 1024).toFixed(0)}KB${bad.length ? `  ⚠ ${bad.length} 个报错` : ""}`);
+    log(`${name}  t=${target.toFixed(2)}s  ${(size / 1024).toFixed(0)}KB${bad.length ? `  ⚠ ${bad.length} errors` : ""}`);
     for (const e of bad) log(`    ${e.slice(0, 160)}`);
   }
 
@@ -175,11 +175,11 @@ async function main() {
   await sheet.evaluate(() => Promise.all(Array.from(document.images).map((i) => i.decode())));
   const sheetFile = path.join(OUT, "_contact-sheet.png");
   await sheet.screenshot({ path: sheetFile, fullPage: true });
-  log(`总览图 ${sheetFile}`);
+  log(`contact sheet ${sheetFile}`);
 
   await browser.close();
   vite?.kill();
-  log(`完成:${shots.length} 张,共 ${errors.length} 条页面报错`);
+  log(`done: ${shots.length} shots, ${errors.length} page errors in total`);
 }
 
 main().catch(async (e) => {

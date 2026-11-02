@@ -75,24 +75,24 @@ export const MAX_PART_NODES = 200;
 
 export function validatePartFrame(raw: unknown, where: string): ClipFrame | undefined {
   if (raw === null || raw === undefined) return undefined;
-  if (!isObj(raw)) throw new Error(`${where} 的 frame 要是对象或 null(null = 铺满父框)`);
+  if (!isObj(raw)) throw new Error(`frame of ${where} must be an object or null (null = fill the parent frame)`);
   for (const k of Object.keys(raw)) {
     if (FRAME_KEYS.has(k)) continue;
     if (PART_3D_KEYS.includes(k)) {
       throw new Error(
-        `${where} 的 frame 暂时不支持 ${k}:三维只能整张卡摆(set_position 的 rotateX / rotateY / translateZ),` +
-        `部件那一层拿不到透视,设了只会得到仿射斜切,而且这张卡一带淡入淡出或强调连斜切都会变样。` +
-        `要让这个部件立体,把它单独做成一张卡再摆。`,
+        `frame of ${where} does not support ${k} yet: 3D can only be applied to the whole card (rotateX / rotateY / translateZ of set_position),` +
+        `the part layer has no perspective, so setting it only gives an affine skew, and if the card has a fade in/out or emphasis, even the skew will look different.` +
+        `To make this part 3D, make it a separate card and position that.`,
       );
     }
-    throw new Error(`${where} 的 frame 不认识 "${k}",只有 x / y / w / h / anchor / scale / rotate`);
+    throw new Error(`frame of ${where} does not recognize "${k}", only x / y / w / h / anchor / scale / rotate`);
   }
-  if (!isNum(raw.x) || !isNum(raw.y)) throw new Error(`${where} 的 frame.x / frame.y 必须是数字(锚点在父框里的位置)`);
-  for (const k of ["w", "h", "scale", "rotate"] as const) if (raw[k] !== undefined && !isNum(raw[k])) throw new Error(`${where} 的 frame.${k} 要是数字`);
-  for (const k of ["w", "h", "scale"] as const) if (raw[k] !== undefined && (raw[k] as number) <= 0) throw new Error(`${where} 的 frame.${k} 要大于 0`);
+  if (!isNum(raw.x) || !isNum(raw.y)) throw new Error(`frame.x / frame.y of ${where} must be numbers (the anchor position within the parent frame)`);
+  for (const k of ["w", "h", "scale", "rotate"] as const) if (raw[k] !== undefined && !isNum(raw[k])) throw new Error(`frame.${k} of ${where} must be a number`);
+  for (const k of ["w", "h", "scale"] as const) if (raw[k] !== undefined && (raw[k] as number) <= 0) throw new Error(`frame.${k} of ${where} must be greater than 0`);
   if (raw.anchor !== undefined) {
     const a = raw.anchor;
-    if (!Array.isArray(a) || a.length !== 2 || !isNum(a[0]) || !isNum(a[1])) throw new Error(`${where} 的 frame.anchor 要是 [ax, ay] 两个数字,0~1`);
+    if (!Array.isArray(a) || a.length !== 2 || !isNum(a[0]) || !isNum(a[1])) throw new Error(`frame.anchor of ${where} must be two numbers [ax, ay], 0~1`);
   }
   // 重建对象:键序固定、不带多余字段,原样写回的比较才不会因为键序不同判成改了
   const f = raw as Record<string, unknown>;
@@ -111,8 +111,8 @@ export function validatePartFrame(raw: unknown, where: string): ClipFrame | unde
 
 function describeControl(c: Control): string {
   const bits = [`${c.key}(${c.label},${c.type}`];
-  if (c.type === "select") bits.push(`取值 ${c.options.map((o) => o.value).join("/")}`);
-  if (c.required) bits.push("必填");
+  if (c.type === "select") bits.push(`values ${c.options.map((o) => o.value).join("/")}`);
+  if (c.required) bits.push("required");
   return bits.join(",") + ")";
 }
 
@@ -123,17 +123,17 @@ export function validatePartParams(def: PartDef<any>, patch: Record<string, unkn
   for (const [key, value] of Object.entries(patch || {})) {
     const control = known.get(key);
     if (!control) {
-      problems.push(`参数 "${key}" 不是部件 ${def.id} 的参数。它接受:${def.controls.map(describeControl).join("、")}`);
+      problems.push(`Parameter "${key}" is not a parameter of part ${def.id}. It accepts: ${def.controls.map(describeControl).join(", ")}`);
       continue;
     }
-    if (control.type === "number" && typeof value !== "number") problems.push(`参数 "${key}" 要数字,收到 ${JSON.stringify(value)}`);
-    if (control.type === "select" && !control.options.some((o) => o.value === value)) problems.push(`参数 "${key}" 只能是 ${control.options.map((o) => o.value).join(" / ")},收到 ${JSON.stringify(value)}`);
+    if (control.type === "number" && typeof value !== "number") problems.push(`Parameter "${key}" needs a number, got ${JSON.stringify(value)}`);
+    if (control.type === "select" && !control.options.some((o) => o.value === value)) problems.push(`Parameter "${key}" can only be ${control.options.map((o) => o.value).join(" / ")}, got ${JSON.stringify(value)}`);
   }
   const merged = { ...def.defaults, ...(existing || {}), ...(patch || {}) };
   for (const c of def.controls) {
     const v = merged[c.key];
     const filled = v !== undefined && v !== null && !(typeof v === "string" && v.trim() === "");
-    if (c.required && !filled) problems.push(`部件 ${def.id} 的 "${c.key}"(${c.label})是必填的,不能为空。${c.hint ?? ""}`);
+    if (c.required && !filled) problems.push(`"${c.key}" (${c.label}) of part ${def.id} is required and cannot be empty. ${c.hint ?? ""}`);
   }
   if (problems.length) throw new Error(problems.join("\n"));
   return merged;
@@ -141,28 +141,28 @@ export function validatePartParams(def: PartDef<any>, patch: Record<string, unkn
 
 /** 整棵树:实例 id 唯一、partId 存在、参数合法、frame 合法、enterMs 非负、嵌套不超过 4 层 */
 export function validatePartTree(tree: unknown, lookup: PartLookup): PartInstance[] {
-  if (!Array.isArray(tree)) throw new Error("parts 要是数组");
+  if (!Array.isArray(tree)) throw new Error("parts must be an array");
   const ids = new Set<string>();
   let count = 0;
   const walk = (list: unknown[], depth: number, path: string): PartInstance[] =>
     list.map((raw, i) => {
       const where = `${path}[${i}]`;
-      if (!isObj(raw)) throw new Error(`${where} 要是对象 { id, partId, params, frame?, enterMs?, children? }`);
-      if (++count > MAX_PART_NODES) throw new Error(`部件树最多 ${MAX_PART_NODES} 个实例`);
+      if (!isObj(raw)) throw new Error(`${where} must be an object { id, partId, params, frame?, enterMs?, children? }`);
+      if (++count > MAX_PART_NODES) throw new Error(`A part tree can have at most ${MAX_PART_NODES} instances`);
       const id = raw.id;
-      if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,40}$/.test(id)) throw new Error(`${where}.id 要是短字符串(字母数字 - _)`);
-      if (ids.has(id)) throw new Error(`部件实例 id "${id}" 重复`);
+      if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,40}$/.test(id)) throw new Error(`${where}.id must be a short string (letters, digits, - _)`);
+      if (ids.has(id)) throw new Error(`Duplicate part instance id "${id}"`);
       ids.add(id);
-      if (typeof raw.partId !== "string") throw new Error(`${where}.partId 要是部件 id(list_parts 里的)`);
+      if (typeof raw.partId !== "string") throw new Error(`${where}.partId must be a part id (from list_parts)`);
       const def = lookup(raw.partId);
-      if (!def) throw new Error(`没有 id 为 "${raw.partId}" 的部件,list_parts 看有哪些`);
-      if (raw.params !== undefined && !isObj(raw.params)) throw new Error(`${where}.params 要是对象`);
+      if (!def) throw new Error(`No part with id "${raw.partId}", see list_parts for the available ones`);
+      if (raw.params !== undefined && !isObj(raw.params)) throw new Error(`${where}.params must be an object`);
       const params = validatePartParams(def, raw.params as Record<string, unknown> | undefined);
       const frame = validatePartFrame(raw.frame, where);
-      if (raw.enterMs !== undefined && (!isNum(raw.enterMs) || (raw.enterMs as number) < 0)) throw new Error(`${where}.enterMs 要是非负毫秒数`);
-      if (raw.label !== undefined && typeof raw.label !== "string") throw new Error(`${where}.label 要是字符串`);
-      if (depth >= 4 && Array.isArray(raw.children) && raw.children.length) throw new Error("部件树最多嵌套 4 层");
-      if (raw.children !== undefined && !Array.isArray(raw.children)) throw new Error(`${where}.children 要是数组`);
+      if (raw.enterMs !== undefined && (!isNum(raw.enterMs) || (raw.enterMs as number) < 0)) throw new Error(`${where}.enterMs must be a non-negative number of milliseconds`);
+      if (raw.label !== undefined && typeof raw.label !== "string") throw new Error(`${where}.label must be a string`);
+      if (depth >= 4 && Array.isArray(raw.children) && raw.children.length) throw new Error("A part tree can be nested at most 4 levels deep");
+      if (raw.children !== undefined && !Array.isArray(raw.children)) throw new Error(`${where}.children must be an array`);
       const children = Array.isArray(raw.children) && raw.children.length ? walk(raw.children, depth + 1, `${where}.children`) : undefined;
       return {
         id,
@@ -195,13 +195,13 @@ export interface NewPartSpec {
 /** 加一个实例。parentId 省略 = 加在根;index 省略 = 追加到末尾。frame 省略 = 部件的 defaultFrame */
 export function addPart(tree: PartInstance[], spec: NewPartSpec, lookup: PartLookup, at?: { parentId?: string | null; index?: number }): { tree: PartInstance[]; node: PartInstance } {
   const def = lookup(spec.partId);
-  if (!def) throw new Error(`没有 id 为 "${spec.partId}" 的部件,list_parts 看有哪些`);
+  if (!def) throw new Error(`No part with id "${spec.partId}", see list_parts for the available ones`);
   const id = spec.id ?? newPartInstanceId();
-  if (findPart(tree, id)) throw new Error(`部件实例 id "${id}" 已经存在`);
-  if (flattenParts(tree).length >= MAX_PART_NODES) throw new Error(`部件树最多 ${MAX_PART_NODES} 个实例`);
+  if (findPart(tree, id)) throw new Error(`Part instance id "${id}" already exists`);
+  if (flattenParts(tree).length >= MAX_PART_NODES) throw new Error(`A part tree can have at most ${MAX_PART_NODES} instances`);
   const params = validatePartParams(def, spec.params);
-  const frame = spec.frame === undefined ? (def.defaultFrame ? { ...def.defaultFrame } : undefined) : validatePartFrame(spec.frame, `部件 ${id}`);
-  if (spec.enterMs !== undefined && (!isNum(spec.enterMs) || spec.enterMs < 0)) throw new Error("enterMs 要是非负毫秒数");
+  const frame = spec.frame === undefined ? (def.defaultFrame ? { ...def.defaultFrame } : undefined) : validatePartFrame(spec.frame, `part ${id}`);
+  if (spec.enterMs !== undefined && (!isNum(spec.enterMs) || spec.enterMs < 0)) throw new Error("enterMs must be a non-negative number of milliseconds");
   const node: PartInstance = {
     id,
     partId: spec.partId,
@@ -214,7 +214,7 @@ export function addPart(tree: PartInstance[], spec: NewPartSpec, lookup: PartLoo
   let list = next;
   if (at?.parentId) {
     const hit = findPart(next, at.parentId);
-    if (!hit) throw new Error(`找不到父部件 ${at.parentId}`);
+    if (!hit) throw new Error(`Parent part ${at.parentId} not found`);
     hit.node.children ??= [];
     list = hit.node.children;
   }
@@ -226,7 +226,7 @@ export function addPart(tree: PartInstance[], spec: NewPartSpec, lookup: PartLoo
 export function removePart(tree: PartInstance[], id: string): PartInstance[] {
   const next = cloneTree(tree);
   const hit = findPart(next, id);
-  if (!hit) throw new Error(`找不到部件实例 ${id}`);
+  if (!hit) throw new Error(`Part instance ${id} not found`);
   hit.parent.splice(hit.index, 1);
   return next;
 }
@@ -243,20 +243,20 @@ export interface PartPatch {
 export function updatePart(tree: PartInstance[], id: string, patch: PartPatch, lookup: PartLookup): { tree: PartInstance[]; node: PartInstance } {
   const next = cloneTree(tree);
   const hit = findPart(next, id);
-  if (!hit) throw new Error(`找不到部件实例 ${id}`);
+  if (!hit) throw new Error(`Part instance ${id} not found`);
   const def = lookup(hit.node.partId);
-  if (!def) throw new Error(`部件 ${hit.node.partId} 已经不存在了`);
+  if (!def) throw new Error(`Part ${hit.node.partId} no longer exists`);
   if (patch.params !== undefined) {
-    if (!isObj(patch.params)) throw new Error("params 要是对象");
+    if (!isObj(patch.params)) throw new Error("params must be an object");
     hit.node.params = validatePartParams(def, patch.params, hit.node.params);
   }
   if (patch.frame !== undefined) {
-    const f = validatePartFrame(patch.frame, `部件 ${id}`);
+    const f = validatePartFrame(patch.frame, `part ${id}`);
     if (f) hit.node.frame = f;
     else delete hit.node.frame;
   }
   if (patch.enterMs !== undefined) {
-    if (!isNum(patch.enterMs) || patch.enterMs < 0) throw new Error("enterMs 要是非负毫秒数");
+    if (!isNum(patch.enterMs) || patch.enterMs < 0) throw new Error("enterMs must be a non-negative number of milliseconds");
     if (patch.enterMs > 0) hit.node.enterMs = patch.enterMs;
     else delete hit.node.enterMs;
   }
@@ -271,13 +271,13 @@ export function updatePart(tree: PartInstance[], id: string, patch: PartPatch, l
 export function movePart(tree: PartInstance[], id: string, to: { parentId?: string | null; index?: number }): PartInstance[] {
   const next = cloneTree(tree);
   const hit = findPart(next, id);
-  if (!hit) throw new Error(`找不到部件实例 ${id}`);
-  if (to.parentId && (to.parentId === id || findPart(hit.node.children ?? [], to.parentId))) throw new Error("不能把部件挪进它自己的子树");
+  if (!hit) throw new Error(`Part instance ${id} not found`);
+  if (to.parentId && (to.parentId === id || findPart(hit.node.children ?? [], to.parentId))) throw new Error("Cannot move a part into its own subtree");
   const [node] = hit.parent.splice(hit.index, 1);
   let list = next;
   if (to.parentId) {
     const p = findPart(next, to.parentId);
-    if (!p) throw new Error(`找不到父部件 ${to.parentId}`);
+    if (!p) throw new Error(`Parent part ${to.parentId} not found`);
     p.node.children ??= [];
     list = p.node.children;
   }

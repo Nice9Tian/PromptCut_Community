@@ -429,24 +429,24 @@ function ParticlesCard({ params, t = 0 }: CardProps<Params>) {
 
 export const particlesCard: CardDef<Params> = {
   id: "particles",
-  name: "粒子背景",
-  description: "漂浮的粒子,可带连线,铺满整个画面",
-  useWhen: "整段画面需要一层动态的科技感 / 星空感底纹时用,通常放最底层、盖住整段时长。两种用法:不填 config 就用颜色/数量/速度几个简单参数;要雪花、星空、气泡、彩带这类现成效果,从 config 控件的 options 里挑一个 URL 填进 config(软件自带 50 多种),此时简单参数不起作用。粒子位置由 seed 决定,同一个 seed 每次导出都一样;想换一种排布就换 seed。它是背景不是主角,别指望它传达信息;要强调数字或文字用别的卡叠在上面。",
-  tags: ["粒子", "背景", "科技", "星空", "雪花", "canvas"],
+  name: "Particle background",
+  description: "Floating particles, optionally linked by lines, filling the whole frame",
+  useWhen: "Use when the whole stretch of video needs a dynamic tech / starry-sky texture layer, usually on the bottom layer covering the full duration. Two modes: without config, use the simple color/count/speed parameters; for ready-made effects such as snowflakes, starry sky, bubbles or confetti, pick a URL from the options of the config control and put it into config (the app ships with 50+), in which case the simple parameters have no effect. Particle positions are determined by seed, and the same seed gives the same result on every export; change the seed for a different layout. It is a background, not the focus, so do not expect it to convey information; to emphasize numbers or text, overlay another card on top.",
+  tags: ["particles", "background", "tech", "starry sky", "snowflake", "canvas"],
   source: "native",
   // 帧模式:审计固化(A0.1)。值 = 固化前 cardFrameMode(def, def.defaults) 的返回值。
   frameMode: "stateful",
   defaults: { config: "", color: "#8ab4ff", quantity: 80, speed: 1.2, size: 3, links: "yes", seed: 1 },
   controls: [
-    { key: "config", label: "现成配置", type: "asset", kind: "particles", options: assetOptions("particles"), hint: "从素材目录里挑一个(options 里的 URL),或填别的 URL / 内联 JSON;填了就用它,下面的颜色/数量/速度不起作用" },
-    { key: "color", label: "颜色", type: "color" },
-    { key: "quantity", label: "数量", type: "number", min: 0, max: 400, step: 10 },
-    { key: "speed", label: "速度", type: "number", min: 0, max: 10, step: 0.2 },
-    { key: "size", label: "大小(px)", type: "number", min: 0.5, max: 20, step: 0.5 },
-    { key: "links", label: "连线", type: "select", options: [{ value: "yes", label: "有" }, { value: "no", label: "无" }] },
-    { key: "seed", label: "随机种子", type: "number", min: 1, max: 99999, step: 1, hint: "换一个数就换一种排布;同一个数每次导出都一样" },
+    { key: "config", label: "Preset config", type: "asset", kind: "particles", options: assetOptions("particles"), hint: "Pick one from the media catalog (a URL in options), or enter another URL / inline JSON; when set, it is used and the color/count/speed below have no effect" },
+    { key: "color", label: "Color", type: "color" },
+    { key: "quantity", label: "Count", type: "number", min: 0, max: 400, step: 10 },
+    { key: "speed", label: "Speed", type: "number", min: 0, max: 10, step: 0.2 },
+    { key: "size", label: "Size (px)", type: "number", min: 0.5, max: 20, step: 0.5 },
+    { key: "links", label: "Links", type: "select", options: [{ value: "yes", label: "present" }, { value: "no", label: "none" }] },
+    { key: "seed", label: "Random seed", type: "number", min: 1, max: 99999, step: 1, hint: "A different number gives a different layout; the same number gives the same result on every export" },
   ],
-  parts: [{ id: "particles", label: "粒子", role: "media", params: ["config", "color", "quantity", "speed", "size", "links", "seed"] }],
+  parts: [{ id: "particles", label: "particles", role: "media", params: ["config", "color", "quantity", "speed", "size", "links", "seed"] }],
   lifecycle: { after: "evolve", exit: ["fade"] },
   /*
    * R9 M1 的第四种契约 `dom2d`:**不进共享渲染器的 Worker**。`tsParticles.load({ element })` 要 DOM 元素、

@@ -21,6 +21,7 @@ import {
   b64urlEncode, b64urlDecode, utf8, utf8Text, authPurpose, adminPurpose, isKdf,
 } from './protocol.mjs';
 import { pbkdf2Sha256, hmacSha256 } from './pure.mjs';
+import { tr } from "../i18n.mjs";
 
 export { PROTOCOL, KDF_DEFAULT } from './protocol.mjs';
 
@@ -31,14 +32,14 @@ const subtleOf = () => {
 
 function randomBytes(n) {
   const out = new Uint8Array(n);
-  if (typeof globalThis.crypto?.getRandomValues !== 'function') throw new Error('没有可用的随机数源（crypto.getRandomValues）');
+  if (typeof globalThis.crypto?.getRandomValues !== 'function') throw new Error('No random number source available (crypto.getRandomValues)');
   globalThis.crypto.getRandomValues(out);
   return out;
 }
 
 function bytesOfKey(key) {
   const k = typeof key === 'string' ? b64urlDecode(key) : key;
-  if (!(k instanceof Uint8Array) || k.length !== KEY_BYTES) throw new TypeError('K 必须是 32 字节（base64url）');
+  if (!(k instanceof Uint8Array) || k.length !== KEY_BYTES) throw new TypeError('K must be 32 bytes (base64url)');
   return k;
 }
 
@@ -50,10 +51,10 @@ function bytesOfKey(key) {
  * @param {{ pure?: boolean }} [options] `pure: true` 强制走纯 JS（测试用）
  */
 export async function deriveKey(password, salt, kdf = KDF_DEFAULT, { pure = false } = {}) {
-  if (typeof password !== 'string' || password === '') throw new TypeError('口令不能为空');
+  if (typeof password !== 'string' || password === '') throw new TypeError(tr("Password cannot be empty"));
   const saltBytes = b64urlDecode(salt);
-  if (!saltBytes || saltBytes.length !== SALT_BYTES) throw new TypeError('盐必须是 16 字节（base64url）');
-  if (!isKdf(kdf)) throw new TypeError('不认识的 kdf 参数');
+  if (!saltBytes || saltBytes.length !== SALT_BYTES) throw new TypeError('Salt must be 16 bytes (base64url)');
+  if (!isKdf(kdf)) throw new TypeError('Unknown kdf parameters');
   const pw = utf8(password);
   const subtle = pure ? null : subtleOf();
   if (subtle) {
@@ -101,13 +102,13 @@ export function httpBaseOf(url) {
   const u = new URL(url);
   if (u.protocol === 'ws:') u.protocol = 'http:';
   else if (u.protocol === 'wss:') u.protocol = 'https:';
-  else if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new TypeError('文档服务地址必须是 ws(s):// 或 http(s)://');
+  else if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new TypeError(tr("The document service address must be ws(s):// or http(s)://"));
   return `${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '')}`;
 }
 
 async function callJson(fetchImpl, url, init) {
   const f = fetchImpl ?? globalThis.fetch;
-  if (typeof f !== 'function') throw new Error('没有可用的 fetch');
+  if (typeof f !== 'function') throw new Error('No fetch available');
   const res = await f(url, { ...init, cache: 'no-store', redirect: 'error' });
   let body = null;
   try {
@@ -116,7 +117,7 @@ async function callJson(fetchImpl, url, init) {
     body = null;
   }
   if (!res.ok || !body || body.ok !== true) {
-    const err = new Error(`共享端点 ${new URL(url).pathname} 回 ${res.status}${body?.error ? `：${body.error}` : ''}`);
+    const err = new Error(tr("Shared endpoint {0} returned {1}{2}", new URL(url).pathname, res.status, body?.error ? `: ${body.error}` : ''));
     err.status = res.status;
     err.reason = body?.error ?? null;
     // 429 的冷却秒数（C10a：回包的 `retryAfter`，没有再看 `Retry-After` 头；界面照表 A 写「请 {秒数} 秒后再试」）

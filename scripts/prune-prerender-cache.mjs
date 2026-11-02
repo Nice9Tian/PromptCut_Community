@@ -42,9 +42,9 @@ function parseArgs(argv) {
     else if (arg === '--before') {
       const raw = argv[++i];
       const value = /^\d+$/.test(raw ?? '') ? Number(raw) : Date.parse(raw);
-      if (!Number.isFinite(value)) throw new Error(`--before 认不出:${raw}`);
+      if (!Number.isFinite(value)) throw new Error(`--before not recognized: ${raw}`);
       opts.before = value;
-    } else throw new Error(`不认识的参数:${arg}`);
+    } else throw new Error(`Unknown argument: ${arg}`);
   }
   opts.root ||= path.join(process.env.PROMPTCUT_EXPORT_DIR || path.join(process.cwd(), 'out'), 'frame-library');
   return opts;
@@ -56,7 +56,7 @@ async function main() {
   const opts = parseArgs(process.argv.slice(2));
   const root = path.resolve(opts.root);
   if (!await looksLikeFrameLibrary(root)) {
-    console.error(`${root} 不像帧库(没有 controls-html / controls / streams 等子目录),不处理。`);
+    console.error(`${root} does not look like a frame store (no controls-html / controls / streams subdirectories), skipping.`);
     process.exit(2);
   }
   const { stale, kept, skipped } = await findStale(root, opts.before);
@@ -70,11 +70,11 @@ async function main() {
   const summary = { root, before: new Date(opts.before).toISOString(), applied: opts.apply, stale: stale.length, bytes: total,
     kept, skipped: skipped.map(item => item.dir), byFamily, removed };
   if (opts.json) { console.log(JSON.stringify(summary, null, 2)); return; }
-  console.log(`帧库:${root}`);
-  console.log(`分界:${summary.before}(最新文件早于它的键目录算旧)`);
-  for (const [family, row] of Object.entries(byFamily)) console.log(`  ${family.padEnd(15)} ${String(row.dirs).padStart(5)} 个目录  ${mb(row.bytes)}`);
-  console.log(`旧目录合计 ${stale.length} 个、${mb(total)};保留 ${kept} 个;跳过(链接)${skipped.length} 个`);
-  console.log(opts.apply ? `已删除 ${removed} 个目录。` : '只列出,没有删除。确认无误后加 --apply 再跑一次。');
+  console.log(`Frame store: ${root}`);
+  console.log(`Cutoff: ${summary.before} (key directories whose newest file is older than this count as stale)`);
+  for (const [family, row] of Object.entries(byFamily)) console.log(`  ${family.padEnd(15)} ${String(row.dirs).padStart(5)} directories  ${mb(row.bytes)}`);
+  console.log(`Stale directories total ${stale.length}, ${mb(total)}; kept ${kept}; skipped (links) ${skipped.length}`);
+  console.log(opts.apply ? `Deleted ${removed} directories.` : 'Listed only, nothing deleted. If everything looks right, run again with --apply.');
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

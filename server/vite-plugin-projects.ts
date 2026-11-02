@@ -2,6 +2,7 @@ import type { Plugin, ViteDevServer } from "vite";
 import type { ServerResponse } from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { tr } from "./i18n.mjs";
 
 /**
  * 本地草稿:每份草稿就是磁盘上的一个 .proc 文件。
@@ -77,11 +78,11 @@ function readBody(req: { on: (ev: string, fn: (c?: unknown) => void) => void; de
       // 编排文件再大也就几 MB;超了多半是把素材本身塞进来了
       if (body.length > limit) {
         req.destroy();
-        reject(new Error("项目文件太大"));
+        reject(new Error(tr("Project file too large")));
       }
     });
     req.on("end", () => resolve(body));
-    req.on("error", () => reject(new Error("读取请求体失败")));
+    req.on("error", () => reject(new Error(tr("Failed to read request body"))));
   });
 }
 
@@ -153,7 +154,7 @@ function handleBackups(root: string, req: import("node:http").IncomingMessage, r
     return readBody(req as never, 128 * 1024 * 1024).then((body) => {
       const b = JSON.parse(body);
       if (!b || typeof b !== "object" || (b.kind !== "overwritten" && b.kind !== "offline-discard")) {
-        return sendJson(res, 400, { ok: false, error: "不认识的备份" });
+        return sendJson(res, 400, { ok: false, error: tr("Unrecognized backup") });
       }
       const newId = `${Date.now()}-${Math.random().toString(36).slice(2, 8).padEnd(6, "0")}`;
       const file = path.join(dir, `${newId}.json`);
@@ -165,16 +166,16 @@ function handleBackups(root: string, req: import("node:http").IncomingMessage, r
     });
   }
   if (req.method === "GET") {
-    if (!BACKUP_ID_RE.test(id)) return sendJson(res, 400, { ok: false, error: "备份 id 不合法" });
+    if (!BACKUP_ID_RE.test(id)) return sendJson(res, 400, { ok: false, error: "Invalid backup id" });
     const file = path.join(dir, `${id}.json`);
-    if (!fs.existsSync(file)) return sendJson(res, 404, { ok: false, error: "备份不存在" });
+    if (!fs.existsSync(file)) return sendJson(res, 404, { ok: false, error: tr("Backup does not exist") });
     res.statusCode = 200;
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
     res.end(fs.readFileSync(file, "utf8"));
     return;
   }
-  return sendJson(res, 405, { ok: false, error: "只支持 GET / POST" });
+  return sendJson(res, 405, { ok: false, error: "Only GET / POST are supported" });
 }
 
 export function projectsPlugin(): Plugin {
@@ -209,10 +210,10 @@ export function projectsPlugin(): Plugin {
           }
 
           const file = fileFor(root, id);
-          if (!file) return sendJson(res, 400, { ok: false, error: "草稿 id 不合法" });
+          if (!file) return sendJson(res, 400, { ok: false, error: "Invalid draft id" });
 
           if (req.method === "GET") {
-            if (!fs.existsSync(file)) return sendJson(res, 404, { ok: false, error: "草稿不存在" });
+            if (!fs.existsSync(file)) return sendJson(res, 404, { ok: false, error: tr("Draft does not exist") });
             res.statusCode = 200;
             res.setHeader("Content-Type", "application/json; charset=utf-8");
             res.setHeader("Cache-Control", "no-store");
@@ -232,7 +233,7 @@ export function projectsPlugin(): Plugin {
             return sendJson(res, 200, { ok: true });
           }
 
-          return sendJson(res, 405, { ok: false, error: "只支持 GET / PUT / DELETE" });
+          return sendJson(res, 405, { ok: false, error: "Only GET / PUT / DELETE are supported" });
         } catch (e) {
           return sendJson(res, 400, { ok: false, error: (e as Error).message });
         }

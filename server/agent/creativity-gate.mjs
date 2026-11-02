@@ -33,8 +33,8 @@ function effectUpdate(idKey) {
   return (args) => {
     const touched = Object.keys(args ?? {}).filter((k) => k !== idKey && args[k] !== undefined);
     return touched.every((k) => EFFECT_META_KEYS.has(k))
-      ? { level: 'low', what: '改效果的名字或说明' }
-      : { level: 'medium', what: '改已有效果的定义(表达式、步骤或参数声明)' };
+      ? { level: 'low', what: 'Change the name or description of an effect' }
+      : { level: 'medium', what: 'Change the definition of an existing effect (expressions, steps or parameter declarations)' };
   };
 }
 
@@ -47,17 +47,17 @@ export const TOOL_CREATIVITY = Object.freeze({
     const id = typeof args?.id === 'string' ? args.id : '';
     const exists = !!id && CARD_ID_RE.test(id) && !!ctx?.cardExists?.(id);
     return exists
-      ? { level: 'medium', what: `整篇重写已有的卡片 ${id}` }
-      : { level: 'high', what: '新建卡片' };
+      ? { level: 'medium', what: `Rewrite the whole existing card ${id}` }
+      : { level: 'high', what: 'Create a new card' };
   },
-  edit_card: { level: 'medium', what: '改已有卡片的源码' },
-  create_filter: { level: 'high', what: '新建滤镜' },
-  create_pixel_map: { level: 'high', what: '新建像素映射' },
-  create_audio_fx: { level: 'high', what: '新建音频效果' },
+  edit_card: { level: 'medium', what: 'Change the source of an existing card' },
+  create_filter: { level: 'high', what: 'Create a new filter' },
+  create_pixel_map: { level: 'high', what: 'Create a new pixel map' },
+  create_audio_fx: { level: 'high', what: 'Create a new audio effect' },
   update_filter: effectUpdate(EFFECT_UPDATE_ID.update_filter),
   update_pixel_map: effectUpdate(EFFECT_UPDATE_ID.update_pixel_map),
   update_audio_fx: effectUpdate(EFFECT_UPDATE_ID.update_audio_fx),
-  measure_audio_js: { level: 'high', what: '写自定义测量代码' },
+  measure_audio_js: { level: 'high', what: 'Write custom measurement code' },
 });
 
 /** 这次调用需要的等级 */
@@ -85,11 +85,11 @@ export function checkCreativity(tool, args, current, ctx = {}) {
     ok: false,
     creativity: { current: level, required: req.level, tool },
     error:
-      `创造力等级不够,${tool} 没有执行:这个对话当前是「${CREATIVITY_LABEL[level]}」${from},` +
-      `${req.what ? `${req.what}` : '这个操作'}要「${CREATIVITY_LABEL[req.level]}」。\n` +
-      `「${CREATIVITY_LABEL[level]}」档:${CREATIVITY_HINT[level]}。\n` +
-      `请停下来告诉用户:这一步需要把创造力等级调到「${CREATIVITY_LABEL[req.level]}」` +
-      '(项目设置里改项目的默认等级,或在 AI 栏这个对话的运行选项里单独调高),由用户决定;' +
-      '不要换别的工具或写法绕过去。等级之内能做的部分可以照常做。',
+      `Creativity level too low, ${tool} was not executed: this chat is currently at "${CREATIVITY_LABEL[level]}"${from}, ` +
+      `${req.what ? `${req.what}` : 'This operation'} requires "${CREATIVITY_LABEL[req.level]}".\n` +
+      `"${CREATIVITY_LABEL[level]}" tier: ${CREATIVITY_HINT[level]}.\n` +
+      `Stop and tell the user: this step requires setting the creativity level to "${CREATIVITY_LABEL[req.level]}"` +
+      ' (change the project\'s default level in project settings, or raise it for this chat alone in its run options in the AI panel), the user decides; ' +
+      'Do not work around it with other tools or approaches. What can be done within the level may proceed as usual.',
   };
 }

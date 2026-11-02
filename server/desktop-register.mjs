@@ -24,6 +24,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { skillRoot } from './skill-gate.mjs';
+import { tr } from "./i18n.mjs";
 
 export const ENTRY_NAME = 'promptcut';
 export const TARGETS = Object.freeze(['claude-code', 'codex']);
@@ -33,7 +34,7 @@ const TARGET_LABEL = { 'claude-code': 'Claude Code', codex: 'Codex' };
 export function configPathOf(target, { env = process.env, home = os.homedir() } = {}) {
   if (target === 'claude-code') return env.PROMPTCUT_CLAUDE_CONFIG || path.join(home, '.claude.json');
   if (target === 'codex') return env.PROMPTCUT_CODEX_CONFIG || path.join(env.CODEX_HOME || path.join(home, '.codex'), 'config.toml');
-  throw new Error(`不认识的登记目标:${target}(只有 ${TARGETS.join(' / ')})`);
+  throw new Error(tr("Unknown registration target: {0} (only {1})", target, TARGETS.join(' / ')));
 }
 
 /** 备份与登记记录放哪 */
@@ -74,9 +75,9 @@ function readJsonConfig(file) {
   try {
     doc = JSON.parse(trimmed);
   } catch (e) {
-    throw new Error(`${file} 不是合法的 JSON(${e.message}),没有改动它。请先修好这个文件再登记。`);
+    throw new Error(tr("{0} is not valid JSON ({1}); it was not modified. Fix the file first, then register again.", file, e.message));
   }
-  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) throw new Error(`${file} 的内容不是一个对象,没有改动它。`);
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) throw new Error(tr("The content of {0} is not an object; it was not modified.", file));
   return { text, doc };
 }
 
@@ -131,10 +132,10 @@ function findTomlBlock(lines) {
     }
     const key = /^\s*("?)([A-Za-z0-9_-]+)\1\s*[.=]/.exec(lines[i]);
     if (current === 'mcp_servers' && key && key[2] === ENTRY_NAME) {
-      throw new Error(`config.toml 的 [mcp_servers] 表里用别的写法定义了 ${ENTRY_NAME}(第 ${i + 1} 行),为了不写坏它,没有改动。请手动删掉那一条后再登记。`);
+      throw new Error(tr("The [mcp_servers] table in config.toml defines {0} in another form (line {1}); to avoid corrupting it, nothing was modified. Delete that entry manually, then register again.", ENTRY_NAME, i + 1));
     }
     if (current === '' && /^\s*mcp_servers\s*\.\s*"?promptcut"?\s*[.=]/.test(lines[i])) {
-      throw new Error(`config.toml 顶层用点号键定义了 mcp_servers.${ENTRY_NAME}(第 ${i + 1} 行),为了不写坏它,没有改动。请手动删掉那一条后再登记。`);
+      throw new Error(tr("config.toml defines mcp_servers.{0} at the top level with a dotted key (line {1}); to avoid corrupting it, nothing was modified. Delete that entry manually, then register again.", ENTRY_NAME, i + 1));
     }
   }
   if (start < 0) return null;
@@ -210,7 +211,7 @@ export function mcpCommand(root, { execPath = process.execPath } = {}) {
  */
 export function registrationStatus(target, want, opts = {}) {
   const impl = IMPL[target];
-  if (!impl) throw new Error(`不认识的登记目标:${target}`);
+  if (!impl) throw new Error(tr("Unknown registration target: {0}", target));
   const file = opts.configPath || configPathOf(target, opts);
   const out = { target, label: TARGET_LABEL[target], file, exists: false, registered: false, current: false, undoable: false, error: null };
   try {
@@ -233,7 +234,7 @@ export function registrationStatus(target, want, opts = {}) {
  */
 export function register(target, want, opts = {}) {
   const impl = IMPL[target];
-  if (!impl) throw new Error(`不认识的登记目标:${target}`);
+  if (!impl) throw new Error(tr("Unknown registration target: {0}", target));
   const file = opts.configPath || configPathOf(target, opts);
   const value = impl.build(want);
   const { text, entry } = impl.read(file);
@@ -252,7 +253,7 @@ export function register(target, want, opts = {}) {
   atomicWrite(file, impl.write(file, value));
   const check = impl.read(file);
   if (!impl.same(check.entry, value)) {
-    return { ok: false, file, backup, error: `写完读回核对不上(可能 ${TARGET_LABEL[target]} 同时改了这个文件)。原文件备份在 ${backup ?? '(原来没有这个文件)'},请稍后重试。` };
+    return { ok: false, file, backup, error: tr("Read-back verification after writing failed (maybe {0} modified this file at the same time). The original file is backed up at {1}. Please try again later.", TARGET_LABEL[target], backup ?? tr("(the file did not exist before)")) };
   }
   const record = { target, file, backup, previousEntry, entry: value, registeredAt: new Date().toISOString() };
   atomicWrite(recordPath(target, opts), JSON.stringify(record, null, 2));
@@ -265,7 +266,7 @@ export function register(target, want, opts = {}) {
  */
 export function unregister(target, want, opts = {}) {
   const impl = IMPL[target];
-  if (!impl) throw new Error(`不认识的登记目标:${target}`);
+  if (!impl) throw new Error(tr("Unknown registration target: {0}", target));
   const file = opts.configPath || configPathOf(target, opts);
   const rec = readRecord(target, opts);
   const { entry } = impl.read(file);
@@ -275,7 +276,7 @@ export function unregister(target, want, opts = {}) {
     return { ok: true, unchanged: true, file, ...registrationStatus(target, want, opts) };
   }
   if (!impl.same(entry, ours)) {
-    return { ok: false, file, error: `${file} 里的 ${ENTRY_NAME} 条目已经被改过,不是 PromptCut 写的那一条;为了不覆盖你的改动,没有撤销。需要的话请手动删改。` };
+    return { ok: false, file, error: tr("The {1} entry in {0} has been modified and is not the one written by PromptCut; to avoid overwriting your changes, it was not undone. Edit or delete it manually if needed.", file, ENTRY_NAME) };
   }
   const restore = rec && rec.file === file ? rec.previousEntry ?? null : null;
   const dir = stateDirOf(opts);

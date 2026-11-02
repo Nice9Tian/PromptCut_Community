@@ -20,6 +20,7 @@
  * 登记表只在内存里,进程重启就清空 —— AI 栏下一次发消息会重新登记,没有要持久化的东西。
  */
 import { effectiveCreativity, normalizeCreativity, creativityRank } from './ssr-host.mjs';
+import { tr } from "../i18n.mjs";
 
 // 创造力等级的几个名字从这里转出:server/agent/service/ 不直接引用 src/(契约 cloud-agent-contract.md 第 2.1 节「载入缝」),经 ssr-host.mjs 取
 export { CREATIVITY_HINT, CREATIVITY_LABEL, normalizeCreativity, projectCreativity } from './ssr-host.mjs';
@@ -87,14 +88,14 @@ export function createAgentSessions({ now = () => Date.now() } = {}) {
       const entry = this.get(id);
       let level = effectiveCreativity(entry.override, projectLevel);
       let source = entry.override
-        ? '这个对话单独设的'
-        : entry.type === 'desktop' ? '桌面 APP 会话跟随项目的默认等级' : '跟随项目的默认等级';
+        ? tr("Set for this chat only")
+        : entry.type === 'desktop' ? tr("Desktop app sessions follow the project's default level") : tr("Follows the project's default level");
       // 子 Agent 不高于拉起它的对话(A3〔裁〕);深度只有 1,多判一层防环
       if (entry.parent && depth < 4) {
         const up = this.creativityOf(entry.parent, projectLevel, depth + 1);
         if (creativityRank(up.level) < creativityRank(level)) {
           level = up.level;
-          source = `子 Agent 不高于拉起它的对话 ${entry.parent}`;
+          source = tr("A sub-Agent is not higher than the chat {0} that launched it", entry.parent);
         }
       }
       return { level, source, entry };

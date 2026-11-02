@@ -293,7 +293,7 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
               yield { type: 'tool_use_partial', id: pt.id, name: pt.name, args: pt.args || '' };
               continue;
             }
-            yield { type: 'tool_use', id: pt.id, name: pt.name, input: {}, inputError: `工具参数 JSON 不完整：${error.message}。请缩小批量或提高输出长度后重试。` };
+            yield { type: 'tool_use', id: pt.id, name: pt.name, input: {}, inputError: `Tool arguments JSON incomplete: ${error.message}. Reduce the batch size or raise the output length and retry.` };
             continue;
           }
           yield { type: 'tool_use', id: pt.id, name: pt.name, input };
@@ -326,7 +326,7 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
           }
 
           if (parsed.error) {
-            const message = typeof parsed.error === 'string' ? parsed.error : (parsed.error.message || 'API 流返回错误');
+            const message = typeof parsed.error === 'string' ? parsed.error : (parsed.error.message || 'API stream returned an error');
             /*
              * 流已经出过数据之后来的 error(2026-10-22 实测 openlux:约 300 秒时来一条
              * 「The upstream stream ended before the response was complete.」,HTTP 仍是 200,没有 finish_reason):
@@ -383,7 +383,7 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
 
       if (!stopReason && !cut && started && !signal?.aborted) {
         // 流读完了却没有 finish_reason:同样是没写完
-        cut = { how: 'no-finish', detail: '流在 finish_reason 之前结束' };
+        cut = { how: 'no-finish', detail: 'Stream ended before finish_reason' };
       }
       if (cut) {
         yield streamCutNotice('openai', cut.how, cut.detail, { pendingToolCalls: Object.keys(partialToolCalls).length });
@@ -391,7 +391,7 @@ export function createProvider(cfg, { fetchImpl = globalThis.fetch } = {}) {
         stopReason = STREAM_CUT;
       }
 
-      if (!stopReason) throw new Error('API 响应流提前结束或未返回 SSE 数据，请检查接口协议。');
+      if (!stopReason) throw new Error('The API response stream ended early or returned no SSE data. Check the API protocol.');
       // 写到长度上限时没写完的工具调用已在上面 finish_reason 那一支交成 tool_use_partial;照常报 `length` 收尾,
       // 由 `agent.mjs` 存代码块、让模型接着写,连续截断超限再明说没做成。中途被掐断的以 `stream_cut` 收尾,做法相同。
       yield { type: 'usage', input: promptTokens, output: completionTokens, cacheRead };

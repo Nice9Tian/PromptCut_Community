@@ -30,7 +30,7 @@ export function stagger(t: number, index: number, options: StaggerOptions): numb
   if (from === "first") order = index;
   else if (typeof from === "number") order = Math.abs(index - from);
   else {
-    if (!(typeof count === "number" && count > 0)) throw new Error(`stagger 的 from 是 "${from}" 时要给 count（一共多少个元素）`);
+    if (!(typeof count === "number" && count > 0)) throw new Error(`stagger needs count (total number of elements) when from is "${from}"`);
     order = from === "last" ? count - 1 - index : Math.abs(index - (count - 1) / 2);
   }
   return t - delay - order * each;

@@ -237,18 +237,18 @@ function BrandGlow({ params, t = 0, stage }: CardProps<Params>) {
 
 export const brandGlow: CardDef<Params> = {
   id: "pc-brand-glow",
-  name: "首页背景光",
-  description: "官网首页与手机版登录的背景那两团光。画面是帧时钟的函数，走满一圈回到起点，专门用来预渲染成无缝循环的视频。",
+  name: "Home page background glow",
+  description: "The two background glows on the website home page and the mobile app login. The picture is a function of the frame clock and loops back to the start after a full cycle, made specifically to be prerendered into a seamless looping video.",
   source: "user",
-  useWhen: "只给「把首页／手机登录的背景光渲成循环视频」这一件事用；别的场合要背景光请另写一张。",
-  tags: ["背景", "光", "着色器", "首页"],
+  useWhen: "Only for rendering the home page / mobile login background glow into a looping video; for a background glow elsewhere, write another card.",
+  tags: ["background", "glow", "shader", "home page"],
   frameMode: "direct",
   defaults: { bg: "#111016", colA: "#00dbdb", colB: "#FF7B00", loopSeconds: 28 },
   controls: [
-    { key: "bg", label: "底色", type: "color" },
-    { key: "colA", label: "冷光", type: "color" },
-    { key: "colB", label: "暖光", type: "color" },
-    { key: "loopSeconds", label: "循环秒数", type: "number", min: 4, max: 600, step: 1 },
+    { key: "bg", label: "Base color", type: "color" },
+    { key: "colA", label: "Cool glow", type: "color" },
+    { key: "colB", label: "Warm glow", type: "color" },
+    { key: "loopSeconds", label: "Loop seconds", type: "number", min: 4, max: 600, step: 1 },
   ],
   Component: BrandGlow,
 };

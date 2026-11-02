@@ -422,18 +422,18 @@ function LoginArt({ params, t = 0 }: CardProps<Params>) {
 
 export const loginArt: CardDef<Params> = {
   id: "pc-login-art",
-  name: "登录页左栏极光",
-  description: "登录页左边那块流动的极光。画面是帧时钟的函数，走满一圈回到起点，专门用来预渲染成无缝循环的视频。",
+  name: "Login page left rail aurora",
+  description: "The flowing aurora on the left of the login page. The picture is a function of the frame clock and loops back to the start after a full cycle, made specifically to be prerendered into a seamless looping video.",
   source: "user",
-  useWhen: "只给「把登录页左栏渲成循环视频」这一件事用；别的场合要流动背景请另写一张。",
-  tags: ["背景", "极光", "着色器", "登录页"],
+  useWhen: "Only for rendering the login page left rail into a looping video; for a flowing background elsewhere, write another card.",
+  tags: ["background", "aurora", "shader", "login page"],
   frameMode: "direct",
   defaults: { cool: "#26c6e6", warm: "#e2731f", bg: "#111016", loopSeconds: 48 },
   controls: [
-    { key: "cool", label: "冷色", type: "color" },
-    { key: "warm", label: "暖色", type: "color" },
-    { key: "bg", label: "底色", type: "color" },
-    { key: "loopSeconds", label: "循环秒数", type: "number", min: 4, max: 600, step: 1 },
+    { key: "cool", label: "Cool color", type: "color" },
+    { key: "warm", label: "Warm color", type: "color" },
+    { key: "bg", label: "Base color", type: "color" },
+    { key: "loopSeconds", label: "Loop seconds", type: "number", min: 4, max: 600, step: 1 },
   ],
   Component: LoginArt,
 };

@@ -55,7 +55,7 @@ const identityOf = (a) => JSON.stringify([a?.userId ?? null, a?.deviceId ?? null
  * @param {() => number} [options.now]
  */
 export function presenceModule({ project, now } = {}) {
-  if (!project || typeof project.publishToProject !== 'function') throw new TypeError('presenceModule: project 必须是带 publishToProject 的项目模块');
+  if (!project || typeof project.publishToProject !== 'function') throw new TypeError('presenceModule: project must be a project module with publishToProject');
   const principals = new Map();
   /** projectId → Map<entryKey, { key, from, data, expiresAt, connId }> */
   const projects = new Map();
@@ -68,22 +68,22 @@ export function presenceModule({ project, now } = {}) {
   }
 
   function common(connId, msg) {
-    if (typeof msg.projectId !== 'string' || !PROJECT_ID_RE.test(msg.projectId)) bad('projectId 不合法');
+    if (typeof msg.projectId !== 'string' || !PROJECT_ID_RE.test(msg.projectId)) bad('projectId is invalid');
     let session = null;
     if (msg.session !== undefined && msg.session !== null) {
-      if (typeof msg.session !== 'string' || msg.session.length < 1 || msg.session.length > 128) bad('session 必须是 1～128 个字符的字符串');
+      if (typeof msg.session !== 'string' || msg.session.length < 1 || msg.session.length > 128) bad('session must be a string of 1-128 characters');
       session = msg.session;
     }
     const principal = principals.get(connId);
-    if (principal?.role === 'render') throw new Refused('forbidden', '渲染节点的连接不能发在场状态');
+    if (principal?.role === 'render') throw new Refused('forbidden', 'Render node connections cannot send presence state');
     return { projectId: msg.projectId, from: actorOf(principal, session) };
   }
 
   function checkData(v) {
-    if (!isObj(v)) bad('data 必须是对象');
+    if (!isObj(v)) bad('data must be an object');
     let bytes;
-    try { bytes = Buffer.byteLength(JSON.stringify(v), 'utf8'); } catch { bad('data 不能序列化'); }
-    if (bytes > PRESENCE_LIMITS.DATA_BYTES) throw new Refused('too-large', `data 超过 ${PRESENCE_LIMITS.DATA_BYTES} 字节`);
+    try { bytes = Buffer.byteLength(JSON.stringify(v), 'utf8'); } catch { bad('data cannot be serialized'); }
+    if (bytes > PRESENCE_LIMITS.DATA_BYTES) throw new Refused('too-large', `data exceeds ${PRESENCE_LIMITS.DATA_BYTES} bytes`);
     return v;
   }
 
@@ -99,18 +99,18 @@ export function presenceModule({ project, now } = {}) {
 
   function set(ctx, connId, msg, reqId) {
     const { projectId, from } = common(connId, msg);
-    if (typeof msg.key !== 'string' || !KEY_RE.test(msg.key)) bad('key 必须是 1～64 个 [A-Za-z0-9._:-] 字符');
+    if (typeof msg.key !== 'string' || !KEY_RE.test(msg.key)) bad('key must be 1-64 characters from [A-Za-z0-9._:-]');
     const data = checkData(msg.data);
     let ttl = PRESENCE_LIMITS.TTL_DEFAULT_MS;
     if (msg.ttlMs !== undefined) {
-      if (!Number.isFinite(msg.ttlMs)) bad('ttlMs 必须是数字');
+      if (!Number.isFinite(msg.ttlMs)) bad('ttlMs must be a number');
       ttl = Math.min(PRESENCE_LIMITS.TTL_MAX_MS, Math.max(PRESENCE_LIMITS.TTL_MIN_MS, Math.round(msg.ttlMs)));
     }
     const t = clock(ctx);
     const list = listOf(projectId);
     prune(list, t);
     const entryKey = `${identityOf(from)}|${msg.key}`;
-    if (!list.has(entryKey) && list.size >= PRESENCE_LIMITS.PER_PROJECT) throw new Refused('too-many', `这个项目的在场状态已有 ${PRESENCE_LIMITS.PER_PROJECT} 项`);
+    if (!list.has(entryKey) && list.size >= PRESENCE_LIMITS.PER_PROJECT) throw new Refused('too-many', `This project already has ${PRESENCE_LIMITS.PER_PROJECT} presence entries`);
     const expiresAt = t + ttl;
     list.set(entryKey, { key: msg.key, from, data, expiresAt, connId });
     stats.sets += 1;
@@ -120,7 +120,7 @@ export function presenceModule({ project, now } = {}) {
 
   function clear(ctx, connId, msg, reqId) {
     const { projectId, from } = common(connId, msg);
-    if (typeof msg.key !== 'string' || !KEY_RE.test(msg.key)) bad('key 必须是 1～64 个 [A-Za-z0-9._:-] 字符');
+    if (typeof msg.key !== 'string' || !KEY_RE.test(msg.key)) bad('key must be 1-64 characters from [A-Za-z0-9._:-]');
     const list = projects.get(projectId);
     const had = list?.delete(`${identityOf(from)}|${msg.key}`);
     stats.clears += 1;
@@ -179,7 +179,7 @@ export function presenceModule({ project, now } = {}) {
     handle(ctx, connId, msg) {
       const reqId = isReqId(msg.reqId) ? msg.reqId : undefined;
       const fn = HANDLERS[msg.type];
-      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: '在场状态模块不支持这种消息' }, reqId);
+      if (!fn) return reply(ctx, connId, { type: 'error', reason: 'unsupported', detail: 'The presence module does not support this message' }, reqId);
       try {
         fn(ctx, connId, msg, reqId);
       } catch (err) {

@@ -67,10 +67,10 @@ export function lanesOfMode(mode) {
 export function modeRefusal(mode, lane) {
   if (lane === 'agent') {
     if (modeServesAgent(mode)) return null;
-    return Object.assign(new Error(`这个预渲染进程是 ${mode} 模式,没有 Agent lane:不接 Agent 的查询。`),
+    return Object.assign(new Error(`This prerender process is in ${mode} mode and has no Agent lane: it does not accept Agent queries.`),
       { status: 503, code: 'NO_AGENT_LANE', retryable: false, mode });
   }
   if (modeServesPrerender(mode)) return null;
-  return Object.assign(new Error(`这个预渲染进程是 ${mode} 模式,只接 Agent 的查询,不做预渲染(请求的 lane:${lane})。`),
+  return Object.assign(new Error(`This prerender process is in ${mode} mode: it only accepts Agent queries and does not prerender (requested lane: ${lane}).`),
     { status: 503, code: 'NO_PRERENDER', retryable: false, mode });
 }

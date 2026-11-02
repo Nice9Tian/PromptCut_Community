@@ -16,6 +16,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { EXPORT_ID_RE, EXPORT_DELIVERABLES, EXPORT_KEEP, isExportKeepName } from './storage-leftovers.mjs';
+import { tr } from "./i18n.mjs";
 
 /*
  * 目录名、交付物、留下的名字只在 `storage-leftovers.mjs` 定义一份(导出完成后的收拾 `pruneExportDir` 用的也是它们),
@@ -162,19 +163,19 @@ const sameFsPath = (a, b) => (process.platform === 'win32' ? a.toLowerCase() ===
  * 实际落在别的目录的,一律拒。回 `{ ok: true, abs }` 或 `{ ok: false, status, error }`。
  */
 export async function resolveExportDir(root, id) {
-  if (typeof id !== 'string' || !parseExportId(id)) return { ok: false, status: 400, error: '不是导出目录的名字' };
+  if (typeof id !== 'string' || !parseExportId(id)) return { ok: false, status: 400, error: tr("Not an export directory name") };
   const base = path.resolve(root);
   const abs = path.join(base, id);
-  if (!sameFsPath(path.dirname(abs), base)) return { ok: false, status: 400, error: '不是导出目录的名字' };
+  if (!sameFsPath(path.dirname(abs), base)) return { ok: false, status: 400, error: tr("Not an export directory name") };
   let st;
-  try { st = await fs.lstat(abs); } catch { return { ok: false, status: 404, error: '这份导出已经不在了' }; }
-  if (isLink(st)) return { ok: false, status: 400, error: '这是一个链接，不是导出目录' };
-  if (!st.isDirectory()) return { ok: false, status: 400, error: '不是目录' };
+  try { st = await fs.lstat(abs); } catch { return { ok: false, status: 404, error: tr("This export no longer exists") }; }
+  if (isLink(st)) return { ok: false, status: 400, error: tr("This is a link, not an export directory") };
+  if (!st.isDirectory()) return { ok: false, status: 400, error: tr("Not a directory") };
   try {
     const [realAbs, realBase] = await Promise.all([fs.realpath(abs), fs.realpath(base)]);
-    if (!sameFsPath(path.dirname(realAbs), realBase)) return { ok: false, status: 400, error: '不在导出目录下' };
+    if (!sameFsPath(path.dirname(realAbs), realBase)) return { ok: false, status: 400, error: tr("Not under the export directory") };
   } catch {
-    return { ok: false, status: 404, error: '这份导出已经不在了' };
+    return { ok: false, status: 404, error: tr("This export no longer exists") };
   }
   return { ok: true, abs };
 }
@@ -215,10 +216,10 @@ async function removeTree(p, report, rel) {
 function failureMessage(report, what) {
   const parts = [];
   if (report.busy.length) {
-    parts.push(`有 ${report.busy.length} 项正被别的程序占用，没${what}（例如 ${report.busy[0].rel}）。关掉正在用它的程序后再试。`);
+    parts.push(tr("{0} items are in use by another program and were not {1} (for example {2}). Close the program using them and try again.", report.busy.length, what, report.busy[0].rel));
   }
   if (report.skipped.length) {
-    parts.push(`有 ${report.skipped.length} 个链接没有动（例如 ${report.skipped[0]}），请在文件管理器里自己处理。`);
+    parts.push(tr("{0} links were left untouched (for example {1}). Please handle them yourself in the file manager.", report.skipped.length, report.skipped[0]));
   }
   return parts.join('');
 }
@@ -226,7 +227,7 @@ function failureMessage(report, what) {
 async function guardActive(abs, id, opts) {
   if (!opts.exportsRunning) return null;
   const d = await describeExport(abs, id, opts);
-  return d.running ? { ok: false, status: 409, error: '这份导出还在进行，等它结束或取消后再删。' } : null;
+  return d.running ? { ok: false, status: 409, error: tr("This export is still in progress. Wait for it to finish or cancel it, then delete.") } : null;
 }
 
 /** 删整份导出 */
@@ -238,7 +239,7 @@ export async function deleteExport(root, id, opts = {}) {
   const report = { freedBytes: 0, busy: [], skipped: [] };
   const gone = await removeTree(r.abs, report, id);
   if (gone) return { ok: true, freedBytes: report.freedBytes };
-  return { ok: false, status: 409, error: failureMessage(report, '删掉'), freedBytes: report.freedBytes, busy: report.busy.length, skipped: report.skipped.length };
+  return { ok: false, status: 409, error: failureMessage(report, tr("deleted")), freedBytes: report.freedBytes, busy: report.busy.length, skipped: report.skipped.length };
 }
 
 /** 只删中间文件:留下成片、透明层与 project.json */
@@ -258,5 +259,5 @@ export async function pruneExport(root, id, opts = {}) {
     await removeTree(path.join(r.abs, n), report, n);
   }
   if (!report.busy.length && !report.skipped.length) return { ok: true, freedBytes: report.freedBytes };
-  return { ok: false, status: 409, error: failureMessage(report, '删掉'), freedBytes: report.freedBytes, busy: report.busy.length, skipped: report.skipped.length };
+  return { ok: false, status: 409, error: failureMessage(report, tr("deleted")), freedBytes: report.freedBytes, busy: report.busy.length, skipped: report.skipped.length };
 }

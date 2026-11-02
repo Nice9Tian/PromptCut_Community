@@ -15,6 +15,7 @@ import { createAgentInstance } from './agent/service/instance.mjs';
 import { prerenderPost } from './prerender-client.mjs';
 // 镜像的存储本体在镜像插件里(两个进程都挂);这里只读当前编辑页 session 的最新一版
 import { latestMirror, latestPlayhead } from './vite-plugin-mirror';
+import { tr } from "./i18n.mjs";
 
 
 /**
@@ -105,7 +106,7 @@ export default function vitePluginAi(): Plugin {
         try {
           return await import(runnerUrl);
         } catch (e: any) {
-          throw new Error(`Runner 尚未就绪或加载失败: ${e.message}`);
+          throw new Error(`Runner is not ready or failed to load: ${e.message}`);
         }
       }
 
@@ -151,8 +152,8 @@ export default function vitePluginAi(): Plugin {
           try {
             const { readConfig } = await import(new URL('./ai-config.mjs', import.meta.url).href);
             const api = (readConfig() as any)?.api || {};
-            if (!api.apiKey) return sendJson(res, 400, { ok: false, error: '还没填 API Key,拉不了模型清单' });
-            if (!api.baseUrl) return sendJson(res, 400, { ok: false, error: '还没填接口地址(官方源没有统一的清单口子,中转站才有)' });
+            if (!api.apiKey) return sendJson(res, 400, { ok: false, error: tr("API Key is not set, cannot fetch the model list") });
+            if (!api.baseUrl) return sendJson(res, 400, { ok: false, error: tr("Base URL is not set (official sources have no unified list endpoint, only relay services do)") });
             const { listApiModels } = await import(new URL('./runners/api-models.mjs', import.meta.url).href);
             const models = await listApiModels(api);
             return sendJson(res, 200, { ok: true, models });
@@ -162,7 +163,7 @@ export default function vitePluginAi(): Plugin {
         }
 
         if (provider !== 'agy') {
-          return sendJson(res, 400, { ok: false, error: '这一家没有列出模型的命令,请在上面手填' });
+          return sendJson(res, 400, { ok: false, error: tr("This provider has no command to list models, please enter one manually above") });
         }
         try {
           const { resolveExe } = await getRunner();
@@ -195,14 +196,14 @@ export default function vitePluginAi(): Plugin {
           if (req.headers.origin && req.headers.origin !== 'http://' + req.headers.host && req.headers.origin !== 'https://' + req.headers.host) return sendJson(res, 403, { ok: false, error: 'Origin rejected' });
           let body = '';
           let over = false;
-          req.on('data', c => { if (over) return; body += c; over = overLimit(req, res, body.length, 8192, '请求体超过 8KB'); });
+          req.on('data', c => { if (over) return; body += c; over = overLimit(req, res, body.length, 8192, 'Request body exceeds 8KB'); });
           req.on('end', async () => {
             if (over) return;
             try {
               const parsed = JSON.parse(body || '{}');
               const job = (await setupService).submitCode(parsed.provider, parsed.code);
               sendJson(res, 200, { ok: true, job });
-            } catch (e: any) { sendJson(res, 400, { ok: false, error: e instanceof SyntaxError ? '请求不是有效的 JSON' : e.message }); }
+            } catch (e: any) { sendJson(res, 400, { ok: false, error: e instanceof SyntaxError ? tr("The request is not valid JSON") : e.message }); }
           });
           return;
         }
@@ -211,7 +212,7 @@ export default function vitePluginAi(): Plugin {
           if (req.headers.origin && req.headers.origin !== 'http://' + req.headers.host && req.headers.origin !== 'https://' + req.headers.host) return sendJson(res, 403, { ok: false, error: 'Origin rejected' });
           let body = '';
           let over = false;
-          req.on('data', c => { if (over) return; body += c; over = overLimit(req, res, body.length, 8192, '请求体超过 8KB'); });
+          req.on('data', c => { if (over) return; body += c; over = overLimit(req, res, body.length, 8192, 'Request body exceeds 8KB'); });
           req.on('end', async () => {
             if (over) return;
             try { (await setupService).cancel(JSON.parse(body).provider); sendJson(res, 200, { ok: true }); }
@@ -231,7 +232,7 @@ export default function vitePluginAi(): Plugin {
           if (req.headers.origin && req.headers.origin !== 'http://' + req.headers.host && req.headers.origin !== 'https://' + req.headers.host) return sendJson(res, 403, { ok: false, error: 'Origin rejected' });
           let body = '';
           let over = false;
-          req.on('data', c => { if (over) return; body += c; over = overLimit(req, res, body.length, 8192, '请求体超过 8KB'); });
+          req.on('data', c => { if (over) return; body += c; over = overLimit(req, res, body.length, 8192, 'Request body exceeds 8KB'); });
           req.on('end', async () => {
             if (over) return;
             try {
@@ -262,16 +263,16 @@ export default function vitePluginAi(): Plugin {
         let body = '';
         let tooBig = false;
         // 报告本身就是大块头,这里的上限只用来挡住明显不正常的请求
-        req.on('data', (c) => { if (tooBig) return; body += c; tooBig = overLimit(req, res, body.length, 64 * 1024 * 1024, '报告超过 64MB,没有保存'); });
+        req.on('data', (c) => { if (tooBig) return; body += c; tooBig = overLimit(req, res, body.length, 64 * 1024 * 1024, tr("The report is over 64MB and was not saved")); });
         req.on('end', () => {
           if (tooBig) return;
           try {
             const { text, label } = JSON.parse(body || '{}');
-            if (typeof text !== 'string' || !text) return sendJson(res, 400, { ok: false, error: 'text 必填' });
+            if (typeof text !== 'string' || !text) return sendJson(res, 400, { ok: false, error: 'text is required' });
             const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '').replace('T', '-');
-            const safeLabel = String(label || '诊断').replace(/[\\/:*?"<>|]/g, '');
+            const safeLabel = String(label || 'diagnostic').replace(/[\\/:*?"<>|]/g, '');
             // 和 ai.json 放一处,不往桌面上堆东西;反正马上就用资源管理器打开了
-            const root = path.join(process.env.LOCALAPPDATA || os.homedir(), 'promptcut', '诊断报告');
+            const root = path.join(process.env.LOCALAPPDATA || os.homedir(), 'promptcut', tr("diagnostic reports"));
             const dir = path.join(root, `${safeLabel}-${stamp}`);
             fs.mkdirSync(dir, { recursive: true });
             const file = path.join(dir, `${safeLabel}-${stamp}.txt`);
@@ -335,10 +336,10 @@ export default function vitePluginAi(): Plugin {
               ? await runners.listProviders({ refresh })
               : await Promise.race([
                   runners.listProviders({ refresh: false }),
-                  new Promise((resolve) => setTimeout(() => resolve({ error: '驱动探活超时', 说明: '超过 2.5 秒没回来,这一格先跳过 —— 下面那些机器状态仍然有效' }), 2500)),
+                  new Promise((resolve) => setTimeout(() => resolve({ error: 'Driver probe timed out', note: 'No reply after 2.5 seconds, skipping this field for now. The machine status below is still valid' }), 2500)),
                 ]);
           }
-          catch (e: any) { providers = { error: e?.message || String(e), 说明: '驱动探活失败 —— 下面那些机器状态仍然有效' }; }
+          catch (e: any) { providers = { error: e?.message || String(e), note: 'Driver probe failed. The machine status below is still valid' }; }
           sendJson(res, 200, {
             ok: true,
             generatedAt: new Date().toISOString(),
@@ -347,10 +348,10 @@ export default function vitePluginAi(): Plugin {
               arch: process.arch,
               node: process.version,
               cliHome: setupRoot(),
-              configPath: process.env.PROMPTCUT_AI_CONFIG || '(默认 %LOCALAPPDATA%\\promptcut\\ai.json)',
+              configPath: process.env.PROMPTCUT_AI_CONFIG || '(default %LOCALAPPDATA%\\promptcut\\ai.json)',
             },
             machineCode: redactMachineCode(machineCode()),
-            machineCodeNote: '只保留首组:机器码同时是配置分发的解密口令,整串不外发',
+            machineCodeNote: 'Only the first group is kept: the machine code is also the decryption passphrase for config distribution, so the full string is never sent out',
             // 本地服务这个进程的现状:跑了多久、内存还剩多少、是打包版还是源码跑的。
             // 「重启一下就好了」这类问题,不看这些就只能靠猜。
             node: env.nodeStatus(),
@@ -391,7 +392,7 @@ export default function vitePluginAi(): Plugin {
             if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'POST only' });
             let body = '';
             let over = false;
-            req.on('data', c => { if (over) return; body += c; over = overLimit(req, res, body.length, 8192, '请求体超过 8KB'); });
+            req.on('data', c => { if (over) return; body += c; over = overLimit(req, res, body.length, 8192, 'Request body exceeds 8KB'); });
             req.on('end', () => {
               if (over) return;
               try {
@@ -409,7 +410,7 @@ export default function vitePluginAi(): Plugin {
           } else if (req.method === 'POST') {
             let body = '';
             let over = false;
-            req.on('data', c => { if (over) return; body += c; over = overLimit(req, res, body.length, 200_000, '请求体超过 200KB'); });
+            req.on('data', c => { if (over) return; body += c; over = overLimit(req, res, body.length, 200_000, tr("Request body is over 200KB")); });
             req.on('end', () => {
               if (over) return;
               try {
@@ -450,7 +451,7 @@ export default function vitePluginAi(): Plugin {
           const url = new URL(req.url || '/', 'http://localhost');
           const provider = url.searchParams.get('provider') || '';
           const { guard, mod } = await getQuotaGuard();
-          if (!mod.QUOTA_PROVIDERS.includes(provider)) return sendJson(res, 400, { ok: false, error: '只有 claude / codex 有额度窗口' });
+          if (!mod.QUOTA_PROVIDERS.includes(provider)) return sendJson(res, 400, { ok: false, error: tr("Only claude / codex have a quota window") });
           const { publicConfig } = await import(new URL('./ai-config.mjs', import.meta.url).href);
           const cfg = mod.normalizeQuotaConfig(publicConfig().quota);
           const quota = await guard.get(provider, { refresh: url.searchParams.get('refresh') === '1' });

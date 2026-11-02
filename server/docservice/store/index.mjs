@@ -54,31 +54,31 @@ export function fileNameOf(name) {
 
 /** 拆 stream：`<命名空间>/<名字>`；不合法就抛 TypeError */
 function parseStream(stream) {
-  if (typeof stream !== 'string') throw new TypeError('stream 必须是字符串');
+  if (typeof stream !== 'string') throw new TypeError('stream must be a string');
   const i = stream.indexOf('/');
   const ns = i > 0 ? stream.slice(0, i) : '';
   const name = i > 0 ? stream.slice(i + 1) : '';
-  if (!NAMESPACE_RE.test(ns)) throw new TypeError(`stream 不合法：${JSON.stringify(stream)}`);
+  if (!NAMESPACE_RE.test(ns)) throw new TypeError(`Invalid stream: ${JSON.stringify(stream)}`);
   if (name === '' || name.length > MAX_NAME_LENGTH || /[/\\\u0000]/.test(name)) {
-    throw new TypeError(`stream 不合法：${JSON.stringify(stream)}`);
+    throw new TypeError(`Invalid stream: ${JSON.stringify(stream)}`);
   }
   return { ns, name };
 }
 
 /** 拆整份文本的名字：`<命名空间>/<已编码的文件名>`；不合法就抛 TypeError */
 function parseBlobName(name) {
-  if (typeof name !== 'string') throw new TypeError('blob 名必须是字符串');
+  if (typeof name !== 'string') throw new TypeError('blob name must be a string');
   const i = name.indexOf('/');
   const ns = i > 0 ? name.slice(0, i) : '';
   const file = i > 0 ? name.slice(i + 1) : '';
   if (!NAMESPACE_RE.test(ns) || !BLOB_FILE_RE.test(file) || /^\.+$/.test(file)) {
-    throw new TypeError(`blob 名不合法：${JSON.stringify(name)}`);
+    throw new TypeError(`Invalid blob name: ${JSON.stringify(name)}`);
   }
   return { ns, file };
 }
 
 function checkBlobText(text) {
-  if (typeof text !== 'string') throw new TypeError('blob 内容必须是字符串');
+  if (typeof text !== 'string') throw new TypeError('blob content must be a string');
 }
 
 let tmpSeq = 0;
@@ -145,7 +145,7 @@ function parseLines(text, onBad) {
 }
 
 function serialize(record) {
-  if (record === null || typeof record !== 'object' || Array.isArray(record)) throw new TypeError('record 必须是对象');
+  if (record === null || typeof record !== 'object' || Array.isArray(record)) throw new TypeError('record must be an object');
   return JSON.stringify(record);
 }
 
@@ -156,7 +156,7 @@ function serialize(record) {
  * @param {(event: string, fields: object) => void} [options.log]
  */
 export function createFileStore({ dir, log = jsonLog } = {}) {
-  if (typeof dir !== 'string' || dir === '') throw new TypeError('createFileStore: dir 必须是非空字符串');
+  if (typeof dir !== 'string' || dir === '') throw new TypeError('createFileStore: dir must be a non-empty string');
   const root = path.resolve(dir);
   /** 本进程已经确认过「以换行结尾」的文件 */
   const checked = new Set();
@@ -164,7 +164,7 @@ export function createFileStore({ dir, log = jsonLog } = {}) {
   function fileOf(stream) {
     const { ns, name } = parseStream(stream);
     const file = path.join(root, ns, `${fileNameOf(name)}.ndjson`);
-    if (!inside(file, root)) throw new TypeError(`stream 不合法：${JSON.stringify(stream)}`);
+    if (!inside(file, root)) throw new TypeError(`Invalid stream: ${JSON.stringify(stream)}`);
     return file;
   }
 
@@ -191,7 +191,7 @@ export function createFileStore({ dir, log = jsonLog } = {}) {
   function blobFileOf(name) {
     const { ns, file: base } = parseBlobName(name);
     const file = path.join(root, ns, base);
-    if (!inside(file, root)) throw new TypeError(`blob 名不合法：${JSON.stringify(name)}`);
+    if (!inside(file, root)) throw new TypeError(`Invalid blob name: ${JSON.stringify(name)}`);
     return file;
   }
 
@@ -214,7 +214,7 @@ export function createFileStore({ dir, log = jsonLog } = {}) {
     /** 整条换成给定的记录（原子：临时文件 + 刷盘 + 改名）；记录为空时留一个空文件 */
     rewrite(stream, records) {
       const file = fileOf(stream);
-      if (!Array.isArray(records)) throw new TypeError('records 必须是数组');
+      if (!Array.isArray(records)) throw new TypeError('records must be an array');
       const text = records.map((r) => `${serialize(r)}
 `).join('');
       writeAtomic(file, text);
@@ -275,7 +275,7 @@ export function createMemoryStore() {
     },
     rewrite(stream, records) {
       parseStream(stream);
-      if (!Array.isArray(records)) throw new TypeError('records 必须是数组');
+      if (!Array.isArray(records)) throw new TypeError('records must be an array');
       streams.set(stream, records.map(serialize));
     },
     writeBlob(name, text) {

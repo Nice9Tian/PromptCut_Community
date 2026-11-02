@@ -27,7 +27,7 @@ export function PartTree({ parts, size, t, playToken }: { parts: PartInstance[];
               <def.Component params={{ ...def.defaults, ...inst.params }} t={Math.max(0, t - enter)} playToken={playToken} width={inner.width} height={inner.height} />
             ) : (
               <div style={{ position: "absolute", inset: 0, border: "2px dashed #f87171", color: "#f87171", font: "20px system-ui", padding: 12 }}>
-                没有部件 {inst.partId}
+                Missing part {inst.partId}
               </div>
             )}
             {inst.children?.length ? <PartTree parts={inst.children} size={inner} t={Math.max(0, t - enter)} playToken={playToken} /> : null}

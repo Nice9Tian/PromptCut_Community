@@ -34,6 +34,7 @@ import { QUEUE_DEFAULTS } from '../../render-queue/constants.mjs';
 import { parseInbound, makeMessage, prioritySummaryValue, NODE_TYPES, PUBLISHER_TYPES } from '../../render-queue/messages.mjs';
 import { describeEnvironment, describeCardEnvironment, isChromiumUserAgent } from '../../render-node/fingerprint.mjs';
 import { deviceRank } from '../../render-node/session.mjs';
+import { tr } from "../../i18n.mjs";
 
 export const RENDER_QUEUE_MODULE = 'render-queue';
 
@@ -90,14 +91,14 @@ function environmentOf(v) {
 function admitNodeHello(principal, msg, nodeUserOf) {
   const browserOwned = isBrowserOwned(principal);
   if (browserOwned && msg.profile !== 'browser') {
-    return { error: { reason: 'forbidden', detail: '纯浏览器节点的连接只能以 browser 报到' } };
+    return { error: { reason: 'forbidden', detail: 'A pure-browser node connection can only check in as browser' } };
   }
   let out = msg;
   if (msg.environment !== undefined && msg.environment !== null) {
     const env = environmentOf(msg.environment);
-    if (!env) return { error: { reason: 'bad-message', detail: 'environment 必须是 { platform, userAgent, renderer, vendor } 字符串' } };
+    if (!env) return { error: { reason: 'bad-message', detail: 'environment must be a { platform, userAgent, renderer, vendor } string' } };
     if (msg.profile === 'browser' && !isChromiumUserAgent(env.userAgent)) {
-      return { error: { reason: 'not-chromium', detail: '一期只在 Chromium 内核的浏览器上当渲染节点' } };
+      return { error: { reason: 'not-chromium', detail: tr("In phase 1, only Chromium-based browsers can serve as render nodes") } };
     }
     const own = msg.envFingerprint;
     if (browserOwned || own === undefined || own === null || own === '') {
@@ -117,7 +118,7 @@ function admitNodeHello(principal, msg, nodeUserOf) {
       out = others;
     }
   } else if (browserOwned) {
-    return { error: { reason: 'bad-message', detail: '纯浏览器节点要报 environment（页面的原始环境值），指纹由文档服务算' } };
+    return { error: { reason: 'bad-message', detail: 'A pure-browser node must report environment (the page\'s raw environment values); the document service computes the fingerprint' } };
   }
   if (msg.environment === undefined || msg.environment === null) {
     // 没有原始环境值就算不出指纹:自报的 cardRuntime、cardEnvFingerprint 不作数
@@ -126,7 +127,7 @@ function admitNodeHello(principal, msg, nodeUserOf) {
   }
   const bound = typeof nodeUserOf === 'function' && typeof msg.nodeId === 'string' ? nodeUserOf(msg.nodeId) : null;
   if (bound !== null && principal && bound !== principal.userId) {
-    return { error: { reason: 'forbidden', detail: '这个 nodeId 属于别的用户' } };
+    return { error: { reason: 'forbidden', detail: 'This nodeId belongs to another user' } };
   }
   return { msg: out };
 }
@@ -160,7 +161,7 @@ function fingerprintOf(requires) {
  */
 export function renderQueueModule(q, { sweepMs = QUEUE_DEFAULTS.SWEEP_INTERVAL_MS } = {}) {
   for (const m of ['connect', 'disconnect', 'handle', 'tick']) {
-    if (typeof q?.[m] !== 'function') throw new TypeError(`queueInterface.${m} 必须是函数`);
+    if (typeof q?.[m] !== 'function') throw new TypeError(`queueInterface.${m} must be a function`);
   }
   /** connId → { principal, publisherId, node, summary } */
   const conns = new Map();
@@ -273,7 +274,7 @@ export function renderQueueModule(q, { sweepMs = QUEUE_DEFAULTS.SWEEP_INTERVAL_M
   function watchSummary(ctx, connId, conn, msg) {
     const reqId = isReqId(msg.reqId) ? msg.reqId : undefined;
     if (msg.projects !== 'all') {
-      return reply(ctx, connId, 'error', { reason: 'bad-message', detail: "摘要订阅的 projects 必须是 'all'" }, reqId);
+      return reply(ctx, connId, 'error', { reason: 'bad-message', detail: "projects in a digest subscription must be 'all'" }, reqId);
     }
     if (!conn?.node) return reply(ctx, connId, 'error', { reason: 'not-registered' }, reqId);
     // 纯浏览器只见本人任务，摘要会泄露别人的项目
@@ -394,7 +395,7 @@ export function renderQueueModule(q, { sweepMs = QUEUE_DEFAULTS.SWEEP_INTERVAL_M
         if (msg.mode === 'summary') return watchSummary(ctx, connId, conn, msg);
         if (msg.mode !== undefined && msg.mode !== 'full') {
           const reqId = isReqId(msg.reqId) ? msg.reqId : undefined;
-          return reply(ctx, connId, 'error', { reason: 'bad-message', detail: "mode 只能是 'full' 或 'summary'" }, reqId);
+          return reply(ctx, connId, 'error', { reason: 'bad-message', detail: "mode must be 'full' or 'summary'" }, reqId);
         }
         // 全量 watch：以最后一条为准，合法的话先退订摘要，再照旧交给队列
         if (conn?.summary && parseInbound(msg).ok) leaveSummary(ctx, connId, conn);
@@ -402,7 +403,7 @@ export function renderQueueModule(q, { sweepMs = QUEUE_DEFAULTS.SWEEP_INTERVAL_M
       }
       if (msg.type === 'node.hello' && !mayRegisterNode(conn?.principal)) {
         const reqId = isReqId(msg.reqId) ? msg.reqId : undefined;
-        return reply(ctx, connId, 'error', { reason: 'forbidden', detail: '只有 render 角色的连接能报到为渲染节点' }, reqId);
+        return reply(ctx, connId, 'error', { reason: 'forbidden', detail: 'Only connections with the render role can check in as a render node' }, reqId);
       }
       if (msg.type === 'node.hello') {
         // M7 D9 / D10 / D14：profile 与凭证绑定、指纹由这里按原始环境值算、非 Chromium 不当节点
@@ -546,7 +547,7 @@ export function renderQueuePlaceholder() {
     types: queueTypes(),
 
     handle(ctx, connId, msg) {
-      const out = { type: 'error', reason: 'queue-unavailable', detail: '渲染任务队列还没有挂上' };
+      const out = { type: 'error', reason: 'queue-unavailable', detail: tr("The render queue is not attached yet") };
       if (isReqId(msg.reqId)) out.reqId = msg.reqId;
       ctx.send(connId, out);
     },

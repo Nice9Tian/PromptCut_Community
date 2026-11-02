@@ -1,6 +1,7 @@
 /** 镜头缩略图读口纯移动；识别/Python/渲染依赖不进入素材角色。 */
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { tr } from "../i18n.mjs";
 // 原dataDir(root)唯一行为，保留旧LAN本地目录兼容。
 const dataDir = root => process.env.PROMPTCUT_DATA_DIR ?? path.join(root, 'out');
 const sendJson = (res, code, data) => { if (res.headersSent) return; res.statusCode = code; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(data)); };
@@ -40,7 +41,7 @@ export function shotsThumbMiddleware(root        , { projectStores, projectAcces
       res.once("finish", () => lease?.release());
       stream.once("error", () => res.destroy());
       stream.pipe(res);
-    } catch (error     ) { if (!res.destroyed) sendJson(res, error?.status ?? 404, { ok: false, error: error?.code ?? "缩略图不存在" }); }
+    } catch (error     ) { if (!res.destroyed) sendJson(res, error?.status ?? 404, { ok: false, error: error?.code ?? tr("Thumbnail not found") }); }
     finally { await handle?.close().catch(() => {}); finish?.(); if (res.writableFinished || !res.headersSent) lease?.release(); }
   };
 }

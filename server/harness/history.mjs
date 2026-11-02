@@ -79,7 +79,7 @@ export class MessageHistory {
       if (!Array.isArray(msg.content)) continue;
       for (let j = msg.content.length - 1; j >= 0; j--) {
         if (msg.content[j].type !== 'image') continue;
-        if (++seen > keep) msg.content[j] = { type: 'text', text: '(更早的一张截图已从上下文移除；需要重看请再截一次)' };
+        if (++seen > keep) msg.content[j] = { type: 'text', text: '(An earlier screenshot was removed from the context; take another screenshot if you need to look again)' };
       }
     }
   }
@@ -145,7 +145,7 @@ export class MessageHistory {
     }
     
     if (truncated) {
-      this.onEvent({ type: 'status', text: '对话历史过长,已截断早期消息' });
+      this.onEvent({ type: 'status', text: 'Chat history too long, earlier messages truncated' });
     }
   }
 

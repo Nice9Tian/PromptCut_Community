@@ -110,7 +110,7 @@ export function createAgentInstance(env) {
     try {
       return await import(runnerUrl);
     } catch (e) {
-      throw new Error(`Runner 尚未就绪或加载失败: ${e.message}`);
+      throw new Error(`Runner is not ready or failed to load: ${e.message}`);
     }
   }
 
@@ -149,7 +149,7 @@ export function createAgentInstance(env) {
     if (!MIRRORED_TOOLS.has(tool) || !mirror) return undefined;
     const required = toolDef?.inputSchema?.required ?? [];
     const missing = required.filter((k) => args?.[k] === undefined || args?.[k] === null);
-    if (missing.length) throw new Error(`缺少必填参数：${missing.join('、')}。请补齐后重试。`);
+    if (missing.length) throw new Error(`Missing required parameters: ${missing.join(', ')}. Add them and try again.`);
     const project = mirror.project;
     const timeoutMs = toolDef?.timeoutMs || 60000;
 
@@ -165,7 +165,7 @@ export function createAgentInstance(env) {
           transcript: {
             engine: m.transcript.engine, model: m.transcript.model, language: m.transcript.language,
             createdAt: m.transcript.createdAt, segments: m.transcript.segments?.length ?? 0,
-            hint: '完整文字稿请用 get_transcript',
+            hint: 'Use get_transcript for the full transcript',
           },
         } : m),
       };
@@ -176,14 +176,14 @@ export function createAgentInstance(env) {
       // 素材镜头拼图要跑镜头识别、写回项目,留给编辑器页面
       if (source !== undefined && source !== 'timeline') return undefined;
       // cutId:看那条剪辑的画面,不切换(视图只在这次出图时用,见 agent-exec.mjs 的 seeFrames)
-      if (cutId !== undefined && cutId !== null && typeof cutId !== 'string') throw new Error('cutId 要是字符串(list_cuts 里的剪辑 id);不传就看当前激活的剪辑。');
+      if (cutId !== undefined && cutId !== null && typeof cutId !== 'string') throw new Error('cutId must be a string (the cut id from list_cuts); if omitted, the currently active cut is used.');
       const look = cutLookView(project, cutId);
       const times = Array.isArray(rest.times) ? rest.times.filter((x) => typeof x === 'number').slice(0, 10) : [];
       const body = times.length
         ? { project: look.project, times, clipId: rest.clipId }
         : { project: look.project, t: typeof rest.t === 'number' ? rest.t : (rest.clipId ? undefined : (look.active ? (latestPlayhead()?.t ?? 0) : look.parkedT)), clipId: rest.clipId };
       const data = await prerenderPost('/api/vision/snapshot', body, { timeoutMs });
-      if (!data?.ok) throw new Error(data?.error || '渲染画面失败');
+      if (!data?.ok) throw new Error(data?.error || 'Failed to render the frame');
       let result = times.length ? { ok: true, frames: data.frames, note: data.note, __images: data.__images } : data;
       result = { ...result, cut: look.cut };
       // 聊天栏里「看得见的工具结果」:和编辑器页面的 withVisual 同一份记录
@@ -200,27 +200,27 @@ export function createAgentInstance(env) {
     if (tool === 'get_gif') {
       // 两步(cloud-task.md 决议 12):Agent 这一侧只写规格(`'agent'`),像素渲染交给 `user` 那一侧的 `/render`
       const spec = await prerenderPost('/api/ai/visual', { tool: 'get_gif', clipId: args.clipId, after: project }, { timeoutMs });
-      if (!spec?.ok) throw new Error(spec?.error || '做动图失败');
-      if (!spec.gifKey) throw new Error(`时间轴上没有 id 为 ${args.clipId} 的片段。`);
+      if (!spec?.ok) throw new Error(spec?.error || 'Failed to make the animated image');
+      if (!spec.gifKey) throw new Error(`No clip with id ${args.clipId} on the timeline.`);
       const data = await prerenderPost('/api/ai/visual/render', { key: spec.gifKey }, { timeoutMs });
-      if (!data?.ok) throw new Error(data?.error || '做动图失败');
+      if (!data?.ok) throw new Error(data?.error || 'Failed to make the animated image');
       return {
         visualId: spec.visualId, ok: true, clipId: args.clipId, times: data.times, gif: data.gifUrl,
-        note: '拼图 4×2,第 k 格对应 times 的第 k 个时刻(按行从左到右)。用户在聊天栏点开这一步能看到动图。',
+        note: 'Collage 4×2: cell k corresponds to the k-th time in times (row by row, left to right). The user can open this step in the chat panel to see the animated image.',
         ...(data.grid ? { __image: { mime: 'image/png', base64: data.grid } } : {}),
       };
     }
 
     if (tool === 'bake_card') {
       const data = await prerenderPost('/api/vision/bake', { project, clipId: args.clipId, t: args.t, size: args.size, bg: args.bg }, { timeoutMs });
-      if (!data?.ok) throw new Error(data?.error || '渲染失败');
+      if (!data?.ok) throw new Error(data?.error || 'Render failed');
       return data;
     }
 
     if (tool === 'inspect_card_dom') {
       const ref = typeof args.ref === 'string' ? Number(String(args.ref).replace(/^ref_/, '')) : args.ref;
       const data = await prerenderPost('/api/cards/dom', { project, clipId: args.clipId, t: args.t, ref, depth: args.depth }, { timeoutMs });
-      if (!data?.ok) throw new Error(data?.error || '读不到 DOM 树');
+      if (!data?.ok) throw new Error(data?.error || 'Cannot read the DOM tree');
       return data;
     }
     return undefined;
@@ -267,11 +267,11 @@ export function createAgentInstance(env) {
   /** 向页面要一张 agent 角色的连接票据(页面凭它在文档服务上的身份签) */
   function requestTicket(projectId, conversation) {
     return new Promise((resolve, reject) => {
-      if (!editorRes) return reject(new Error("编辑台没有打开,要不到连接票据"));
+      if (!editorRes) return reject(new Error("The editor is not open, so a connection ticket cannot be obtained"));
       const reqId = `t${++ticketSeq}`;
       const timer = setTimeout(() => {
         ticketWaiters.delete(reqId);
-        reject(new Error("页面 10 秒内没有交回连接票据"));
+        reject(new Error("The page did not return a connection ticket within 10 seconds"));
       }, 10_000);
       ticketWaiters.set(reqId, { resolve, reject, timer });
       editorRes.write(`data: ${JSON.stringify({ type: "agent.ticket", reqId, projectId, role: "agent", conversation })}\n\n`);
@@ -280,20 +280,20 @@ export function createAgentInstance(env) {
 
   async function bindAgent(input) {
     const projectId = typeof input?.projectId === "string" && PROJECT_ID_RE.test(input.projectId) ? input.projectId : null;
-    if (!projectId) throw new Error("projectId 不合法");
+    if (!projectId) throw new Error("projectId is invalid");
     const mode = typeof input?.mode === "string" ? input.mode : (HOSTED ? "hosted" : "local");
-    if (!AGENT_MODES.has(mode)) throw new Error(`mode 只能是 ${[...AGENT_MODES].join(" / ")}`);
+    if (!AGENT_MODES.has(mode)) throw new Error(`mode must be one of ${[...AGENT_MODES].join(" / ")}`);
     let url = `ws://127.0.0.1:${editorPortOf()}/docservice`;
     if (mode === "ticket") {
-      if (typeof input?.url !== "string" || !/^wss?:\/\//.test(input.url)) throw new Error("mode 为 ticket 时要给文档服务的 ws(s):// 地址");
+      if (typeof input?.url !== "string" || !/^wss?:\/\//.test(input.url)) throw new Error("When mode is ticket, provide the document service's ws(s):// address");
       url = input.url;
     }
     if (mode === "hosted") {
       // 托管档的实例只为建它时定下的那个项目服务:项目与文档服务地址都不听请求的
-      if (projectId !== env.projectId) throw new Error("这个实例不为这个项目服务");
+      if (projectId !== env.projectId) throw new Error("This instance does not serve this project");
       if (env.accountDataRequired === true &&
           (env.accountMode !== true || typeof env.accountDataWebSocketImpl !== 'function'))
-        throw new Error('账号数据连接缺少可信实例证明');
+        throw new Error('The account data connection lacks a trusted instance proof');
       url = env.docUrl;
     }
     // Only the trusted account runner may cancel its own pending binding.
@@ -532,11 +532,11 @@ export function createAgentInstance(env) {
   /** 让页面开一个子 Agent 的页签,等它回话(8 秒) */
   function openAgentTab(spec) {
     return new Promise((resolve, reject) => {
-      if (!editorRes) return reject(new Error('编辑台没有打开,没有页签可开'));
+      if (!editorRes) return reject(new Error('The editor is not open, so there is no tab to open'));
       const reqId = `s${++spawnSeq}`;
       const timer = setTimeout(() => {
         spawnWaiters.delete(reqId);
-        reject(new Error('页面 8 秒内没有开出页签'));
+        reject(new Error('The page did not open a tab within 8 seconds'));
       }, 8_000);
       spawnWaiters.set(reqId, { resolve, reject, timer });
       editorRes.write(`data: ${JSON.stringify({ type: 'agent.spawn', reqId, ...spec })}\n\n`);
@@ -570,7 +570,7 @@ export function createAgentInstance(env) {
       // 授权不在、内部通道不可用、参数不合规矩:如实说这一步没做成,不退回到别的做法
       const code = typeof err?.code === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(err.code) ? err.code : 'unavailable';
       agentLog('agent.page.failed', { tool, code });
-      return { ok: false, cloudUnavailable: true, code, error: `${tool} 这一次没有做成:云端到发起人页面的通道现在用不了(${code})。请按项目内容继续,不要等待。` };
+      return { ok: false, cloudUnavailable: true, code, error: `${tool} did not succeed this time: the channel from the cloud to the initiator's page is unavailable right now (${code}). Continue based on the project content; do not wait.` };
     }
   }
 
@@ -628,7 +628,7 @@ export function createAgentInstance(env) {
       if (CLOUD_PLAYHEAD_TOOLS.has(tool) && !hostedInitiatorOnline(agent || '')) {
         const out = await callToolChecked(tool, toolDef, args, agent, callId);
         return out && typeof out === 'object' && !Array.isArray(out) && out.ok !== false
-          ? { ...out, initiatorOffline: true, note: '发起方不在线,播放头按 0 记。' }
+          ? { ...out, initiatorOffline: true, note: 'The initiator is offline; the playhead is taken as 0.' }
           : out;
       }
     }
@@ -649,8 +649,8 @@ export function createAgentInstance(env) {
       return {
         ok: false,
         error: loopToolLock.size
-          ? `审查环路的这一回合是只读的:${tool} 这一回合不能用。能用的只有 ${[...loopToolLock].join('、')}。`
-          : `审查环路的这一回合不调用任何工具,${tool} 被拒绝。只用文字回答。`,
+          ? `This turn of the review loop is read-only: ${tool} cannot be used in this turn. Only ${[...loopToolLock].join(', ')} can be used.`
+          : `This turn of the review loop calls no tools, so ${tool} was rejected. Answer in text only.`,
       };
     }
 
@@ -754,9 +754,9 @@ export function createAgentInstance(env) {
         if (!checked.ok) {
           return { ok: false, error: checked.error };
         }
-        return { ok: true, message: '已记录进度报告', report: checked.value };
+        return { ok: true, message: 'Progress report recorded', report: checked.value };
       }
-      return { ok: false, error: `服务端工具 ${tool} 没有实现` };
+      return { ok: false, error: `Server tool ${tool} is not implemented` };
     }
   }
 
@@ -768,7 +768,7 @@ export function createAgentInstance(env) {
   async function callEditorPage(tool, args, agent, limit) {
     if (!editorRes) {
       // 桌面 APP 的会话最常碰到这一条(SKILL 模式默认关着编辑界面;后台运行是计划 A5):说清是什么、该怎么办
-      throw new Error(`编辑台没有打开:没有页面连着 /api/mcp/events。${tool} 要在 PromptCut 的编辑界面里执行,请用户打开编辑界面后再试,不要反复重试。`);
+      throw new Error(`Editor is not open: no page is connected to /api/mcp/events. ${tool} has to run in the PromptCut editor; ask the user to open the editor and try again, and do not retry repeatedly.`);
     }
 
     const id = nextCallId++;
@@ -783,7 +783,7 @@ export function createAgentInstance(env) {
       timer = setTimeout(() => {
         if (pendingCalls.has(id)) {
           pendingCalls.delete(id);
-          resolve({ ok: false, error: `${tool} 超过 ${Math.round(limit / 1000)} 秒没有返回,已放弃等待。` });
+          resolve({ ok: false, error: `${tool} did not return within ${Math.round(limit / 1000)} seconds; stopped waiting.` });
         }
       }, limit);
     });
@@ -800,7 +800,7 @@ export function createAgentInstance(env) {
     let over = false;
     // 32MB:附件带的是地址和文本(ChatAttachment 没有内联二进制),整段字幕、整篇文档都够;
     // 再大就不是正常输入了,而是有人在往这条路上灌东西。
-    req.on('data', c => { if (over) return; body += c; over = overLimit(req, res, body.length, 32 * 1024 * 1024, '请求体超过 32MB'); });
+    req.on('data', c => { if (over) return; body += c; over = overLimit(req, res, body.length, 32 * 1024 * 1024, 'Request body exceeds 32MB'); });
     req.on('end', async () => {
       if (over) return;
       let hasDone = false;
@@ -817,7 +817,7 @@ export function createAgentInstance(env) {
           if (auth.state !== 'normal') {
             // Before quota probes or task registration: no CLI executes known-invalid credentials.
             const event = auth.state === 'invalid' ? authFailureEvent(auth.reason) : {
-              type: 'error', message: 'Codex 登录状态待确认，请重新登录。', retryable: false,
+              type: 'error', message: 'Codex login state needs confirmation, please log in again.', retryable: false,
               authProvider: 'codex', authReason: 'state_unknown', authGeneration: auth.revision,
             };
             res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
@@ -839,9 +839,9 @@ export function createAgentInstance(env) {
         // 剧本每一轮都拼进系统提示词,而不是只在第一条用户消息里说一次:
         // 多轮执行最容易顺着中间结果越走越偏,摆在系统提示里才拉得住。
         if (typeof script === 'string' && script.trim()) {
-          systemPrompt += `\n\n## 本片剧本(用户写的,每一步都要照它来)\n\n${script.trim()}\n\n` +
-            '这是这条片子的主线。做任何编排、配字幕、配动效的决定时都要对照它;' +
-            '和它冲突的做法不要做,拿不准就按剧本写的来。剧本没写到的细节可以自己判断。';
+          systemPrompt += `\n\n## Script for this video (written by the user; follow it at every step)\n\n${script.trim()}\n\n` +
+            'This is the storyline of this video. Check against it for every decision about arrangement, captions and motion graphics; ' +
+            'Do not do anything that conflicts with it, and when unsure follow what the script says. Details the script does not cover are yours to decide.';
         }
 
         let finalPrompt = prompt;
@@ -850,10 +850,10 @@ export function createAgentInstance(env) {
         const library = (attachments || []).filter((a) => a.library);
         const userFiles = (attachments || []).filter((a) => !a.library);
         if (library.length > 0) {
-          const kindName = { video: '视频', image: '图片', audio: '音频' };
-          finalPrompt += '\n\n素材库(已导入,工具里用 mediaId;卡片参数里引用填 cardUrl):\n' + library.map((a) => {
+          const kindName = { video: 'Video', image: 'Image', audio: 'audio' };
+          finalPrompt += '\n\nMedia library (already imported; use mediaId in tools, use cardUrl for references in card parameters):\n' + library.map((a) => {
             let line = `- [${kindName[a.kind] || a.kind}] ${a.name} · mediaId ${a.id} · cardUrl ${a.url}`;
-            if (a.durationSec && a.kind !== 'image') line += ` · 时长 ${a.durationSec} 秒`;
+            if (a.durationSec && a.kind !== 'image') line += ` · duration ${a.durationSec} seconds`;
             return line;
           }).join('\n');
         }
@@ -861,9 +861,9 @@ export function createAgentInstance(env) {
         // (docs/semantics/product/agent.md「素材与产物」),磁盘路径它读不了,只会被引着去读。
         // 要剪辑、转写、配动效,先用 import_media 把「站内地址」装进素材库(import_media 的工具说明写着这条路)。
         if (userFiles.length > 0) {
-          finalPrompt += '\n\n附件(在对话的工作目录里,不在素材库;要剪辑、转写或配动效,先用 import_media 传它的站内地址装进素材库):\n' + userFiles.map((a) => {
-            let line = `- [${a.kind === 'video' ? '视频' : a.kind}] ${a.name} · 站内地址 ${a.url}`;
-            if (a.durationSec) line += ` · 时长 ${a.durationSec} 秒`;
+          finalPrompt += '\n\nAttachments (in the chat\'s working directory, not in the media library; to cut, transcribe or add motion graphics, first pass its in-app URL to import_media to load it into the media library):\n' + userFiles.map((a) => {
+            let line = `- [${a.kind === 'video' ? 'Video' : a.kind}] ${a.name} · in-app URL ${a.url}`;
+            if (a.durationSec) line += ` · duration ${a.durationSec} seconds`;
             if (a.text) line += `\n\`\`\`\n${a.text}\n\`\`\``;
             return line;
           }).join('\n');
@@ -893,9 +893,9 @@ export function createAgentInstance(env) {
         if (agentId && sess.parent && sess.role) {
           const role = loadRole(sess.role);
           if (role) {
-            systemPrompt += `\n\n## 你的角色:${role.name}\n\n你是 Agent ${sess.parent} 用 spawn_agent 拉起的子 Agent,对话 ID ${agentId}。` +
-              '只做它交给你的那部分;开工先 declare_scope,做完用 report_progress 交代,再用 send_message 把结果告诉拉起你的 Agent。' +
-              `你不能再拉起别的 Agent。\n\n${role.prompt}`;
+            systemPrompt += `\n\n## Your role: ${role.name}\n\nYou are a sub-Agent spawned by Agent ${sess.parent} with spawn_agent, chat ID ${agentId}.` +
+              'Do only the part it handed to you; start with declare_scope, report back with report_progress when done, then use send_message to tell the Agent that spawned you the result.' +
+              `You cannot spawn other Agents.\n\n${role.prompt}`;
           }
         }
         const agentNotes = agentId ? board().consumeNotes(agentId) : '';
@@ -903,10 +903,10 @@ export function createAgentInstance(env) {
         const runHops = Number.isSafeInteger(data.hops) && data.hops > 0 ? data.hops : 0;
 
         const editorPort = (server.httpServer?.address())?.port || 5195;
-        const editorState = editorRes ? "编辑台已连接" : "未连接";
-        finalPrompt += `\n\n当前端口 ${editorPort};${editorState}` + (agentId ? `;你的 Agent 对话 ID:${agentId}` : '') +
-          `;创造力等级「${CREATIVITY_LABEL[convCreativity                                 ]}」(${convCreativitySource}):` +
-          `${CREATIVITY_HINT[convCreativity                                ]}。越级的工具调用会被拒绝,被拒就停下告诉用户,不要绕`;
+        const editorState = editorRes ? "Editor connected" : "Not connected";
+        finalPrompt += `\n\nCurrent port ${editorPort}; ${editorState}` + (agentId ? `; your Agent chat ID: ${agentId}` : '') +
+          `; creativity level "${CREATIVITY_LABEL[convCreativity                                 ]}" (${convCreativitySource}): ` +
+          `${CREATIVITY_HINT[convCreativity                                ]}. Tool calls above your level will be rejected; if rejected, stop and tell the user, do not work around it`;
 
         res.writeHead(200, {
           'Content-Type': 'text/event-stream',
@@ -1075,7 +1075,7 @@ export function createAgentInstance(env) {
     if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'POST only' });
     let body = '';
     let over = false;
-    req.on('data', c => { if (over) return; body += c; over = overLimit(req, res, body.length, 8192, '请求体超过 8KB'); });
+    req.on('data', c => { if (over) return; body += c; over = overLimit(req, res, body.length, 8192, 'Request body exceeds 8KB'); });
     req.on('end', () => {
       if (over) return;
       try {
@@ -1126,7 +1126,7 @@ export function createAgentInstance(env) {
     let body = '';
     let over = false;
     // 工具结果从页面回来,里面可能整段是画面或大段文本,给得宽一点;宽也是有上限的。
-    req.on('data', c => { if (over) return; body += c; over = overLimit(req, res, body.length, 64 * 1024 * 1024, '工具结果超过 64MB'); });
+    req.on('data', c => { if (over) return; body += c; over = overLimit(req, res, body.length, 64 * 1024 * 1024, 'Tool result exceeds 64MB'); });
     req.on('end', () => {
       if (over) return;
       try {
@@ -1147,7 +1147,7 @@ export function createAgentInstance(env) {
     if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'POST only' });
     let body = '';
     let over = false;
-    req.on('data', c => { if (over) return; body += c; over = overLimit(req, res, body.length, 32 * 1024 * 1024, '请求体超过 32MB'); });
+    req.on('data', c => { if (over) return; body += c; over = overLimit(req, res, body.length, 32 * 1024 * 1024, 'Request body exceeds 32MB'); });
     req.on('end', async () => {
       if (over) return;
       try {
@@ -1202,11 +1202,11 @@ export function createAgentInstance(env) {
   const readJsonBody = (req, res, max, onBody) => {
     let body = '';
     let over = false;
-    req.on('data', (c) => { if (over) return; body += c; over = overLimit(req, res, body.length, max, `请求体超过 ${max} 字节`); });
+    req.on('data', (c) => { if (over) return; body += c; over = overLimit(req, res, body.length, max, `Request body exceeds ${max} bytes`); });
     req.on('end', () => {
       if (over) return;
       let data;
-      try { data = JSON.parse(body || '{}'); } catch { return sendJson(res, 400, { ok: false, error: '请求体不是 JSON' }); }
+      try { data = JSON.parse(body || '{}'); } catch { return sendJson(res, 400, { ok: false, error: 'Request body is not JSON' }); }
       onBody(data);
     });
   };
@@ -1227,11 +1227,11 @@ export function createAgentInstance(env) {
     if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'POST only' });
     readJsonBody(req, res, 8192, (data) => {
       const w = typeof data?.reqId === 'string' ? ticketWaiters.get(data.reqId) : undefined;
-      if (!w) return sendJson(res, 404, { ok: false, error: '没有在等这张票据' });
+      if (!w) return sendJson(res, 404, { ok: false, error: 'Nothing is waiting for this ticket' });
       ticketWaiters.delete(data.reqId);
       clearTimeout(w.timer);
       if (typeof data.ticket === 'string' && data.ticket.length > 0 && data.ticket.length <= 2048) w.resolve(data.ticket);
-      else w.reject(new Error(typeof data.error === 'string' ? `页面没签出票据:${data.error}` : '页面交回的票据不合法'));
+      else w.reject(new Error(typeof data.error === 'string' ? `Page failed to sign a ticket: ${data.error}` : 'Ticket returned by the page is invalid'));
       sendJson(res, 200, { ok: true });
     });
   });
@@ -1271,7 +1271,7 @@ export function createAgentInstance(env) {
     if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'POST only' });
     readJsonBody(req, res, 8192, (data) => {
       const key = typeof data?.conversationId === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(data.conversationId) ? data.conversationId : null;
-      if (!key) return sendJson(res, 400, { ok: false, error: 'conversationId 不合法' });
+      if (!key) return sendJson(res, 400, { ok: false, error: 'conversationId is invalid' });
       const b = board();
       b.markSeen(key);
       sendJson(res, 200, { ok: true, messages: b.takeInbox(key, data?.onlyAuto !== false) });
@@ -1281,11 +1281,11 @@ export function createAgentInstance(env) {
     if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'POST only' });
     readJsonBody(req, res, 8192, (data) => {
       const w = typeof data?.reqId === 'string' ? spawnWaiters.get(data.reqId) : undefined;
-      if (!w) return sendJson(res, 404, { ok: false, error: '没有在等这个页签' });
+      if (!w) return sendJson(res, 404, { ok: false, error: 'Nothing is waiting for this tab' });
       spawnWaiters.delete(data.reqId);
       clearTimeout(w.timer);
       if (data.ok === true) w.resolve();
-      else w.reject(new Error(typeof data.error === 'string' ? data.error.slice(0, 300) : '页面没开出页签'));
+      else w.reject(new Error(typeof data.error === 'string' ? data.error.slice(0, 300) : 'Page failed to open a tab'));
       sendJson(res, 200, { ok: true });
     });
   });
@@ -1368,7 +1368,7 @@ export function createAgentInstance(env) {
     // 在服务端另有实现的工具(导入素材、建卡改卡、配音):交给 hosted-tools.mjs,落地的写入记在这次调用的事件上下文上
     const hosted = hostedContext(typeof ctx?.agent === 'string' ? ctx.agent : '');
     if (hosted?.has(tool)) return { result: await hosted.call(tool, args, ctx?.track), opIds: [] };
-    throw new Error(`云端 Agent 这一版还用不了 ${tool}:它要在编辑界面里执行。`);
+    throw new Error(`This version of the Cloud Agent cannot use ${tool} yet: it has to run in the editor.`);
   }
 
   /** 实例里各对话共用的状态(这个项目的卡片源码表);没有 hosted-tools(只给不碰这些工具的测试)时是 null */
@@ -1449,7 +1449,7 @@ export function createAgentInstance(env) {
     const binding = agentBinding;
     const unavailable = reason => {
       agentLog('agent.selection.unavailable', { reason });
-      return { ok: false, code: 'selection-unavailable', error: '当前项目选区暂不可用。' };
+      return { ok: false, code: 'selection-unavailable', error: 'The current project selection is unavailable.' };
     };
     if (!scope || typeof scope.projectId !== 'string' || typeof scope.conversationId !== 'string' ||
         typeof scope.runId !== 'string' || typeof scope.runGrantId !== 'string' || !scope.runGrantId ||
@@ -1483,14 +1483,14 @@ export function createAgentInstance(env) {
     if (wire === 'seek' && !(typeof a.t === 'number' && Number.isFinite(a.t) && a.t >= 0)) {
       // 没有人连着看时先说不在线(Agent 该知道的是「这一步用不上页面」,而不是去补参数重试)
       if (!hostedInitiatorOnline(agent)) return initiatorOffline(tool);
-      return { ok: false, error: `${tool} 要给 t(秒,不小于 0 的数)。` };
+      return { ok: false, error: `${tool} needs t (seconds, a number not less than 0).` };
     }
     const send = wire === 'seek' ? { t: a.t } : {};
     let out = null;
     try { out = env.pageCall ? await env.pageCall(agent, wire, send) : null; } catch { out = null; }
     if (out?.ok === true && out.result && typeof out.result === 'object') {
       const r = out.result;
-      if (r.ok !== true) return { ok: false, error: String(r.error || `${tool} 在发起人的页面上没有做成`) };
+      if (r.ok !== true) return { ok: false, error: String(r.error || `${tool} did not succeed on the initiator's page`) };
       if (wire === 'seek') {
         const ps = hostedPageStates.get(agent);
         hostedPageStates.set(agent, { ...(ps && typeof ps === 'object' ? ps : {}), t: a.t });
@@ -1516,7 +1516,7 @@ export function createAgentInstance(env) {
     for (const tr of project?.tracks ?? []) {
       for (const c of tr.clips ?? []) if (ids.includes(c.id)) clips.push({ ...c, trackId: tr.id });
     }
-    return { ok: true, ids, clips, note: '这是用户发这条消息时的选区,之后页面上可能已经变了。' };
+    return { ok: true, ids, clips, note: 'This is the selection at the time the user sent this message; the page may have changed since.' };
   }
 
   /**
@@ -1538,7 +1538,7 @@ export function createAgentInstance(env) {
     const done = (async () => {
       const binding = agentBinding;
       if (!binding) {
-        emit({ type: 'error', code: 'unavailable', message: '这个项目的云端 Agent 还没接上文档服务,请稍后再试。' });
+        emit({ type: 'error', code: 'unavailable', message: 'The Cloud Agent for this project is not yet connected to the document service, please try again later.' });
         return;
       }
       let systemPrompt = '';
@@ -1551,17 +1551,17 @@ export function createAgentInstance(env) {
       // 判据和下面真正派活那一处(`isMediaFrames` 那一支)用同一个条件,免得提示词说的和实际能做的不一致
       systemPrompt += `\n\n${cloudSystemNote({ look: !!prerenderPost, provided: accountProvided, collectDelegate: accountTools?.delegateDownload?.() === true, mediaFrames: !!accountProvided?.has('see_frames') })}`;
       if (typeof o.script === 'string' && o.script.trim()) {
-        systemPrompt += `\n\n## 本片剧本(用户写的,每一步都要照它来)\n\n${o.script.trim()}\n\n` +
-          '这是这条片子的主线。做任何编排、配字幕、配动效的决定时都要对照它;' +
-          '和它冲突的做法不要做,拿不准就按剧本写的来。剧本没写到的细节可以自己判断。';
+        systemPrompt += `\n\n## Script for this video (written by the user; follow it at every step)\n\n${o.script.trim()}\n\n` +
+          'This is the storyline of this video. Check against it for every decision about arrangement, captions and motion graphics; ' +
+          'Do not do anything that conflicts with it, and when unsure follow what the script says. Details the script does not cover are yours to decide.';
       }
       let finalPrompt = String(o.prompt ?? '');
       const library = Array.isArray(o.library) ? o.library.filter((a) => a && typeof a === 'object').slice(0, 500) : [];
       if (library.length > 0) {
-        const kindName = { video: '视频', image: '图片', audio: '音频' };
-        finalPrompt += '\n\n素材库(已导入,工具里用 mediaId;卡片参数里引用填 cardUrl):\n' + library.map((a) => {
+        const kindName = { video: 'Video', image: 'Image', audio: 'audio' };
+        finalPrompt += '\n\nMedia library (already imported; use mediaId in tools, use cardUrl for references in card parameters):\n' + library.map((a) => {
           let line = `- [${kindName[a.kind] || a.kind}] ${a.name} · mediaId ${a.id} · cardUrl ${a.url}`;
-          if (a.durationSec && a.kind !== 'image') line += ` · 时长 ${a.durationSec} 秒`;
+          if (a.durationSec && a.kind !== 'image') line += ` · duration ${a.durationSec} seconds`;
           return line;
         }).join('\n');
       }
@@ -1576,8 +1576,8 @@ export function createAgentInstance(env) {
       const apiConfig = o.apiConfig && typeof o.apiConfig === 'object' ? o.apiConfig : {};
       agentSessions.register(agentId, { type: 'api', vendor: String(apiConfig.vendor || 'api'), role: 'main', creativity: normalizeCreativity(o.creativity) });
       const { level, source } = agentSessions.creativityOf(agentId, currentProjectCreativity());
-      finalPrompt += `\n\n你的 Agent 对话 ID:${agentId};创造力等级「${CREATIVITY_LABEL[level]}」(${source}):` +
-        `${CREATIVITY_HINT[level]}。越级的工具调用会被拒绝,被拒就停下告诉用户,不要绕`;
+      finalPrompt += `\n\nYour Agent chat ID: ${agentId}; creativity level "${CREATIVITY_LABEL[level]}" (${source}): ` +
+        `${CREATIVITY_HINT[level]}. Tool calls above your level will be rejected; if rejected, stop and tell the user, do not work around it`;
 
       emit({ type: 'run', runId: o.runId });
       // 单个项目副本的上限(契约第 11 节):太大的项目不服务。先等副本就绪(这个对话的连接此时登记)
@@ -1587,11 +1587,11 @@ export function createAgentInstance(env) {
         const project = binding.side.link.replica.project;
         const max = Number(o.maxProjectBytes) > 0 ? Number(o.maxProjectBytes) : 16 * 1024 * 1024;
         if (project && JSON.stringify(project).length > max) {
-          emit({ type: 'error', code: 'too-large', message: '项目太大,云端 Agent 暂不支持这个项目。请在电脑上的 PromptCut 里使用。' });
+          emit({ type: 'error', code: 'too-large', message: 'The project is too large and the Cloud Agent does not support it yet. Please use PromptCut on your computer.' });
           return;
         }
       } catch (err) {
-        emit({ type: 'error', code: 'unavailable', message: `云端 Agent 连不上这个项目的文档服务:${String(err?.message ?? err).slice(0, 200)}` });
+        emit({ type: 'error', code: 'unavailable', message: `The Cloud Agent cannot reach this project's document service: ${String(err?.message ?? err).slice(0, 200)}` });
         return;
       }
       const api = await import(new URL('../../runners/api.mjs', import.meta.url).href);
@@ -1657,7 +1657,7 @@ export function createAgentInstance(env) {
             const timeout = new Promise((resolve) => {
               timer = setTimeout(() => {
                 agentLog('agent.tool-timeout', { tool: name });
-                resolve({ ok: false, timeout: true, error: `${name} 超过 ${Math.round(limitMs / 1000)} 秒没有做完,已不再等它。它可能没有生效,请先读一次项目确认再继续。` });
+                resolve({ ok: false, timeout: true, error: `${name} did not finish within ${Math.round(limitMs / 1000)} seconds; no longer waiting for it. It may not have taken effect, so read the project once to confirm before continuing.` });
               }, limitMs);
               timer.unref?.();
             });

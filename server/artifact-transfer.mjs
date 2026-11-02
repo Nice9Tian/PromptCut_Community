@@ -81,13 +81,13 @@ async function settleLimited(items, limit, work) {
 /** 清单 JSON 的字节数;超上限就抛 `code: 'result-too-large'`(不截断,契约第 11 节第 7 条) */
 export function assertResultSize(result) {
   const bytes = Buffer.byteLength(JSON.stringify(result), 'utf8');
-  if (bytes > RESULT_MAX_BYTES) throw fail(`任务清单 ${bytes} 字节,超过上限 ${RESULT_MAX_BYTES}`, { code: 'result-too-large', bytes, retryable: false });
+  if (bytes > RESULT_MAX_BYTES) throw fail(`Task manifest is ${bytes} bytes, over the limit of ${RESULT_MAX_BYTES}`, { code: 'result-too-large', bytes, retryable: false });
   return bytes;
 }
 
 const rangeOf = task => {
   const from = task?.range?.from, to = task?.range?.to;
-  if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < from) throw fail(`任务的 range 不对:${JSON.stringify(task?.range ?? null)}`, { retryable: false });
+  if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < from) throw fail(`Invalid task range: ${JSON.stringify(task?.range ?? null)}`, { retryable: false });
   return { from, to };
 };
 
@@ -376,7 +376,7 @@ function canvasHeavyOf(task, opts) {
 /** 按「哈希 → 文件」读块:给 `pushResult` 的 `readBlob` */
 const blobReader = files => async hash => {
   const file = files.get(hash);
-  if (!file) throw fail(`清单里没有块 ${hash}`);
+  if (!file) throw fail(`The manifest has no chunk ${hash}`);
   // 轨道流的块在列清单时已经读进内存(见 `collectStreamResult`):推的就是列清单那一刻的字节
   if (Buffer.isBuffer(file)) return file;
   return fs.readFile(file);
@@ -388,10 +388,10 @@ const blobReader = files => async hash => {
  * 回 `{ result, readBlob }`(第 11 节第 1 条)。
  */
 export async function collectSnapshotResult(pipeline, task, opts = {}) {
-  if (task?.kind !== undefined && task.kind !== 'snapshot') throw fail(`不是快照任务:${task.kind}`, { retryable: false });
+  if (task?.kind !== undefined && task.kind !== 'snapshot') throw fail(`Not a snapshot task: ${task.kind}`, { retryable: false });
   // C6.4:推送队列的段自带落盘位置(`unit.dirKey` / `unit.entryKey`),经 `opts.location` 给进来,不再按 E.9 反算
   const loc = checkLocation(opts?.location, task?.tier) ?? snapshotLocation(task);
-  if (!loc) throw fail(`认不出快照任务的落盘位置:${task?.resultKey}(本地档要 input.entryKey、input.contentKey、requires.envFingerprint)`, { code: 'unknown-location', retryable: false });
+  if (!loc) throw fail(`Cannot determine where to store the snapshot task result: ${task?.resultKey} (a local tier needs input.entryKey, input.contentKey, requires.envFingerprint)`, { code: 'unknown-location', retryable: false });
   const { from, to } = rangeOf(task);
   // c10a 第 9 节:这一批的预渲染小尺寸可能还在生成(`frame-pipeline.mjs` 的 `writeSmallSnapshots`),等它落定再列清单 ——
   // 两档一起推才算这一段做完。这里只是等,不渲染(没有在生成的就立刻往下走)
@@ -524,12 +524,12 @@ async function readStreamManifest(pipeline, key) {
  */
 export async function collectStreamResult(pipeline, task, opts = {}) {
   void opts;
-  if (task?.kind !== undefined && task.kind !== 'stream') throw fail(`不是轨道流任务:${task.kind}`, { retryable: false });
+  if (task?.kind !== undefined && task.kind !== 'stream') throw fail(`Not a track stream task: ${task.kind}`, { retryable: false });
   const key = task?.resultKey;
-  if (!KEY_RE.test(String(key))) throw fail(`轨道流任务的 resultKey 不对:${key}`, { retryable: false });
+  if (!KEY_RE.test(String(key))) throw fail(`Invalid resultKey for track stream task: ${key}`, { retryable: false });
   const { from, to } = rangeOf(task);
   const manifest = await readStreamManifest(pipeline, key);
-  if (!manifest) throw fail(`本机没有这条流的清单:${key}`, { code: 'no-stream-manifest' });
+  if (!manifest) throw fail(`This machine has no manifest for this stream: ${key}`, { code: 'no-stream-manifest' });
   const dir = streamDir(pipeline, key);
   const files = new Map();
   const inits = {};
@@ -595,8 +595,8 @@ function resultBlocks(result) {
   } else if (result?.kind === 'stream') {
     for (const meta of Object.values(result.inits ?? {})) out.set(meta.hash, { ns: PX_NS, hash: meta.hash, ext: 'mp4' });
     for (const seg of Object.values(result.segments ?? {})) out.set(seg.hash, { ns: PX_NS, hash: seg.hash, ext: 'm4s' });
-  } else throw fail(`不认识的清单 kind:${result?.kind}`, { retryable: false });
-  for (const { hash } of out.values()) if (!KEY_RE.test(String(hash))) throw fail(`清单里的哈希不对:${hash}`, { retryable: false });
+  } else throw fail(`Unknown manifest kind: ${result?.kind}`, { retryable: false });
+  for (const { hash } of out.values()) if (!KEY_RE.test(String(hash))) throw fail(`Invalid hash in the manifest: ${hash}`, { retryable: false });
   return [...out.values()];
 }
 
@@ -606,8 +606,8 @@ function resultBlocks(result) {
  * `onBlock({ blocks, pushed, bytes })`(可选,诊断):开推时报一次总块数,之后每推完一块报一次(`bytes` 是已推块的字节数)。
  */
 export async function pushResult(client, result, readBlob, { onBlock } = {}) {
-  if (!result || result.v !== RESULT_VERSION) throw fail('不认识的任务清单', { retryable: false });
-  if (typeof readBlob !== 'function') throw fail('pushResult 需要 readBlob', { retryable: false });
+  if (!result || result.v !== RESULT_VERSION) throw fail('Unknown task manifest', { retryable: false });
+  if (typeof readBlob !== 'function') throw fail('pushResult requires readBlob', { retryable: false });
   assertResultSize(result);
   const blocks = resultBlocks(result);
   let uploaded = 0, skipped = 0, bytesDone = 0;
@@ -615,9 +615,9 @@ export async function pushResult(client, result, readBlob, { onBlock } = {}) {
   tell();
   const settled = await settleLimited(blocks, TRANSFER_CONCURRENCY, async ({ ns, hash, ext }) => {
     const bytes = await readBlob(hash);
-    if (!bytes || sha256(bytes) !== hash) throw fail(`块 ${hash} 的内容和清单对不上(本机文件在清单之后被改过)`);
+    if (!bytes || sha256(bytes) !== hash) throw fail(`Content of chunk ${hash} does not match the manifest (the local file was modified after the manifest)`);
     const put = await client.put(ns, Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes), { ext });
-    if (put?.hash && put.hash !== hash) throw fail(`素材服务回的哈希 ${put.hash} 和清单里的 ${hash} 不同`);
+    if (put?.hash && put.hash !== hash) throw fail(`The hash ${put.hash} returned by the asset service differs from ${hash} in the manifest`);
     if (put?.uploaded) uploaded++; else skipped++;
     bytesDone += bytes.length;
     tell();
@@ -1072,15 +1072,15 @@ export function createAssetSink({ pipeline, client, content = null, log = () => 
  * ======================================================================== */
 
 function checkSnapshotResult(result) {
-  const bad = why => { throw fail(`快照清单不对:${why}`, { retryable: false }); };
+  const bad = why => { throw fail(`Invalid snapshot manifest: ${why}`, { retryable: false }); };
   if (result.tier !== 'shared' && result.tier !== 'local') bad(`tier = ${result.tier}`);
   if (!safeKey(result.dirKey)) bad('dirKey');
-  if (result.tier === 'local' && !safeKey(result.entryKey)) bad('本地档缺 entryKey');
+  if (result.tier === 'local' && !safeKey(result.entryKey)) bad('Local tier is missing entryKey');
   const { from, to } = result.range ?? {};
   if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < from) bad('range');
   if (!Array.isArray(result.frames)) bad('frames');
   for (const item of result.frames) {
-    if (!Array.isArray(item) || !Number.isInteger(item[0]) || item[0] < from || item[0] > to || !KEY_RE.test(String(item[1]))) bad(`帧 ${JSON.stringify(item)}`);
+    if (!Array.isArray(item) || !Number.isInteger(item[0]) || item[0] < from || item[0] > to || !KEY_RE.test(String(item[1]))) bad(`Frame ${JSON.stringify(item)}`);
   }
 }
 
@@ -1096,17 +1096,17 @@ function checkSnapshotResult(result) {
  *         即 `interactive: false` 或已关闭)就抛 `code: 'no-stream-producer'`。
  */
 export async function applyResult(pipeline, client, result) {
-  if (!result || typeof result !== 'object' || result.v !== RESULT_VERSION) throw fail('不认识的任务清单', { retryable: false });
+  if (!result || typeof result !== 'object' || result.v !== RESULT_VERSION) throw fail('Unknown task manifest', { retryable: false });
   if (result.kind === 'snapshot') return applySnapshotResult(pipeline, client, result);
   if (result.kind === 'stream') return applyStreamResult(pipeline, client, result);
-  throw fail(`不认识的清单 kind:${result.kind}`, { retryable: false });
+  throw fail(`Unknown manifest kind: ${result.kind}`, { retryable: false });
 }
 
 async function fetchBlock(client, ns, hash) {
   const buf = await client.get(ns, hash);
-  if (buf === null || buf === undefined) throw fail(`块 ${ns}/${hash} 不在素材服务上`, { code: 'blob-missing', status: 404 });
+  if (buf === null || buf === undefined) throw fail(`Chunk ${ns}/${hash} is not on the asset service`, { code: 'blob-missing', status: 404 });
   const bytes = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
-  if (sha256(bytes) !== hash) throw fail(`块 ${ns}/${hash} 的内容和哈希对不上`, { code: 'blob-corrupt' });
+  if (sha256(bytes) !== hash) throw fail(`Content of chunk ${ns}/${hash} does not match its hash`, { code: 'blob-corrupt' });
   return bytes;
 }
 
@@ -1136,7 +1136,7 @@ async function applySnapshotResult(pipeline, client, result) {
       fetched++;
       const html = item.value.toString('utf8');
       // 快照按 UTF-8 文本落盘(`commitSnapshots` 的口径):解码再编码回不到原字节的块不收
-      if (!Buffer.from(html, 'utf8').equals(item.value)) { failure ||= fail(`快照块 ${batch[k][1]} 不是合法的 UTF-8`, { code: 'blob-corrupt' }); return; }
+      if (!Buffer.from(html, 'utf8').equals(item.value)) { failure ||= fail(`Snapshot chunk ${batch[k][1]} is not valid UTF-8`, { code: 'blob-corrupt' }); return; }
       items.push({ localFrame: batch[k][0], html });
     });
     if (items.length) {
@@ -1237,7 +1237,7 @@ async function applyPngFrames(pipeline, client, result) {
 
 async function applyStreamResult(pipeline, client, result) {
   const producer = typeof pipeline?.streamProducer === 'function' ? pipeline.streamProducer() : null;
-  if (!producer) throw fail('这个预渲染实例没有轨道流生产者(interactive: false 或已关闭),收不了流清单', { code: 'no-stream-producer', retryable: false });
+  if (!producer) throw fail('This prerender instance has no track stream producer (interactive: false or already closed), so it cannot receive stream manifests', { code: 'no-stream-producer', retryable: false });
   const needs = await producer.adoptionNeeds(result);
   const wanted = new Set(needs.segments);
   const settled = await settleLimited(needs.hashes, TRANSFER_CONCURRENCY, hash => fetchBlock(client, PX_NS, hash));

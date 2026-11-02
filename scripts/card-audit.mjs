@@ -52,7 +52,7 @@ async function run() {
     });
     await p.close();
   } catch (e) {
-    console.error('获取卡片列表失败:', e);
+    console.error('Failed to fetch card list:', e);
     await plainBrowser.close();
     await bakery.close();
     process.exitCode = 1;
@@ -69,7 +69,7 @@ async function run() {
 
   try {
     for (const id of cardIds) {
-      console.log(`\n=== 审计卡片: ${id} ===`);
+      console.log(`\n=== Auditing card: ${id} ===`);
       const res = { 
         id, 
         posPass: false, posMaxDiff: 0, posMatch: 0, posTotal: K_FRAMES.length, 
@@ -220,7 +220,7 @@ async function run() {
         res.structCount = signatures.size;
 
       } catch (e) {
-        console.error(`审计卡片 ${id} 时出错:`, e);
+        console.error(`Error while auditing card ${id}:`, e);
         res.error = e.message;
         exitCode = 1;
       } finally {
@@ -233,7 +233,7 @@ async function run() {
     fs.writeFileSync('out/card-audit.json', JSON.stringify(results, null, 2));
 
     console.log('\n========================================================================================');
-    console.log('卡片 id'.padEnd(20) + ' | 位置无关 x/y | 确定性 x/y | 结构种数 | 挂载请求数 | canvas/svg/video/img');
+    console.log('card id'.padEnd(20) + ' | position-independent x/y | deterministic x/y | structure variants | mount requests | canvas/svg/video/img');
     console.log('---------------------|--------------|------------|----------|------------|-----------------------');
     
     const failures = [];
@@ -253,9 +253,9 @@ async function run() {
       console.log(`${r.id.padEnd(20)} | ${posStr} | ${detStr} | ${strCount} | ${reqCount} | ${carr}`);
 
       let reason = [];
-      if (!r.posPass) reason.push(`位置无关失败(最大差值 ${r.posMaxDiff})`);
-      if (!r.detPass) reason.push(`确定性失败(最大差值 ${r.detMaxDiff})`);
-      if (r.structCount > 1) reason.push(`结构不稳定(${r.structCount}种签名)`);
+      if (!r.posPass) reason.push(`position independence failed (max diff ${r.posMaxDiff})`);
+      if (!r.detPass) reason.push(`determinism failed (max diff ${r.detMaxDiff})`);
+      if (r.structCount > 1) reason.push(`unstable structure (${r.structCount} signatures)`);
       
       if (reason.length > 0) failures.push({ id: r.id, reason: reason.join('; ') });
       
@@ -265,7 +265,7 @@ async function run() {
     }
 
     if (withReqs.length > 0) {
-      console.log('\n以下卡片在挂载时发起了网络请求:');
+      console.log('\nThese cards made network requests on mount:');
       withReqs.forEach(w => {
         console.log(`- [${w.id}]`);
         w.reqs.forEach(req => console.log(`    ${req}`));
@@ -273,10 +273,10 @@ async function run() {
     }
 
     if (failures.length > 0) {
-      console.log('\n不通过清单:');
+      console.log('\nFailing list:');
       failures.forEach(f => console.log(`- [${f.id}] ${f.reason}`));
     } else {
-      console.log('\n所有卡片全部通过！');
+      console.log('\nAll cards passed!');
     }
 
     process.exitCode = exitCode;
@@ -288,6 +288,6 @@ async function run() {
 }
 
 run().catch(e => {
-  console.error('审计脚本发生未捕获的错误:', e);
+  console.error('Audit script hit an uncaught error:', e);
   process.exitCode = 1;
 });

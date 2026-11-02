@@ -11,7 +11,7 @@
  */
 export function validateProgressReport(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    return { ok: false, error: '参数应为对象' };
+    return { ok: false, error: 'Arguments must be an object' };
   }
 
   // 报错里写「收到的是什么」:typeof 会把 null 和数组都说成 object,Agent 看了没法照着改
@@ -19,26 +19,26 @@ export function validateProgressReport(input) {
   const given = (v) => v !== undefined && v !== null;
 
   if (given(input.final) && typeof input.final !== 'boolean') {
-    return { ok: false, error: `字段 final 应该是布尔值 (boolean),收到的是 ${kindOf(input.final)}` };
+    return { ok: false, error: `Field final must be a boolean, got ${kindOf(input.final)}` };
   }
 
   if (given(input.blocked) && typeof input.blocked !== 'boolean') {
-    return { ok: false, error: `字段 blocked 应该是布尔值 (boolean),收到的是 ${kindOf(input.blocked)}` };
+    return { ok: false, error: `Field blocked must be a boolean, got ${kindOf(input.blocked)}` };
   }
 
   if (given(input.stage) && typeof input.stage !== 'string') {
-    return { ok: false, error: `字段 stage 应该是字符串 (string),收到的是 ${kindOf(input.stage)}` };
+    return { ok: false, error: `Field stage must be a string, got ${kindOf(input.stage)}` };
   }
 
   const normalizeArray = (arr, name) => {
     if (!given(arr)) return { value: [] };
     if (!Array.isArray(arr)) {
-      return { error: `字段 ${name} 应该是字符串数组 (array),收到的是 ${kindOf(arr)}` };
+      return { error: `Field ${name} must be an array of strings, got ${kindOf(arr)}` };
     }
     const result = [];
     for (const [idx, item] of arr.entries()) {
       if (typeof item !== 'string') {
-        return { error: `字段 ${name} 的第 ${idx + 1} 条应为字符串,收到的是 ${kindOf(item)}` };
+        return { error: `Item ${idx + 1} of field ${name} must be a string, got ${kindOf(item)}` };
       }
       const trimmed = item.trim();
       if (trimmed !== '') {
@@ -61,7 +61,7 @@ export function validateProgressReport(input) {
   const problems = problemsRes.value;
 
   if (!done.length && !todo.length && !problems.length && typeof input.final !== 'boolean') {
-    return { ok: false, error: '报告是空的:done / todo / problems 至少填一条,或者给出 final(true 表示整个任务收尾)' };
+    return { ok: false, error: 'The report is empty: fill in at least one of done / todo / problems, or give final (true means the whole task is finished)' };
   }
 
   /*

@@ -184,7 +184,7 @@ export function createSharedHttp({
   services = null,
 }) {
   const servicesOf = typeof services === 'function' ? services : () => services;
-  if (mode !== 'hosted' && mode !== 'lan') throw new TypeError("createSharedHttp: mode 只能是 'hosted' 或 'lan'");
+  if (mode !== 'hosted' && mode !== 'lan') throw new TypeError("createSharedHttp: mode must be 'hosted' or 'lan'");
   const storeOf = typeof store === 'function' ? store : () => store;
   /** 来源 → 最近一小时建项目的时刻 */
   const creates = new Map();

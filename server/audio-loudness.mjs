@@ -8,6 +8,7 @@
 import { spawn } from "node:child_process";
 import { measureArgs, timelineMeasureArgs, parseEbur128 } from "./audio-measure.mjs";
 import { AssetSourceError, hasAudioStreamAsync } from "./audio-source.mjs";
+import { tr } from "./i18n.mjs";
 
 /**
  * @param {object} p
@@ -26,8 +27,8 @@ export async function measureLoudness({ body, resolveSource, ffmpeg, ffprobe, ha
   try {
     if (body.scope === "media" || body.scope === "clip") {
       const file = await resolveSource(body.media);
-      if (!file) return { status: 400, body: { ok: false, error: "素材文件不存在" } };
-      if (!(await hasAudio(file, ffprobe))) return { status: 400, body: { ok: false, error: "该文件没有音频流" } };
+      if (!file) return { status: 400, body: { ok: false, error: tr("Media file does not exist") } };
+      if (!(await hasAudio(file, ffprobe))) return { status: 400, body: { ok: false, error: tr("This file has no audio stream") } };
       args = measureArgs({
         file,
         offset: body.scope === "clip" ? body.offset : undefined,
@@ -42,13 +43,13 @@ export async function measureLoudness({ body, resolveSource, ffmpeg, ffprobe, ha
         const file = await resolveSource(e.media);
         if (!file || !(await hasAudio(file, ffprobe))) {
           skipped++;
-          skippedNames.push(e.media?.name || e.clipId || "未知片段");
+          skippedNames.push(e.media?.name || e.clipId || tr("Unknown clip"));
           continue;
         }
         validEntries.push({ ...e, file });
       }
       if (skipped > 0) {
-        notes.push("有 " + skipped + " 段没有音频流或文件不存在，已跳过：" + skippedNames.join("、"));
+        notes.push(tr("Skipped ") + skipped + tr(" clips with no audio stream or missing file: ") + skippedNames.join(", "));
       }
       if (validEntries.length === 0) {
         return {
@@ -64,7 +65,7 @@ export async function measureLoudness({ body, resolveSource, ffmpeg, ffprobe, ha
       }
       args = timelineMeasureArgs(validEntries, Number(body.duration) > 0 ? Number(body.duration) : undefined);
     } else {
-      return { status: 400, body: { ok: false, error: "无效的 scope" } };
+      return { status: 400, body: { ok: false, error: tr("Invalid scope") } };
     }
   } catch (e) {
     if (e instanceof AssetSourceError) return { status: 502, body: { ok: false, error: e.message } };
@@ -81,13 +82,13 @@ export async function measureLoudness({ body, resolveSource, ffmpeg, ffprobe, ha
     const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs);
     child.on("error", (e) => {
       clearTimeout(timer);
-      done(500, { ok: false, error: "启动 ffmpeg 失败: " + e.message });
+      done(500, { ok: false, error: tr("Failed to start ffmpeg: ") + e.message });
     });
     child.on("close", (code) => {
       clearTimeout(timer);
-      if (timedOut) return done(500, { ok: false, error: "分析超时" });
+      if (timedOut) return done(500, { ok: false, error: tr("Analysis timed out") });
       if (code !== 0 && !stderr.includes("Parsed_ebur128")) {
-        return done(500, { ok: false, error: "ffmpeg 运行失败: " + stderr.slice(-300) });
+        return done(500, { ok: false, error: tr("ffmpeg failed to run: ") + stderr.slice(-300) });
       }
       try {
         const parsed = parseEbur128(stderr);
@@ -95,7 +96,7 @@ export async function measureLoudness({ body, resolveSource, ffmpeg, ffprobe, ha
         if (notes.length > 0) parsed.notes = (parsed.notes || []).concat(notes);
         done(200, { ok: true, ...parsed });
       } catch (err) {
-        done(500, { ok: false, error: "解析输出失败: " + String(err) });
+        done(500, { ok: false, error: tr("Failed to parse output: ") + String(err) });
       }
     });
   });

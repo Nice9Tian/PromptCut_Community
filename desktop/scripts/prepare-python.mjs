@@ -137,7 +137,7 @@ function copyDir(src, dst) {
 
 async function download(url, dest) {
   const res = await fetch(url, { redirect: 'follow' });
-  if (!res.ok) throw new Error(`下载失败 ${res.status} ${res.statusText}: ${url}`);
+  if (!res.ok) throw new Error(`Download failed ${res.status} ${res.statusText}: ${url}`);
   const buf = Buffer.from(await res.arrayBuffer());
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   const tmp = `${dest}.part`;
@@ -163,19 +163,19 @@ function readZipEntries(buf) {
       break;
     }
   }
-  if (eocd < 0) throw new Error('不是有效的 zip:找不到 EOCD 记录');
+  if (eocd < 0) throw new Error('Not a valid zip: EOCD record not found');
 
   const count = buf.readUInt16LE(eocd + 10);
   const cenSize = buf.readUInt32LE(eocd + 12);
   const cenOffset = buf.readUInt32LE(eocd + 16);
   if (cenOffset === 0xffffffff || cenSize === 0xffffffff || count === 0xffff) {
-    throw new Error('不支持 zip64 格式的压缩包');
+    throw new Error('zip64 archives are not supported');
   }
 
   const entries = [];
   let p = cenOffset;
   for (let i = 0; i < count; i++) {
-    if (buf.readUInt32LE(p) !== CEN_SIG) throw new Error(`zip 中央目录第 ${i} 项签名错误`);
+    if (buf.readUInt32LE(p) !== CEN_SIG) throw new Error(`Bad signature in zip central directory entry ${i}`);
     const method = buf.readUInt16LE(p + 10);
     const crc = buf.readUInt32LE(p + 16);
     const compSize = buf.readUInt32LE(p + 20);
@@ -188,7 +188,7 @@ function readZipEntries(buf) {
     entries.push({ name, method, crc, compSize, rawSize, localOffset });
     p += 46 + nameLen + extraLen + commentLen;
   }
-  if (p > cenOffset + cenSize + 4) throw new Error('zip 中央目录长度与 EOCD 记录不符');
+  if (p > cenOffset + cenSize + 4) throw new Error('zip central directory length does not match the EOCD record');
   return entries;
 }
 
@@ -196,7 +196,7 @@ function readZipEntries(buf) {
 function readZipEntryData(buf, entry) {
   const lo = entry.localOffset;
   if (buf.readUInt32LE(lo) !== 0x04034b50) {
-    throw new Error(`zip 局部头签名错误:${entry.name}`);
+    throw new Error(`Bad zip local header signature: ${entry.name}`);
   }
   const nameLen = buf.readUInt16LE(lo + 26);
   const extraLen = buf.readUInt16LE(lo + 28);
@@ -204,7 +204,7 @@ function readZipEntryData(buf, entry) {
   const raw = buf.subarray(start, start + entry.compSize);
   if (entry.method === 0) return Buffer.from(raw);
   if (entry.method === 8) return zlib.inflateRawSync(raw);
-  throw new Error(`不支持的 zip 压缩方式 ${entry.method}:${entry.name}`);
+  throw new Error(`Unsupported zip compression method ${entry.method}: ${entry.name}`);
 }
 
 /** 校验缓存里的 zip 能不能正常解压(条目完整 + CRC 对得上)。 */
@@ -232,7 +232,7 @@ function extractZip(file, destDir) {
   for (const e of entries) {
     const rel = e.name.replace(/\\/g, '/');
     if (rel.startsWith('/') || rel.split('/').includes('..')) {
-      throw new Error(`zip 里有越界路径:${e.name}`);
+      throw new Error(`Out-of-bounds path in zip: ${e.name}`);
     }
     const out = path.join(destDir, rel);
     if (rel.endsWith('/')) {
@@ -278,7 +278,7 @@ const PY_PRINT_PATH = 'import sys, json; print(json.dumps(sys.path))';
 function pythonPathList(extraEnv = {}, args = ['-I']) {
   const r = runPython([...args, '-c', PY_PRINT_PATH], extraEnv);
   if (r.status !== 0) {
-    throw new Error(`解释器启动失败(退出码 ${r.status}):${(r.stderr || '').trim()}`);
+    throw new Error(`Interpreter failed to start (exit code ${r.status}): ${(r.stderr || '').trim()}`);
   }
   return JSON.parse(r.stdout.trim());
 }
@@ -295,19 +295,19 @@ async function ensureZip() {
   const zipPath = path.join(CACHE_DIR, PYTHON_ZIP_NAME);
   if (fs.existsSync(zipPath)) {
     if (zipIsValid(zipPath)) {
-      log(`[1/6] 复用缓存的 embeddable 包 ${PYTHON_ZIP_NAME}(${mb(fs.statSync(zipPath).size)})`);
+      log(`[1/6] Reusing cached embeddable package ${PYTHON_ZIP_NAME} (${mb(fs.statSync(zipPath).size)})`);
       return zipPath;
     }
-    warn(`缓存里的 ${PYTHON_ZIP_NAME} 解压校验不通过,删掉重下`);
+    warn(`Extraction check failed for ${PYTHON_ZIP_NAME} in the cache, deleting and re-downloading`);
     fs.rmSync(zipPath, { force: true });
   }
-  log(`[1/6] 下载 ${PYTHON_ZIP_URL}`);
+  log(`[1/6] Downloading ${PYTHON_ZIP_URL}`);
   const size = await download(PYTHON_ZIP_URL, zipPath);
   if (!zipIsValid(zipPath)) {
     fs.rmSync(zipPath, { force: true });
-    throw new Error('下载到的 zip 无法解压,已删除;请重试');
+    throw new Error('The downloaded zip cannot be extracted and was deleted; please retry');
   }
-  log(`      下载完成:${mb(size)}`);
+  log(`      Download complete: ${mb(size)}`);
   return zipPath;
 }
 
@@ -315,15 +315,15 @@ function extractRuntime(zipPath) {
   // 幂等:重装前清掉旧的解释器,避免上一版残留文件
   rimraf(RUNTIME_PY);
   const n = extractZip(zipPath, RUNTIME_PY);
-  if (!fs.existsSync(PYTHON_EXE)) throw new Error('解压后没找到 python.exe');
+  if (!fs.existsSync(PYTHON_EXE)) throw new Error('python.exe not found after extraction');
   const size = dirSize(RUNTIME_PY);
-  log(`[2/6] 解压到 runtime/python(${n} 个条目,解压后 ${mb(size)})`);
+  log(`[2/6] Extracting to runtime/python (${n} entries, ${mb(size)} after extraction)`);
   return size;
 }
 
 function pthFile() {
   const hits = fs.readdirSync(RUNTIME_PY).filter((f) => f.endsWith('._pth'));
-  if (hits.length !== 1) throw new Error(`runtime/python 下应有且仅有一个 ._pth,实际 ${hits.length} 个`);
+  if (hits.length !== 1) throw new Error(`runtime/python should contain exactly one ._pth, found ${hits.length}`);
   return path.join(RUNTIME_PY, hits[0]);
 }
 
@@ -351,24 +351,24 @@ function patchPth() {
   out.push('import site');
   const content = out.join('\r\n') + '\r\n';
   fs.writeFileSync(file, content, 'utf8');
-  log(`[3/6] 改写 ${path.basename(file)}:${out.filter(Boolean).join(' | ')}`);
+  log(`[3/6] Rewriting ${path.basename(file)}: ${out.filter(Boolean).join(' | ')}`);
 }
 
 async function installPip() {
   const getPip = path.join(CACHE_DIR, GET_PIP_NAME);
   if (fs.existsSync(getPip) && fs.statSync(getPip).size > 100_000) {
-    log(`[4/6] 复用缓存的 get-pip.py(${mb(fs.statSync(getPip).size)})`);
+    log(`[4/6] Reusing cached get-pip.py (${mb(fs.statSync(getPip).size)})`);
   } else {
-    log(`[4/6] 下载 ${GET_PIP_URL}`);
+    log(`[4/6] Downloading ${GET_PIP_URL}`);
     await download(GET_PIP_URL, getPip);
   }
   const r = runPython([getPip, '--no-warn-script-location']);
   if (r.status !== 0) {
-    throw new Error(`get-pip.py 执行失败(退出码 ${r.status}):\n${r.stdout}\n${r.stderr}`);
+    throw new Error(`get-pip.py failed (exit code ${r.status}):\n${r.stdout}\n${r.stderr}`);
   }
   const v = pipVersion();
   installPylibsHook();
-  log(`      pip 装好了:${v}(带 pip 后 ${mb(dirSize(RUNTIME_PY))})`);
+  log(`      pip installed: ${v} (after adding pip: ${mb(dirSize(RUNTIME_PY))})`);
   return v;
 }
 
@@ -392,7 +392,7 @@ function installPylibsHook() {
     ';_d=[os.path.abspath(p) for p in _v.split(os.pathsep) if p and os.path.isdir(p)]' +
     ';[sys.path.append(p) for p in _d if p not in sys.path]\n';
   fs.writeFileSync(file, line, 'utf8');
-  log(`      site 钩子:${path.basename(file)}(PROMPTCUT_PYLIBS → sys.path)`);
+  log(`      site hook: ${path.basename(file)} (PROMPTCUT_PYLIBS → sys.path)`);
 }
 
 function pipVersion() {
@@ -415,20 +415,20 @@ function copyRequirements() {
   if (!fs.existsSync(srcDir)) return [];
   const files = fs.readdirSync(srcDir).filter((f) => /^requirements-.+.txt$/.test(f));
   for (const f of files) fs.copyFileSync(path.join(srcDir, f), path.join(RUNTIME_PY, f));
-  if (files.length) log(`[5/6] 复制 ${files.join(', ')} → runtime/python`);
-  else warn('[5/6] python/ 下没有 requirements-*.txt,STT 引擎将无法安装。');
+  if (files.length) log(`[5/6] Copying ${files.join(', ')} → runtime/python`);
+  else warn('[5/6] No requirements-*.txt under python/, the speech-to-text engine cannot be installed.');
   return files;
 }
 
 function copySttPackage() {
   if (!fs.existsSync(STT_SRC)) {
-    warn(`[5/6] python/promptcut_stt/ 还不存在,跳过复制。`);
-    warn(`      STT 包由另一处维护;它就位后重跑本脚本即可。--check 会把这种情况判为「未就绪」。`);
+    warn(`[5/6] python/promptcut_stt/ does not exist yet, skipping copy.`);
+    warn(`      The STT package is maintained elsewhere; rerun this script once it is in place. --check treats this case as "not ready".`);
     return false;
   }
   rimraf(STT_DST);
   copyDir(STT_SRC, STT_DST);
-  log(`[5/6] 复制 promptcut_stt → Lib/site-packages(${mb(dirSize(STT_DST))})`);
+  log(`[5/6] Copying promptcut_stt → Lib/site-packages (${mb(dirSize(STT_DST))})`);
   return true;
 }
 
@@ -452,9 +452,9 @@ function copyPromptcutPackages() {
     const dst = path.join(SITE_PACKAGES, pkg);
     rimraf(dst);
     copyDir(path.join(srcDir, pkg), dst);
-    log(`[5/6] 复制 ${pkg} → Lib/site-packages(${mb(dirSize(dst))})`);
+    log(`[5/6] Copying ${pkg} → Lib/site-packages (${mb(dirSize(dst))})`);
   }
-  if (!pkgs.length) warn('[5/6] python/ 下没有别的 promptcut_* 包。');
+  if (!pkgs.length) warn('[5/6] No other promptcut_* packages under python/.');
   return pkgs;
 }
 
@@ -475,30 +475,30 @@ const BASE_LIB_PROBE = 'import numpy, PIL, sys; assert numpy.__version__ == "2.2
 function installBaseLibs() {
   const probe = runPython(['-I', '-c', BASE_LIB_PROBE]);
   if (probe.status === 0) {
-    log(`[5/6] 基础库已就位:${probe.stdout.trim()}`);
+    log(`[5/6] Base libraries already in place: ${probe.stdout.trim()}`);
     return true;
   }
-  log(`[5/6] 安装基础库 ${BASE_LIBS.join(', ')} → Lib/site-packages`);
+  log(`[5/6] Installing base libraries ${BASE_LIBS.join(', ')} → Lib/site-packages`);
   const r = runPython(
     ['-I', '-m', 'pip', 'install', '--only-binary=:all:', '--upgrade', '--no-warn-script-location',
      '--target', SITE_PACKAGES, ...BASE_LIBS],
     {}, { stdio: 'inherit' },
   );
   if (r.status !== 0) {
-    throw new Error('基础卡片依赖安装失败，不能交付缺少 numpy/Pillow 的运行时。');
+    throw new Error('Base card dependency installation failed; cannot ship a runtime without numpy/Pillow.');
   }
   const after = runPython(['-I', '-c', BASE_LIB_PROBE]);
   if (after.status !== 0) {
-    throw new Error('基础依赖安装后校验失败，检查 ._pth 的 site-packages 配置。');
+    throw new Error('Verification failed after installing base dependencies; check the site-packages setting in ._pth.');
   }
-  log(`[5/6] ${after.stdout.trim()} 就位`);
+  log(`[5/6] ${after.stdout.trim()} in place`);
   return true;
 }
 
 function writeVersionFile(pip) {
   const data = { version: PYTHON_VERSION, pip, builtAt: new Date().toISOString() };
   fs.writeFileSync(VERSION_FILE, JSON.stringify(data, null, 2) + '\n', 'utf8');
-  log(`[6/6] 写 PYTHON-VERSION.json:${JSON.stringify(data)}`);
+  log(`[6/6] Writing PYTHON-VERSION.json: ${JSON.stringify(data)}`);
   return data;
 }
 
@@ -514,17 +514,17 @@ function readVersionFile() {
 
 /** 隔离验证:sys.path 不得越界;并检测 PYTHONPATH 的实际作用。 */
 function verifyIsolation() {
-  if (!fs.existsSync(PYTHON_EXE)) fail('内置 Python 未就绪,先跑 node desktop/scripts/prepare-python.mjs');
+  if (!fs.existsSync(PYTHON_EXE)) fail('Bundled Python is not ready, run node desktop/scripts/prepare-python.mjs first');
 
-  log('--- 隔离验证 ---');
+  log('--- Isolation check ---');
   const base = pythonPathList();
   log(`sys.path (python.exe -I):`);
-  for (const p of base) log(`  ${p || '(空串)'}`);
+  for (const p of base) log(`  ${p || '(empty string)'}`);
   const stray = base.filter((p) => !underRuntime(p));
   if (stray.length) {
-    fail(`sys.path 里出现了内置目录以外的路径,隔离失败:\n  ${stray.join('\n  ')}`);
+    fail(`sys.path contains paths outside the bundled directory, isolation failed:\n  ${stray.join('\n  ')}`);
   }
-  log(`OK:${base.length} 个条目全部位于 ${RUNTIME_PY} 之内,没有系统 Python 的目录。`);
+  log(`OK: all ${base.length} entries are inside ${RUNTIME_PY}, no system Python directories.`);
 
   // 第二步:库目录探针。分别看 PROMPTCUT_PYLIBS(site 钩子)和 PYTHONPATH 谁真的生效。
   rimraf(ISOLATION_PROBE);
@@ -537,28 +537,28 @@ function verifyIsolation() {
     const viaPythonPathNoI = pythonPathList({ PYTHONPATH: ISOLATION_PROBE }, []);
 
     log('');
-    log(`sys.path (PROMPTCUT_PYLIBS=${ISOLATION_PROBE},带 -I):`);
-    for (const p of viaPylibs) log(`  ${p || '(空串)'}`);
-    log(`  → PROMPTCUT_PYLIBS 生效:${hit(viaPylibs) ? '是' : '否'}`);
-    log(`  → PYTHONPATH 生效(带 -I):${hit(viaPythonPath) ? '是' : '否'}`);
-    log(`  → PYTHONPATH 生效(不带 -I):${hit(viaPythonPathNoI) ? '是' : '否'}`);
+    log(`sys.path (PROMPTCUT_PYLIBS=${ISOLATION_PROBE}, with -I):`);
+    for (const p of viaPylibs) log(`  ${p || '(empty string)'}`);
+    log(`  → PROMPTCUT_PYLIBS effective: ${hit(viaPylibs) ? 'yes' : 'no'}`);
+    log(`  → PYTHONPATH effective (with -I): ${hit(viaPythonPath) ? 'yes' : 'no'}`);
+    log(`  → PYTHONPATH effective (without -I): ${hit(viaPythonPathNoI) ? 'yes' : 'no'}`);
 
     const strayEnv = [...viaPylibs, ...viaPythonPath, ...viaPythonPathNoI].filter(
       (p) => !underRuntime(p) && !hit([p]),
     );
     if (strayEnv.length) {
-      fail(`带环境变量时 sys.path 仍不得引入其他路径,实际出现:\n  ${strayEnv.join('\n  ')}`);
+      fail(`With the environment variable set, sys.path must still not gain other paths, but found:\n  ${strayEnv.join('\n  ')}`);
     }
 
     if (!hit(viaPylibs)) {
-      fail('PROMPTCUT_PYLIBS 没能进 sys.path;site 钩子 promptcut_pylibs.pth 可能缺失或写坏了。');
+      fail('PROMPTCUT_PYLIBS did not make it into sys.path; the site hook promptcut_pylibs.pth may be missing or corrupted.');
     }
     log('');
-    log('结论:PROMPTCUT_PYLIBS 指向的目录会出现在 sys.path 末尾 —— 这就是在线装的库');
-    log('      被找到的机制(靠 site-packages 里的 promptcut_pylibs.pth,不是靠 PYTHONPATH)。');
+    log('Conclusion: the directory PROMPTCUT_PYLIBS points to appears at the end of sys.path, which is where libraries installed online go');
+    log('      How it gets found: via promptcut_pylibs.pth in site-packages, not via PYTHONPATH.');
     if (!hit(viaPythonPath) && !hit(viaPythonPathNoI)) {
-      log('      PYTHONPATH 对内置解释器无效:._pth 文件完全接管路径计算,而 -I(= -E -s)');
-      log('      本身也会忽略 PYTHON* 变量。这一条与预期一致,不是故障。');
+      log('      PYTHONPATH has no effect on the bundled interpreter: the ._pth file takes over path computation entirely, and -I (= -E -s)');
+      log('      also ignores PYTHON* variables. This is expected, not a fault.');
     }
     return { pylibs: hit(viaPylibs), pythonpath: hit(viaPythonPath) };
   } finally {
@@ -568,9 +568,9 @@ function verifyIsolation() {
 
 /** 在线装库验证:pip install --target 到临时目录,再 import。 */
 function verifyPipInstall() {
-  if (!fs.existsSync(PYTHON_EXE)) fail('内置 Python 未就绪,先跑 node desktop/scripts/prepare-python.mjs');
+  if (!fs.existsSync(PYTHON_EXE)) fail('Bundled Python is not ready, run node desktop/scripts/prepare-python.mjs first');
 
-  log('--- 在线装库验证(faster-whisper) ---');
+  log('--- Online library install check (faster-whisper) ---');
   rimraf(PYLIBS_TEST);
   fs.mkdirSync(PYLIBS_TEST, { recursive: true });
   try {
@@ -582,28 +582,28 @@ function verifyPipInstall() {
     process.stdout.write(r.stdout);
     if (r.status !== 0) {
       process.stderr.write(r.stderr);
-      fail(`pip install 失败(退出码 ${r.status})`);
+      fail(`pip install failed (exit code ${r.status})`);
     }
     const size = dirSize(PYLIBS_TEST);
-    log(`安装耗时:${secs.toFixed(1)} 秒`);
-    log(`目录体积:${mb(size)}(${PYLIBS_TEST})`);
+    log(`Install took: ${secs.toFixed(1)} s`);
+    log(`Directory size: ${mb(size)} (${PYLIBS_TEST})`);
 
     const tail = (r2) => (r2.stderr || '').trim().split('\n').pop();
     const IMPORT = 'import faster_whisper, sys; print(faster_whisper.__version__)';
 
     // 正路:PROMPTCUT_PYLIBS(site 钩子)
     const viaPylibs = runPython(['-I', '-c', IMPORT], { PROMPTCUT_PYLIBS: PYLIBS_TEST });
-    log(`import(靠 PROMPTCUT_PYLIBS):${viaPylibs.status === 0 ? viaPylibs.stdout.trim() : '失败 — ' + tail(viaPylibs)}`);
+    log(`import (via PROMPTCUT_PYLIBS): ${viaPylibs.status === 0 ? viaPylibs.stdout.trim() : 'failed: ' + tail(viaPylibs)}`);
 
     // 对照:PYTHONPATH(内置解释器上无效,记录下来备查)
     const viaEnv = runPython(['-I', '-c', IMPORT], { PYTHONPATH: PYLIBS_TEST });
-    log(`import(靠 PYTHONPATH):${viaEnv.status === 0 ? viaEnv.stdout.trim() : '失败(预期如此) — ' + tail(viaEnv)}`);
+    log(`import (via PYTHONPATH): ${viaEnv.status === 0 ? viaEnv.stdout.trim() : 'failed (expected): ' + tail(viaEnv)}`);
 
-    if (viaPylibs.status !== 0) fail('PROMPTCUT_PYLIBS 路径下 import 不到 faster_whisper');
+    if (viaPylibs.status !== 0) fail('Cannot import faster_whisper under the PROMPTCUT_PYLIBS path');
     return { secs, size, version: viaPylibs.stdout.trim() };
   } finally {
     rimraf(PYLIBS_TEST); // 只是验证产物,用完就删
-    log(`已删除临时目录 ${PYLIBS_TEST}`);
+    log(`Deleted temp directory ${PYLIBS_TEST}`);
   }
 }
 
@@ -613,41 +613,41 @@ function check() {
   const add = (name, ok, detail) => results.push({ name, ok, detail });
 
   const hasExe = fs.existsSync(PYTHON_EXE);
-  add('python.exe 存在', hasExe, PYTHON_EXE);
+  add('python.exe exists', hasExe, PYTHON_EXE);
 
   if (hasExe) {
     const base = runPython(['-I', '-c', BASE_LIB_PROBE]);
-    add('numpy/Pillow 固定版本', base.status === 0, (base.stdout || base.stderr || '').trim());
+    add('numpy/Pillow pinned versions', base.status === 0, (base.stdout || base.stderr || '').trim());
     const r = runPython(['-I', '-c', 'import sys,pip;print(sys.version)']);
     add('import sys, pip', r.status === 0, r.status === 0 ? r.stdout.trim().replace(/\s+/g, ' ') : (r.stderr || '').trim().split('\n').pop());
 
-    const s = runPython(['-I', '-c', 'import promptcut_stt;print(getattr(promptcut_stt,"__version__","(无 __version__)"))']);
+    const s = runPython(['-I', '-c', 'import promptcut_stt;print(getattr(promptcut_stt,"__version__","(no __version__)"))']);
     add(
       'import promptcut_stt',
       s.status === 0,
-      s.status === 0 ? s.stdout.trim() : 'STT 包未就绪 — ' + (s.stderr || '').trim().split('\n').pop(),
+      s.status === 0 ? s.stdout.trim() : 'STT package not ready: ' + (s.stderr || '').trim().split('\n').pop(),
     );
   } else {
-    add('import sys, pip', false, '跳过(没有 python.exe)');
-    add('import promptcut_stt', false, '跳过(没有 python.exe)');
+    add('import sys, pip', false, 'skipped (no python.exe)');
+    add('import promptcut_stt', false, 'skipped (no python.exe)');
   }
 
   const reqs = fs.existsSync(RUNTIME_PY)
     ? fs.readdirSync(RUNTIME_PY).filter((f) => /^requirements-.+.txt$/.test(f))
     : [];
   add(
-    'requirements-*.txt 就位',
+    'requirements-*.txt in place',
     reqs.length > 0,
-    reqs.length ? reqs.join(', ') + ' @ ' + RUNTIME_PY : 'runtime/python 下没有,装好的软件将无法安装 STT 引擎',
+    reqs.length ? reqs.join(', ') + ' @ ' + RUNTIME_PY : 'not found under runtime/python, so the installed app will be unable to install the STT engine',
   );
 
   const v = readVersionFile();
-  add('PYTHON-VERSION.json', !!v && v.version === PYTHON_VERSION, v ? JSON.stringify(v) : '缺失');
+  add('PYTHON-VERSION.json', !!v && v.version === PYTHON_VERSION, v ? JSON.stringify(v) : 'missing');
 
   log('--- prepare-python --check ---');
   for (const r of results) log(`${r.ok ? '  OK ' : '  NG '} ${r.name}: ${r.detail}`);
   const allOk = results.every((r) => r.ok);
-  log(allOk ? '内置 Python 已就绪。' : '内置 Python 未就绪,跑 node desktop/scripts/prepare-python.mjs 组装。');
+  log(allOk ? 'Bundled Python is ready.' : 'Bundled Python is not ready, run node desktop/scripts/prepare-python.mjs to assemble it.');
   process.exit(allOk ? 0 : 1);
 }
 
@@ -667,10 +667,10 @@ async function build({ force }) {
   let zipSize = null;
 
   if (ready) {
-    log(`[1/6] 已有 Python ${PYTHON_VERSION} + pip ${pip},跳过下载`);
-    log('[2/6] 跳过解压(--force 可强制重装)');
-    log('[3/6] 跳过 ._pth 改写');
-    log('[4/6] 跳过 pip 安装');
+    log(`[1/6] Python ${PYTHON_VERSION} + pip ${pip} already present, skipping download`);
+    log('[2/6] Skipping extraction (--force to force a reinstall)');
+    log('[3/6] Skipping ._pth rewrite');
+    log('[4/6] Skipping pip install');
     installPylibsHook(); // 便宜且自愈,每次都重新生成
   } else {
     const zipPath = await ensureZip();
@@ -687,14 +687,14 @@ async function build({ force }) {
   writeVersionFile(pip);
 
   log('');
-  log('体积小结:');
-  if (zipSize !== null) log(`  下载的 zip        ${mb(zipSize)}`);
+  log('Size summary:');
+  if (zipSize !== null) log(`  downloaded zip    ${mb(zipSize)}`);
   log(`  runtime/python    ${mb(dirSize(RUNTIME_PY))}`);
   log('');
 
   verifyIsolation();
   log('');
-  log('内置 Python 组装完成。校验:node desktop/scripts/prepare-python.mjs --check');
+  log('Bundled Python assembled. Verify with: node desktop/scripts/prepare-python.mjs --check');
 }
 
 async function main() {

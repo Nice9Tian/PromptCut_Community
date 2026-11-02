@@ -33,7 +33,7 @@ export const WORKFLOW_TOOL_NAMES = Object.freeze(['background_job_status', 'auto
 export const WORKFLOW_JOB_KIND = 'workflow.auto';
 export const WORKFLOW_STAGES = Object.freeze(['transcribe', 'shots', 'subjects', 'compose', 'prerender']);
 export const WORKFLOW_STAGE_LABEL = Object.freeze({
-  transcribe: '语音转写', shots: '镜头识别', subjects: '主体识别', compose: '生成字幕与卡片', prerender: '发布预渲染任务',
+  transcribe: 'Speech-to-text', shots: 'Shot detection', subjects: 'subject detection', compose: 'Generate captions and cards', prerender: 'Publish prerender job',
 });
 
 export const WORKFLOW_DEFAULTS = Object.freeze({
@@ -66,32 +66,32 @@ const BAND = Object.freeze({
 });
 
 const JOB_LABEL = Object.freeze({
-  'stt.transcribe': '语音转写', 'stt.install': '语音识别引擎安装', 'shots.detect': '镜头识别',
-  'subject.detect': '主体识别', 'subject.install': '主体识别拓展安装', 'track.points': '运动追踪',
-  'track.install': '运动追踪拓展安装', [WORKFLOW_JOB_KIND]: '一键流程',
+  'stt.transcribe': 'Speech-to-text', 'stt.install': 'Speech-to-text engine install', 'shots.detect': 'Shot detection',
+  'subject.detect': 'subject detection', 'subject.install': 'Subject detection extension install', 'track.points': 'Motion tracking',
+  'track.install': 'Motion tracking extension install', [WORKFLOW_JOB_KIND]: 'one-click workflow',
 });
 
 /** 各包写的、账本里没有人话的那些码的通用说法;各包自己的说法(转写、工作区索引里的 message、宿主注入的)优先 */
 export const WORKFLOW_ERROR_TEXT = Object.freeze({
-  FENCE_CANCELLED: '这一轮对话的权限被收回(设为私有、被停止或 Agent 被关闭),作业已取消。',
-  INTERRUPTED_ON_RESTART: 'Agent 服务重启时这个作业正在跑,已中断;可以重新发起。',
-  SERVICE_CLOSING: 'Agent 服务关闭时这个作业正在跑,已中断;可以重新发起。',
-  SHOTS_CANCELLED: '镜头识别已被取消。',
-  SUBJECT_CANCELLED: '主体检测已被取消。',
-  WORKFLOW_CANCELLED: '一键流程被取消了。',
-  STAGE_UNAVAILABLE: '这一阶段依赖的能力在这台云节点上没有就绪,一键流程停在这里。',
-  STAGE_FAILED: '这一阶段没有做成,一键流程停在这里。',
-  STAGE_TIMEOUT: '这一阶段等了太久没有结果,一键流程停在这里(后台作业可能还在跑,用 background_job_status 看)。',
-  STAGE_CANCELLED: '这一阶段的后台作业被取消了,一键流程停在这里。',
-  STAGE_INTERRUPTED: '这一阶段的后台作业被中断了,一键流程停在这里。',
-  EMPTY_TRANSCRIPT: '文字稿是空的,没有可配卡的内容。',
-  MEDIA_MISSING: '素材不在项目里了。',
-  PROJECT_CHANGED: '项目在这期间一直被别人改动,字幕和卡片没有写入(没有半截提交)。可以重新调用 auto_workflow。',
-  COMMIT_FAILED: '字幕和卡片没能写进项目(没有半截提交)。',
-  PUBLISH_FAILED: '字幕和卡片已经写进项目,但发布预渲染任务没有成功。',
+  FENCE_CANCELLED: 'Permission for this chat turn was revoked (set to private, stopped, or the Agent was turned off); the job was cancelled.',
+  INTERRUPTED_ON_RESTART: 'This job was running when the Agent service restarted and was interrupted; you can start it again.',
+  SERVICE_CLOSING: 'This job was running when the Agent service shut down and was interrupted; you can start it again.',
+  SHOTS_CANCELLED: 'Shot detection was cancelled.',
+  SUBJECT_CANCELLED: 'Subject detection was cancelled.',
+  WORKFLOW_CANCELLED: 'The one-click workflow was cancelled.',
+  STAGE_UNAVAILABLE: 'A capability this stage depends on is not ready on this cloud node; the one-click workflow stopped here.',
+  STAGE_FAILED: 'This stage did not succeed; the one-click workflow stopped here.',
+  STAGE_TIMEOUT: 'This stage waited too long without a result; the one-click workflow stopped here (the background job may still be running, check with background_job_status).',
+  STAGE_CANCELLED: 'The background job for this stage was cancelled; the one-click workflow stopped here.',
+  STAGE_INTERRUPTED: 'The background job for this stage was interrupted; the one-click workflow stopped here.',
+  EMPTY_TRANSCRIPT: 'The transcript is empty; there is no content to build cards from.',
+  MEDIA_MISSING: 'The media is no longer in the project.',
+  PROJECT_CHANGED: 'The project kept being modified by others in the meantime, so captions and cards were not written (no partial commit). You can call auto_workflow again.',
+  COMMIT_FAILED: 'Captions and cards could not be written to the project (no partial commit).',
+  PUBLISH_FAILED: 'Captions and cards were written to the project, but publishing the prerender job failed.',
 });
 
-const STATE_TEXT = Object.freeze({ queued: '排队中', running: '进行中', done: '已完成', error: '失败', cancelled: '已取消', interrupted: '被中断' });
+const STATE_TEXT = Object.freeze({ queued: 'Queued', running: 'In progress', done: 'Completed', error: 'failed', cancelled: 'Cancelled', interrupted: 'Interrupted' });
 const TERMINAL = new Set(['done', 'error', 'cancelled', 'interrupted']);
 const BAD_JOB = new Set(['error', 'cancelled', 'interrupted']);
 const MEDIA_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,199}$/;
@@ -330,12 +330,12 @@ export function createWorkflowTools({
   resources, jobs, workspace, providers = {}, project, prerender = null, kernel = null, errorTexts = {},
   limits: limitsIn = {}, now = Date.now, log = () => {},
 } = {}) {
-  const miss = (name) => new WorkflowToolError(`一键流程没有配置全(缺 ${name})。`, { code: 'workflow-unconfigured', status: 503 });
-  if (typeof resources?.authorize !== 'function' || typeof resources?.register !== 'function') throw miss('运行资源登记器');
-  if (!['start', 'update', 'get', 'checkpointRetained'].every((k) => typeof jobs?.[k] === 'function')) throw miss('作业表');
-  if (typeof workspace !== 'function') throw miss('工作区');
-  if (!['getMedia', 'getTimeline', 'applyEdits'].every((k) => typeof project?.[k] === 'function')) throw miss('项目接口');
-  if (typeof kernel?.getCard !== 'function') throw miss('内核函数 getCard(宿主要经 ssr-host 载入缝取来注入 kernel)');
+  const miss = (name) => new WorkflowToolError(`The one-click workflow is not fully configured (missing ${name}).`, { code: 'workflow-unconfigured', status: 503 });
+  if (typeof resources?.authorize !== 'function' || typeof resources?.register !== 'function') throw miss('run resource registrar');
+  if (!['start', 'update', 'get', 'checkpointRetained'].every((k) => typeof jobs?.[k] === 'function')) throw miss('job table');
+  if (typeof workspace !== 'function') throw miss('workspace');
+  if (!['getMedia', 'getTimeline', 'applyEdits'].every((k) => typeof project?.[k] === 'function')) throw miss('project interface');
+  if (typeof kernel?.getCard !== 'function') throw miss('kernel function getCard (the host must fetch it through the ssr-host load seam and inject it into kernel)');
   const cfg = { ...WORKFLOW_DEFAULTS, ...limitsIn };
   const optional = new Set(cfg.optionalStages ?? []);
   const handles = new Set(WORKFLOW_TOOL_NAMES);
@@ -355,9 +355,9 @@ export function createWorkflowTools({
   /* ---------------------------------------------------------------- 授权 */
 
   const forbidden = (action) => new WorkflowToolError(
-    action === 'write' ? '这一轮没有改项目的权限(只读成员、被停止或已转私有),一键流程没有开始。' : '这一轮没有读项目的权限。',
+    action === 'write' ? 'This round has no permission to modify the project (read-only member, stopped, or switched to private), so the one-click workflow did not start.' : 'This round has no permission to read the project.',
     { code: 'workflow-forbidden', status: 403 });
-  const upstream = () => new WorkflowToolError('文档服务暂时联系不上,没法确认这一轮的权限。稍后再试。', { code: 'authority-unavailable', status: 503 });
+  const upstream = () => new WorkflowToolError('The document service is temporarily unreachable, so permissions for this turn cannot be confirmed. Try again later.', { code: 'authority-unavailable', status: 503 });
   /** 把授权/账本层的错误统一成给模型的错误:403 与 503 分开,不透露更多 */
   function authError(error, action) {
     if (error instanceof WorkflowToolError) return error;
@@ -369,10 +369,10 @@ export function createWorkflowTools({
     if (error instanceof WorkflowToolError) return error;
     if (AUTH_UNAVAILABLE.has(error?.code)) return upstream();
     if (REVOKED.test(String(error?.code ?? '')) || error?.name === 'ToolContextError' || error?.name === 'RunResourceError') return forbidden(action);
-    return new WorkflowToolError(`一键流程没能登记作业(${error?.code ?? '账本不可用'})。`, { code: 'workflow-job', status: 500 });
+    return new WorkflowToolError(`The one-click workflow could not register the job (${error?.code ?? 'ledger unavailable'}).`, { code: 'workflow-job', status: 500 });
   }
   const authorize = async (context, action) => {
-    if (closing) throw new WorkflowToolError('云端 Agent 服务正在关闭,一键流程不再接新活。', { code: 'workflow-closed', status: 503 });
+    if (closing) throw new WorkflowToolError('The Cloud Agent service is shutting down, and the one-click workflow no longer accepts new work.', { code: 'workflow-closed', status: 503 });
     try { return await resources.authorize(context, action); } catch (error) { throw authError(error, action); }
   };
 
@@ -420,7 +420,7 @@ export function createWorkflowTools({
       const row = readIndexFile(ws, file).find((r) => r.jobId === ledger.jobId);
       if (typeof row?.message === 'string' && row.message) return row.message;
     }
-    return WORKFLOW_ERROR_TEXT[code] ?? `作业没有成功(${code})。`;
+    return WORKFLOW_ERROR_TEXT[code] ?? `The job did not succeed (${code}).`;
   }
 
   /** 账本里非终态、却比这个提供方起来得早、又不是本进程在跑的:上一次进程留下的,按「被中断」说 */
@@ -453,8 +453,8 @@ export function createWorkflowTools({
       out.errorCode = view.errorCode ?? null;
       const reason = reasonOf({ ...view, errorCode: view.errorCode ?? (view.state === 'interrupted' ? 'INTERRUPTED_ON_RESTART' : null) }, ws);
       if (reason) out.error = reason;
-      if (view.state === 'interrupted') out.hint = '这个作业被中断了,不会自己接着跑;需要的话重新发起(一键流程会复用已经做完的阶段)。';
-      if (view.state === 'error') out.hint = '失败了就不要继续轮询这个作业号。';
+      if (view.state === 'interrupted') out.hint = 'This job was interrupted and will not resume on its own; start it again if needed (the one-click workflow reuses stages that are already done).';
+      if (view.state === 'error') out.hint = 'If it failed, do not keep polling this job ID.';
     }
     return out;
   }
@@ -474,27 +474,27 @@ export function createWorkflowTools({
   }
 
   function phaseText(view, stages) {
-    if (view.state === 'done') return '已完成';
-    if (view.state === 'cancelled') return '已取消';
-    if (view.state === 'interrupted') return '被中断';
-    if (view.state === 'error') return '失败';
+    if (view.state === 'done') return 'Completed';
+    if (view.state === 'cancelled') return 'Cancelled';
+    if (view.state === 'interrupted') return 'Interrupted';
+    if (view.state === 'error') return 'failed';
     const current = stages.find((s) => s.status === 'running') ?? stages.find((s) => s.stage === view.stage);
-    const names = { transcribe: '转写中', shots: '镜头识别中', subjects: '主体识别中', compose: '配卡中', prerender: '发布预渲染中' };
-    return current ? (names[current.stage] ?? '进行中') : '排队中';
+    const names = { transcribe: 'Transcribing', shots: 'Detecting shots', subjects: 'Detecting subjects', compose: 'Composing cards', prerender: 'Publishing prerender' };
+    return current ? (names[current.stage] ?? 'In progress') : 'Queued';
   }
 
   /** 一键流程整体的说法:失败/中断/取消时点明停在哪一阶段、后面没做 */
   function workflowError(view, stages, row) {
     if (view.state === 'done' || !TERMINAL.has(view.state)) return null;
     const at = stages.find((s) => ['error', 'unavailable', 'cancelled', 'interrupted'].includes(s.status)) ?? stages.find((s) => s.stage === view.stage);
-    const where = at ? `「${at.label}」阶段` : '某个阶段';
+    const where = at ? `the "${at.label}" stage` : 'a stage';
     const notDone = stages.filter((s) => s.status === 'pending').map((s) => s.label);
-    const after = notDone.length ? `后面的阶段(${notDone.join('、')})没有做。` : '';
+    const after = notDone.length ? `Later stages (${notDone.join(', ')}) were not run. ` : '';
     let why = at?.reason;
     if (!why && view.errorCode && WORKFLOW_ERROR_TEXT[view.errorCode]) why = WORKFLOW_ERROR_TEXT[view.errorCode];
-    const verb = { error: '失败了', cancelled: '被取消了', interrupted: '被中断了' }[view.state];
-    const resume = view.state === 'error' && at?.status === 'unavailable' ? '' : '重新调用 auto_workflow 可以接着做:已经做完的阶段(文字稿、镜头、主体)会直接复用。';
-    return `一键流程在${where}${verb}${why ? `:${why}` : '。'}${after}${resume}`.replace(/。。/g, '。');
+    const verb = { error: 'failed', cancelled: 'was cancelled', interrupted: 'was interrupted' }[view.state];
+    const resume = view.state === 'error' && at?.status === 'unavailable' ? '' : 'Call auto_workflow again to continue: stages that are already done (transcript, shots, subjects) will be reused directly.';
+    return `The one-click workflow at ${where} ${verb}${why ? `:${why}` : '.'}${after}${resume}`.replace(/\.\./g, '.');
   }
 
   function workflowView(ledger, row) {
@@ -522,7 +522,7 @@ export function createWorkflowTools({
       if (gaps.length) out.notDone = gaps;
     }
     if (done && !ok && row?.committed) out.committed = true;
-    if (view.state === 'interrupted') out.hint = '一键流程被中断了。重新调用 auto_workflow 可以接着做:已经做完的阶段(文字稿、镜头、主体)会直接复用,不重做。';
+    if (view.state === 'interrupted') out.hint = 'The one-click workflow was interrupted. Call auto_workflow again to continue: stages that are already done (transcript, shots, subjects) will be reused directly, not redone.';
     return out;
   }
 
@@ -552,7 +552,7 @@ export function createWorkflowTools({
       const started = await jobs.start(context, WORKFLOW_JOB_KIND, digest, `${base}-${attempt}`.slice(0, 128));
       if (!BAD_JOB.has(started.state)) return started;
     }
-    throw new WorkflowToolError('同样的请求已经失败多次,换个参数或稍后再试。', { code: 'too-many-attempts', status: 429 });
+    throw new WorkflowToolError('The same request has already failed several times; change the parameters or try again later.', { code: 'too-many-attempts', status: 429 });
   }
 
   /* ---------------------------------------------------------------- 阶段 */
@@ -584,7 +584,7 @@ export function createWorkflowTools({
       try { ledger = await jobs.get(job.context, childJobId); }
       catch (error) {
         if (REVOKED.test(String(error?.code ?? '')) || AUTH_UNAVAILABLE.has(error?.code)) throw new Halt('fence');
-        if (error?.code === 'job-not-found') throw new StageStop('error', 'STAGE_FAILED', '子作业在账本里找不到了。', { childJobId });
+        if (error?.code === 'job-not-found') throw new StageStop('error', 'STAGE_FAILED', 'The child job can no longer be found in the ledger.', { childJobId });
         throw error;
       }
       if (TERMINAL.has(ledger.state)) return ledger;
@@ -621,10 +621,10 @@ export function createWorkflowTools({
     if (!media) throw new StageStop('error', 'MEDIA_MISSING', WORKFLOW_ERROR_TEXT.MEDIA_MISSING);
     const skip = skipped(media);
     if (skip) return outcome('skipped', { reason: skip });
-    if (reused(media)) return outcome('reused', { reason: '项目里已经有这一步的结果,直接复用。' });
+    if (reused(media)) return outcome('reused', { reason: 'The project already has the result of this step, so it is reused directly.' });
     const provider = providers[providerKey];
     if (!provider || typeof provider.call !== 'function') {
-      return outcome('unavailable', { reason: `这台云节点没有接上${label}。` });
+      return outcome('unavailable', { reason: `This cloud node is not connected to ${label}.` });
     }
     checkHalt(job);
     let reply;
@@ -635,12 +635,12 @@ export function createWorkflowTools({
       throw new StageStop('error', 'STAGE_FAILED', String(error?.message ?? error).slice(0, 400));
     }
     if (reply?.ok === false) {
-      return outcome('unavailable', { reason: typeof reply.error === 'string' ? reply.error : `${label}在这台节点上用不了。` });
+      return outcome('unavailable', { reason: typeof reply.error === 'string' ? reply.error : `${label} is unavailable on this node.` });
     }
-    if (reply?.reused === true) return outcome('reused', { reason: '项目里已经有这一步的结果,直接复用。' });
+    if (reply?.reused === true) return outcome('reused', { reason: 'The project already has the result of this step, so it is reused directly.' });
     const childJobId = reply?.jobId;
     if (typeof childJobId !== 'string' || !JOB_ID_RE.test(childJobId)) {
-      throw new StageStop('error', 'STAGE_FAILED', `${label}没有返回作业号,不能确认它做成了。`);
+      throw new StageStop('error', 'STAGE_FAILED', `${label} did not return a job ID, so it cannot be confirmed as done.`);
     }
     job.child = { provider, jobId: childJobId };
     await recordStage(job, name, { status: 'running', childJobId });
@@ -649,26 +649,26 @@ export function createWorkflowTools({
     childVerdict(job, name, ledger, job.ws);
     // 作业说做完了:项目里确实有结果才算(没有就是提交那一步没成,不能冒充完成)
     const after = await project.getMedia(job.context, job.mediaId);
-    if (!after || !dataReady(after)) throw new StageStop('error', 'STAGE_FAILED', `${label}的作业显示完成,但项目里没有找到它的结果。`, { childJobId });
+    if (!after || !dataReady(after)) throw new StageStop('error', 'STAGE_FAILED', `The job for ${label} shows as complete, but its result was not found in the project.`, { childJobId });
     return outcome('done', { childJobId });
   }
 
   const stageRunners = {
     transcribe: (job) => perceptionStage(job, 'transcribe', {
-      providerKey: 'stt', tool: 'transcribe_media', label: '语音转写',
-      skipped: (m) => (m.kind === 'image' ? '图片没有声音。' : null),
+      providerKey: 'stt', tool: 'transcribe_media', label: 'Speech-to-text',
+      skipped: (m) => (m.kind === 'image' ? 'Images have no sound.' : null),
       reused: (m) => Array.isArray(m.transcript?.segments) && m.transcript.segments.length > 0,
       dataReady: (m) => Array.isArray(m.transcript?.segments),
     }),
     shots: (job) => perceptionStage(job, 'shots', {
-      providerKey: 'shots', tool: 'detect_shots', label: '镜头识别',
-      skipped: (m) => (m.kind !== 'video' ? `${m.kind === 'audio' ? '音频' : '这份素材'}不是视频,没有镜头可分。` : null),
+      providerKey: 'shots', tool: 'detect_shots', label: 'Shot detection',
+      skipped: (m) => (m.kind !== 'video' ? `${m.kind === 'audio' ? 'audio' : 'This media'} is not a video, so there are no shots to split.` : null),
       reused: (m) => !!m.shots,
       dataReady: (m) => !!m.shots,
     }),
     subjects: (job) => perceptionStage(job, 'subjects', {
-      providerKey: 'subject', tool: 'detect_subjects', label: '主体识别',
-      skipped: (m) => (m.kind === 'audio' ? '音频没有画面可看。' : null),
+      providerKey: 'subject', tool: 'detect_subjects', label: 'subject detection',
+      skipped: (m) => (m.kind === 'audio' ? 'Audio has no picture to view.' : null),
       reused: (m) => !!m.subjects,
       dataReady: (m) => !!m.subjects,
     }),
@@ -690,7 +690,7 @@ export function createWorkflowTools({
         transcript: media.transcript, mediaId: job.mediaId, tracks: timeline?.tracks ?? [], maxCards: job.maxCards, getCard: kernel.getCard,
       });
       if (plan.cards.length === 0 && !plan.caption) {
-        return outcome('done', { reason: '文字稿里没有落在这条素材片段范围内的内容,没有放字幕和卡片。', plan: { ...plan, cards: [] }, applied: null });
+        return outcome('done', { reason: 'The transcript has nothing within this media clip\'s range, so no captions or cards were placed.', plan: { ...plan, cards: [] }, applied: null });
       }
       const commitKey = sha(JSON.stringify({ v: 1, mediaId: job.mediaId, maxCards: job.maxCards,
         transcript: media.transcript.segments.map((s) => [s.start, s.end, s.text]) }));
@@ -711,13 +711,13 @@ export function createWorkflowTools({
           if (attempt < cfg.composeAttempts) continue;
           throw new StageStop('error', 'PROJECT_CHANGED', WORKFLOW_ERROR_TEXT.PROJECT_CHANGED);
         }
-        if (error?.code === 'media-changed' || error?.code === 'media-missing') throw new StageStop('error', 'MEDIA_MISSING', '素材在这期间被换掉或删掉了,字幕和卡片没有写入。');
+        if (error?.code === 'media-changed' || error?.code === 'media-missing') throw new StageStop('error', 'MEDIA_MISSING', 'The media was replaced or deleted in the meantime, so the captions and cards were not written.');
         if (REVOKED.test(String(error?.code ?? '')) || AUTH_UNAVAILABLE.has(error?.code) || error?.status === 403 || error?.status === 503) await revokedCheck(job);
         throw new StageStop('error', 'COMMIT_FAILED', `${WORKFLOW_ERROR_TEXT.COMMIT_FAILED}${error?.message ? `(${String(error.message).slice(0, 160)})` : ''}`);
       }
       job.row.committed = true;
       return outcome(applied?.alreadyApplied ? 'reused' : 'done', {
-        reason: applied?.alreadyApplied ? '这份文字稿的字幕和卡片已经在项目里了,没有重复放。' : undefined,
+        reason: applied?.alreadyApplied ? 'The captions and cards for this transcript are already in the project, so they were not placed again.' : undefined,
         plan, applied,
       });
     }
@@ -727,9 +727,9 @@ export function createWorkflowTools({
   /** 发布预渲染任务:云端没有页面,这一步由宿主经接缝交给 Agent 服务的预渲染发布 */
   async function prerenderStage(job) {
     const applied = job.composed?.applied;
-    if (!applied) return outcome('skipped', { reason: '这次没有写入新的字幕和卡片,没有要发布的内容。' });
+    if (!applied) return outcome('skipped', { reason: 'No new captions or cards were written this time, so there is nothing to publish.' });
     if (!prerender || typeof prerender.publish !== 'function') {
-      return outcome('unavailable', { reason: '这台节点没有接预渲染发布,字幕和卡片已经写进项目,预渲染任务没有发布。' });
+      return outcome('unavailable', { reason: 'This node is not connected to prerender publishing. The captions and cards were written to the project, but the prerender task was not published.' });
     }
     const clipIds = [...(applied.clips ?? []).filter(Boolean).map((c) => c.clipId), ...(applied.captionClipId ? [applied.captionClipId] : [])];
     checkHalt(job);
@@ -742,8 +742,8 @@ export function createWorkflowTools({
       if (REVOKED.test(String(error?.code ?? '')) || AUTH_UNAVAILABLE.has(error?.code) || error?.status === 403 || error?.status === 503) await revokedCheck(job);
       throw new StageStop('error', 'PUBLISH_FAILED', `${WORKFLOW_ERROR_TEXT.PUBLISH_FAILED}(${String(error?.message ?? error).slice(0, 160)})`);
     }
-    if (reply?.published === true) return outcome('done', { reason: '已把受影响的片段交给预渲染任务发布(攒几秒后发出,渲染结果记在对话的事件里)。', planned: reply.planned });
-    return outcome('unavailable', { reason: typeof reply?.reason === 'string' && reply.reason ? reply.reason : '这个项目现在没有可用的渲染节点,预渲染任务没有发布。' });
+    if (reply?.published === true) return outcome('done', { reason: 'Handed the affected clips to the prerender task for publishing (sent after a few seconds; render results are recorded in the chat events).', planned: reply.planned });
+    return outcome('unavailable', { reason: typeof reply?.reason === 'string' && reply.reason ? reply.reason : 'This project has no available render node right now, so the prerender task was not published.' });
   }
 
   /** 子进程/提交出了授权类的错:确认是授权真的被收回就停(Halt),不当作阶段失败 */
@@ -862,7 +862,7 @@ export function createWorkflowTools({
       if (REVOKED.test(String(error?.code ?? '')) || AUTH_UNAVAILABLE.has(error?.code) || error?.name === 'AbortError') return;
       say('agent.workflow.crashed', { message: String(error?.message ?? error).slice(0, 160) });
       const cur = WORKFLOW_STAGES.find((s) => job.row.stages[s]?.status === 'running');
-      if (cur) job.row.stages[cur] = { ...job.row.stages[cur], status: 'error', reason: '一键流程自己出了故障。', finishedAt: now() };
+      if (cur) job.row.stages[cur] = { ...job.row.stages[cur], status: 'error', reason: 'The one-click workflow itself failed.', finishedAt: now() };
       await finishRow(job, { status: 'error', errorCode: 'STAGE_FAILED' });
       await finishLedger(job, { state: 'error', errorCode: 'STAGE_FAILED' });
     } finally {
@@ -896,16 +896,16 @@ export function createWorkflowTools({
   function parseWorkflowArgs(args) {
     rejectUnknown(args, ['mediaId', 'style', 'maxCards']);
     const mediaId = args?.mediaId;
-    if (typeof mediaId !== 'string' || !MEDIA_ID_RE.test(mediaId)) throw new WorkflowToolError('mediaId 必填,是素材的 id(可用 list_media 查看)。', { code: 'bad-args' });
+    if (typeof mediaId !== 'string' || !MEDIA_ID_RE.test(mediaId)) throw new WorkflowToolError('mediaId is required and is the media id (see list_media).', { code: 'bad-args' });
     let style;
     if (args.style !== undefined && args.style !== null) {
-      if (typeof args.style !== 'string' || args.style.length > 200) throw new WorkflowToolError('style 必须是一段不超过 200 字的文字。', { code: 'bad-args' });
+      if (typeof args.style !== 'string' || args.style.length > 200) throw new WorkflowToolError('style must be text of at most 200 characters.', { code: 'bad-args' });
       style = args.style;
     }
     let maxCards = cfg.defaultMaxCards;
     if (args.maxCards !== undefined && args.maxCards !== null) {
       if (typeof args.maxCards !== 'number' || !Number.isInteger(args.maxCards) || args.maxCards < 0 || args.maxCards > cfg.maxCardsCeiling) {
-        throw new WorkflowToolError(`maxCards 必须是 0 到 ${cfg.maxCardsCeiling} 的整数。`, { code: 'bad-args' });
+        throw new WorkflowToolError(`maxCards must be an integer from 0 to ${cfg.maxCardsCeiling}.`, { code: 'bad-args' });
       }
       maxCards = args.maxCards;
     }
@@ -916,9 +916,9 @@ export function createWorkflowTools({
     const input = parseWorkflowArgs(args);
     await authorize(context, 'write');
     const media = await project.getMedia(context, input.mediaId);
-    if (!media) throw new WorkflowToolError('找不到该素材,可以用 list_media 查。', { code: 'media-not-found', status: 404 });
-    if (media.kind === 'image') throw new WorkflowToolError(`${media.name ?? '这份素材'}是图片,没有声音可转写,一键流程只做视频或音频。`, { code: 'media-kind' });
-    if (media.pending) throw new WorkflowToolError(`${media.name ?? '这份素材'}还没进素材服务(上传没完成或失败),稍后再试或重新导入。`, { code: 'media-pending' });
+    if (!media) throw new WorkflowToolError('Media not found; you can look it up with list_media.', { code: 'media-not-found', status: 404 });
+    if (media.kind === 'image') throw new WorkflowToolError(`${media.name ?? 'This media'} is an image with no sound to transcribe; the one-click workflow only handles video or audio.`, { code: 'media-kind' });
+    if (media.pending) throw new WorkflowToolError(`${media.name ?? 'This media'} is not in the asset service yet (upload incomplete or failed); try again later or re-import it.`, { code: 'media-pending' });
 
     const mediaKey = `${context.projectId}\0${input.mediaId}`;
     const digest = sha(JSON.stringify({ v: 1, mediaId: input.mediaId, style: input.style ?? null, maxCards: input.maxCards }));
@@ -927,11 +927,11 @@ export function createWorkflowTools({
       const liveJob = live.get(already);
       if (liveJob && liveJob.conversationId === context.conversationId) {
         return { jobId: already, running: true, started: false, alreadyRunning: true, mediaId: input.mediaId, phase: phaseOfLive(liveJob),
-          hint: '这条素材的一键流程已经在跑,用 auto_workflow_status 带上这个 jobId 轮询,不要重复调用。' };
+          hint: 'The one-click workflow for this media is already running. Poll with auto_workflow_status using this jobId; do not call again.' };
       }
-      throw new WorkflowToolError('这条素材正在做一键流程(别的对话发起的),等它跑完再试。', { code: 'workflow-busy', status: 409 });
+      throw new WorkflowToolError('This media is being processed by a one-click workflow (started from another chat); wait for it to finish and try again.', { code: 'workflow-busy', status: 409 });
     }
-    if (live.size + reserving >= cfg.maxRunning) throw new WorkflowToolError('节点上一键流程正在跑的太多了,过一会儿再试。', { code: 'workflow-busy', status: 429 });
+    if (live.size + reserving >= cfg.maxRunning) throw new WorkflowToolError('Too many one-click workflows are running on the node; try again in a moment.', { code: 'workflow-busy', status: 429 });
 
     byMedia.set(mediaKey, 'reserved');
     reserving += 1;
@@ -946,13 +946,13 @@ export function createWorkflowTools({
       byMedia.delete(mediaKey);
       // 刚登记的作业不留在排队里:标「被中断」,免得重启后看着像还在等
       if (started.state === 'queued') await jobs.update(context, started.jobId, 0, { state: 'interrupted', errorCode: 'SERVICE_CLOSING' }).catch(() => {});
-      throw new WorkflowToolError('云端 Agent 服务正在关闭,一键流程不再接新活。', { code: 'workflow-closed', status: 503 });
+      throw new WorkflowToolError('The Cloud Agent service is shutting down, and the one-click workflow no longer accepts new work.', { code: 'workflow-closed', status: 503 });
     }
     if (started.state !== 'queued' || live.has(started.jobId)) {
       // 同一请求的重试:作业已经开了(可能正在跑,也可能已经做完),不再开第二个
       if (byMedia.get(mediaKey) === 'reserved') byMedia.delete(mediaKey);
       return { jobId: started.jobId, running: started.state === 'queued' || started.state === 'running', started: false, mediaId: input.mediaId, state: started.state,
-        hint: '这一轮里已经发起过同样的一键流程,用 auto_workflow_status 带上这个 jobId 查,不要重复调用。' };
+        hint: 'The same one-click workflow was already started in this turn. Check it with auto_workflow_status using this jobId; do not call again.' };
     }
 
     const ws = await wsOf(context);
@@ -979,7 +979,7 @@ export function createWorkflowTools({
     waiting.abort();
     if (quick === 'slow') {
       return { jobId: started.jobId, running: true, started: true, mediaId: input.mediaId, phase: phaseOfLive(job),
-        hint: '素材较长,转写、识别和配卡已在后台继续,请用 auto_workflow_status 带上这个 jobId 轮询,done 为 true 时 result 里就是完整结果;这期间不要重复调用 auto_workflow。' };
+        hint: 'The media is long, so transcription, recognition and card arrangement continue in the background. Poll with auto_workflow_status using this jobId; when done is true, result holds the full result. Do not call auto_workflow again in the meantime.' };
     }
     const status = await statusOf(context, started.jobId);
     if (status.ok) return { ...status.result, jobId: started.jobId, running: false, stages: status.stages, ...(status.notDone ? { notDone: status.notDone } : {}) };
@@ -989,12 +989,12 @@ export function createWorkflowTools({
 
   const phaseOfLive = (job) => {
     const cur = WORKFLOW_STAGES.find((s) => job.row.stages[s]?.status === 'running');
-    return { transcribe: '转写中', shots: '镜头识别中', subjects: '主体识别中', compose: '配卡中', prerender: '发布预渲染中' }[cur] ?? '排队中';
+    return { transcribe: 'Transcribing', shots: 'Detecting shots', subjects: 'Detecting subjects', compose: 'Composing cards', prerender: 'Publishing prerender' }[cur] ?? 'Queued';
   };
 
   /* ---------------------------------------------------------------- 状态 */
 
-  const notFound = () => new WorkflowToolError('找不到该作业,可能是 jobId 错误、不属于这个对话,或系统已重启。', { code: 'job-not-found', status: 404 });
+  const notFound = () => new WorkflowToolError('Job not found: the jobId may be wrong, may not belong to this chat, or the system may have restarted.', { code: 'job-not-found', status: 404 });
 
   async function ledgerOf(context, jobId) {
     if (typeof jobId !== 'string' || !JOB_ID_RE.test(jobId)) {
@@ -1035,15 +1035,15 @@ export function createWorkflowTools({
 
   function rejectUnknown(args, allowed) {
     if (args === undefined || args === null) return;
-    if (typeof args !== 'object' || Array.isArray(args)) throw new WorkflowToolError('参数必须是一个对象。', { code: 'bad-args' });
+    if (typeof args !== 'object' || Array.isArray(args)) throw new WorkflowToolError('Arguments must be an object.', { code: 'bad-args' });
     const extra = Object.keys(args).filter((k) => !allowed.includes(k));
-    if (extra.length) throw new WorkflowToolError(`不认识的参数:${extra.join('、')}。可用的参数:${allowed.join('、')}。`, { code: 'bad-args' });
+    if (extra.length) throw new WorkflowToolError(`Unknown parameters: ${extra.join(', ')}. Available parameters: ${allowed.join(', ')}.`, { code: 'bad-args' });
   }
 
   /* ---------------------------------------------------------------- 对外 */
 
   async function call(name, args, context, options = {}) {
-    if (!handles.has(name)) throw new WorkflowToolError(`一键流程不处理 ${name}。`, { code: 'unknown-tool', status: 404 });
+    if (!handles.has(name)) throw new WorkflowToolError(`The one-click workflow does not handle ${name}.`, { code: 'unknown-tool', status: 404 });
     if (name === 'background_job_status') return backgroundJobStatus(args, context);
     if (name === 'auto_workflow_status') return autoWorkflowStatus(args, context);
     return autoWorkflow(args, context, options);

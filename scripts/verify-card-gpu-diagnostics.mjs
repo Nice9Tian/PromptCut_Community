@@ -22,11 +22,11 @@ const cardFile = path.join(process.cwd(), 'src', 'cards', 'user', `${CARD_ID}.ts
 const CARD_SOURCE = `import type { CardDef } from "../../kernel/types";
 import { glsl } from "../../render/cards/graphValues";
 
-/** 验证脚本的临时卡:故意引用一个没有声明的 uniform,用来看编译诊断有没有原样传出来。 */
+/** Temporary card for the verify script: deliberately references an undeclared uniform, to check that the compile diagnostics are passed through unchanged. */
 export const brokenShader: CardDef<Record<string, never>> = {
   id: "${CARD_ID}",
-  name: "编译诊断探针",
-  description: "故意写错 uniform 的 GLSL 素材效果卡,只给 verify-card-gpu-diagnostics 用",
+  name: "Compile diagnostics probe",
+  description: "A GLSL media effect card with a deliberately wrong uniform, used only by verify-card-gpu-diagnostics",
   source: "user",
   kind: "animation",
   frameMode: "direct",
@@ -48,7 +48,7 @@ try {
   const mod = await server.ssrLoadModule(`/src/cards/user/${CARD_ID}.tsx`);
   // ssrLoadModule 回的是模块命名空间,不是函数 —— 取出里面那个 CardDef 再包成 getCard
   const definition = Object.values(mod).find((value) => value && typeof value === 'object' && value.id === CARD_ID);
-  assert.ok(definition, `临时素材效果卡没有导出 id 为 ${CARD_ID} 的 CardDef`);
+  assert.ok(definition, `The temporary media effect card does not export a CardDef with id ${CARD_ID}`);
   const getCard = (id) => (id === definition.id ? definition : undefined);
 
   const base = { id: 'shader-error-' + randomUUID(), width: 64, height: 64, fps: 10, duration: 1, themeId: 'default', media: [], tracks: [{ id: 'main', kind: 'video', clips: [] }] };

@@ -87,18 +87,18 @@ export function createWsEndpoint({
   try {
     parsed = new URL(url);
   } catch {
-    throw new TypeError('createWsEndpoint：url 不是合法地址');
+    throw new TypeError('createWsEndpoint: url is not a valid address');
   }
   if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') {
-    throw new TypeError('createWsEndpoint：url 必须是 ws:// 或 wss://');
+    throw new TypeError('createWsEndpoint: url must be ws:// or wss://');
   }
-  if (typeof WebSocketImpl !== 'function') throw new TypeError('createWsEndpoint：没有可用的 WebSocket');
+  if (typeof WebSocketImpl !== 'function') throw new TypeError('createWsEndpoint: no WebSocket available');
   if (token !== undefined && token !== null && (typeof token !== 'string' || token === '')) {
-    throw new TypeError('createWsEndpoint：token 必须是非空字符串');
+    throw new TypeError('createWsEndpoint: token must be a non-empty string');
   }
   if (protocolsOf !== undefined && protocolsOf !== null) {
-    if (typeof protocolsOf !== 'function') throw new TypeError('createWsEndpoint：protocols 必须是函数');
-    if (token) throw new TypeError('createWsEndpoint：protocols 与 token 不能同时给');
+    if (typeof protocolsOf !== 'function') throw new TypeError('createWsEndpoint: protocols must be a function');
+    if (token) throw new TypeError('createWsEndpoint: protocols and token cannot both be given');
   }
 
   const policy = { ...BACKOFF_DEFAULTS, ...(backoff ?? {}) };
@@ -153,7 +153,7 @@ export function createWsEndpoint({
     Promise.resolve(got).then((list) => {
       pending = false;
       if (closed) return;
-      if (!Array.isArray(list) || list.some((p) => typeof p !== 'string')) throw new TypeError('protocols() 必须回字符串数组');
+      if (!Array.isArray(list) || list.some((p) => typeof p !== 'string')) throw new TypeError('protocols() must return an array of strings');
       open(list);
     }).catch((error) => {
       pending = false;

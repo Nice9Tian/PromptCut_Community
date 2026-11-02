@@ -105,28 +105,28 @@ export function isIdArray(arr) {
  * @param {unknown} ops
  */
 export function checkOps(ops) {
-  if (!Array.isArray(ops)) throw new OpError('bad-op', -1, 'ops 必须是数组');
+  if (!Array.isArray(ops)) throw new OpError('bad-op', -1, 'ops must be an array');
   const parsed = [];
   ops.forEach((op, i) => {
-    if (!isObj(op)) throw new OpError('bad-op', i, '每条操作必须是对象');
-    if (!OP_NAMES.includes(op.op)) throw new OpError('bad-op', i, `op 只能是 ${OP_NAMES.join(' / ')}`);
+    if (!isObj(op)) throw new OpError('bad-op', i, 'Each operation must be an object');
+    if (!OP_NAMES.includes(op.op)) throw new OpError('bad-op', i, `op must be one of ${OP_NAMES.join(' / ')}`);
     const segs = parsePath(op.path);
-    if (segs === null) throw new OpError('bad-op', i, 'path 必须是空串或以 / 开头的 JSON 指针');
+    if (segs === null) throw new OpError('bad-op', i, 'path must be an empty string or a JSON pointer starting with /');
     switch (op.op) {
       case 'set':
-        if (!Object.hasOwn(op, 'value') || op.value === undefined) throw new OpError('bad-op', i, 'set 缺少 value');
-        if (segs.length === 0 && !isObj(op.value)) throw new OpError('bad-op', i, '根替换的 value 必须是普通对象');
+        if (!Object.hasOwn(op, 'value') || op.value === undefined) throw new OpError('bad-op', i, 'set is missing value');
+        if (segs.length === 0 && !isObj(op.value)) throw new OpError('bad-op', i, 'The value of a root replacement must be a plain object');
         break;
       case 'remove':
-        if (segs.length === 0) throw new OpError('bad-op', i, '不能 remove 根');
+        if (segs.length === 0) throw new OpError('bad-op', i, 'Cannot remove the root');
         break;
       case 'insert':
-        if (!isObj(op.value) || !isIdValue(op.value.id)) throw new OpError('bad-op', i, 'insert 的 value 必须是带非空字符串 id 的对象');
-        if (!isIndex(op.index)) throw new OpError('bad-op', i, 'insert 的 index 必须是非负整数');
+        if (!isObj(op.value) || !isIdValue(op.value.id)) throw new OpError('bad-op', i, 'The value of insert must be an object with a non-empty string id');
+        if (!isIndex(op.index)) throw new OpError('bad-op', i, 'The index of insert must be a non-negative integer');
         break;
       case 'move':
-        if (segs.length === 0 || segs[segs.length - 1].id === null) throw new OpError('bad-op', i, 'move 的 path 必须以 @<id> 结尾');
-        if (!isIndex(op.index)) throw new OpError('bad-op', i, 'move 的 index 必须是非负整数');
+        if (segs.length === 0 || segs[segs.length - 1].id === null) throw new OpError('bad-op', i, 'move path must end with @<id>');
+        if (!isIndex(op.index)) throw new OpError('bad-op', i, 'move index must be a non-negative integer');
         break;
       default:
         break;
@@ -180,7 +180,7 @@ export function applyOps(root, ops) {
   function ownRoot(i, create) {
     if (!isContainer(state.root)) {
       const missing = state.root === undefined || state.root === null;
-      if (!create || !missing) throw new OpError('bad-path', i, missing ? '文档还没有内容' : '根不是对象或数组');
+      if (!create || !missing) throw new OpError('bad-path', i, missing ? 'The document has no content yet' : 'The root is not an object or array');
       state.root = {};
       owned.add(state.root);
       return state.root;
@@ -198,16 +198,16 @@ export function applyOps(root, ops) {
     for (let k = 0; k < segs.length; k += 1) {
       const seg = segs[k];
       if (Array.isArray(node)) {
-        if (seg.id === null) throw new OpError('bad-path', i, `数组只能按 @<id> 寻址：${formatPath(segs.slice(0, k + 1))}`);
+        if (seg.id === null) throw new OpError('bad-path', i, `Arrays can only be addressed by @<id>: ${formatPath(segs.slice(0, k + 1))}`);
         const at = findById(node, seg.id);
-        if (at < 0) throw new OpError('bad-path', i, `找不到 ${formatPath(segs.slice(0, k + 1))}`);
+        if (at < 0) throw new OpError('bad-path', i, `Cannot find ${formatPath(segs.slice(0, k + 1))}`);
         const copy = own(node[at]);
         node[at] = copy;
         node = copy;
         continue;
       }
       if (!Object.hasOwn(node, seg.text)) {
-        if (!create) throw new OpError('bad-path', i, `找不到 ${formatPath(segs.slice(0, k + 1))}`);
+        if (!create) throw new OpError('bad-path', i, `Cannot find ${formatPath(segs.slice(0, k + 1))}`);
         const fresh = {};
         owned.add(fresh);
         putKey(node, seg.text, fresh);
@@ -215,7 +215,7 @@ export function applyOps(root, ops) {
         continue;
       }
       const child = node[seg.text];
-      if (!isContainer(child)) throw new OpError('bad-path', i, `${formatPath(segs.slice(0, k + 1))} 不是对象或数组`);
+      if (!isContainer(child)) throw new OpError('bad-path', i, `${formatPath(segs.slice(0, k + 1))} is not an object or array`);
       const copy = own(child);
       putKey(node, seg.text, copy);
       node = copy;
@@ -237,10 +237,10 @@ export function applyOps(root, ops) {
         const parent = descend(i, segs.slice(0, -1), true);
         const last = segs[segs.length - 1];
         if (Array.isArray(parent)) {
-          if (last.id === null) throw new OpError('bad-path', i, `数组只能按 @<id> 寻址：${path}`);
+          if (last.id === null) throw new OpError('bad-path', i, `Arrays can only be addressed by @<id>: ${path}`);
           const at = findById(parent, last.id);
-          if (at < 0) throw new OpError('bad-path', i, `找不到 ${path}（set 不在数组里建元素，用 insert）`);
-          if (!matchesId(op.value, last.id)) throw new OpError('bad-path', i, `${path} 的新值必须是 id 相同的对象`);
+          if (at < 0) throw new OpError('bad-path', i, `Cannot find ${path} (set does not create elements in an array, use insert)`);
+          if (!matchesId(op.value, last.id)) throw new OpError('bad-path', i, `The new value of ${path} must be an object with the same id`);
           effects.push({ op: 'set', path, target: path, noop: false, before: parent[at], after: op.value });
           parent[at] = op.value;
           return;
@@ -254,7 +254,7 @@ export function applyOps(root, ops) {
         const parent = descend(i, segs.slice(0, -1), false);
         const last = segs[segs.length - 1];
         if (Array.isArray(parent)) {
-          if (last.id === null) throw new OpError('bad-path', i, `数组只能按 @<id> 寻址：${path}`);
+          if (last.id === null) throw new OpError('bad-path', i, `Arrays can only be addressed by @<id>: ${path}`);
           const at = findById(parent, last.id);
           if (at >= 0) parent.splice(at, 1);
           effects.push({ op: 'remove', path, target: path, noop: at < 0 });
@@ -267,17 +267,17 @@ export function applyOps(root, ops) {
       }
       case 'insert': {
         const arr = descend(i, segs, false);
-        if (!Array.isArray(arr)) throw new OpError('bad-path', i, `${path} 不是数组`);
-        if (!isIdArray(arr)) throw new OpError('bad-path', i, `${path} 不是带 id 的数组`);
+        if (!Array.isArray(arr)) throw new OpError('bad-path', i, `${path} is not an array`);
+        if (!isIdArray(arr)) throw new OpError('bad-path', i, `${path} is not an array with ids`);
         const { id } = op.value;
-        if (findById(arr, id) >= 0) throw new OpError('bad-path', i, `${path} 里已经有 id ${id}`);
+        if (findById(arr, id) >= 0) throw new OpError('bad-path', i, `${path} already contains id ${id}`);
         arr.splice(Math.min(op.index, arr.length), 0, op.value);
         effects.push({ op: 'insert', path, target: `${path}/${idSegment(id)}`, noop: false });
         return;
       }
       case 'move': {
         const arr = descend(i, segs.slice(0, -1), false);
-        if (!Array.isArray(arr)) throw new OpError('bad-path', i, `${formatPath(segs.slice(0, -1))} 不是数组`);
+        if (!Array.isArray(arr)) throw new OpError('bad-path', i, `${formatPath(segs.slice(0, -1))} is not an array`);
         const at = findById(arr, segs[segs.length - 1].id);
         if (at < 0) {
           effects.push({ op: 'move', path, target: path, noop: true });
@@ -289,7 +289,7 @@ export function applyOps(root, ops) {
         return;
       }
       default:
-        throw new OpError('bad-op', i, '未知操作');
+        throw new OpError('bad-op', i, 'Unknown operation');
     }
   });
   return { root: state.root, effects };

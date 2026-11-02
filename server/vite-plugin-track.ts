@@ -24,6 +24,7 @@ import { createAssetSourceResolver } from "./audio-source.mjs";
 import { assetServiceOrigin } from "./asset-client";
 import { mediaSourceOf } from "./vision/ffmpeg-frames";
 import { pythonInput, resolveMediaSource } from "./perception-source.mjs";
+import { tr } from "./i18n.mjs";
 
 /** 素材记录 → 素材服务上的 HTTP 地址。写法与 vite-plugin-shots.ts 相同,见 server/perception-source.mjs */
 const resolveSource = createAssetSourceResolver({ origin: assetServiceOrigin, toUrl: (m, origin) => mediaSourceOf(m, origin) });
@@ -79,7 +80,7 @@ function runTracking(
     const python = findPython(root);
     if (!python) {
       job.status = "error";
-      job.message = "没有可用的 Python，无法运行追踪拓展。";
+      job.message = tr("No usable Python, cannot run the tracking extension.");
       return resolveRun();
     }
     const env = await buildEnv(root, python);
@@ -143,7 +144,7 @@ function runTracking(
           job.percent = 100;
         } else if (ev.event === "error") {
           job.status = "error";
-          job.message = String(ev.message ?? "追踪失败");
+          job.message = String(ev.message ?? tr("Tracking failed"));
         }
       }
     });
@@ -159,8 +160,8 @@ function runTracking(
         job.status = code === 0 && job.points ? "done" : "error";
         if (job.status === "error" && !job.message) {
           job.message = errTail.trim()
-            ? `追踪进程异常退出（代码 ${code}）：${errTail.trim().slice(-500)}`
-            : `追踪进程异常退出（代码 ${code}）`;
+            ? tr("Tracking process exited abnormally (code {0}): {1}", code, errTail.trim().slice(-500))
+            : tr("Tracking process exited abnormally (code {0})", code);
         }
       }
       resolve();
@@ -187,7 +188,7 @@ export function trackPlugin(): Plugin {
             // 会让调用方以为还能追，结果每次调用都失败。
             return sendJson(res, 200, {
               ok: true, ready: false, engine: null,
-              reason: "没有可用的 Python",
+              reason: "No usable Python",
             });
           }
           const env = await buildEnv(root, python);
@@ -196,7 +197,7 @@ export function trackPlugin(): Plugin {
           child.stdout?.on("data", (d: Buffer) => { out += d.toString(); });
           child.on("error", () =>
             sendJson(res, 200, { ok: true, ready: false, engine: null,
-                                 reason: "解释器启动失败" }));
+                                 reason: "Interpreter failed to start" }));
           child.on("close", () => {
             try {
               const line = out.split(/\r?\n/).find((l) => l.includes('"event"'));
@@ -211,7 +212,7 @@ export function trackPlugin(): Plugin {
               });
             } catch {
               sendJson(res, 200, { ok: true, ready: false, engine: null,
-                                   reason: "解释器没有返回可解析的状态" });
+                                   reason: "The interpreter returned no parseable status" });
             }
           });
           return;
@@ -220,7 +221,7 @@ export function trackPlugin(): Plugin {
         // POST /api/track/install —— 装 torch，SSE 流式回日志（190 MB，要跑一会儿）
         if (req.method === "POST" && url === "/api/track/install") {
           const python = findPython(root);
-          if (!python) return sendJson(res, 400, { ok: false, error: "没有可用的 Python" });
+          if (!python) return sendJson(res, 400, { ok: false, error: tr("No usable Python") });
           const env = await buildEnv(root, python);
           return pipeToSse(spawnPython(python, ["-m", "promptcut_track", "install"], env), res);
         }
@@ -236,7 +237,7 @@ export function trackPlugin(): Plugin {
                     && p.every((v) => typeof v === "number" && Number.isFinite(v)))) {
               return sendJson(res, 400, {
                 ok: false,
-                error: "points 要写成 [[帧号, x, y], ...]，且至少一个点",
+                error: tr("points must be written as [[frame number, x, y], ...], with at least one point"),
               });
             }
 
@@ -266,7 +267,7 @@ export function trackPlugin(): Plugin {
         const jobMatch = req.method === "GET" && url.match(/^\/api\/track\/job\/([\w-]+)$/);
         if (jobMatch) {
           const job = jobs.get(jobMatch[1]);
-          if (!job) return sendJson(res, 404, { ok: false, error: "作业不存在，可能服务已重启" });
+          if (!job) return sendJson(res, 404, { ok: false, error: tr("Job not found, the service may have restarted") });
           return sendJson(res, 200, { ok: true, job });
         }
 

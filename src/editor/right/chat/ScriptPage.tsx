@@ -92,7 +92,7 @@ export function ScriptPage(props: { active: boolean }) {
             }
           }}
           spellCheck={false}
-          placeholder={tr("e.g.\\n1. Open with the pain point in 5 seconds, using a quote card\\n2. Middle follows \"problem → data → solution\", with a trend chart in the data part\\n3. Close by echoing the opening line")}
+          placeholder={tr("e.g.\n1. Open with the pain point in 5 seconds, using a quote card\n2. Middle follows \"problem → data → solution\", with a trend chart in the data part\n3. Close by echoing the opening line")}
         />
         <div className="pc-script-actions">
           {justSaved && <span className="pc-script-saved" role="status">{tr("Saved")}</span>}

@@ -109,9 +109,9 @@ export function glassMask(glass, area, mask = new Uint8Array(area.w * area.h)) {
 export function diffLayer(upper, lower, width, height, { crop = null, glass = null, mask = null, tolerance = DIFF_TOLERANCE } = {}) {
   const c = crop ?? { x: 0, y: 0, w: width, h: height };
   if (!(Number.isInteger(c.x) && Number.isInteger(c.y) && Number.isInteger(c.w) && Number.isInteger(c.h)) || c.x < 0 || c.y < 0 || c.w <= 0 || c.h <= 0 || c.x + c.w > width || c.y + c.h > height) {
-    throw new Error(`diffLayer:要交出去的矩形不在画面里:${JSON.stringify(c)}(画面 ${width}×${height})`);
+    throw new Error(`diffLayer: the rectangle to hand off is outside the frame: ${JSON.stringify(c)} (frame ${width}×${height})`);
   }
-  if (upper.length < width * height * 4 || lower.length < width * height * 4) throw new Error('diffLayer:数据比画面小');
+  if (upper.length < width * height * 4 || lower.length < width * height * 4) throw new Error('diffLayer: data is smaller than the frame');
   const out = Buffer.alloc(c.w * c.h * 4);
   const m = mask ?? (glass?.length ? glassMask(glass, c) : null);
   let changed = 0;
@@ -341,14 +341,14 @@ const samePixels = (a, b) => {
 export function belowSegmentCapture(bakery, { clipId, view, rect, record = newBelowRecord(), signal = null, verify = true, note = () => {}, tap = null }) {
   const crop = { x: rect.x - view.x, y: rect.y - view.y, w: rect.w, h: rect.h };
   if (crop.x < 0 || crop.y < 0 || crop.x + crop.w > view.w || crop.y + crop.h > view.h) {
-    throw new Error(`差分取层:交出去的矩形 ${JSON.stringify(rect)} 不在截图矩形 ${JSON.stringify(view)} 里`);
+    throw new Error(`Layer diff: the rectangle to hand off ${JSON.stringify(rect)} is not inside the screenshot rectangle ${JSON.stringify(view)}`);
   }
-  const fail = (code, message) => Object.assign(new Error(`差分取层:${message}`), { code });
+  const fail = (code, message) => Object.assign(new Error(`Layer diff: ${message}`), { code });
   const shot = () => captureFrame(bakery, SHOT, signal, { prime: false, clip: view });
   let checked = !verify;
   let mask = null, maskKey = '';
   return async (frame, shoot) => {
-    if (record.failed) throw fail(record.failed, `这条流上一次实测没过(${record.failed}),不再产`);
+    if (record.failed) throw fail(record.failed, `the last measurement of this stream failed (${record.failed}), no longer producing it`);
     let at = performance.now();
     const upperPng = await shoot();
     record.upperMs += performance.now() - at;
@@ -357,7 +357,7 @@ export function belowSegmentCapture(bakery, { clipId, view, rect, record = newBe
     const hid = await bakery.page.evaluate(pageHideTarget, clipId);
     let lowerPng = null, lowerAgain = null;
     try {
-      if (!hid?.ok) throw fail('not-hidden', `片段 ${clipId} 那一层藏不住(${hid?.reason ?? '页面没有回话'})`);
+      if (!hid?.ok) throw fail('not-hidden', `the layer of clip ${clipId} cannot be hidden (${hid?.reason ?? 'the page did not respond'})`);
       if (!hid.absent) {
         if (record.primeLower) await shot();
         lowerPng = await shot();
@@ -381,13 +381,13 @@ export function belowSegmentCapture(bakery, { clipId, view, rect, record = newBe
       record.last = { frame, lowerStable, upperStable };
       if (!upperStable) {
         record.failed = 'upper-changed';
-        note(`差分取层没过:第 ${frame} 帧把片段 ${clipId} 藏起来再撤掉以后,带目标卡的画面变了;这条流不再产`);
-        throw fail('upper-changed', `第 ${frame} 帧藏和撤以后带目标卡的画面变了`);
+        note(`Layer diff failed: after hiding and restoring clip ${clipId} at frame ${frame}, the frame containing the target card changed; this stream is no longer produced`);
+        throw fail('upper-changed', `at frame ${frame}, the frame containing the target card changed after hiding and restoring`);
       }
       if (!lowerStable) {
         record.primeLower = true;
-        note(`差分取层:第 ${frame} 帧藏着片段 ${clipId} 连截两张不相同,这条流以后每张下张先丢一张再截`);
-        throw fail('lower-unstable', `第 ${frame} 帧藏着目标卡连截两张不相同`);
+        note(`Layer diff: at frame ${frame} with clip ${clipId} hidden, two consecutive captures differ; from now on this stream discards one capture before each capture below`);
+        throw fail('lower-unstable', `at frame ${frame} with the target card hidden, two consecutive captures differ`);
       }
       checked = true;
     } else record.lowerMs += performance.now() - at;
@@ -399,7 +399,7 @@ export function belowSegmentCapture(bakery, { clipId, view, rect, record = newBe
     at = performance.now();
     const upper = decodePngRgba(upperPng), lower = decodePngRgba(lowerPng);
     if (!upper || !lower || upper.width !== view.w || upper.height !== view.h || lower.width !== view.w || lower.height !== view.h) {
-      throw fail('png', `第 ${frame} 帧的截图解不开,或者不是 ${view.w}×${view.h}`);
+      throw fail('png', `the screenshot at frame ${frame} cannot be decoded, or is not ${view.w}×${view.h}`);
     }
     record.decodeMs += performance.now() - at;
     at = performance.now();
@@ -407,7 +407,7 @@ export function belowSegmentCapture(bakery, { clipId, view, rect, record = newBe
       const outside = layerOutside(upper.data, lower.data, view.w, view.h, crop, { glass, origin: view });
       if (outside) {
         record.overflows++;
-        throw Object.assign(fail('below-overflow', `第 ${frame} 帧目标卡改到了交出去的矩形外面`), { box: { x: outside.x + view.x, y: outside.y + view.y, w: outside.w, h: outside.h } });
+        throw Object.assign(fail('below-overflow', `at frame ${frame} the target card changed outside the rectangle handed off`), { box: { x: outside.x + view.x, y: outside.y + view.y, w: outside.w, h: outside.h } });
       }
     }
     if (glass) {

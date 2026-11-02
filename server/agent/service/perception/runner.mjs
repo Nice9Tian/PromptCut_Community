@@ -239,7 +239,7 @@ export const PYTHON_BOOTSTRAP = "import sys, runpy; n = int(sys.argv.pop(1)); ro
  * @param {{ roots?: Array<string | null | undefined>, args?: string[] }} [o] `roots` 是部署配置给的包目录、第三方库目录(排在搜索路径最前,按给的顺序)
  */
 export function isolatedPythonArgs(moduleName, { roots = [], args = [] } = {}) {
-  if (typeof moduleName !== 'string' || !/^[A-Za-z_][A-Za-z0-9_.]*$/.test(moduleName)) throw new Error('isolatedPythonArgs: 模块名不合法');
+  if (typeof moduleName !== 'string' || !/^[A-Za-z_][A-Za-z0-9_.]*$/.test(moduleName)) throw new Error('isolatedPythonArgs: invalid module name');
   const dirs = roots.filter((r) => typeof r === 'string' && r !== '');
   return dirs.length
     ? [...PYTHON_ISOLATED_FLAGS, '-c', PYTHON_BOOTSTRAP, String(dirs.length), ...dirs, moduleName, ...args]

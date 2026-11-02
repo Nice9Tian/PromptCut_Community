@@ -27,7 +27,7 @@ export function lanOpenPlugin(): Plugin {
         if (!fromLocalClient(req)) {
           res.statusCode = 403;
           res.setHeader("content-type", "application/json; charset=utf-8");
-          res.end(JSON.stringify({ error: "这条信息只给本机的编辑页面" }));
+          res.end(JSON.stringify({ error: "This message is only for the editor page on this machine" }));
           return;
         }
         const addr = server.httpServer?.address();

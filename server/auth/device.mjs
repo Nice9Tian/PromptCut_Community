@@ -15,6 +15,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { createHash } from 'node:crypto';
 import { isDeviceId, isDeviceName } from './protocol.mjs';
+import { tr } from "../i18n.mjs";
 
 function firstMac() {
   for (const list of Object.values(os.networkInterfaces() ?? {})) {
@@ -36,7 +37,7 @@ export function localDeviceInfo(env = process.env) {
     const file = path.join(env.PROMPTCUT_DATA_DIR, 'device.json');
     const read = () => {
       const record = JSON.parse(fs.readFileSync(file, 'utf8'));
-      if (record.version !== 1 || !isDeviceId(record.deviceId) || !isDeviceName(record.deviceName)) throw new Error('本机设备身份记录损坏；保留原记录，请恢复备份');
+      if (record.version !== 1 || !isDeviceId(record.deviceId) || !isDeviceName(record.deviceName)) throw new Error(tr("The local device identity record is corrupted; the original record was kept, please restore a backup"));
       return { deviceId: record.deviceId, deviceName: isDeviceName(env.PROMPTCUT_DEVICE_NAME) ? env.PROMPTCUT_DEVICE_NAME : record.deviceName };
     };
     if (fs.existsSync(file)) return read();

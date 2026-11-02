@@ -156,12 +156,12 @@ export function guard(req, res, opts = {}) {
   const wantJson = opts.json ?? WRITE_METHODS.has(method);
 
   if (!originOk(req)) {
-    return deny(res, "跨源请求被拒绝");
+    return deny(res, "Cross-origin request denied");
   }
   if (wantJson && WRITE_METHODS.has(method) && !jsonContentType(req)) {
     // 不是浏览器发的(比如 curl 忘了带头)也一并拦:这道门槛的意义就在于「简单请求进不来」,
     // 留个后门等于没设。自家代码全部走 JSON。
-    return deny(res, "这个接口只接受 Content-Type: application/json");
+    return deny(res, "This endpoint only accepts Content-Type: application/json");
   }
   return true;
 }

@@ -194,8 +194,8 @@ export class WsConnection extends EventEmitter {
     if (b.length < 2) return null;
     const fin = (b[0] & 0x80) !== 0;
     const opcode = b[0] & 0x0f;
-    if (b[0] & 0x70) return this.#fail(CLOSE.PROTOCOL, 'RSV 位必须为 0');
-    if (!(b[1] & 0x80)) return this.#fail(CLOSE.PROTOCOL, '客户端帧必须带掩码');
+    if (b[0] & 0x70) return this.#fail(CLOSE.PROTOCOL, 'RSV bits must be 0');
+    if (!(b[1] & 0x80)) return this.#fail(CLOSE.PROTOCOL, 'Client frames must be masked');
     let len = b[1] & 0x7f;
     let off = 2;
     if (len === 126) {
@@ -205,12 +205,12 @@ export class WsConnection extends EventEmitter {
     } else if (len === 127) {
       if (b.length < 10) return null;
       const big = b.readBigUInt64BE(2);
-      if (big > BigInt(this.#maxPayload)) return this.#fail(CLOSE.TOO_BIG, '消息过大');
+      if (big > BigInt(this.#maxPayload)) return this.#fail(CLOSE.TOO_BIG, 'Message too large');
       len = Number(big);
       off = 10;
     }
-    if (opcode >= 0x8 && (!fin || len > 125)) return this.#fail(CLOSE.PROTOCOL, '控制帧不能分片或超过 125 字节');
-    if (len > this.#maxPayload) return this.#fail(CLOSE.TOO_BIG, '消息过大');
+    if (opcode >= 0x8 && (!fin || len > 125)) return this.#fail(CLOSE.PROTOCOL, 'Control frames cannot be fragmented or exceed 125 bytes');
+    if (len > this.#maxPayload) return this.#fail(CLOSE.TOO_BIG, 'Message too large');
     if (b.length < off + 4 + len) return null;
     const mask = b.subarray(off, off + 4);
     const payload = Buffer.from(b.subarray(off + 4, off + 4 + len));
@@ -222,15 +222,15 @@ export class WsConnection extends EventEmitter {
   #onFrame({ fin, opcode, payload }) {
     switch (opcode) {
       case OP.TEXT:
-        if (this.#frags) return this.#fail(CLOSE.PROTOCOL, '上一条分片消息还没收完');
+        if (this.#frags) return this.#fail(CLOSE.PROTOCOL, 'The previous fragmented message is not finished yet');
         if (fin) return this.#deliver(payload);
         this.#frags = [payload];
         this.#fragLen = payload.length;
         return;
       case OP.CONT:
-        if (!this.#frags) return this.#fail(CLOSE.PROTOCOL, '没有正在接收的分片消息');
+        if (!this.#frags) return this.#fail(CLOSE.PROTOCOL, 'No fragmented message is being received');
         this.#fragLen += payload.length;
-        if (this.#fragLen > this.#maxPayload) return this.#fail(CLOSE.TOO_BIG, '消息过大');
+        if (this.#fragLen > this.#maxPayload) return this.#fail(CLOSE.TOO_BIG, 'Message too large');
         this.#frags.push(payload);
         if (fin) {
           const whole = Buffer.concat(this.#frags);
@@ -239,7 +239,7 @@ export class WsConnection extends EventEmitter {
         }
         return;
       case OP.BINARY:
-        return this.#fail(CLOSE.UNSUPPORTED, '只收文本消息');
+        return this.#fail(CLOSE.UNSUPPORTED, 'Only text messages are accepted');
       case OP.PING:
         if (!this.#closeSent && this.#socket.writable) this.#writeFrame(OP.PONG, payload);
         return;
@@ -257,7 +257,7 @@ export class WsConnection extends EventEmitter {
         return;
       }
       default:
-        return this.#fail(CLOSE.PROTOCOL, `未知的 opcode ${opcode}`);
+        return this.#fail(CLOSE.PROTOCOL, `Unknown opcode ${opcode}`);
     }
   }
 
@@ -267,7 +267,7 @@ export class WsConnection extends EventEmitter {
     try {
       text = this.#decoder.decode(payload);
     } catch {
-      return this.#fail(CLOSE.INVALID_DATA, '文本消息不是合法的 UTF-8');
+      return this.#fail(CLOSE.INVALID_DATA, 'Text message is not valid UTF-8');
     }
     this.emit('message', text);
   }

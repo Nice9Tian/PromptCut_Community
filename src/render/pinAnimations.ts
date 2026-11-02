@@ -120,7 +120,7 @@ export function createAnimationPinner(doc: Document = document): AnimationPinner
     try {
       handler.call(a, new AnimationPlaybackEvent("finish", { currentTime: a.currentTime, timelineTime: a.timeline?.currentTime ?? null }));
     } catch (err) {
-      console.error("[pinAnimations] 结束回调抛错", err);
+      console.error("[pinAnimations] end callback threw an error", err);
     }
   };
 

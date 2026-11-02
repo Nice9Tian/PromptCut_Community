@@ -94,10 +94,10 @@ function ChartRankPart({ params, width, height }: PartProps<Params>) {
 
 export const chartRank: PartDef<Params> = {
   id: "chart-rank",
-  name: "排名条",
-  description: "柱状条形排名及滚动数值",
-  useWhen: "3 到 5 项比大小、排榜单时用条形图。**部件不会自动排序**,rows 要按数值从大到小传进来;项目名不超过 5 字,超出会被截断;两项对决用 group-versus,时间走势用 chart-growth。",
-  tags: ["排名", "条形图", "对比", "榜单"],
+  name: "Rank bars",
+  description: "Bar chart ranking with rolling values",
+  useWhen: "Use a bar chart to compare 3 to 5 items or build a ranking. **The part does not sort automatically**: pass rows in descending order by value; item names must be at most 5 characters, longer ones are truncated. Use group-versus for a two-way showdown and chart-growth for trends over time.",
+  tags: ["ranking", "bar chart", "comparison", "leaderboard"],
   role: "list",
   from: "rank-bars",
   defaults: {
@@ -107,10 +107,10 @@ export const chartRank: PartDef<Params> = {
     size: 0,
   },
   controls: [
-    { key: "rows", label: "数据行(名称,数值|名称,数值)", type: "text" },
-    { key: "suffix", label: "数值后缀", type: "text" },
-    { key: "accent", label: "颜色", type: "color" },
-    { key: "size", label: "字号(0 = 按框自适应)", type: "number", min: 0, max: 80, step: 2, hint: "0 表示按部件的框自动算;想固定就填具体像素" },
+    { key: "rows", label: "Data rows (name,value|name,value)", type: "text" },
+    { key: "suffix", label: "Value suffix", type: "text" },
+    { key: "accent", label: "Color", type: "color" },
+    { key: "size", label: "Font size (0 = auto-fit to box)", type: "number", min: 0, max: 80, step: 2, hint: "0 means auto-computed from the part's box; enter a pixel value to fix it" },
   ],
   defaultFrame: { x: 960, y: 540, w: 1000, h: 600, anchor: [0.5, 0.5] },
   settleMs: (p) => (Math.max(1, p.rows.split("|").filter(Boolean).length) - 1) * 120 + 900,

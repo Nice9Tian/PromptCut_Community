@@ -41,7 +41,7 @@ export const ACCOUNT_CARD_LINK_DEFAULTS = Object.freeze({
 /** 页面交回的票据:`{ ticket, expiresAt? }` 或只有票据串 */
 function normalizeTicket(value) {
   const ticket = typeof value === 'string' ? value : value?.ticket;
-  if (typeof ticket !== 'string' || !TICKET.test(ticket)) throw new Error('账号连接票据不合法');
+  if (typeof ticket !== 'string' || !TICKET.test(ticket)) throw new Error('Invalid account connection ticket');
   const expiresAt = typeof value === 'object' && Number.isSafeInteger(value?.expiresAt) ? value.expiresAt : null;
   return { ticket, expiresAt };
 }
@@ -69,7 +69,7 @@ export function accountCardEndpoint({
   minSessionMs = ACCOUNT_CARD_LINK_DEFAULTS.minSessionMs,
   fallbackLifeMs = ACCOUNT_CARD_LINK_DEFAULTS.fallbackLifeMs,
 } = {}) {
-  if (typeof getTicket !== 'function') throw new TypeError('accountCardEndpoint: getTicket 要是函数');
+  if (typeof getTicket !== 'function') throw new TypeError('accountCardEndpoint: getTicket must be a function');
   const handlers = { message: [], open: [], resume: [], close: [] };
   const emit = (kind, arg) => { for (const h of [...handlers[kind]]) { try { h(arg); } catch { /* 上层的处理出错不影响连接 */ } } };
   const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志失败不影响连接 */ } };
@@ -155,7 +155,7 @@ export function accountCardEndpoint({
  * 直接当子协议函数调用也能用(只出示票据,不管寿命),免得别的端点拿到它时出错。
  */
 export function accountCardProtocols(getTicket) {
-  if (typeof getTicket !== 'function') throw new TypeError('accountCardProtocols: getTicket 要是函数');
+  if (typeof getTicket !== 'function') throw new TypeError('accountCardProtocols: getTicket must be a function');
   const list = async () => ['promptcut.v1', `${ACCOUNT_PROTOCOL_PREFIX}${normalizeTicket(await getTicket()).ticket}`];
   return Object.assign(list, { accountTicket: getTicket });
 }

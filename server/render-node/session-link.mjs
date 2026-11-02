@@ -117,11 +117,11 @@ export function wsUrlOf(url) {
   try {
     u = new URL(url);
   } catch {
-    throw new TypeError('createDocEndpoint：url 不是合法地址');
+    throw new TypeError('createDocEndpoint: url is not a valid address');
   }
   if (u.protocol === 'http:') u.protocol = 'ws:';
   else if (u.protocol === 'https:') u.protocol = 'wss:';
-  else if (u.protocol !== 'ws:' && u.protocol !== 'wss:') throw new TypeError('createDocEndpoint：url 必须是 ws(s):// 或 http(s)://');
+  else if (u.protocol !== 'ws:' && u.protocol !== 'wss:') throw new TypeError('createDocEndpoint: url must be ws(s):// or http(s)://');
   return u.toString();
 }
 
@@ -141,9 +141,9 @@ export function transportOf(option, env = globalThis.process?.env?.PROMPTCUT_TRA
   const v = raw === undefined || raw === null ? 'auto' : String(raw).trim().toLowerCase() || 'auto';
   if (v === 'auto' || v === 'ws') return v;
   if (v === 'http') {
-    throw Object.assign(new Error('HTTP 长轮询传输在本版（HT-a）未启用，只能走 WebSocket：去掉 PROMPTCUT_TRANSPORT=http（或 --transport http），或改成 ws'), { code: 'transport-unavailable' });
+    throw Object.assign(new Error('HTTP long polling transport is not enabled in this version (HT-a), only WebSocket is available: remove PROMPTCUT_TRANSPORT=http (or --transport http), or change it to ws'), { code: 'transport-unavailable' });
   }
-  throw new TypeError(`传输只能是 auto、ws 或 http：${JSON.stringify(String(raw)).slice(0, 40)}`);
+  throw new TypeError(`Transport must be auto, ws or http: ${JSON.stringify(String(raw)).slice(0, 40)}`);
 }
 
 /**
@@ -192,13 +192,13 @@ export function createDocEndpoint({
 } = /** @type {any} */ ({})) {
   const mode = transportOf(transport);
   const wsUrl = wsUrlOf(url);
-  if (typeof WebSocketImpl !== 'function') throw new TypeError('createDocEndpoint：没有可用的 WebSocket');
+  if (typeof WebSocketImpl !== 'function') throw new TypeError('createDocEndpoint: no WebSocket available');
   if (token !== undefined && token !== null && (typeof token !== 'string' || token === '')) {
-    throw new TypeError('createDocEndpoint：token 必须是非空字符串');
+    throw new TypeError('createDocEndpoint: token must be a non-empty string');
   }
   if (protocolsOf !== undefined && protocolsOf !== null) {
-    if (typeof protocolsOf !== 'function') throw new TypeError('createDocEndpoint：protocols 必须是函数');
-    if (token) throw new TypeError('createDocEndpoint：protocols 与 token 不能同时给');
+    if (typeof protocolsOf !== 'function') throw new TypeError('createDocEndpoint: protocols must be a function');
+    if (token) throw new TypeError('createDocEndpoint: protocols and token cannot both be given');
   }
   const policy = { ...BACKOFF_DEFAULTS, ...(backoff ?? {}) };
   const fixedProtocols = token ? [PROTOCOL, TOKEN_PREFIX + token] : [PROTOCOL];
@@ -300,7 +300,7 @@ export function createDocEndpoint({
       Promise.resolve().then(() => resumeProtocolsOf()).then(list => {
         pendingProtocols = false;
         if (closed || sess !== saved || cur !== null) return;
-        if (!Array.isArray(list) || list.some(p => typeof p !== 'string')) throw new TypeError('resumeProtocols() 必须回字符串数组');
+        if (!Array.isArray(list) || list.some(p => typeof p !== 'string')) throw new TypeError('resumeProtocols() must return an array of strings');
         dial([PROTOCOL, `${SESSION_PREFIX}${saved.sid}.${saved.inAck}`, ...list.filter(p => p !== PROTOCOL && p !== SESSION_NEW && !p.startsWith(SESSION_PREFIX))], 'resume');
       }).catch(() => {
         pendingProtocols = false;
@@ -325,7 +325,7 @@ export function createDocEndpoint({
     Promise.resolve(got).then((list) => {
       pendingProtocols = false;
       if (closed) return;
-      if (!Array.isArray(list) || list.some((p) => typeof p !== 'string')) throw new TypeError('protocols() 必须回字符串数组');
+      if (!Array.isArray(list) || list.some((p) => typeof p !== 'string')) throw new TypeError('protocols() must return an array of strings');
       dial([...list.filter((p) => p !== SESSION_NEW && !p.startsWith(SESSION_PREFIX)), SESSION_NEW], 'new');
     }).catch((error) => {
       pendingProtocols = false;

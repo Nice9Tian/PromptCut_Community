@@ -33,7 +33,7 @@ function run(label, cmd, args, opts = {}) {
   console.log(`\n── ${label} ──`);
   const r = spawnSync(cmd, args, { windowsHide: true, cwd: DESKTOP_DIR, stdio: "inherit", shell: true, ...opts });
   if (r.status !== 0) {
-    console.error(`[FAIL] ${label} 失败（退出码 ${r.status}）`);
+    console.error(`[FAIL] ${label} failed (exit code ${r.status})`);
     process.exit(1);
   }
 }
@@ -46,7 +46,7 @@ const shellVersion = tauriConf.version;
 const productName = tauriConf.productName || "PromptCut";
 
 console.log("PromptCut build-release");
-console.log(`  外壳版本：${shellVersion}（Rust 那半边，只在需要重编时才变）`);
+console.log(`  Shell version: ${shellVersion} (the Rust half, changes only when a rebuild is needed)`);
 
 /**
  * --from-head：源码取自 HEAD 的一棵临时 worktree，而不是当前工作区。
@@ -64,18 +64,18 @@ if (has("--from-head")) {
   const dirty = spawnSync("git", ["status", "--porcelain"], { windowsHide: true, cwd: PROJECT_ROOT, encoding: "utf8" }).stdout || "";
   const head = (spawnSync("git", ["rev-parse", "--short", "HEAD"], { windowsHide: true, cwd: PROJECT_ROOT, encoding: "utf8" }).stdout || "").trim();
   worktree = path.join(DESKTOP_DIR, ".cache", "release-src");
-  console.log(`\n── 从 HEAD (${head}) 取源码 ──`);
+  console.log(`\n── Fetching source from HEAD (${head}) ──`);
   const excluded = dirty.split(/\r?\n/).filter((l) => l.trim() && !/^\?\?/.test(l));
   if (excluded.length) {
-    console.log(`  工作区有 ${excluded.length} 个文件未提交，本次发布不包含它们：`);
+    console.log(`  ${excluded.length} files in the working tree are uncommitted and are not included in this release:`);
     for (const l of excluded.slice(0, 12)) console.log(`    ${l.trim()}`);
-    if (excluded.length > 12) console.log(`    …还有 ${excluded.length - 12} 个`);
+    if (excluded.length > 12) console.log(`    ...and ${excluded.length - 12} more`);
   }
   spawnSync("git", ["worktree", "remove", "--force", worktree], { windowsHide: true, cwd: PROJECT_ROOT, stdio: "ignore" });
   spawnSync("git", ["worktree", "prune"], { windowsHide: true, cwd: PROJECT_ROOT, stdio: "ignore" });
   const add = spawnSync("git", ["worktree", "add", "--detach", worktree, "HEAD"], { windowsHide: true, cwd: PROJECT_ROOT, stdio: "inherit" });
   if (add.status !== 0) {
-    console.error("[FAIL] 建不出 worktree");
+    console.error("[FAIL] Cannot create worktree");
     process.exit(1);
   }
   sourceArgs = ["--source", worktree];
@@ -98,9 +98,9 @@ process.on("exit", cleanupWorktree);
 if (!has("--skip-runtime")) {
   // --require-vite-env:VITE_ 变量找不到就当场失败。这条路是**发布**,不是手跑试试,
   // 少了那些值打出来的包诊断提交是死的,而且流程里没有任何别的一步会因此报错。
-  run("组装 runtime", "node", ["scripts/prepare-runtime.mjs", "--require-vite-env", ...sourceArgs]);
+  run("Assemble runtime", "node", ["scripts/prepare-runtime.mjs", "--require-vite-env", ...sourceArgs]);
 } else {
-  run("检查 runtime", "node", ["scripts/prepare-runtime.mjs", "--check", ...sourceArgs]);
+  run("Check runtime", "node", ["scripts/prepare-runtime.mjs", "--check", ...sourceArgs]);
 }
 /**
  * **拆 worktree 之前,先把安装器那三个文件抢出来。**
@@ -126,12 +126,12 @@ if (worktree) {
   for (const f of ["apply-patch.ps1", "apply-patch.cmd", "patch-installer.nsi"]) {
     const from = path.join(worktree, "desktop", "scripts", f);
     if (!fs.existsSync(from)) {
-      console.error(`[FAIL] HEAD 里没有 desktop/scripts/${f}`);
+      console.error(`[FAIL] HEAD has no desktop/scripts/${f}`);
       process.exit(1);
     }
     fs.copyFileSync(from, path.join(installerSrc, f));
   }
-  console.log(`  安装器取自 HEAD：${installerSrc}`);
+  console.log(`  Installer taken from HEAD: ${installerSrc}`);
 }
 cleanupWorktree();
 
@@ -139,10 +139,10 @@ cleanupWorktree();
 const appVersion = JSON.parse(
   fs.readFileSync(path.join(DESKTOP_DIR, "src-tauri", "runtime", "app", "package.json"), "utf-8")
 ).version;
-console.log(`\n  应用版本：${appVersion}`);
+console.log(`\n  App version: ${appVersion}`);
 
 if (!has("--patch-only")) {
-  run("构建安装包（Rust 编译 + NSIS）", "npx", ["tauri", "build"]);
+  run("Build installer (Rust compile + NSIS)", "npx", ["tauri", "build"]);
 }
 
 // 补丁要在安装包之后出：两者用的是同一份 runtime/app，顺序反了会对不上。
@@ -153,7 +153,7 @@ if (has("--from-head")) patchArgs.push("--skip-source-check");
 // 安装器那三个文件也要来自 HEAD,不能是工作区当前的样子(见上面抢文件那一段)
 if (installerSrc) patchArgs.push("--installer-src", installerSrc);
 if (has("--zip")) patchArgs.push("--zip");
-if (!has("--installer-only")) run("打更新补丁", "node", patchArgs);
+if (!has("--installer-only")) run("Build update patch", "node", patchArgs);
 
 // ── 收集产物 ──────────────────────────────────────────────────────────
 fs.mkdirSync(RELEASE_DIR, { recursive: true });
@@ -173,7 +173,7 @@ if (!has("--patch-only")) {
         .map((f) => path.join(BUNDLE_DIR, f))[0]
     : undefined;
   if (!src) {
-    console.error(`[FAIL] 找不到安装包：${path.join(BUNDLE_DIR, setupName)}`);
+    console.error(`[FAIL] Installer not found: ${path.join(BUNDLE_DIR, setupName)}`);
     process.exit(1);
   }
   const dest = path.join(RELEASE_DIR, `PromptCut-${appVersion}-setup.exe`);
@@ -190,12 +190,12 @@ const manifest = has("--installer-only") ? null : JSON.parse(
   fs.readFileSync(path.join(RELEASE_DIR, `manifest-${appVersion}.json`), "utf-8")
 );
 
-console.log(`\n══ 完成（${elapsed()}s）══`);
+console.log(`\n══ Done (${elapsed()}s) ══`);
 for (const f of results) {
   console.log(`  ${(fs.statSync(f).size / 1048576).toFixed(1).padStart(8)} MB  ${path.basename(f)}`);
 }
 if (manifest) {
-  console.log(`\n  补丁含依赖：${manifest.includesDeps ? "是" : "否"}（${manifest.depsReason}）`);
-  console.log(`  补丁适用于：外壳 ${manifest.minShellVersion} 或更新`);
+  console.log(`\n  Patch includes dependencies: ${manifest.includesDeps ? "yes" : "no"} (${manifest.depsReason})`);
+  console.log(`  Patch applies to: shell ${manifest.minShellVersion} or newer`);
 }
-console.log(`  产物目录：${RELEASE_DIR}`);
+console.log(`  Output directory: ${RELEASE_DIR}`);

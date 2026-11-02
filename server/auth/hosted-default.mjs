@@ -16,6 +16,7 @@
  * 浏览器与 Node 通用：除产品声明外不引任何模块；浏览器里没有 `process`，第 2 级自然跳过。
  */
 import { PRODUCT } from './product.mjs';
+import { tr } from "../i18n.mjs";
 
 /** 托管服务的自有域名（2026-10-22 用户定）：以后换机器只改它的 DNS 记录，不用再发客户端 */
 const HOSTED_HOST = PRODUCT.hosted?.host ?? null;
@@ -91,9 +92,9 @@ function checked(value, from) {
   try {
     u = new URL(text);
   } catch {
-    throw new TypeError(`托管地址（${from}）不是合法的地址`);
+    throw new TypeError(tr("The hosted address ({0}) is not a valid address", from));
   }
-  if (!['http:', 'https:', 'ws:', 'wss:'].includes(u.protocol)) throw new TypeError(`托管地址（${from}）必须是 http(s):// 或 ws(s)://`);
+  if (!['http:', 'https:', 'ws:', 'wss:'].includes(u.protocol)) throw new TypeError(tr("The hosted address ({0}) must be http(s):// or ws(s)://", from));
   return text.replace(/\/+$/, '');
 }
 

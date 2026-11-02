@@ -135,8 +135,8 @@ export function ensureLayoutSync(dir, layout) {
  * @returns {import('./blob-store.mjs').BlobStore}
  */
 export function createFsStore({ dir, hooks = {}, chunkSize = BLOB_CHUNK_SIZE, shard = false } = /** @type {any} */ ({})) {
-  if (typeof dir !== 'string' || dir === '') throw new TypeError('createFsStore：dir 必须是非空字符串');
-  if (!Number.isSafeInteger(chunkSize) || chunkSize <= 0) throw new TypeError('createFsStore：chunkSize 必须是正整数');
+  if (typeof dir !== 'string' || dir === '') throw new TypeError('createFsStore: dir must be a non-empty string');
+  if (!Number.isSafeInteger(chunkSize) || chunkSize <= 0) throw new TypeError('createFsStore: chunkSize must be a positive integer');
   const base = path.resolve(dir);
   const sharded = shard === true;
   const contentTypeForExt = typeof hooks.contentTypeForExt === 'function' ? hooks.contentTypeForExt : minimalContentType;

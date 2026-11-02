@@ -41,7 +41,7 @@ async function ensureMcpRegistered(exePath, mcpOpts, safeOnEvent) {
     try {
       runAgy(exePath, mcpAddArgs(mcpOpts), { windowsHide: true, stdio: 'ignore' });
       registeredOnce = true;
-      safeOnEvent({ type: 'status', text: '已把 PromptCut 注册为 agy 的 MCP 服务（agy mcp add promptcut）' });
+      safeOnEvent({ type: 'status', text: tr("Registered PromptCut as an MCP server for agy (agy mcp add promptcut)") });
     } catch (e) {
       safeOnEvent({ type: 'error', message: `MCP registration failed: ${e.message}` });
     }
@@ -65,6 +65,7 @@ export async function getAgyProvider() {
 }
 
 import { runTextProtocolLoop } from '../harness/tool-protocol.mjs';
+import { tr } from "../i18n.mjs";
 
 export function startRun(opts) {
   if (opts.toolProtocol) {
@@ -92,7 +93,7 @@ export function startRun(opts) {
 
   const donePromise = run.done.then((res) => {
     if (rejected) {
-      opts.onEvent({ type: 'status', text: '原生工具被拒，改用文本协议重试' });
+      opts.onEvent({ type: 'status', text: tr("Native tool was rejected, retrying with text protocol") });
       const nextRun = runTextProtocolLoop({ startRun: _startRun, opts, onEvent: opts.onEvent });
       abortRef.abort = nextRun.abort;
       return nextRun.done;
@@ -121,32 +122,32 @@ export function startRun(opts) {
  * 所以清单要列全,并且说清「换一个内建工具也一样」。
  */
 const AGY_ADDENDUM = `
-## 关于你自己那套内建工具(只有你这一家需要看)
+## About your own built-in tools (only relevant to you)
 
-你除了 PromptCut 的工具,自己还带着 view_file / list_dir / grep_search / find_by_name /
-read_url_content / run_command 这些内建工具。**在这里基本都用不了,而且用了代价很大:**
+Besides the PromptCut tools, you also carry built-in tools such as view_file / list_dir / grep_search / find_by_name /
+read_url_content / run_command. **Here they mostly cannot be used, and using them is very costly:**
 
-- 你的工作区只有一个很小的临时目录,读写它以外的任何路径都会被自动拒绝
-  (无人值守,没人能给你点同意);
-- 读网页、跑命令同样没人能给你点同意,一律自动拒绝;
-- 被拒一次,你这一轮就整个作废、什么都交不出来,要从头再来一遍。换一个内建工具也一样。
+- Your workspace is only a small temporary directory; reading or writing any path outside it is rejected automatically
+  (unattended, nobody can approve for you);
+- Reading web pages and running commands likewise cannot be approved by anyone, and are always rejected automatically;
+- Once rejected, your whole turn is void and you deliver nothing, and must start over from scratch. Switching to another built-in tool makes no difference.
 
-所以:**除非文件确实在你的工作区里,否则不要用内建工具碰任何路径、网址或命令。**
-你要做的每一件事都有对应的 PromptCut 工具:
+So: **unless the file is really in your workspace, do not use built-in tools to touch any path, URL or command.**
+Everything you need to do has a matching PromptCut tool:
 
-| 你想干的事 | 用这个,别用内建工具 |
+| What you want to do | Use this, not a built-in tool |
 | --- | --- |
-| 看工程里有什么(轨道、片段、素材、卡片) | \`get_project\` / \`get_clip\` / \`get_track\` / \`list_media\` / \`list_cards\` |
-| 弄清工程的数据长什么样 | 上面这些工具返回的就是;别去搜应用目录里的源码 |
-| 读网页、查资料 | \`web_open\` / \`web_read\` |
-| 看某张卡的源码 | \`get_card_source\` |
-| 改一张卡 | \`edit_card\`(新建才用 \`create_card\`) |
-| 看画面长什么样 | \`see_frames\` |
-| 处理用户发来的附件 | \`import_media({ url })\`,url 取消息里的**站内地址**;别去 view_file 那个磁盘路径 |
-| 等几秒再查后台作业 | \`wait({ seconds })\`,别用 run_command 去 sleep |
-| 查某个工具怎么调 | 它的参数说明**已经在你的工具清单里**了,直接看;不要去读磁盘上的 schema json |
-| 每个小阶段结束、整个任务收尾时向用户汇报 | \`report_progress\` |
-| 告诉用户你接下来要做什么、刚做好了什么(显示在对话气泡里) | \`send_message\`,to 填 "user" |
+| See what is in the project (tracks, clips, media, cards) | \`get_project\` / \`get_clip\` / \`get_track\` / \`list_media\` / \`list_cards\` |
+| Understand what the project data looks like | What the tools above return; do not search the app directory for source code |
+| Read web pages, look things up | \`web_open\` / \`web_read\` |
+| See the source of a card | \`get_card_source\` |
+| Modify a card | \`edit_card\` (use \`create_card\` only for new ones) |
+| See what the frame looks like | \`see_frames\` |
+| Handle attachments sent by the user | \`import_media({ url })\`, take the url from the **in-site address** in the message; do not view_file that disk path |
+| Wait a few seconds before checking background jobs | \`wait({ seconds })\`, do not sleep via run_command |
+| Look up how to call a tool | Its parameter description is **already in your tool list**, read it directly; do not read schema json on disk |
+| Report to the user at the end of each small phase and when the whole task wraps up | \`report_progress\` |
+| Tell the user what you are about to do or have just finished (shown in the chat bubble) | \`send_message\`, set to to "user" |
 `;
 
 /**
@@ -160,11 +161,11 @@ export function deniedAdvice(names, detail) {
   const s = `${names} ${detail}`.toLowerCase().replace(/[_\s-]/g, '');
   const tips = [];
   if (/readfile|listdir|grepsearch|findbyname|viewfile|codebasesearch/.test(s)) {
-    tips.push('看工程、素材、卡片:用 get_project / get_clip / list_media / list_cards / get_card_source,别去翻磁盘上的目录和源码');
+    tips.push('To inspect the project, media and cards: use get_project / get_clip / list_media / list_cards / get_card_source, do not browse directories and source code on disk');
   }
-  if (/readurl/.test(s)) tips.push('读网页:用 web_open / web_read;用户发来的附件用 import_media({ url })');
-  if (/runcommand|command/.test(s)) tips.push('等几秒再查后台作业:用 wait({ seconds },1~30),别用 run_command 去 sleep');
-  if (!tips.length) tips.push('换成 PromptCut 提供的工具做同一件事');
+  if (/readurl/.test(s)) tips.push('To read web pages: use web_open / web_read; for attachments sent by the user use import_media({ url })');
+  if (/runcommand|command/.test(s)) tips.push('To wait a few seconds before checking background jobs: use wait({ seconds }, 1~30), do not sleep via run_command');
+  if (!tips.length) tips.push('Do the same thing with the tools PromptCut provides');
   return tips;
 }
 
@@ -176,7 +177,7 @@ function _startRun(opts) {
   let childController = null;
   let isAborted = false;
   
-  const fullPrompt = `<<<系统说明>>>\n${opts.systemPrompt}\n${AGY_ADDENDUM}\n<<<用户消息>>>\n${opts.prompt}`;
+  const fullPrompt = `<<<System instructions>>>\\n${opts.systemPrompt}\\n${AGY_ADDENDUM}\\n<<<User message>>>\\n${opts.prompt}`;
 
   /*
    * 提示词走 **stdin**,不走命令行参数。
@@ -341,10 +342,10 @@ function _startRun(opts) {
                   */
                  if (denied && isMcp) {
                     if (opts.onPermissionDenied) opts.onPermissionDenied();
-                    childController.safeOnEvent({ type: 'status', text: `agy 拒绝了 MCP 工具调用。请打开 AI 设置（右栏齿轮），点『授权 PromptCut 工具』，然后重试。` });
+                    childController.safeOnEvent({ type: 'status', text: tr("agy rejected the MCP tool call. Open AI settings (gear in the right rail), click \"Authorize PromptCut tools\", then retry.") });
                  } else if (denied) {
-                    childController.safeOnEvent({ type: 'tool_result', name: tName, ok: false, summary: `Antigravity 自己拒绝了这个工具(它的内建工具,不是 PromptCut 的):${msg}`, ...call });
-                    childController.safeOnEvent({ type: 'status', text: `Antigravity 拦下了它自己的 ${tName}——无人值守模式下没法弹窗征求同意。PromptCut 的工具不受影响,让它改用 PromptCut 的工具做同一件事即可。` });
+                    childController.safeOnEvent({ type: 'tool_result', name: tName, ok: false, summary: tr("Antigravity itself rejected this tool (its built-in tool, not PromptCut's): {0}", msg), ...call });
+                    childController.safeOnEvent({ type: 'status', text: tr("Antigravity blocked its own {0}: no popup can ask for consent in unattended mode. PromptCut's tools are unaffected; have it use PromptCut's tools to do the same thing instead.", tName) });
                  } else {
                     childController.safeOnEvent({ type: 'tool_result', name: tName, ok: false, summary: msg, ...call });
                  }
@@ -371,7 +372,7 @@ function _startRun(opts) {
             * claude.mjs 那边一直是查 is_error 的,这里补齐。
             */
            if (res.status === 'ERROR' || res.error) {
-              const why = typeof res.error === 'string' ? res.error : (res.error?.message || 'Antigravity 报错但没说原因');
+              const why = typeof res.error === 'string' ? res.error : (res.error?.message || tr("Antigravity reported an error without giving a reason"));
               childController.finish({ type: 'error', message: `Antigravity: ${why}` });
               return;
            }
@@ -400,13 +401,13 @@ function _startRun(opts) {
                 * (见 server/mcp-tools.mjs 里 wait 的说明)。
                 */
                if (!String(finalResponse).trim() && !emitted.trim()) {
-                  const why = deniedDetail || `内建工具 ${deniedNames} 被拒绝`;
+                  const why = deniedDetail || tr("Built-in tool {0} was rejected", deniedNames);
                   const tips = deniedAdvice(deniedNames, deniedDetail);
                   childController.finish({
                     type: 'error',
-                    message: `Antigravity 拒绝了它自己的内建工具(${deniedNames})之后放弃了这一轮,没有产出任何结果。`
-                      + `无人值守模式下它没法弹窗征求同意,工作区以外的读文件、读网页、跑命令一律自动拒绝。`
-                      + `PromptCut 的工具不受影响 —— ${tips.join(';')}。`,
+                    message: tr("Antigravity gave up this turn after rejecting its own built-in tools ({0}), and produced no result.", deniedNames)
+                      + tr("In unattended mode it cannot pop up a window to ask for consent, so reading files, reading web pages and running commands outside the workspace are always rejected automatically.")
+                      + tr("PromptCut's tools are unaffected: {0}.", tips.join(';')),
                     /*
                      * 这一类中断是「接着说就有可能成」的:上下文都还在(--conversation 会把
                      * 整段对话带回来),缺的只是让它知道刚才为什么停、以及换哪条路。
@@ -414,15 +415,16 @@ function _startRun(opts) {
                      * 不让它自己开口问「刚才怎么了」,省一轮往返,也省得它猜错。
                      */
                     retryable: true,
-                    retryPrompt: `接着上面继续做。上一轮中断了,原因是:${why}。\n`
-                      + `这是 Antigravity 自己的权限限制:无人值守模式下,你的内建工具(view_file / list_dir / grep_search / find_by_name / read_url_content / run_command 等)`
-                      + `只要碰工作区以外的路径、网址或命令,一律被自动拒绝,整轮作废。换一个内建工具也一样,不要再试。\n`
-                      + `改用 PromptCut 的工具:\n${tips.map((t) => `- ${t}`).join('\n')}\n`
-                      + `不用重头再来,从刚才停下的地方接着做就行。`,
+                    retryPrompt: `Continue from above. The previous turn was interrupted because: ${why}.\\n`
+                      + `This is Antigravity's own permission limit: in unattended mode, your built-in tools (view_file / list_dir / grep_search / find_by_name / read_url_content / run_command, etc.)`
+                      + `are always rejected automatically as soon as they touch a path, URL or command outside the workspace, and the whole turn is void. Switching to another built-in tool makes no difference, do not try again.
+`
+                      + `Switch to PromptCut tools:\\n${tips.map((t) => `- ${t}`).join('\n')}\\n`
+                      + `No need to start over, just continue from where you stopped.`,
                   });
                   return;
                }
-               childController.safeOnEvent({ type: 'status', text: `部分动作被拒绝: ${deniedNames}` });
+               childController.safeOnEvent({ type: 'status', text: tr("Some actions were rejected: {0}", deniedNames) });
            }
 
            if (typeof finalResponse === 'string' && finalResponse.trim().length > 0) {

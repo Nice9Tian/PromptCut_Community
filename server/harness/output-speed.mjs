@@ -109,7 +109,7 @@ export function createOutputSpeedBook({ file = null, now = () => Date.now(), log
       const tmp = `${file}.${process.pid}.tmp`;
       fs.writeFileSync(tmp, JSON.stringify({ v: 1, models: merged }, null, 1), { encoding: 'utf8', mode: 0o660 });
       fs.renameSync(tmp, file);
-    } catch (e) { log(`[harness.output-speed] 速度记录没写成: ${e?.message || e}`); }
+    } catch (e) { log(`[harness.output-speed] failed to write speed record: ${e?.message || e}`); }
   };
 
   return {

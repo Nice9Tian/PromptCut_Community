@@ -87,12 +87,12 @@ const fmtBox = (b: readonly number[] | null) => (b ? `[${b.join(", ")}]` : "null
  */
 export function entityRectsNote(stage: { width: number; height: number }, fps: number, frames: [number, EntityRect[] | null][], image?: { width?: number | null; height?: number | null }): string {
   const scaled = image?.width && image?.height && (image.width !== stage.width || image.height !== stage.height)
-    ? `图片缩到了 ${image.width}×${image.height},按比例换算` : "和图片像素一致";
-  const head = `实体矩形(舞台 ${stage.width}×${stage.height} 像素坐标 [x, y, w, h],${scaled};box = 片段包裹层外框,solid = 实体像素的范围,solid 为 null = 这张卡此刻没有实体像素):`;
+    ? `Image was scaled down to ${image.width}×${image.height}; converted proportionally` : "Matches the image pixels";
+  const head = `Solid rectangles (pixel coordinates [x, y, w, h] on the ${stage.width}×${stage.height} stage, ${scaled}; box = outer frame of the clip wrapper, solid = extent of the solid pixels, solid null = this card has no solid pixels right now):`;
   const blocks = frames.map(([frame, rects]) => {
     const t = `t=${+(frame / fps).toFixed(3)}s`;
-    if (!rects) return `${t}:没量出来。`;
-    if (!rects.length) return `${t}:画面上没有片段。`;
+    if (!rects) return `${t}: could not be measured.`;
+    if (!rects.length) return `${t}: no clips on screen.`;
     return [`${t}:`, ...rects.map((r) => `${r.clipId} box=${fmtBox(r.box)} solid=${fmtBox(r.solid)}`)].join("\n");
   });
   return [head, ...blocks].join("\n");
@@ -110,7 +110,7 @@ async function attachEntityRects(service: ReturnType<typeof frameService>, proje
   } catch (e: any) {
     if (signal?.aborted) throw e;
     for (const value of result.values()) value.rects = null;
-    notes.push(`实体矩形没量出来(${e?.message || e}),图片不受影响。`);
+    notes.push(`Could not measure the entity rectangle (${e?.message || e}); the image is not affected.`);
   }
 }
 
@@ -127,7 +127,7 @@ async function attachEntityRects(service: ReturnType<typeof frameService>, proje
 export async function renderOneFrame(root: string, origin: string, project: any, t: number, notes: string[], priority = 0, o: RenderOpts = {}): Promise<FrameResult> {
   const m = await renderFrames(root, origin, project, [t], notes, priority, o);
   const first = m.values().next().value;
-  if (!first) throw new Error("一帧都没渲出来");
+  if (!first) throw new Error("No frame was rendered");
   return first;
 }
 
@@ -169,7 +169,7 @@ export async function renderFrames(root: string, origin: string, project: any, t
     const frames = await service.see_frames(normalized, times, { signal: o.signal, lane: o.lane ?? "agent" });
     const result = new Map<number, FrameResult>();
     for (const [frame, value] of frames) {
-      if (value.incomplete) throw new Error(`画面尚未就绪：${(value.missing || []).join("、")}`);
+      if (value.incomplete) throw new Error(`Frame not ready yet: ${(value.missing || []).join(", ")}`);
       if (o.post && (o.post.shrink || o.post.bg || o.post.stats)) {
         // The authoritative frame may come from MOV, a mixed control cache,
         // or live rendering. None promises a duplicate in frames/<n>.png.
@@ -246,6 +246,6 @@ export async function renderFrames(root: string, origin: string, project: any, t
   } finally {
     // 看一眼就够了,不留垃圾:等删完(Windows 上渲染子进程刚退、文件可能还占着,退避重试);
     // 还是删不掉也不该让这次调用失败,记一笔,下次启动由 sweepExportRoot 按 pid 清
-    if (!(await removeTempDir(dir))) console.warn(`[vision] 临时导出目录删不掉,留给下次启动清理:${dir}`);
+    if (!(await removeTempDir(dir))) console.warn(`[vision] Could not delete the temporary export directory, leaving it for cleanup on next startup: ${dir}`);
   }
 }

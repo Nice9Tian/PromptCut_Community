@@ -15,7 +15,7 @@ function concatPath(file) {
 
 /** Join independently encoded part movies without decoding them again. */
 async function concatVideos(ffmpeg, parts, output) {
-  if (!parts.length) throw new Error('没有可合并的导出分片');
+  if (!parts.length) throw new Error('No export shards to merge');
   const list = output + '.concat.txt';
   await fs.writeFile(list, parts.map((file) => `file '${concatPath(path.resolve(file))}'`).join('\n') + '\n', 'utf8');
   try {
@@ -25,7 +25,7 @@ async function concatVideos(ffmpeg, parts, output) {
       let stderr = '';
       proc.stderr.on('data', (d) => { stderr = (stderr + d).slice(-8000); });
       proc.on('error', reject);
-      proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`合并导出分片失败(ffmpeg ${code}): ${stderr}`)));
+      proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`Failed to merge export shards (ffmpeg ${code}): ${stderr}`)));
     });
   } finally { await fs.rm(list, { force: true }); }
 }
@@ -59,7 +59,7 @@ export async function exportUnified(project, opts) {
       plannerBakery = await openBakery({ ...opts, url: opts.url });
       const clips = await plannerBakery.page.evaluate(() => window.__pcClipFrameModes?.() ?? null);
       ranges = planShardRanges(clips ?? projectCardClips(project), startFrame, endFrame, fps, requestedWorkers);
-      console.log(`分片导出:${ranges.length} 段 ${ranges.map(([a, b]) => `${a}-${b}`).join(' ')}`);
+      console.log(`Shard export: ${ranges.length} segments ${ranges.map(([a, b]) => `${a}-${b}`).join(' ')}`);
     }
     partVideos = !opts.noVideo && ranges.length > 1 && !targetFrames;
     ffmpeg = partVideos ? await findFfmpeg() : null;
@@ -124,7 +124,7 @@ export async function exportUnified(project, opts) {
             console.log(`Exported frame ${frame} (${completed}/${allFrames.length})`);
           },
         }));
-      }, { label: `分片 ${a}-${b}` });
+      }, { label: `Shard ${a}-${b}` });
       if (stream) { await stream.finish(); finished = true; }
       result.part = { startFrame: a, endFrame: b, file: partFile };
       first ||= result;
@@ -141,7 +141,7 @@ export async function exportUnified(project, opts) {
     const files = results.map((r) => r.part.file);
     cardsVideo = path.join(out, 'overlay.mov');
     await concatVideos(ffmpeg, files, cardsVideo);
-    console.log(`分片视频已合并: ${files.length} 个 part -> ${cardsVideo}`);
+    console.log(`Shard videos merged: ${files.length} parts -> ${cardsVideo}`);
     // 分片是合并后 overlay.mov 的逐字节重复,合完就删(存储计划 A 部分:大的导出里多占十几 GB)
     await fs.rm(partsDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }).catch(() => {});
   }

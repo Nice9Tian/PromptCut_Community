@@ -18,7 +18,7 @@ export const visionHandlers = {
      * cutId(2026-10-21 用户定):看没激活的剪辑不用切换。交给渲染的是「那条剪辑当激活」的项目视图,
      * 只在这次出图时用:不进 store、不进文档同步、播放头和激活剪辑都不动。不给 t 时取那条剪辑上次离开时的播放头。
      */
-    if (args?.cutId !== undefined && args?.cutId !== null && typeof args.cutId !== "string") throw new Error("cutId 要是字符串(list_cuts 里的剪辑 id);不传就看当前激活的剪辑。");
+    if (args?.cutId !== undefined && args?.cutId !== null && typeof args.cutId !== "string") throw new Error("cutId must be a string (the cut id from list_cuts); if omitted, the currently active cut is used.");
     const look = cutLookView(state.project, args?.cutId);
     const project = look.project;
     const playheadT = look.active ? state.t : (look.parkedT ?? 0);
@@ -39,7 +39,7 @@ export const visionHandlers = {
         signal: AbortSignal.timeout(180000),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.ok) throw new Error(data.error || `渲染画面失败(HTTP ${res.status})`);
+      if (!res.ok || !data.ok) throw new Error(data.error || `Failed to render frame (HTTP ${res.status})`);
       return { ...data, cut: look.cut };
     };
     /*
@@ -57,7 +57,7 @@ export const visionHandlers = {
         signal: AbortSignal.timeout(180000),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.ok) throw new Error(data.error || `渲染画面失败(HTTP ${res.status})`);
+      if (!res.ok || !data.ok) throw new Error(data.error || `Failed to render frame (HTTP ${res.status})`);
       return { ok: true, frames: data.frames, note: data.note, __images: data.__images, cut: look.cut };
     }
     return snap(typeof args?.t === "number" ? args.t : undefined);
@@ -75,7 +75,7 @@ export const visionHandlers = {
    */
   seeSequences: async (args) => {
     let media = getState().project.media.find((m) => m.id === args.mediaId);
-    if (!media) throw new Error(`找不到素材 ${args.mediaId}`);
+    if (!media) throw new Error(`Asset ${args.mediaId} not found`);
     /*
      * 图片直接把图本身交回去。以前只认视频:图片要么被拒,要么(被错登记成 video 的老 jpg)
      * 跑一遍镜头识别得到一个 0.04 秒的「镜头」—— 模型认定「抽不出画面」,转头去 Read 磁盘路径。
@@ -83,9 +83,9 @@ export const visionHandlers = {
      */
     if (isImageMedia(media)) {
       const src = media.url || mediaCardUrl(media);
-      if (!src) throw new Error(`${media.name} 没有可取的地址(上传没完成?),稍后再试`);
+      if (!src) throw new Error(`${media.name} has no fetchable address (upload not finished?), try again later`);
       const r = await fetch(src);
-      if (!r.ok) throw new Error(`取图片失败(HTTP ${r.status}):${media.name}`);
+      if (!r.ok) throw new Error(`Failed to fetch image (HTTP ${r.status}): ${media.name}`);
       const bmp = await createImageBitmap(await r.blob());
       const scale = Math.min(1, 1280 / Math.max(bmp.width, bmp.height));
       const canvas = document.createElement("canvas");
@@ -101,18 +101,18 @@ export const visionHandlers = {
         width: bmp.width,
         height: bmp.height,
         cardUrl: mediaCardUrl(media),
-        note: "这是一张图片,下面就是它本身(长边缩到 1280 以内)。卡片参数里要用它就填 cardUrl。",
-        __images: [{ sceneIndex: 1, label: "原图", mime: "image/jpeg", base64 }],
+        note: "This is an image, shown below as is (long edge scaled down to within 1280). To use it in card parameters, fill in cardUrl.",
+        __images: [{ sceneIndex: 1, label: "Original image", mime: "image/jpeg", base64 }],
       };
     }
-    if (media.kind !== "video") throw new Error(`${media.name} 不是视频,没有画面可看`);
+    if (media.kind !== "video") throw new Error(`${media.name} is not a video, there are no frames to view`);
     // 刚导入的素材要等入库完(import_media 一返回模型就可能接着调这里):最多等 15 秒。
     // 镜头识别经素材服务取字节,看的是 pending / 哈希 / 地址,不是磁盘路径(见 ai/perceptionMedia.ts)
     for (let i = 0; i < 30 && !mediaReadyForServer(media); i++) {
       await new Promise((r) => setTimeout(r, 500));
       media = getState().project.media.find((m) => m.id === args.mediaId) ?? media;
     }
-    if (!mediaReadyForServer(media)) throw new Error(`${media.name} 还没进素材服务(上传没完成或失败),稍后再试或重新导入`);
+    if (!mediaReadyForServer(media)) throw new Error(`${media.name} is not in the asset service yet (upload incomplete or failed), try again later or re-import`);
     const notes: string[] = [];
     let shots = media.shots ?? null;
     if (!shots) {
@@ -127,13 +127,13 @@ export const visionHandlers = {
         actions.setMediaShots(args.mediaId, result);
         shotJobs.delete(args.mediaId);
         shots = result;
-        notes.push(`刚跑完镜头识别(${result.engine}),共 ${result.shots.length} 个镜头。`);
+        notes.push(`Shot detection just finished (${result.engine}), ${result.shots.length} shots in total.`);
       } catch (e) {
-        notes.push(`镜头识别没成功(${e instanceof Error ? e.message : String(e)}),下面按每 10 秒一段切,边界不是真镜头。`);
+        notes.push(`Shot detection failed (${e instanceof Error ? e.message : String(e)}), below it is split into 10-second segments, the boundaries are not real shots.`);
       }
     }
     const { scenes: all, fallback } = scenesOf(shots, media.duration ?? 0);
-    if (!all.length) throw new Error(`${media.name} 没有可看的画面(时长为 0?)`);
+    if (!all.length) throw new Error(`${media.name} has no picture to view (duration is 0?)`);
     const plan = planSequences(all, args);
     // 拼图一张一张要,最多 3 张并行:每张是一次 ffmpeg,全开会把机器压死
     const results: any[] = new Array(plan.scenes.length);
@@ -188,10 +188,10 @@ export const visionHandlers = {
       scenes: scenesOut,
       note: [
         ...notes,
-        `每张拼图对应 scenes 里同序号的镜头,格子按行从左到右对应 frames 里的秒数。`,
-        plan.nextPage ? `还有 ${plan.pages - plan.page} 页:see_frames({ source: "media", mediaId, page: ${plan.nextPage} })。` : "这是最后一页。",
-        "某个镜头看不清:see_frames({ source: 'media', mediaId, scene: 序号, grid: 9 })。",
-        !media.transcript ? "这个素材还没转写,想对照说了什么先 transcribe_media。" : "",
+        `Each contact sheet corresponds to the shot with the same index in scenes; cells, row by row from left to right, correspond to the seconds in frames.`,
+        plan.nextPage ? `${plan.pages - plan.page} more pages: see_frames({ source: "media", mediaId, page: ${plan.nextPage} }).` : "This is the last page.",
+        "If a shot is hard to see: see_frames({ source: 'media', mediaId, scene: index, grid: 9 }).",
+        !media.transcript ? "This media has not been transcribed yet; to check what is said, run transcribe_media first." : "",
       ].filter(Boolean).join(" "),
       __images: images,
     };
@@ -211,7 +211,7 @@ export const visionHandlers = {
       signal: AbortSignal.timeout(150000),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) throw new Error(data.error || `渲染失败(HTTP ${res.status})`);
+    if (!res.ok || !data.ok) throw new Error(data.error || `Render failed (HTTP ${res.status})`);
     return data;
   },
   /**
@@ -228,12 +228,12 @@ export const visionHandlers = {
       signal: AbortSignal.timeout(60000),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) throw new Error(data.error || `读不到 DOM 树(HTTP ${res.status})`);
+    if (!res.ok || !data.ok) throw new Error(data.error || `Cannot read the DOM tree (HTTP ${res.status})`);
     return data;
   },
   cardAuthoringGuide: async () => {
     const res = await fetch(apiUrl("/api/cards/guide"));
-    if (!res.ok) throw new Error(`拿不到建卡指南(HTTP ${res.status})`);
+    if (!res.ok) throw new Error(`Cannot get the card authoring guide (HTTP ${res.status})`);
     return { guide: await res.text() };
   },
 } satisfies Partial<EditorApi>;

@@ -46,7 +46,7 @@ export function memberOf(actor) {
  * @param {string} [o.origin] 本进程的标识(自己发出去又收回来的按它跳过)
  */
 export function createPresenceBridge({ link, board, editing = null, conversationNumberOf, labelOf = () => null, infoOf = () => null, origin = `ed-${randomBytes(6).toString('base64url')}`, log = () => {}, limits: limitsIn = {} } = {}) {
-  if (!link || typeof board !== 'function' || typeof conversationNumberOf !== 'function') throw new TypeError('createPresenceBridge: 要 link、board、conversationNumberOf');
+  if (!link || typeof board !== 'function' || typeof conversationNumberOf !== 'function') throw new TypeError('createPresenceBridge: requires link, board, conversationNumberOf');
   const L = { ...PRESENCE_DEFAULTS, ...limitsIn };
   const projectId = link.projectId;
   /** null = 还不知道;true = 文档服务认;false = 旧版文档服务,不再发 */
@@ -121,7 +121,7 @@ export function createPresenceBridge({ link, board, editing = null, conversation
     const local = b.listRaw('').find((a) => a.id === data.to && !a.remote);
     if (!local) return;
     const member = memberOf(from);
-    const who = `Agent ${data.from ?? '?'}(${[data.vendor, member ? `成员 ${member} 那边` : null].filter(Boolean).join(',') || '别的成员那边'})`;
+    const who = `Agent ${data.from ?? '?'}(${[data.vendor, member ? `on member ${member}'s side` : null].filter(Boolean).join(',') || 'on another member\'s side'})`;
     b.deliver({ from: typeof data.from === 'string' ? data.from : null, fromLabel: who, to: data.to, text: data.text, hops: data.hops });
   }
 

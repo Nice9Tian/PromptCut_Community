@@ -32,7 +32,7 @@ function streamOf(buf) {
  * @returns {import('./blob-store.mjs').BlobStore}
  */
 export function createMemoryStore({ chunkSize = BLOB_CHUNK_SIZE, now = Date.now } = {}) {
-  if (!Number.isSafeInteger(chunkSize) || chunkSize <= 0) throw new TypeError('createMemoryStore：chunkSize 必须是正整数');
+  if (!Number.isSafeInteger(chunkSize) || chunkSize <= 0) throw new TypeError('createMemoryStore: chunkSize must be a positive integer');
   const withLock = createKeyedLock();
   /** @type {Map<string, { data: Buffer, ext: string, tier: 'small' | 'original', mtimeMs: number }>} */
   const blobs = new Map();

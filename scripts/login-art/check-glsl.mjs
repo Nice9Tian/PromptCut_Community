@@ -16,7 +16,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const text = fs.readFileSync(path.join(ROOT, 'src/start/BrandCanvas.tsx'), 'utf8').replace(/\r\n/g, '\n');
 const grab = (name) => {
   const m = new RegExp('export const ' + name + ' = `(.*?)`;', 's').exec(text);
-  if (!m) throw new Error('没找到 ' + name);
+  if (!m) throw new Error('Not found: ' + name);
   return m[1];
 };
 const VERT = grab('VERT');

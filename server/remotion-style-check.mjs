@@ -202,7 +202,7 @@ export function inspectRemotionStyle(source, o = {}) {
   };
   findMode(sf);
   for (const node of unreadable) {
-    hit(node, 'frame-mode', 'frameMode 要直接写成字面量："direct"（remotion 式）或 "stateful"（motion 式）。写成变量或算出来的值，建卡时读不出这张卡是哪种写法');
+    hit(node, 'frame-mode', 'frameMode must be written directly as a literal: "direct" (remotion style) or "stateful" (motion style). If it is written as a variable or a computed value, card creation cannot tell which style this card uses');
   }
 
   /** usesFramework：有一句指向框架的导入（含只带类型的）；loadsFramework：其中有会留到运行时的（裸导入、带值的导入） */
@@ -219,19 +219,19 @@ export function inspectRemotionStyle(source, o = {}) {
 
   /* ---------- 必须引用框架 ---------- */
   if (!loadsFramework) {
-    hit(directNode ?? sf, 'framework', `这张卡声明的是 remotion 式，但没有引用框架。在文件开头加一行 \`import ${FRAMEWORK_IMPORT};\`；用到工具时写成 \`import { tween } from ${FRAMEWORK_IMPORT};\`。引用以后，这张卡载入时文件顶层的对象会被锁成只读`);
+    hit(directNode ?? sf, 'framework', `This card declares remotion style but does not import the framework. Add a line \`import ${FRAMEWORK_IMPORT};\` at the top of the file; to use the tools, write \`import { tween } from ${FRAMEWORK_IMPORT};\`. Once imported, top-level objects in the file are locked read-only when the card loads`);
   }
 
   /* ---------- 导入 ---------- */
   const checkSpecifier = (node, spec, typeOnly) => {
     if (typeOnly) return;
     if (spec === 'motion' || spec.startsWith('motion/')) {
-      hit(node, 'motion', `引用了 ${spec}：Motion 的动画、弹簧按真实时间自己往前走，跳到某一帧时算不出那一帧的画面。过渡、弹簧、错开进场用框架 ${FRAMEWORK_IMPORT} 里的 tween、spring、stagger，它们由 t 直接算`);
+      hit(node, 'motion', `Imported ${spec}: Motion animations and springs advance on their own in real time, so the picture of a given frame cannot be computed when jumping to it. For transitions, springs and staggered entrances, use tween, spring and stagger from the framework ${FRAMEWORK_IMPORT}, which compute directly from t`);
       return;
     }
     const at = normalizeSpecifier(fileName, spec);
     if (at !== null && REMOTION_IMPORT_ALLOW.includes(at)) return;
-    hit(node, 'import', `引用了 ${spec.slice(0, 80)}：remotion 式的卡只许引用框架 ${FRAMEWORK_IMPORT}、react、"../../kernel/types"、"../../kernel/frameReady"、"../../kernel/soundEffects"、"../../render/cards/graphValues"、"../native/hud"、"../native/sound-effects"、"../magicui/vendor/cn"`);
+    hit(node, 'import', `Imported ${spec.slice(0, 80)}: remotion-style cards may only import the framework ${FRAMEWORK_IMPORT}, react, "../../kernel/types", "../../kernel/frameReady", "../../kernel/soundEffects", "../../render/cards/graphValues", "../native/hud", "../native/sound-effects", "../magicui/vendor/cn"`);
   };
   for (const st of sf.statements) {
     if (ts.isImportDeclaration(st)) {
@@ -244,19 +244,19 @@ export function inspectRemotionStyle(source, o = {}) {
       const spec = stringOf(st.moduleSpecifier);
       if (spec !== null) checkSpecifier(st, spec, st.isTypeOnly);
     } else if (ts.isImportEqualsDeclaration(st)) {
-      hit(st, 'import', '不许用 import x = require(…)：remotion 式的卡的导入只写成 import … from "…"');
+      hit(st, 'import', 'import x = require(…) is not allowed: in remotion-style cards, imports must be written only as import … from "…"');
     }
   }
 
   /* ---------- 文件顶层只许写常量 ---------- */
-  const TOP_ONLY = '卡片文件顶层只许写 import、类型、函数和 const 常量';
+  const TOP_ONLY = 'Only import, types, functions and const constants are allowed at the top level of a card file';
   const checkInitializer = (init) => {
     const walk = (node) => {
       if (isFunctionLike(node)) return; // 函数体是调用时才跑的，由下面的逐条规则管
-      if (ts.isNewExpression(node)) hit(node, 'top-level', '顶层用了 new：new 出来的东西（Map、Set、类的实例、定长数组）锁不成只读，会成为跨帧存东西的地方。要查表就写成对象或数组字面量；确实要用的放进函数里现算');
-      else if (ts.isAwaitExpression(node)) hit(node, 'top-level', '顶层用了 await：卡片载入不能等异步的东西。异步准备放进组件里，用 beginFrameWork 挡住截图');
-      else if (isAssignment(node) || isUpdate(node) || ts.isDeleteExpression(node)) hit(node, 'top-level', `顶层的初始化式里有赋值：${TOP_ONLY}`);
-      else if (ts.isClassExpression(node)) hit(node, 'top-level', `顶层写了 class：${TOP_ONLY}`);
+      if (ts.isNewExpression(node)) hit(node, 'top-level', 'Top level uses new: things created with new (Map, Set, class instances, fixed-length arrays) cannot be locked read-only and would become a place to store data across frames. For lookup tables, write an object or array literal; if you really need one, create it inside a function');
+      else if (ts.isAwaitExpression(node)) hit(node, 'top-level', 'Top level uses await: a card cannot wait for async work when it loads. Put async preparation inside the component and use beginFrameWork to hold back the screenshot');
+      else if (isAssignment(node) || isUpdate(node) || ts.isDeleteExpression(node)) hit(node, 'top-level', `Top-level initializer contains an assignment: ${TOP_ONLY}`);
+      else if (ts.isClassExpression(node)) hit(node, 'top-level', `Top level contains a class: ${TOP_ONLY}`);
       ts.forEachChild(node, walk);
     };
     walk(init);
@@ -268,16 +268,16 @@ export function inspectRemotionStyle(source, o = {}) {
       if (st.modifiers?.some((m) => m.kind === ts.SyntaxKind.DeclareKeyword)) continue;
       const flags = st.declarationList.flags;
       if (!(flags & ts.NodeFlags.Const)) {
-        hit(st, 'top-level', `顶层写了 ${flags & ts.NodeFlags.Let ? 'let' : 'var'}：能改的顶层变量活得比一帧长，上一帧写进去的东西下一帧读得到。${TOP_ONLY}；随时间变的量在组件里由 t 算`);
+        hit(st, 'top-level', `Top level contains ${flags & ts.NodeFlags.Let ? 'let' : 'var'}: a mutable top-level variable outlives a frame, so what one frame writes can be read by the next. ${TOP_ONLY}; compute time-varying values in the component from t`);
       }
       for (const d of st.declarationList.declarations) if (d.initializer) checkInitializer(d.initializer);
       continue;
     }
     if (ts.isExportAssignment(st)) { checkInitializer(st.expression); continue; }
-    if (ts.isClassDeclaration(st)) { hit(st, 'top-level', `顶层写了 class：类的静态字段和实例都是能改的东西。${TOP_ONLY}；组件写成函数`); continue; }
-    if (ts.isEnumDeclaration(st)) { hit(st, 'top-level', `顶层写了 enum：${TOP_ONLY}；用联合类型或 const 对象`); continue; }
+    if (ts.isClassDeclaration(st)) { hit(st, 'top-level', `Top level contains a class: static fields and instances of a class are mutable. ${TOP_ONLY}; write components as functions`); continue; }
+    if (ts.isEnumDeclaration(st)) { hit(st, 'top-level', `Top level contains an enum: ${TOP_ONLY}; use a union type or a const object`); continue; }
     if (ts.isExpressionStatement(st) && stringOf(st.expression) !== null) continue; // "use strict" 这类指令
-    hit(st, 'top-level', `顶层有一条直接执行的语句：${TOP_ONLY}。载入时不许做事（注册、改全局、预先算一遍存起来）`);
+    hit(st, 'top-level', `Top level contains a directly executed statement: ${TOP_ONLY}. Nothing may be done at load time (registering, changing globals, precomputing and storing)`);
   }
 
   /* ---------- 逐个节点 ---------- */
@@ -309,17 +309,17 @@ export function inspectRemotionStyle(source, o = {}) {
   };
   /** 这个名字是不是文件顶层的（没被函数里的同名变量遮住） */
   const topKind = (id) => (id && !shadowed(id.text) ? top.get(id.text) ?? null : null);
-  const describeTop = (id) => (top.get(id.text) === 'import' ? `导入进来的 ${id.text}` : `文件顶层的 ${id.text}`);
-  const NO_CARRY = '这一帧的画面只许用 t、参数和输入素材算出来，不能读上一帧留下的东西';
+  const describeTop = (id) => (top.get(id.text) === 'import' ? `imported ${id.text}` : `top-level ${id.text} of the file`);
+  const NO_CARRY = 'The picture of this frame may only be computed from t, parameters and input assets, and must not read anything left over from the previous frame';
 
   const checkWriteTarget = (node, target) => {
     const t = unwrap(target);
     if (t && ts.isPropertyAccessExpression(t) && t.name.text === 'current') {
-      hit(node, 'state', `往 .current 里写：ref 里存的值活得比一帧长，这是在把东西带到下一帧。${NO_CARRY}；ref 只用来拿 DOM 节点`);
+      hit(node, 'state', `Writing to .current: a value stored in a ref outlives a frame, so this carries data over to the next frame. ${NO_CARRY}; use a ref only to hold DOM nodes`);
       return;
     }
     const root = rootOf(target);
-    if (root && topKind(root)) hit(node, 'state', `往${describeTop(root)} 里写：它活得比一帧长，上一帧写进去的东西下一帧读得到。${NO_CARRY}`);
+    if (root && topKind(root)) hit(node, 'state', `Writing to ${describeTop(root)}: it outlives a single frame, so what the previous frame wrote is readable in the next frame. ${NO_CARRY}`);
   };
 
   /** 字符串在不在「类名」的位置上（className 属性里、cn() 这类函数的参数里） */
@@ -344,13 +344,13 @@ export function inspectRemotionStyle(source, o = {}) {
     }
     return false;
   };
-  const CSS_HINT = `CSS 的动画和过渡跟着真实时间走，机器一卡就对不上帧。把随时间变的样式写成 t 的函数（框架 ${FRAMEWORK_IMPORT} 的 interpolate、tween、spring），直接写进 style`;
+  const CSS_HINT = `CSS animations and transitions follow real time, so they fall out of sync with frames when the machine stalls. Write time-varying styles as functions of t (the framework's ${FRAMEWORK_IMPORT} interpolate, tween, spring), directly in style`;
 
   const checkText = (node, text) => {
-    if (CSS_TEXT.test(text)) hit(node, 'css-animation', `样式文本里有 CSS 动画或过渡（@keyframes / animation / transition）：${CSS_HINT}`);
+    if (CSS_TEXT.test(text)) hit(node, 'css-animation', `The style text contains a CSS animation or transition (@keyframes / animation / transition): ${CSS_HINT}`);
     const animate = CLASS_ANIMATE.test(text);
     if (animate || (CLASS_TRANSITION.test(text) && inClassContext(node))) {
-      hit(node, 'css-animation', `类名里有 ${animate ? 'animate-*' : 'transition'}：${CSS_HINT}`);
+      hit(node, 'css-animation', `The class name contains ${animate ? 'animate-*' : 'transition'}: ${CSS_HINT}`);
     }
   };
 
@@ -360,15 +360,15 @@ export function inspectRemotionStyle(source, o = {}) {
     if (ts.isIdentifier(node)) {
       const name = node.text;
       if (isGlobal(node)) {
-        if (name === 'performance') hit(node, 'real-time', `读了真实时间（performance）：导出和预渲染走的是舞台自己的帧时钟，真实时间每次都不一样。要时间就用组件收到的 t`);
-        else if (TIMERS.has(name)) hit(node, 'timer', `用了定时器（${name}）：它按真实时间触发，不跟着帧走。「过一会儿再出现」写成 t 的条件：t >= 多少秒，或框架的 tween / stagger 的 delay`, LEGACY_TIMERS.has(name) ? { legacy: true } : undefined);
-        else if (FRAME_CALLBACKS.has(name)) hit(node, 'frame-callback', `用了浏览器的逐帧回调（${name}）：它跟着屏幕刷新走，回调几次、隔多久都不确定。舞台每一帧会带着新的 t 重新渲染这张卡，画面写成 t 的函数就行`);
-        else if (name === 'crypto') hit(node, 'random', `用了不带种子的随机（crypto）：每次拿到的数不一样。用框架 ${FRAMEWORK_IMPORT} 的 random(种子, 序号)`);
-        else if (GLOBAL_STORES.has(name)) hit(node, 'state', `用了 ${name}：全局对象和本地存储活得比一帧长，是跨帧存东西的地方。${NO_CARRY}`);
-        else if (name === 'eval') hit(node, 'state', '用了 eval：运行时拼出来的代码建卡时查不了');
-        else if (name === 'IntersectionObserver') hit(node, 'viewport', '用了 IntersectionObserver：卡片挂载即播放，不存在「滚动进入视口」这回事', { legacy: true });
+        if (name === 'performance') hit(node, 'real-time', `Read real time (performance): export and prerender run on the stage's own frame clock, and real time differs every run. If you need time, use the t the component receives`);
+        else if (TIMERS.has(name)) hit(node, 'timer', `Used a timer (${name}): it fires on real time and does not follow frames. Write "appear after a while" as a condition on t: t >= some number of seconds, or the delay of the framework's tween / stagger`, LEGACY_TIMERS.has(name) ? { legacy: true } : undefined);
+        else if (FRAME_CALLBACKS.has(name)) hit(node, 'frame-callback', `Used the browser's per-frame callback (${name}): it follows the screen refresh, so how many times it is called and at what interval are not deterministic. The stage re-renders this card on every frame with a new t, so just write the picture as a function of t`);
+        else if (name === 'crypto') hit(node, 'random', `Used unseeded randomness (crypto): it returns a different number every time. Use the framework's ${FRAMEWORK_IMPORT} random(seed, index)`);
+        else if (GLOBAL_STORES.has(name)) hit(node, 'state', `Used ${name}: global objects and local storage outlive a single frame and are a place to keep things across frames. ${NO_CARRY}`);
+        else if (name === 'eval') hit(node, 'state', 'Used eval: code assembled at runtime cannot be checked when the card is created');
+        else if (name === 'IntersectionObserver') hit(node, 'viewport', 'Used IntersectionObserver: a card plays as soon as it is mounted, so "scrolling into the viewport" does not exist', { legacy: true });
         else if (name === 'Function' && node.parent && (ts.isCallExpression(node.parent) || ts.isNewExpression(node.parent)) && node.parent.expression === node) {
-          hit(node, 'state', '用了 Function(…)：运行时拼出来的代码建卡时查不了');
+          hit(node, 'state', 'Used Function(…): code assembled at runtime cannot be checked when the card is created');
         }
       }
     }
@@ -378,45 +378,45 @@ export function inspectRemotionStyle(source, o = {}) {
       const obj = unwrap(node.expression);
       const member = ts.isPropertyAccessExpression(node) ? node.name.text : stringOf(node.argumentExpression);
       const globalObj = obj && ts.isIdentifier(obj) && isGlobal(obj) ? obj.text : null;
-      if (globalObj === 'Math' && member === 'random') hit(node, 'random', `用了不带种子的随机（Math.random）：它每调一次往前走一步，第 N 帧拿到哪个数取决于前面调过几次，直接跳到第 N 帧就对不上。用框架 ${FRAMEWORK_IMPORT} 的 random(种子, 序号)，由种子和序号直接算`);
-      if (globalObj === 'Date' && member === 'now') hit(node, 'real-time', '读了真实时间（Date.now()）：导出和预渲染走的是舞台自己的帧时钟，真实时间每次都不一样。要时间就用组件收到的 t', { legacy: true });
-      if (member && FRAME_CALLBACK_MEMBERS.has(member)) hit(node, 'frame-callback', `用了自带的帧循环（${member}）：它跟着屏幕刷新走。画面写成 t 的函数，t 变了显式画一次`);
+      if (globalObj === 'Math' && member === 'random') hit(node, 'random', `Used unseeded randomness (Math.random): each call advances one step, so which number frame N gets depends on how many times it was called before, and jumping straight to frame N gives a mismatch. Use the framework's ${FRAMEWORK_IMPORT} random(seed, index), computed directly from the seed and index`);
+      if (globalObj === 'Date' && member === 'now') hit(node, 'real-time', 'Read real time (Date.now()): export and prerender run on the stage\'s own frame clock, and real time differs every run. If you need time, use the t the component receives', { legacy: true });
+      if (member && FRAME_CALLBACK_MEMBERS.has(member)) hit(node, 'frame-callback', `Used a built-in frame loop (${member}): it follows the screen refresh. Write the picture as a function of t and draw explicitly once whenever t changes`);
     }
     if (ts.isNewExpression(node) || ts.isCallExpression(node)) {
       const callee = unwrap(node.expression);
       if (callee && ts.isIdentifier(callee) && callee.text === 'Date' && isGlobal(callee) && (node.arguments?.length ?? 0) === 0) {
-        hit(node, 'real-time', `读了真实时间（${ts.isNewExpression(node) ? 'new Date()' : 'Date()'}）：导出和预渲染走的是舞台自己的帧时钟，真实时间每次都不一样。要时间就用组件收到的 t`);
+        hit(node, 'real-time', `Read real time (${ts.isNewExpression(node) ? 'new Date()' : 'Date()'}): export and prerender run on the stage's own frame clock, and real time differs every run. If you need time, use the t the component receives`);
       }
     }
     if (ts.isCallExpression(node)) {
       const callee = unwrap(node.expression);
-      if (node.expression.kind === ts.SyntaxKind.ImportKeyword) hit(node, 'import', '用了动态 import()：remotion 式的卡的导入只写成文件开头的 import … from "…"');
-      if (callee && ts.isIdentifier(callee) && callee.text === 'require' && isGlobal(callee)) hit(node, 'import', '用了 require()：remotion 式的卡的导入只写成文件开头的 import … from "…"');
+      if (node.expression.kind === ts.SyntaxKind.ImportKeyword) hit(node, 'import', 'Used dynamic import(): imports in a remotion-style card must only be written as import … from "…" at the start of the file');
+      if (callee && ts.isIdentifier(callee) && callee.text === 'require' && isGlobal(callee)) hit(node, 'import', 'Used require(): imports in a remotion-style card must only be written as import … from "…" at the start of the file');
       // 记状态的 hook
       const hook = callee && ts.isIdentifier(callee) ? callee.text : callee && ts.isPropertyAccessExpression(callee) ? callee.name.text : null;
       const fromReact = callee && (ts.isIdentifier(callee) ? (!shadowed(callee.text) && (importedFrom.get(callee.text) === 'react' || !top.has(callee.text))) : true);
       if (hook && fromReact && STATE_HOOKS.has(hook)) {
-        hit(node, 'state', `用了 ${hook}：它记的值活得比一帧长，画面就不再只由 t 和参数决定。${NO_CARRY}；随时间变的量由 t 直接算，要缓存只用 useMemo`);
+        hit(node, 'state', `Used ${hook}: the value it remembers outlives a single frame, so the picture is no longer determined by t and the parameters alone. ${NO_CARRY}; compute time-varying values directly from t, and use only useMemo for caching`);
       }
       if (hook === 'useRef' && fromReact && node.arguments.length > 0) {
         const init = unwrap(node.arguments[0]);
         const empty = init.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(init) && init.text === 'undefined');
-        if (!empty) hit(node, 'state', `useRef 带了初值：ref 里存的值活得比一帧长，是跨帧存东西的地方。remotion 式的卡里 ref 只用来拿 DOM 节点，写成 useRef(null)。${NO_CARRY}`);
+        if (!empty) hit(node, 'state', `useRef was given an initial value: a value stored in a ref outlives a single frame and is a place to keep things across frames. In a remotion-style card a ref is only used to get a DOM node, so write useRef(null). ${NO_CARRY}`);
       }
       // 元素的 animate()
       if (callee && ts.isPropertyAccessExpression(callee) && callee.name.text === 'animate') {
-        hit(node, 'css-animation', `调了 .animate(…)：元素的动画接口跟着真实时间走。${CSS_HINT}`);
+        hit(node, 'css-animation', `Called .animate(…): the element animation API follows real time. ${CSS_HINT}`);
       }
       // 往顶层的东西里写：X.push(…)、Object.assign(X, …)
       if (callee && ts.isPropertyAccessExpression(callee) && MUTATORS.has(callee.name.text)) {
         const root = rootOf(callee.expression);
-        if (root && topKind(root)) hit(node, 'state', `往${describeTop(root)} 里写（${callee.name.text}）：它活得比一帧长，上一帧写进去的东西下一帧读得到。${NO_CARRY}`);
+        if (root && topKind(root)) hit(node, 'state', `Writing to ${describeTop(root)} (${callee.name.text}): it outlives a single frame, so what the previous frame wrote is readable in the next frame. ${NO_CARRY}`);
       }
       if (callee && ts.isPropertyAccessExpression(callee) && OBJECT_WRITERS.has(callee.name.text) && node.arguments[0]) {
         const holder = unwrap(callee.expression);
         const root = rootOf(node.arguments[0]);
         if (holder && ts.isIdentifier(holder) && ['Object', 'Reflect'].includes(holder.text) && root && topKind(root)) {
-          hit(node, 'state', `往${describeTop(root)} 里写（${holder.text}.${callee.name.text}）：它活得比一帧长，上一帧写进去的东西下一帧读得到。${NO_CARRY}`);
+          hit(node, 'state', `Writing to ${describeTop(root)} (${holder.text}.${callee.name.text}): it outlives a single frame, so what the previous frame wrote is readable in the next frame. ${NO_CARRY}`);
         }
       }
     }
@@ -430,7 +430,7 @@ export function inspectRemotionStyle(source, o = {}) {
       const left = unwrap(node.left);
       if (left && ts.isPropertyAccessExpression(left) && STYLE_KEY.test(left.name.text) && /\.style$/.test(left.expression.getText(sf))
         && !STYLE_OFF.has(stringOf(unwrap(node.right)) ?? '?')) {
-        hit(node, 'css-animation', `给样式写了 ${left.name.text}：${CSS_HINT}`);
+        hit(node, 'css-animation', `Wrote ${left.name.text} into the style: ${CSS_HINT}`);
       }
     }
 
@@ -441,7 +441,7 @@ export function inspectRemotionStyle(source, o = {}) {
         const key = nameOf(prop.name);
         if (!key || !STYLE_KEY.test(key)) continue;
         if (ts.isPropertyAssignment(prop) && STYLE_OFF.has(stringOf(unwrap(prop.initializer)) ?? '?')) continue; // 明写「没有」的不算
-        hit(prop, 'css-animation', `样式里写了 ${key}：${CSS_HINT}`);
+        hit(prop, 'css-animation', `Wrote ${key} in the style: ${CSS_HINT}`);
       }
     }
 
@@ -454,22 +454,22 @@ export function inspectRemotionStyle(source, o = {}) {
     } else if (ts.isTemplateExpression(node)) {
       checkText(node, [node.head.text, ...node.templateSpans.map((s) => s.literal.text)].join(' '));
     } else if (ts.isJsxText(node)) {
-      if (CSS_TEXT.test(node.text)) hit(node, 'css-animation', `样式文本里有 CSS 动画或过渡（@keyframes / animation / transition）：${CSS_HINT}`);
+      if (CSS_TEXT.test(node.text)) hit(node, 'css-animation', `The style text contains a CSS animation or transition (@keyframes / animation / transition): ${CSS_HINT}`);
     }
 
     // JSX：<motion.x>、<AnimatePresence>、<animate>、whileHover
     if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
       const tag = node.tagName.getText(sf);
       if (/^(motion|m)\.[A-Za-z]/.test(tag) && !shadowed(tag.split('.')[0]) && (!top.has(tag.split('.')[0]) || /^motion(\/|$)/.test(importedFrom.get(tag.split('.')[0]) ?? ''))) {
-        hit(node, 'motion', `用了 <${tag}>：Motion 的组件按真实时间自己播动画。用普通的标签，把随时间变的样式写成 t 的函数（框架 ${FRAMEWORK_IMPORT} 的 tween、spring、interpolate）`);
+        hit(node, 'motion', `Used <${tag}>: Motion components play animations by themselves on real time. Use a plain tag and write time-varying styles as functions of t (the framework's ${FRAMEWORK_IMPORT} tween, spring, interpolate)`);
       } else if (tag === 'AnimatePresence' || tag.endsWith('.AnimatePresence')) {
-        hit(node, 'presence', `用了 <AnimatePresence>：进出场组件靠「上一帧有、这一帧没有」来播退场，这是在读前一帧的状态。出场、退场都写成 t 的条件和过渡：该出现的时间段里渲染它，透明度、位移由框架 ${FRAMEWORK_IMPORT} 的 tween / interpolate 按 t 算`);
+        hit(node, 'presence', `Used <AnimatePresence>: presence components play the exit by relying on "present in the previous frame, absent in this one", which reads the previous frame's state. Write both entrance and exit as conditions and transitions on t: render it during the time range when it should appear, and compute opacity and offset with the framework's ${FRAMEWORK_IMPORT} tween / interpolate from t`);
       } else if (SMIL_TAGS.has(tag)) {
-        hit(node, 'css-animation', `用了 SVG 的 <${tag}>：它按真实时间自己播。把属性写成 t 的函数`);
+        hit(node, 'css-animation', `Used SVG <${tag}>: it plays by itself on real time. Write the attributes as functions of t`);
       }
       for (const attr of node.attributes.properties) {
         if (ts.isJsxAttribute(attr) && MOTION_PROPS.test(attr.name.getText(sf))) {
-          hit(attr, 'motion', `用了 ${attr.name.getText(sf)}：这是 Motion 的交互属性，导出时没有鼠标也没有滚动，它不会发生。要它出现就写成 t 的条件`);
+          hit(attr, 'motion', `Used ${attr.name.getText(sf)}: this is a Motion interaction property, and during export there is no mouse and no scrolling, so it never happens. To make it appear, write it as a condition on t`);
         }
       }
     }
@@ -488,8 +488,8 @@ export function inspectRemotionStyle(source, o = {}) {
   return { declared, usesFramework, violations };
 }
 
-const TAG = '[remotion 式]';
-const TRAILER = `${TAG} 这张卡声明的是 remotion 式（frameMode: "direct"）：画面只由时间 t、参数和输入素材决定，只用框架 ${FRAMEWORK_IMPORT} 的工具写（interpolate、tween、spring、stagger、random 等）。要从起点一帧帧推进才能得到画面的写法，是另一种声明 frameMode: "stateful"，不归这套规矩管。`;
+const TAG = '[remotion-style]';
+const TRAILER = `${TAG} This card declares remotion-style (frameMode: "direct"): the picture is determined only by time t, the parameters and the input media, and is written using only the framework's ${FRAMEWORK_IMPORT} tools (interpolate, tween, spring, stagger, random, etc.). A style that needs to advance frame by frame from the start to get the picture is a different declaration, frameMode: "stateful", and is not governed by these rules.`;
 
 const countByRule = (violations) => {
   const out = new Map();
@@ -534,7 +534,7 @@ export function remotionStyleErrors(source, o = {}) {
       return true;
     });
   }
-  const errors = rejected.map((v) => `${TAG} 第 ${v.line} 行：${v.message}。`);
+  const errors = rejected.map((v) => `${TAG} Line ${v.line}: ${v.message}.`);
   if (errors.length && after.declared === 'direct') errors.push(TRAILER);
   return { remotionStyle: after.declared === 'direct', errors, violations: rejected.map(({ rule, line, message }) => ({ rule, line, message })) };
 }

@@ -217,7 +217,7 @@ export function createDocService(options = {}) {
    */
   function mount(mod) {
     if (Array.isArray(mod?.types) && mod.types.some((t) => typeof t === 'string' && t.startsWith(SESSION_TYPE_PREFIX))) {
-      throw new Error(`模块 ${mod.name} 不能认领 ${SESSION_TYPE_PREFIX} 开头的类型：那是会话控制消息`);
+      throw new Error(`Module ${mod.name} cannot claim types starting with ${SESSION_TYPE_PREFIX}: those are session control messages`);
     }
     const unmountCore = router.mount(mod);
     let timer = null;
@@ -265,7 +265,7 @@ export function createDocService(options = {}) {
 
   const attached = hostServer !== undefined && hostServer !== null;
   if (attached && (typeof hostServer.on !== 'function' || typeof hostServer.off !== 'function')) {
-    throw new TypeError('createDocService: server 必须是 http.Server');
+    throw new TypeError('createDocService: server must be an http.Server');
   }
 
   let currentAuthority = options.authority ?? null;
@@ -583,7 +583,7 @@ export function createDocService(options = {}) {
      * 挂载模式下同步抛错：宿主负责监听。
      */
     listen(port, host) {
-      if (attached) throw new Error('挂载模式下由宿主服务器监听，文档服务不能 listen()');
+      if (attached) throw new Error('In attached mode the host server does the listening, so the document service cannot call listen()');
       return new Promise((resolve, reject) => {
         ownServer.once('error', reject);
         ownServer.listen(port, host, () => {
@@ -641,7 +641,7 @@ export function createDocService(options = {}) {
      * 返回卸下函数：卸下时对所有连接调 `disconnect`，已记的角色清空，队列消息重新回 `queue-unavailable`。
      */
     mountRenderQueue(queueInterface) {
-      if (queueSlot.kind === 'real') throw new Error('渲染任务队列已经挂上了');
+      if (queueSlot.kind === 'real') throw new Error('The render queue is already attached');
       // 传工厂函数（空间 → 队列）时按空间各起一份（auth-contract 第 6 节）；传队列对象时是单实例（旧入口）
       const spaced = typeof queueInterface === 'function';
       const mod = spaced

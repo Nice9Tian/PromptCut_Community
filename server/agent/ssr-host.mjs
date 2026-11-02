@@ -97,7 +97,7 @@ export async function loadSsrHost(load, { apiBase } = {}) {
     async callRoute(tool, args) {
       const route = routeTable[tool];
       const fn = editorApi[route.method];
-      if (typeof fn !== 'function') throw new Error(`服务端没有 ${tool} 的实现(${route.method})`);
+      if (typeof fn !== 'function') throw new Error(`The server has no implementation of ${tool} (${route.method})`);
       return route.passArgs ? fn(args) : fn();
     },
     /**

@@ -89,8 +89,8 @@ const ID_RE = /^[A-Za-z0-9_.:-]{1,128}$/;
 const sleep = (ms) => new Promise((resolve) => { const t = setTimeout(resolve, ms); t.unref?.(); });
 const unavailable = (code, error, extra = {}) => ({ ok: false, cloudUnavailable: true, code, error, ...extra });
 
-const NO_BROWSER = '这台节点没有配置浏览器,云端 Agent 做不了网页操作。请告诉用户联系托管方,或在电脑上的 PromptCut 里做这一步。';
-const NOT_OPEN = '云端的浏览器现在没有开着(还没打开过网页,或者它已经被关掉:闲置太久、这一轮被停止、服务重启过)。先用 web_open 打开一条链接;之前清单里的编号都作废了。';
+const NO_BROWSER = 'This node has no browser configured, so the Cloud Agent cannot operate web pages. Tell the user to contact the host, or do this step in PromptCut on their computer.';
+const NOT_OPEN = 'The cloud browser is not open right now (no page has been opened yet, or it was closed: idle too long, this turn was stopped, or the service restarted). Open a link with web_open first; all numbers in the earlier manifest are void.';
 
 /** id 当目录名:去掉不能进路径的字符,再接一段原文的哈希(两个不同的 id 清洗后撞名也分得开) */
 function dirName(id) {
@@ -104,7 +104,7 @@ export const hostedBrowserRoot = (dataDir) => path.join(path.resolve(dataDir), '
 /** 一个「项目 × 对话」的浏览器目录:`<数据目录>/web/<项目>/<对话>/`(用户数据目录是它下面的 `profile/`) */
 export function hostedBrowserDir(dataDir, { projectId, conversationId }) {
   if (typeof projectId !== 'string' || !ID_RE.test(projectId) || typeof conversationId !== 'string' || !ID_RE.test(conversationId)) {
-    throw new HostedBrowserError('项目或对话的 id 不合法。', { code: 'bad-scope', status: 400 });
+    throw new HostedBrowserError('Invalid project or chat id.', { code: 'bad-scope', status: 400 });
   }
   return path.join(hostedBrowserRoot(dataDir), dirName(projectId), dirName(conversationId));
 }
@@ -135,7 +135,7 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
   if (typeof resources?.authorize !== 'function' || typeof resources?.register !== 'function'
     || typeof egress?.admit !== 'function' || typeof egress?.admitUrl !== 'function'
     || typeof dataDir !== 'string' || !dataDir) {
-    throw new HostedBrowserError('云端网页操作没有配置全(缺运行资源登记器、出网闸或数据目录)。', { code: 'web-unconfigured', status: 503 });
+    throw new HostedBrowserError('Cloud web operation is not fully configured (missing run-resource registrar, egress gate or data directory).', { code: 'web-unconfigured', status: 503 });
   }
   const cfg = { ...HOSTED_BROWSER_DEFAULTS, ...limits };
   const say = (event, fields = {}) => { try { log(event, fields); } catch { /* 日志失败不影响工具 */ } };
@@ -258,7 +258,7 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
       // 这个对话上一个浏览器还在关(含设私有时删目录):等它完。不等的话新浏览器会先读到正在被删的旧 cookie
       while (closingByKey.has(key)) { try { await closingByKey.get(key); } catch { /* 关闭自己会记结果 */ } }
       if (!await makeRoom()) {
-        throw new HostedBrowserError('云端同时开着的浏览器已经到上限,这次没有打开。稍后再试;别的对话里用完了浏览器请 web_close。', { code: 'web-busy', status: 429 });
+        throw new HostedBrowserError('The number of browsers open in the cloud at once has reached its limit; this one was not opened. Try again later; if you are done with a browser in another chat, call web_close.', { code: 'web-busy', status: 429 });
       }
       const dir = hostedBrowserDir(dataDir, scope);
       const session = await launchSession({
@@ -274,7 +274,7 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
         now,
       });
       const entry = { key, projectId: scope.projectId, conversationId: scope.conversationId, dir, session, bound: new Map(), contexts: new Set(), pendingHandles: new Set(), timer: null, retired: null, closed: null, lastClose: null };
-      if (closing) { await track(session.close({ graceful: false, reason: 'host-close' })); throw new HostedBrowserError('云端网页操作正在关闭。', { code: 'web-closed', status: 503 }); }
+      if (closing) { await track(session.close({ graceful: false, reason: 'host-close' })); throw new HostedBrowserError('Cloud web operation is shutting down.', { code: 'web-closed', status: 503 }); }
       sessions.set(key, entry);
       // 浏览器自己没了(崩溃、被系统杀):从表里摘掉并核一遍进程
       session.processGone().then(() => {
@@ -345,10 +345,10 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
   };
 
   async function call(name, args, context) {
-    if (!handles.has(name)) throw new HostedBrowserError(`网页操作不处理 ${name}。`, { code: 'unknown-tool', status: 404 });
-    if (closing) throw new HostedBrowserError('云端网页操作正在关闭。', { code: 'web-closed', status: 503 });
+    if (!handles.has(name)) throw new HostedBrowserError(`Web operation does not handle ${name}.`, { code: 'unknown-tool', status: 404 });
+    if (closing) throw new HostedBrowserError('Cloud web operation is shutting down.', { code: 'web-closed', status: 503 });
     if (args !== undefined && args !== null && (typeof args !== 'object' || Array.isArray(args))) {
-      throw new HostedBrowserError('参数必须是一个对象。', { code: 'bad-args' });
+      throw new HostedBrowserError('Arguments must be an object.', { code: 'bad-args' });
     }
     const input = args ?? {};
     // 第一道:这一轮此刻还算不算数。伪造的、改过的、别的进程发的上下文在这里就抛了,浏览器碰都不碰
@@ -360,7 +360,7 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
       const entry = sessions.get(key);
       if (!entry) return { ok: true, closed: true, wasOpen: false };
       const result = await retire(entry, { reason: 'web_close' });
-      if (!result.exited) throw new HostedBrowserError('浏览器进程没有在时限内退出,托管方需要查看节点。', { code: 'web-close-pending', status: 503 });
+      if (!result.exited) throw new HostedBrowserError('The browser process did not exit within the time limit; the host needs to check the node.', { code: 'web-close-pending', status: 503 });
       return { ok: true, closed: true, wasOpen: true };
     }
 
@@ -373,7 +373,7 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
     }
     if (!entry) {
       if (name !== 'web_open') return { ok: false, error: NOT_OPEN, notOpen: true };
-      if (typeof input.url !== 'string' || !input.url.trim()) return { ok: false, error: '要给 url' };
+      if (typeof input.url !== 'string' || !input.url.trim()) return { ok: false, error: 'url is required' };
       // 地址本身就不许打开的(非 http(s)、内网、metadata…):当场拒,不为它起一个浏览器
       const admitted = await admitWebTarget(egress, input.url);
       if (!admitted.ok) return admitted.result;
@@ -391,7 +391,7 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
     // 动页面之前的闸:这一轮被收回(登记器打了信号)、或这个会话已经在收,就不动
     const guard = () => {
       if (registration.signal.aborted || entry.retired || closing) {
-        throw new HostedBrowserError('这一轮对话的权限已被收回,没有操作网页。', { code: 'run-resource-fenced', status: 403 });
+        throw new HostedBrowserError('Permission for this chat turn has been revoked; the web page was not operated.', { code: 'run-resource-fenced', status: 403 });
       }
     };
     guard();
@@ -408,20 +408,20 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
     } catch (error) {
       // 动作半路被收回:浏览器已经被杀,报的是「权限被收回」而不是连接断开之类的内部错
       if (registration.signal.aborted || entry.retired === 'fence') {
-        throw new HostedBrowserError('这一轮对话的权限已被收回,网页操作已停止。', { code: 'run-resource-fenced', status: 403 });
+        throw new HostedBrowserError('Permission for this chat turn has been revoked; web operation has stopped.', { code: 'run-resource-fenced', status: 403 });
       }
       // 出错的回话也是固定句子:异常原文里可能带着页面上的字,不拼进去(日志里也只记异常的类名)。
       // 不在这里 return:出错的结果同样要过下面「交结果前」的那次授权复核
       const mapped = failure(error);
       if (mapped instanceof HostedBrowserError && mapped.code === 'web-timeout') {
-        result = { ok: false, code: 'ACTION_TIMEOUT', error: `这一步超过 ${Math.round(cfg.actionMs / 1000)} 秒没有完成,已经停下。可以 web_view 看看页面现在的样子,或换一个地址。` };
+        result = { ok: false, code: 'ACTION_TIMEOUT', error: `This step did not finish within ${Math.round(cfg.actionMs / 1000)} seconds and was stopped. Use web_view to see how the page looks now, or try another address.` };
       } else if ((mapped instanceof HostedBrowserError && mapped.code === 'web-closed') || entry.session.closed) {
         result = { ok: false, error: NOT_OPEN, notOpen: true };
       } else if (mapped instanceof HostedBrowserError) {
         throw mapped;
       } else {
         say('agent.web.action-failed', { tool: name, kind: String(error?.name ?? 'Error').slice(0, 40) });
-        result = { ok: false, code: 'ACTION_FAILED', error: '这一步没有做成(浏览器那边出了错)。可以 web_view 看看页面现在的样子,再决定下一步。' };
+        result = { ok: false, code: 'ACTION_FAILED', error: 'This step failed (the browser reported an error). Use web_view to see how the page looks now, then decide the next step.' };
       }
     } finally {
       touch(entry);
@@ -429,7 +429,7 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
     // 第二道:页面上的东西交回去之前,这一轮还得是当前这一轮、栅栏没动过
     const after = await resources.authorize(context, 'read');
     if (after.fenceRevision !== before.fenceRevision || registration.signal.aborted) {
-      throw new HostedBrowserError('这一轮对话的权限在操作期间变了,结果没有交回。', { code: 'run-resource-fenced', status: 403 });
+      throw new HostedBrowserError('Permission for this chat turn changed during the operation; the result was not returned.', { code: 'run-resource-fenced', status: 403 });
     }
     return result;
   }
@@ -472,7 +472,7 @@ export function createHostedBrowserTools({ resources, egress, dataDir, runtime =
 
   /** 项目被删:它名下所有对话的浏览器关掉、目录删掉 */
   async function removeProject(projectId) {
-    if (typeof projectId !== 'string' || !ID_RE.test(projectId)) throw new HostedBrowserError('项目的 id 不合法。', { code: 'bad-scope' });
+    if (typeof projectId !== 'string' || !ID_RE.test(projectId)) throw new HostedBrowserError('Invalid project id.', { code: 'bad-scope' });
     const mine = [...sessions.values()].filter((e) => e.projectId === projectId);
     const results = await Promise.all(mine.map((e) => retire(e, { reason: 'project-deleted', graceful: false, removeProfile: true })));
     const dir = path.join(root, dirName(projectId));

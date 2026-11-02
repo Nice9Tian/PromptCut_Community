@@ -56,6 +56,7 @@ export interface ShotsJob {
 }
 
 import { shotsDir, shotsThumbMiddleware } from './asset-store/shots-thumb.mjs';
+import { tr } from "./i18n.mjs";
 
 const jobs = new Map<string, ShotsJob>();
 
@@ -81,17 +82,17 @@ async function probeVideo(env: NodeJS.ProcessEnv, video: string): Promise<{ fps:
     child.stdout.on("data", (d) => { out += d.toString(); });
     child.on("error", reject);
     child.on("close", (code) => {
-      if (code !== 0) return reject(new Error("ffprobe 读不出这个文件的视频信息"));
+      if (code !== 0) return reject(new Error(tr("ffprobe could not read video info from this file")));
       try {
         const j = JSON.parse(out);
         const raw = j.streams?.[0]?.r_frame_rate ?? "0/1";
         const [n, d] = String(raw).split("/").map(Number);
         const fps = d ? n / d : Number(raw);
         const duration = Number(j.format?.duration ?? 0);
-        if (!fps || !Number.isFinite(fps)) return reject(new Error("读不出帧率"));
+        if (!fps || !Number.isFinite(fps)) return reject(new Error(tr("Could not read the frame rate")));
         resolve({ fps, duration });
       } catch (e) {
-        reject(new Error(`ffprobe 输出解析失败：${(e as Error).message}`));
+        reject(new Error(tr("Failed to parse ffprobe output: {0}", (e as Error).message)));
       }
     });
   });
@@ -119,7 +120,7 @@ function detectWithScdet(env: NodeJS.ProcessEnv, video: string, onLine: (t: numb
       }
     });
     child.on("error", reject);
-    child.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg 退出码 ${code}`))));
+    child.on("close", (code) => (code === 0 ? resolve() : reject(new Error(tr("ffmpeg exit code {0}", code)))));
   });
 }
 
@@ -241,7 +242,7 @@ async function runDetection(root: string, job: ShotsJob, video: string, ref: Rec
         // 没拿到结果、也没收到 error 事件，就靠退出码和 stderr 说明发生了什么
         if (code !== 0 && job.status !== "error" && !job.transitions) {
           job.status = "error";
-          job.message = stderrTail.join("\n").trim() || `镜头识别进程异常退出（代码 ${code}）`;
+          job.message = stderrTail.join("\n").trim() || tr("Shot detection process exited abnormally (code {0})", code);
         }
         resolve();
       });
@@ -296,7 +297,7 @@ export function shotsPlugin(options: { projectStores?: any; projectAccess?: any 
         // GET /api/shots/status —— 拓展装没装
         if (req.method === "GET" && url === "/api/shots/status") {
           const python = findPython(root);
-          if (!python) return sendJson(res, 200, { ok: true, ready: false, engine: "scdet", reason: "没有可用的 Python" });
+          if (!python) return sendJson(res, 200, { ok: true, ready: false, engine: "scdet", reason: "No usable Python" });
           const env = await buildEnv(root, python);
           const child = spawnPython(python, ["-m", "promptcut_shots", "status"], env);
           let out = "";
@@ -317,7 +318,7 @@ export function shotsPlugin(options: { projectStores?: any; projectAccess?: any 
         // POST /api/shots/install —— 装 onnxruntime,SSE 流式回日志
         if (req.method === "POST" && url === "/api/shots/install") {
           const python = findPython(root);
-          if (!python) return sendJson(res, 400, { ok: false, error: "没有可用的 Python" });
+          if (!python) return sendJson(res, 400, { ok: false, error: tr("No usable Python") });
           const env = await buildEnv(root, python);
           return pipeToSse(spawnPython(python, ["-m", "promptcut_shots", "install"], env), res);
         }
@@ -353,7 +354,7 @@ export function shotsPlugin(options: { projectStores?: any; projectAccess?: any 
         const jobMatch = req.method === "GET" && url.match(/^\/api\/shots\/job\/([\w-]+)$/);
         if (jobMatch) {
           const job = jobs.get(jobMatch[1]);
-          if (!job) return sendJson(res, 404, { ok: false, error: "作业不存在,可能服务已重启" });
+          if (!job) return sendJson(res, 404, { ok: false, error: tr("Job not found, the service may have restarted") });
           return sendJson(res, 200, { ok: true, job });
         }
 
@@ -369,7 +370,7 @@ export function shotsPlugin(options: { projectStores?: any; projectAccess?: any 
             res.setHeader("Cache-Control", "max-age=3600");
             return res.end(data);
           } catch {
-            return sendJson(res, 404, { ok: false, error: "缩略图不存在" });
+            return sendJson(res, 404, { ok: false, error: tr("Thumbnail not found") });
           }
         }
 

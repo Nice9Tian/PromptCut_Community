@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { randomBytes, createHash, createCipheriv, createDecipheriv } from 'node:crypto';
 import { identityKey, roomKey } from './descriptor.mjs';
 import { migrateHostedDeep } from '../auth/hosted-default.mjs';
+import { tr } from "../i18n.mjs";
 
 const transientStorageCodes = new Set(['ETIMEDOUT', 'EBUSY', 'EAGAIN', 'EINTR', 'EMFILE', 'ENFILE', 'RECOVERY_LOCK_BUSY']);
 const diagnosticCodes = new Set([...transientStorageCodes, 'INVALID', 'OTHER', 'DPAPI_FAILED', 'ENOSPC', 'EACCES', 'EPERM', 'ENOENT', 'EIO', 'EEXIST', 'ERR_OSSL_BAD_DECRYPT', 'ERR_CRYPTO_INVALID_AUTH_TAG']);
@@ -43,10 +44,10 @@ export function systemProtector(dir) {
         // 房间里的保存、取消多用户协作、搬到云端都跟着失败。上限放到与恢复接口请求体相同的量级
         maxBuffer: PROTECT_MAX_BUFFER,
       });
-      if (p.status !== 0) throw Object.assign(new Error('系统保护存储不可用'), { storageCode: p.error?.code ?? 'DPAPI_FAILED' });
+      if (p.status !== 0) throw Object.assign(new Error(tr("System protected storage unavailable")), { storageCode: p.error?.code ?? 'DPAPI_FAILED' });
       const output = p.stdout.trim();
       // 判的仍是「一段合法的 base64」;写成长度加一条不嵌套的正则:原来那条带分组重复的正则在几 MB 的输出上会把调用栈撑爆
-      if (!output || output.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(output)) throw Object.assign(new Error('系统保护存储响应无效'), { storageCode: 'DPAPI_FAILED' });
+      if (!output || output.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(output)) throw Object.assign(new Error(tr("System protected storage response invalid")), { storageCode: 'DPAPI_FAILED' });
       return Buffer.from(output, 'base64');
     };
     return { kind: 'dpapi-current-user', seal: value => run('seal', value), open: value => run('open', value) };
@@ -65,7 +66,7 @@ export function privateDeviceProtector(dir) {
       try { fs.linkSync(tmp, file); } catch (e) { if (e.code !== 'EEXIST') throw e; }
     } finally { fs.closeSync(fd); fs.unlinkSync(tmp); }
   }
-  const key = fs.readFileSync(file); if (key.length !== 32) throw new Error('设备保护密钥损坏');
+  const key = fs.readFileSync(file); if (key.length !== 32) throw new Error(tr("Device protection key corrupted"));
   return {
     kind: 'private-device-key',
     seal(value) { const iv = randomBytes(12); const c = createCipheriv('aes-256-gcm', key, iv); c.setAAD(Buffer.from('pc-collab-v1')); return Buffer.concat([iv, c.update(value), c.final(), c.getAuthTag()]); },
@@ -95,7 +96,7 @@ export function openRecoveryVault({ dir, protector, write = atomic }) {
       // 旧托管主机名（键与值里都有）换成新的，见 hosted-default.mjs 的 RETIRED_HOSTED_HOSTS；下次写入时落盘
       const m = migrateHostedDeep(v);
       state = { ...m, journals: m.journals ?? {}, settings: m.settings ?? {}, unregister: m.unregister ?? {}, moves: m.moves ?? {} };
-    } catch (e) { throw Object.assign(new Error('协作恢复数据损坏；保留原数据，请从备份恢复或重新认证'), { storagePhase, storageCode: e.storageCode ?? e.code ?? 'INVALID' }); }
+    } catch (e) { throw Object.assign(new Error(tr("Collaboration recovery data corrupted; the original data is kept, restore from backup or re-authenticate")), { storagePhase, storageCode: e.storageCode ?? e.code ?? 'INVALID' }); }
   };
   read();
   const lockFile = path.join(dir, 'identities.lock');
@@ -120,7 +121,7 @@ export function openRecoveryVault({ dir, protector, write = atomic }) {
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
       }
     }
-    throw Object.assign(new Error('协作恢复记录正在被另一个实例保存，请重试'), { code: liveOwner ? 'RECOVERY_LOCK_BUSY' : 'INVALID' });
+    throw Object.assign(new Error(tr("The collaboration recovery record is being saved by another instance, please retry")), { code: liveOwner ? 'RECOVERY_LOCK_BUSY' : 'INVALID' });
   };
   const change = fn => {
     const lock = acquire();
@@ -145,7 +146,7 @@ export function openRecoveryVault({ dir, protector, write = atomic }) {
       return { identities, selected: identities.find(r => identityKey(r) === bound) ?? (identities.length === 1 ? identities[0] : null), host: structuredClone(state.hosts[roomKey(descriptor)] ?? null), journal: structuredClone(state.journals[JSON.stringify([roomKey(descriptor), contentId])] ?? null) };
     },
     remember(record, contentId) {
-      if (!['creator', 'member'].includes(record.as) || typeof record.username !== 'string' || !record.username || !/^[A-Za-z0-9_-]{43}$/.test(record.key)) throw new TypeError('身份恢复记录无效');
+      if (!['creator', 'member'].includes(record.as) || typeof record.username !== 'string' || !record.username || !/^[A-Za-z0-9_-]{43}$/.test(record.key)) throw new TypeError(tr("Identity recovery record invalid"));
       const k = identityKey(record);
       change(s => { s.identities[k] = structuredClone(record); if (contentId) s.bindings[JSON.stringify([roomKey(record), contentId])] = k; });
     },
@@ -153,16 +154,16 @@ export function openRecoveryVault({ dir, protector, write = atomic }) {
     settings(descriptor) { read(); return structuredClone(state.settings[roomKey(descriptor)] ?? null); },
     saveSettings(descriptor, value) { change(s => { s.settings[roomKey(descriptor)] = structuredClone(value); }); },
     journal(descriptor, contentId, journal) {
-      if (journal && (journal.version !== 1 || journal.projectId !== descriptor.roomId || !Array.isArray(journal.pending) || !Array.isArray(journal.project?.tracks))) throw new Error('离线操作记录无效');
+      if (journal && (journal.version !== 1 || journal.projectId !== descriptor.roomId || !Array.isArray(journal.pending) || !Array.isArray(journal.project?.tracks))) throw new Error(tr("Offline operation record invalid"));
       change(s => { s.journals[JSON.stringify([roomKey(descriptor), contentId])] = structuredClone(journal); });
     },
     bindHost(descriptor, deviceId) {
       read();
-      if (state.revoked[roomKey(descriptor)]) throw new Error('房间已注销');
+      if (state.revoked[roomKey(descriptor)]) throw new Error(tr("Room has been revoked"));
       const prior = state.hosts[roomKey(descriptor)];
-      if (prior && prior.deviceId !== deviceId) throw new Error('主机设备冲突');
+      if (prior && prior.deviceId !== deviceId) throw new Error(tr("Host device conflict"));
       if (!prior) change(s => {
-        if (s.revoked[roomKey(descriptor)] || s.hosts[roomKey(descriptor)] && s.hosts[roomKey(descriptor)].deviceId !== deviceId) throw new Error('房间已注销或主机冲突');
+        if (s.revoked[roomKey(descriptor)] || s.hosts[roomKey(descriptor)] && s.hosts[roomKey(descriptor)].deviceId !== deviceId) throw new Error(tr("Room revoked or host conflict"));
         s.hosts[roomKey(descriptor)] ??= { deviceId, registrationKey: randomBytes(32).toString('base64url') };
       });
       return this.host(descriptor);

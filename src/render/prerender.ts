@@ -36,7 +36,7 @@ let firstAsk = true;
 
 /** 预渲染进程不可用。调用方按 `code` 认,不认文案 */
 export function prerenderUnavailable(): Error {
-  return Object.assign(new Error("预渲染进程还没就绪,这一项要它才能完成。"), {
+  return Object.assign(new Error("The prerender process is not ready yet, and this item needs it to finish."), {
     code: "PRERENDER_UNAVAILABLE",
     retryable: true,
   });

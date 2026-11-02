@@ -51,8 +51,8 @@ export function createMirrorStore() {
 
   /** 整份推送 */
   function pushFull({ session, localRev, project }) {
-    if (!session) throw new Error("缺少 session");
-    if (!project || !Array.isArray(project.tracks)) throw new Error("缺少 project");
+    if (!session) throw new Error("Missing session");
+    if (!project || !Array.isArray(project.tracks)) throw new Error("Missing project");
     const rev = Number(localRev) || 0;
     const s = sessions.get(session);
     if (s && s.versions.length && rev <= s.maxRev) return { status: "stale", localRev: s.maxRev, hash: s.versions[s.versions.length - 1].hash };
@@ -64,7 +64,7 @@ export function createMirrorStore() {
    * 两层 diff。`hash` 是页面算的 `projectHash`;给了就校验,对不上回 resync。
    */
   function pushDiff({ session, fromLocalRev, toLocalRev, hash, patch }) {
-    if (!session) throw new Error("缺少 session");
+    if (!session) throw new Error("Missing session");
     const to = Number(toLocalRev) || 0;
     const from = Number(fromLocalRev) || 0;
     const s = sessions.get(session);
@@ -89,8 +89,8 @@ export function createMirrorStore() {
    * 已经有这一版就原样返回,不重复存。
    */
   function insert({ session, localRev, project }) {
-    if (!session) throw new Error("缺少 session");
-    if (!project || !Array.isArray(project.tracks)) throw new Error("缺少 project");
+    if (!session) throw new Error("Missing session");
+    if (!project || !Array.isArray(project.tracks)) throw new Error("Missing project");
     const rev = Number(localRev) || 0;
     const have = getMirror(session, rev);
     if (have) return { status: "ok", localRev: have.localRev, hash: have.hash };
@@ -148,7 +148,7 @@ export function createMirrorStore() {
   }
 
   function setPlayhead(session, t, playing, wanted) {
-    if (!session) throw new Error("缺少 session");
+    if (!session) throw new Error("Missing session");
     const list = normalizeWanted(wanted);
     const previous = playheads.get(session);
     const entry = { session, t: Number.isFinite(Number(t)) ? Number(t) : 0, playing: !!playing, at: Date.now(),

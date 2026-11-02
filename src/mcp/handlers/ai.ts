@@ -30,14 +30,14 @@ export const aiHandlers = {
   // 镜头识别:5 分钟素材约 36 秒,同样立刻返回 jobId,结果用 list_shots 轮询。
   detectShots: async (args) => {
     const media = getState().project.media.find((m) => m.id === args.mediaId);
-    if (!media) throw new Error(`找不到素材 ${args.mediaId}`);
-    if (media.kind !== "video") throw new Error(`${media.name} 不是视频,没有镜头可分`);
-    if (!mediaReadyForServer(media)) throw new Error(`${media.name} 还没进素材服务(上传没完成或失败),稍后再试或重新导入`);
+    if (!media) throw new Error(`Asset ${args.mediaId} not found`);
+    if (media.kind !== "video") throw new Error(`${media.name} is not a video, so there are no shots to split`);
+    if (!mediaReadyForServer(media)) throw new Error(`${media.name} is not in the asset service yet (upload incomplete or failed), try again later or re-import`);
     if (media.shots && !args.force) {
       return {
         reused: true, mediaId: args.mediaId, engine: media.shots.engine,
         shots: media.shots.shots.length, transitions: media.shots.transitions.length,
-        hint: "这个素材已经检测过了,直接用 list_shots 取结果;要重测传 force:true",
+        hint: "This media has already been analyzed; use list_shots to get the result, or pass force:true to re-run",
       };
     }
     const jobId = await startShotDetection(perceptionMediaRef(media));
@@ -55,13 +55,13 @@ export const aiHandlers = {
       });
     return {
       jobId, started: true, mediaId: args.mediaId,
-      hint: "镜头识别已在后台开始,请用 list_shots 轮询该 mediaId",
+      hint: "Shot detection has started in the background, poll this mediaId with list_shots",
     };
   },
 
   listShots: (args) => {
     const media = getState().project.media.find((m) => m.id === args.mediaId);
-    if (!media) throw new Error(`找不到素材 ${args.mediaId}`);
+    if (!media) throw new Error(`Asset ${args.mediaId} not found`);
     const pending = shotJobs.get(args.mediaId);
     if (pending?.error) throw new Error(pending.error);
     if (!media.shots) {
@@ -78,8 +78,8 @@ export const aiHandlers = {
       engine: media.shots.engine,
       // 没装拓展时只有硬切,这一句要让模型看见,免得它以为片子里真的没有溶解
       engineNote: media.shots.engine === "scdet"
-        ? "当前用的是 ffmpeg scdet 兜底,只认硬切,溶解等渐变转场检测不出来"
-        : "TransNetV2,硬切和溶解都认得",
+        ? "Currently using the ffmpeg scdet fallback, which only detects hard cuts and cannot detect gradual transitions such as dissolves"
+        : "TransNetV2, recognizes both hard cuts and dissolves",
       shots: media.shots.shots.map((s) => ({
         ...s,
         subject: subjectDigest(subjectForRange(media.subjects, s.start, s.end)),
@@ -95,29 +95,29 @@ export const aiHandlers = {
       //   5. 有结果。
       ...(subjectPending?.error
         ? {
-            subjectHint: `上次主体检测失败:${subjectPending.error}。`
-              + (media.subjects ? "下面每个镜头的 subject 来自更早成功的那一批,不是这次的。" : "")
-              + "先调 subject_status 看 engine:为 null 说明这台机器上两档都用不了(没有兜底档),"
-              + "退回 see_frames({ source: 'timeline', t }) 看真实画面判断人在哪,**不要继续轮询本工具**;"
-              + "engine 不为 null 才值得调 detect_subjects 并传 force:true 重试。",
+            subjectHint: `Last subject detection failed: ${subjectPending.error}.`
+              + (media.subjects ? "The subject of each shot below comes from an earlier successful batch, not this one." : "")
+              + "First call subject_status and check engine: null means neither tier works on this machine (there is no fallback tier), "
+              + "fall back to see_frames({ source: 'timeline', t }) and judge from the real frames where the person is, **do not keep polling this tool**; "
+              + "Only when engine is not null is it worth calling detect_subjects with force:true to retry.",
           }
         : subjectPending
           ? {
-              subjectHint: `主体检测正在跑(${subjectPending.percent}%),跑完再调一次本工具就能看到每个镜头的人物位置`
-                + (media.subjects ? ";下面的 subject 是上一批的结果,新一批跑完会替换" : ""),
+              subjectHint: `Subject detection is running (${subjectPending.percent}%); once it finishes, call this tool again to see the people's positions in each shot`
+                + (media.subjects ? "; the subject below is from the previous batch and will be replaced when the new batch finishes" : ""),
             }
           : !media.subjects
             ? {
-                subjectHint: "这些镜头还没做主体检测,所以每个 subject 都是 null。要决定卡片放哪边、"
-                  + "别遮住人物的脸,先调 detect_subjects 拿人物位置。",
+                subjectHint: "These shots have not had subject detection yet, so every subject is null. To decide which side to put the card on, "
+                  + "Don't cover people's faces; first call detect_subjects to get the people's positions.",
               }
             : media.shots.shots.every((s) => subjectForRange(media.subjects, s.start, s.end) === null)
               ? {
                   subjectEngine: media.subjects.engine,
                   subjectFailedCount: media.subjects.failedCount ?? 0,
-                  subjectHint: `主体检测跑完了,但这一批 ${media.subjects.samples.length} 个采样没有一个可用`
-                    + "(全部抽帧失败,见 subjectFailedCount),所以每个 subject 都是 null —— 这不是「画面里没有人」。"
-                    + "换几个时刻用 detect_subjects 传 times 重测,或退回 see_frames({ source: 'timeline', t }) 看图。",
+                  subjectHint: `Subject detection finished, but none of the ${media.subjects.samples.length} samples in this batch is usable`
+                    + " (all frame extractions failed, see subjectFailedCount), so every subject is null. This does not mean \"there is nobody in the frame\"."
+                    + "Re-measure with detect_subjects by passing different times, or fall back to see_frames({ source: 'timeline', t }) and look at the image.",
                 }
               : {
                   subjectEngine: media.subjects.engine,
@@ -127,16 +127,16 @@ export const aiHandlers = {
                   ...(media.subjects.fellBackFrom
                     ? {
                         subjectFellBackFrom: media.subjects.fellBackFrom,
-                        subjectFallbackNote: `本来要跑 full 档,中途退回了 light:${media.subjects.fallbackReason ?? "原因未知"}。`
-                          + "所以 prompt 没生效,label 只可能是 person / face。",
+                        subjectFallbackNote: `Was meant to run the full tier but fell back to light midway: ${media.subjects.fallbackReason ?? "unknown reason"}.`
+                          + "so the prompt has no effect, and label can only be person / face.",
                       }
                     : null),
-                  subjectHint: "每个镜头的 subject.suggestedPosition 可以直接填进卡片的 params.position"
-                    + "(只会是 left / right / bottom,不会返回 center);boxes 是原始视频像素的人物框。"
-                    + "suggestedPosition 为 null 表示四档全被人物占住(看 suggestedOccupancy 和 warning),"
-                    + "那个镜头没有不遮人的位置,别硬填。"
-                    + "能不能填以 list_cards({cardId}) 的 controls 为准,卡片不支持这个值就换一张卡,"
-                    + "不要退回默认的居中 —— 居中正是人脸所在。",
+                  subjectHint: "Each shot's subject.suggestedPosition can be filled directly into the card's params.position"
+                    + "(it is only ever left / right / bottom, never center); boxes are the people's boxes in original video pixels."
+                    + "suggestedPosition being null means all four slots are occupied by people (see suggestedOccupancy and warning),"
+                    + "that shot has no position that avoids covering people, so don't force a fill."
+                    + "Whether it can be filled is decided by the controls of list_cards({cardId}); if the card doesn't support this value, switch to another card,"
+                    + "and don't fall back to the default center: center is exactly where the face is.",
                 }),
     };
   },
@@ -146,11 +146,11 @@ export const aiHandlers = {
   // 塞进 project 只会让工程文件无限膨胀,所以只留在内存里。
   trackPoints: async (args) => {
     const media = getState().project.media.find((m) => m.id === args.mediaId);
-    if (!media) throw new Error(`找不到素材 ${args.mediaId}`);
-    if (media.kind !== "video") throw new Error(`${media.name} 不是视频,没有运动可追`);
-    if (!mediaReadyForServer(media)) throw new Error(`${media.name} 还没进素材服务(上传没完成或失败),稍后再试或重新导入`);
+    if (!media) throw new Error(`Asset ${args.mediaId} not found`);
+    if (media.kind !== "video") throw new Error(`${media.name} is not a video, there is no motion to track`);
+    if (!mediaReadyForServer(media)) throw new Error(`${media.name} is not in the asset service yet (upload incomplete or failed), try again later or re-import`);
     if (!Array.isArray(args.points) || args.points.length === 0) {
-      throw new Error("points 至少要有一个点,写成 [[帧号, x, y], ...]");
+      throw new Error("points needs at least one point, written as [[frameNumber, x, y], ...]");
     }
 
     const jobId = await startTracking(perceptionMediaRef(media), args.points);
@@ -169,10 +169,10 @@ export const aiHandlers = {
       });
     return {
       jobId, started: true, mediaId: args.mediaId, points: args.points.length,
-      hint: "运动追踪已在后台开始,请用 get_track 轮询该 mediaId",
+      hint: "Motion tracking has started in the background, poll this mediaId with get_track",
       // 装没装拓展决定用哪一档,也决定要等多久:同样 250 帧,
       // 神经网络档约 26 秒,模板匹配约 1 秒。
-      engineHint: "哪一档在跑要等结果出来才知道,看 get_track 返回的 engine",
+      engineHint: "Which tier is running is only known once the result is out, see engine returned by get_track",
     };
   },
 
@@ -186,7 +186,7 @@ export const aiHandlers = {
    */
   getTrack: (args) => {
     const media = getState().project.media.find((m) => m.id === args.mediaId);
-    if (!media) throw new Error(`找不到素材 ${args.mediaId}`);
+    if (!media) throw new Error(`Asset ${args.mediaId} not found`);
     const pending = trackJobs.get(args.mediaId);
     if (pending?.error) throw new Error(pending.error);
     const result = trackResults.get(args.mediaId);
@@ -199,9 +199,9 @@ export const aiHandlers = {
       engine: result.engine,
       // 降级档要让模型看见,否则它会拿模板匹配的粗结果当准数据下判断
       engineNote: result.engine === "bootstapir"
-        ? "BootsTAPIR,任意点追踪,visible 为 false 表示该帧被遮挡或移出画面"
-        : "当前是模板匹配兜底(未装运动追踪拓展)。刚体、纹理清晰、不转向的目标能追得很准,"
-          + "但目标一旦转向、缩放或长时间被挡就会跟丢;某个点带 note 字段表示它压根没追成",
+        ? "BootsTAPIR, arbitrary point tracking; visible being false means the point is occluded or out of frame in that frame"
+        : "Currently using the template matching fallback (motion tracking extension not installed). Rigid targets with clear texture that don't turn can be tracked very accurately,"
+          + "but once the target turns, scales or is occluded for a long time, tracking is lost; a point with a note field means it could not be tracked at all",
       width: result.width,
       height: result.height,
       frames: result.frames,
@@ -226,8 +226,8 @@ export const aiHandlers = {
           ...(p.note ? { note: p.note } : {}),
         };
       }),
-      hint: "只给了摘要。要让卡片跟着某个点走就调 attach_clip_motion(不用把坐标读出来);"
-        + "确实需要逐帧坐标时传 full:true,但那会是很长一串数字。",
+      hint: "Only a summary was returned. To make a card follow a point, call attach_clip_motion (no need to read out the coordinates);"
+        + "if you really need per-frame coordinates, pass full:true, but that will be a very long list of numbers.",
     };
   },
 
@@ -236,11 +236,11 @@ export const aiHandlers = {
     return {
       ...s,
       hint: s.engine === "bootstapir"
-        ? "已装拓展,走 BootsTAPIR。"
+        ? "Extension installed, using BootsTAPIR."
         : s.engine === "template"
-          ? "未装拓展,走模板匹配兜底 —— 能追,但目标转向、形变或长时间被挡时会跟丢。"
-            + "用户要更稳的结果就用 track_install 装拓展(约 400 MB)。"
-          : "两档都用不了(通常是找不到 Python),这台机器上追不了。",
+          ? "Extension not installed, using the template matching fallback: it can track, but loses the target when it turns, deforms or is occluded for a long time."
+            + "If the user wants more stable results, install the extension with track_install (about 400 MB)."
+          : "Neither tier is usable (usually Python can't be found), so tracking is not possible on this machine.",
     };
   },
 
@@ -266,8 +266,8 @@ export const aiHandlers = {
       });
     return {
       jobId, started: true,
-      hint: "运动追踪拓展正在后台安装(torch + 权重约 400 MB,要几分钟)。"
-        + "用 background_job_status 查这个 jobId,或用 track_status 看 engine 有没有变成 bootstapir。不要重复启动。",
+      hint: "The motion tracking extension is installing in the background (torch + weights, about 400 MB, takes a few minutes)."
+        + "Check this jobId with background_job_status, or use track_status to see whether engine has become bootstapir. Do not start it again.",
     };
   },
 
@@ -284,9 +284,9 @@ export const aiHandlers = {
    */
   detectSubjects: async (args) => {
     const media = getState().project.media.find((m) => m.id === args.mediaId);
-    if (!media) throw new Error(`找不到素材 ${args.mediaId}`);
-    if (media.kind === "audio") throw new Error(`${media.name} 是音频,没有画面可看`);
-    if (!mediaReadyForServer(media)) throw new Error(`${media.name} 还没进素材服务(上传没完成或失败),稍后再试或重新导入`);
+    if (!media) throw new Error(`Asset ${args.mediaId} not found`);
+    if (media.kind === "audio") throw new Error(`${media.name} is audio, there is no picture to view`);
+    if (!mediaReadyForServer(media)) throw new Error(`${media.name} is not in the asset service yet (upload incomplete or failed), try again later or re-import`);
 
     const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
     const promptChanged = !!media.subjects && prompt !== (media.subjects.prompt ?? "");
@@ -309,10 +309,10 @@ export const aiHandlers = {
         failedCount: media.subjects.failedCount ?? 0,
         prompt: media.subjects.prompt,
         ...(cannotAnswerPrompt
-          ? { engineNote: "已有结果是 light 档跑的,label 只有 person / face,答不了提示词里别的名词;"
-              + "这台机器现在也只能跑 light,所以没有重测。装了 full 拓展包之后再传 force:true 重测。" }
+          ? { engineNote: "The existing result was produced by the light tier, label is only person / face, and it can't answer other nouns in the prompt;"
+              + "this machine can only run light right now, so it was not re-measured. After installing the full extension pack, pass force:true to re-measure." }
           : null),
-        hint: "这个素材已经检测过了,直接用 list_subjects 取结果,或用 list_shots 看每个镜头的 suggestedPosition;要重测传 force:true",
+        hint: "This media has already been detected. Use list_subjects to get the result, or list_shots to see each shot's suggestedPosition; to re-detect, pass force:true",
       };
     }
 
@@ -323,10 +323,10 @@ export const aiHandlers = {
     const times = Array.isArray(args.times) && args.times.length > 0
       ? args.times.map(Number).filter((t) => Number.isFinite(t) && t >= 0)
       : subjectSampleTimes(media);
-    if (times.length === 0) throw new Error("算不出采样时刻,素材可能没有时长信息;可以自己传 times");
+    if (times.length === 0) throw new Error("Cannot compute sample times, the media may have no duration info; you can pass times yourself");
     const sampledNote = !args.times && autoRaw > times.length
-      ? `素材偏长或镜头偏碎,采样已从 ${autoRaw} 点降到 ${times.length} 点`
-        + `(上限 ${MAX_SUBJECT_TIMES});镜头级的结论会更粗,approximate 为 true 的镜头会变多。`
+      ? `Media is long or shots are fragmented, sampling was reduced from ${autoRaw} points to ${times.length} points`
+        + `(limit ${MAX_SUBJECT_TIMES}); shot-level conclusions will be coarser, and more shots will have approximate set to true.`
       : undefined;
 
     // engine 用上面复用判据查到的那一次:轮询之前就让模型知道跑的是哪一档,以及大概要等多久。
@@ -356,25 +356,25 @@ export const aiHandlers = {
     return {
       jobId, started: true, mediaId: args.mediaId,
       samples: times.length,
-      sampledFrom: media.shots ? "按镜头(每个镜头 20%/50%/80%)" : "每 2 秒一点(这段素材还没做镜头识别)",
+      sampledFrom: media.shots ? "By shot (20%/50%/80% of each shot)" : "One point every 2 seconds (shot detection has not been run on this media)",
       ...(sampledNote ? { sampledNote } : null),
       engine,
       ...(etaSeconds ? { etaSeconds } : null),
       ...(staleEngine
-        ? { staleEngine: true, engineNote: "上一批结果是 light 档跑的,答不了提示词,所以这次重测(不是复用)" }
+        ? { staleEngine: true, engineNote: "The previous batch of results was produced with the light tier and cannot answer the prompt, so this run re-detected (not reused)" }
         : null),
-      hint: "主体检测已在后台开始,用 list_subjects 轮询该 mediaId;"
+      hint: "Subject detection has started in background mode, poll that mediaId with list_subjects; "
         + (etaSeconds
-          ? `预计 ${etaSeconds} 秒左右(engine=${engine},实测 light 约 0.5 秒/帧、full 约 3 秒/帧)。`
-            + `${engine === "full" ? "full 档慢,隔 10 秒问一次就够" : "隔 3 秒问一次就够"},别每秒都问。`
-          : "engine 为 null 表示两档都用不了,这个作业多半会失败;先调 subject_status 确认。")
-        + "跑完之后 list_shots 的每个镜头会带上 subject 和 suggestedPosition。",
+          ? `Estimated about ${etaSeconds} seconds (engine=${engine}, measured: light about 0.5 s/frame, full about 3 s/frame).`
+            + `${engine === "full" ? "the full tier is slow, asking once every 10 seconds is enough" : "asking once every 3 seconds is enough"}, do not ask every second.`
+          : "engine being null means neither tier is usable and this job will most likely fail; call subject_status first to confirm.")
+        + "After it finishes, each shot from list_shots will carry subject and suggestedPosition.",
     };
   },
 
   listSubjects: (args) => {
     const media = getState().project.media.find((m) => m.id === args.mediaId);
-    if (!media) throw new Error(`找不到素材 ${args.mediaId}`);
+    if (!media) throw new Error(`Asset ${args.mediaId} not found`);
     const pending = subjectJobs.get(args.mediaId);
     if (pending?.error) throw new Error(pending.error);
     // 有作业在跑就先报在跑 —— 哪怕手里还有上一批结果。以前是「有旧结果就直接回旧结果」,
@@ -383,7 +383,7 @@ export const aiHandlers = {
       return {
         running: true, percent: pending.percent, engine: pending.engine,
         ...(media.subjects
-          ? { stale: true, staleNote: "上一批结果还在,但新一次检测正在跑,这里不给样本;跑完再调一次本工具" }
+          ? { stale: true, staleNote: "The previous batch of results is still there, but a new detection is running, so no samples are given here; call this tool again after it finishes" }
           : null),
       };
     }
@@ -395,13 +395,13 @@ export const aiHandlers = {
       // 哪一档决定了 label 里能出现什么。不说清楚的话,模型会把 light 档
       // 「只有 person/face」读成「画面里没有猫」。
       engineNote: s.engine === "full"
-        ? "Grounding DINO,label 是提示词里的名词;prompt 为空时按 person . face . 找"
-        : "YuNet + RT-DETR 的 light 档,只认 person 和 face,提示词不生效(原样回显在 prompt 里)",
+        ? "Grounding DINO. The label is the noun in the prompt; when the prompt is empty it searches for person . face ."
+        : "The light tier of YuNet + RT-DETR. It only recognizes person and face; the prompt has no effect (it is echoed back unchanged in prompt)",
       ...(s.fellBackFrom
         ? {
             fellBackFrom: s.fellBackFrom,
-            fallbackNote: `本来要跑 full 档,中途退回了 light:${s.fallbackReason ?? "原因未知"}。`
-              + "所以 prompt 没生效,label 只可能是 person / face。",
+            fallbackNote: `Was meant to run the full tier but fell back to light midway: ${s.fallbackReason ?? "unknown reason"}.`
+              + "so the prompt has no effect, and label can only be person / face.",
           }
         : null),
       prompt: s.prompt,
@@ -413,7 +413,7 @@ export const aiHandlers = {
       samples: s.samples.map((sm) => ({
         t: sm.t,
         ...(sm.failed
-          ? { failed: true, reason: sm.reason ?? "这一帧没抽出来", boxes: [], boxCount: 0 }
+          ? { failed: true, reason: sm.reason ?? "This frame could not be extracted", boxes: [], boxCount: 0 }
           : {
               safeSide: sm.safeSide,
               ...suggestPosition(sm.safeSide, sm.occupancy),
@@ -422,11 +422,11 @@ export const aiHandlers = {
               boxCount: sm.boxes.length,
             }),
       })),
-      hint: "坐标是原始视频像素(和 width/height 同一套)。要按镜头排卡片就直接看 list_shots,"
-        + "那边每个镜头已经把这些采样折好了。suggestedPosition 可直接填进卡片的 params.position"
-        + "(只会是 left / right / bottom,不会返回 center);为 null 表示四档都被人物占住,"
-        + "看 suggestedOccupancy 和 warning,那一刻没有不遮人的位置。"
-        + "failed 为 true 的采样是抽帧失败,不是「这一帧没有人」,不要拿它下结论。",
+      hint: "Coordinates are in original video pixels (the same system as width/height). To arrange cards by shot, look at list_shots directly,"
+        + "where each shot has already folded these samples together. suggestedPosition can be filled directly into the card's params.position"
+        + "(it is only ever left / right / bottom, never center); null means all four slots are occupied by people,"
+        + "see suggestedOccupancy and warning; at that moment there is no position that avoids covering people."
+        + "A sample with failed set to true is a frame extraction failure, not \"no person in this frame\"; don't draw conclusions from it.",
     };
   },
 
@@ -435,14 +435,14 @@ export const aiHandlers = {
     return {
       ...s,
       hint: s.engine === "full"
-        ? "full 档:YuNet + RT-DETR + Grounding DINO,能按任意文字提示找目标(prompt 生效)。"
+        ? "full tier: YuNet + RT-DETR + Grounding DINO, can find targets from any text prompt (prompt takes effect)."
         : s.engine === "light"
-          ? "light 档:YuNet(人脸) + RT-DETR(人体),只认 person 和 face,prompt 不生效。"
-            + "要按任意词找目标(猫、手机、红色的车)得装 full 档拓展库包。"
+          ? "light tier: YuNet (face) + RT-DETR (body), only recognizes person and face, prompt has no effect."
+            + "To find targets by arbitrary words (cat, phone, red car), you need to install the full tier extension pack."
           // 这里没有兜底档,和运动追踪不一样 —— 不能让模型以为还有个降级引擎在跑。
-          : "两档都用不了,这台机器上检测不了主体。"
-            + "位置和遮挡的判断退回 see_frames 看图,不要凭空猜「人在左边」。"
-            + "用户想要就用 subject_install 装 light 档(约 30 MB)。",
+          : "Neither tier is usable, so subject detection is not possible on this machine."
+            + "For position and occlusion judgments, fall back to looking at the images with see_frames; don't guess \"the person is on the left\" out of thin air."
+            + "If the user wants it, install the light tier with subject_install (about 30 MB).",
     };
   },
 
@@ -469,9 +469,9 @@ export const aiHandlers = {
       });
     return {
       jobId, started: true,
-      hint: "主体检测 light 档正在后台安装(onnxruntime,约 30 MB)。"
-        + "用 background_job_status 查这个 jobId,或用 subject_status 看 engine 有没有变成 light。不要重复启动。"
-        + "装完还可能缺权重文件(yunet.onnx / rtdetr_r18vd.onnx),那要跑拓展库包的 .exe 才有。",
+      hint: "Subject detection light tier is installing in the background (onnxruntime, about 30 MB)."
+        + "Check this jobId with background_job_status, or use subject_status to see whether engine has become light. Do not start it again."
+        + "After installing, the weight files (yunet.onnx / rtdetr_r18vd.onnx) may still be missing; those only come from running the extension pack's .exe.",
     };
   },
 
@@ -488,22 +488,22 @@ export const aiHandlers = {
   attachClipMotion: (args) => {
     const p = getState().project;
     const hit = findClip(p, args.clipId);
-    if (!hit) throw new Error(`找不到片段 ${args.clipId}`);
-    if (!hit.clip.cardId) throw new Error(`${args.clipId} 是素材段,不是卡片段,没有「跟着走」这回事`);
+    if (!hit) throw new Error(`Clip ${args.clipId} not found`);
+    if (!hit.clip.cardId) throw new Error(`${args.clipId} is a media clip, not a card clip, so "following" doesn't apply to it`);
 
     const media = p.media.find((m) => m.id === args.mediaId);
-    if (!media) throw new Error(`找不到素材 ${args.mediaId}`);
+    if (!media) throw new Error(`Asset ${args.mediaId} not found`);
 
     const result = trackResults.get(args.mediaId);
     if (!result) {
       throw new Error(trackJobs.get(args.mediaId)
-        ? `${media.name} 的追踪还没跑完,先用 get_track 等它出结果`
-        : `${media.name} 还没追过,先调 track_points`);
+        ? `Tracking for ${media.name} has not finished, use get_track to wait for its result first`
+        : `${media.name} has not been tracked yet, call track_points first`);
     }
     const idx = args.pointIndex ?? 0;
     const point = result.points[idx];
-    if (!point) throw new Error(`这次追踪只有 ${result.points.length} 个点,没有第 ${idx} 个`);
-    if (point.note) throw new Error(`第 ${idx} 个点没追成:${point.note}`);
+    if (!point) throw new Error(`This tracking has only ${result.points.length} points, no point number ${idx}`);
+    if (point.note) throw new Error(`Point ${idx} failed to track: ${point.note}`);
 
     // 画面来自哪一段素材:必须和卡片在时间上真的重叠,否则卡片会跟着
     // 一个当时根本没在播的画面走。
@@ -512,8 +512,8 @@ export const aiHandlers = {
       .filter((c) => c.mediaId === args.mediaId)
       .find((c) => c.start < hit.clip.end && c.end > hit.clip.start);
     if (!source) {
-      throw new Error(`时间轴上没有一段 ${media.name} 和这张卡在时间上重叠 —— `
-        + `卡片放在 ${hit.clip.start.toFixed(2)}~${hit.clip.end.toFixed(2)}s,那段时间画面上没有这个素材`);
+      throw new Error(`No segment of ${media.name} on the timeline overlaps this card in time: `
+        + `the card is placed at ${hit.clip.start.toFixed(2)}~${hit.clip.end.toFixed(2)}s, and this media is not on screen during that time`);
     }
 
     const built = buildClipMotion({
@@ -533,7 +533,7 @@ export const aiHandlers = {
     });
 
     if (!actions.setClipMotion(args.clipId, built.motion)) {
-      throw new Error(`绑定失败:写不进片段 ${args.clipId}`);
+      throw new Error(`Binding failed: cannot write to clip ${args.clipId}`);
     }
 
     const { frames, visibleFrames, rangeX, rangeY } = built.summary;
@@ -550,19 +550,19 @@ export const aiHandlers = {
       whenHidden: built.motion.whenHidden,
       // 两种「绑了等于没绑」要当场说破,不能让用户自己去预览里发现
       ...(rangeX < 2 && rangeY < 2
-        ? { warning: "这个点几乎没动(位移不到 2 像素),绑上去看不出跟随效果" }
+        ? { warning: "This point barely moves (displacement under 2 pixels), so binding to it would show no visible follow effect" }
         : {}),
       ...(visibleFrames < frames * 0.5
-        ? { warning2: `一半以上的帧(${frames - visibleFrames}/${frames})目标不可见,`
-            + `跟随会大段停住${built.motion.whenHidden === "hide" ? "或整张卡消失" : ""}` }
+        ? { warning2: `The target is not visible in more than half of the frames (${frames - visibleFrames}/${frames}), `
+            + `the follow will stall for long stretches${built.motion.whenHidden === "hide" ? " or the whole card will disappear" : ""}` }
         : {}),
     };
   },
 
   detachClipMotion: (args) => {
     const hit = findClip(getState().project, args.clipId);
-    if (!hit) throw new Error(`找不到片段 ${args.clipId}`);
-    if (!hit.clip.motion) return { ok: true, clipId: args.clipId, changed: false, hint: "这张卡本来就没绑轨迹" };
+    if (!hit) throw new Error(`Clip ${args.clipId} not found`);
+    if (!hit.clip.motion) return { ok: true, clipId: args.clipId, changed: false, hint: "This card had no track bound to begin with" };
     actions.setClipMotion(args.clipId, undefined);
     return { ok: true, clipId: args.clipId, changed: true };
   },
@@ -584,7 +584,7 @@ export const aiHandlers = {
     });
     return {
       jobId, started: true, engine,
-      hint: "安装已在后台开始,用户界面上会显示带进度的安装动画。用 background_job_status 查这个 jobId,或用 stt_status 看该引擎的 installed 字段。不要重复启动。",
+      hint: "Installation has started in the background, and the user interface will show an install animation with progress. Check this jobId with background_job_status, or use stt_status to see the engine's installed field. Do not start it again.",
     };
   },
 
@@ -597,12 +597,12 @@ export const aiHandlers = {
         sttJobs.set(jobId, { done: true, ok: false, error: e instanceof Error ? e.message : String(e) });
       });
     sttJobs.set(jobId, { done: false, ok: false });
-    return { jobId, started: true, mediaId: args.mediaId, hint: "转写已在后台开始,请用 get_transcript 轮询该 mediaId" };
+    return { jobId, started: true, mediaId: args.mediaId, hint: "Transcription has started in the background, poll this mediaId with get_transcript" };
   },
 
   getTranscript: (args) => {
     const media = getState().project.media.find((m) => m.id === args.mediaId);
-    if (!media) throw new Error(`找不到素材 ${args.mediaId}`);
+    if (!media) throw new Error(`Asset ${args.mediaId} not found`);
     const t = media.transcript;
     if (!t) return null;
     // 契约:超过 200 段时只返回前 200 段 + 总数
@@ -623,22 +623,22 @@ export const aiHandlers = {
     const media = args.mediaId
       ? project.media.find((m) => m.id === args.mediaId)
       : project.media.find((m) => m.transcript && m.transcript.segments.length > 0);
-    if (!media) throw new Error(args.mediaId ? `找不到素材 ${args.mediaId}` : "素材库里没有已转写的素材,先用 transcribe_media 转写。");
+    if (!media) throw new Error(args.mediaId ? `Asset ${args.mediaId} not found` : "No transcribed media in the media library; transcribe first with transcribe_media.");
     const segments = media.transcript?.segments;
-    if (!segments || segments.length === 0) throw new Error(`素材「${media.name}」还没有文字稿,先用 transcribe_media 转写。`);
+    if (!segments || segments.length === 0) throw new Error(`Media "${media.name}" has no transcript yet. Transcribe it with transcribe_media first.`);
 
     // 没指定 clip 就找时间轴上唯一那张字幕卡;有多张时要求说清楚是哪一张
     let clipId = args.clipId;
     if (!clipId) {
       const hits = project.tracks.flatMap((t) => t.clips.filter((c) => (c as { cardId?: string }).cardId === "caption-track"));
-      if (hits.length === 0) throw new Error("时间轴上没有 caption-track 卡片。先 add_clip 建一张,或直接传 clipId。");
-      if (hits.length > 1) throw new Error(`时间轴上有 ${hits.length} 张字幕卡,请用 clipId 指明是哪一张:${hits.map((c) => c.id).join(", ")}`);
+      if (hits.length === 0) throw new Error("There is no caption-track card on the timeline. Create one with add_clip first, or pass clipId directly.");
+      if (hits.length > 1) throw new Error(`There are ${hits.length} captions cards on the timeline, specify which one with clipId: ${hits.map((c) => c.id).join(", ")}`);
       clipId = hits[0].id;
     }
     const hit = findClip(project, clipId);
-    if (!hit) throw new Error(`找不到 clip ${clipId}`);
+    if (!hit) throw new Error(`clip ${clipId} not found`);
     const clip = hit.clip as { start: number; end: number; cardId?: string };
-    if (clip.cardId !== "caption-track") throw new Error(`clip ${clipId} 是 ${clip.cardId},不是字幕卡。`);
+    if (clip.cardId !== "caption-track") throw new Error(`clip ${clipId} is ${clip.cardId}, not a captions card.`);
 
     /*
      * 文字稿的秒数是**素材内**的,得先按这份素材在时间轴上的位置换算过去
@@ -652,8 +652,8 @@ export const aiHandlers = {
       const onTimeline = placed.some((c) => c.mediaId === media.id);
       throw new Error(
         onTimeline
-          ? `文字稿里没有落在这张卡时段(${clip.start}s–${clip.end}s)内的段落,检查一下 clip 的起止时间。`
-          : `素材「${media.name}」还没放到时间轴上,字幕对不上时间。先 add_clip 把它放上去。`,
+          ? `The transcript has no segments within this card's time range (${clip.start}s-${clip.end}s). Check the clip's start and end times.`
+          : `Media "${media.name}" is not on the timeline yet, so captions can't be aligned to time. Place it with add_clip first.`,
       );
     }
 
@@ -700,26 +700,26 @@ export const aiHandlers = {
     const op = args.op ?? "edit";
 
     if (op === "remove") {
-      if (args.index == null) throw new Error("remove 要给 index(list_captions 里的下标)");
+      if (args.index == null) throw new Error("remove requires index (the index in list_captions)");
       const lines = captionsOf(hit.clip as { params?: Record<string, unknown> });
       const gone = lines[args.index];
-      if (!gone) throw new Error(`这张字幕卡只有 ${lines.length} 条,没有第 ${args.index} 条`);
-      if (!actions.removeCaption(clipId, args.index)) throw new Error("删除失败");
+      if (!gone) throw new Error(`This captions card has only ${lines.length} entries, no entry ${args.index}`);
+      if (!actions.removeCaption(clipId, args.index)) throw new Error("Failed to delete");
       return { clipId, removed: describeCaption(gone, args.index), count: lines.length - 1 };
     }
 
     if (op === "insert") {
-      if (args.start == null) throw new Error("insert 要给 start(相对字幕卡起点的秒)");
-      if (!args.text) throw new Error("insert 要给 text");
+      if (args.start == null) throw new Error("insert requires start (seconds relative to the captions card start)");
+      if (!args.text) throw new Error("insert requires text");
       const at = actions.addCaption(clipId, { start: args.start, end: args.end, zh: args.text, en: args.en });
-      if (at < 0) throw new Error(`${args.start}s 附近没有放得下的空当了 —— 先用 list_captions 看看哪儿是空的,或者把邻近那条改短。`);
+      if (at < 0) throw new Error(`No gap near ${args.start}s is large enough. Use list_captions to see where the free gaps are, or shorten the neighboring entry.`);
       const now = captionsOf(findCaptionClip(clipId).clip as { params?: Record<string, unknown> });
       return { clipId, index: at, caption: describeCaption(now[at], at), count: now.length };
     }
 
-    if (args.index == null) throw new Error("edit 要给 index(list_captions 里的下标)");
+    if (args.index == null) throw new Error("edit requires index (the index in list_captions)");
     if (args.text === undefined && args.en === undefined && args.start === undefined && args.end === undefined) {
-      throw new Error("edit 至少要给 text / en / start / end 里的一个");
+      throw new Error("edit requires at least one of text / en / start / end");
     }
     const at = actions.editCaption(clipId, args.index, {
       start: args.start,
@@ -727,7 +727,7 @@ export const aiHandlers = {
       zh: args.text,
       en: args.en,
     });
-    if (at < 0) throw new Error(`改不了第 ${args.index} 条,先用 list_captions 确认下标`);
+    if (at < 0) throw new Error(`Can't edit entry ${args.index}. Use list_captions to confirm the index`);
     const now = captionsOf(findCaptionClip(clipId).clip as { params?: Record<string, unknown> });
     return { clipId, index: at, caption: describeCaption(now[at], at), count: now.length };
   },

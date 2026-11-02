@@ -43,7 +43,7 @@ export function spaceChannel(space, channel) {
  * @param {(healths: Array<[string, object]>) => object} [options.health] 合并各空间的 health；缺省用 `local` 的
  */
 export function spacedModule({ create, health: mergeHealth } = {}) {
-  if (typeof create !== 'function') throw new TypeError('spacedModule: create 必须是函数');
+  if (typeof create !== 'function') throw new TypeError('spacedModule: create must be a function');
   /** 空间 → { mod, ctx }，ctx 是按空间改写过频道名的上下文 */
   const spaces = new Map();
   /** connId → 空间（管理身份记 null） */
@@ -51,7 +51,7 @@ export function spacedModule({ create, health: mergeHealth } = {}) {
   let outerCtx = null;
 
   const local = create(LOCAL_SPACE);
-  if (!isObj(local) || typeof local.name !== 'string') throw new TypeError('spacedModule: create 必须回模块对象');
+  if (!isObj(local) || typeof local.name !== 'string') throw new TypeError('spacedModule: create must return a module object');
 
   function wrapCtx(space, ctx) {
     return Object.freeze({
@@ -109,7 +109,7 @@ export function spacedModule({ create, health: mergeHealth } = {}) {
       bind(ctx);
       const space = conns.get(connId);
       if (space === null || space === undefined) {
-        const out = { type: 'error', reason: 'forbidden', detail: '这条连接不在任何空间里' };
+        const out = { type: 'error', reason: 'forbidden', detail: 'This connection is not in any space' };
         if (isReqId(msg.reqId)) out.reqId = msg.reqId;
         ctx.send(connId, out);
         return undefined;

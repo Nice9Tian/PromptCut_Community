@@ -219,16 +219,16 @@ export function framePatchFromArgs(args: PositionArgs, parent: Size): Partial<Cl
   const out: Partial<ClipFrame> = {};
   const num = (k: keyof PositionArgs, v: unknown, check?: (n: number) => string | null) => {
     if (v === undefined) return;
-    if (typeof v !== "number" || !Number.isFinite(v)) throw new Error(`${k} 必须是有限数字,收到 ${JSON.stringify(v)}`);
+    if (typeof v !== "number" || !Number.isFinite(v)) throw new Error(`${k} must be a finite number, got ${JSON.stringify(v)}`);
     const bad = check?.(v);
     if (bad) throw new Error(bad);
     (out as Record<string, unknown>)[k] = v;
   };
   num("x", args.x);
   num("y", args.y);
-  num("w", args.w, (n) => (n > 0 ? null : `w 必须大于 0,收到 ${n}`));
-  num("h", args.h, (n) => (n > 0 ? null : `h 必须大于 0,收到 ${n}`));
-  num("scale", args.scale, (n) => (n > 0 ? null : `scale 必须大于 0,收到 ${n};要隐藏卡片用 remove_clip 或 opacity,不要缩到 0`));
+  num("w", args.w, (n) => (n > 0 ? null : `w must be greater than 0, got ${n}`));
+  num("h", args.h, (n) => (n > 0 ? null : `h must be greater than 0, got ${n}`));
+  num("scale", args.scale, (n) => (n > 0 ? null : `scale must be greater than 0, got ${n}; to hide a card use remove_clip or opacity, do not shrink it to 0`));
   num("rotate", args.rotate);
   // 三维。角度不设上下限(转 720° 是合法的动画意图),translateZ 也不限 ——
   // 推到相机后面会被 projectStage 判成不可见,那是渲染层的事,不该在参数校验里替它决定
@@ -238,12 +238,12 @@ export function framePatchFromArgs(args: PositionArgs, parent: Size): Partial<Cl
   if (args.anchor !== undefined) {
     const a = args.anchor;
     if (!Array.isArray(a) || a.length !== 2 || !a.every((n) => typeof n === "number" && Number.isFinite(n))) {
-      throw new Error(`anchor 必须是两个数字 [ax, ay],例如 [0.5, 0.5] 表示中心,收到 ${JSON.stringify(a)}`);
+      throw new Error(`anchor must be two numbers [ax, ay], e.g. [0.5, 0.5] for the center, got ${JSON.stringify(a)}`);
     }
     out.anchor = [a[0], a[1]];
   }
   if (Object.keys(out).length === 0) {
-    throw new Error("set_position 至少要传 x / y / w / h / anchor / scale / rotate / rotateX / rotateY / translateZ 中的一项,或 clear:true");
+    throw new Error("set_position needs at least one of x / y / w / h / anchor / scale / rotate / rotateX / rotateY / translateZ, or clear:true");
   }
   return args.space === "world" ? localFromWorld(out, parent) : out;
 }
@@ -324,16 +324,16 @@ export interface Rect {
 
 function normRect(r: Rect): Box {
   for (const k of ["x1", "y1", "x2", "y2"] as const) {
-    if (typeof r[k] !== "number" || !Number.isFinite(r[k])) throw new Error(`${k} 必须是有限数字,收到 ${JSON.stringify(r[k])}`);
+    if (typeof r[k] !== "number" || !Number.isFinite(r[k])) throw new Error(`${k} must be a finite number, got ${JSON.stringify(r[k])}`);
   }
   const box = { left: Math.min(r.x1, r.x2), top: Math.min(r.y1, r.y2), width: Math.abs(r.x2 - r.x1), height: Math.abs(r.y2 - r.y1) };
-  if (!(box.width > 0 && box.height > 0)) throw new Error(`矩形必须有正的宽高,收到 x1=${r.x1} y1=${r.y1} x2=${r.x2} y2=${r.y2}`);
+  if (!(box.width > 0 && box.height > 0)) throw new Error(`Rectangle must have a positive width and height, got x1=${r.x1} y1=${r.y1} x2=${r.x2} y2=${r.y2}`);
   return box;
 }
 
 function checkAlign(a: unknown, name: string): [number, number] {
   if (!Array.isArray(a) || a.length !== 2 || !a.every((n) => typeof n === "number" && Number.isFinite(n))) {
-    throw new Error(`${name} 必须是两个数字 [ax, ay],例如 [0.5, 0.5] 表示中心,收到 ${JSON.stringify(a)}`);
+    throw new Error(`${name} must be two numbers [ax, ay], e.g. [0.5, 0.5] for the center, got ${JSON.stringify(a)}`);
   }
   return [a[0], a[1]];
 }
@@ -355,7 +355,7 @@ export function rectToFrame(
   const r = normRect(rect);
   const align = opts.align === undefined ? ([0.5, 0.5] as [number, number]) : checkAlign(opts.align, "align");
   const mode = opts.mode ?? "fit";
-  if (mode !== "fit" && mode !== "canvas") throw new Error(`mode 只能是 fit 或 canvas,收到 ${JSON.stringify(mode)}`);
+  if (mode !== "fit" && mode !== "canvas") throw new Error(`mode must be fit or canvas, got ${JSON.stringify(mode)}`);
   const x = r.left + align[0] * r.width;
   const y = r.top + align[1] * r.height;
   if (mode === "canvas") {
@@ -381,10 +381,10 @@ export function alignToFrame(
   prev: ClipFrame | undefined,
   parent: Size,
 ): ClipFrame {
-  if (h === undefined && v === undefined) throw new Error("align 至少要传 h(left/center/right)或 v(top/center/bottom)中的一个");
-  if (h !== undefined && !["left", "center", "right"].includes(h)) throw new Error(`h 只能是 left / center / right,收到 ${JSON.stringify(h)}`);
-  if (v !== undefined && !["top", "center", "bottom"].includes(v)) throw new Error(`v 只能是 top / center / bottom,收到 ${JSON.stringify(v)}`);
-  if (typeof margin !== "number" || !Number.isFinite(margin)) throw new Error(`margin 必须是有限数字,收到 ${JSON.stringify(margin)}`);
+  if (h === undefined && v === undefined) throw new Error("align needs at least one of h (left/center/right) or v (top/center/bottom)");
+  if (h !== undefined && !["left", "center", "right"].includes(h)) throw new Error(`h must be left / center / right, got ${JSON.stringify(h)}`);
+  if (v !== undefined && !["top", "center", "bottom"].includes(v)) throw new Error(`v must be top / center / bottom, got ${JSON.stringify(v)}`);
+  if (typeof margin !== "number" || !Number.isFinite(margin)) throw new Error(`margin must be a finite number, got ${JSON.stringify(margin)}`);
   const p = resolveFrame(prev, parent);
   const ax = h === "left" ? 0 : h === "right" ? 1 : h === "center" ? 0.5 : p.anchor[0];
   const ay = v === "top" ? 0 : v === "bottom" ? 1 : v === "center" ? 0.5 : p.anchor[1];
@@ -469,7 +469,7 @@ export function rectForSafeSide(side: SafeSide, parent: Size, margin = 40): Rect
     case "right": return { x1: W / 2 + margin, y1: margin, x2: W - margin, y2: H - margin };
     case "top": return { x1: margin, y1: margin, x2: W - margin, y2: H / 3 - margin };
     case "bottom": return { x1: margin, y1: (H * 2) / 3 + margin, x2: W - margin, y2: H - margin };
-    default: throw new Error(`safeSide 只能是 left / right / top / bottom,收到 ${JSON.stringify(side)}`);
+    default: throw new Error(`safeSide must be left / right / top / bottom, got ${JSON.stringify(side)}`);
   }
 }
 
@@ -481,11 +481,11 @@ export function nudgeFrame(
 ): ClipFrame {
   for (const k of ["dx", "dy", "scaleBy", "rotateBy"] as const) {
     const v = d[k];
-    if (v !== undefined && (typeof v !== "number" || !Number.isFinite(v))) throw new Error(`${k} 必须是有限数字,收到 ${JSON.stringify(v)}`);
+    if (v !== undefined && (typeof v !== "number" || !Number.isFinite(v))) throw new Error(`${k} must be a finite number, got ${JSON.stringify(v)}`);
   }
-  if (d.scaleBy !== undefined && !(d.scaleBy > 0)) throw new Error(`scaleBy 是倍数,必须大于 0(0.5 = 缩到一半,2 = 放大一倍),收到 ${d.scaleBy}`);
+  if (d.scaleBy !== undefined && !(d.scaleBy > 0)) throw new Error(`scaleBy is a multiplier and must be greater than 0 (0.5 = shrink to half, 2 = double the size), got ${d.scaleBy}`);
   if (d.dx === undefined && d.dy === undefined && d.scaleBy === undefined && d.rotateBy === undefined) {
-    throw new Error("nudge 至少要传 dx / dy / scaleBy / rotateBy 中的一项");
+    throw new Error("nudge needs at least one of dx / dy / scaleBy / rotateBy");
   }
   const p = resolveFrame(prev, parent);
   return {

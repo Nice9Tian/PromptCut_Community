@@ -837,23 +837,23 @@ function LottieCard({ params, t = 0 }: CardProps<Params>) {
 
 export const lottieCard: CardDef<Params> = {
   id: "lottie",
-  name: "Lottie 动画",
-  description: "播放一段 Lottie(AE 导出的 JSON)动画,跟着时间轴逐帧走",
-  useWhen: "要放一段现成的 Lottie 动画时用。软件自带几段素材(片头字标、角色亮相、节日装饰等),列在 src 控件的 options 里,把那个 URL 填进 src 就行;手上有别的 Lottie 文件(LottieFiles 下载的、设计师用 AE 导出的)也可以直接用。把 JSON 文本贴进 json 参数,或者给一个 URL。它不会自己「播」,是按 clip 时间逐帧定位:clip 多长动画就走多长,speed 调快慢,loop 决定到头了循环还是停在最后一帧。不适合自己从零画动效 —— 那用别的卡。素材文件的许可证要自己核对。",
-  tags: ["lottie", "动画文件", "AE", "素材"],
+  name: "Lottie animation",
+  description: "Plays a Lottie animation (JSON exported from AE), stepping frame by frame with the timeline",
+  useWhen: "Use this to place a ready-made Lottie animation. The app ships with a few media items (title logos, character reveals, holiday decorations, etc.), listed in the options of the src control: just fill that URL into src. You can also use any other Lottie file directly (downloaded from LottieFiles, or exported from AE by a designer). Paste the JSON text into the json parameter, or give a URL. It does not \"play\" by itself; it is positioned frame by frame by clip time: the animation runs as long as the clip, speed adjusts how fast, and loop decides whether it loops at the end or stays on the last frame. Not suitable for drawing motion graphics from scratch: use another card for that. You must check the license of the media files yourself.",
+  tags: ["lottie", "animation file", "AE", "media"],
   source: "native",
   // 帧模式:remotion 式(渲染重构「癸」)。每一帧由素材、参数、帧号直接算出,不用从挂载帧推过来;
   // 随机数和属性值留旧数那几处在 loadLottie 里固定住了(见文件头),所以顺着推和直接跳是同一个画面。
   frameMode: "direct",
   defaults: { json: DEMO_JSON, src: "", speed: 1, loop: "no", fit: "contain" },
   controls: [
-    { key: "json", label: "Lottie JSON 文本(优先)", type: "text", hint: "整个 .json 文件的内容;留空则用 src" },
-    { key: "src", label: "或素材 / URL", type: "asset", kind: "lottie", options: assetOptions("lottie"), hint: "从素材目录里挑一个(options 里的 URL),或填别的 JSON URL;json 参数留空时才用它" },
-    { key: "speed", label: "速度倍率", type: "number", min: 0.1, max: 8, step: 0.1 },
-    { key: "loop", label: "到头后", type: "select", options: [{ value: "no", label: "停在最后一帧" }, { value: "yes", label: "循环" }] },
-    { key: "fit", label: "适配", type: "select", options: [{ value: "contain", label: "完整显示" }, { value: "cover", label: "铺满裁切" }] },
+    { key: "json", label: "Lottie JSON text (preferred)", type: "text", hint: "Contents of the whole .json file; leave empty to use src" },
+    { key: "src", label: "Or media / URL", type: "asset", kind: "lottie", options: assetOptions("lottie"), hint: "Pick one from the media catalog (a URL in options), or enter another JSON URL; only used when the json parameter is empty" },
+    { key: "speed", label: "Speed multiplier", type: "number", min: 0.1, max: 8, step: 0.1 },
+    { key: "loop", label: "At the end", type: "select", options: [{ value: "no", label: "Hold last frame" }, { value: "yes", label: "Loop" }] },
+    { key: "fit", label: "Fit", type: "select", options: [{ value: "contain", label: "Show in full" }, { value: "cover", label: "Fill and crop" }] },
   ],
-  parts: [{ id: "animation", label: "动画", role: "media", params: ["json", "src", "speed", "loop", "fit"] }],
+  parts: [{ id: "animation", label: "Animation", role: "media", params: ["json", "src", "speed", "loop", "fit"] }],
   lifecycle: { after: "hold", exit: ["fade"] },
   timing: (p) => ({ after: p.loop === "yes" ? "loop" : "hold" }),
   Component: LottieCard,

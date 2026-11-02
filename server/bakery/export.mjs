@@ -46,7 +46,7 @@ export function findMissingMaterialFontFile({ platform = process.platform, windi
   const fontFile = candidates.find((candidate) => exists(candidate));
   if (!fontFile) {
     const platformName = platform === 'win32' ? 'Windows Fonts' : platform === 'linux' ? 'Noto Sans CJK' : 'supported platform font locations';
-    throw new Error(`确认缺失素材需要中文代理字体，但未找到可用字体（${platformName}）。`);
+    throw new Error(`Confirmed missing media needs a Chinese fallback font, but no usable font was found (${platformName}).`);
   }
   return fontFile;
 }
@@ -80,7 +80,7 @@ export async function exportFrames(opts) {
   // 剪辑段里有视频 / 图片:兼容旁路画不出它们,改走缺省的完整整帧路线(FrameScene 连素材一起渲),成片里照样有
   // (`mechanism/rendering.md`「剪辑段」的兼容旁路一条)
   if (mediaMode === 'ffmpeg' && cutSegmentsHaveVisualMedia(await loadProject(opts.url || DEFAULT_URL, outDir).catch(() => null))) {
-    console.log('[export] 剪辑段里有视频或图片:--media=ffmpeg 的兼容旁路摆不出嵌套的素材,这次改走缺省的完整整帧路线');
+    console.log('[export] The cut segment contains videos or images: the --media=ffmpeg compatibility bypass cannot lay out nested media, so this run uses the default full whole-frame path');
     mediaMode = 'chrome';
   }
   const ffmpegCmd = await findFfmpeg();
@@ -135,7 +135,7 @@ export async function exportFrames(opts) {
       // 卡片透明层。素材走 ffmpeg 时这里只有卡片 —— 名字说的就是它:叠到别的画面上用的那一层
       const bakedCardsVideo = baked.cardsVideo || null;
       if (streamCards || bakedCardsVideo) {
-        console.log(`${bakedCardsVideo ? '分片 overlay.mov 已合并' : 'overlay.mov 已由 Chrome 帧流式写入'}本地 ffmpeg。`);
+        console.log(`${bakedCardsVideo ? 'Sharded overlay.mov merged' : 'overlay.mov streamed from Chrome frames'} via local ffmpeg.`);
       }
       else {
         console.log('Creating overlay.mov...');
@@ -180,7 +180,7 @@ export async function exportFrames(opts) {
               } catch (e) {
                 if (plan.some(c => c.cardAudio || c.soundEffect)) throw e;
                 const fx = plan.filter((c) => c.fx).length;
-                console.error('Chrome 混音失败,退回 ffmpeg 直接混' + (fx ? '(' + fx + ' 段挂着的音频效果会丢)' : '') + ':', e.message);
+                console.error('Chrome mixing failed, falling back to direct ffmpeg mixing' + (fx ? '(' + fx + ' segments with audio effects attached will be lost)' : '') + ':', e.message);
               }
             }
             if (!mixed) {
@@ -216,7 +216,7 @@ async function composePreview({ ffmpegCmd, baked, layers, outDir, cardsVideo = n
   const glassList = baked.glass?.list || [];
   const blurs = baked.glass?.blurs || [];
   const blur = blurs.length ? Math.max(...blurs) : 0;
-  if (blurs.length > 1) console.warn(`毛玻璃的模糊量不止一种(${blurs.join(' / ')} px),统一按最大的 ${blur}px 合成`);
+  if (blurs.length > 1) console.warn(`Frosted glass has more than one blur amount (${blurs.join(' / ')} px), compositing with the largest, ${blur}px`);
   let mask = null;
   if (glassList.length && blur > 0) {
     await fillGlassGaps(baked.glass.dir, startFrame, endFrame, width, height);
@@ -235,7 +235,7 @@ async function composePreview({ ffmpegCmd, baked, layers, outDir, cardsVideo = n
     sidecarDir: path.resolve(outDir),
   });
   await Promise.all(sidecars.map((s) => fs.writeFile(s.file, s.text, 'utf8')));
-  for (const n of notes) console.warn('合成:', n);
+  for (const n of notes) console.warn('Compositing:', n);
   let finalArgs = args;
   // 片段多、带强调时 filter graph 会很长;Windows 命令行上限 32K 字符,长了改用文件传
   if (graph.length > 8000) {

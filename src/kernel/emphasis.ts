@@ -25,7 +25,7 @@ export interface ClipEmphasis {
   dy?: number;
 }
 
-export const EMPHASIS_LABEL: Record<EmphasisKind, string> = { shadow: "阴影", outline: "描边" };
+export const EMPHASIS_LABEL: Record<EmphasisKind, string> = { shadow: "Shadow", outline: "Outline" };
 
 /** 各自的默认值:不给参数时就是这一套 */
 export const EMPHASIS_DEFAULTS: Record<EmphasisKind, Required<Omit<ClipEmphasis, "kind">>> = {
@@ -90,7 +90,7 @@ export function emphasisFilter(e: ClipEmphasis | null | undefined, scale = 1): s
 /** 一行说明,给界面和 Agent 回显 */
 export function describeEmphasis(e: ClipEmphasis | null | undefined): string {
   const n = normalizeEmphasis(e);
-  if (!n) return "无";
-  if (n.kind === "shadow") return `阴影 ${n.size}px · 偏移 ${n.dx},${n.dy} · ${n.color} ${Math.round(n.opacity * 100)}%`;
-  return `描边 ${n.size}px · ${n.color} ${Math.round(n.opacity * 100)}%`;
+  if (!n) return "none";
+  if (n.kind === "shadow") return `Shadow ${n.size}px · offset ${n.dx},${n.dy} · ${n.color} ${Math.round(n.opacity * 100)}%`;
+  return `Outline ${n.size}px · ${n.color} ${Math.round(n.opacity * 100)}%`;
 }

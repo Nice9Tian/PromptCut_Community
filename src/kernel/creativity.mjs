@@ -20,16 +20,16 @@ export const CREATIVITY_LEVELS = Object.freeze(['low', 'medium', 'high']);
 export const DEFAULT_CREATIVITY = 'high';
 
 /** 给人看的名字 */
-export const CREATIVITY_LABEL = Object.freeze({ low: '低', medium: '中', high: '高' });
+export const CREATIVITY_LABEL = Object.freeze({ low: 'Low', medium: 'Medium', high: 'High' });
 
 /** 选项上的短说明(下拉框放不下整句) */
-export const CREATIVITY_SHORT = Object.freeze({ low: '只改参数', medium: '可改代码和表达式', high: '可新建卡片和效果' });
+export const CREATIVITY_SHORT = Object.freeze({ low: 'Parameters only', medium: 'Can edit code and expressions', high: 'Can create new cards and effects' });
 
 /** 每一档允许什么(项目设置、AI 栏的提示和闸门的报错共用这几句) */
 export const CREATIVITY_HINT = Object.freeze({
-  low: '只用已有的卡片和效果,只改参数;测量只用内置方法',
-  medium: '可以改已有卡片和效果的代码或表达式,但不新建',
-  high: '可以新建任意卡片和效果,可以写自定义测量代码',
+  low: 'Use only existing cards and effects, change only parameters; measure only with built-in methods',
+  medium: 'May change the code or expressions of existing cards and effects, but not create new ones',
+  high: 'May create any card and effect, and may write custom measurement code',
 });
 
 /** 合法等级原样回,其它(缺省、拼错、旧数据)回 null */
