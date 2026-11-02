@@ -18,7 +18,7 @@ test('只读权限的项目按只读算，读写的不算；离开项目回到�
   assert.equal(isViewOnly(), true);
   assert.equal(viewOnlyReason(), 'read-only-member');
   assert.equal(projectAccessNow(), 'r');
-  assert.match(viewOnlyText(), /只能查看/);
+  assert.match(viewOnlyText(), /You can only view this project/);
 
   setProjectAccess('rw');
   assert.equal(isViewOnly(), false);
@@ -37,5 +37,5 @@ test('两种只读说的话不一样：自己用只读方式打开 vs 这个项�
   setProjectAccess(null);
   const observe = viewOnlyText();
   assert.notEqual(member, observe);
-  assert.match(observe, /只读查看模式/);
+  assert.match(observe, /read-only view mode/);
 });

@@ -17,11 +17,11 @@ test("明显冲突时拒绝并给出分页建议", () => {
   const result = classifyFileDetailed({ name: "a.jpg", type: "video/mp4" });
   assert.equal(result.kind, null);
   assert.equal(result.conflict, true);
-  assert.match(result.reason, /图片/);
+  assert.match(result.reason, /Images/);
 });
 
 test("未知类型拒绝而不是默认成视频", () => {
   const result = classifyFileDetailed({ name: "a.bin", type: "application/octet-stream" });
   assert.equal(result.kind, null);
-  assert.match(result.reason, /无法识别/);
+  assert.match(result.reason, /Cannot recognize the type of file/);
 });

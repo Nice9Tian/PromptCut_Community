@@ -65,7 +65,7 @@ test("CS-04 坏情形:另存 → 本机改 → 云端另有人改 → 重开:别
   assert.equal(plan.kind, "table");
   assert.deepEqual(plan.things.map((t) => t.key), ["offline:clip:c1"], "只列我的修改,没有「c2 改回去」「删掉 c9」");
   const rows = M.mergeRows(cloud, plan.things);
-  assert.equal(rows[0].props[0].text, "透明度 0.4 → 0.9（云端现在是 0.4）");
+  assert.equal(rows[0].props[0].text, "Opacity 0.4 → 0.9 (The cloud is now 0.4)");
   const r = M.applyMerge(cloud, plan.things, new Map([["offline:clip:c1", new Set(["opacity"])]]));
   assert.equal(clipIn(r.project, "c1").opacity, 0.9);
   assert.equal(clipIn(r.project, "c2").label, "别人改的", "别人的改动还在");

@@ -46,7 +46,7 @@ test("状态 → 措辞:断网、连不上文档服务、连不上素材服务�
 });
 
 test("离开编辑界面的确认:问的是「改动只在这个页面里」,不是「项目没保存」", () => {
-  assert.equal(st.UNSENT_LEAVE_TEXT, "当前离线，你的改动只在这个页面里。离开编辑界面会丢失它们。继续？");
+  assert.equal(st.UNSENT_LEAVE_TEXT, "You are offline, and your changes exist only in this page. Leaving the editor will lose them. Continue?");
   // 手机版用自己的确认框(按钮「取消 / 离开」),正文一样、不带那一问
   assert.equal(st.UNSENT_LEAVE_TEXT, `${st.UNSENT_LEAVE_BODY} Continue?`);
   assert.doesNotMatch(st.UNSENT_LEAVE_BODY, /继续/);
@@ -170,12 +170,12 @@ test("备份:只进内存、不自动下载,列表里逐个下载出 JSON(LocalB
     assert.equal(store.list().length, 2);
     assert.equal(store.download(1), true);
     assert.equal(downloads.length, 1);
-    assert.match(downloads[0].name, /^我的_项目-备份-离线丢弃-\d{8}-\d{6}-2\.json$/);
+    assert.match(downloads[0].name, /^我的_项目-backup-discarded offline-\d{8}-\d{6}-2\.json$/);
     const body = JSON.parse(downloads[0].text);
     assert.deepEqual(body.backup, discard);
     assert.equal(body.projectName, "我的/项目");
     assert.equal(store.download(0), true);
-    assert.match(downloads[1].name, /-被覆盖-/);
+    assert.match(downloads[1].name, /-overwritten-/);
     assert.deepEqual(JSON.parse(downloads[1].text).backup, overwritten);
     assert.equal(store.download(5), false, "没有这一份");
     off();

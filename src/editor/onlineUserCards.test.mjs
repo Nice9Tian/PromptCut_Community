@@ -321,10 +321,10 @@ export const opaque: CardDef = { id: "synced-o", name: "控件认不出", defaul
     await sources.sync();
     const v = R.syncedCardView("synced-p");
     assert.equal(v.name, "带参数的同步卡");
-    assert.equal(v.description, "Description");
+    assert.equal(v.description, "说明");
     assert.deepEqual(v.defaults, { text: "hi", size: 48, side: "l", tint: "#ff0000" });
     assert.deepEqual(v.controls.map((c) => c.type), ["text", "number", "select", "color"]);
-    assert.deepEqual(v.controls[2].options, [{ value: "l", label: "Left" }, { value: "r", label: "Right" }]);
+    assert.deepEqual(v.controls[2].options, [{ value: "l", label: "左" }, { value: "r", label: "右" }]);
     assert.equal(v.controlsIncomplete, false);
     assert.equal(R.syncedCardView("synced-o").controlsIncomplete, true);
     assert.deepEqual(R.syncedCardView("synced-o").controls, []);
@@ -372,7 +372,7 @@ export const c: CardDef = { id: "synced-i", name: "引控件的同步卡", defau
     content.store.set("src/cards/user/shared.ts", `export const SHARED = [{ key: "text", label: "文字改了", type: "text" }, { key: "n", label: "数", type: "number" }];\n`);
     await sources.sync();
     assert.deepEqual(gets().slice(3), ["src/cards/user/shared.ts"]);
-    assert.deepEqual(R.syncedCardView("synced-i").controls.map((c) => c.label), ["文字改了", "数", "Position", "Primary color"]);
+    assert.deepEqual(R.syncedCardView("synced-i").controls.map((c) => c.label), ["文字改了", "数", "位置", "Primary color"]);
     // 缺的文件后来同步上来了:取到、补上,提示撤掉
     content.store.set("src/cards/user/gone.ts", `export const GONE = [];\n`);
     await sources.sync();

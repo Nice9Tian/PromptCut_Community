@@ -186,9 +186,9 @@ test('ORGR-09 cloud group wording: when connected to the cloud it says "Stored i
   assert.equal(orgWhereText('cloud', false), 'Only remembered in this browser for now');
   assert.equal(orgWhereText('local'), 'Only remembered on this machine');
   assert.equal(orgWhereText('local', true), 'Only remembered on this machine');
-  assert.equal(groupNoteText('cloud'), 'Cloud group: stored in the cloud, visible on other devices too, can only hold cloud projects.');
-  assert.equal(groupNoteText('cloud', false), 'Cloud group: only remembered in this browser for now, can only hold cloud projects.');
-  assert.equal(groupNoteText('local'), 'Local group: only remembered on this machine, can only hold local projects.');
+  assert.equal(groupNoteText('cloud'), 'Cloud group: Stored in the cloud, visible on other devices too. Only cloud projects can go in it.');
+  assert.equal(groupNoteText('cloud', false), 'Cloud group: Only remembered in this browser for now. Only cloud projects can go in it.');
+  assert.equal(groupNoteText('local'), 'Local group: Only remembered on this machine. Only local projects can go in it.');
 });
 
 test('ORGR-10 cleanup: for projects no longer in the list, entries with no organization info are removed and their chats are removed with them; entries with organization info are kept; if the list was not fetched, nothing is cleaned', () => {

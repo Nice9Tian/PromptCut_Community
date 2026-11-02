@@ -46,12 +46,12 @@ describe("accountExtensions & lanMemberSource seam", () => {
         { username: "老张", role: "creator", online: true },
         { username: "小李", role: "member", online: false },
       ],
-      "Me",
+      "我",
       false,
     );
     assert.deepEqual(
       online.map((m) => m.username),
-      ["老张", "Me", "小王"],
+      ["老张", "我", "小王"],
     );
     assert.deepEqual(
       offline.map((m) => m.username),
@@ -163,7 +163,7 @@ describe("accountExtensions & lanMemberSource seam", () => {
     // 社区版默认兜底（未注册云端扩展时）
     assert.equal(
       formatUploadRejectionReason("guest-video-limit"),
-      "游客最多上传 3 条视频。要传更多，请注册一个账号。",
+      "Guests can upload at most 3 videos. To upload more, please sign up for an account.",
     );
     assert.equal(
       projectLink("https://accounts.example/editor", "prj_0123456789abcdef01234567"),
@@ -191,7 +191,8 @@ describe("accountExtensions & lanMemberSource seam", () => {
     );
     assert.equal(
       formatUploadRejectionReason("guest-file-too-large"),
-      "游客上传的每一条源文件不能超过 100 MB。",
+      // 装上云端扩展后文案由云端那份给(还是中文);没装就是公开侧内置的英文
+      hasCloudManifest ? "游客上传的每一条源文件不能超过 100 MB。" : "Each source file uploaded by a guest cannot exceed 100 MB.",
     );
     assert.equal(
       projectLink("https://accounts.example/editor", "prj_0123456789abcdef01234567", "tok_abc"),

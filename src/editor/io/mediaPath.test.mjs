@@ -67,9 +67,9 @@ test("MP-M1 只有路径、本机取不到文件的素材:后台补入库那一�
   assert.deepEqual(r.failed, [{ id: gone.id, name: "voice-gone.mp3", unreachable: true }]);
   // 0.7.18:不再清空地址,改写「确认缺失」的记录(画面、声音、导出见到记录出占位,不去取这个地址);存盘重开后地址不变,记录才对得上
   assert.equal(get(gone.id).url, fileUrl(gonePath), "地址留着");
-  assert.equal(get(gone.id).name, "(缺失) voice-gone.mp3");
+  assert.equal(get(gone.id).name, "(missing) voice-gone.mp3");
   assert.deepEqual(get(gone.id).missingMaterial, { v: 1, mediaId: gone.id, reason: "confirmed-missing",
-    original: { kind: "audio", name: "(缺失) voice-gone.mp3", url: fileUrl(gonePath), path: gonePath }, visual: false, audio: true });
+    original: { kind: "audio", name: "(missing) voice-gone.mp3", url: fileUrl(gonePath), path: gonePath }, visual: false, audio: true });
   assert.equal(get(ok.id).missingMaterial, undefined);
   assert.equal(get(gone.id).path, gonePath, "path 留着,换回有这个文件的机器还补得上");
   assert.notEqual(get(gone.id), before, "换新对象写回");
@@ -79,7 +79,7 @@ test("MP-M1 只有路径、本机取不到文件的素材:后台补入库那一�
   assert.equal(get(hashed.id).name, "clip.mp4", "带哈希的素材不在这里核");
   // 再来一轮不重复加标记
   await ingestUnhashedMedia({ markMissing: true });
-  assert.equal(get(gone.id).name, "(缺失) voice-gone.mp3");
+  assert.equal(get(gone.id).name, "(missing) voice-gone.mp3");
 });
 
 test("MP-M2 说不清的不标:请求本身出错(编辑器进程不在)、或没要求标(打包、放云端那两处调用)", async () => {
@@ -120,7 +120,7 @@ test("MP-M3 打开项目后的后台检查:本机项目标「(缺失)」,共享�
   try {
     await waitFor(() => seen);
     assert.equal(get(b.id).url, fileUrl(p));
-    assert.equal(get(b.id).name, "(缺失) voice.mp3");
+    assert.equal(get(b.id).name, "(missing) voice.mp3");
     assert.equal(get(b.id).missingMaterial?.reason, "confirmed-missing");
   } finally { stop(); }
 });
@@ -128,7 +128,7 @@ test("MP-M3 打开项目后的后台检查:本机项目标「(缺失)」,共享�
 test("MP-M4 以前在别的机器上标过「(缺失)」、这台机器取得到:补上哈希并去掉标记", async () => {
   actions.newProject("回到原机器");
   const p = "D:/pc/media/voice-back.mp3";
-  const m = actions.addMedia({ kind: "audio", name: "(缺失) voice-back.mp3", path: p, url: fileUrl(p) });
+  const m = actions.addMedia({ kind: "audio", name: "(missing) voice-back.mp3", path: p, url: fileUrl(p) });
   globalThis.fetch = fakeEditor({ files: { [p]: H("7") } }).fetchImpl;
   const r = await ingestUnhashedMedia({ background: true, markMissing: true });
   assert.deepEqual(r.ingested, [m.id]);
@@ -157,9 +157,9 @@ test("MP-M5 带哈希、本地内容库里没有这份字节的素材标「(缺�
   assert.deepEqual(asked, [[H("a"), H("b"), H("c")]]);
   assert.deepEqual(r, { missing: [lack.id], restored: [] });
   assert.equal(get(lack.id).url, `/@media/${H("b")}`, "地址留着按哈希的那一个");
-  assert.equal(get(lack.id).name, "(缺失) lack.mp3");
+  assert.equal(get(lack.id).name, "(missing) lack.mp3");
   assert.deepEqual(get(lack.id).missingMaterial, { v: 1, mediaId: lack.id, reason: "confirmed-missing",
-    original: { kind: "audio", name: "(缺失) lack.mp3", url: `/@media/${H("b")}`, hash: H("b"), path: "C:/A/out/media/y.mp3" }, visual: false, audio: true });
+    original: { kind: "audio", name: "(missing) lack.mp3", url: `/@media/${H("b")}`, hash: H("b"), path: "C:/A/out/media/y.mp3" }, visual: false, audio: true });
   assert.equal(get(have.id).missingMaterial, undefined);
   assert.equal(get(lack.id).hash, H("b"), "哈希留着:下次打开照样按哈希找");
   assert.equal(get(have.id).url, `/@media/${H("a")}`);
@@ -178,7 +178,7 @@ test("MP-M5 带哈希、本地内容库里没有这份字节的素材标「(缺�
 
 test("MP-M6 标过「(缺失)」的带哈希素材,内容库里有了之后去掉标记、换回按哈希的地址;后台检查在共享项目里不判带哈希的", async () => {
   actions.newProject("带哈希-回来");
-  const m = actions.addMedia({ kind: "audio", name: "(缺失) back.mp3", url: "", hash: H("f") });
+  const m = actions.addMedia({ kind: "audio", name: "(missing) back.mp3", url: "", hash: H("f") });
   globalThis.fetch = async (url) => String(url).startsWith("/api/media/local?") ? Response.json({ ok: true, hashes: [H("f")] }) : new Response(null, { status: 404 });
   assert.deepEqual(await checkHashedMedia(), { missing: [], restored: [m.id] });
   assert.equal(get(m.id).name, "back.mp3");
@@ -205,8 +205,27 @@ test("MP-M6 标过「(缺失)」的带哈希素材,内容库里有了之后去�
   const stop2 = startTierBackfill({ shared: () => false, afterIngest: (r) => { seen = r; } });
   try {
     await waitFor(() => seen);
-    assert.equal(get(l.id).name, "(缺失) gone.mp3");
+    assert.equal(get(l.id).name, "(missing) gone.mp3");
   } finally { stop2(); }
+});
+
+// 老项目(中文界面存下的)里的标记是「(缺失) 」;现在的代码只认 tr("(missing) ") 写的那一种,认不出老标记。
+// 产品问题,见 work/i18n/AGENT-i18n-tests.md;修好之前用 todo 记着,不挡测试运行。
+test("MP-M4b 老项目里的中文标记「(缺失) 」也能去掉", { todo: "mediaUpload.ts 的标记前缀只认当前界面语言那一种" }, async () => {
+  actions.newProject("回到原机器-老标记");
+  const p = "D:/pc/media/voice-back.mp3";
+  const m = actions.addMedia({ kind: "audio", name: "(缺失) voice-back.mp3", path: p, url: fileUrl(p) });
+  globalThis.fetch = fakeEditor({ files: { [p]: H("7") } }).fetchImpl;
+  await ingestUnhashedMedia({ background: true, markMissing: true });
+  assert.equal(get(m.id).name, "voice-back.mp3");
+});
+
+test("MP-M6b 老项目里的中文标记「(缺失) 」带哈希素材找回后也去掉", { todo: "mediaUpload.ts 的标记前缀只认当前界面语言那一种" }, async () => {
+  actions.newProject("带哈希-回来-老标记");
+  const m = actions.addMedia({ kind: "audio", name: "(缺失) back.mp3", url: "", hash: H("f") });
+  globalThis.fetch = async (url) => String(url).startsWith("/api/media/local?") ? Response.json({ ok: true, hashes: [H("f")] }) : new Response(null, { status: 404 });
+  await checkHashedMedia();
+  assert.equal(get(m.id).name, "back.mp3");
 });
 
 /** 让「编辑器进程拿到带 rw 票据的上传目标」成立(同 enqueueExisting.test.mjs 的 EQE-2) */

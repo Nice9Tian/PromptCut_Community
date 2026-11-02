@@ -61,7 +61,7 @@ test("RO3 置灰说明永远是 viewOnlyText()；没锁时原来的悬停说明�
   const on = core.readOnlyState(core.memberReadOnlyNow());
   assert.equal(on.locked, true);
   assert.equal(on.why, vo.viewOnlyText());
-  assert.match(on.why, /只能查看/);
+  assert.match(on.why, /You can only view this project/);
   assert.equal(on.title("原来的说明"), vo.viewOnlyText(), "锁着就是那一句，不是控件自己编的");
   assert.equal(on.title(), vo.viewOnlyText());
   reset();

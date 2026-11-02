@@ -23,7 +23,7 @@ test('AV1 引用:发送写成「@卡片 名字(片段 id) 正文」,开头的引
   // 名字里带括号:只认最后一对括号当片段 id
   assert.deepEqual(splitQuotes('@卡片 标题(副本)(c-9) 放大').quotes, [{ label: '标题(副本)', id: 'c-9' }]);
   // 桌面「引用到 AI」插进输入框的写法(引用后一个空格、再写话)
-  assert.deepEqual(splitQuotes('@卡片 数字滚动(c-3) 字号再大点'), { quotes: [{ label: 'Number ticker', id: 'c-3' }], rest: '字号再大点' });
+  assert.deepEqual(splitQuotes('@卡片 数字滚动(c-3) 字号再大点'), { quotes: [{ label: '数字滚动', id: 'c-3' }], rest: '字号再大点' });
   // 只有引用、没有话
   assert.deepEqual(splitQuotes('@卡片 a(b)'), { quotes: [{ label: 'a', id: 'b' }], rest: '' });
   // 引用不在开头的不认(那是用户自己写的)
@@ -31,7 +31,7 @@ test('AV1 引用:发送写成「@卡片 名字(片段 id) 正文」,开头的引
 });
 
 test('AV1b 单张叠加卡的引用写成「@叠加卡 名字(片段id#种类:定义id)」,标记条到发送一路带着级别', () => {
-  const q = { id: 'c1#filter:f1', label: '压暗', kind: 'Overlay card' };
+  const q = { id: 'c1#filter:f1', label: '压暗', kind: '叠加卡' };
   const list = addQuote([], q);
   assert.deepEqual(list, [q], 'addQuote 要把 kind 一起留下,不然发送时又写回「@卡片」');
   assert.equal(withQuotes('调淡一点', list), '@叠加卡 压暗(c1#filter:f1) 调淡一点');
@@ -56,7 +56,7 @@ test('AV3 一轮回复:动手之前的话 → 操作卡片 → 动手之后的�
   assert.deepEqual(v.before.map((s) => s.text), ['我先看一下素材']);
   assert.deepEqual(v.after.map((s) => s.text), ['标题放好了']);
   assert.deepEqual(v.items.map((i) => [i.state, i.kind, i.name]), [['done', 'read', 'list_media'], ['done', 'Add', 'add_clip'], ['err', 'change', 'set_clip_param']]);
-  assert.equal(v.title, '第 1 轮 · 3 项操作');
+  assert.equal(v.title, 'Turn 1 · 3 actions');
   assert.equal(v.hasCard, true);
 });
 

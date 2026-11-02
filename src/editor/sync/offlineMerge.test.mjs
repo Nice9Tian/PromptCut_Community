@@ -110,7 +110,7 @@ test("OM-01 重连后离线批次逐项转进待合并表,DocSync 回到云端�
     ["offline:clip:c1:@time,opacity", "offline:clip:c3:"], "c1 两个属性(透明度改两次只一条),c3 删除");
   const rows = M.mergeRows(A.ds.project, table.things);
   const c1 = rows.find((r) => r.key === "offline:clip:c1");
-  assert.equal(c1.props.find((p) => p.prop === "opacity").text, "透明度 0.4 → 0.8（云端现在是 0.5）");
+  assert.equal(c1.props.find((p) => p.prop === "opacity").text, "Opacity 0.4 → 0.8 (The cloud is now 0.5)");
   assert.equal(rows.find((r) => r.key === "offline:clip:c3").conflict, true, "我删了、别人改了:冲突");
   await table.flush();
   assert.equal(A.backups.length, 1, "照旧留一份整批备份(安全网)");

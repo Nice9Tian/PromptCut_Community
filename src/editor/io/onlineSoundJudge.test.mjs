@@ -146,7 +146,7 @@ test('B14 在线「生成声音」与新加音效:判轻照常生成入库,判�
     const key = soundTargetOf(h.project, h.clip).soundKey;
     await store.putCost(soundCostStoreKey(key, 'test-device'), heavyRecord(key, 'card'));
     const before = getState().project;
-    await assert.rejects(() => generateCardAudio(h.clip.id), /判重/);
+    await assert.rejects(() => generateCardAudio(h.clip.id), /too slow to synthesize on this device/);
     assert.equal(getState().project, before);
     actions.newProject('在线音效');
     const job = await waitSoundGeneration(startSoundGeneration({ preset: 'notification', start: 0 }).id);
@@ -155,7 +155,7 @@ test('B14 在线「生成声音」与新加音效:判轻照常生成入库,判�
     const seeded = await onlineSoundJudgeDebug().seed({ soundKey: recipeSoundTarget(recipe).soundKey, kind: 'effect', blockMs: 500 });
     assert.equal(seeded.device, 'test-device');
     const rejected = await waitSoundGeneration(startSoundGeneration({ recipe, start: 1 }).id);
-    assert.equal(rejected.state, 'failed'); assert.match(rejected.error, /判重/); assert.equal(getState().project.media.length, 1);
+    assert.equal(rejected.state, 'failed'); assert.match(rejected.error, /too slow to synthesize on this device/); assert.equal(getState().project.media.length, 1);
   } finally { restore(); service.restore(); }
 });
 

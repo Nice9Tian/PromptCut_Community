@@ -216,12 +216,12 @@ it('C10A-API-07 在线产物里没有桌面专用的标识', { timeout: 240_000 
   const text = bundleText(onlineDir);
   for (const id of ['/api/mcp/events', '/api/ai/setup', '/api/chats/', 'PROMPTCUT_AGENT', '/api/ai/diagnostics']) assert.equal(text.includes(id), false, `在线产物里不该有 ${id}`);
   // 云端对话的诊断报告在页面里生成、浏览器下载(用户 2026-10-07 定):诊断报告的窗口在在线产物里,走本机编辑器写盘的那条路被剪掉
-  assert.ok(text.includes('云端对话诊断报告'), '在线产物里带云端对话的诊断报告');
+  assert.ok(text.includes('Cloud chat diagnostic report'), '在线产物里带云端对话的诊断报告');
 });
 
 it('C10A-API-08 桌面产物里没有写死的云节点地址：云端 Agent 的地址由文档服务下发', { timeout: 240_000 }, async () => {
   await buildDesktop();
   const text = bundleText(desktopDir);
-  assert.ok(text.includes('在云端运行'), '桌面产物里带云端 AI 栏');
+  assert.ok(text.includes('Runs in the cloud and continues after you close it'), '桌面产物里带云端 AI 栏');
   assert.equal(/https?:\/\/[^"'`\s]*\/agent\/v1/.test(text), false, '桌面产物里不该写死云节点的 /agent/v1 地址');
 });
