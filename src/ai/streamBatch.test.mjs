@@ -5,7 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { appendTextPart, appendThinkingPart, applyDeltas, isDeltaEvent } from "./streamBatch.ts";
 
-const base = { id: "a", role: "assistant", text: "Start", parts: [{ kind: "text", text: "Start" }] };
+const base = { id: "a", role: "assistant", text: "开头", parts: [{ kind: "text", text: "开头" }] };
 const events = [
   { type: "text", delta: "第一" },
   { type: "text", delta: "句。" },

@@ -75,5 +75,5 @@ test('表外的特殊分支在执行器里都真的有接住的地方', () => {
 });
 
 test('未知工具名的报错文案没变', () => {
-  assert.ok(EXECUTOR.includes('throw new Error(`未知工具: ${tool}`)'), 'Agent 和测试都按这句文案认「这个工具不存在」');
+  assert.ok(EXECUTOR.includes('throw new Error(trText("Unknown tool: {0}", tool))'), 'Agent 和测试都按这句文案认「这个工具不存在」');
 });

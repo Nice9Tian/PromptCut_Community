@@ -40,7 +40,7 @@ test('云端副本:add_cut_segment / set_cut_segment 直连各自的 EditorApi �
     await assert.rejects(() => host.callRoute('add_cut_segment', { cutId: 'A', start: 0 }), /放进它自己/);
     const set = await host.callRoute('set_cut_segment', { clipId: added.segment.clipId, cutOffset: 3 });
     assert.deepEqual([set.segment.cutOffset, set.segment.end], [3, 4], '偏移改了,出点截到被引用剪辑剩下的长度');
-    await assert.rejects(() => host.callRoute('set_cut_segment', { clipId: added.segment.clipId, cutOffset: 9 }), /超出/);
+    await assert.rejects(() => host.callRoute('set_cut_segment', { clipId: added.segment.clipId, cutOffset: 9 }), /exceeds the total duration/);
     host.clearProject();
   } finally {
     await vite.close();

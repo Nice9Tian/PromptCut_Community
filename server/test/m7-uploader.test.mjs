@@ -62,7 +62,7 @@ test('M7-UP-02 哈希不符 complete 回 409 抛出(可重试);没有素材服�
   await assert.rejects(up.put('snap', wrong, new Uint8Array(small), 'html'), (e) => e.retryable === true && /409/.test(e.message));
   assert.equal(up.stats().failed, 1);
   const none = createSnapUploader({ base: () => null, ticket: async () => null });
-  await assert.rejects(none.put('snap', sha256(small), new Uint8Array(small), 'html'), /还没有远程素材服务/);
+  await assert.rejects(none.put('snap', sha256(small), new Uint8Array(small), 'html'), /no remote asset service/);
   assert.equal(await none.has('snap', sha256(small)), false);
   await srv.close();
 });

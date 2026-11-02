@@ -36,7 +36,7 @@ test("同一份配置每次加密结果都不同(salt / iv 是随机的)", async
 
 test("换一台机器解不开", async () => {
   const blob = await encryptConfig(CONFIG, CODE, FAST);
-  await assert.rejects(() => decryptConfig(blob, machineCode("win:another-machine")), /解不开/);
+  await assert.rejects(() => decryptConfig(blob, machineCode("win:another-machine")), /Can.t decrypt/);
 });
 
 test("抄码时的大小写、分隔符、形近字都能容错", async () => {
@@ -54,22 +54,22 @@ test("聊天软件插进来的换行不影响解密", async () => {
 test("改一个字节就解不开(GCM 校验)", async () => {
   const blob = await encryptConfig(CONFIG, CODE, FAST);
   const flipped = blob.slice(0, -6) + (blob.at(-6) === "A" ? "B" : "A") + blob.slice(-5);
-  await assert.rejects(() => decryptConfig(flipped, CODE), /解不开/);
+  await assert.rejects(() => decryptConfig(flipped, CODE), /Can.t decrypt/);
 });
 
 test("粘贴不全给出的是「截断」而不是「口令不对」", async () => {
   const blob = await encryptConfig(CONFIG, CODE, FAST);
-  await assert.rejects(() => decryptConfig(blob.slice(0, 30), CODE), /截断/);
+  await assert.rejects(() => decryptConfig(blob.slice(0, 30), CODE), /truncated/);
 });
 
 test("不是我们的密文时直接说清楚", async () => {
-  await assert.rejects(() => decryptConfig("这是一段普通文本", CODE), /不是 PromptCut/);
+  await assert.rejects(() => decryptConfig("这是一段普通文本", CODE), /not a PromptCut config string/);
   assert.equal(looksLikeShareBlob("这是一段普通文本"), false);
 });
 
 test("过期的配置拒绝导入", async () => {
   const blob = await encryptConfig({ ...CONFIG, expiresAt: Date.now() - 1000 }, CODE, FAST);
-  await assert.rejects(() => decryptConfig(blob, CODE), /过期/);
+  await assert.rejects(() => decryptConfig(blob, CODE), /expired/);
 });
 
 test("没到期的配置正常导入", async () => {
@@ -79,8 +79,8 @@ test("没到期的配置正常导入", async () => {
 });
 
 test("空 Key 和空口令都当场拦下", async () => {
-  await assert.rejects(() => encryptConfig({ ...CONFIG, apiKey: "" }, CODE, FAST), /API Key/);
-  await assert.rejects(() => encryptConfig(CONFIG, "", FAST), /口令/);
+  await assert.rejects(() => encryptConfig({ ...CONFIG, apiKey: "" }, CODE, FAST), /API key/);
+  await assert.rejects(() => encryptConfig(CONFIG, "", FAST), /encryption passphrase/);
 });
 
 test("密文头里的轮数被限制在合理范围,不给拿来卡死浏览器", async () => {
@@ -89,5 +89,5 @@ test("密文头里的轮数被限制在合理范围,不给拿来卡死浏览器"
   const body = Buffer.from(blob.slice("PCAI1.".length).replace(/-/g, "+").replace(/_/g, "/"), "base64");
   body.writeUInt32BE(2_000_000_000, 0);
   const evil = "PCAI1." + body.toString("base64url");
-  await assert.rejects(() => decryptConfig(evil, CODE), /头部异常/);
+  await assert.rejects(() => decryptConfig(evil, CODE), /header is abnormal/);
 });
