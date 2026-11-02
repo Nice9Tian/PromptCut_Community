@@ -1,4 +1,4 @@
-// Active triage for pixel map tools: reject whole-frame color grading (A) and return equivalent ops,
+// Active screening for pixel map tools: reject whole-frame color grading (A) and return equivalent ops,
 // accept per-pixel (B), reject untranslatable (C).
 // Run: node --test src/mcp/tools/pixelMapTools.test.mjs
 import test from "node:test";

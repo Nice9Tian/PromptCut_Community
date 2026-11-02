@@ -54,7 +54,7 @@ export function createPixelMapTools(store: PixelMapStore) {
   };
   const summary = (p: Project, def: PixelMapDef) => ({ pixelMapId: def.id, name: def.name, description: def.description, source: def.source, where: def.where, to: def.to, mode: def.mode, colorSequence: def.colorSequence, usedBy: pixelMapUsesOf(p, def.id) });
   /*
-   * Actively triage before storing into the library
+   * Actively screen before storing into the library
    * (docs/archive/restructure_planning/render_pipeline_restructure.md 3.9). Whole-frame color grading
    * (A) is rejected: it can be handled by GPU compositor filters without consuming the preview
    * per-tick budget; pixel-by-pixel CPU implementation benchmarked at 416~483 ms per frame at 1080p,

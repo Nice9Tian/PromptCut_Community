@@ -879,7 +879,7 @@ function hostAssetClient({ node, endpoint, docUrl, origin, ticket, createAssetCl
 }
 
 /**
- * M6b standalone render host (`docs/plan/render-host-contract.md` section 3; orchestrated in
+ * M6b standalone render host (`docs/plan/render-host-contract.md` section 3; coordinated in
  * `render-node/host.mjs`):
  *
  *   - Configuration: `PROMPTCUT_SHARED_CONFIG` (single entry or array, each entry is one shared
@@ -1830,8 +1830,7 @@ export function framesPlugin(): Plugin {
           // Sole source of the session's "current version" (Item 4): the page's preload carries its
           // `{ session, localRev }`
           if (url.pathname === "/preload" && !servesPrerender) {
-            // `agent` mode does not prerender (cloud-task.md I1): explicitly skipped, does not schedule
-            // work, and does not register session versions
+            // `agent` mode does not prerender (cloud-task.md I1): skipped explicitly, schedules nothing, registers no session versions
             return json(200, { ok: true, skipped: prerenderMode, key: entry.key });
           }
           if (url.pathname === "/preload") {

@@ -34,12 +34,12 @@ const fixture = () => ({
   media: [{ id: 'v1', kind: 'video', url: '/@media/v1.mp4', hash: 'h-v1', duration: 20 }, { id: 'a1', kind: 'audio', url: '/@media/a1.mp3', duration: 30 }],
   cardNodes: [{ id: 'n1', adapter: 'card', cardId: 'fx-tint', kind: 'filter', params: {}, inputs: { source: '@clip/v-fx/source' } }],
   tracks: [
-    { id: 't1', name: 'Track 1', clips: [{ id: 'c1', cardId: 'punch-pill', start: 0, end: 2, params: { text: 'a' } }] },
-    { id: 't2', name: 'Track 2', clips: [
+    { id: 't1', name: '序列 1', clips: [{ id: 'c1', cardId: 'punch-pill', start: 0, end: 2, params: { text: 'a' } }] },
+    { id: 't2', name: '序列 2', clips: [
       { id: 'v-plain', cardId: '', mediaId: 'v1', mediaOffset: 1.5, start: 0, end: 4, params: {} },
       { id: 'v-fx', cardId: '', mediaId: 'v1', mediaOffset: 0.2, start: 4, end: 8, params: {}, nodeId: 'n1' },
     ] },
-    { id: 't3', name: 'Track 3', clips: [{ id: 'a-1', cardId: '', mediaId: 'a1', mediaOffset: 3, start: 0, end: 10, params: {} }] },
+    { id: 't3', name: '序列 3', clips: [{ id: 'a-1', cardId: '', mediaId: 'a1', mediaOffset: 3, start: 0, end: 10, params: {} }] },
   ],
 });
 const DEFS = { 'fx-tint': { id: 'fx-tint', kind: 'filter', defaults: {}, card() {} }, 'punch-pill': { id: 'punch-pill', defaults: { text: '' } } };
@@ -147,8 +147,8 @@ test('Export mix manifest (audioPlanOf): a speed-changed video clip produces no 
 test('Cut segment flattening (cutFlatten): the trimmed-off portion advances the media start by the rate, and the speed is carried down', () => {
   const p = {
     id: 'p', width: 1280, height: 720, fps: 30, duration: 20, media: [{ id: 'v1', kind: 'video', url: '/@media/v1.mp4' }],
-    tracks: [{ id: 'ta', name: 'Track 1', clips: [{ id: 'seg', cardId: '', cutId: 'B', cutOffset: 1, start: 2, end: 6, params: {} }] }],
-    cuts: [{ id: 'A', name: 'Cut A' }, { id: 'B', name: 'Cut B', duration: 8, transitions: [], tracks: [{ id: 'tb', name: 'Track 1', clips: [{ id: 'b1', cardId: '', mediaId: 'v1', mediaOffset: 3, speed: 2, start: 0, end: 8, params: {} }] }] }],
+    tracks: [{ id: 'ta', name: '序列 1', clips: [{ id: 'seg', cardId: '', cutId: 'B', cutOffset: 1, start: 2, end: 6, params: {} }] }],
+    cuts: [{ id: 'A', name: 'Cut A' }, { id: 'B', name: 'Cut B', duration: 8, transitions: [], tracks: [{ id: 'tb', name: '序列 1', clips: [{ id: 'b1', cardId: '', mediaId: 'v1', mediaOffset: 3, speed: 2, start: 0, end: 8, params: {} }] }] }],
     activeCutId: 'A',
   };
   const v = flatPlanProject(p).tracks.flatMap((t) => t.clips).find((c) => c.id === 'seg~b1');
@@ -198,7 +198,7 @@ test('store.setClipSpeed: keeps the in point, recomputes the end point from the 
   const { actions, getState } = await import(srcUrl('store/project.ts'));
   actions.loadProject({ version: 1, id: 'p-speed', name: 't', width: 1280, height: 720, fps: 30, duration: 20, themeId: 'midnight',
     media: [{ id: 'v1', kind: 'video', name: 'v.mp4', url: '/@media/v1.mp4', duration: 30 }, { id: 'i1', kind: 'image', name: 'i.png', url: '/@media/i.png' }],
-    tracks: [{ id: 'ta', name: 'Track 1', clips: [
+    tracks: [{ id: 'ta', name: '序列 1', clips: [
       { id: 'v', cardId: '', mediaId: 'v1', mediaOffset: 2, start: 1, end: 5, params: {} },
       { id: 'img', cardId: '', mediaId: 'i1', start: 10, end: 12, params: {} },
     ] }] });
@@ -244,12 +244,12 @@ test('store.setClipSpeed push-aside: shortening leaves a gap at the tail; later 
   const load = (extra = {}) => actions.loadProject({ version: 1, id: 'p-push', name: 't', width: 1280, height: 720, fps: 30, duration: 40, themeId: 'midnight',
     media: [{ id: 'v1', kind: 'video', name: 'v.mp4', url: '/@media/v1.mp4', duration: 60 }],
     tracks: [
-      { id: 'ta', name: 'Track 1', clips: [
+      { id: 'ta', name: '序列 1', clips: [
         { id: 'v', cardId: '', mediaId: 'v1', start: 0, end: 4, params: {} },
         { id: 'a', cardId: '', mediaId: 'v1', start: 5, end: 8, params: {} },
         { id: 'b', cardId: '', mediaId: 'v1', start: 10, end: 13, params: {} },
       ] },
-      { id: 'tb', name: 'Track 2', clips: [{ id: 'other', cardId: '', mediaId: 'v1', start: 6, end: 9, params: {} }], ...(extra.lockB ? { locked: true } : {}) },
+      { id: 'tb', name: '序列 2', clips: [{ id: 'other', cardId: '', mediaId: 'v1', start: 6, end: 9, params: {} }], ...(extra.lockB ? { locked: true } : {}) },
     ], ...(extra.transitions ? { transitions: extra.transitions } : {}) });
   const clip = (id) => getState().project.tracks.flatMap((t) => t.clips).find((x) => x.id === id);
   const span = (id) => [clip(id).start, clip(id).end];
@@ -290,7 +290,7 @@ test('store.setClipSpeed manual input: values outside 0.25-4 are rejected with a
   const { actions, getState } = await import(srcUrl('store/project.ts'));
   actions.loadProject({ version: 1, id: 'p-range', name: 't', width: 1280, height: 720, fps: 30, duration: 20, themeId: 'midnight',
     media: [{ id: 'v1', kind: 'video', name: 'v.mp4', url: '/@media/v1.mp4', duration: 60 }],
-    tracks: [{ id: 'ta', name: 'Track 1', clips: [{ id: 'v', cardId: '', mediaId: 'v1', start: 0, end: 4, params: {} }] }] });
+    tracks: [{ id: 'ta', name: '序列 1', clips: [{ id: 'v', cardId: '', mediaId: 'v1', start: 0, end: 4, params: {} }] }] });
   const clip = () => getState().project.tracks[0].clips[0];
   for (const bad of [0.2, 4.5, -1, 0]) {
     const r = actions.setClipSpeed('v', bad);
@@ -308,8 +308,8 @@ test('store.setClipSpeed with a transition attached: the fade follows the two en
   const load = () => actions.loadProject({ version: 1, id: 'p-tr', name: 't', width: 1280, height: 720, fps: 30, duration: 30, themeId: 'midnight',
     media: [{ id: 'v1', kind: 'video', name: 'v.mp4', url: '/@media/v1.mp4', duration: 60 }],
     tracks: [
-      { id: 'ta', name: 'Track 1', clips: [{ id: 'a', cardId: '', mediaId: 'v1', start: 0, end: 4, fadeIn: 0.5, fadeOut: 1, params: {} }, { id: 'c', cardId: '', mediaId: 'v1', start: 9, end: 12, params: {} }] },
-      { id: 'tb', name: 'Track 2', clips: [{ id: 'b', cardId: '', mediaId: 'v1', start: 3, end: 7, fadeIn: 1, params: {} }, { id: 'd', cardId: '', mediaId: 'v1', start: 8, end: 10, params: {} }] },
+      { id: 'ta', name: '序列 1', clips: [{ id: 'a', cardId: '', mediaId: 'v1', start: 0, end: 4, fadeIn: 0.5, fadeOut: 1, params: {} }, { id: 'c', cardId: '', mediaId: 'v1', start: 9, end: 12, params: {} }] },
+      { id: 'tb', name: '序列 2', clips: [{ id: 'b', cardId: '', mediaId: 'v1', start: 3, end: 7, fadeIn: 1, params: {} }, { id: 'd', cardId: '', mediaId: 'v1', start: 8, end: 10, params: {} }] },
     ],
     transitions: [{ id: 'x', kind: 'crossfade', aId: 'a', bId: 'b', dur: 1 }, { id: 'f', kind: 'fadeIn', aId: 'a', dur: 0.5 }] });
   const clip = (id) => getState().project.tracks.flatMap((t) => t.clips).find((x) => x.id === id);

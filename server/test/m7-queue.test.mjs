@@ -19,7 +19,7 @@
  *   M7Q-D14 Browsers with non-Chromium engines refuse to act as nodes (`not-chromium`)
  *   M7Q-D12 Layer table v3: each layer includes candidates; page reading v2 treats it as a single
  *           candidate
- *   M7Q-D11 `session.mjs` and fine-grained task orchestration (`task-runner.mjs`) do not import
+ *   M7Q-D11 `session.mjs` and fine-grained task scheduling (`task-runner.mjs`) do not import
  *           `node:` built-in modules or `split.mjs` / queue itself
  *
  * Result keys and fingerprints are computed independently with `node:crypto`, not borrowed from

@@ -151,7 +151,7 @@ test("The placeholder shows the original name, without the missing marker", asyn
   editor({});
   await ingestUnhashedMedia({ background: true, markMissing: true }); await checkHashedMedia();
   const media = reopen(true);
-  assert.deepEqual(media.map(missingMaterialLabel), ["Scene: Interview (1).mp4", "narration.wav", "cover.png", "Scene: Interview (1).mp4"]);
+  assert.deepEqual(media.map(missingMaterialLabel), ["Scene: Interview (1).mp4", "narration.wav", "封面.png", "Scene: Interview (1).mp4"]);
 });
 
 test("Files from old versions that only got the Chinese \"(缺失) \" marker and lost their address: the record is added on open and the marker is not stacked", async () => {

@@ -191,7 +191,7 @@ test('N5 a body over maxBodyBytes replies too-large and persists no state (count
   await w.next(byType('content.changed'));
 
   const tooLong = 'a'.repeat(99);
-  const multiByte = 'Medium'.repeat(33); // 35 characters, 101 bytes
+  const multiByte = '中'.repeat(33); // i18n-allow: 35 characters, 101 bytes
   assert.equal(Buffer.byteLength(JSON.stringify(multiByte)), 101);
   const before = env.store.read('content/card-source').length;
   for (const body of [tooLong, multiByte, { big: 'x'.repeat(200) }]) {

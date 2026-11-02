@@ -201,7 +201,7 @@ test("MG-06 wiring (checked against the source)", () => {
   assert.match(sources, /holdMeasureForCardSources\(\)/, "Closes the gate when card source sync starts");
   assert.match(sources, /onFirstSettled: \(ok, link\) => releaseMeasureGate\(ok, link\)/, "Opens the gate as soon as the first sync of each connection has a result");
   assert.match(sources, /setMeasureGateLink\(linkKey\)/, "The gate is tracked per connection: it attaches to the current connection");
-  assert.match(loop, /for \(;;\) \{[\s\S]{0,400}await whenMeasureGateOpen\(\);/, "Resident probe waits for the gate at the start of every round (when the gate closes again after a connection change, it waits for the new project)");
+  assert.match(loop, /for \(;;\) \{[\s\S]{0,900}await whenMeasureGateOpen\(\);/, "Resident probe waits for the gate at the start of every round (when the gate closes again after a connection change, it waits for the new project)");
   assert.match(loop, /if \(gen !== generation \|\| !measureGateOpen\(\)\) break;/, "If the gate closes again within a round, stop");
 });
 

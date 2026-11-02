@@ -19,7 +19,7 @@
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isReqId = (v) => typeof v === 'string' || (typeof v === 'number' && Number.isFinite(v));
 
-/** Default values for outbound backpressure (H.2): when underlying backlog reaches high watermark, switches to entering the core's own outbound queue; when queue plus backlog exceeds upper limit, closes with 1013 */
+/** Default values for outbound backpressure (H.2): when underlying backlog reaches high watermark, switches to entering the core's own outbox; when the outbox plus backlog exceeds upper limit, closes with 1013 */
 export const CORE_DEFAULTS = Object.freeze({
   HIGH_WATER_BYTES: 64 * 1024,
   MAX_PENDING_BYTES: 1024 * 1024,
@@ -123,11 +123,11 @@ export function createRouter({
   /**
    * connId → connection record:
    * - Identity: `connId`, `principal`, `remote`, `connectedAt`;
-   * - Outbound queue (H.2): `outbox` stores `{ text, bytes, key, dead }` in enqueue order, with
+   * - Outbox (H.2): `outbox` stores `{ text, bytes, key, dead }` in arrival order, with
    *   items before `head` already written out;
    *   coalesced items are only marked `dead` and skipped during drain. `live` is the count of items
    *   not yet written out and not coalesced, `bytes` is their byte count,
-   *   `byKey` is coalesce key → that item in the queue;
+   *   `byKey` is coalesce key → that item in the outbox;
    * - `shut`: closed due to backpressure; subsequent sends are all dropped;
    * - `subs`: subscribed channels (H.1).
    */
@@ -149,12 +149,12 @@ export function createRouter({
     return Number.isFinite(n) && n > 0 ? n : 0;
   }
 
-  /** Backlog for this connection: bytes in outbound queue + unsent bytes in underlying layer */
+  /** Backlog for this connection: bytes in the outbox + unsent bytes in underlying layer */
   const pendingOf = (conn) => conn.bytes + bufferedOf(conn.connId);
 
-  // ---------- Outbound: direct write, enqueue, coalesce, drain, backpressure (H.2) ----------
+  // ---------- Outbound: direct write, buffering, coalesce, drain, backpressure (H.2) ----------
 
-  /** Clears the outbound queue */
+  /** Clears the outbox */
   function resetOutbox(conn) {
     conn.outbox = [];
     conn.head = 0;
@@ -177,10 +177,10 @@ export function createRouter({
   }
 
   /**
-   * Hands a serialized message to this connection: writes directly if queue is empty and underlying
-   * layer has not reached high-water mark, otherwise enqueues (deletes older with same key first).
-   * Returns whether it was accepted (written out or enqueued); returns false if already closed or
-   * if this enqueue triggered a backpressure close.
+   * Hands a serialized message to this connection: writes directly if the outbox is empty and underlying
+   * layer has not reached high-water mark, otherwise buffers it (deletes older with same key first).
+   * Returns whether it was accepted (written out or buffered); returns false if already closed or
+   * if buffering it triggered a backpressure close.
    */
   function deliver(conn, text, key) {
     if (conn.shut) return false;
@@ -210,7 +210,7 @@ export function createRouter({
     return true;
   }
 
-  /** Underlying layer drained: write in enqueue order until queue is empty or underlying reaches high-water mark again */
+  /** Underlying layer drained: write in arrival order until the outbox is empty or underlying reaches high-water mark again */
   function drained(connId) {
     const conn = conns.get(connId);
     if (!conn || conn.shut) return;
@@ -396,7 +396,7 @@ export function createRouter({
       subscribe: ops.subscribe,
       unsubscribe: ops.unsubscribe,
       publish: ops.publish,
-      // Backlog for this connection: bytes in core outbound queue + unsent bytes in underlying layer;
+      // Backlog for this connection: bytes in the core's outbox + unsent bytes in underlying layer;
       // returns 0 if connection does not exist.
       // Modules throttle based on this when sending long bursts of messages, preventing backlog
       // from exceeding maxPendingBytes and being disconnected with 1013 (H.2)

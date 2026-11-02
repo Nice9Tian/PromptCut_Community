@@ -51,7 +51,7 @@ test("None / size 0 / fully transparent → empty string (an empty string means 
 });
 
 test("describeEmphasis: the UI and the Agent echo the same sentence", () => {
-  assert.equal(describeEmphasis(null), "none");
-  assert.match(describeEmphasis({ kind: "outline", size: 6, color: "#fff", opacity: 1 }), /Outline 6px/);
-  assert.match(describeEmphasis({ kind: "shadow" }), /Shadow 18px · offset 0,8/);
+  assert.equal(describeEmphasis(null), "无"); // i18n-allow: emphasis.ts is left untranslated (audio card closure)
+  assert.match(describeEmphasis({ kind: "outline", size: 6, color: "#fff", opacity: 1 }), /描边 6px/); // i18n-allow: emphasis.ts is left untranslated
+  assert.match(describeEmphasis({ kind: "shadow" }), /阴影 18px · 偏移 0,8/); // i18n-allow: emphasis.ts is left untranslated
 });

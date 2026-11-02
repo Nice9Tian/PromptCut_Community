@@ -117,7 +117,7 @@ test('UE-S5 how the notice is worded and placed: for an object result the notice
   assert.deepEqual(both.overwrote, ov);
   assert.deepEqual(both.userEditing, ue.slice(0, 1));
   assert.ok(both.notice.startsWith('User is editing clip c1'), both.notice);
-  assert.ok(both.notice.includes('\nThis write overwrote content someone else just wrote: clip c1(User just edited,rev 2, 3 s ago)'), both.notice);
+  assert.ok(both.notice.includes('\nThis write overwrote content someone else just wrote: clip c1 (User just edited, rev 2, 3 s ago)'), both.notice);
   const err = annotateError(new Error('Rejected'), ue.slice(0, 1));
   assert.match(err.message, /^Rejected\nUser is editing clip c1/);
 });
@@ -257,7 +257,7 @@ test('UE-S7~S10 end to end: userEditing of the read / write tools; overwriting w
     assert.deepEqual({ entity: o.entity, clipId: o.clipId, by: o.by, who: o.who, label: o.label, rev: o.rev },
       { entity: '/tracks/@t1/clips/@c1', clipId: 'c1', by: 'user', who: 'User', label: 'User just edited', rev: 2 });
     assert.ok(o.agoMs >= 0 && o.agoMs < 60_000);
-    assert.match(w.notice, /^This write overwrote content someone else just wrote: clip c1\(User just edited,rev 2, \d+ s ago\)\. Something the user just edited was overwritten by this write/);
+    assert.match(w.notice, /^This write overwrote content someone else just wrote: clip c1 \(User just edited, rev 2, \d+ s ago\)\. Something the user just edited was overwritten by this write/);
     // The same chat immediately writes c1 again: previous writer was itself, no notification
     const again = await s.callTool('update_clip', { clipId: 'c1', opacity: 0.4 }, { agent: 'conv-A' });
     assert.equal(again.overwrote, undefined);

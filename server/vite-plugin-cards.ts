@@ -2418,7 +2418,7 @@ export default function vitePluginCards(): Plugin[] {
 
             /*
              * Apply ownership stamp. Default project = only appears in the project where it was created: this
-             * is the triage safeguard:
+             * is the screening safeguard:
              * custom cards are mostly made for a specific client / specific video; default sharing is the
              * counter-intuitive choice.
              * To reuse across projects, simply change it to "Custom media" in the chat panel.
