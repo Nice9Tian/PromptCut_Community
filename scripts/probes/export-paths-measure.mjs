@@ -54,7 +54,7 @@ function parseArgs(argv) {
   const o = { runs: 3, projects: ['demo', 'heavy'], frames: null, workers: 'auto', port: 7460, work: null, json: null, assets: null, split: true, keep: false, retries: 3 };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    const next = () => { if (i + 1 >= argv.length) throw new Error(`${a} 后面要跟一个值`); return argv[++i]; };
+    const next = () => { if (i + 1 >= argv.length) throw new Error(`${a} must be followed by a value`); return argv[++i]; };
     if (a === '--runs') o.runs = Math.max(1, Math.floor(Number(next())));
     else if (a === '--projects') o.projects = next().split(',').map((s) => s.trim()).filter(Boolean);
     else if (a === '--frames') o.frames = next();
@@ -67,11 +67,11 @@ function parseArgs(argv) {
     else if (a === '--keep') o.keep = true;
     else if (a === '--retries') o.retries = Math.max(1, Math.floor(Number(next())));
     else if (a === '--help' || a === '-h') o.help = true;
-    else throw new Error(`不认识的参数 ${a}`);
+    else throw new Error(`Unknown argument ${a}`);
   }
-  for (const p of o.projects) if (!PROJECTS[p]) throw new Error(`没有这个项目 ${p}(有：${Object.keys(PROJECTS).join('、')})`);
-  if (!Number.isInteger(o.runs) || o.runs < 1) throw new Error('--runs 要是正整数');
-  if (o.frames && !/^\d+-\d+$/.test(o.frames)) throw new Error('--frames 要写成 a-b');
+  for (const p of o.projects) if (!PROJECTS[p]) throw new Error(`No such project ${p} (available: ${Object.keys(PROJECTS).join(', ')})`);
+  if (!Number.isInteger(o.runs) || o.runs < 1) throw new Error('--runs must be a positive integer');
+  if (o.frames && !/^\d+-\d+$/.test(o.frames)) throw new Error('--frames must be written as a-b');
   return o;
 }
 
@@ -123,7 +123,7 @@ async function machineInfo({ ffmpeg, onlineChrome }) {
   const ff = spawnSync(ffmpeg, ['-version'], { encoding: 'utf8', windowsHide: true });
   return {
     cpu: cpus[0]?.model?.trim(), logicalCores: cpus.length, ramGB: round(os.totalmem() / 2 ** 30, 1),
-    gpu: gpu ? [].concat(gpu).map((g) => `${g.Name} (驱动 ${g.DriverVersion})`) : null,
+    gpu: gpu ? [].concat(gpu).map((g) => `${g.Name} (driver ${g.DriverVersion})`) : null,
     os: `${os.type()} ${os.release()} ${os.arch()}`, node: process.version,
     ffmpeg: String(ff.stdout || '').split(/\r?\n/)[0] || null,
     onlineChrome, desktopChromeHeadlessShell: await expectedHeadlessShellVersion(),
@@ -142,7 +142,7 @@ function visibleWindows() {
 
 function runSync(cmd, args) {
   const r = spawnSync(cmd, args, { encoding: 'buffer', windowsHide: true, maxBuffer: 512 * 1024 * 1024 });
-  if (r.status !== 0) throw new Error(`${path.basename(cmd)} 退出码 ${r.status}：${String(r.stderr).slice(-500)}`);
+  if (r.status !== 0) throw new Error(`${path.basename(cmd)} exit code ${r.status}: ${String(r.stderr).slice(-500)}`);
   return r.stdout;
 }
 
@@ -156,7 +156,7 @@ function timeProc(cmd, args) {
     p.on('error', reject);
     p.on('close', (code) => {
       const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-      code === 0 ? resolve(ms) : reject(new Error(`${path.basename(cmd)} 退出码 ${code}：${err}`));
+      code === 0 ? resolve(ms) : reject(new Error(`${path.basename(cmd)} exit code ${code}: ${err}`));
     });
   });
 }
@@ -196,7 +196,7 @@ async function* frameStream(ffmpeg, file, w, h) {
     }
   }
   const code = await closed;
-  if (code !== 0) throw new Error(`解码 ${path.basename(file)} 失败(ffmpeg ${code})：${err}`);
+  if (code !== 0) throw new Error(`Decoding ${path.basename(file)} failed (ffmpeg ${code}): ${err}`);
 }
 
 async function frameHashes(ffmpeg, file, w, h) {
@@ -310,7 +310,7 @@ async function buildProject(page, spec, mediaFile) {
     await io.importVideoFiles([new File([arr], `${spec.name}-${fixtureName}`, { type: 'video/mp4' })]);
     for (let i = 0; i < 150 && getState().project.media.some((m) => m.pending || !m.url); i++) await new Promise((r) => setTimeout(r, 200));
     const media = getState().project.media[0];
-    if (!media || media.pending || !media.url) throw new Error('素材导入没完成');
+    if (!media || media.pending || !media.url) throw new Error('The media import did not finish');
     // 导入后素材服务还会在后台重封装、生成小尺寸(ffmpeg)：等它们做完再往下，免得和第一遍测量抢处理器
     for (let i = 0; i < 300 && !getState().project.media[0]?.tiers?.small; i++) await new Promise((r) => setTimeout(r, 200));
     await new Promise((r) => setTimeout(r, 1500));
@@ -326,7 +326,7 @@ async function buildProject(page, spec, mediaFile) {
         clip = actions.addClipOnNewTrack({ index: 0, cardId: layer.cardId, start: layer.start, duration: layer.end - layer.start });
         if (clip && layer.params) actions.setClipParams(clip.id, layer.params);
       }
-      if (!clip) throw new Error(`放不进片段 ${layer.cardId || 'media'}`);
+      if (!clip) throw new Error(`Could not place clip ${layer.cardId || 'media'}`);
       added.push(layer.cardId || 'media');
     }
     const p = getState().project;
@@ -379,13 +379,13 @@ async function runDesktop({ origin, work, id, project, frames, workers, keepFram
   const code = await new Promise((resolve, reject) => { child.on('error', reject); child.on('close', resolve); });
   const wallMs = T(t0);
   const cpu = cpuStop();
-  if (code !== 0) throw new Error(`桌面导出退出码 ${code}：${tail.slice(-1500)}`);
+  if (code !== 0) throw new Error(`Desktop export exit code ${code}: ${tail.slice(-1500)}`);
 
   const first = (re) => marks.find((m) => re.test(m.line));
   const last = (re) => [...marks].reverse().find((m) => re.test(m.line));
   const frameMarks = marks.filter((m) => /^Exported frame \d+ \(\d+\/\d+\)/.test(m.line));
-  const shardLine = first(/^分片导出:/);
-  const shards = shardLine ? (shardLine.line.match(/(\d+) 段/) || [])[1] : '1';
+  const shardLine = first(/^Sharded export:/);
+  const shards = shardLine ? (shardLine.line.match(/(\d+) segments/) || [])[1] : '1';
   const tFirstFrame = frameMarks[0]?.t ?? null;
   const tLastFrame = frameMarks.at(-1)?.t ?? null;
   const tRunning = first(/^Running ffmpeg to generate video files/)?.t ?? null;
@@ -414,7 +414,7 @@ async function runDesktop({ origin, work, id, project, frames, workers, keepFram
   const out = path.join(dir, 'preview.mp4');
   return { dir, out, wallMs, cpu, shards: Number(shards), proresMode, segments, sizes: {
     overlayMovBytes: fs.existsSync(path.join(dir, 'overlay.mov')) ? fs.statSync(path.join(dir, 'overlay.mov')).size : null,
-  }, marks: marks.map((m) => ({ t: round(m.t, 0), line: m.line })).filter((m) => /^(分片|Warm-up|Export finished|Running ffmpeg|Creating|Composited \d+ frames|No audio|Audio muxed|Video synthesis|Launching|Navigating|Waiting for)/.test(m.line)).slice(0, 40), frameLines: frameMarks.length };
+  }, marks: marks.map((m) => ({ t: round(m.t, 0), line: m.line })).filter((m) => /^(Shard|Warm-up|Export finished|Running ffmpeg|Creating|Composited \d+ frames|No audio|Audio muxed|Video synthesis|Launching|Navigating|Waiting for)/.test(m.line)).slice(0, 40), frameLines: frameMarks.length };
 }
 
 /* ---------------- 在线那条路 ---------------- */
@@ -468,7 +468,7 @@ async function runOnline({ browser, origin, project, frames, outFile }) {
   const page = await browser.newPage();
   try {
     await page.setViewport({ width: 1600, height: 1000 });
-    page.on('pageerror', (e) => log(`页面错误：${String(e).slice(0, 200)}`));
+    page.on('pageerror', (e) => log(`Page error: ${String(e).slice(0, 200)}`));
     await page.goto(`${origin}/?editor&nosetup=1`, { waitUntil: 'domcontentloaded', timeout: 180000 });
     await page.waitForFunction(async () => !!(await import('/src/editor/stageBridge.ts')).frontStage(), { timeout: 180000, polling: 500 });
     await page.evaluate(async (p) => { const { actions } = await import('/src/store/project.ts'); actions.loadProject(p); }, project);
@@ -484,7 +484,7 @@ async function runOnline({ browser, origin, project, frames, outFile }) {
     }, maxFrames);
     const evalWallMs = T(t0);
     const cpu = cpuStop();
-    if (!r.result) throw new Error(`在线导出失败：${r.error || '没有结果'}${r.waits?.length ? '；等待提示：' + r.waits.join('|').slice(0, 200) : ''}`);
+    if (!r.result) throw new Error(`Online export failed: ${r.error || 'no result'}${r.waits?.length ? '; wait hints: ' + r.waits.join('|').slice(0, 200) : ''}`);
     await fsp.writeFile(outFile, Buffer.from(r.base64, 'base64'));
     const M = await page.evaluate(() => window.__pcM);
     const total = r.result.ms;
@@ -533,12 +533,12 @@ async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (opts.help) { console.log(fs.readFileSync(import.meta.filename, 'utf8').split('*/')[0]); return 0; }
   const work = opts.work || path.join(REPO, 'out', 'export-paths-measure', stamp());
-  assertNoUserExportDir({ PROMPTCUT_EXPORT_DIR: work }, 'export-paths-measure 的工作目录');
+  assertNoUserExportDir({ PROMPTCUT_EXPORT_DIR: work }, 'working directory of export-paths-measure');
   await fsp.mkdir(work, { recursive: true });
   const jsonFile = opts.json || path.join(work, 'summary.json');
   const assetsDir = opts.assets || path.join(work, 'assets');
   await fsp.mkdir(assetsDir, { recursive: true });
-  log(`工作目录 ${work}`);
+  log(`Working directory ${work}`);
 
   const ffmpeg = await findFfmpeg();
   const ffprobe = ffprobeOf(ffmpeg);
@@ -559,7 +559,7 @@ async function main() {
 
   try {
     server = await startDevServer({ env, logFile: path.join(work, 'vite.log'), port: opts.port, log });
-    log(`dev server 就绪 ${server.origin}(舞台 ${server.stagePorts.join(' / ')})`);
+    log(`dev server ready ${server.origin} (stage ${server.stagePorts.join(' / ')})`);
     browser = await puppeteer.launch({ headless: true, protocolTimeout: 1800000,
       args: [...PROBE_CHROME_ARGS, '--no-first-run', '--hide-scrollbars', '--force-device-scale-factor=1', '--autoplay-policy=no-user-gesture-required'] });
     result.machine = await machineInfo({ ffmpeg, onlineChrome: await browser.version() });
@@ -572,14 +572,14 @@ async function main() {
         const sup = async (pref) => { try { return !!(await VideoEncoder.isConfigSupported({ ...base, hardwareAcceleration: pref })).supported; } catch { return null; } };
         let gl = null;
         try { const c = document.createElement('canvas').getContext('webgl'); const e = c.getExtension('WEBGL_debug_renderer_info'); gl = e ? c.getParameter(e.UNMASKED_RENDERER_WEBGL) : null; } catch { /* 没有 WebGL */ }
-        return { secureContext: isSecureContext, preferHardware: await sup('prefer-hardware'), preferSoftware: await sup('prefer-software'), noPreference: await sup('no-preference'), webglRenderer: gl, config: 'avc1.640028 1280x720@30 约 2.76 Mbps，latencyMode quality(src/export/capability.ts 的 videoConfigOf，不指定硬件偏好)' };
+        return { secureContext: isSecureContext, preferHardware: await sup('prefer-hardware'), preferSoftware: await sup('prefer-software'), noPreference: await sup('no-preference'), webglRenderer: gl, config: 'avc1.640028 1280x720@30 about 2.76 Mbps, latencyMode quality (videoConfigOf in src/export/capability.ts, no hardware preference specified)' };
       });
       await pg.close();
     }
 
     for (const name of opts.projects) {
       const spec = PROJECTS[name];
-      log(`—— 项目 ${name}：${spec.note}`);
+      log(`Project ${name}: ${spec.note}`);
       // 搭项目
       const setupPage = await browser.newPage();
       await setupPage.setViewport({ width: 1600, height: 1000 });
@@ -613,9 +613,9 @@ async function main() {
             }
             break;
           } catch (e) {
-            log(`预热 ${route} 第 ${attempt} 次失败：${String(e.message || e).slice(0, 160).replace(/\s+/g, ' ')}`);
+            log(`Warm-up ${route} attempt ${attempt} failed: ${String(e.message || e).slice(0, 160).replace(/\s+/g, ' ')}`);
             P.warmup[`${route}Failures`] = (P.warmup[`${route}Failures`] || 0) + 1;
-            if (attempt === 3) failures.push(`${name} 预热 ${route} 3 次都失败：${String(e.message || e).slice(-600)}`);
+            if (attempt === 3) failures.push(`${name} warm-up ${route} failed all 3 attempts: ${String(e.message || e).slice(-600)}`);
             else await sleep(3000 * attempt);
           }
         }
@@ -625,7 +625,7 @@ async function main() {
       for (let k = 1; k <= opts.runs; k++) {
         for (const route of ['desktop', 'online']) {
           const before = await loadBefore();
-          log(`${name} ${route} 第 ${k}/${opts.runs} 遍(开跑前整机占用 ${before.cpuPct}%，空闲内存 ${before.freeMemGB} GB)`);
+          log(`${name} ${route} pass ${k}/${opts.runs} (whole-machine usage before the run ${before.cpuPct}%, free memory ${before.freeMemGB} GB)`);
           const id = `${name}-${route[0]}${k}`;
           const file = route === 'desktop' ? null : path.join(work, `${name}-online-${k}.mp4`);
           // 暂时性故障(机器被别的任务压住、导出页 20 秒没就绪这类)重试，最多 3 次；每次失败都记下，3 次都失败才算这一遍失败
@@ -649,15 +649,15 @@ async function main() {
               }
               rec.fileSha256 = crypto.createHash('sha256').update(await fsp.readFile(rec.file || file)).digest('hex');
               if (attempts.length) rec.failedAttempts = attempts;
-              if (rec.video.frames !== expectFrames) failures.push(`${name} ${route} 第 ${k} 遍成片帧数 ${rec.video.frames}，应为 ${expectFrames}`);
+              if (rec.video.frames !== expectFrames) failures.push(`${name} ${route} pass ${k} final video frame count ${rec.video.frames}, expected ${expectFrames}`);
               P[route].runs.push(rec);
               done = true;
-              log(`  完成 ${round(rec.totalMs / 1000, 1)} s，${rec.video.frames} 帧，${round(rec.video.bytes / 1e6, 2)} MB，${rec.video.bitrateKbps} kbps，跑的过程平均占用 ${rec.cpuDuring.meanPct}%${attempts.length ? `(前面失败了 ${attempts.length} 次)` : ''}`);
+              log(`  Done in ${round(rec.totalMs / 1000, 1)} s, ${rec.video.frames} frames, ${round(rec.video.bytes / 1e6, 2)} MB, ${rec.video.bitrateKbps} kbps, average usage during the run ${rec.cpuDuring.meanPct}%${attempts.length ? `(failed ${attempts.length} times before)` : ''}`);
             } catch (e) {
               const msg = String(e.message || e).slice(-1500);
               attempts.push((msg.length > 500 ? msg.slice(0, 200) + ' … ' + msg.slice(-250) : msg));
-              log(`  第 ${attempt} 次失败：${msg.slice(0, 200).replace(/\s+/g, ' ')}`);
-              if (attempt === opts.retries) failures.push(`${name} ${route} 第 ${k} 遍失败(试了 ${opts.retries} 次)：${msg}`);
+              log(`  Attempt ${attempt} failed: ${msg.slice(0, 200).replace(/\s+/g, ' ')}`);
+              if (attempt === opts.retries) failures.push(`${name} ${route} pass ${k} failed (tried ${opts.retries} times): ${msg}`);
               else await sleep(3000 * attempt);
             }
           }
@@ -674,39 +674,39 @@ async function main() {
       }
       const d1 = P.desktop.runs[0], o1 = P.online.runs[0];
       if (d1 && o1) {
-        log(`${name}：两条路成片逐帧比较(桌面第 1 遍 vs 在线第 1 遍)`);
+        log(`${name}: frame-by-frame comparison of the final video from the two paths (desktop pass 1 vs online pass 1)`);
         const per = await crossDiff(ffmpeg, d1.file, o1.file, w, h);
         P.crossPathDiff = summarizeDiff(per, d1.frameHashes.length, o1.frameHashes.length);
         const sorted = [...per].sort((a, b) => a.mean - b.mean);
         const pick = [...new Set([sorted[sorted.length >> 1]?.i, per.reduce((x, y) => (y.mean > x.mean ? y : x)).i, Math.max(0, Math.floor(per.length * 0.25))])].filter((v) => v !== undefined);
         P.crossPathDiff.images = (await saveDiffTiles(ffmpeg, d1.file, o1.file, w, h, pick, assetsDir, name)).map((x) => ({ frame: x.frame, file: path.relative(REPO, x.file).replace(/\\/g, '/'), bytes: x.bytes }));
         P.crossPathDiff.perFrameSample = per.filter((p) => p.i % 30 === 0).map((p) => ({ i: p.i, mean: round(p.mean, 3), max: p.max, over32Pct: round(p.over32 * 100, 3), psnr: round(p.psnr, 2) }));
-        if (!P.crossPathDiff.frameCountEqual) failures.push(`${name} 两条路成片帧数不同：${P.crossPathDiff.framesA} vs ${P.crossPathDiff.framesB}`);
-      } else failures.push(`${name} 缺一条路的成片，没法比画面差`);
+        if (!P.crossPathDiff.frameCountEqual) failures.push(`${name} the two paths produced different final video frame counts: ${P.crossPathDiff.framesA} vs ${P.crossPathDiff.framesB}`);
+      } else failures.push(`${name} the final video from one path is missing, so the picture difference cannot be compared`);
 
       // 拆段单测
       if (opts.split && d1?.keepDir) {
-        log(`${name}：拆段单测`);
+        log(`${name}: stage-split test`);
         P.split = {};
         try {
           let nv = null;
           for (let attempt = 1; attempt <= 3 && !nv; attempt++) {
             try { nv = await runDesktop({ origin: server.origin, work, id: `${name}-split`, project, frames: opts.frames, workers: opts.workers, noVideo: true }); }
-            catch (e) { log(`  拆段单测第 ${attempt} 次失败：${String(e.message || e).slice(0, 160).replace(/\s+/g, ' ')}`); if (attempt === 3) throw e; await sleep(3000 * attempt); }
+            catch (e) { log(`  Stage-split test attempt ${attempt} failed: ${String(e.message || e).slice(0, 160).replace(/\s+/g, ' ')}`); if (attempt === 3) throw e; await sleep(3000 * attempt); }
           }
           const nPng = fs.readdirSync(path.join(nv.dir, 'frames')).filter((f) => f.endsWith('.png')).length;
-          P.split.captureOnlyPng = { wallMs: round(nv.wallMs, 0), frames: nPng, startupToFirstFrameMs: round(nv.segments.startupToFirstFrameMs, 0), captureMs: round(nv.segments.captureMs, 0), note: '只截图落 PNG(--no-video)，不编码；截图自身的墙钟，含写盘' };
+          P.split.captureOnlyPng = { wallMs: round(nv.wallMs, 0), frames: nPng, startupToFirstFrameMs: round(nv.segments.startupToFirstFrameMs, 0), captureMs: round(nv.segments.captureMs, 0), note: 'Screenshots to PNG only (--no-video), no encoding; wall-clock time of the screenshots themselves, including disk writes' };
           const pngDir = path.join(nv.dir, 'frames');
           const mov = path.join(work, `${name}-split-prores.mov`);
           const first = Math.min(...fs.readdirSync(pngDir).filter((f) => f.endsWith('.png')).map((f) => parseInt(f, 10)));
-          P.split.pngToProres = { wallMs: round(await timeProc(ffmpeg, ['-y', '-v', 'error', '-framerate', String(fps), '-start_number', String(first), '-i', path.join(pngDir, '%06d.png'), '-an', '-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', 'yuva444p10le', mov]), 0), bytes: fs.statSync(mov).size, note: '读 PNG 序列再编 ProRes 4444(单独跑；主流程里是边截边编)' };
+          P.split.pngToProres = { wallMs: round(await timeProc(ffmpeg, ['-y', '-v', 'error', '-framerate', String(fps), '-start_number', String(first), '-i', path.join(pngDir, '%06d.png'), '-an', '-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', 'yuva444p10le', mov]), 0), bytes: fs.statSync(mov).size, note: 'Read the PNG sequence and encode ProRes 4444 (run on its own; in the main flow encoding happens while capturing)' };
           const overlay = path.join(d1.keepDir, 'overlay.mov');
-          P.split.proresDecodeOnly = { wallMs: round(await timeProc(ffmpeg, ['-v', 'error', '-i', overlay, '-an', '-f', 'null', '-']), 0), note: '只解 ProRes 到空输出' };
+          P.split.proresDecodeOnly = { wallMs: round(await timeProc(ffmpeg, ['-v', 'error', '-i', overlay, '-an', '-f', 'null', '-']), 0), note: 'Decode ProRes only, to a null output' };
           const x264Out = path.join(work, `${name}-split-x264.mp4`);
-          P.split.proresDecodeAndX264 = { wallMs: round(await timeProc(ffmpeg, ['-y', '-v', 'error', '-i', overlay, '-an', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', x264Out]), 0), bytes: fs.statSync(x264Out).size, note: '解 ProRes 加 libx264(同主流程的编码参数，没有素材层)；减去上一项近似 libx264 本身' };
-          P.split.x264Approx = { wallMs: round(P.split.proresDecodeAndX264.wallMs - P.split.proresDecodeOnly.wallMs, 0), note: '近似值：两次单测相减，两次读盘与解码有重叠，仅作量级' };
+          P.split.proresDecodeAndX264 = { wallMs: round(await timeProc(ffmpeg, ['-y', '-v', 'error', '-i', overlay, '-an', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', x264Out]), 0), bytes: fs.statSync(x264Out).size, note: 'Decode ProRes plus libx264 (same encoding parameters as the main flow, no media layer); subtracting the previous item approximates libx264 itself' };
+          P.split.x264Approx = { wallMs: round(P.split.proresDecodeAndX264.wallMs - P.split.proresDecodeOnly.wallMs, 0), note: 'Approximate value: the difference of two tests; both include overlapping disk reads and decoding, so use it as an order of magnitude only' };
           if (!opts.keep) { await fsp.rm(nv.dir, { recursive: true, force: true }); await fsp.rm(mov, { force: true }); await fsp.rm(x264Out, { force: true }); }
-        } catch (e) { failures.push(`${name} 拆段单测失败：${String(e.message || e).slice(-1500)}`); }
+        } catch (e) { failures.push(`${name} stage-split test failed: ${String(e.message || e).slice(-1500)}`); }
         if (!opts.keep) await fsp.rm(d1.keepDir, { recursive: true, force: true });
         delete d1.keepDir;
       }
@@ -729,7 +729,7 @@ async function main() {
       P.faster = dm && om ? { faster: om < dm ? 'online' : 'desktop', ratio: round(Math.max(dm, om) / Math.min(dm, om), 2), desktopMedianMs: dm, onlineMedianMs: om } : null;
     }
   } catch (e) {
-    failures.push(`探针异常：${e?.stack || e}`);
+    failures.push(`Probe exception: ${e?.stack || e}`);
   } finally {
     await browser?.close().catch(() => {});
     cleanup();
@@ -737,11 +737,11 @@ async function main() {
 
   const windowsAfter = visibleWindows();
   result.visibleWindows = { before: windowsBefore, after: windowsAfter, newAfter: windowsAfter.filter((w) => !windowsBefore.includes(w)) };
-  if (result.visibleWindows.newAfter.length) failures.push(`跑完后多出可见窗口：${result.visibleWindows.newAfter.join(' | ')}`);
+  if (result.visibleWindows.newAfter.length) failures.push(`Extra visible windows after the run: ${result.visibleWindows.newAfter.join(' | ')}`);
   result.finishedAt = new Date().toISOString();
   result.ok = failures.length === 0;
   await fsp.writeFile(jsonFile, JSON.stringify(result, null, 2));
-  log(`汇总 ${jsonFile}`);
+  log(`Summary ${jsonFile}`);
   console.log(JSON.stringify({ ok: result.ok, json: jsonFile, failures, faster: Object.fromEntries(Object.entries(result.projects).map(([k, v]) => [k, v.faster])) }));
   return result.ok ? 0 : 1;
 }

@@ -41,7 +41,7 @@ beforeEach(() => {
   now += 10_000;
 });
 
-test("C10-BF-01 撤快照后播放中投递返回 0 并清空 settled;不派发快照 RPC", async () => {
+test("C10-BF-01 After snapshots are withdrawn, delivery during playback returns 0 and clears settled; no snapshot RPC is dispatched", async () => {
   const p = project([{ id: "t", name: "t", clips: [card("h", 0, 10)] }]);
   plan = { segments: [{ fromSec: 0, toSec: 1000, heavy: new Set(["h"]), light: new Set() }] };
   const stage = fakeStage();
@@ -50,16 +50,16 @@ test("C10-BF-01 撤快照后播放中投递返回 0 并清空 settled;不派发�
   noteSettled("front", ["h"]);
   assert.deepEqual(suppressedAt({ project: p, t: 1, playing: false }), []);
   const delivered = await deliverSnapshots(stage, "front", { project: p, t: 1, playing: true });
-  assert.equal(delivered, 0, "撤快照后 deliverSnapshots 返回 0");
-  assert.equal(stage.calls.length, 0, "撤快照后不向舞台派发快照 RPC");
-  assert.deepEqual(suppressedAt({ project: p, t: 1, playing: false }), ["h"], "播放中清空 settled");
-  assert.deepEqual(suppressedAt({ project: p, t: 1, playing: true }), ["h"], "播放中重卡在 suppressed 中");
+  assert.equal(delivered, 0, "After snapshots are withdrawn, deliverSnapshots returns 0");
+  assert.equal(stage.calls.length, 0, "After snapshots are withdrawn, no snapshot RPC is dispatched to the stage");
+  assert.deepEqual(suppressedAt({ project: p, t: 1, playing: false }), ["h"], "settled is cleared during playback");
+  assert.deepEqual(suppressedAt({ project: p, t: 1, playing: true }), ["h"], "Heavy cards are in suppressed during playback");
   setBeatSwap(false);
   assert.equal(beatSwapDebug().on, false);
   assert.equal(SNAPSHOT_THROTTLE_MS, 33);
 });
 
-test("C10-BF-02 撤快照后按从上到下的层序由 suppressed 接管;deliverSnapshots 返回 0", async () => {
+test("C10-BF-02 After snapshots are withdrawn, suppressed takes over in top-to-bottom layer order; deliverSnapshots returns 0", async () => {
   // 三张重卡:轨道 top 上的 a、轨道 mid 上的 b、c(c 在 b 后面,盖在 b 上面)
   const p = project([
     { id: "top", name: "top", clips: [card("a", 0, 10)] },
@@ -70,17 +70,17 @@ test("C10-BF-02 撤快照后按从上到下的层序由 suppressed 接管;delive
   const stage = fakeStage();
   setBeatSwap(true, { swapMs: 3, occupied: () => 23.333333 - 6 });
   const ret = await deliverSnapshots(stage, "front", { project: p, t: 1, playing: true });
-  assert.equal(ret, 0, "deliverSnapshots 返回 0");
-  assert.equal(stage.calls.length, 0, "不派发快照 RPC");
+  assert.equal(ret, 0, "deliverSnapshots returns 0");
+  assert.equal(stage.calls.length, 0, "No snapshot RPC is dispatched");
   const sup = suppressedAt({ project: p, t: 1, playing: true });
-  assert.deepEqual(sup, ["a", "b", "c"], "重卡全部进入 suppressed 抑制");
+  assert.deepEqual(sup, ["a", "b", "c"], "All heavy cards are placed under suppression (suppressed)");
   const d = beatSwapDebug();
-  assert.equal(d.last, null, "撤快照后 last 为 null,无空指针");
+  assert.equal(d.last, null, "After snapshots are withdrawn, last is null, with no null-pointer error");
 });
 
 /* ---------------------------------------------------------------- 每层的换帧成本(swap-tuning 任务 A) */
 
-test("ST-A-08 宿主给了每层成本(按卡种):setBeatSwap 保持签名兼容;撤快照后播放中重卡全量抑制", async () => {
+test("ST-A-08 The host supplies per-layer cost (by card kind): setBeatSwap stays signature-compatible; after snapshots are withdrawn, heavy cards are fully suppressed during playback", async () => {
   const p = project([
     { id: "top", name: "top", clips: [card("a", 0, 10)] },
     { id: "mid", name: "mid", clips: [card("b", 0, 10), card("c", 0, 10)] },
@@ -96,7 +96,7 @@ test("ST-A-08 宿主给了每层成本(按卡种):setBeatSwap 保持签名兼容
   assert.equal(beatSwapDebug().on, true);
 });
 
-test("ST-A-09 撤快照后不再按大小装箱;beatSwapDebug 保持兼容签名且无空指针隐患", async () => {
+test("ST-A-09 After snapshots are withdrawn, packing by size no longer happens; beatSwapDebug keeps a compatible signature with no null-pointer risk", async () => {
   const { SWAP_COST_MODEL, swapCostOfSize } = await import("../render/beatSwap.mjs");
   const big = "<div>" + "x".repeat(400 * 1024) + "</div>";                        // 约 400 KB 文本
   const bmp = '<img src="data:image/webp;base64,' + "A".repeat(400 * 1024) + '">'; // 约 400 KB 位图
@@ -105,13 +105,13 @@ test("ST-A-09 撤快照后不再按大小装箱;beatSwapDebug 保持兼容签名
   const stage = fakeStage();
   setBeatSwap(true, { swapMs: 3, occupied: () => 23.333333 - 10, costOf: () => 3 });
   await deliverSnapshots(stage, "front", { project: p, t: 1, playing: true });
-  assert.equal(beatSwapDebug().knownSizes, 0, "撤快照后不记录快照大小");
+  assert.equal(beatSwapDebug().knownSizes, 0, "After snapshots are withdrawn, snapshot sizes are not recorded");
   const mMs = swapCostOfSize({ bytes: bmp.length, bitmap: true });
   const tMs = swapCostOfSize({ bytes: big.length, bitmap: false });
   assert.ok(Math.abs(mMs - (SWAP_COST_MODEL.baseMs + SWAP_COST_MODEL.bitmapMsPerKB * bmp.length / 1024)) < 1e-9);
-  assert.ok(tMs > mMs * 3, `同样大小,文本比位图贵得多:${tMs} vs ${mMs}`);
+  assert.ok(tMs > mMs * 3, `At the same size, text is much more expensive than bitmaps: ${tMs} vs ${mMs}`);
   const d = beatSwapDebug();
-  assert.equal(d.last, null, "撤快照后 last 为 null");
+  assert.equal(d.last, null, "After snapshots are withdrawn, last is null");
   assert.deepEqual(suppressedAt({ project: p, t: 1, playing: true }), ["m", "t"]);
   setBeatSwap(false);
   assert.equal(beatSwapDebug().on, false);

@@ -14,7 +14,7 @@ async function upload(f, project, ns, content = bytes, key = hash) {
   assert.equal((await request(f, project, `${url}/complete`, { method: 'POST' })).status, 200);
 }
 
-test('真实HTTP：三命名空间GET/HEAD/Range/chunks/complete、query票据隔离，同hash分别上传', async t => {
+test('real HTTP: GET/HEAD/Range/chunks/complete across the three namespaces, query ticket isolation, the same hash uploaded separately', async t => {
   const f = await startAssetProjectFixture(); t.after(() => f.close());
   for (const ns of ['media', 'snap', 'px']) {
     await upload(f, 'A', ns);
@@ -33,7 +33,7 @@ test('真实HTTP：三命名空间GET/HEAD/Range/chunks/complete、query票据�
   await f.factory.removeProject('A');
   for (const ns of ['media', 'snap', 'px']) assert.equal((await request(f, 'B', `/api/asset/${ns}/${hash}`)).status, 200);
 });
-test('真实HTTP：回环无证拒、旧media及PCM、local/tiers/私路径/adopt/remote目标不越项目', async t => {
+test('real HTTP: loopback without credentials is rejected; legacy media and PCM, and local/tiers/private path/adopt/remote targets stay within the project', async t => {
   const f = await startAssetProjectFixture(); t.after(() => f.close());
   await upload(f, 'A', 'media');
   assert.equal((await fetch(`${f.base}/api/asset/media/${hash}`)).status, 401);
@@ -49,7 +49,7 @@ test('真实HTTP：回环无证拒、旧media及PCM、local/tiers/私路径/adop
   assert.equal(remote.status, 403); // 真实归属错误保留权限状态，不能配置跨项目remote
   assert.equal((await (await request(f, 'B', '/api/media/remote')).json()).base, null);
 });
-test('真实HTTP：上传流入独立项目目录，环境全局目录不能覆盖，输入不被改写', async t => {
+test('real HTTP: upload streams go into a separate project directory, the environment-wide directory cannot override it, and the input is not rewritten', async t => {
   const f = await startAssetProjectFixture(); t.after(() => f.close());
   const old = process.env.PROMPTCUT_EXPORT_DIR;
   process.env.PROMPTCUT_EXPORT_DIR = path.join(f.out, 'wrong-global');
@@ -62,7 +62,7 @@ test('真实HTTP：上传流入独立项目目录，环境全局目录不能覆�
   const ownedFile = path.join(f.factory.project('A').dirs.media, 'already-local.wav'); await fs.writeFile(ownedFile, bytes);
   const adopted = await request(f, 'A', `/api/media/adopt?path=${encodeURIComponent(ownedFile)}`, { method: 'POST' }); assert.equal(adopted.status, 200); const adoptedBody = await adopted.json(); assert.equal(adoptedBody.projectId, 'A'); assert.equal(adoptedBody.hash, hash); assert.deepEqual(await fs.readFile(ownedFile), bytes);
 });
-test('真实HTTP：失权持续流立刻销毁、关闭确认后旧GET/Range/chunks拒绝，B不受影响', async t => {
+test('real HTTP: an ongoing stream whose authorization is lost is destroyed immediately; after close confirmation old GET/Range/chunks are rejected, and B is unaffected', async t => {
   let stream;
   const f = await startAssetProjectFixture({ wrapStore: (_id, _ns, store) => new Proxy(store, { get(target, key) {
     if (key === 'read') return async () => { stream = new Readable({ read() {} }); stream.push(bytes.subarray(0, 2)); return stream; };
@@ -77,7 +77,7 @@ test('真实HTTP：失权持续流立刻销毁、关闭确认后旧GET/Range/chu
   for (const suffix of ['', '/chunks']) assert.equal((await request(f, 'A', `/api/asset/media/${hash}${suffix}`)).status, 403);
   assert.equal((await request(f, 'B', `/api/asset/media/${hash}`)).status, 404);
 });
-test('真实shots缩略读口GET/HEAD按项目物理目录、已知文件名不跨读、失权拒', async t => {
+test('real shots thumbnail read endpoint GET/HEAD follows the project\'s physical directory, a known file name is not read across projects, and lost authorization is rejected', async t => {
   const f = await startAssetProjectFixture(); t.after(() => f.close());
   const a = f.shots.shotsDir(f.factory.project('A').root), b = f.shots.shotsDir(f.factory.project('B').root);
   await fs.mkdir(a, { recursive: true }); await fs.writeFile(path.join(a, 'same-thumb.jpg'), bytes);

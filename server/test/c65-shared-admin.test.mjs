@@ -16,7 +16,7 @@ import {
 const R = (i) => `198.51.100.${200 + i}`;
 
 for (const mode of ['free', 'restricted']) {
-  test(`C65-SA1 set-creator-password(${mode}):旧密码不能再以创建者进入、新密码可以;之后的创建者操作按新密码算证明`, async (t) => {
+  test(`C65-SA1 set-creator-password(${mode}): the old password can no longer enter as creator and the new one can; later creator operations compute their proof from the new password`, async (t) => {
     const env = await hostFor(t);
     const proj = await createProject(env, { mode, ...(mode === 'restricted' ? { list: [{ username: 'bob', password: 'bob-pw' }] } : {}) });
     const creator = await join(env, proj, { username: proj.creator.username, as: 'creator', remote: R(1) });
@@ -24,8 +24,8 @@ for (const mode of ['free', 'restricted']) {
     assert.equal(r.type, 'shared.admin.ok', JSON.stringify(r));
     assert.equal(r.op, 'set-creator-password');
 
-    assert.equal(await joinStatus(env, proj, { username: proj.creator.username, as: 'creator', remote: R(2) }), 401, '旧创建者密码');
-    assert.equal(await joinStatus(env, proj, { username: proj.creator.username, as: 'creator', password: 'creator-new', remote: R(3) }), 101, '新创建者密码');
+    assert.equal(await joinStatus(env, proj, { username: proj.creator.username, as: 'creator', remote: R(2) }), 401, 'old creator password');
+    assert.equal(await joinStatus(env, proj, { username: proj.creator.username, as: 'creator', password: 'creator-new', remote: R(3) }), 101, 'new creator password');
 
     // 之后的创建者操作:旧密码算的证明 forbidden,新密码的成功
     const old = await adminOp(creator, proj, 'list-bans', {}, { password: proj.creator.password });
@@ -39,7 +39,7 @@ for (const mode of ['free', 'restricted']) {
   });
 }
 
-test('C65-SA2 set-creator-password 不作废已发的票据(不加代数)', async (t) => {
+test('C65-SA2 set-creator-password does not revoke tickets already issued (generation not incremented)', async (t) => {
   const env = await hostFor(t, { assets: true });
   const blob = await uploadLocal(env);
   const proj = await createProject(env, { mode: 'free' });
@@ -49,12 +49,12 @@ test('C65-SA2 set-creator-password 不作废已发的票据(不加代数)', asyn
   const r = await adminOp(creator, proj, 'set-creator-password', { creator: credential('rotated-creator') });
   assert.equal(r.type, 'shared.admin.ok', JSON.stringify(r));
   const read = await env.asset(`media/${blob.hash}`, { remote: '192.168.1.91', headers: bearer(before) });
-  assert.equal(read.status, 200, '旧票据仍然有效');
+  assert.equal(read.status, 200, 'the old ticket is still valid');
   const after = (await ticketOf(member, { kind: 'asset', access: 'r' })).ticket;
-  assert.equal(parseTicket(after).body.g, parseTicket(before).body.g, '项目代数不变');
+  assert.equal(parseTicket(after).body.g, parseTicket(before).body.g, 'project generation unchanged');
 });
 
-test('C65-SA3 set-creator-password:成员、不带证明、证明错一律 forbidden;字段不对回 bad-message', async (t) => {
+test('C65-SA3 set-creator-password: a member, no proof, or wrong proof is always forbidden; wrong fields return bad-message', async (t) => {
   const env = await hostFor(t);
   const proj = await createProject(env, { mode: 'free' });
   const creator = await join(env, proj, { username: proj.creator.username, as: 'creator', remote: R(10) });
@@ -71,7 +71,7 @@ test('C65-SA3 set-creator-password:成员、不带证明、证明错一律 forbi
   assert.equal(await joinStatus(env, proj, { username: proj.creator.username, as: 'creator', remote: R(12) }), 101);
 });
 
-test('C65-SA4 list-bans 列出禁入表;kick 之后出现、unban 之后消失', async (t) => {
+test('C65-SA4 list-bans lists the ban list; an entry appears after kick and disappears after unban', async (t) => {
   const env = await hostFor(t);
   const proj = await createProject(env, { mode: 'free' });
   const creator = await join(env, proj, { username: proj.creator.username, as: 'creator', remote: R(20) });
@@ -86,7 +86,7 @@ test('C65-SA4 list-bans 列出禁入表;kick 之后出现、unban 之后消失',
   assert.equal((await adminOp(creator, proj, 'list-bans', {}, { badProof: true })).reason, 'forbidden');
 });
 
-test('C65-SA5 set-password 之后,本空间其余在线连接各收到一条 shared.notice password-changed,连接不断', async (t) => {
+test('C65-SA5 after set-password, each of the other online connections in this space receives one shared.notice password-changed, and the connections stay open', async (t) => {
   const env = await hostFor(t);
   const proj = await createProject(env, { mode: 'free' });
   const creator = await join(env, proj, { username: proj.creator.username, as: 'creator', remote: R(30) });
@@ -95,30 +95,30 @@ test('C65-SA5 set-password 之后,本空间其余在线连接各收到一条 sha
   const outsider = await join(env, other, { username: 'yan', remote: R(32) });
   const r = await adminOp(creator, proj, 'set-password', { project: credential('pw-2') });
   assert.equal(r.type, 'shared.admin.ok', JSON.stringify(r));
-  await waitFor(() => zoe.all.some((m) => m.type === 'shared.notice' && m.event === 'password-changed'), 3000, '成员收到密码被改的通知');
-  assert.equal(creator.all.some((m) => m.type === 'shared.notice'), false, '改密码的一方自己不收');
-  assert.equal(outsider.all.some((m) => m.type === 'shared.notice'), false, '别的项目的成员不收');
-  assert.equal(zoe.ws.readyState, 1, '在线连接不断');
+  await waitFor(() => zoe.all.some((m) => m.type === 'shared.notice' && m.event === 'password-changed'), 3000, 'the member receives the password-changed notice');
+  assert.equal(creator.all.some((m) => m.type === 'shared.notice'), false, 'the party that changed the password does not receive it');
+  assert.equal(outsider.all.some((m) => m.type === 'shared.notice'), false, 'members of other projects do not receive it');
+  assert.equal(zoe.ws.readyState, 1, 'live connection stays up');
 });
 
-test('C65-SA6 限定进入:list-bans 另带名单用户名;set-list 的 { username, keep: true } 沿用原口令,名单里没有的人 keep 回 bad-message', async (t) => {
+test('C65-SA6 restricted entry: list-bans also carries the usernames in the list; { username, keep: true } in set-list keeps the original passphrase, and keep for someone not in the list returns bad-message', async (t) => {
   const env = await hostFor(t);
   const proj = await createProject(env, { mode: 'restricted', list: [{ username: 'bob', password: 'bob-pw' }, { username: 'cai', password: 'cai-pw' }] });
   const creator = await join(env, proj, { username: proj.creator.username, as: 'creator', remote: R(40) });
   const read = await adminOp(creator, proj, 'list-bans');
   assert.deepEqual(read.list, ['bob', 'cai']);
-  assert.equal(JSON.stringify(read).includes('"salt"'), false, '不带盐与 K');
+  assert.equal(JSON.stringify(read).includes('"salt"'), false, 'no salt and no K');
   // 留 bob 原口令、删 cai、加 dan
   const r = await adminOp(creator, proj, 'set-list', { list: [{ username: 'bob', keep: true }, credential('dan-pw', 'dan')] });
   assert.equal(r.type, 'shared.admin.ok', JSON.stringify(r));
   proj.list = [{ username: 'bob', password: 'bob-pw' }, { username: 'dan', password: 'dan-pw' }, { username: 'cai', password: 'cai-pw' }];
-  assert.equal(await joinStatus(env, proj, { username: 'bob', remote: R(41) }), 101, 'bob 沿用原口令');
-  assert.equal(await joinStatus(env, proj, { username: 'dan', remote: R(42) }), 101, '新加的 dan');
-  assert.equal(await joinStatus(env, proj, { username: 'cai', remote: R(43) }), 401, 'cai 被删');
+  assert.equal(await joinStatus(env, proj, { username: 'bob', remote: R(41) }), 101, 'bob keeps the original passphrase');
+  assert.equal(await joinStatus(env, proj, { username: 'dan', remote: R(42) }), 101, 'newly added dan');
+  assert.equal(await joinStatus(env, proj, { username: 'cai', remote: R(43) }), 401, 'cai is removed');
   assert.deepEqual((await adminOp(creator, proj, 'list-bans')).list, ['bob', 'dan']);
   const bad = await adminOp(creator, proj, 'set-list', { list: [{ username: 'zed', keep: true }] });
   assert.equal(bad.reason, 'bad-message', JSON.stringify(bad));
   const free = await createProject(env, { mode: 'free' });
   const fc = await join(env, free, { username: free.creator.username, as: 'creator', remote: R(44) });
-  assert.equal((await adminOp(fc, free, 'list-bans')).list, undefined, '自由进入不带名单');
+  assert.equal((await adminOp(fc, free, 'list-bans')).list, undefined, 'open entry carries no list');
 });

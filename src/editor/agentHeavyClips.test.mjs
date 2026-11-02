@@ -45,11 +45,11 @@ const keyOf = (p, clipId) => CI.clipIdentityOf(p).identityKeys[clipId];
 const judgeHL = (...args) => { const { heavy, light } = J.judgeHeavyClips(...args); return { heavy, light }; };
 const rec = (identityKey, stepMs, env = "0000000000000001") => ({ identityKey, envFingerprint: env, stepMs, samples: 30, measuredAt: 1, mode: "build" });
 
-test("JH-01 有记录:预算内的判轻、超出的判重;多条取中位数", () => {
+test("JH-01 With a record: within budget is classified as light, over budget as heavy; with several records take the median", () => {
   CI.resetClipIdentityCache();
   const p = project([card("light", "stateful-card", 0, 4), card("heavy", "stateful-card", 5, 9, { size: 2 })]);
   const kl = keyOf(p, "light"), kh = keyOf(p, "heavy");
-  assert.ok(kl && kh && kl !== kh, "两张卡各有身份");
+  assert.ok(kl && kh && kl !== kh, "The two cards each have an identity");
   // 粒子卡在线上实测约 2 ms/帧(轻);另一张 40 ms/帧(超出 B = 23.3 ms)
   const r = judgeHL(p, [rec(kl, 2.3), rec(kh, 40)], ["light", "heavy"]);
   assert.deepEqual(r, { heavy: ["heavy"], light: ["light"] });
@@ -60,7 +60,7 @@ test("JH-01 有记录:预算内的判轻、超出的判重;多条取中位数", 
   assert.ok(B > 2.3 && B < 30);
 });
 
-test("JH-02 没有记录:direct 判轻,其余判重;注册表里没有的卡判重", () => {
+test("JH-02 Without a record: direct is classified as light, the rest as heavy; a card not in the registry is classified as heavy", () => {
   CI.resetClipIdentityCache();
   const p = project([card("s", "stateful-card", 0, 4), card("d", "direct-card", 0, 4), card("u", "not-registered-card", 0, 4)]);
   const r = judgeHL(p, [], ["s", "d", "u"]);
@@ -70,19 +70,19 @@ test("JH-02 没有记录:direct 判轻,其余判重;注册表里没有的卡判�
   assert.deepEqual(r2, { heavy: ["u"], light: ["s", "d"] });
 });
 
-test("JH-03 剪辑段里的卡与顶层同一条规则;同一张卡的记录对两个实例都管用", () => {
+test("JH-03 Cards inside a cut segment follow the same rule as top-level ones; a record for the same card works for both instances", () => {
   CI.resetClipIdentityCache();
   const inner = [card("X", "stateful-card", 0, 4), card("Y", "stateful-card", 4, 8, { size: 3 })];
-  const p = project([seg("S", "B", 0, 8), seg("S2", "B", 10, 18)], [{ id: "B", name: "剪辑2", duration: 8, tracks: [{ id: "b1", name: "b1", clips: inner }] }]);
+  const p = project([seg("S", "B", 0, 8), seg("S2", "B", 10, 18)], [{ id: "B", name: "Cut 2", duration: 8, tracks: [{ id: "b1", name: "b1", clips: inner }] }]);
   const kx = keyOf(p, "S~X"), ky = keyOf(p, "S~Y");
-  assert.ok(kx && ky, "剪辑段里的卡按虚拟片段给身份");
-  assert.equal(keyOf(p, "S2~X"), kx, "成本键剥掉 flat:同一张卡在两个实例同一个键");
+  assert.ok(kx && ky, "Cards inside a cut segment get an identity per virtual clip");
+  assert.equal(keyOf(p, "S2~X"), kx, "The cost key strips flat: the same card has the same key in both instances");
   const candidates = ["S~X", "S~Y", "S2~X", "S2~Y"];
   assert.deepEqual(judgeHL(p, [rec(kx, 2), rec(ky, 50)], candidates), { heavy: ["S~Y", "S2~Y"], light: ["S~X", "S2~X"] });
-  assert.deepEqual(judgeHL(p, [], candidates), { heavy: candidates, light: [] }, "没有记录的 stateful 卡判重");
+  assert.deepEqual(judgeHL(p, [], candidates), { heavy: candidates, light: [] }, "A stateful card with no record is classified as heavy");
 });
 
-test("JH-04 不在项目里的候选两边都不放;顺序保持", () => {
+test("JH-04 Candidates not in the project go on neither side; order is preserved", () => {
   CI.resetClipIdentityCache();
   const p = project([card("a", "stateful-card", 0, 4), card("b", "stateful-card", 0, 4, { k: 1 })]);
   assert.deepEqual(judgeHL(p, [], ["b", "gone", "a"]), { heavy: ["b", "a"], light: [] });
@@ -90,7 +90,7 @@ test("JH-04 不在项目里的候选两边都不放;顺序保持", () => {
   assert.deepEqual(judgeHL(p, null, []), { heavy: [], light: [] });
 });
 
-test("JH-05 与页面的分派同一份:同一位置几张轻卡挤不下预算时,挤出去的判重", () => {
+test("JH-05 Same copy as the page's dispatch: when several light cards at the same position do not fit in the budget, the ones squeezed out are classified as heavy", () => {
   CI.resetClipIdentityCache();
   // 四张卡同一位置,各 8 ms:贪心装三张就超(8×3 = 24 > 23.3 再加重卡的换帧成本),挤出去的那张判重
   const clips = ["c1", "c2", "c3", "c4"].map((id, i) => card(id, "stateful-card", 0, 4, { i }));
@@ -100,20 +100,20 @@ test("JH-05 与页面的分派同一份:同一位置几张轻卡挤不下预算�
   const ids = CI.clipIdentityOf(p);
   const plan = P.planPipelines(p, records.map((x) => ({ identityKey: x.identityKey, stepMs: x.stepMs })), FPS, { identityKeys: ids.identityKeys, frameModes: ids.frameModes });
   assert.ok(r.heavy.length >= 1 && r.light.length >= 1, JSON.stringify(r));
-  for (const id of r.heavy) assert.ok(plan.prerenderSet.has(id), `${id} 在页面那张表里也判重`);
+  for (const id of r.heavy) assert.ok(plan.prerenderSet.has(id), `${id} is also classified as heavy in the page's table`);
 });
 
-test("JH-06 改过参数、新身份没有记录:按同一张卡别的身份的记录估,轻的不发", () => {
+test("JH-06 Parameters were changed and the new identity has no record: estimate from the records of the same card's other identities, and do not send out the light ones", () => {
   CI.resetClipIdentityCache();
   // 改之前:粒子卡一样的 stateful 卡,页面测过约 2 ms/帧(线上 particles 的样子)
   const before = project([card("p", "stateful-card", 0, 4, { count: 100 })]);
   const kOld = keyOf(before, "p");
   const groups = J.cardIdentityGroups(before);
-  assert.deepEqual(Object.values(groups), [[kOld]], "改之前的项目:这张卡一个身份");
+  assert.deepEqual(Object.values(groups), [[kOld]], "Project before the change: this card has one identity");
   // Agent 改了参数:身份换了,新身份没有记录
   const after = project([card("p", "stateful-card", 0, 4, { count: 120 })]);
   const kNew = keyOf(after, "p");
-  assert.notEqual(kNew, kOld, "改参数换成本身份");
+  assert.notEqual(kNew, kOld, "Changing parameters changes the cost identity");
   const records = [rec(kOld, 1.8, "a000000000000001"), rec(kOld, 2.2, "a000000000000002"), rec(kOld, 90, "a000000000000003")];
   // 不给改之前的身份:同一张卡在此刻项目里没有别的身份 → 照原来的兜底判重
   assert.deepEqual(J.judgeHeavyClips(after, records, ["p"]), { heavy: ["p"], light: [], estimated: [] });
@@ -130,7 +130,7 @@ test("JH-06 改过参数、新身份没有记录:按同一张卡别的身份的�
   assert.deepEqual(J.judgeHeavyClips(both, [rec(kq, 3)], ["p"]), { heavy: [], light: ["p"], estimated: ["p"] });
 });
 
-test("JH-07 同一张卡一条记录都没有:照原来的兜底;别的卡的记录不借;源码版本不同不算同一张卡", () => {
+test("JH-07 The same card has no records at all: fall back as before; do not borrow records from other cards; a different source version does not count as the same card", () => {
   CI.resetClipIdentityCache();
   const p = project([card("s", "stateful-card", 0, 4), card("d", "direct-card", 5, 9)]);
   // 只有 direct 卡的记录:stateful 卡不借它的,照兜底判重

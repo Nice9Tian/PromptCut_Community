@@ -17,14 +17,14 @@ function SoundBeep(_props: CardProps<P>) {
 
 export const soundBeep: CardDef<P> = {
   id: "sound-beep",
-  name: "声音探针的哔声卡",
-  description: "测试夹具:纯色画面加一段正弦波",
-  tags: ["探针"],
+  name: "Beep card for the sound probe",
+  description: "Test fixture: solid color frame plus a sine wave",
+  tags: ["probe"],
   frameMode: "stateful",
   kind: "animation",
   inputs: {},
   defaults: { hz: 440, gain: 0.25 },
-  controls: [{ key: "hz", label: "频率", type: "number", min: 50, max: 4000 }, { key: "gain", label: "强度", type: "number", min: 0, max: 1, step: 0.05 }],
+  controls: [{ key: "hz", label: "Frequency", type: "number", min: 50, max: 4000 }, { key: "gain", label: "Intensity", type: "number", min: 0, max: 1, step: 0.05 }],
   Component: SoundBeep,
   audio: (_sources, range, params) => {
     const g = globalThis as { __PC_SOUND_BEEP_RAN?: number };

@@ -51,7 +51,7 @@ function rig({ welcome = { activeIntervalMs: EVERY }, busy } = {}) {
 test("QM-D-P1 old queue (node.welcome without activeIntervalMs): holds a claim and the host also says busy, yet not a single node.active is sent", async () => {
   const r = rig({ welcome: {}, busy: () => "stage" });
   await r.claim();
-  assert.equal(r.bakes.length, 1, "第 0 帧在做");
+  assert.equal(r.bakes.length, 1, "Frame 0 is in progress");
   for (let i = 0; i < 5; i++) { r.advance(EVERY); r.node.tick(); }
   assert.equal(r.of("node.active").length, 0);
   assert.equal(r.node.debug().counters.active, 0);
@@ -77,7 +77,7 @@ test("QM-D-P2 new queue, holding a claim (generating snapshots): reports busy 'b
 
 test("QM-D-P3 no claim held: reports only when the host says the background stage is busy ('stage'); idle (null) does not report; a host that throws counts as not busy", () => {
   let state = null;
-  const r = rig({ busy: () => { if (state === "throw") throw new Error("坏了"); return state; } });
+  const r = rig({ busy: () => { if (state === "throw") throw new Error("Broken"); return state; } });
   r.node.tick();
   assert.equal(r.of("node.active").length, 0, "idle does not report");
   state = "stage";

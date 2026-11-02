@@ -55,7 +55,7 @@ const check = (cond, label, extra) => { if (!cond) fails.push(label + (extra ===
 const FPS = 30;
 /** 6 秒 = 180 帧:两张共享档的卡各切三段(0～59、60～119、120～179),本地档的卡从 1 秒起;一段约几十秒,够探针看清楚 */
 const projectOf = id => ({
-  id, name: '认领闸探针', width: 1920, height: 1080, fps: FPS, duration: 6,
+  id, name: 'Claim gate probe', width: 1920, height: 1080, fps: FPS, duration: 6,
   themeId: 'dark', camera3dFov: 50, media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
   tracks: [
     { id: 'tr-1', name: 'tr-1', hidden: false, clips: [{ id: 'clip-stateful', kind: 'card', cardId: 'r6-stateful', start: 0, end: 6, params: {} }] },
@@ -77,7 +77,7 @@ async function until(label, fn, timeoutMs = 120000, everyMs = 500) {
     let value;
     try { value = await fn(); } catch { value = null; }
     if (value) return value;
-    if (Date.now() > deadline) { fails.push(`超时:${label}`); return null; }
+    if (Date.now() > deadline) { fails.push(`Timeout: ${label}`); return null; }
     await delay(everyMs);
   }
 }
@@ -114,7 +114,7 @@ async function runOnce(label, { withAgent, port, docPort }) {
   run.exportDir = exportDir;
   const log = [];
   try {
-    for (const p of [port, port + 1, port + 2, docPort]) check(await portFree(p), `[${label}] 端口 ${p} 空着`);
+    for (const p of [port, port + 1, port + 2, docPort]) check(await portFree(p), `[${label}] port ${p} is free`);
     if (fails.length) return run;
     await fs.mkdir(path.join(exportDir, 'data'), { recursive: true });
 
@@ -124,7 +124,7 @@ async function runOnce(label, { withAgent, port, docPort }) {
     const doc = spawn(process.execPath, [path.join(ROOT, 'server', 'docservice', 'main.mjs')], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: docEnv });
     doc.stdout.resume(); doc.stderr.resume();
     children.push(doc);
-    if (!await until(`[${label}] 文档服务起来`, async () => (await json(`http://127.0.0.1:${docPort}/healthz`)).body?.ok === true || null, 30000)) return run;
+    if (!await until(`[${label}] document service up`, async () => (await json(`http://127.0.0.1:${docPort}/healthz`)).body?.ok === true || null, 30000)) return run;
 
     const env = { ...process.env, PROMPTCUT_EXPORT_DIR: exportDir, PROMPTCUT_DATA_DIR: path.join(exportDir, 'data'),
       PROMPTCUT_DOCSERVICE_URL: `ws://127.0.0.1:${docPort}`, PROMPTCUT_QUEUE_NODE: '1', PROMPTCUT_STREAMS: '0', PROMPTCUT_NO_PORT_FILE: '1' };
@@ -135,8 +135,8 @@ async function runOnce(label, { withAgent, port, docPort }) {
     const keep = c => { log.push(c.toString()); if (log.length > 400) log.shift(); };
     editor.stdout.on('data', keep); editor.stderr.on('data', keep);
     const EDITOR = `http://127.0.0.1:${port}`;
-    if (!await until(`[${label}] 编辑器进程起来`, async () => (await fetch(EDITOR + '/api/prerender/info').then(r => r.ok, () => false)) || null, 120000)) return run;
-    const base = await until(`[${label}] 预渲染进程就绪`, async () => {
+    if (!await until(`[${label}] editor process up`, async () => (await fetch(EDITOR + '/api/prerender/info').then(r => r.ok, () => false)) || null, 120000)) return run;
+    const base = await until(`[${label}] prerender process ready`, async () => {
       const info = await json(EDITOR + '/api/prerender/info');
       return info.body?.ready && info.body.url ? info.body.url : null;
     }, 180000);
@@ -146,27 +146,27 @@ async function runOnce(label, { withAgent, port, docPort }) {
     const PROJECT = projectOf(`claim-gate-${label}-${STAMP}`);
 
     // 第一次打 /api/frames/* 才建管线、起本机节点;等它连上文档服务、报到
-    if (!await until(`[${label}] 本机节点报到(queue.active)`, async () => (await diag()).queue?.active === true || null, 180000, 1000)) return run;
+    if (!await until(`[${label}] local node checked in (queue.active)`, async () => (await diag()).queue?.active === true || null, 180000, 1000)) return run;
     const d0 = await diag();
     run.mode = d0.mode?.mode ?? null;
-    check(run.mode === 'full', `[${label}] 预渲染进程是 full 模式`, d0.mode);
-    check(d0.scheduler?.agentOpen === false, `[${label}] 开始时 Agent 专用实例没开`, d0.scheduler);
+    check(run.mode === 'full', `[${label}] prerender process is in full mode`, d0.mode);
+    check(d0.scheduler?.agentOpen === false, `[${label}] dedicated Agent instance is off at the start`, d0.scheduler);
 
     if (withAgent) {
       const see = await postJson(`${base}/api/vision/snapshot`, { project: PROJECT, t: 1 });
       run.firstSee = { status: see.status, ok: see.body?.ok ?? null };
-      check(see.ok && see.body?.ok !== false, `[${label}] 模型先看一帧,返回了`, run.firstSee);
+      check(see.ok && see.body?.ok !== false, `[${label}] the model views a frame first and it returned`, run.firstSee);
       const s = (await diag()).scheduler;
-      check(s?.agentOpen === true, `[${label}] 之后 Agent 专用实例开着`, s);
+      check(s?.agentOpen === true, `[${label}] dedicated Agent instance is on afterwards`, s);
     }
 
     const SESSION = `cg-${label}-${STAMP}`;
     const pushed = await postJson(EDITOR + '/api/data/project', { session: SESSION, localRev: 1, project: PROJECT });
-    check(pushed.ok, `[${label}] 项目推进镜像`, pushed.body);
-    await until(`[${label}] 预渲染进程手里有这一版项目`, async () => (await json(`${base}/api/data/project?session=${SESSION}&localRev=1`)).ok || null, 30000);
+    check(pushed.ok, `[${label}] project pushed to the mirror`, pushed.body);
+    await until(`[${label}] prerender process holds this version of the project`, async () => (await json(`${base}/api/data/project?session=${SESSION}&localRev=1`)).ok || null, 30000);
     const started = Date.now();
     const preload = await postJson(`${base}/api/frames/preload`, { session: SESSION, localRev: 1 });
-    check(preload.ok, `[${label}] preload 开跑`, preload.body);
+    check(preload.ok, `[${label}] preload started`, preload.body);
 
     // 一路采样:每 150 ms 读一次诊断;每 2 秒照页面那样重发 preload 保活
     const samples = [];
@@ -206,16 +206,16 @@ async function runOnce(label, { withAgent, port, docPort }) {
     if (orderSend) await orderSend;
     run.preloadMs = Date.now() - started;
     run.ready = readyBody ? { status: readyBody.status, error: readyBody.error ?? null } : null;
-    check(readyBody?.status === 'ready', `[${label}] 后台那一趟以 ready 结束`, run.ready);
-    check(!!settled, `[${label}] plan 切分完、细任务全部落定`);
+    check(readyBody?.status === 'ready', `[${label}] the background run ended with ready`, run.ready);
+    check(!!settled, `[${label}] plan split finished, all subtasks settled`);
     if (settled) {
       run.tasks = settled.derived.length;
       run.snapshotTasks = settled.derived.filter(id => id.startsWith('snapshot:')).length;
       run.done = settled.states.filter(st => st === 'done').length;
       run.failedTasks = settled.derived.filter((id, i) => settled.states[i] === 'failed');
       run.queueStats = settled.stats;
-      check(run.failedTasks.length === 0, `[${label}] 没有细任务失败`, run.failedTasks);
-      check(run.snapshotTasks >= 2, `[${label}] 切出了至少两个快照细任务`, settled.derived);
+      check(run.failedTasks.length === 0, `[${label}] no subtask failed`, run.failedTasks);
+      check(run.snapshotTasks >= 2, `[${label}] at least two snapshot subtasks were split out`, settled.derived);
     }
     const dEnd = await diag();
     run.counts = dEnd.scheduler?.counts ?? {};
@@ -224,15 +224,15 @@ async function runOnce(label, { withAgent, port, docPort }) {
     for (const f of judgeRun({ withAgent, summary: run.summary, counts: run.counts })) fails.push(`[${label}] ${f}`);
     if (withAgent) {
       run.agentOrder = order;
-      check(!!orderSend, `[${label}] 采样期间见到过专用实例在做队列任务(才能测 Agent 任务排在哪)`, run.summary);
+      check(!!orderSend, `[${label}] the dedicated instance was seen running queue tasks during sampling (needed to measure where the Agent task is queued)`, run.summary);
       if (order) {
-        check(!order.error && order.status === 200 && order.ok !== false, `[${label}] 专用实例忙着时模型再看一帧,照常返回`, { status: order.status, error: order.error });
-        check(order.ok !== false && order.jumped?.length === 0 && order.agentAt !== null, `[${label}] Agent 任务不排在排队中的预渲染后面`, { reason: order.reason, jumped: order.jumped });
+        check(!order.error && order.status === 200 && order.ok !== false, `[${label}] while the dedicated instance is busy, the model views another frame and it returns as usual`, { status: order.status, error: order.error });
+        check(order.ok !== false && order.jumped?.length === 0 && order.agentAt !== null, `[${label}] the Agent task is not queued behind the waiting prerenders`, { reason: order.reason, jumped: order.jumped });
         // judgeAgentWait 的 15 秒上限量的是机器与网络有多快，语义里没有这条时间承诺：只记录，不进 fails
         // （判据函数 claim-gate-judge.mjs 一字不动，它有自己的单测；耗时只记录,不当闸门(verification.md,2026-10-07 用户改定);2026-10-23 探针总审第二遍扫描补改）
         const agentWaitNotes = judgeAgentWait(order, AGENT_WAIT_LIMIT_MS);
-        if (agentWaitNotes.length) (out.agentWaitNotes ??= []).push(`[${label}] 等 Agent 落定的用时超过 ${AGENT_WAIT_LIMIT_MS} ms（只记录）：${agentWaitNotes.join('；')}`);
-        check((run.yields?.count ?? 0) >= 1, `[${label}] 专用实例上的队列任务在批边界让过路(scheduler.yields.count >= 1)`, run.yields);
+        if (agentWaitNotes.length) (out.agentWaitNotes ??= []).push(`[${label}] waiting for the Agent to settle took longer than ${AGENT_WAIT_LIMIT_MS} ms (record only): ${agentWaitNotes.join(';')}`);
+        check((run.yields?.count ?? 0) >= 1, `[${label}] queue tasks on the dedicated instance yielded at batch boundaries (scheduler.yields.count >= 1)`, run.yields);
       }
     }
     return run;

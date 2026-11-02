@@ -35,7 +35,7 @@ const err400 = (msg) => ({ ok: false, status: 400, headers: { get: () => null },
 const userMsg = (text) => [{ role: 'user', content: [{ type: 'text', text }] }];
 
 /** 跑一遍 stream,把事件和每次请求的 body 都收下来 */
-async function run(cfg, { messages = userMsg('喂'), tools = [], responses } = {}) {
+async function run(cfg, { messages = userMsg('Hello'), tools = [], responses } = {}) {
   const sent = [];
   let i = 0;
   const fetchImpl = async (_url, init) => {
@@ -59,19 +59,19 @@ const CFG = { model: 'gemini-3.1-pro', apiKey: 'k' };
 
 /* ── 思考档位 ─────────────────────────────────────────────────── */
 
-test('cfg.effort 要发成 thinkingConfig —— 以前这里一个字都没发', async () => {
-  const { sent } = await run({ ...CFG, effort: 'high' }, { responses: [() => sse(parts({ text: '嗯' }))] });
+test('cfg.effort must be sent as thinkingConfig: previously nothing at all was sent here', async () => {
+  const { sent } = await run({ ...CFG, effort: 'high' }, { responses: [() => sse(parts({ text: 'Hmm' }))] });
   assert.deepEqual(sent[0].generationConfig.thinkingConfig, { thinkingLevel: 'high', includeThoughts: true });
 });
 
-test('没选思考档就别发这个字段,不要自作主张给个默认值', async () => {
-  const a = await run({ ...CFG, effort: '' }, { responses: [() => sse(parts({ text: '嗯' }))] });
+test('when no thinking tier is selected, do not send this field and do not make up a default value', async () => {
+  const a = await run({ ...CFG, effort: '' }, { responses: [() => sse(parts({ text: 'Hmm' }))] });
   assert.equal(a.sent[0].generationConfig.thinkingConfig, undefined);
-  const b = await run(CFG, { responses: [() => sse(parts({ text: '嗯' }))] });
+  const b = await run(CFG, { responses: [() => sse(parts({ text: 'Hmm' }))] });
   assert.equal(b.sent[0].generationConfig.thinkingConfig, undefined);
 });
 
-test('档位原样透传,不换算成 token 预算', async () => {
+test('the tier is passed through as is, not converted into a token budget', async () => {
   for (const lv of ['low', 'medium', 'high']) {
     const { sent } = await run({ ...CFG, effort: lv }, { responses: [() => sse(parts({ text: 'x' }))] });
     assert.equal(sent[0].generationConfig.thinkingConfig.thinkingLevel, lv);
@@ -80,47 +80,47 @@ test('档位原样透传,不换算成 token 预算', async () => {
   }
 });
 
-test('老模型不认 thinkingConfig 就去掉重发一次,别让一个下拉框打死整轮对话', async () => {
+test('if an older model does not recognize thinkingConfig, drop it and resend once; do not let one dropdown kill the whole chat turn', async () => {
   const { sent, events, threw } = await run(
     { ...CFG, effort: 'high' },
-    { responses: [() => err400('Unknown name "thinkingConfig"'), () => sse(parts({ text: '好的' }))] },
+    { responses: [() => err400('Unknown name "thinkingConfig"'), () => sse(parts({ text: 'OK' }))] },
   );
-  assert.equal(threw, null, '重发成功就不该抛');
-  assert.equal(sent.length, 2, '要重发一次');
-  assert.ok(sent[0].generationConfig.thinkingConfig, '第一次带着');
-  assert.equal(sent[1].generationConfig.thinkingConfig, undefined, '第二次去掉');
-  assert.deepEqual(sent[1].contents, sent[0].contents, '除了这个字段,别的一个字不改');
-  assert.ok(events.some((e) => e.type === 'text_delta' && e.text === '好的'));
+  assert.equal(threw, null, 'should not throw if the resend succeeds');
+  assert.equal(sent.length, 2, 'must resend once');
+  assert.ok(sent[0].generationConfig.thinkingConfig, 'the first request carries it');
+  assert.equal(sent[1].generationConfig.thinkingConfig, undefined, 'the second request drops it');
+  assert.deepEqual(sent[1].contents, sent[0].contents, 'apart from this field, nothing else changes');
+  assert.ok(events.some((e) => e.type === 'text_delta' && e.text === 'OK'));
 });
 
-test('没发 thinkingConfig 时的 400 照常报错,不要白重发一次', async () => {
-  const { sent, threw } = await run(CFG, { responses: [() => err400('无关的错误')] });
+test('a 400 when thinkingConfig was not sent is reported as usual; do not resend pointlessly', async () => {
+  const { sent, threw } = await run(CFG, { responses: [() => err400('unrelated error')] });
   assert.equal(sent.length, 1);
   assert.match(String(threw?.message), /gemini HTTP 400/);
 });
 
 /* ── 思考内容 ─────────────────────────────────────────────────── */
 
-test('thought:true 的 part 走 thinking_delta,而且不能漏进正文', async () => {
+test('a part with thought:true goes through thinking_delta and must not leak into the main text', async () => {
   const { events } = await run(CFG, {
-    responses: [() => sse(parts({ text: '我先想想', thought: true }, { text: '答案是 42' }))],
+    responses: [() => sse(parts({ text: 'Let me think first', thought: true }, { text: 'The answer is 42' }))],
   });
   const think = events.filter((e) => e.type === 'thinking_delta').map((e) => e.text);
   const text = events.filter((e) => e.type === 'text_delta').map((e) => e.text);
-  assert.deepEqual(think, ['我先想想'], '判断顺序写反的话这里会是空的');
-  assert.deepEqual(text, ['答案是 42'], '思考不能被当成正文播出去');
+  assert.deepEqual(think, ['Let me think first'], 'this would be empty if the check order were reversed');
+  assert.deepEqual(text, ['The answer is 42'], 'thinking must not be emitted as main text');
 });
 
-test('事件类型必须是 thinking_delta —— agent.mjs 只认这个名字,别的会被静默丢掉', async () => {
-  const { events } = await run(CFG, { responses: [() => sse(parts({ text: '想', thought: true }))] });
+test('the event type must be thinking_delta: agent.mjs only recognizes this name, anything else is silently dropped', async () => {
+  const { events } = await run(CFG, { responses: [() => sse(parts({ text: 'Thinking', thought: true }))] });
   const kinds = new Set(events.map((e) => e.type));
   assert.ok(kinds.has('thinking_delta'));
-  assert.ok(!kinds.has('thought'), "不能叫 thought,上层不认识");
+  assert.ok(!kinds.has('thought'), "must not be called thought, the upper layer does not recognize it");
 });
 
 /* ── 工具调用的 id ─────────────────────────────────────────────── */
 
-test('有官方 functionCall.id 就用它,没有才自己编号', async () => {
+test('use the official functionCall.id when there is one; only assign our own number when there is none', async () => {
   const { events } = await run(CFG, {
     responses: [() => sse(parts(
       { functionCall: { id: 'call_abc', name: 'see_frames', args: { t: 1 } } },
@@ -132,7 +132,7 @@ test('有官方 functionCall.id 就用它,没有才自己编号', async () => {
   assert.match(calls[1].id, /^gemini-call-\d+$/);
 });
 
-test('自己编的号在一条流里不会重复 —— agent.mjs 撞号会直接停掉整轮', async () => {
+test('self-assigned numbers never repeat within a stream: on a number collision agent.mjs stops the whole turn outright', async () => {
   const { events } = await run(CFG, {
     responses: [() => sse(parts(
       { functionCall: { name: 'see_frames', args: { t: 1 } } },
@@ -141,65 +141,65 @@ test('自己编的号在一条流里不会重复 —— agent.mjs 撞号会直�
     ))],
   });
   const ids = events.filter((e) => e.type === 'tool_use').map((e) => e.id);
-  assert.equal(new Set(ids).size, ids.length, `撞号了:${ids.join(', ')}`);
+  assert.equal(new Set(ids).size, ids.length, `numbers collided: ${ids.join(', ')}`);
 });
 
 /* ── 工具结果回传 ─────────────────────────────────────────────── */
 
 const withToolResult = (content, toolUseId = 'call_abc') => [
-  { role: 'user', content: [{ type: 'text', text: '看一下' }] },
+  { role: 'user', content: [{ type: 'text', text: 'Take a look' }] },
   { role: 'assistant', content: [{ type: 'tool_use', id: toolUseId, name: 'see_frames', input: {} }] },
   { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content }] },
 ];
 const fnResp = (sent) => sent[0].contents.at(-1).parts[0].functionResponse;
 
-test('结果本来是对象就原样发,别拍成一整条字符串', async () => {
+test('if the result is already an object, send it as is; do not flatten it into one big string', async () => {
   const { sent } = await run(CFG, {
-    messages: withToolResult({ ok: true, notes: ['一', '二'], box: { w: 1920, h: 1080 } }),
-    responses: [() => sse(parts({ text: '好' }))],
+    messages: withToolResult({ ok: true, notes: ['One', 'Two'], box: { w: 1920, h: 1080 } }),
+    responses: [() => sse(parts({ text: 'OK' }))],
   });
-  assert.deepEqual(fnResp(sent).response, { ok: true, notes: ['一', '二'], box: { w: 1920, h: 1080 } });
+  assert.deepEqual(fnResp(sent).response, { ok: true, notes: ['One', 'Two'], box: { w: 1920, h: 1080 } });
 });
 
-test('字符串 / 数组 / null 不是 Struct,仍然要包一层', async () => {
-  for (const c of ['一段文字', ['a', 'b'], null]) {
-    const { sent } = await run(CFG, { messages: withToolResult(c), responses: [() => sse(parts({ text: '好' }))] });
-    assert.deepEqual(fnResp(sent).response, { result: c }, `content=${JSON.stringify(c)} 要包一层`);
+test('a string / array / null is not a Struct, so it still has to be wrapped', async () => {
+  for (const c of ['Some text', ['a', 'b'], null]) {
+    const { sent } = await run(CFG, { messages: withToolResult(c), responses: [() => sse(parts({ text: 'OK' }))] });
+    assert.deepEqual(fnResp(sent).response, { result: c }, `content=${JSON.stringify(c)} needs to be wrapped`);
   }
 });
 
-test('官方 id 回传,自己编的号不回传(发过去 Gemini 也不认识)', async () => {
-  const real = await run(CFG, { messages: withToolResult({ ok: true }, 'call_abc'), responses: [() => sse(parts({ text: '好' }))] });
+test('official ids are sent back; self-assigned numbers are not (Gemini would not recognize them anyway)', async () => {
+  const real = await run(CFG, { messages: withToolResult({ ok: true }, 'call_abc'), responses: [() => sse(parts({ text: 'OK' }))] });
   assert.equal(fnResp(real.sent).id, 'call_abc');
-  const fake = await run(CFG, { messages: withToolResult({ ok: true }, 'gemini-call-1'), responses: [() => sse(parts({ text: '好' }))] });
+  const fake = await run(CFG, { messages: withToolResult({ ok: true }, 'gemini-call-1'), responses: [() => sse(parts({ text: 'OK' }))] });
   assert.equal(fnResp(fake.sent).id, undefined);
 });
 
-test('functionResponse 的 name 从当轮的 tool_use 里查,别写死 unknown', async () => {
-  const { sent } = await run(CFG, { messages: withToolResult({ ok: true }), responses: [() => sse(parts({ text: '好' }))] });
+test('the name in functionResponse is looked up from the current turn\'s tool_use; do not hard-code unknown', async () => {
+  const { sent } = await run(CFG, { messages: withToolResult({ ok: true }), responses: [() => sse(parts({ text: 'OK' }))] });
   assert.equal(fnResp(sent).name, 'see_frames');
 });
 
 /* ── 收尾 ─────────────────────────────────────────────────────── */
 
-test('正常收尾照旧 yield stop', async () => {
+test('a normal finish still yields stop', async () => {
   for (const reason of ['STOP', 'MAX_TOKENS']) {
     const { events, threw } = await run(CFG, { responses: [() => sse(parts({ text: 'x' }), finish(reason))] });
-    assert.equal(threw, null, `${reason} 不该抛`);
+    assert.equal(threw, null, `${reason} should not throw`);
     assert.equal(events.at(-1).type, 'stop');
     assert.equal(events.at(-1).reason, reason);
   }
 });
 
-test('异常收尾要抛出来,不能伪装成正常结束', async () => {
+test('an abnormal finish must throw and must not be disguised as a normal end', async () => {
   for (const reason of ['MALFORMED_FUNCTION_CALL', 'SAFETY', 'RECITATION']) {
     const { threw } = await run(CFG, { responses: [() => sse(parts({ text: 'x' }), finish(reason))] });
-    assert.ok(threw, `${reason} 被当成正常结束了`);
+    assert.ok(threw, `${reason} was treated as a normal end`);
     assert.match(threw.message, new RegExp(reason));
   }
 });
 
-test('抛之前 usage 已经报出去了,别把这一轮的账丢掉', async () => {
+test('usage was already reported before the throw; do not lose this turn\'s usage accounting', async () => {
   const { events } = await run(CFG, {
     responses: [() => sse(parts({ text: 'x' }), { usageMetadata: { promptTokenCount: 11, candidatesTokenCount: 22 }, candidates: [{ finishReason: 'SAFETY' }] })],
   });

@@ -34,14 +34,14 @@ const pad = (n) => String(n).padStart(4, '0');
 
 if (COMMAND === 'capture') await capture();
 else if (COMMAND === 'compare') await compare();
-else { console.error('用法见文件头:capture --out <目录> | compare --a <目录> --b <目录>'); process.exit(2); }
+else { console.error('See the file header for usage: capture --out <dir> | compare --a <dir> --b <dir>'); process.exit(2); }
 
 async function capture() {
   const { createServer } = await import('vite');
   const { default: puppeteer } = await import('puppeteer');
   const { PROBE_CHROME_ARGS } = await import('./probe-chrome.mjs');
   const PORT = Number(arg('--port', '27600'));
-  if (!Number.isInteger(PORT) || PORT < 20000 || PORT > 64999) throw new Error('--port 要用 20000 以上的端口');
+  if (!Number.isInteger(PORT) || PORT < 20000 || PORT > 64999) throw new Error('--port must be a port of 20000 or above');
   const OUT = path.resolve(ROOT, arg('--out', 'out/lottie-baseline/run'));
   const ASSETS = arg('--assets', [...BUNDLED, 'demo'].join(',')).split(',').filter(Boolean);
   const POKE = arg('--poke', '');
@@ -184,7 +184,7 @@ async function capture() {
           const touched = await p2.evaluate(code);
           await p2.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
           const after = await shot(p2, path.join(dir, `poke-${pad(f)}-${trick}-1.png`), vis);
-          console.log(`  poke ${trick}:动了 ${touched ?? '-'} 处;之前 ${before.png},之后 ${after.png}`);
+          console.log(`  poke ${trick}: touched ${touched ?? '-'} places; before ${before.png}, after ${after.png}`);
           await p2.close();
         }
       }
@@ -211,8 +211,8 @@ async function capture() {
         }
       }
       const empties = entry.seq.filter((s) => s.empty).length;
-      console.log(`${name}:${total} 帧(帧率 ${fr}),顺推 ${entry.seq.length} 张,回跳 ${Object.keys(entry.back).length} 张,直接跳 ${Object.keys(entry.jump).length} 张(第 ${picks.join('、')} 帧);没有 SVG 的 ${empties} 张`);
-      if (empties) index.pageErrors.push(`${name}:有 ${empties} 张图里没有 SVG`);
+      console.log(`${name}: ${total} frames (frame rate ${fr}), forward ${entry.seq.length} images, back-jump ${Object.keys(entry.back).length} images, direct jump ${Object.keys(entry.jump).length} images (frames ${picks.join(', ')}); ${empties} images without SVG`);
+      if (empties) index.pageErrors.push(`${name}: ${empties} images contain no SVG`);
     }
   } finally {
     index.seconds = +((Date.now() - started) / 1000).toFixed(1);
@@ -220,7 +220,7 @@ async function capture() {
     await browser?.close().catch(() => {});
     await vite.close().catch(() => {});
   }
-  console.log(`留底写到 ${OUT},用时 ${index.seconds} 秒;页面报错和警告 ${index.pageErrors.length} 条`);
+  console.log(`Capture written to ${OUT}, took ${index.seconds} s; ${index.pageErrors.length} page errors and warnings`);
   for (const e of index.pageErrors.slice(0, 10)) console.log(`  ${e}`);
   process.exit(index.pageErrors.length ? 1 : 0);
 }
@@ -244,37 +244,37 @@ async function compare() {
   };
   for (const name of Object.keys(ia.assets)) {
     const ea = ia.assets[name], eb = ib.assets[name];
-    if (!eb) { result.problems.push(`${name}:后一份里没有`); continue; }
-    if (ea.total !== eb.total) { result.problems.push(`${name}:帧数对不上 ${ea.total} / ${eb.total}`); continue; }
+    if (!eb) { result.problems.push(`${name}: missing in the second capture`); continue; }
+    if (ea.total !== eb.total) { result.problems.push(`${name}: frame count mismatch ${ea.total} / ${eb.total}`); continue; }
     const out = { total: ea.total };
     for (const pair of PAIRS) {
       const [ga, gb] = pair.split(':'); const group = ga === (gb ?? ga) ? ga : `${ga}→${gb}`;
       const la = ea[ga], lb = eb[gb ?? ga];
-      if (!la || !lb) { result.problems.push(`${name}:没有 ${!la ? ga : gb} 这一组`); continue; }
+      if (!la || !lb) { result.problems.push(`${name}: no group ${!la ? ga : gb}`); continue; }
       const keys = Array.isArray(la) ? la.map((_, i) => i) : Object.keys(la).map(Number);
       const g = { count: keys.length, same: 0, textOnly: [], pixelDiff: [] };
       for (const f of keys) {
         const sa = la[f], sb = lb[f];
-        if (!sa || !sb) { result.problems.push(`${name} ${group} 第 ${f} 帧:缺图`); continue; }
+        if (!sa || !sb) { result.problems.push(`${name} ${group} frame ${f}: image missing`); continue; }
         if (sa.png === sb.png) { if (sa.vis === sb.vis) g.same++; else g.textOnly.push(f); continue; }
         const d = pixels(path.join(A, name, `${ga}-${pad(f)}.png`), path.join(B, name, `${gb ?? ga}-${pad(f)}.png`));
         if (d.pixels === 0) { if (sa.vis === sb.vis) g.same++; else g.textOnly.push(f); } else g.pixelDiff.push({ f, pixels: d.pixels, max: d.max, textSame: sa.vis === sb.vis });
       }
       out[group] = g;
       const worst = g.pixelDiff.reduce((m, x) => Math.max(m, x.pixels), 0);
-      console.log(`${name} ${group}:${g.count} 张,相同 ${g.same};文本不同像素相同 ${g.textOnly.length}${g.textOnly.length ? `(第 ${ranges(g.textOnly)} 帧)` : ''};像素不同 ${g.pixelDiff.length}${g.pixelDiff.length ? `(第 ${ranges(g.pixelDiff.map((x) => x.f))} 帧,最多 ${worst} 个像素,最大差 ${g.pixelDiff.reduce((m, x) => Math.max(m, x.max), 0)})` : ''}`);
+      console.log(`${name} ${group}: ${g.count} images, identical ${g.same}; text differs but pixels identical ${g.textOnly.length}${g.textOnly.length ? `(frames ${ranges(g.textOnly)})` : ''}; pixels differ ${g.pixelDiff.length}${g.pixelDiff.length ? `(frames ${ranges(g.pixelDiff.map((x) => x.f))}, up to ${worst} pixels, max difference ${g.pixelDiff.reduce((m, x) => Math.max(m, x.max), 0)})` : ''}`);
     }
     result.assets[name] = out;
   }
   const json = arg('--json', '');
   if (json) fs.writeFileSync(path.resolve(ROOT, json), JSON.stringify(result, null, 1));
-  for (const p of result.problems) console.log(`对不上:${p}`);
+  for (const p of result.problems) console.log(`Mismatch: ${p}`);
   process.exit(result.problems.length ? 1 : 0);
 }
 
 /** [1,2,3,7,9,10] → "1～3、7、9～10" */
 function ranges(list) {
   const xs = [...list].sort((a, b) => a - b), out = [];
-  for (let i = 0; i < xs.length; i++) { let j = i; while (j + 1 < xs.length && xs[j + 1] === xs[j] + 1) j++; out.push(j > i ? `${xs[i]}～${xs[j]}` : `${xs[i]}`); i = j; }
-  return out.join('、');
+  for (let i = 0; i < xs.length; i++) { let j = i; while (j + 1 < xs.length && xs[j + 1] === xs[j] + 1) j++; out.push(j > i ? `${xs[i]}-${xs[j]}` : `${xs[i]}`); i = j; }
+  return out.join(', ');
 }

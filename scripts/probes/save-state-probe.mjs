@@ -97,7 +97,7 @@ async function openEditor(browser) {
             const text = typeof data === 'string' ? data : await new Blob([data]).text();
             await w.write(text.slice(0, Math.floor(text.length / 2)));
             probe.log.push('half-written');
-            throw new DOMException('模拟：写到一半磁盘出错', 'InvalidStateError');
+            throw new DOMException('Simulated: disk error halfway through the write', 'InvalidStateError');
           },
           close: () => { probe.log.push('close'); return w.close(); },
           abort: (reason) => { probe.log.push('abort'); return w.abort(reason); },
@@ -117,10 +117,10 @@ async function clickSave(page) {
   // 点顶栏「项目」→「保存项目」。菜单偶尔一打开就被别处的关闭逻辑收回去:重试几次
   for (let i = 0; i < 4; i += 1) {
     await page.click('.pc-proj-btn');
-    const open = await waitFor(page, () => [...document.querySelectorAll('.pc-proj-item')].some((b) => b.textContent.includes('保存项目')), null, 2000).then(() => true, () => false);
+    const open = await waitFor(page, () => [...document.querySelectorAll('.pc-proj-item')].some((b) => b.textContent.includes('Save project')), null, 2000).then(() => true, () => false);
     if (open) {
       await page.evaluate(() => {
-        const item = [...document.querySelectorAll('.pc-proj-item')].find((b) => b.textContent.includes('保存项目'));
+        const item = [...document.querySelectorAll('.pc-proj-item')].find((b) => b.textContent.includes('Save project'));
         item.click();
       });
       return 'menu';
@@ -179,14 +179,14 @@ async function tryEditPaths(page) {
   // 5 粘贴、滚轮
   await page.evaluate(() => {
     const el = document.querySelector('[data-pc="timeline"]') || document.body;
-    const dt = new DataTransfer(); dt.setData('text/plain', '粘贴');
+    const dt = new DataTransfer(); dt.setData('text/plain', 'paste');
     el.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }));
     el.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 300, ctrlKey: true }));
   });
   await sleep(150); changed.pasteWheel = await snap();
   // 6 Agent 面板:焦点放进输入框打字。打不进字就发不出去;不按回车 —— 没拦住的话(改之前的代码)回车会真把话发给 Agent
   const hasComposer = await page.evaluate(() => { const t = document.querySelector('.ai-composer-input'); if (!t) return false; t.focus(); return true; });
-  if (hasComposer) await page.keyboard.type('把标题改成 X');
+  if (hasComposer) await page.keyboard.type('Change the title to X');
   await sleep(200);
   changed.agentPanel = { ...(await snap()), composer: hasComposer, typed: await page.evaluate(() => document.querySelector('.ai-composer-input')?.value ?? null) };
   await page.evaluate(() => document.activeElement?.blur?.());
@@ -197,10 +197,10 @@ async function phaseLock(browser) {
   const page = await openEditor(browser);
   await page.evaluate(() => {
     const a = window.__pcStore.actions;
-    a.setProjectMeta({ name: '保存探针改过' });
+    a.setProjectMeta({ name: 'Save probe modified' });
   });
   const tracks0 = await trackCount(page);
-  await addTrack(page, '探针序列');
+  await addTrack(page, 'Probe track');
   const selected = await selectFirstClip(page);
   const clips0 = await clipCount(page);
   // 撤销栈里要真有这一步、有选中的片段,快捷键那两条路才测得出东西
@@ -215,7 +215,7 @@ async function phaseLock(browser) {
   await page.screenshot({ path: path.join(outDir, '1-saving.png') });
   const tried = await tryEditPaths(page);
   for (const [k, v] of Object.entries(tried)) {
-    const ok = v.same && v.name === '保存探针改过' && v.tracks === tracks0 + 1 && v.clips === clips0 && !v.renaming && (k !== 'agentPanel' || !v.composer || !v.typed);
+    const ok = v.same && v.name === 'Save probe modified' && v.tracks === tracks0 + 1 && v.clips === clips0 && !v.renaming && (k !== 'agentPanel' || !v.composer || !v.typed);
     check(`lock.blocked.${k}`, ok, v);
   }
   await page.evaluate(() => window.__saveProbe.release());
@@ -226,7 +226,7 @@ async function phaseLock(browser) {
   const text = await page.evaluate((n) => window.__opfsText(n), fname);
   let savedName = null, savedTracks = null;
   try { const doc = JSON.parse(text); savedName = doc.project.name; savedTracks = doc.project.tracks.length; } catch { /* 下面判 */ }
-  check('lock.file-written', savedName === '保存探针改过' && savedTracks === tracks0 + 1, { savedName, savedTracks, bytes: text?.length ?? 0 });
+  check('lock.file-written', savedName === 'Save probe modified' && savedTracks === tracks0 + 1, { savedName, savedTracks, bytes: text?.length ?? 0 });
   const dirty = await page.evaluate(() => window.__pcStore.getState().dirty);
   check('lock.marked-saved', dirty === false, { dirty });
   await page.evaluate(() => document.activeElement?.blur?.());
@@ -241,17 +241,17 @@ async function phaseLock(browser) {
 
 async function phaseTimeout(browser) {
   const page = await openEditor(browser);
-  await page.evaluate(() => { window.__pcStore.actions.setProjectMeta({ name: '超时探针' }); });
+  await page.evaluate(() => { window.__pcStore.actions.setProjectMeta({ name: 'Timeout probe' }); });
   const fname = await fileName(page);
   // 先正常存一版,作为「上次有效保存」
   await clickSave(page);
   await waitFor(page, () => window.__saveProbe.log.includes('closed') && window.__pcStore.getState().dirty === false, null, 30000);
   await sleep(300);
   const before = await page.evaluate((n) => window.__opfsText(n), fname);
-  check('timeout.baseline-saved', !!before && before.includes('超时探针'), { bytes: before?.length ?? 0 });
-  await page.evaluate(() => { window.__pcStore.actions.setProjectMeta({ name: '超时探针改过' }); });
+  check('timeout.baseline-saved', !!before && before.includes('Timeout probe'), { bytes: before?.length ?? 0 });
+  await page.evaluate(() => { window.__pcStore.actions.setProjectMeta({ name: 'Timeout probe modified' }); });
   const tracks0 = await trackCount(page);
-  await addTrack(page, '超时序列');
+  await addTrack(page, 'Timeout track');
   // 本机 Agent 有一个工具调用开始了、一直没结束(和 mcpExecutor 用的是同一个模块实例)
   const moduleUrl = await page.evaluate(AGENT_TOOL('beginAgentTool'));
   check('timeout.precondition-agent-module', !!moduleUrl, { moduleUrl });
@@ -270,7 +270,7 @@ async function phaseTimeout(browser) {
   await waitFor(page, () => !!document.querySelector('[data-pc="save-notice"]'), null, 30000).catch(() => {});
   const elapsed = Date.now() - t0;
   const notice = await page.evaluate(() => { const el = document.querySelector('[data-pc="save-notice"]'); return { tone: el?.getAttribute('data-tone'), text: el?.textContent ?? '' }; });
-  check('timeout.notice', notice.tone === 'error' && notice.text.includes('Agent') && notice.text.includes('没有保存') && notice.text.includes('原来的文件没有改动'), { notice, elapsedMs: elapsed });
+  check('timeout.notice', notice.tone === 'error' && notice.text.includes('Agent') && notice.text.includes('not saved') && notice.text.includes('original file was not changed'), { notice, elapsedMs: elapsed });
   await page.screenshot({ path: path.join(outDir, '4-timeout.png') });
   const createAfter = await page.evaluate(() => window.__saveProbe.createCalls);
   const afterText = await page.evaluate((n) => window.__opfsText(n), fname);
@@ -286,29 +286,29 @@ async function phaseTimeout(browser) {
 
 async function phaseFail(browser) {
   const page = await openEditor(browser);
-  await page.evaluate(() => { window.__pcStore.actions.setProjectMeta({ name: '失败探针' }); });
+  await page.evaluate(() => { window.__pcStore.actions.setProjectMeta({ name: 'Failure probe' }); });
   const fname = await fileName(page);
   await clickSave(page);
   await waitFor(page, () => window.__saveProbe.log.includes('closed') && window.__pcStore.getState().dirty === false, null, 30000);
   await sleep(300);
   const before = await page.evaluate((n) => window.__opfsText(n), fname);
-  check('fail.baseline-saved', !!before && before.includes('失败探针'), { bytes: before?.length ?? 0 });
+  check('fail.baseline-saved', !!before && before.includes('Failure probe'), { bytes: before?.length ?? 0 });
   // 改得多一点,让新内容比旧的长、写一半时一定和旧内容不同
   const tracks0 = await trackCount(page);
-  await addTrack(page, '失败序列'.repeat(20));
+  await addTrack(page, 'Failure track'.repeat(20));
   await page.evaluate(() => { window.__saveProbe.mode = 'fail'; window.__saveProbe.log = []; });
   await clickSave(page);
   await waitFor(page, () => !!document.querySelector('[data-pc="save-notice"]') || (!document.querySelector('[data-pc="save-lock"]') && window.__saveProbe.log.includes('half-written')), null, 30000);
   await sleep(300);
   const notice = await page.evaluate(() => { const el = document.querySelector('[data-pc="save-notice"]'); return el ? { tone: el.getAttribute('data-tone'), text: el.textContent } : null; });
-  check('fail.notice', !!notice && notice.tone === 'error' && notice.text.includes('原来的文件'), { notice });
+  check('fail.notice', !!notice && notice.tone === 'error' && notice.text.includes('original file'), { notice });
   await page.screenshot({ path: path.join(outDir, '5-write-failed.png') });
   const log = await page.evaluate(() => window.__saveProbe.log);
   check('fail.aborted', log.includes('abort') && !log.includes('close'), { log });
   const afterText = await page.evaluate((n) => window.__opfsText(n), fname);
   check('fail.original-byte-identical', afterText === before, { beforeBytes: before?.length ?? 0, afterBytes: afterText?.length ?? 0 });
   const names = await page.evaluate(() => window.__opfsNames());
-  check('fail.no-leftover-files', names.filter((n) => n !== fname && n.startsWith('失败探针')).length === 0, { names });
+  check('fail.no-leftover-files', names.filter((n) => n !== fname && n.startsWith('Failure probe')).length === 0, { names });
   const dirty = await page.evaluate(() => window.__pcStore.getState().dirty);
   check('fail.still-dirty', dirty === true, { dirty });
   await page.evaluate(() => document.activeElement?.blur?.());
@@ -322,7 +322,7 @@ async function phaseFail(browser) {
     const h = await root.getFileHandle(n);
     const orig = await (await h.getFile()).text();
     const w = await h.createWritable();
-    await w.write('半截'.repeat(50));
+    await w.write('partial'.repeat(50));
     const midway = await (await h.getFile()).text();
     // 不 close、不 abort,丢掉这个流
     const w2 = await h.createWritable(); // 再开一个流也不受影响

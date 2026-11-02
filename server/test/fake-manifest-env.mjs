@@ -29,8 +29,8 @@ export async function loadContentClient() {
   if (!contentClientMod && !contentClientError) {
     try { contentClientMod = await import('../render-node/content-client.mjs'); } catch (err) { contentClientError = err; }
   }
-  if (contentClientError) throw new Error(`载不进 server/render-node/content-client.mjs：${contentClientError.message}`);
-  assert.equal(typeof contentClientMod.createContentClient, 'function', `content-client.mjs 要导出 createContentClient；导出：${Object.keys(contentClientMod).join(', ')}`);
+  if (contentClientError) throw new Error(`cannot load server/render-node/content-client.mjs: ${contentClientError.message}`);
+  assert.equal(typeof contentClientMod.createContentClient, 'function', `content-client.mjs must export createContentClient; exports: ${Object.keys(contentClientMod).join(', ')}`);
   return contentClientMod;
 }
 
@@ -61,7 +61,7 @@ export async function connectEndpoint(url, { env, ms = 3000 } = {}) {
   env?.endpoints?.add(endpoint);
   if (!endpoint.connected) {
     await new Promise((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error(`端点 ${ms} ms 内没连上：${url}`)), ms);
+      const t = setTimeout(() => reject(new Error(`endpoint did not connect within ${ms} ms: ${url}`)), ms);
       endpoint.onOpen(() => { clearTimeout(t); resolve(); });
     });
   }
@@ -160,8 +160,8 @@ export async function until(cond, { timeoutMs = 10_000, stepMs = 10, what = () =
     if (await cond()) return Date.now() - t0;
     if (Date.now() - t0 > timeoutMs) {
       let info = '';
-      try { info = await what(); } catch (err) { info = `（诊断出错：${err.message}）`; }
-      throw new Error(`等了 ${timeoutMs} ms 条件仍不成立。${info}`);
+      try { info = await what(); } catch (err) { info = `(diagnostics error: ${err.message})`; }
+      throw new Error(`waited ${timeoutMs} ms and the condition still does not hold. ${info}`);
     }
     await new Promise((resolve) => setTimeout(resolve, stepMs));
   }

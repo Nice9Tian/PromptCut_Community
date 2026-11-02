@@ -48,7 +48,7 @@ async function readAll(stream) {
 }
 
 for (const [kind, make] of Object.entries(kinds)) {
-  test(`${kind}：A 已收到第 0 片，B 重传同一片还没写完时，A 收尾不回 incomplete`, async () => {
+  test(`${kind}: A has received chunk 0; while B's re-send of the same chunk has not finished writing, A's completion does not return incomplete`, async () => {
     const store = make();
     const buf = crypto.randomBytes(CS * 2 + 5);
     const h = sha256(buf);
@@ -61,16 +61,16 @@ for (const [kind, make] of Object.entries(kinds)) {
     const bDone = store.putChunk(h, 0, meta, b.src);
     await Promise.race([b.started, tick(200)]);
     await tick();
-    assert.deepEqual((await store.chunks(h)).received, [0, 1, 2], '已收到的片不因重传而撤掉');
+    assert.deepEqual((await store.chunks(h)).received, [0, 1, 2], 'Chunks already received are not removed because of a re-send');
     const done = await store.complete(h);
-    assert.equal(done.status, 'ok', `A 收尾：${JSON.stringify(done)}`);
+    assert.equal(done.status, 'ok', `A completion: ${JSON.stringify(done)}`);
     b.src.end(buf.subarray(0, CS));
     const bRes = await bDone;
-    assert.ok(bRes.status === 'ok' || bRes.status === 'complete', `B 的重传：${JSON.stringify(bRes)}`);
+    assert.ok(bRes.status === 'ok' || bRes.status === 'complete', `B's re-send: ${JSON.stringify(bRes)}`);
     assert.equal(sha256(await readAll(await store.read(h))), h);
   });
 
-  test(`${kind}：A、B 同时传第 0 片，A 先写完并收尾入库，B 写完回 complete 而不是 discarded`, async () => {
+  test(`${kind}: A and B upload chunk 0 at the same time; A finishes writing first and completes and is stored, and B returns complete instead of discarded when it finishes writing`, async () => {
     const store = make();
     const buf = crypto.randomBytes(CS - 3);
     const h = sha256(buf);
@@ -81,22 +81,22 @@ for (const [kind, make] of Object.entries(kinds)) {
     await tick();
     assert.equal((await store.putChunk(h, 0, meta, [buf])).status, 'ok');
     const done = await store.complete(h);
-    assert.equal(done.status, 'ok', `A 收尾：${JSON.stringify(done)}`);
+    assert.equal(done.status, 'ok', `A completion: ${JSON.stringify(done)}`);
     b.src.end(buf);
     const bRes = await bDone;
-    assert.ok(bRes.status === 'ok' || bRes.status === 'complete', `B：${JSON.stringify(bRes)}`);
+    assert.ok(bRes.status === 'ok' || bRes.status === 'complete', `B: ${JSON.stringify(bRes)}`);
     assert.equal(sha256(await readAll(await store.read(h))), h);
     assert.equal((await store.chunks(h)).complete, true);
   });
 
-  test(`${kind}：已收到的片重传时断流，标记保留（存着的字节没被碰过）`, async () => {
+  test(`${kind}: when a chunk already received is re-sent and the stream breaks, the mark is kept (the stored bytes were never touched)`, async () => {
     const store = make();
     const buf = crypto.randomBytes(CS + 4);
     const h = sha256(buf);
     const meta = { size: buf.length, ext: 'webp' };
     assert.equal((await store.putChunk(h, 0, meta, [buf.subarray(0, CS)])).status, 'ok');
     assert.equal((await store.putChunk(h, 1, meta, [buf.subarray(CS)])).status, 'ok');
-    const broken = (async function* () { yield buf.subarray(0, 5); throw new Error('断线'); })();
+    const broken = (async function* () { yield buf.subarray(0, 5); throw new Error('Connection lost'); })();
     await assert.rejects(store.putChunk(h, 0, meta, broken));
     assert.deepEqual((await store.chunks(h)).received, [0, 1]);
     assert.equal((await store.complete(h)).status, 'ok');

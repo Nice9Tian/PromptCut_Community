@@ -21,7 +21,7 @@ const gate = () => { let open; const p = new Promise(resolve => { open = resolve
 async function until(check, ms = 3000) {
   const t0 = Date.now();
   while (!check()) {
-    if (Date.now() - t0 > ms) throw new Error('等不到条件成立');
+    if (Date.now() - t0 > ms) throw new Error('Timed out waiting for the condition');
     await sleep(1);
   }
 }
@@ -29,7 +29,7 @@ async function until(check, ms = 3000) {
 let opened = 0;
 mock.module(new URL('../bakery/index.mjs', import.meta.url).href, {
   exports: {
-    openBakery: async () => { opened++; throw new Error('这里不开 Chrome'); },
+    openBakery: async () => { opened++; throw new Error('Chrome is not opened here'); },
     findFfmpeg: async () => 'ffmpeg',
     bakeFrames: async () => {},
   },
@@ -92,13 +92,13 @@ function harness({ mode = 'full', agentOpen = false, queueOpen = true, interacti
 async function settlesWithin(promise, ms = 500) {
   const timer = sleep(ms).then(() => ({ timeout: true }));
   const result = await Promise.race([promise.then(value => ({ ok: true, value }), error => ({ ok: false, error })), timer]);
-  assert.ok(!result.timeout, `${ms} ms 内没有落定(挂住了)`);
+  assert.ok(!result.timeout, `did not settle within ${ms} ms (hung)`);
   return result;
 }
 
 /* ------------------------------------------------------------------ 模式 */
 
-test('QR2-M-1 模式值:认得三种、大小写与空白不计;预渲染进程没设或认不得按 full;编辑器拉起时缺省 full(本机总有 Agent)、显式给了照它', () => {
+test('QR2-M-1 mode value: three values are recognized, case and whitespace are ignored; an unset or unrecognized value in the prerender process is treated as full; when launched by the editor the default is full (this machine always has an Agent), and an explicit value is used as given', () => {
   assert.equal(modeLib.parsePrerenderMode(' Agent '), 'agent');
   assert.equal(modeLib.parsePrerenderMode('USER'), 'user');
   assert.equal(modeLib.parsePrerenderMode('full'), 'full');
@@ -114,7 +114,7 @@ test('QR2-M-1 模式值:认得三种、大小写与空白不计;预渲染进程�
   assert.deepEqual(modeLib.lanesOfMode('full'), ['user', 'background', 'queue', 'stream', 'agent']);
 });
 
-test('QR2-M-2 full 模式(缺省):三条链都建,Agent 查询与普通预渲染都接;不传 mode 与传 full 相同', async () => {
+test('QR2-M-2 full mode (default): all three chains are built, and both Agent queries and regular prerender are accepted; passing no mode is the same as passing full', async () => {
   for (const mode of [undefined, 'full']) {
     const { svc, log, task, agentTask } = harness({ mode, agentOpen: true });
     try {
@@ -130,7 +130,7 @@ test('QR2-M-2 full 模式(缺省):三条链都建,Agent 查询与普通预渲染
   }
 });
 
-test('QR2-M-3 user 模式:不建 Agent lane;Agent 的查询(see_frames、runAgentTask、layout)当场回 503 NO_AGENT_LANE、不可重试;预渲染照做、专用实例不接活', async () => {
+test('QR2-M-3 user mode: no Agent lane is built; Agent queries (see_frames, runAgentTask, layout) immediately return 503 NO_AGENT_LANE and are not retryable; prerender proceeds as usual, and the dedicated instance takes no jobs', async () => {
   const { svc, log, task, agentTask } = harness({ mode: 'user' });
   // 就算 lanes 里有个 'agent'(不会有),也不借它
   svc.lanes.set('agent', { bakery: fakeBakery('agent', log) });
@@ -143,14 +143,14 @@ test('QR2-M-3 user 模式:不建 Agent lane;Agent 的查询(see_frames、runAgen
       const result = await settlesWithin(Promise.resolve().then(call));
       assert.ok(!result.ok && noAgent(result.error), String(result.error?.code ?? result.value));
     }
-    assert.equal(svc.agentPending, 0, 'Agent 队列里没留东西');
+    assert.equal(svc.agentPending, 0, 'nothing is left in the Agent queue');
     // 预渲染照做:操作预览、普通预渲染都在 queue lane 上
     const hold = gate();
     const a = task('A', { hold });
     const b = task('B');
     await until(() => log.includes('A:start@queue'));
     await sleep(15);
-    assert.ok(!log.some(e => e.startsWith('B')), 'B 没被专用实例接走(user 模式没有专用实例)');
+    assert.ok(!log.some(e => e.startsWith('B')), 'B was not picked up by the dedicated instance (user mode has no dedicated instance)');
     assert.equal(svc.agentSpareSlot(), false);
     hold.open();
     await Promise.all([a, b]);
@@ -161,7 +161,7 @@ test('QR2-M-3 user 模式:不建 Agent lane;Agent 的查询(see_frames、runAgen
   } finally { await svc.close(); }
 });
 
-test('QR2-M-4 agent 模式:只建 Agent lane;预渲染的请求当场回 503 NO_PRERENDER(不排队、不挂住、不开 Chrome);preload 回 skipped;Agent 查询照常', async () => {
+test('QR2-M-4 agent mode: only the Agent lane is built; prerender requests immediately return 503 NO_PRERENDER (not queued, not left hanging, no Chrome opened); preload returns skipped; Agent queries work as usual', async () => {
   const { svc, log, agentTask } = harness({ mode: 'agent', agentOpen: true });
   const openedBefore = opened;
   try {
@@ -185,13 +185,13 @@ test('QR2-M-4 agent 模式:只建 Agent lane;预渲染的请求当场回 503 NO_
     // 后台那一趟借 'background' 时同样拒,并标 cancelled(照让路收手)
     const bg = await settlesWithin(svc.acquire('background', project));
     assert.ok(!bg.ok && bg.error.code === 'NO_PRERENDER' && bg.error.cancelled === true);
-    assert.equal(svc.queueTasks.length, 0, '没有排进普通预渲染队列');
+    assert.equal(svc.queueTasks.length, 0, 'not queued in the regular prerender queue');
     assert.deepEqual(await svc.preload(project, { session: 's1', localRev: 1 }), { skipped: 'agent' });
-    assert.equal(svc.streamProducer(), null, '不产流');
+    assert.equal(svc.streamProducer(), null, 'no stream is produced');
     await svc.prewarmUser(project);
-    assert.equal(svc.userPool.length, 0, '不养交互帧的热池');
-    assert.equal(opened, openedBefore, '没开任何 Chrome');
-    assert.equal(svc.agentSpareSlot(), false, '没有预渲染可接');
+    assert.equal(svc.userPool.length, 0, 'no warm pool of interactive frames is kept');
+    assert.equal(opened, openedBefore, 'no Chrome was opened');
+    assert.equal(svc.agentSpareSlot(), false, 'there is no prerender to pick up');
     // Agent 查询照常
     assert.equal(await agentTask('X'), 'X');
     const frames = await svc.see_frames(project, [0.5, 1]);
@@ -200,7 +200,7 @@ test('QR2-M-4 agent 模式:只建 Agent lane;预渲染的请求当场回 503 NO_
   } finally { await svc.close(); }
 });
 
-test('QR2-M-5 编辑器进程(interactive: false)不受模式影响:照旧 NO_AGENT_LANE(可重试)/ USE_PRERENDER,普通预渲染队列照旧', async () => {
+test('QR2-M-5 the editor process (interactive: false) is not affected by the mode: NO_AGENT_LANE (retryable) / USE_PRERENDER as before, and the regular prerender queue as before', async () => {
   for (const mode of ['agent', 'user', 'full']) {
     const { svc, task } = harness({ mode, interactive: false });
     try {
@@ -212,40 +212,40 @@ test('QR2-M-5 编辑器进程(interactive: false)不受模式影响:照旧 NO_AG
   }
 });
 
-test('QR2-M-6 源码核对:编辑器拉起预渲染进程时传 PROMPTCUT_PRERENDER_MODE(localPrerenderMode);帧插件按模式建管线,agent 模式不起渲染节点、不建推送队列、/preload 回 skipped', () => {
+test('QR2-M-6 source check: when the editor launches the prerender process it passes PROMPTCUT_PRERENDER_MODE (localPrerenderMode); the frame plugin builds the pipeline according to the mode, and in agent mode it starts no render node, builds no push queue, and /preload returns skipped', () => {
   const root = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..');
   const prerender = fs.readFileSync(path.join(root, 'vite-plugin-prerender.ts'), 'utf8');
   assert.match(prerender, /const mode = localPrerenderMode\(process\.env\)/);
   assert.match(prerender, /PROMPTCUT_PRERENDER_MODE: mode,/);
-  assert.match(prerender, /error: s\.error, mode \}/, '/api/prerender/info 带 mode');
+  assert.match(prerender, /error: s\.error, mode \}/, '/api/prerender/info includes mode');
   const frames = fs.readFileSync(path.join(root, 'vite-plugin-frames.ts'), 'utf8');
   assert.match(frames, /const prerenderMode = isPrerender \? prerenderModeOf\(process\.env\) : "full";/);
   assert.match(frames, /mode: prerenderMode,/);
   assert.match(frames, /if \(servesPrerender\) void startArtifactPush/);
   assert.match(frames, /if \(servesPrerender && queueNodeSwitch\(\)\) void startQueueNode/);
   assert.match(frames, /url\.pathname === "\/preload" && !servesPrerender\) \{\s*\/\/[^\n]*\n\s*return json\(200, \{ ok: true, skipped: prerenderMode/);
-  assert.match(frames, /reason: `prerender-mode-\$\{prerenderMode\}`/, 'agent 模式不当自动渲染节点');
+  assert.match(frames, /reason: `prerender-mode-\$\{prerenderMode\}`/, 'agent mode does not act as an automatic render node');
 });
 
 /* ------------------------------------------------------------------ 认领闸 */
 
-test('QR2-C-1 agentSpareSlot:只在 full 模式、专用实例开着没过期、Agent 队列空、手里没活、没有它能接的待办时为真', async () => {
+test('QR2-C-1 agentSpareSlot: true only in full mode, with the dedicated instance open and not expired, the Agent queue empty, no job in hand, and no pending item it could take', async () => {
   const closed = harness({ agentOpen: false });
-  try { assert.equal(closed.svc.agentSpareSlot(), false, '专用实例没开:不为接预渲染开实例'); } finally { await closed.svc.close(); }
+  try { assert.equal(closed.svc.agentSpareSlot(), false, 'dedicated instance not open: no instance is opened just to take on prerender'); } finally { await closed.svc.close(); }
   const { svc, task, agentTask } = harness({ agentOpen: true });
   try {
     assert.equal(svc.agentSpareSlot(), true);
     svc.lanes.get('agent').expired = true;
-    assert.equal(svc.agentSpareSlot(), false, '到了空闲关闭');
+    assert.equal(svc.agentSpareSlot(), false, 'idle close reached');
     svc.lanes.get('agent').expired = false;
     svc.backgroundLeaseUntil = Date.now() + 10_000;
-    assert.equal(svc.agentSpareSlot(), false, '播放让路期间');
+    assert.equal(svc.agentSpareSlot(), false, 'while yielding to playback');
     svc.backgroundLeaseUntil = 0;
     // Agent 任务在做:不开
     const hold = gate();
     const x = svc.runAgentTask(async lease => { await lease(project); await hold.p; return 'X'; });
     await until(() => svc.agentPending === 1);
-    assert.equal(svc.agentSpareSlot(), false, 'Agent 队列不空');
+    assert.equal(svc.agentSpareSlot(), false, 'Agent queue is not empty');
     hold.open();
     await x;
     // queue lane 忙、队列里还有它能接的待办:专用实例自己会接,不用多认领
@@ -253,16 +253,16 @@ test('QR2-C-1 agentSpareSlot:只在 full 模式、专用实例开着没过期、
     const a = task('A', { hold: holdA });
     const b = task('B', { hold: holdB });
     await until(() => svc.agentUnit !== null);
-    assert.equal(svc.agentSpareSlot(), false, '手里有一项');
+    assert.equal(svc.agentSpareSlot(), false, 'one item in hand');
     holdB.open(); await b;
     await until(() => svc.agentUnit === null);
-    assert.equal(svc.agentSpareSlot(), true, 'queue lane 在做 A、专用实例空着');
+    assert.equal(svc.agentSpareSlot(), true, 'queue lane is working on A, dedicated instance is idle');
     holdA.open(); await a;
     await agentTask('Y');
   } finally { await svc.close(); }
 });
 
-test('QR2-C-2 节点会话的 claimLimit:上限多一格时持有一项还会再认领一项;canClaim 拿到此刻的持有数;hello 报的仍是 maxConcurrent', () => {
+test('QR2-C-2 claimLimit of a node session: with one extra slot in the limit, a node holding one item still claims another; canClaim receives the current held count; hello still reports maxConcurrent', () => {
   let t = 1000;
   const sent = [];
   let limit = 1;
@@ -286,39 +286,39 @@ test('QR2-C-2 节点会话的 claimLimit:上限多一格时持有一项还会再
   session.receive({ type: 'task.claimed', epoch: 'e', id: first.id, token: 1, version: 1, leaseUntil: t + 30000, task: { ...view(first.id.split(':')[1]), state: 'claimed', version: 1 } });
   sent.length = 0;
   t += 1; session.tick();
-  assert.equal(sent.filter(m => m.type === 'task.claim').length, 0, '上限 1:持有一项就不再认领');
+  assert.equal(sent.filter(m => m.type === 'task.claim').length, 0, 'limit 1: no more claims once one item is held');
   limit = 2;
   t += 1; session.tick();
   const second = sent.find(m => m.type === 'task.claim');
-  assert.ok(second && second.id !== first.id, '上限 2:再认领一项');
-  assert.deepEqual([...new Set(seen)].sort(), [0, 1], 'canClaim 拿到持有数 0 与 1');
+  assert.ok(second && second.id !== first.id, 'limit 2: claims one more item');
+  assert.deepEqual([...new Set(seen)].sort(), [0, 1], 'canClaim received held counts 0 and 1');
 });
 
-test('QR2-C-3 认领闸的格子:平时那一格什么都接;多出的那一格只接快照、不接和手里同一张卡的、只在专用实例能接且 queue lane 在忙时开', async () => {
+test('QR2-C-3 slots of the claim gate: the regular slot accepts anything; the extra slot accepts only snapshots, never one for the same card as the one in hand, and is open only when the dedicated instance can take it and the queue lane is busy', async () => {
   const pipeline = { spare: true, queueRunning: { tag: 'x' }, agentSpareSlot() { return this.spare; } };
   const g = createAgentSpareGate({ pipeline, base: 1 });
   const snap = (key, extra = {}) => ({ id: `snapshot:${key}:0-59`, kind: 'snapshot', input: { contentKey: key, ...extra } });
   assert.equal(g.claimLimit(), 2);
-  assert.equal(g.canClaim({ id: 'plan:1', kind: 'plan' }, { held: 0 }), true, '平时那一格:plan 也接');
-  assert.equal(g.canClaim({ id: 'stream:1', kind: 'stream' }, { held: 1 }), false, '多出的格子不接流(会多开流 Chrome)');
-  assert.equal(g.canClaim({ id: 'plan:1', kind: 'plan' }, { held: 1 }), false, '多出的格子不接 plan');
+  assert.equal(g.canClaim({ id: 'plan:1', kind: 'plan' }, { held: 0 }), true, 'regular slot: plan is accepted too');
+  assert.equal(g.canClaim({ id: 'stream:1', kind: 'stream' }, { held: 1 }), false, 'the extra slot does not take streams (it would open an extra stream Chrome)');
+  assert.equal(g.canClaim({ id: 'plan:1', kind: 'plan' }, { held: 1 }), false, 'the extra slot does not take plan');
   // 手里在做 card-a:同一张卡的另一段不接,别的卡接
   let release;
   const running = g.wrap({ render: () => new Promise(r => { release = r; }) }).render(snap('card-a'), {});
   assert.equal(g.canClaim(snap('card-a'), { held: 1 }), false);
   assert.equal(g.canClaim(snap('card-b'), { held: 1 }), true);
-  assert.equal(snapshotConflictKey(snap('card-b', { entryKey: 'e1' })), 'scene:e1', '本地档按整场景互斥');
+  assert.equal(snapshotConflictKey(snap('card-b', { entryKey: 'e1' })), 'scene:e1', 'local tier is mutually exclusive per whole scene');
   release(); await running;
-  assert.equal(g.canClaim(snap('card-a'), { held: 1 }), true, '做完摘掉');
+  assert.equal(g.canClaim(snap('card-a'), { held: 1 }), true, 'removed once done');
   pipeline.queueRunning = null;
-  assert.equal(g.claimLimit(), 1, 'queue lane 空着:多认领的会落到 queue lane 上,不开格子');
+  assert.equal(g.claimLimit(), 1, 'queue lane is idle: the extra claimed item lands on the queue lane, so no slot is opened');
   assert.equal(g.canClaim(snap('card-b'), { held: 1 }), false);
   pipeline.queueRunning = { tag: 'x' }; pipeline.spare = false;
-  assert.equal(g.claimLimit(), 1, '专用实例不能接:不开格子');
+  assert.equal(g.claimLimit(), 1, 'dedicated instance cannot take it: no slot is opened');
   assert.equal(g.canClaim(snap('card-b'), { held: 1 }), false);
 });
 
-test('QR2-C-4 专用实例开着且空闲:多认领的那一项在专用实例上做;期间 Agent 任务到达,等它做完就先做,排在排队中的预渲染之前', async () => {
+test('QR2-C-4 dedicated instance is open and idle: the extra claimed item runs on the dedicated instance; if an Agent task arrives in the meantime, it runs first once that item finishes, ahead of the queued prerender', async () => {
   const { svc, log, task, agentTask } = harness({ agentOpen: true });
   const g = createAgentSpareGate({ pipeline: svc, base: 1 });
   try {
@@ -326,22 +326,22 @@ test('QR2-C-4 专用实例开着且空闲:多认领的那一项在专用实例�
     // 平时那一格:A 在 queue lane 上做
     const a = task('A', { hold: holdA, tag: 'card:a' });
     await until(() => log.includes('A:start@queue'));
-    assert.equal(g.claimLimit(), 2, '专用实例开着且空闲、queue lane 在忙:多一格');
+    assert.equal(g.claimLimit(), 2, 'dedicated instance open and idle, queue lane busy: one more slot');
     assert.equal(g.canClaim({ id: 'snapshot:b', kind: 'snapshot', input: { contentKey: 'b' } }, { held: 1 }), true);
     // 多认领的 B(另一张卡)排进来,专用实例接走
     const b = task('B', { hold: holdB, tag: 'card:b' });
     await until(() => log.includes('B:start@agent'));
-    assert.equal(g.claimLimit(), 1, '专用实例手里有活:格子收回');
+    assert.equal(g.claimLimit(), 1, 'dedicated instance has a job in hand: the slot is taken back');
     // 再来一项 C 排着(比如别的来源的普通预渲染),然后 Agent 任务 X 到达
     const c = task('C', { tag: 'card:c' });
     const x = agentTask('X');
     await sleep(15);
-    assert.ok(!log.includes('B:end') && !log.includes('X@agent'), 'B 不被打断,X 等它');
+    assert.ok(!log.includes('B:end') && !log.includes('X@agent'), 'B is not interrupted, X waits for it');
     holdB.open();
     assert.equal(await x, 'X');
     const at = e => log.indexOf(e);
-    assert.ok(at('B:end') < at('X@agent'), 'X 紧跟在 B 之后');
-    assert.ok(!log.includes('C:start@agent') || at('X@agent') < at('C:start@agent'), 'X 不排在排队中的 C 后面');
+    assert.ok(at('B:end') < at('X@agent'), 'X comes right after B');
+    assert.ok(!log.includes('C:start@agent') || at('X@agent') < at('C:start@agent'), 'X is not placed after the queued C');
     await c;
     holdA.open();
     await Promise.all([a, b]);
@@ -349,7 +349,7 @@ test('QR2-C-4 专用实例开着且空闲:多认领的那一项在专用实例�
   } finally { await svc.close(); }
 });
 
-test('QR2-C-5 专用实例没开:不多认领;多出来的一项(若有)也只在 queue lane 上排,不为它开 Chrome', async () => {
+test('QR2-C-5 dedicated instance not open: no extra claim; an extra item (if any) is also queued only on the queue lane, and no Chrome is opened for it', async () => {
   const { svc, log, task } = harness({ agentOpen: false });
   const g = createAgentSpareGate({ pipeline: svc, base: 1 });
   const openedBefore = opened;
@@ -361,11 +361,11 @@ test('QR2-C-5 专用实例没开:不多认领;多出来的一项(若有)也只�
     assert.equal(g.canClaim({ id: 'snapshot:b', kind: 'snapshot', input: { contentKey: 'b' } }, { held: 1 }), false);
     const b = task('B');
     await sleep(15);
-    assert.ok(!log.some(e => e.startsWith('B')), 'B 等 queue lane');
+    assert.ok(!log.some(e => e.startsWith('B')), 'B waits for the queue lane');
     holdA.open();
     await Promise.all([a, b]);
     assert.ok(log.includes('B:start@queue'));
-    assert.ok(!svc.lanes.has('agent'), '没开 Agent 专用实例');
-    assert.equal(opened, openedBefore, '没开任何 Chrome');
+    assert.ok(!svc.lanes.has('agent'), 'no Agent dedicated instance was opened');
+    assert.equal(opened, openedBefore, 'no Chrome was opened');
   } finally { await svc.close(); }
 });

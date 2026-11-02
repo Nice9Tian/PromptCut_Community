@@ -20,7 +20,7 @@ const exists = file => fs.access(file).then(() => true, () => false);
 const png = (r = 255) => { const p = new PNG({ width: 2, height: 2 }); for (let i = 0; i < p.data.length; i += 4) { p.data[i] = r; p.data[i + 3] = 255; } return PNG.sync.write(p); };
 const tmp = async t => { const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'mnt3-b-')); t.after(() => fs.rm(dir, { recursive: true, force: true })); return dir; };
 
-test('MNT3-B-1 movie:false 的整场景存储:写满连续前缀也不起 ffmpeg、不产 full.mov,PNG 表照旧', async t => {
+test('MNT3-B-1 whole-scene store with movie:false: even when a full contiguous prefix is written, no ffmpeg is started and no full.mov is produced; the PNG table is unchanged', async t => {
   const dir = await tmp(t);
   const store = new MovFrameStore({ dir, fps: 30, movie: false });
   let factoryCalls = 0;
@@ -29,17 +29,17 @@ test('MNT3-B-1 movie:false 的整场景存储:写满连续前缀也不起 ffmpeg
   for (const n of [0, 1, 2]) await store.put(n, png(n * 40 + 10));
   await store.start('fake', factory);
   await store.finish();
-  assert.equal(factoryCalls, 0, '不起编码流');
+  assert.equal(factoryCalls, 0, 'No encoding stream is started');
   assert.equal(store.writer, null);
-  assert.equal(await exists(store.movieFile), false, '不产 full.mov');
+  assert.equal(await exists(store.movieFile), false, 'full.mov is not produced');
   assert.deepEqual([0, 1, 2].map(n => store.has(n)), [true, true, true]);
   for (const n of [0, 1, 2]) assert.ok(await exists(path.join(dir, 'mov', 'frames', `${String(n).padStart(6, '0')}.png`)));
   const table = JSON.parse(await fs.readFile(path.join(dir, 'mov', 'frames.json'), 'utf8'));
   assert.deepEqual(table.frames, [0, 1, 2]);
-  assert.equal(table.movie, null, '索引里不再指向影片');
+  assert.equal(table.movie, null, 'The index no longer points to a movie');
 });
 
-test('MNT3-B-2 movie:false 载入时删掉旧版本留下的 full.mov;缺省(独立卡那一份)不删、照旧编', async t => {
+test('MNT3-B-2 movie:false deletes the full.mov left by older versions on load; the default (the standalone card copy) does not delete it and still encodes as before', async t => {
   const dir = await tmp(t);
   await fs.mkdir(path.join(dir, 'scene', 'mov'), { recursive: true });
   await fs.writeFile(path.join(dir, 'scene', 'mov', 'full.mov'), 'old movie');
@@ -51,7 +51,7 @@ test('MNT3-B-2 movie:false 载入时删掉旧版本留下的 full.mov;缺省(独
   await fs.writeFile(path.join(dir, 'card', 'mov', 'full.mov'), 'card movie');
   const card = new MovFrameStore({ dir: path.join(dir, 'card') });
   await card.ready;
-  assert.equal(await fs.readFile(path.join(dir, 'card', 'mov', 'full.mov'), 'utf8'), 'card movie', '缺省不动');
+  assert.equal(await fs.readFile(path.join(dir, 'card', 'mov', 'full.mov'), 'utf8'), 'card movie', 'The default leaves it alone');
 
   const fresh = new MovFrameStore({ dir: path.join(dir, 'card2') });
   const written = [];
@@ -62,11 +62,11 @@ test('MNT3-B-2 movie:false 载入时删掉旧版本留下的 full.mov;缺省(独
   fresh.writer.finish = async () => { await origFinish(); await fs.writeFile(fresh.tempMovie, 'movie'); };
   await fresh.put(0, png());
   await fresh.finish();
-  assert.equal(written.length, 1, '缺省照旧把帧送进编码流');
+  assert.equal(written.length, 1, 'The default still feeds frames into the encoding stream as before');
   assert.equal(await fs.readFile(path.join(dir, 'card2', 'mov', 'full.mov'), 'utf8'), 'movie');
 });
 
-test('MNT3-B-3 管线建的整场景存储是 movie:false;writeMov 按顺序写第 0 帧也不起编码流', async t => {
+test('MNT3-B-3 the whole-scene store built by the pipeline is movie:false; even writing frame 0 in order with writeMov starts no encoding stream', async t => {
   const root = await tmp(t);
   const service = new FramePipeline({ root, origin: () => '' });
   t.after(() => service.close?.().catch?.(() => {}));
@@ -83,7 +83,7 @@ test('MNT3-B-3 管线建的整场景存储是 movie:false;writeMov 按顺序写�
   assert.deepEqual([entry.mov.has(0), entry.mov.has(1)], [true, true]);
 });
 
-test('MNT3-B-4 fillMov 不再以 full.mov 判「做过了」:每趟都交给 renderMovFrames(它自己跳过已有的帧)', async t => {
+test('MNT3-B-4 fillMov no longer judges "already done" by full.mov: every pass is handed to renderMovFrames (which skips existing frames itself)', async t => {
   const root = await tmp(t);
   const service = new FramePipeline({ root, origin: () => '' });
   const project = { id: 'mnt3-fill', width: 2, height: 2, fps: 30, duration: 3 / 30, tracks: [] };
@@ -100,7 +100,7 @@ test('MNT3-B-4 fillMov 不再以 full.mov 判「做过了」:每趟都交给 ren
   assert.equal(entry.mov.writer, null);
 });
 
-test('MNT3-B-5 prerender 只栅格化、抄 frames/:不编 preview.mp4,旧的 preview.mp4 顺手删', async t => {
+test('MNT3-B-5 prerender only rasterizes and copies frames/: it does not encode preview.mp4, and an old preview.mp4 is deleted along the way', async t => {
   const root = await tmp(t);
   const service = new FramePipeline({ root, origin: () => '' });
   const entry = { key: 'k1', dir: path.join(root, 'k1'), project: { fps: 30 }, html: new Map([[0, 'a'], [1, 'b']]) };
@@ -119,18 +119,18 @@ test('MNT3-B-5 prerender 只栅格化、抄 frames/:不编 preview.mp4,旧的 pr
   await fs.writeFile(path.join(entry.dir, 'preview.mp4'), 'old');
 
   await service.prerender(entry, {}, new AbortController().signal);
-  assert.deepEqual(rastered, [[0, 0], [0, 1], [1, 0], [1, 1]], '每个前缀、每一帧都栅格化(缓存命中时 rasterPrefix 自己只读文件)');
+  assert.deepEqual(rastered, [[0, 0], [0, 1], [1, 0], [1, 1]], 'Every prefix and every frame is rasterized (on a cache hit, rasterPrefix only reads the file itself)');
   for (const frame of [0, 1]) {
     const name = `${String(frame).padStart(6, '0')}.png`;
-    assert.deepEqual(await fs.readFile(path.join(entry.dir, 'frames', name)), await fs.readFile(path.join(root, 'tracks', 'p2', name)), '最后一个前缀抄进 frames/');
+    assert.deepEqual(await fs.readFile(path.join(entry.dir, 'frames', name)), await fs.readFile(path.join(root, 'tracks', 'p2', name)), 'The last prefix is copied into frames/');
   }
   for (const p of prefixes) assert.equal(await exists(path.join(root, 'tracks', p.key, 'preview.mp4')), false);
   assert.equal(await exists(path.join(entry.dir, 'preview.mp4')), false);
   const leftovers = (await fs.readdir(entry.dir)).filter(n => n.endsWith('.mp4'));
-  assert.deepEqual(leftovers, [], '没有临时 mp4');
+  assert.deepEqual(leftovers, [], 'No temporary mp4');
 });
 
-test('MNT3-B-6 prerender 中途取消照旧抛 Cancelled', async t => {
+test('MNT3-B-6 canceling prerender midway still throws Cancelled', async t => {
   const root = await tmp(t);
   const service = new FramePipeline({ root, origin: () => '' });
   const controller = new AbortController();

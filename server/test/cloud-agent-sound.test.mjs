@@ -24,10 +24,10 @@ import { ROOT } from './cloud-agent-kit.mjs';
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 class ToolError extends Error {}
 
-const typingClip = { id: 'typing', cardId: 'mu-typing', start: 2, end: 6, params: { text: '你好,PromptCut!\nok', duration: 90, delayMs: 100, seed: 7 }, label: '打字' };
+const typingClip = { id: 'typing', cardId: 'mu-typing', start: 2, end: 6, params: { text: '你好,PromptCut!\nok', duration: 90, delayMs: 100, seed: 7 }, label: 'Typing' };
 const baseProject = (id = 'p-snd') => ({
-  version: 1, id, name: '音效', width: 1920, height: 1080, fps: 30, duration: 12, themeId: 'midnight', media: [],
-  tracks: [{ id: 't1', name: '序列 1', clips: [structuredClone(typingClip)] }], transitions: [],
+  version: 1, id, name: 'Sound effect', width: 1920, height: 1080, fps: 30, duration: 12, themeId: 'midnight', media: [],
+  tracks: [{ id: 't1', name: 'Track 1', clips: [structuredClone(typingClip)] }], transitions: [],
 });
 
 async function setup(t) {
@@ -49,7 +49,7 @@ async function setup(t) {
         host.setProject(st.project);
         try { await apply(host); st.project = host.getProject(); st.commits += 1; } finally { host.clearProject(); }
       },
-      ensureCanWrite: async () => { if (readOnly) throw new ToolError('你在这个项目里只有只读权限,云端 Agent 不能替你把素材写进项目。'); },
+      ensureCanWrite: async () => { if (readOnly) throw new ToolError('You only have read-only permission in this project, so the Cloud Agent cannot write media to the project for you.'); },
       put: async (wav) => {
         if (putDelayMs) await new Promise((r) => setTimeout(r, putDelayMs));
         const copy = Buffer.from(wav);
@@ -66,7 +66,7 @@ async function setup(t) {
 
 const clipsOf = (p) => p.tracks.flatMap((tr) => tr.clips);
 
-test('CA-SND-01 云端合成的 WAV 与桌面版同配方逐样本相同;素材、配方、片段原子登记', { timeout: 120_000 }, async (t) => {
+test('CA-SND-01 WAV synthesized in the cloud is sample-for-sample identical to the desktop app\'s with the same recipe; media, recipe and clip are registered atomically', { timeout: 120_000 }, async (t) => {
   const { host, desktop, instance } = await setup(t);
   const a = instance('p-snd');
 
@@ -81,7 +81,7 @@ test('CA-SND-01 云端合成的 WAV 与桌面版同配方逐样本相同;素材�
   assert.equal(media1.kind, 'audio');
   assert.equal(media1.name, '叮.wav');
   assert.equal(media1.ext, 'wav');
-  assert.equal(media1.hash, sha256(a.puts[0]), '素材条目里的内容哈希就是写进素材服务的那份字节的哈希');
+  assert.equal(media1.hash, sha256(a.puts[0]), 'The content hash in the media entry is the hash of the exact bytes written to the asset service');
   assert.equal(media1.url, `/@media/${media1.hash}`);
   assert.equal(media1.size, a.puts[0].length);
   assert.equal(clip1.start, 1);
@@ -94,29 +94,29 @@ test('CA-SND-01 云端合成的 WAV 与桌面版同配方逐样本相同;素材�
   // 与桌面版的入口同一份配方:逐样本相同(桌面版在 Worker 里跑的是同一个函数;这里是它在没有 Worker 的环境下的同一条路)
   const desk1 = Buffer.from(await desktop.renderSoundEffectWavInWorker(structuredClone(media1.soundEffect.recipe)));
   assert.equal(desk1.length, a.puts[0].length);
-  assert.ok(desk1.equals(a.puts[0]), '提示音:云端与桌面版逐字节相同');
+  assert.ok(desk1.equals(a.puts[0]), 'Notification sound: cloud and desktop app are byte-for-byte identical');
   // 配方本身也与桌面版从同一组参数算出来的相同
   const planned = host.sound.plan(baseProject('p-snd'), { preset: 'notification', start: 1, requestId: 'x', params: { frequency: 660, notes: [0, 4, 7] }, seed: 3 });
   assert.deepEqual(planned.recipe, media1.soundEffect.recipe);
   assert.equal(a.puts[0].toString('latin1', 0, 4), 'RIFF');
   assert.equal(a.puts[0].readUInt16LE(20), 1, 'PCM');
-  assert.equal(a.puts[0].readUInt16LE(34), 16, '16 位');
+  assert.equal(a.puts[0].readUInt16LE(34), 16, '16-bit');
   let nonzero = 0;
   for (let i = 44; i < a.puts[0].length; i += 2) if (a.puts[0].readInt16LE(i) !== 0) nonzero += 1;
-  assert.ok(nonzero > 1000, '不是一段静音');
+  assert.ok(nonzero > 1000, 'Not silence');
 
   // 键盘声:复用打字机卡片的文字与节奏,落在它的起点
   const keys = await a.tools.sound_generate({ preset: 'keyboard', sourceClipId: 'typing', requestId: 'keys-1' });
   assert.equal(keys.ok, true, JSON.stringify(keys));
   const media2 = a.project.media.find((m) => m.id === keys.result.mediaId);
   const clip2 = clipsOf(a.project).find((c) => c.id === keys.result.clipId);
-  assert.equal(clip2.start, typingClip.start, '落在打字机卡片的起点');
+  assert.equal(clip2.start, typingClip.start, 'Lands at the start of the typing card');
   assert.ok(clip2.end <= typingClip.end + 1e-9);
   assert.equal(clip2.soundEffect.sourceClipId, 'typing');
   assert.equal(media2.soundEffect.recipe.preset, 'keyboard');
-  assert.ok(media2.soundEffect.recipe.events.length >= 10, '每个字一个事件');
+  assert.ok(media2.soundEffect.recipe.events.length >= 10, 'One event per character');
   const desk2 = Buffer.from(await desktop.renderSoundEffectWavInWorker(structuredClone(media2.soundEffect.recipe)));
-  assert.ok(desk2.equals(a.puts[1]), '键盘声:云端与桌面版逐字节相同');
+  assert.ok(desk2.equals(a.puts[1]), 'Keyboard sound: cloud and desktop app are byte-for-byte identical');
 
   // 钉死的内容哈希:Node 或合成内核变了、与已经入库的旧素材不再相同时,这里先红
   const pinned = { chime: sha256(a.puts[0]), keys: sha256(a.puts[1]) };
@@ -139,10 +139,10 @@ test('CA-SND-01 云端合成的 WAV 与桌面版同配方逐样本相同;素材�
 /** CA-SND-01 钉死的内容哈希(同一份配方在桌面版的浏览器里合成出来也是它:`cloud-agent-sound-probe` 的 S4 对着真浏览器比) */
 const PINNED = { chime: '9af90898ad856b9a7a04f92d1e7dcdd01630af09b6b1e2d9bb1736de02321772', keys: '649e4ac2176e651b3dce41d41a2b57732ea96c58a0877154a698b4701db4d078' };
 
-test('CA-SND-02 幂等、取消、过期、只读、上限', { timeout: 120_000 }, async (t) => {
+test('CA-SND-02 idempotency, cancel, stale, read-only, limit', { timeout: 120_000 }, async (t) => {
   const { instance, host } = await setup(t);
 
-  await t.test('同一个 requestId 重试:不再合成、不多出片段;换配方被拒', async () => {
+  await t.test('Retry with the same requestId: no re-synthesis, no extra clip; changing the recipe is rejected', async () => {
     const a = instance('p-idem');
     const first = await a.tools.sound_generate({ preset: 'notification', start: 1, requestId: 'r1' });
     const again = await a.tools.sound_generate({ preset: 'notification', start: 1, requestId: 'r1' });
@@ -150,25 +150,25 @@ test('CA-SND-02 幂等、取消、过期、只读、上限', { timeout: 120_000 
     assert.deepEqual(again.result, first.result);
     assert.equal(a.puts.length, 1);
     assert.equal(clipsOf(a.project).filter((c) => c.soundEffect).length, 1);
-    await assert.rejects(a.tools.sound_generate({ preset: 'notification', start: 1, requestId: 'r1', params: { frequency: 990 } }), /requestId 已用于不同配方/);
+    await assert.rejects(a.tools.sound_generate({ preset: 'notification', start: 1, requestId: 'r1', params: { frequency: 990 } }), /requestId already used for a different recipe/);
     await assert.rejects(a.tools.sound_generate({ preset: 'notification', start: 1 }), /requestId/);
     await assert.rejects(a.tools.sound_generate({ preset: 'keyboard', requestId: 'k0' }), /Keyboard sound requires/);
     await assert.rejects(a.tools.sound_generate({ preset: 'notification', start: 99, requestId: 'far' }), /start must be within the project time range/);
     await assert.rejects(a.tools.sound_generate({ preset: 'notification', requestId: 'big', params: { duration: 1e9 } }), ToolError);
   });
 
-  await t.test('只读成员:合成之前就被拒,不合成、不上传、项目不变', async () => {
+  await t.test('Read-only member: rejected before synthesis; no synthesis, no upload, project unchanged', async () => {
     let rendered = 0;
     const ro = instance('p-ro', { readOnly: true, renderHook: (r, o, real) => { rendered += 1; return real(r, o); } });
     const before = JSON.stringify(ro.project);
-    await assert.rejects(ro.tools.sound_generate({ preset: 'notification', start: 1, requestId: 'ro-1' }), /只读/);
+    await assert.rejects(ro.tools.sound_generate({ preset: 'notification', start: 1, requestId: 'ro-1' }), /read-only/);
     assert.equal(rendered, 0);
     assert.equal(ro.puts.length, 0);
     assert.equal(JSON.stringify(ro.project), before);
     assert.deepEqual((await ro.tools.sound_status({})).jobs, []);
   });
 
-  await t.test('取消:合成中取消,不上传、不提交;旧音效不动', async () => {
+  await t.test('Cancel: cancelled during synthesis, no upload, no commit; the old sound effect is untouched', async () => {
     let started;
     const waitStart = new Promise((r) => { started = r; });
     const a = instance('p-cancel', { renderHook: async (recipe, o, real) => { started(); await new Promise((r) => setTimeout(r, 150)); return real(recipe, o); } });
@@ -180,28 +180,28 @@ test('CA-SND-02 幂等、取消、过期、只读、上限', { timeout: 120_000 
     const cancelled = await a.tools.sound_cancel({ jobId: jobs[0].jobId });
     assert.equal(cancelled.state, 'cancelled');
     const out = await pending;
-    assert.deepEqual([out.ok, out.state, out.error], [false, 'cancelled', '已取消,原音效保持不变']);
+    assert.deepEqual([out.ok, out.state, out.error], [false, 'cancelled', 'Cancelled; the original sound effect is unchanged']);
     assert.equal(a.puts.length, 0);
     assert.equal(a.commits, 0);
     assert.equal(a.project.media.length, 0);
     // 取消过的 requestId 可以重来
     const redo = await a.tools.sound_generate({ preset: 'notification', start: 1, requestId: 'c1' });
     assert.equal(redo.ok, true);
-    await assert.rejects(a.tools.sound_cancel({ jobId: 'sound-nope' }), /找不到音效任务/);
-    await assert.rejects(a.tools.sound_status({ jobId: 'sound-nope' }), /找不到音效任务/);
+    await assert.rejects(a.tools.sound_cancel({ jobId: 'sound-nope' }), /Sound effect job not found/);
+    await assert.rejects(a.tools.sound_status({ jobId: 'sound-nope' }), /Sound effect job not found/);
   });
 
-  await t.test('过期:合成期间来源片段被改,旧结果不应用;重生成时目标片段被改同理', async () => {
+  await t.test('Stale: the source clip was changed during synthesis, so the old result is not applied; the same applies when the target clip is changed during regeneration', async () => {
     const a = instance('p-stale');
     a.beforeCommit = () => {
-      a.project = { ...a.project, tracks: a.project.tracks.map((tr) => ({ ...tr, clips: tr.clips.map((c) => (c.id === 'typing' ? { ...c, params: { ...c.params, text: '改了' } } : c)) })) };
+      a.project = { ...a.project, tracks: a.project.tracks.map((tr) => ({ ...tr, clips: tr.clips.map((c) => (c.id === 'typing' ? { ...c, params: { ...c.params, text: 'changed' } } : c)) })) };
       a.beforeCommit = null;
     };
     const out = await a.tools.sound_generate({ preset: 'keyboard', sourceClipId: 'typing', requestId: 's1' });
     // 状态是否为 stale 见下面标 todo 的用例:服务端靠 /已改变|已切换/ 认旧结果过期,src 的错误现在是英文
     assert.equal(out.ok, false, JSON.stringify(out));
     assert.match(out.error, /original typing clip has changed/);
-    assert.equal(a.project.media.length, 0, '素材已经上传,但没有登记进项目');
+    assert.equal(a.project.media.length, 0, 'The asset was uploaded but not registered in the project');
     assert.equal(clipsOf(a.project).filter((c) => c.soundEffect).length, 0);
 
     const ok = await a.tools.sound_generate({ preset: 'notification', start: 8, requestId: 's2' });
@@ -213,7 +213,7 @@ test('CA-SND-02 幂等、取消、过期、只读、上限', { timeout: 120_000 
     const regen = await a.tools.sound_generate({ clipId: ok.result.clipId, params: { frequency: 440 }, requestId: 's3' });
     assert.equal(regen.ok, false, JSON.stringify(regen));
     const kept = clipsOf(a.project).find((c) => c.id === ok.result.clipId);
-    assert.equal(kept.mediaId, ok.result.mediaId, '旧音效保持不变');
+    assert.equal(kept.mediaId, ok.result.mediaId, 'The old sound effect stays unchanged');
     // 没有被改时重生成:同一个片段换了素材,位置不变
     const regen2 = await a.tools.sound_generate({ clipId: ok.result.clipId, params: { frequency: 440 }, requestId: 's4' });
     assert.equal(regen2.ok, true, JSON.stringify(regen2));
@@ -226,31 +226,31 @@ test('CA-SND-02 幂等、取消、过期、只读、上限', { timeout: 120_000 
   // 疑似产品问题:server/agent/service/hosted-sound.mjs 第 123 行用 /已改变|已切换/ 判断提交回调抛的是「旧结果过期」,
   // 而 src/store/actions/sound.ts:30 抛的已是英文 "The original typing clip has changed, ..."(tr),认不出,状态落成 failed 而不是 stale。
   // 修好后去掉 todo。
-  await t.test('过期的状态是 stale(旧结果不应用)', async () => {
+  await t.test('An expired state is stale (the old result is not applied)', async () => {
     const a = instance('p-stale-state');
     a.beforeCommit = () => {
-      a.project = { ...a.project, tracks: a.project.tracks.map((tr) => ({ ...tr, clips: tr.clips.map((c) => (c.id === 'typing' ? { ...c, params: { ...c.params, text: '改了' } } : c)) })) };
+      a.project = { ...a.project, tracks: a.project.tracks.map((tr) => ({ ...tr, clips: tr.clips.map((c) => (c.id === 'typing' ? { ...c, params: { ...c.params, text: 'changed' } } : c)) })) };
       a.beforeCommit = null;
     };
     const out = await a.tools.sound_generate({ preset: 'keyboard', sourceClipId: 'typing', requestId: 's1' });
     assert.deepEqual([out.ok, out.state], [false, 'stale'], JSON.stringify(out));
   });
 
-  await t.test('上限:一位成员在一个项目里最多排 4 个;上传失败带回原因', async () => {
+  await t.test('Limit: a member can queue at most 4 in one project; an upload failure returns the reason', async () => {
     const gate = { open: null };
     const hold = new Promise((r) => { gate.open = r; });
     const a = instance('p-queue', { renderHook: async (recipe, o, real) => { await hold; return real(recipe, o); } });
     const running = [0, 1, 2, 3].map((i) => a.tools.sound_generate({ preset: 'notification', requestId: `q${i}`, params: { frequency: 400 + i } }));
     await new Promise((r) => setTimeout(r, 50));
-    await assert.rejects(a.tools.sound_generate({ preset: 'notification', requestId: 'q4', params: { frequency: 500 } }), /队列已满/);
+    await assert.rejects(a.tools.sound_generate({ preset: 'notification', requestId: 'q4', params: { frequency: 500 } }), /Queue is full/);
     gate.open();
     assert.deepEqual((await Promise.all(running)).map((r) => r.state), ['succeeded', 'succeeded', 'succeeded', 'succeeded']);
 
     const b = instance('p-fail');
     const failing = createSoundTools({
       state: newSoundState(), slot: createSlot(), host: async () => host,
-      snapshot: async () => ({ project: b.project }), mutate: async () => { throw new Error('不该走到提交'); },
-      ensureCanWrite: async () => {}, put: async () => { throw new Error('素材服务拒绝了这次写入(413)'); }, record: (row) => b.usage.push(row), ToolError,
+      snapshot: async () => ({ project: b.project }), mutate: async () => { throw new Error('Should not reach commit'); },
+      ensureCanWrite: async () => {}, put: async () => { throw new Error('The asset service rejected this write (413)'); }, record: (row) => b.usage.push(row), ToolError,
     });
     const out = await failing.sound_generate({ preset: 'notification', start: 1, requestId: 'f1' });
     assert.deepEqual([out.ok, out.state], [false, 'failed']);
@@ -259,7 +259,7 @@ test('CA-SND-02 幂等、取消、过期、只读、上限', { timeout: 120_000 
   });
 });
 
-test('CA-SND-03 / CA-SND-04 作业表按实例分;合成在进程里同时只跑一个', { timeout: 120_000 }, async (t) => {
+test('CA-SND-03 / CA-SND-04 the job table is split per instance; only one synthesis runs at a time in a process', { timeout: 120_000 }, async (t) => {
   const { instance } = await setup(t);
   let active = 0;
   let peak = 0;
@@ -277,18 +277,18 @@ test('CA-SND-03 / CA-SND-04 作业表按实例分;合成在进程里同时只跑
   const jb = (await b.tools.sound_status({})).jobs;
   assert.equal(ja.length, 1);
   assert.equal(jb.length, 2);
-  assert.ok(ja.every((j) => /^sound-[a-f0-9]{12}$/.test(j.jobId)), '作业号带随机数,不是顺序号');
+  assert.ok(ja.every((j) => /^sound-[a-f0-9]{12}$/.test(j.jobId)), 'Job IDs carry a random number, not a sequence number');
   // 乙实例看不到、查不到、取消不了甲实例的作业
   assert.equal(jb.some((j) => j.jobId === ja[0].jobId), false);
-  await assert.rejects(b.tools.sound_status({ jobId: ja[0].jobId }), /找不到音效任务/);
-  await assert.rejects(b.tools.sound_cancel({ jobId: ja[0].jobId }), /找不到音效任务/);
+  await assert.rejects(b.tools.sound_status({ jobId: ja[0].jobId }), /Sound effect job not found/);
+  await assert.rejects(b.tools.sound_cancel({ jobId: ja[0].jobId }), /Sound effect job not found/);
   // 排队中的取消:不占名额、不合成
   const queued = jb.find((j) => j.state === 'queued');
-  assert.ok(queued, '乙的第二个在排队');
+  assert.ok(queued, 'B\'s second one is queued');
   assert.equal((await b.tools.sound_cancel({ jobId: queued.jobId })).state, 'cancelled');
   const [ra, rb, rb2] = await Promise.all([pa, pb, pb2]);
   assert.deepEqual([ra.state, rb.state, rb2.state].sort(), ['cancelled', 'succeeded', 'succeeded']);
-  assert.equal(peak, 1, '两个实例的合成没有重叠');
+  assert.equal(peak, 1, 'The two instances\' syntheses do not overlap');
   assert.equal(a.project.id, 'p-a');
   assert.equal(a.project.media.length, 1);
   assert.equal(b.project.media.length, 1);

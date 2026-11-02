@@ -46,19 +46,19 @@ async function requestBodyFor(cfg) {
   return seen.body;
 }
 
-test('选了档位:reasoning_effort 进请求体', async () => {
+test('A tier is selected: reasoning_effort goes into the request body', async () => {
   for (const effort of ['low', 'medium', 'high']) {
     const body = await requestBodyFor({ effort });
-    assert.equal(body.reasoning_effort, effort, `${effort} 应该原样发出去`);
+    assert.equal(body.reasoning_effort, effort, `${effort} should be sent as is`);
   }
 });
 
-test('选「默认」(空):一个字段都不发 —— 上游对不认识的参数可能直接 400', async () => {
+test('Choosing "Default" (empty): no field is sent at all, since the upstream may return a 400 right away on a parameter it does not recognize', async () => {
   assert.ok(!('reasoning_effort' in await requestBodyFor({ effort: '' })));
-  assert.ok(!('reasoning_effort' in await requestBodyFor({})), '压根没这个字段时也不能凭空冒出来');
+  assert.ok(!('reasoning_effort' in await requestBodyFor({})), 'Even when the field is absent altogether, it must not appear out of nowhere');
 });
 
-test('加了 reasoning_effort 不影响原有字段', async () => {
+test('Adding reasoning_effort does not affect the existing fields', async () => {
   const body = await requestBodyFor({ effort: 'high' });
   assert.equal(body.model, 'm');
   assert.equal(body.stream, true);
@@ -84,10 +84,10 @@ async function configDiagnostic(effort) {
   return events.find((e) => e.type === 'diagnostic' && e.stage === 'configuration')?.data;
 }
 
-test('runner:startRun 的 opts.effort 进 cfg,并且在诊断里看得见', async () => {
+test('runner: opts.effort of startRun goes into cfg and is visible in the diagnostics', async () => {
   const high = await configDiagnostic('high');
-  assert.equal(high?.effort, 'high', '档位没进 cfg 的话,现象就是「选了没反应」而且无从查起');
+  assert.equal(high?.effort, 'high', 'If the tier does not get into cfg, the symptom is "selected but nothing happens" and there is nowhere to start investigating');
 
   const none = await configDiagnostic('');
-  assert.equal(none?.effort, '(默认)', '没选档位时诊断里要说明是走默认,不要显示成空白');
+  assert.equal(none?.effort, '(default)', 'When no tier is selected, the diagnostics must say it uses the default instead of showing a blank');
 });

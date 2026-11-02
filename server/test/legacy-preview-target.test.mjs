@@ -19,10 +19,10 @@ import { createRequire } from 'node:module';
 
 mock.module(new URL('../bakery/index.mjs', import.meta.url).href, {
   exports: {
-    openBakery: async () => { throw new Error('单测不开 Chrome'); },
-    findFfmpeg: async () => { throw new Error('单测不找 ffmpeg'); },
-    streamPngVideo: () => { throw new Error('单测不编码'); },
-    bakeFrames: async () => { throw new Error('单测不预渲染'); },
+    openBakery: async () => { throw new Error('Unit test does not open Chrome'); },
+    findFfmpeg: async () => { throw new Error('Unit test does not look for ffmpeg'); },
+    streamPngVideo: () => { throw new Error('Unit test does not encode'); },
+    bakeFrames: async () => { throw new Error('Unit test does not prerender'); },
   },
 });
 const { FramePipeline } = await import('../frame-pipeline.mjs');
@@ -71,26 +71,26 @@ function frameCalls() {
   return calls;
 }
 
-test('X7-legacy-target 前提:编辑器进程(interactive: false)拒绝 user / playback lane,预渲染进程(interactive: true)不拒', async () => {
+test('X7-legacy-target precondition: the editor process (interactive: false) refuses the user / playback lane, while the prerender process (interactive: true) does not', async () => {
   const editor = new FramePipeline({ root: path.join(ROOT, 'out', 'x7-legacy-target-unused'), origin: () => 'http://127.0.0.1:1', interactive: false });
   const prerender = new FramePipeline({ root: path.join(ROOT, 'out', 'x7-legacy-target-unused'), origin: () => 'http://127.0.0.1:1', interactive: true });
   try {
     for (const lane of ['user', 'playback']) {
       const refused = editor.laneRefused(lane);
-      assert.equal(refused?.status, 503, `编辑器进程的 ${lane} lane 回 503`);
+      assert.equal(refused?.status, 503, `The editor process's ${lane} lane returns 503`);
       assert.equal(refused?.code, 'USE_PRERENDER');
-      assert.equal(prerender.laneRefused(lane), null, `预渲染进程答 ${lane} lane`);
+      assert.equal(prerender.laneRefused(lane), null, `The prerender process answers the ${lane} lane`);
     }
   } finally {
     await Promise.allSettled([editor.close(), prerender.close()]);
   }
 });
 
-test('X7-legacy-target legacy 预览的整帧请求打预渲染进程:user / playback lane 的调用没有一处 target 是 "user"', () => {
+test('X7-legacy-target legacy preview whole-frame requests go to the prerender process: no user / playback lane call has target "user"', () => {
   const calls = frameCalls();
   const legacy = calls.filter(c => c.file === 'src/editor/preview/UnifiedPreview.tsx' && c.fn === 'see_frames' && c.lane === 'user');
-  assert.equal(legacy.length, 1, `UnifiedPreview 里暂停取整帧的那一处 see_frames:${JSON.stringify(calls.filter(c => c.file.endsWith('UnifiedPreview.tsx')))}`);
-  assert.equal(legacy[0].target, 'prerender', 'legacy 的整帧请求要打预渲染进程');
+  assert.equal(legacy.length, 1, `The see_frames in UnifiedPreview that fetches a whole frame when paused: ${JSON.stringify(calls.filter(c => c.file.endsWith('UnifiedPreview.tsx')))}`);
+  assert.equal(legacy[0].target, 'prerender', 'The legacy whole-frame request must go to the prerender process');
   const wrong = calls.filter(c => (c.lane === 'user' || c.lane === 'playback') && c.target === 'user');
-  assert.deepEqual(wrong, [], 'user / playback lane 发给编辑器进程只会得到 503');
+  assert.deepEqual(wrong, [], 'Sending the user / playback lane to the editor process only gets 503');
 });

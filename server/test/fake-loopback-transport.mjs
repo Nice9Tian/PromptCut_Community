@@ -35,17 +35,17 @@ export function jsonProblem(value, path = '$', seen = new Set()) {
     case 'boolean':
       return null;
     case 'number':
-      if (!Number.isFinite(value)) return `${path} 是非有限数 ${value}`;
-      if (Object.is(value, -0)) return `${path} 是 -0`;
+      if (!Number.isFinite(value)) return `${path} is a non-finite number ${value}`;
+      if (Object.is(value, -0)) return `${path} is -0`;
       return null;
     case 'undefined':
-      return `${path} 是 undefined`;
+      return `${path} is undefined`;
     case 'object':
       break;
     default:
-      return `${path} 的类型是 ${typeof value}`;
+      return `${path} has type ${typeof value}`;
   }
-  if (seen.has(value)) return `${path} 有循环引用`;
+  if (seen.has(value)) return `${path} has a circular reference`;
   seen.add(value);
   try {
     if (Array.isArray(value)) {
@@ -56,7 +56,7 @@ export function jsonProblem(value, path = '$', seen = new Set()) {
       return null;
     }
     const proto = Object.getPrototypeOf(value);
-    if (proto !== Object.prototype && proto !== null) return `${path} 不是普通对象（${value?.constructor?.name ?? '无构造器'}）`;
+    if (proto !== Object.prototype && proto !== null) return `${path} is not a plain object (${value?.constructor?.name ?? 'no constructor'})`;
     for (const key of Object.keys(value)) {
       if (value[key] === undefined) continue;
       const p = jsonProblem(value[key], `${path}.${key}`, seen);
@@ -87,7 +87,7 @@ export function createLoopback({ serialize = true } = {}) {
       return JSON.parse(JSON.stringify(message));
     } catch (error) {
       // 连 stringify 都过不了（BigInt、循环引用）：记下来，原样投递，免得把问题藏起来
-      nonJson.push({ dir, connId, type: message?.type, problem: `JSON.stringify 抛出：${error.message}` });
+      nonJson.push({ dir, connId, type: message?.type, problem: `JSON.stringify threw: ${error.message}` });
       return message;
     }
   }
@@ -110,7 +110,7 @@ export function createLoopback({ serialize = true } = {}) {
   }
 
   function connect(connId, principal) {
-    if (!queue) throw new Error('createLoopback: 先 attach(queue) 再 connect');
+    if (!queue) throw new Error('createLoopback: call attach(queue) before connect');
     const old = endpoints.get(connId);
     if (old && !old.closed) old._kill();
     // 队列那边同一 connId 重复 connect 会先按断开处理旧的（契约 A.3）
@@ -124,7 +124,7 @@ export function createLoopback({ serialize = true } = {}) {
         items.push({ dir: 'in', connId, endpoint, message: prepare('in', connId, message) });
       },
       onMessage(handler) {
-        if (typeof handler !== 'function') throw new TypeError('onMessage: handler 必须是函数');
+        if (typeof handler !== 'function') throw new TypeError('onMessage: handler must be a function');
         handlers.push(handler);
       },
       /** 断开：调 `queue.disconnect`，并丢弃这条连接还没投递的消息（两个方向都丢） */
@@ -160,7 +160,7 @@ export function createLoopback({ serialize = true } = {}) {
       if (endpoint.closed || partitioned.has(connId) || endpoints.get(connId) !== endpoint) continue;
       if (++count > max) {
         items.unshift(item);
-        throw new Error(`loopback.flush：投递超过 ${max} 条仍未收敛（疑似活锁）`);
+        throw new Error(`loopback.flush: still not converged after delivering more than ${max} messages (suspected livelock)`);
       }
       delivered.push({ dir, connId, message });
       if (dir === 'in') {

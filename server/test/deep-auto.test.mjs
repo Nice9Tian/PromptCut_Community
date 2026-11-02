@@ -38,7 +38,7 @@ async function runTo(limitOpts) {
     onEvent: (e) => events.push(e),
     ...limitOpts,
   });
-  const out = await agent.run('一直做');
+  const out = await agent.run('Keep going');
   return { out, events, history: out.history.get() };
 }
 
@@ -48,46 +48,46 @@ const userText = (history) => history
   .flatMap((m) => m.content.filter((b) => b.type === 'text').map((b) => b.text))
   .join('\n');
 
-test('常规模式：到上限时明确告诉模型「已达到 N 轮上限」', async () => {
+test('Normal mode: when the limit is reached, explicitly tell the model "the limit of N rounds has been reached"', async () => {
   const { out, history } = await runTo({ maxIterations: 3 });
   assert.equal(out.outcome, 'round_limit');
-  assert.match(userText(history), /已达到 3 轮模型往返上限/);
+  assert.match(userText(history), /reached the limit of 3 model round trips/);
 });
 
-test('深度自主：到上限照样收尾，但那句话里不出现轮数', async () => {
+test('Deep autonomy: it still wraps up at the limit, but the message does not mention the number of rounds', async () => {
   const { out, history } = await runTo({ maxIterations: 3, deepAuto: true });
-  assert.equal(out.outcome, 'round_limit', '仍然要停下来并让模型总结，不能闷头返回空结果');
+  assert.equal(out.outcome, 'round_limit', 'It must still stop and let the model summarize, not silently return an empty result');
   const text = userText(history);
-  assert.match(text, /本次运行已到上限/);
-  assert.doesNotMatch(text, /轮/, '模型上下文里不该出现任何轮次字样');
-  assert.doesNotMatch(text, /3/, '更不能把具体的上限数字告诉它');
+  assert.match(text, /this run has reached its limit/);
+  assert.doesNotMatch(text, /round/, 'No mention of rounds should appear in the model context');
+  assert.doesNotMatch(text, /3/, 'The specific limit number certainly must not be disclosed to it');
 });
 
-test('深度自主的上限是真放宽了，不是还按常规 48 轮跑', async () => {
+test('The deep autonomy limit really is relaxed, not still running at the normal 48 rounds', async () => {
   const { out } = await runTo({ maxIterations: 40, deepAuto: true });
   // 40 轮才触顶：说明 maxIterations 真的被用上了，而不是构造函数的默认值
   assert.equal(out.outcome, 'round_limit');
-  assert.equal(out.completed, 40, '每一轮执行一次 noop，应该正好做满 40 次');
+  assert.equal(out.completed, 40, 'Running noop once per round should complete exactly 40 times');
 });
 
-test('屏幕上的进度还是要有轮次；不限轮次时不写分母', async () => {
+test('The on-screen progress should still show the round; with no round limit, no denominator is written', async () => {
   const { events } = await runTo({ maxIterations: 3, deepAuto: true });
   const req = events.find((e) => e.type === 'progress' && e.phase === 'requesting');
-  assert.match(req.text, /第 1\/3 轮/, '有上限时分子分母都给用户看');
+  assert.match(req.text, /Round 1\/3/, 'With a limit, both numerator and denominator are shown to the user');
 
   const infinite = [];
   const agent = new Agent({
-    provider: { name: 'once', async *stream() { yield { type: 'text_delta', text: '好' }; yield { type: 'stop', reason: 'end_turn' }; } },
+    provider: { name: 'once', async *stream() { yield { type: 'text_delta', text: 'OK' }; yield { type: 'stop', reason: 'end_turn' }; } },
     system: 's', tools: [noopTool], maxIterations: Infinity, deepAuto: true,
     onEvent: (e) => infinite.push(e),
   });
-  await agent.run('随便');
+  await agent.run('whatever');
   const first = infinite.find((e) => e.type === 'progress' && e.phase === 'requesting');
-  assert.match(first.text, /第 1 轮/);
-  assert.doesNotMatch(first.text, /Infinity|\//, '不限轮次时别写出 Infinity，也别留个空分母');
+  assert.match(first.text, /Round 1/);
+  assert.doesNotMatch(first.text, /Infinity|\//, 'With no round limit, do not write Infinity, and do not leave an empty denominator');
 });
 
-test('不限轮次时循环没有终点：模型不收尾就一直跑，只有停止能拦下它', async () => {
+test('With no round limit the loop has no end: if the model does not wrap up it just keeps running, and only stopping can halt it', async () => {
   const ac = new AbortController();
   let rounds = 0;
   const agent = new Agent({
@@ -101,8 +101,8 @@ test('不限轮次时循环没有终点：模型不收尾就一直跑，只有�
     signal: ac.signal,
     onEvent: () => {},
   });
-  await assert.rejects(() => agent.run('一直做'), (e) => e.name === 'AbortError');
-  assert.ok(rounds >= 60, `不限轮次下应该一路跑过常规的 48 轮，实际只跑了 ${rounds}`);
+  await assert.rejects(() => agent.run('Keep going'), (e) => e.name === 'AbortError');
+  assert.ok(rounds >= 60, `With no round limit it should run straight past the normal 48 rounds, but it only ran ${rounds}`);
 });
 
 // ── 「自主轮次」这个设置项本身 ──────────────────────────────────
@@ -124,13 +124,13 @@ async function withConfig(fn) {
   }
 }
 
-test('自主轮次:默认 300,老配置里没有这个字段也补得上', async () => {
+test('Autonomous rounds: default 300, filled in even when an old config lacks this field', async () => {
   await withConfig(async ({ publicConfig }) => {
     assert.equal(publicConfig().deepAutoRounds, 300);
   });
 });
 
-test('自主轮次:0 是合法的(表示不限),负数和超大值不是', async () => {
+test('Autonomous rounds: 0 is valid (meaning unlimited), negative numbers and huge values are not', async () => {
   await withConfig(async ({ writeConfig, publicConfig }) => {
     writeConfig({ deepAutoRounds: 0 });
     assert.equal(publicConfig().deepAutoRounds, 0);
@@ -139,6 +139,6 @@ test('自主轮次:0 是合法的(表示不限),负数和超大值不是', async
     assert.throws(() => writeConfig({ deepAutoRounds: -1 }), /0~100000/);
     assert.throws(() => writeConfig({ deepAutoRounds: 100001 }), /0~100000/);
     assert.throws(() => writeConfig({ deepAutoRounds: 'many' }), /0~100000/);
-    assert.equal(publicConfig().deepAutoRounds, 1000, '非法值不该把已存的改掉');
+    assert.equal(publicConfig().deepAutoRounds, 1000, 'An invalid value must not overwrite the stored one');
   });
 });

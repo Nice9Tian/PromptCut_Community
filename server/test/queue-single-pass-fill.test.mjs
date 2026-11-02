@@ -15,9 +15,9 @@ import path from 'node:path';
 const bakeLog = [];
 mock.module(new URL('../bakery/index.mjs', import.meta.url).href, {
   exports: {
-    openBakery: async () => { throw new Error('单测不开 Chrome'); },
+    openBakery: async () => { throw new Error('Unit test does not open Chrome'); },
     findFfmpeg: async () => 'ffmpeg',
-    streamPngVideo: () => { throw new Error('单测不编码'); },
+    streamPngVideo: () => { throw new Error('Unit test does not encode'); },
     bakeFrames: async (bakery, opts = {}) => {
       const rec = { targetFrames: [...(opts.targetFrames ?? [])], snapshotFrames: [...(opts.snapshotFrames ?? [])], events: [] };
       bakeLog.push(rec);
@@ -78,7 +78,7 @@ const withTmp = async (fn) => {
   try { return await fn(root); } finally { await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 };
 
-test('QSP4 一段(帧 6～25)顺推:换一次页 + 收尾一次;帧集合与逐批的并集相同;每 4 帧入库一次、报一次进度;盘上的快照相同', async () => {
+test('QSP4 one segment (frames 6-25) in a sequential pass: one page switch + one wrap-up; the frame set equals the union of the per-batch runs; commit once and report progress once per 4 frames; the snapshots on disk are the same', async () => {
   const range = { from: 6, to: 25 };
   const batch = await withTmp(root => run(root, { singlePass: false, range }));
   const single = await withTmp(root => run(root, { singlePass: true, range }));
@@ -100,19 +100,19 @@ test('QSP4 一段(帧 6～25)顺推:换一次页 + 收尾一次;帧集合与逐�
   assert.deepEqual(single.files, batch.files);
 });
 
-test('QSP5 顺推时每 4 帧先入库再截下一帧:入库跟着推帧走,不是全推完才一次交', async () => {
+test('QSP5 in a sequential pass, every 4 frames are committed before the next frame is captured: committing follows the pushing of frames, rather than handing everything over at once after all are pushed', async () => {
   const single = await withTmp(root => run(root, { singlePass: true, range: { from: 0, to: 11 } }));
   assert.equal(single.bakes.length, 1);
   assert.deepEqual(single.batches.map(b => b.first), [0, 4, 8]);
   const ev = single.bakes[0].events;
   assert.deepEqual(ev.filter(e => e.startsWith('commit')), ['commit 0,1,2,3', 'commit 4,5,6,7', 'commit 8,9,10,11']);
-  assert.ok(ev.indexOf('commit 0,1,2,3') > ev.indexOf('snap 3') && ev.indexOf('commit 0,1,2,3') < ev.indexOf('snap 4'), '第一批 4 帧在推第 5 帧之前入库');
+  assert.ok(ev.indexOf('commit 0,1,2,3') > ev.indexOf('snap 3') && ev.indexOf('commit 0,1,2,3') < ev.indexOf('snap 4'), 'the first batch of 4 frames is committed before frame 5 is pushed');
 });
 
-test('QSP6 只有一批(一段不到 5 帧)或没给 range:照原来逐批走', async () => {
+test('QSP6 only one batch (a segment of fewer than 5 frames) or no range given: proceeds batch by batch as before', async () => {
   const one = await withTmp(root => run(root, { singlePass: true, range: { from: 0, to: 3 } }));
   assert.equal(one.bakes.length, 1);
   assert.deepEqual(one.bakes[0].targetFrames, [0, 1, 2, 3]);
   const whole = await withTmp(root => run(root, { singlePass: true, range: null }));
-  assert.equal(whole.bakes.length, Math.ceil(N / 4), '没给 range(后台那一趟):逐批');
+  assert.equal(whole.bakes.length, Math.ceil(N / 4), 'no range given (the background pass): batch by batch');
 });

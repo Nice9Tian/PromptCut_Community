@@ -34,7 +34,7 @@ const frameMs = (n, fps) => (n / fps) * 1000;
 /** 把时钟拨回 0(倒退是跳转),并清掉这一下带出来的那一拍 */
 const rewind = () => { clock.advanceTo(0); };
 
-test("累加确实有误差(这条测的是前提):逐帧加 1000/30,第 60 帧不是 2000", () => {
+test("accumulation does drift (this test checks the premise): adding 1000/30 frame by frame, frame 60 is not 2000", () => {
   let ms = 0;
   for (let k = 0; k < 60; k++) ms += 1000 / 30;
   assert.notEqual(ms, 2000);
@@ -42,26 +42,26 @@ test("累加确实有误差(这条测的是前提):逐帧加 1000/30,第 60 帧�
 });
 
 for (const fps of [24, 25, 30, 60]) {
-  test(`${fps} 帧/秒:从头推 20 秒,每一步的时刻都等于 帧号 / fps * 1000`, () => {
+  test(`${fps} fps: advancing from the start for 20 seconds, the time at every step equals frame number / fps * 1000`, () => {
     rewind();
     const got = [];
     clock.advanceTo(frameMs(20 * fps, fps), { step: 1000 / fps, maxCatchUp: Infinity, onFrame: (ms) => got.push(ms) });
     assert.equal(got.length, 20 * fps);
-    for (let k = 1; k <= 20 * fps; k++) assert.equal(got[k - 1], frameMs(k, fps), `第 ${k} 帧`);
+    for (let k = 1; k <= 20 * fps; k++) assert.equal(got[k - 1], frameMs(k, fps), `Frame ${k}`);
     assert.equal(clock.now(), frameMs(20 * fps, fps));
   });
 
-  test(`${fps} 帧/秒:一帧一帧接着推,每帧正好一拍,落在同一个时刻上`, () => {
+  test(`${fps} fps: advancing frame by frame continuously, each frame is exactly one tick and lands on the same time`, () => {
     rewind();
     for (let n = 1; n <= 20 * fps; n++) {
       const got = [];
       clock.advanceTo(frameMs(n, fps), { step: 1000 / fps, onFrame: (ms) => got.push(ms) });
-      assert.deepEqual(got, [frameMs(n, fps)], `第 ${n} 帧`);
+      assert.deepEqual(got, [frameMs(n, fps)], `Frame ${n}`);
     }
   });
 }
 
-test("隔几帧取一张(接着推):中间的帧一帧不落,时刻和从头推的一样", () => {
+test("sampling every few frames (continued advance): no intermediate frame is skipped, times match advancing from the start", () => {
   rewind();
   const fps = 30;
   const got = [];
@@ -70,7 +70,7 @@ test("隔几帧取一张(接着推):中间的帧一帧不落,时刻和从头推�
   got.forEach((ms, i) => assert.equal(ms, frameMs(i + 1, fps)));
 });
 
-test("起点不在帧格上:第一步走到下一个帧格;终点不在帧格上:最后一步走到终点本身", () => {
+test("start off the frame grid: first step goes to the next grid point; end off the frame grid: last step goes to the end itself", () => {
   rewind();
   const step = 1000 / 30;
   clock.set(10);
@@ -83,7 +83,7 @@ test("起点不在帧格上:第一步走到下一个帧格;终点不在帧格上
   assert.deepEqual(more, [frameMs(4, 30), 140]);
 });
 
-test("起点只差浮点尾数(旧的累加值):算在那一帧上,不多跑一拍", () => {
+test("start off by only a floating-point remainder (old accumulated value): counted on that frame, no extra tick", () => {
   rewind();
   clock.set(1999.9999999999982);
   const got = [];
@@ -91,14 +91,14 @@ test("起点只差浮点尾数(旧的累加值):算在那一帧上,不多跑一�
   assert.deepEqual(got, [frameMs(61, 30)]);
 });
 
-test("目标只比帧格差浮点尾数:直接走到目标本身,一拍", () => {
+test("target off the frame grid by only a floating-point remainder: go straight to the target itself, one tick", () => {
   rewind();
   const got = [];
   clock.advanceTo(33.33333333333334, { step: 1000 / 30, onFrame: (ms) => got.push(ms) });
   assert.deepEqual(got, [33.33333333333334]);
 });
 
-test("补跑上限削掉起点以后,剩下的步子仍然落在帧格上", () => {
+test("after the catch-up limit trims the start, the remaining steps still land on the frame grid", () => {
   rewind();
   const got = [];
   clock.advanceTo(10_000, { step: 1000 / 30, maxCatchUp: 6000, onFrame: (ms) => got.push(ms) });
@@ -108,7 +108,7 @@ test("补跑上限削掉起点以后,剩下的步子仍然落在帧格上", () =
   assert.equal(got.at(-1), 10_000);
 });
 
-test("认不出帧率的步长:按 帧号 * 步长 走,同样不累加;给了 fps 就照 fps", () => {
+test("step with unrecognized frame rate: advance by frame number * step, still without accumulating; if fps is given, follow fps", () => {
   rewind();
   const got = [];
   clock.advanceTo(35, { step: 7, onFrame: (ms) => got.push(ms) });
@@ -121,17 +121,17 @@ test("认不出帧率的步长:按 帧号 * 步长 走,同样不累加;给了 fp
   exact.forEach((ms, i) => assert.equal(ms, frameMs(i + 1, fps)));
 });
 
-test("frameGrid:给的帧率和步长对不上时不用它", () => {
+test("frameGrid: not used when the given frame rate does not match the step", () => {
   const grid = frameGrid(1000 / 30, 25);
-  assert.equal(grid.at(60), 2000, "按步长认出来的 30 帧/秒");
-  assert.equal(frameGrid(40, 30).at(3), 120, "按步长认出来的 25 帧/秒");
+  assert.equal(grid.at(60), 2000, "30 fps recognized from the step");
+  assert.equal(frameGrid(40, 30).at(3), 120, "25 fps recognized from the step");
   assert.equal(grid.after(0), 1);
   assert.equal(grid.after(frameMs(60, 30)), 61);
   assert.equal(grid.reaches(60, 2000), true);
   assert.equal(grid.reaches(59, 2000), false);
 });
 
-test("advanceToAsync:走的是同一串时刻;一帧里先拨时钟、再提交、再跑回调、再收尾", async () => {
+test("advanceToAsync: walks the same sequence of times; within one frame: tick the clock, then commit, then run callbacks, then finish up", async () => {
   rewind();
   const fps = 30;
   const got = [];
@@ -149,7 +149,7 @@ test("advanceToAsync:走的是同一串时刻;一帧里先拨时钟、再提交�
   assert.deepEqual(order, [["onFrame", frameMs(1, fps), null], ["afterFrame", frameMs(1, fps), frameMs(1, fps)]]);
 });
 
-test("advanceToAsync:收尾回的 Promise 要等;abort 在帧与帧之间生效,停在整帧上", async () => {
+test("advanceToAsync: the Promise returned by the wrap-up must be awaited; abort takes effect between frames and stops on a whole frame", async () => {
   rewind();
   const fps = 30;
   let settled = 0;

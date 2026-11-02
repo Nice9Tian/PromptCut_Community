@@ -13,8 +13,8 @@ async function main() {
   };
 
   const opts = {
-    prompt: "开始",
-    systemPrompt: "系统提示",
+    prompt: "Start",
+    systemPrompt: "System prompt",
     sessionId: null,
     callTool,
     onEvent: (ev) => {
@@ -25,7 +25,7 @@ async function main() {
   const run = runTextProtocolLoop({ startRun, opts, onEvent: opts.onEvent });
   await run.done;
   
-  console.log("=== 事件日志 ===");
+  console.log("=== Event log ===");
   events.forEach(e => {
     if (e.type === 'text') {
       console.log(`[text] ${e.delta.replace(/\n/g, '\\n')}`);
@@ -37,43 +37,43 @@ async function main() {
   // 断言
   let passed = true;
   const statusEvents = events.filter(e => e.type === 'status');
-  if (statusEvents.some(e => e.text === '文本协议已达 8 轮上限')) {
-     console.log("✅ 8轮上限生效");
+  if (statusEvents.some(e => e.text === 'Text protocol reached the 8-round limit')) {
+     console.log("✅ 8-round limit took effect");
   } else {
-     console.log("❌ 8轮上限未生效");
+     console.log("❌ 8-round limit did not take effect");
      passed = false;
   }
   
   const toolCallEvents = events.filter(e => e.type === 'tool_call');
   if (toolCallEvents.length === 8 * 2) { 
-     console.log("✅ 围栏被正确解析");
+     console.log("✅ Fences parsed correctly");
   } else {
-     console.log(`❌ 围栏解析数量不对，预期 16，实际 ${toolCallEvents.length}`);
+     console.log(`❌ Wrong number of fences parsed, expected 16, actual ${toolCallEvents.length}`);
      passed = false;
   }
   
   const toolResultEvents = events.filter(e => e.type === 'tool_result');
   const unregistered = toolResultEvents.filter(e => e.name === 'bad_tool');
-  if (unregistered.length > 0 && unregistered[0].ok === false && unregistered[0].summary.includes('未注册')) {
-     console.log("✅ 未注册工具被拒绝");
+  if (unregistered.length > 0 && unregistered[0].ok === false && unregistered[0].summary.includes('not registered')) {
+     console.log("✅ Unregistered tool was rejected");
   } else {
-     console.log("❌ 未注册工具未被正确拒绝");
+     console.log("❌ Unregistered tool was not rejected correctly");
      passed = false;
   }
   
-  const badJson = toolResultEvents.filter(e => e.summary.includes('JSON 解析失败'));
+  const badJson = toolResultEvents.filter(e => e.summary.includes('JSON parse failed'));
   if (badJson.length > 0 && badJson[0].ok === false) {
-     console.log("✅ 坏JSON被捕捉并回灌");
+     console.log("✅ Bad JSON was caught and fed back");
   } else {
-     console.log("❌ 坏JSON捕捉失败");
+     console.log("❌ Failed to catch bad JSON");
      passed = false;
   }
   
   // callToolCount should be exactly 8 (only stt_status is called, once per round)
   if (callToolCount === 8) {
-     console.log("✅ callTool只对合法工具调用");
+     console.log("✅ callTool only for valid tool calls");
   } else {
-     console.log(`❌ callTool被调用了 ${callToolCount} 次`);
+     console.log(`❌ callTool was called ${callToolCount} times`);
      passed = false;
   }
   

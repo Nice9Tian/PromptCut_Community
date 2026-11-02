@@ -25,7 +25,7 @@ function freshStore(now) {
 
 // ------------------------------------------------------------------ 存储
 
-test('store：首次打开生成 server.json；建、查、改、删；重开后记录还在；名字按 NFC + 小写唯一', () => {
+test('store: first open generates server.json; create, look up, update, delete; records survive a reopen; names are unique by NFC + lowercase', () => {
   const dir = path.join(tempDir('pc-au-'), 'auth');
   const st = openCredentialStore({ dir });
   const serverJson = JSON.parse(fs.readFileSync(path.join(dir, 'server.json'), 'utf8'));
@@ -37,7 +37,7 @@ test('store：首次打开生成 server.json；建、查、改、删；重开后
   assert.deepEqual(rec.userGenerations, {});
   assert.deepEqual(rec.bans, []);
   assert.equal(Buffer.from(rec.ticketKey, 'base64url').length, 32);
-  assert.equal(rec.list, undefined, '自由进入没有名单');
+  assert.equal(rec.list, undefined, 'open entry has no list');
   assert.equal(st.nameTaken('CAFÉ'), true);
   assert.equal(st.byName('café').projectId, rec.projectId);
   assert.throws(() => st.create({ name: 'café', mode: 'free', kdf: FAST_KDF, creator: { username: 'x', ...cred() }, project: cred() }), (e) => e.code === 'name-taken');
@@ -50,25 +50,25 @@ test('store：首次打开生成 server.json；建、查、改、删；重开后
   assert.equal(r2.list.length, 1);
   const up = st.update(rec.projectId, (d) => { d.generation += 1; d.name = 'hijack'; });
   assert.equal(up.generation, 2);
-  assert.equal(up.name, 'Café', 'update 不能改名');
+  assert.equal(up.name, 'Café', 'update cannot rename');
   assert.equal(st.get(rec.projectId).generation, 2);
   assert.equal(st.update('sp_nope', () => {}), null);
 
   const reopened = openCredentialStore({ dir });
   assert.equal(reopened.count(), 2);
   assert.equal(reopened.get(rec.projectId).generation, 2);
-  assert.equal(reopened.serverSecret.toString('base64url'), serverJson.secret, '服务端密钥跨重开不变');
+  assert.equal(reopened.serverSecret.toString('base64url'), serverJson.secret, 'server key is unchanged across reopens');
   assert.equal(st.remove(rec.projectId), true);
   assert.equal(st.remove(rec.projectId), false);
   assert.equal(fs.existsSync(file), false);
-  assert.equal(st.nameTaken('café'), false, '删了名字就释放');
+  assert.equal(st.nameTaken('café'), false, 'deleting releases the name');
   // 返回的是副本：改它不影响存储
   const copy = st.get(r2.projectId);
   copy.generation = 99;
   assert.equal(st.get(r2.projectId).generation, 1);
 });
 
-test('store：目录不可用（是个文件）、server.json 坏了、项目文件坏了 → 打开时抛错（失败即关）', () => {
+test('store: unusable directory (it is a file), corrupt server.json, corrupt project file → throws on open (fail-closed)', () => {
   const base = tempDir('pc-au-');
   const asFile = path.join(base, 'file');
   fs.writeFileSync(asFile, 'x');
@@ -83,18 +83,18 @@ test('store：目录不可用（是个文件）、server.json 坏了、项目文
   assert.throws(() => openCredentialStore({ dir: d3 }));
 });
 
-test('store：credentialStoreFor 按目录取进程内单例；forget 之后重新打开', () => {
+test('store: credentialStoreFor returns an in-process singleton per directory; reopens after forget', () => {
   const dir = path.join(tempDir('pc-au-'), 'auth');
   assert.equal(existingCredentialStore(dir), null);
   const a = credentialStoreFor(dir);
-  assert.equal(credentialStoreFor(path.join(dir, '.')), a, '同一目录同一份');
+  assert.equal(credentialStoreFor(path.join(dir, '.')), a, 'same directory, same instance');
   assert.equal(existingCredentialStore(dir), a);
   forgetCredentialStore(dir);
   assert.notEqual(credentialStoreFor(dir), a);
   forgetCredentialStore(dir);
 });
 
-test('store：projectId 是 sp_ 加 26 位小写 base32，互不相同', () => {
+test('store: projectId is sp_ plus 26 lowercase base32 characters, all distinct', () => {
   const seen = new Set();
   for (let i = 0; i < 500; i++) {
     const id = newProjectId();
@@ -106,7 +106,7 @@ test('store：projectId 是 sp_ 加 26 位小写 base32，互不相同', () => {
 
 // ------------------------------------------------------------------ 挑战
 
-test('challenges：只能用一次、60 s 过期、绑定一致；用过的再交回 used，没见过的 unknown', () => {
+test('challenges: single use, expire after 60 s, binding must match; a used one presented again returns used, one never seen returns unknown', () => {
   const now = clock();
   const ch = createChallenges({ now });
   const b = ['join', 'sp_x', 'bob', 'dev', 'member'];
@@ -116,7 +116,7 @@ test('challenges：只能用一次、60 s 过期、绑定一致；用过的再�
   assert.equal(ch.check(n1, b), 'used');
   const n2 = ch.issue(b);
   assert.equal(ch.check(n2, ['join', 'sp_x', 'bob', 'dev', 'creator']), 'mismatch');
-  assert.equal(ch.check(n2, b), 'used', '绑定不符也作废');
+  assert.equal(ch.check(n2, b), 'used', 'a mismatched binding also voids it');
   const n3 = ch.issue(b);
   now.add(59_999);
   assert.equal(ch.consume(n3, b), true);
@@ -130,7 +130,7 @@ test('challenges：只能用一次、60 s 过期、绑定一致；用过的再�
   assert.equal(ch.check(n5, ['admin', 'conn-1', 'sp_x']), 'used');
 });
 
-test('challenges：在册数量有上限，超出丢最早发的', () => {
+test('challenges: the number of outstanding entries is capped, the earliest issued is dropped when the cap is exceeded', () => {
   const ch = createChallenges({ max: 3 });
   const ns = [1, 2, 3, 4].map((i) => ch.issue(['x', i]));
   assert.ok(ch.size() <= 3);
@@ -140,21 +140,21 @@ test('challenges：在册数量有上限，超出丢最早发的', () => {
 
 // ------------------------------------------------------------------ 限速
 
-test('rate-limit：1 分钟内第 5 次失败进入 60 s 冷却；冷却期内再失败不延长；过后清零；别的来源不受影响', () => {
+test('rate-limit: the 5th failure within 1 minute enters a 60 s cooldown; further failures during the cooldown do not extend it; the count resets afterwards; other sources are unaffected', () => {
   const now = clock();
   const rl = createRateLimiter({ now });
   for (let i = 0; i < 4; i++) assert.equal(rl.fail('1.1.1.1'), false);
   assert.equal(rl.blocked('1.1.1.1'), false);
-  assert.equal(rl.fail('1.1.1.1'), true, '第 5 次进入冷却');
+  assert.equal(rl.fail('1.1.1.1'), true, '5th failure enters cooldown');
   assert.equal(rl.blocked('1.1.1.1'), true);
   assert.equal(rl.blocked('2.2.2.2'), false);
   now.add(30_000);
   rl.fail('1.1.1.1');
   now.add(29_999);
-  assert.equal(rl.blocked('1.1.1.1'), true, '60 s 以内');
+  assert.equal(rl.blocked('1.1.1.1'), true, 'within 60 s');
   now.add(2);
-  assert.equal(rl.blocked('1.1.1.1'), false, '60 s 之后恢复');
-  assert.equal(rl.fail('1.1.1.1'), false, '冷却过后从零数');
+  assert.equal(rl.blocked('1.1.1.1'), false, 'recovers after 60 s');
+  assert.equal(rl.fail('1.1.1.1'), false, 'counting restarts from zero after cooldown');
   // 失败分散在一分钟以外不累计
   const rl2 = createRateLimiter({ now });
   for (let i = 0; i < 10; i++) { rl2.fail('3.3.3.3'); now.add(15_000); }
@@ -171,7 +171,7 @@ function ticketFixture() {
   return { now, st, rec, lookup };
 }
 
-test('tickets：签发的形状与字段；核对通过；过期、代数、签名、类别、长度各情形', () => {
+test('tickets: issued shape and fields; verification passes; the expiry, generation, signature, kind and length cases', () => {
   const { now, st, rec, lookup } = ticketFixture();
   const u = 'bob@dev-000000000001';
   const { ticket, exp } = signTicket(st.peek(rec.projectId), { k: 'asset', u, r: 'rw' }, now());
@@ -209,7 +209,7 @@ test('tickets：签发的形状与字段；核对通过；过期、代数、签�
   st.update(rec.projectId, (d) => { d.userGenerations[u] = userGeneration(d, u) + 1; });
   assert.equal(verifyTicket(t2, { lookup, now: now() }).reason, 'generation');
   const other = signTicket(st.peek(rec.projectId), { k: 'asset', u: 'carol@dev-000000000002', r: 'r' }, now()).ticket;
-  assert.equal(verifyTicket(other, { lookup, now: now() }).ok, true, '别的用户不受影响');
+  assert.equal(verifyTicket(other, { lookup, now: now() }).ok, true, 'other users are unaffected');
 
   // 格式
   for (const bad of ['', 'v1', 'v1.a.b', `v2.${seg}.${sig}`, `v1.${seg}`, 'x'.repeat(2049), `v1.${seg}.${sig}.x`]) {
@@ -220,7 +220,7 @@ test('tickets：签发的形状与字段；核对通过；过期、代数、签�
   assert.equal(verifyTicket(other, { lookup, now: now() }).reason, 'no-project');
 });
 
-test('tickets：连接票据 2 分钟、带角色 / 对话号 / 归属；轮换期间旧密钥照认到 until', () => {
+test('tickets: connection ticket lasts 2 minutes and carries role / chat number / ownership; during rotation the old key is still accepted up to until', () => {
   const { now, st, rec, lookup } = ticketFixture();
   const u = 'bob@dev-000000000001';
   const t = signTicket(st.peek(rec.projectId), { k: 'conn', u, r: 'render', o: { kind: 'agent', c: 2 }, dn: 'Bob PC' }, now());
@@ -237,8 +237,8 @@ test('tickets：连接票据 2 分钟、带角色 / 对话号 / 归属；轮换�
     d.oldTicketKeys = [{ kid: kidOf(oldKey), key: oldKey, until: now() + 1000 }];
     d.ticketKey = crypto.randomBytes(32).toString('base64url');
   });
-  assert.equal(verifyTicket(oldTicket, { lookup, now: now() }).ok, true, '轮换期内旧票据照认');
-  assert.equal(verifyTicket(oldTicket, { lookup, now: now() + 1001 }).reason, 'signature', '过了 until 不认');
+  assert.equal(verifyTicket(oldTicket, { lookup, now: now() }).ok, true, 'old ticket is still accepted during rotation');
+  assert.equal(verifyTicket(oldTicket, { lookup, now: now() + 1001 }).reason, 'signature', 'not accepted after until');
   const fresh = signTicket(st.peek(rec.projectId), { k: 'asset', u, r: 'r' }, now()).ticket;
   assert.equal(verifyTicket(fresh, { lookup, now: now() }).ok, true);
 });
@@ -265,7 +265,7 @@ function makeProof({ key, projectId, username, deviceId, as = 'member', nonce, r
   return proofItem({ v: 1, p: projectId, u: username, d: deviceId, dn: 'Dev', as, nonce, m, r: role, ...extra });
 }
 
-test('handshake：证明对 → 成员 principal 字段齐全；nonce 复用、四元组不符、证明错、名单外 → null 并记原因', () => {
+test('handshake: correct proof → member principal has all fields; nonce reuse, four-tuple mismatch, wrong proof, off the list → null and the reason is recorded', () => {
   const f = handshakeFixture();
   const project = cred();
   const creator = cred();
@@ -278,13 +278,13 @@ test('handshake：证明对 → 成员 principal 字段齐全；nonce 复用、�
     userId: `bob@${dev}`, tenantId: rec.projectId, scope: 'member', username: 'bob', deviceId: dev, deviceName: 'Dev',
     creator: false, role: 'render', conversation: null, owner: { kind: 'user' },
   });
-  assert.equal(f.auth.authenticate(f.req('promptcut.v1', good)), null, 'nonce 复用');
+  assert.equal(f.auth.authenticate(f.req('promptcut.v1', good)), null, 'nonce reuse');
   const n2 = issue();
-  assert.equal(f.auth.authenticate(f.req('promptcut.v1', makeProof({ key: project.key, projectId: rec.projectId, username: 'bobby', deviceId: dev, nonce: n2 }))), null, '四元组不符');
+  assert.equal(f.auth.authenticate(f.req('promptcut.v1', makeProof({ key: project.key, projectId: rec.projectId, username: 'bobby', deviceId: dev, nonce: n2 }))), null, 'four-tuple mismatch');
   const n3 = issue();
-  assert.equal(f.auth.authenticate(f.req('promptcut.v1', makeProof({ key: cred().key, projectId: rec.projectId, username: 'bob', deviceId: dev, nonce: n3 }))), null, '口令错');
+  assert.equal(f.auth.authenticate(f.req('promptcut.v1', makeProof({ key: cred().key, projectId: rec.projectId, username: 'bob', deviceId: dev, nonce: n3 }))), null, 'wrong passphrase');
   const n4 = issue('bob', 'creator');
-  assert.equal(f.auth.authenticate(f.req('promptcut.v1', makeProof({ key: project.key, projectId: rec.projectId, username: 'bob', deviceId: dev, as: 'creator', nonce: n4 }))), null, '不是创建者');
+  assert.equal(f.auth.authenticate(f.req('promptcut.v1', makeProof({ key: project.key, projectId: rec.projectId, username: 'bob', deviceId: dev, as: 'creator', nonce: n4 }))), null, 'not the creator');
   const n5 = issue('alice', 'creator');
   const asCreator = f.auth.authenticate(f.req('promptcut.v1', makeProof({ key: creator.key, projectId: rec.projectId, username: 'alice', deviceId: dev, as: 'creator', nonce: n5, role: 'agent', extra: { c: 2 } })));
   assert.equal(asCreator.creator, true);
@@ -294,7 +294,7 @@ test('handshake：证明对 → 成员 principal 字段齐全；nonce 复用、�
   assert.ok(!JSON.stringify(f.logs).includes(project.key));
 });
 
-test('handshake：格式与组合规则（多项、缺 promptcut.v1、agent 缺对话号、owner 给了非 render、JSON 超 1024 字节）', () => {
+test('handshake: format and combination rules (multiple items, missing promptcut.v1, agent missing chat number, owner given on a non-render role, JSON over 1024 bytes)', () => {
   const f = handshakeFixture();
   const project = cred();
   const rec = f.st.create({ name: 'h2', mode: 'free', kdf: FAST_KDF, creator: { username: 'alice', ...cred() }, project });
@@ -302,18 +302,18 @@ test('handshake：格式与组合规则（多项、缺 promptcut.v1、agent 缺�
   const p = (extra = {}, role = 'page') => makeProof({ key: project.key, projectId: rec.projectId, username: 'bob', deviceId: dev, nonce: f.challenges.issue(['join', rec.projectId, 'bob', dev, 'member']), role, extra });
   const reasons = () => f.logs.map((l) => l.reason);
   assert.equal(f.auth.authenticate(f.req('promptcut.v1', p(), 'promptcut.ticket.x')), null);
-  assert.equal(f.auth.authenticate(f.req(p())), null, '缺 promptcut.v1');
-  assert.equal(f.auth.authenticate(f.req('promptcut.v1', p({}, 'agent'))), null, 'agent 缺对话号');
-  assert.equal(f.auth.authenticate(f.req('promptcut.v1', p({ c: 1 }, 'page'))), null, 'page 带对话号');
-  assert.equal(f.auth.authenticate(f.req('promptcut.v1', p({ o: { kind: 'user' } }, 'page'))), null, 'owner 只给 render');
-  assert.equal(f.auth.authenticate(f.req('promptcut.v1', p({ pad: 'x'.repeat(1100) }))), null, 'JSON 超 1024 字节');
+  assert.equal(f.auth.authenticate(f.req(p())), null, 'promptcut.v1 missing');
+  assert.equal(f.auth.authenticate(f.req('promptcut.v1', p({}, 'agent'))), null, 'agent missing chat number');
+  assert.equal(f.auth.authenticate(f.req('promptcut.v1', p({ c: 1 }, 'page'))), null, 'page carries a chat number');
+  assert.equal(f.auth.authenticate(f.req('promptcut.v1', p({ o: { kind: 'user' } }, 'page'))), null, 'owner only for render');
+  assert.equal(f.auth.authenticate(f.req('promptcut.v1', p({ pad: 'x'.repeat(1100) }))), null, 'JSON over 1024 bytes');
   assert.equal(f.auth.authenticate(f.req('promptcut.v1', 'promptcut.auth.!!!')), null);
-  assert.equal(f.auth.authenticate(f.req('promptcut.v1', 'promptcut.role.render')), null, '只有角色项');
-  assert.equal(f.auth.authenticate(f.req('promptcut.v1')), null, '非回环什么都不带');
+  assert.equal(f.auth.authenticate(f.req('promptcut.v1', 'promptcut.role.render')), null, 'only a role item');
+  assert.equal(f.auth.authenticate(f.req('promptcut.v1')), null, 'non-loopback with nothing');
   assert.deepEqual(reasons(), ['multiple', 'bad-format', 'bad-format', 'bad-format', 'bad-format', 'bad-format', 'bad-format', 'bad-format', 'no-credential']);
 });
 
-test('handshake：回环什么都不带是本机身份；本机声明只在回环认、项目要存在；令牌只在给了且允许时认', () => {
+test('handshake: loopback with nothing is the local identity; a local claim is accepted only on loopback and the project must exist; a token is accepted only when given and allowed', () => {
   const token = crypto.randomBytes(32).toString('base64url');
   const loop = handshakeFixture({ loopback: true, token });
   assert.deepEqual(loop.auth.authenticate(loop.req()), LOCAL_PRINCIPAL);
@@ -326,22 +326,22 @@ test('handshake：回环什么都不带是本机身份；本机声明只在回�
   assert.equal(loop.auth.authenticate(loop.req('promptcut.v1', `promptcut.tenant.${rec.projectId}`)).role, 'page');
   assert.equal(loop.auth.authenticate(loop.req('promptcut.v1', `promptcut.tenant.${rec.projectId}`, 'promptcut.role.agent.4')).conversation, 4);
   assert.equal(loop.auth.authenticate(loop.req('promptcut.v1', `promptcut.tenant.${rec.projectId}`, 'promptcut.role.agent')), null);
-  assert.equal(loop.auth.authenticate(loop.req('promptcut.v1', `promptcut.tenant.${newProjectId()}`)), null, '项目不存在');
+  assert.equal(loop.auth.authenticate(loop.req('promptcut.v1', `promptcut.tenant.${newProjectId()}`)), null, 'Project does not exist');
   assert.deepEqual(loop.auth.authenticate(loop.req('promptcut.v1', `promptcut.token.${token}`)), ADMIN_PRINCIPAL);
-  assert.equal(loop.auth.authenticate(loop.req('promptcut.v1', `promptcut.token.${token}`, `promptcut.tenant.${rec.projectId}`)), null, '令牌不能和别的项一起');
+  assert.equal(loop.auth.authenticate(loop.req('promptcut.v1', `promptcut.token.${token}`, `promptcut.tenant.${rec.projectId}`)), null, 'token cannot be combined with other items');
 
   const lan = handshakeFixture({ loopback: false });
   const rec2 = lan.st.create({ name: 'h3b', mode: 'free', kdf: FAST_KDF, creator: { username: 'alice', ...cred() }, project: cred() });
-  assert.equal(lan.auth.authenticate(lan.req('promptcut.v1', `promptcut.tenant.${rec2.projectId}`)), null, '非回环的本机声明');
-  assert.equal(lan.auth.authenticate(lan.req('promptcut.v1', `promptcut.token.${token}`)), null, '没配令牌');
+  assert.equal(lan.auth.authenticate(lan.req('promptcut.v1', `promptcut.tenant.${rec2.projectId}`)), null, 'local claim from non-loopback');
+  assert.equal(lan.auth.authenticate(lan.req('promptcut.v1', `promptcut.token.${token}`)), null, 'no token configured');
 
   const noToken = handshakeFixture({ loopback: true });
   const auth2 = createHandshakeAuth({ store: noToken.st, challenges: noToken.challenges, limiter: noToken.limiter, clusterToken: token, acceptToken: false, isLoopback: () => true });
-  assert.equal(auth2.authenticate(noToken.req('promptcut.v1', `promptcut.token.${token}`)), null, '挂载模式一律不认令牌');
+  assert.equal(auth2.authenticate(noToken.req('promptcut.v1', `promptcut.token.${token}`)), null, 'mounted mode never accepts tokens');
   assert.throws(() => createHandshakeAuth({ store: null, challenges: noToken.challenges, limiter: noToken.limiter, clusterToken: 'short', isLoopback: () => true }), TypeError);
 });
 
-test('handshake：限定进入——名单内能进、名单外与禁入表 401；创建者以 member 身份进入也算创建者', () => {
+test('handshake: restricted entry (those on the list get in; those off the list or on the ban list get 401); a creator entering as member still counts as the creator', () => {
   const f = handshakeFixture();
   const creator = cred();
   const bob = cred();
@@ -349,17 +349,17 @@ test('handshake：限定进入——名单内能进、名单外与禁入表 401�
   const dev = 'dev-000000000004';
   const go = (username, key, as = 'member') => f.auth.authenticate(f.req('promptcut.v1', makeProof({ key, projectId: rec.projectId, username, deviceId: dev, as, nonce: f.challenges.issue(['join', rec.projectId, username, dev, as]) })));
   assert.equal(go('bob', bob.key).username, 'bob');
-  assert.equal(go('carol', bob.key), null, '名单外');
+  assert.equal(go('carol', bob.key), null, 'off the list');
   const a = go('alice', creator.key);
-  assert.equal(a.creator, true, '创建者自动算名单的一员');
+  assert.equal(a.creator, true, 'the creator automatically counts as on the list');
   f.st.update(rec.projectId, (d) => { d.bans.push({ username: 'bob', deviceId: dev }); });
-  assert.equal(go('bob', bob.key), null, '禁入');
+  assert.equal(go('bob', bob.key), null, 'banned');
   assert.deepEqual(f.logs.map((l) => l.reason), ['not-listed', 'banned']);
   assert.equal(credentialFor(f.st.peek(rec.projectId), 'carol', 'member'), null);
   assert.equal(admissionOf(f.st.peek(rec.projectId), { username: 'bob', deviceId: dev, creator: false }), 'banned');
 });
 
-test('handshake：限速——同一来源错 5 次后冷却期内口令对也拒；重放用过的 nonce 不计数；61 s 后恢复', () => {
+test('handshake: rate limiting (after 5 failures from the same source, even a correct passphrase is rejected during cooldown); replaying a used nonce is not counted; recovers after 61 s', () => {
   const f = handshakeFixture();
   const project = cred();
   const rec = f.st.create({ name: 'h5', mode: 'free', kdf: FAST_KDF, creator: { username: 'alice', ...cred() }, project });
@@ -372,15 +372,15 @@ test('handshake：限速——同一来源错 5 次后冷却期内口令对也�
   for (let i = 0; i < 4; i++) {
     const a = attempt(cred().key);
     assert.equal(a.first, null);
-    assert.equal(a.replay(), null, '重放（Node 的 WebSocket 在 401 后会原样再请求一次）');
+    assert.equal(a.replay(), null, 'replay (after a 401, Node WebSocket re-sends the same request once)');
   }
-  assert.equal(f.limiter.blocked('10.0.0.9'), false, '重放不计数：4 次失败还没到冷却');
+  assert.equal(f.limiter.blocked('10.0.0.9'), false, 'replay is not counted: 4 failures have not reached cooldown yet');
   assert.equal(attempt(cred().key).first, null);
   assert.equal(f.limiter.blocked('10.0.0.9'), true);
-  assert.equal(attempt(project.key).first, null, '冷却期内口令对也拒');
+  assert.equal(attempt(project.key).first, null, 'rejected during cooldown even with the correct passphrase');
   assert.equal(f.logs.at(-1).reason, 'rate-limited');
   f.now.add(61_000);
-  assert.ok(attempt(project.key).first, '61 s 后恢复');
+  assert.ok(attempt(project.key).first, 'recovers after 61 s');
 });
 
 test('isLoopbackAddress', () => {

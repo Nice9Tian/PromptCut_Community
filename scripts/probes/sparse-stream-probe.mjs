@@ -59,7 +59,7 @@ const KEEP = args.includes('--keep');
 const JSON_OUT = flagArg('json', null, args);
 const OUT = path.resolve(flagArg('out', null, args) || path.join(os.tmpdir(), `pc-sparse-stream-probe-${Date.now().toString(36)}`));
 process.env.PROMPTCUT_STREAM_POOL = '1';
-if (!ORIGIN && !PORT) { console.error('要给 --origin <dev server> 或 --port <自己起一台>'); process.exit(2); }
+if (!ORIGIN && !PORT) { console.error('Pass --origin <dev server> or --port <start your own>'); process.exit(2); }
 
 const FPS = 30, WIDTH = 1280, HEIGHT = 720, DURATION = 9;
 /** 入点、出点按秒写,落在两帧之间(帧号除以 30 多数不是有限小数,直接换成秒会差一帧) */
@@ -85,7 +85,7 @@ async function until(label, fn, timeoutMs, everyMs = 300) {
     let value = null;
     try { value = await fn(); } catch { value = null; }
     if (value) return value;
-    if (Date.now() > deadline) { fails.push(`超时:${label}`); return null; }
+    if (Date.now() > deadline) { fails.push(`Timeout: ${label}`); return null; }
     await sleep(everyMs);
   }
 }
@@ -99,7 +99,7 @@ function frameStore() {
     rgba(frame) {
       if (cache.has(frame)) return cache.get(frame);
       const data = decodePngRgba(png.get(frame))?.data;
-      if (!data) throw new Error(`解不开第 ${frame} 帧的参照`);
+      if (!data) throw new Error(`Could not resolve the reference for frame ${frame}`);
       cache.set(frame, data);
       if (cache.size > 48) cache.delete(cache.keys().next().value);
       return data;
@@ -213,7 +213,7 @@ let dev = null, bakery = null, browser = null, hostServer = null;
 const pipelines = [];
 const started = Date.now();
 try {
-  check(SPARSE_STRIDE === STREAM_SEGMENT_FRAMES, '稀疏版只有一档:每个分段一张');
+  check(SPARSE_STRIDE === STREAM_SEGMENT_FRAMES, 'The sparse version has only one tier: one image per segment');
   const ffmpeg = await findFfmpeg();
   let origin = ORIGIN;
   if (!origin) { dev = await startDevServer({ port: PORT, dataDir: path.join(OUT, 'dev-data'), tag: 'sparseprobe' }); origin = dev.origin; say('spawn', { pid: dev.pid, port: PORT }); }
@@ -248,7 +248,7 @@ try {
       const first = streamSegmentFirstFrame(n, originFrame);
       const count = streamSegmentFrameCount(n, originFrame, lastFrame);
       const d = await decodeOf(producer, state, n, dir, `sparse-${n}`);
-      if (!check(d.seg.stride === SPARSE_STRIDE && d.seg.samples === count && d.exact, `${tag}#${n}:稀疏版,样本数 = 这一段盖住的帧数`, { stride: d.seg.stride, samples: d.seg.samples, count, decoded: d.samples.length })) continue;
+      if (!check(d.seg.stride === SPARSE_STRIDE && d.seg.samples === count && d.exact, `${tag}#${n}: sparse version, sample count = the number of frames this segment covers`, { stride: d.seg.stride, samples: d.seg.samples, count, decoded: d.samples.length })) continue;
       // 每个样本都是同一张
       const worst = Math.max(0, ...d.samples.slice(1).map((s) => sampleDiff(s, d.samples[0])));
       if (worst > 1.5) record.notSame.push({ n, worst: round2(worst) });
@@ -269,13 +269,13 @@ try {
       record.segments.push({ n, first, samples: d.seg.samples, box: got, sameWorst: round2(worst) });
     }
     record.bound = manifest.bound; record.tight = manifest.tight ?? null; record.union = union;
-    check(record.segments.length === spec.lastSegment + 1, `${tag}:每个分段都有一版稀疏的`, record.segments.length);
-    check(record.notSame.length === 0, `${tag}:稀疏版每个分段里的样本都是同一张`, record.notSame);
-    check(record.wrong.length === 0, `${tag}:稀疏版那一张最像的是分段的第一帧`, record.wrong.slice(0, 4));
-    check(record.boxOff.length === 0, `${tag}:位置矩形和分段第一帧的不透明区域对得上(各边差 ≤ 1 像素)`, record.boxOff.slice(0, 4));
-    check(!!manifest.tight && (!union || inside(union, manifest.tight)), `${tag}:稀疏版齐了以后定了收紧矩形,盖住所有分段的位置矩形`, { tight: manifest.tight, union });
+    check(record.segments.length === spec.lastSegment + 1, `${tag}: every segment has a sparse version`, record.segments.length);
+    check(record.notSame.length === 0, `${tag}: all samples within each segment of the sparse version are the same image`, record.notSame);
+    check(record.wrong.length === 0, `${tag}: the single sparse image most resembles the first frame of the segment`, record.wrong.slice(0, 4));
+    check(record.boxOff.length === 0, `${tag}: the position rectangle matches the opaque area of the segment's first frame (each edge differs by ≤ 1 pixel)`, record.boxOff.slice(0, 4));
+    check(!!manifest.tight && (!union || inside(union, manifest.tight)), `${tag}: once the sparse version is complete, a tight rectangle is fixed that covers the position rectangles of all segments`, { tight: manifest.tight, union });
     const rows = producer.status().streams.find((r) => r.streamKey === spec.streamKey || r.key === spec.streamKey);
-    if (rows) check(Object.values(rows.segments).every((s) => 'box' in s), `${tag}:状态里每个分段带着位置矩形`);
+    if (rows) check(Object.values(rows.segments).every((s) => 'box' in s), `${tag}: every segment in the status carries a position rectangle`);
     return record;
   };
 
@@ -288,7 +288,7 @@ try {
       const first = streamSegmentFirstFrame(n, originFrame);
       const count = streamSegmentFrameCount(n, originFrame, lastFrame);
       const d = await decodeOf(producer, state, n, dir, `dense-${n}`);
-      if (!check(d.seg.stride === 1 && d.seg.samples === count && d.exact, `${tag}#${n}:满密度`, { stride: d.seg.stride, samples: d.seg.samples, count })) continue;
+      if (!check(d.seg.stride === 1 && d.seg.samples === count && d.exact, `${tag}#${n}: full density`, { stride: d.seg.stride, samples: d.seg.samples, count })) continue;
       record.rects.add(JSON.stringify(d.rect));
       const before = sparseRecord.segments.find((s) => s.n === n)?.box;
       if (JSON.stringify(d.seg.box ?? null) !== JSON.stringify(before ?? null)) record.boxChanged.push({ n, before, after: d.seg.box });
@@ -310,9 +310,9 @@ try {
     record.rects = [...record.rects].map((r) => JSON.parse(r));
     record.widened = state.widened ?? 0;
     record.tight = manifest.tight ?? null;
-    check(record.wrong.length === 0, `${tag}:满密度的样本最像的是它自己那一帧`, record.wrong.slice(0, 4));
-    check(record.boxChanged.length === 0, `${tag}:补成满密度以后位置矩形原样留着`, record.boxChanged.slice(0, 4));
-    check(record.clipped.length === 0, `${tag}:满密度的分段没有裁掉内容(每一帧的不透明区域都在这一段的矩形里)`, record.clipped.slice(0, 4));
+    check(record.wrong.length === 0, `${tag}: each full-density sample most resembles its own frame`, record.wrong.slice(0, 4));
+    check(record.boxChanged.length === 0, `${tag}: after filling up to full density, the position rectangles stay as they were`, record.boxChanged.slice(0, 4));
+    check(record.clipped.length === 0, `${tag}: full-density segments do not crop any content (every frame's opaque area lies within this segment's rectangle)`, record.clipped.slice(0, 4));
     return record;
   };
 
@@ -324,9 +324,9 @@ try {
     const firstDense = Math.min(Infinity, ...denseStart.map((e) => e.seq));
     const summary = { sparseStored: sparseStored.length, denseStarted: denseStart.length, lastSparseSeq: lastSparse, firstDenseSeq: Number.isFinite(firstDense) ? firstDense : null,
       strides: [...new Set(events.filter((e) => e.ev === 'start').map((e) => e.stride))] };
-    check(new Set(sparseStored.map((e) => `${e.key}#${e.n}`)).size === total, `${tag}:每个分段都先落了一版稀疏的`, summary);
-    check(denseStart.length >= total && firstDense > lastSparse, `${tag}:稀疏的全部落盘以后满密度的才开工`, summary);
-    check(summary.strides.every((s) => s === 1 || s === SPARSE_STRIDE), `${tag}:只有两种密度(每段一张、每帧一张)`, summary.strides);
+    check(new Set(sparseStored.map((e) => `${e.key}#${e.n}`)).size === total, `${tag}: every segment first had a sparse version stored`, summary);
+    check(denseStart.length >= total && firstDense > lastSparse, `${tag}: full-density work starts only after all the sparse ones are written to disk`, summary);
+    check(summary.strides.every((s) => s === 1 || s === SPARSE_STRIDE), `${tag}: only two densities (one per segment, one per frame)`, summary.strides);
     return summary;
   };
 
@@ -335,20 +335,20 @@ try {
   pipelines.push(A.pipeline);
   let t0 = Date.now();
   await A.pipeline.preload(PROJECT);
-  if (!(await until('甲:稀疏版齐了', () => allAt(A.producer, (s) => !!s), 600_000))) throw new Error(`甲的稀疏版没产完:${JSON.stringify(A.producer.status().log.slice(-8))}`);
+  if (!(await until('A: sparse version complete', () => allAt(A.producer, (s) => !!s), 600_000))) throw new Error(`A's sparse version was not fully produced: ${JSON.stringify(A.producer.status().log.slice(-8))}`);
   await sleep(600);
   out.a = { sparseMs: Date.now() - t0 };
   const statesA = [...A.producer.streams.values()];
-  check(statesA.length === 2 && statesA.every((s) => s.spec.kind === 'card'), '甲:两条单卡流', statesA.map((s) => s.spec.kind));
-  check(statesA.every((s) => segmentsOf(s).every((n) => s.manifest.segments[n]?.stride === SPARSE_STRIDE)), '甲:闸卡住时每个分段都是稀疏版(没有满密度的)');
+  check(statesA.length === 2 && statesA.every((s) => s.spec.kind === 'card'), 'A: two single-card streams', statesA.map((s) => s.spec.kind));
+  check(statesA.every((s) => segmentsOf(s).every((n) => s.manifest.segments[n]?.stride === SPARSE_STRIDE)), 'A: while the gate is held, every segment is a sparse version (none at full density)');
   const truthA = new Map(), sparseA = new Map();
   for (const state of statesA) {
     const clip = state.spec.topClipId, [o, l] = WANT[clip];
-    check(state.spec.originFrame === o && state.spec.lastFrame === l, `甲 ${clip}:第 ${o}～${l} 帧`, { originFrame: state.spec.originFrame, lastFrame: state.spec.lastFrame });
+    check(state.spec.originFrame === o && state.spec.lastFrame === l, `A ${clip}: frames ${o} to ${l}`, { originFrame: state.spec.originFrame, lastFrame: state.spec.lastFrame });
     const dir = path.join(OUT, `ref-${clip}`);
     await fs.mkdir(dir, { recursive: true });
     truthA.set(clip, await exportFrames(bakery, state.isolated, emptyUrl, l, dir));
-    sparseA.set(clip, await checkSparse(`甲 ${clip}`, A.producer, state, truthA.get(clip), dir, { direct: false }));
+    sparseA.set(clip, await checkSparse(`A ${clip}`, A.producer, state, truthA.get(clip), dir, { direct: false }));
   }
   out.a.sparse = [...sparseA.values()].map((r) => ({ tag: r.tag, bound: r.bound, tight: r.tight, union: r.union, segments: r.segments }));
   say('a-sparse', { ms: out.a.sparseMs, streams: out.a.sparse.map((r) => ({ tag: r.tag, tight: r.tight, boxes: r.segments.map((s) => s.box && [s.box.x, s.box.y, s.box.w, s.box.h]) })) });
@@ -360,7 +360,7 @@ try {
   const exportRgb = new Map();
   const exportOf = (f) => { if (!exportRgb.has(f)) { exportRgb.set(f, rgbOver(exported.png(f))); if (exportRgb.size > 24) exportRgb.delete(exportRgb.keys().next().value); } return exportRgb.get(f); };
   const ports = await (await fetch(origin + '/api/stage/ports')).json();
-  if (!ports.ok || !Array.isArray(ports.ports) || ports.ports.length < 2) throw new Error(`舞台端口没起来:${JSON.stringify(ports)}`);
+  if (!ports.ok || !Array.isArray(ports.ports) || ports.ports.length < 2) throw new Error(`Stage ports did not come up: ${JSON.stringify(ports)}`);
   const u = new URL(origin);
   const [originA, originB] = ports.ports.slice(0, 2).map((p) => `${u.protocol}//${u.hostname}:${p}`);
   const HOST_PATH = '/__sparse-stream-probe-host';
@@ -446,7 +446,7 @@ try {
     const rows = [];
     for (const f of [47, 62, 96, 107, 112, 127]) {
       const { got } = await seekTo(f);
-      if (!check(got.ms !== null, `舞台贴稀疏版:第 ${f} 帧流平面画出来了`, got)) continue;
+      if (!check(got.ms !== null, `Stage with sparse version: stream plane rendered frame ${f}`, got)) continue;
       const stage = await shotStage();
       for (const clip of onStage(f)) {
         const first = segFirst(clip, f);
@@ -457,8 +457,8 @@ try {
     }
     out.a.stageSparse = rows;
     say('a-stage-sparse', { rows: rows.map((r) => [r.frame, r.clip, r.segmentFirst, r.best]) });
-    check(rows.length >= 8, '舞台贴稀疏版:几帧都比过了', rows.length);
-    check(rows.every((r) => r.best === r.segmentFirst), '舞台贴稀疏版:分段中间的帧,画的是分段第一帧的画面', rows.filter((r) => r.best !== r.segmentFirst));
+    check(rows.length >= 8, 'Stage with sparse version: several frames were all compared', rows.length);
+    check(rows.every((r) => r.best === r.segmentFirst), 'Stage with sparse version: frames in the middle of a segment show the image of the segment\'s first frame', rows.filter((r) => r.best !== r.segmentFirst));
     await fs.writeFile(path.join(OUT, 'export-40.png'), toPng(exportOf(40)));
     await fs.writeFile(path.join(OUT, 'export-47.png'), toPng(exportOf(47)));
   }
@@ -468,7 +468,7 @@ try {
   {
     const { got } = await seekTo(47);
     const r = got.ms === null ? null : bestOf(await shotStage(), 'clip-b', [40, 46, 47]);
-    check(r?.best === 40, '舞台:放行之前停在第 47 帧,贴的是稀疏版(第 40 帧的画面)', r ?? got);
+    check(r?.best === 40, 'Stage: before release, parked at frame 47, showing the sparse version (the image of frame 40)', r ?? got);
   }
 
   for (const state of statesA) for (const n of segmentsOf(state)) {
@@ -480,17 +480,17 @@ try {
   t0 = Date.now();
   A.gate.hold = false;
   A.producer.kick();
-  if (!(await until('甲:满密度齐了', () => (allAt(A.producer, (s) => s?.stride === 1) && !A.producer.workers.size ? true : null), 900_000))) throw new Error(`甲的满密度没产完:${JSON.stringify(A.producer.status().log.slice(-8))}`);
+  if (!(await until('A: full density complete', () => (allAt(A.producer, (s) => s?.stride === 1) && !A.producer.workers.size ? true : null), 900_000))) throw new Error(`A's full density was not fully produced: ${JSON.stringify(A.producer.status().log.slice(-8))}`);
   out.a.denseMs = Date.now() - t0;
-  out.a.order = checkOrder('甲', A.events, statesA.reduce((sum, s) => sum + s.spec.lastSegment + 1, 0));
+  out.a.order = checkOrder('A', A.events, statesA.reduce((sum, s) => sum + s.spec.lastSegment + 1, 0));
   out.a.dense = [];
   for (const state of statesA) {
     const clip = state.spec.topClipId;
     const dir = path.join(OUT, `ref-${clip}`);
-    const r = await checkDense(`甲 ${clip}`, A.producer, state, truthA.get(clip), dir, sparseA.get(clip), { direct: false });
+    const r = await checkDense(`A ${clip}`, A.producer, state, truthA.get(clip), dir, sparseA.get(clip), { direct: false });
     out.a.dense.push({ tag: r.tag, widened: r.widened, tight: r.tight, rects: r.rects, clipped: r.clipped.length, wrong: r.wrong.length });
   }
-  out.a.widenLog = A.producer.status().log.filter((line) => /放大/.test(String(line?.message ?? line))).length;
+  out.a.widenLog = A.producer.status().log.filter((line) => /enlarge/.test(String(line?.message ?? line))).length;
   say('a-dense', { ms: out.a.denseMs, order: out.a.order, dense: out.a.dense });
 
   // ---------- 舞台换上满密度(第 6 条):先不动播放头,等停着的那一帧自己换上;再从第 48 帧起逐帧往后走(每一步一拍)
@@ -504,14 +504,14 @@ try {
       if (lastSeen.best === 47) { upgraded = Date.now() - tWait; break; }
       await sleep(400);
     }
-    check(upgraded !== null, '舞台换满密度:停着的那一帧(第 47 帧)不用动播放头,自己从稀疏版换成了这一帧的画面', lastSeen);
+    check(upgraded !== null, 'Stage switch to full density: the frame it is parked on (frame 47) changed from the sparse version to its own image by itself, without moving the playhead', lastSeen);
     if (upgraded !== null) { await fs.writeFile(path.join(OUT, 'stage-upgraded-47.png'), toPng(await shotStage())); }
 
     const rows = [];
     const LAST_STEP = 212;
     for (let f = 48; f <= LAST_STEP; f++) {
       const { got } = await seekTo(f);
-      if (got.ms === null) { check(false, `舞台换满密度:第 ${f} 帧流平面画出来了`, got); break; }
+      if (got.ms === null) { check(false, `Stage switch to full density: stream plane rendered frame ${f}`, got); break; }
       const stage = await shotStage();
       const first = segFirst('clip-b', f);
       const r = bestOf(stage, 'clip-b', [first, f - 1, f, f + 1]);
@@ -529,10 +529,10 @@ try {
       wrong: wrong.slice(0, 6).map((r) => ({ frame: r.frame, shows: r.shows, scores: r.scores })),
       clipA: rows.filter((r) => r.clipA !== undefined).map((r) => [r.frame, r.clipA]).filter(([f, b]) => f !== b), servedKeptSparse: servedKept };
     say('a-stage-swap', out.a.stageSwap);
-    check(rows.length === LAST_STEP - 47, '舞台换满密度:每一拍都比过了', rows.length);
-    check(wrong.length === 0 && out.a.stageSwap.denseBeats >= 140, '舞台换满密度:换上以后逐帧往后走,每一拍画的都是这一帧自己(没有画错的、没有退回稀疏版的)', out.a.stageSwap);
-    check(out.a.stageSwap.boundaries >= 10, '舞台换满密度:走过了十来个分段边界', out.a.stageSwap.boundaries);
-    check(out.a.stageSwap.clipA.length === 0, '舞台换满密度:clip-a 入场时满密度已经齐了,一入场每一帧就是它自己', out.a.stageSwap.clipA);
+    check(rows.length === LAST_STEP - 47, 'Stage switch to full density: every tick was compared', rows.length);
+    check(wrong.length === 0 && out.a.stageSwap.denseBeats >= 140, 'Stage switch to full density: stepping forward frame by frame after the switch, every tick shows the frame\'s own image (none wrong, none fell back to the sparse version)', out.a.stageSwap);
+    check(out.a.stageSwap.boundaries >= 10, 'Stage switch to full density: crossed about ten segment boundaries', out.a.stageSwap.boundaries);
+    check(out.a.stageSwap.clipA.length === 0, 'Stage switch to full density: full density was already complete when clip-a entered, so from entry every frame is its own image', out.a.stageSwap.clipA);
   }
   await rpc('setRole', 'back', { job: 'probe' });
   await browser.close(); browser = null;
@@ -543,25 +543,25 @@ try {
   pipelines.push(B.pipeline);
   t0 = Date.now();
   await B.pipeline.preload(DIRECT('sparse-stream-probe-direct'));
-  if (!(await until('乙:稀疏版齐了', () => allAt(B.producer, (s) => !!s), 600_000))) throw new Error(`乙的稀疏版没产完:${JSON.stringify(B.producer.status().log.slice(-8))}`);
+  if (!(await until('B: sparse version complete', () => allAt(B.producer, (s) => !!s), 600_000))) throw new Error(`B's sparse version was not fully produced: ${JSON.stringify(B.producer.status().log.slice(-8))}`);
   await sleep(600);
   const stateB = [...B.producer.streams.values()][0];
   out.b = { sparseMs: Date.now() - t0, replay: stateB.spec.replay !== false, resetsAfterSparse: B.producer.stats.resets, segments: stateB.spec.lastSegment + 1 };
-  check(B.producer.streams.size === 1 && stateB.spec.replay === false, '乙:一条不回放的流(remotion 式)', { replay: stateB.spec.replay });
-  check(stateB.spec.originFrame === WANT['clip-c'][0] && stateB.spec.lastFrame === WANT['clip-c'][1], '乙:第 20～110 帧', { originFrame: stateB.spec.originFrame, lastFrame: stateB.spec.lastFrame });
-  check(out.b.resetsAfterSparse <= 2, '乙:稀疏那一趟分段之间直接跳,不逐段重灌工程', { resets: out.b.resetsAfterSparse, segments: out.b.segments });
+  check(B.producer.streams.size === 1 && stateB.spec.replay === false, 'B: one stream without replay (remotion style)', { replay: stateB.spec.replay });
+  check(stateB.spec.originFrame === WANT['clip-c'][0] && stateB.spec.lastFrame === WANT['clip-c'][1], 'B: frames 20 to 110', { originFrame: stateB.spec.originFrame, lastFrame: stateB.spec.lastFrame });
+  check(out.b.resetsAfterSparse <= 2, 'B: during the sparse pass, jump straight between segments without reloading the project for each segment', { resets: out.b.resetsAfterSparse, segments: out.b.segments });
   const dirB = path.join(OUT, 'ref-clip-c');
   await fs.mkdir(dirB, { recursive: true });
   const truthB = await exportFrames(bakery, stateB.isolated, emptyUrl, WANT['clip-c'][1], dirB);
-  const sparseB = await checkSparse('乙 clip-c', B.producer, stateB, truthB, dirB, { direct: true });
+  const sparseB = await checkSparse('B clip-c', B.producer, stateB, truthB, dirB, { direct: true });
   out.b.sparse = { bound: sparseB.bound, tight: sparseB.tight, union: sparseB.union, segments: sparseB.segments };
   t0 = Date.now();
   B.gate.hold = false;
   B.producer.kick();
-  if (!(await until('乙:满密度齐了', () => (allAt(B.producer, (s) => s?.stride === 1) && !B.producer.workers.size ? true : null), 900_000))) throw new Error(`乙的满密度没产完:${JSON.stringify(B.producer.status().log.slice(-8))}`);
+  if (!(await until('B: full density complete', () => (allAt(B.producer, (s) => s?.stride === 1) && !B.producer.workers.size ? true : null), 900_000))) throw new Error(`B's full density was not fully produced: ${JSON.stringify(B.producer.status().log.slice(-8))}`);
   out.b.denseMs = Date.now() - t0;
-  out.b.order = checkOrder('乙', B.events, stateB.spec.lastSegment + 1);
-  const denseB = await checkDense('乙 clip-c', B.producer, stateB, truthB, dirB, sparseB, { direct: true });
+  out.b.order = checkOrder('B', B.events, stateB.spec.lastSegment + 1);
+  const denseB = await checkDense('B clip-c', B.producer, stateB, truthB, dirB, sparseB, { direct: true });
   out.b.dense = { widened: denseB.widened, tight: denseB.tight, rects: denseB.rects, clipped: denseB.clipped.length };
   say('b', out.b);
 
@@ -569,29 +569,29 @@ try {
   const C = openPipeline(path.join(OUT, 'library-c'), origin, { frozen: true });
   pipelines.push(C.pipeline);
   const entryC = await C.pipeline.preload(DIRECT('sparse-stream-probe-queue'));
-  const stateC = await until('丙:流的计划到了生产者手里', () => [...C.producer.streams.values()][0] ?? null, 120_000);
-  if (!stateC) throw new Error('丙:生产者没有拿到流');
+  const stateC = await until('C: the stream plan reached the producer', () => [...C.producer.streams.values()][0] ?? null, 120_000);
+  if (!stateC) throw new Error('C: the producer did not get a stream');
   await sleep(500);
-  check(Object.keys(stateC.manifest.segments ?? {}).length === 0, '丙:自动生产没动(一段都没产)');
+  check(Object.keys(stateC.manifest.segments ?? {}).length === 0, 'C: automatic production did not run (no segment produced)');
   const specC = stateC.spec, range = { from: 1, to: 3 };
   const runQueue = async (density) => { const mark = C.events.length; const r = await C.producer.produceRange(entryC, specC, range, { density }); return { ...r, strides: C.events.slice(mark).filter((e) => e.ev === 'start').map((e) => e.stride) }; };
   const q1 = await runQueue('sparse');
   const afterSparse = [1, 2, 3].map((n) => ({ n, stride: stateC.manifest.segments[n]?.stride, box: stateC.manifest.segments[n]?.box }));
-  check(q1.produced === 3 && q1.strides.every((s) => s === SPARSE_STRIDE), '丙:稀疏流任务产出这一段的三个分段,每段一张', q1);
-  check(afterSparse.every((s) => s.stride === SPARSE_STRIDE && s.box && typeof s.box.w === 'number'), '丙:稀疏流任务产的分段记着稀疏、带位置矩形', afterSparse);
-  check(stateC.manifest.segments[0] === undefined && stateC.manifest.segments[4] === undefined, '丙:只产了任务范围里的分段');
+  check(q1.produced === 3 && q1.strides.every((s) => s === SPARSE_STRIDE), 'C: the sparse stream task produced the three segments of this range, one image each', q1);
+  check(afterSparse.every((s) => s.stride === SPARSE_STRIDE && s.box && typeof s.box.w === 'number'), 'C: segments produced by the sparse stream task are recorded as sparse and carry a position rectangle', afterSparse);
+  check(stateC.manifest.segments[0] === undefined && stateC.manifest.segments[4] === undefined, 'C: only the segments within the task\'s range were produced');
   const q2 = await runQueue('sparse');
-  check(q2.produced === 0 && q2.skipped === 3 && q2.strides.length === 0, '丙:同一个稀疏流任务再做一次,一帧都不截', q2);
+  check(q2.produced === 0 && q2.skipped === 3 && q2.strides.length === 0, 'C: running the same sparse stream task again captures no frames', q2);
   const q3 = await runQueue(null);
   const afterDense = [1, 2, 3].map((n) => ({ n, stride: stateC.manifest.segments[n]?.stride, box: stateC.manifest.segments[n]?.box }));
-  check(q3.produced === 3 && q3.strides.every((s) => s === 1) && afterDense.every((s) => s.stride === 1), '丙:满密度任务在同一条流上补成满密度', { q3, afterDense });
-  check(JSON.stringify(afterDense.map((s) => s.box)) === JSON.stringify(afterSparse.map((s) => s.box)), '丙:补成满密度以后位置矩形原样留着');
+  check(q3.produced === 3 && q3.strides.every((s) => s === 1) && afterDense.every((s) => s.stride === 1), 'C: a full-density task fills the same stream up to full density', { q3, afterDense });
+  check(JSON.stringify(afterDense.map((s) => s.box)) === JSON.stringify(afterSparse.map((s) => s.box)), 'C: after filling up to full density, the position rectangles stay as they were');
   const q4 = await runQueue('sparse');
-  check(q4.produced === 0 && q4.strides.length === 0 && [1, 2, 3].every((n) => stateC.manifest.segments[n]?.stride === 1), '丙:满密度之后再来稀疏流任务,不截、不降级', q4);
+  check(q4.produced === 0 && q4.strides.length === 0 && [1, 2, 3].every((n) => stateC.manifest.segments[n]?.stride === 1), 'C: a sparse stream task after full density captures nothing and does not downgrade', q4);
   out.c = { sparse: q1, again: q2, dense: q3, late: q4, boxes: afterSparse.map((s) => s.box) };
   say('c', out.c);
 } catch (error) {
-  fails.push(`探针出错:${error?.message || error}`);
+  fails.push(`Probe error: ${error?.message || error}`);
   say('ERROR', { error: String(error?.stack || error) });
 } finally {
   try { await browser?.close(); } catch { /* ignore */ }

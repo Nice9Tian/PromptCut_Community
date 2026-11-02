@@ -38,13 +38,13 @@ const stateOf = (h, id) => h.task(id);
 function claimOk(h, conn, task) {
   const out = h.claim(conn, task.id, h.task(task.id).version);
   const m = out.last(conn, ['task.claimed', 'task.claim-rejected']);
-  assert.equal(m?.type, 'task.claimed', `${conn} 认领 ${task.id}：${JSON.stringify(m)}`);
+  assert.equal(m?.type, 'task.claimed', `${conn} claims ${task.id}: ${JSON.stringify(m)}`);
   return m;
 }
 
 /* ================================================================== D1 */
 
-test('D1 浏览器先认领：建锁时同锁键、异指纹、dual 的 open 任务全部作废（failed / superseded，attempts 不变），浏览器那几段照常', gateOpts(queueDualGate()), () => {
+test('D1 browser claims first: when the lock is created, all open dual tasks with the same lock key and a different fingerprint are invalidated (failed / superseded, attempts unchanged), and the browser\'s segments proceed as usual', gateOpts(queueDualGate()), () => {
   const h = rig();
   const [own0, br0] = dualPair(0);
   const [own1, br1] = dualPair(1);
@@ -54,15 +54,15 @@ test('D1 浏览器先认领：建锁时同锁键、异指纹、dual 的 open 任
   const c = claimOk(h, 'br', br0);
   for (const t of [own0, own1]) {
     const s = stateOf(h, t.id);
-    assert.equal(s.state, 'failed', `${t.id} 应作废：${JSON.stringify(s)}`);
+    assert.equal(s.state, 'failed', `${t.id} should be invalidated: ${JSON.stringify(s)}`);
     assert.equal(s.lastError, 'superseded');
-    assert.equal(s.attempts, 0, '作废不计失败次数');
+    assert.equal(s.attempts, 0, 'Invalidation is not counted as a failed attempt');
   }
   assert.equal(stateOf(h, br0.id).state, 'claimed');
-  assert.equal(stateOf(h, br1.id).state, 'open', '浏览器那一份的其余段照常 open');
+  assert.equal(stateOf(h, br1.id).state, 'open', 'The remaining segments of the browser\'s copy stay open as usual');
 
   // 作废的没人认领过：不发 lease-lost
-  assert.equal(h.bus.ofType('task.lease-lost').length, 0, '作废的 dual 任务没人认领，不发 lease-lost');
+  assert.equal(h.bus.ofType('task.lease-lost').length, 0, 'Nobody claimed the invalidated dual task, so no lease-lost is sent');
   // pc 再也认领不到切分方那一份
   const again = h.claim('pc', own1.id, stateOf(h, own1.id).version).last('pc', ['task.claimed', 'task.claim-rejected']);
   assert.equal(again.type, 'task.claim-rejected', JSON.stringify(again));
@@ -72,10 +72,10 @@ test('D1 浏览器先认领：建锁时同锁键、异指纹、dual 的 open 任
   const c1 = claimOk(h, 'br', br1);
   h.complete('br', br1.id, c1.token, { v: 1 });
   const done = h.bus.of('page', 'task.done').map((m) => m.id).sort();
-  assert.deepEqual(done, [br0.id, br1.id].sort(), `task.done 只给浏览器那两段、各一次：${JSON.stringify(done)}`);
+  assert.deepEqual(done, [br0.id, br1.id].sort(), `task.done goes only to the browser's two segments, once each: ${JSON.stringify(done)}`);
 });
 
-test('D1 切分方先认领：浏览器那一份全部作废，浏览器此后看不见、认领不到', gateOpts(queueDualGate()), () => {
+test('D1 splitter claims first: the browser\'s copy is entirely invalidated, and the browser can no longer see or claim it afterwards', gateOpts(queueDualGate()), () => {
   const h = rig();
   const tasks = [...dualPair(0), ...dualPair(1)];
   h.publish('page', tasks);
@@ -89,31 +89,31 @@ test('D1 切分方先认领：浏览器那一份全部作废，浏览器此后�
   assert.equal(r.type, 'task.claim-rejected', JSON.stringify(r));
   // 浏览器节点收到过这两段的撤回（hidden 或 failed 都算）
   const closed = new Set(h.bus.of('br', 'task.closed').map((m) => m.id));
-  assert.ok(closed.has(br0.id) && closed.has(br1.id), `浏览器应收到撤回：${JSON.stringify([...closed])}`);
+  assert.ok(closed.has(br0.id) && closed.has(br1.id), `The browser should receive the withdrawal: ${JSON.stringify([...closed])}`);
 });
 
-test('D1 作废的任务不再占 MAX_TASKS_PER_PROJECT：作废后能发布新任务', gateOpts(queueDualGate()), () => {
+test('D1 invalidated tasks no longer count toward MAX_TASKS_PER_PROJECT: new tasks can be published after the invalidation', gateOpts(queueDualGate()), () => {
   const h = rig({ MAX_TASKS_PER_PROJECT: 2 });
   const [own0, br0] = dualPair(0);
   h.publish('page', [own0, br0]);
   const full = h.publish('page', [snapTask({ contentKey: 'ck-2', fp: OWN })]).one('page', 'task.published').results[0];
-  assert.equal(full.error, 'limit', `对照：满了应回 limit：${JSON.stringify(full)}`);
+  assert.equal(full.error, 'limit', `Control: when full it should return limit: ${JSON.stringify(full)}`);
   claimOk(h, 'br', br0);
   const next = h.publish('page', [snapTask({ contentKey: 'ck-3', fp: OWN })]).one('page', 'task.published').results[0];
-  assert.equal(next.error, undefined, `浏览器那份作废了切分方那份，应腾出名额：${JSON.stringify(next)}`);
+  assert.equal(next.error, undefined, `The browser's copy invalidated the splitter's copy, so a slot should be freed up: ${JSON.stringify(next)}`);
 });
 
-test('D1 不带 dual 的任务行为不变：建锁时异指纹的 open 任务留着（只被锁挡住）', gateOpts(queueDualGate()), () => {
+test('D1 the behavior of tasks without dual is unchanged: open tasks with a different fingerprint are kept when the lock is created (they are only blocked by the lock)', gateOpts(queueDualGate()), () => {
   const h = rig();
   const a = snapTask({ contentKey: CK, fp: OWN, seg: 0 });
   const b = snapTask({ contentKey: CK, fp: BR, seg: 0 });
   h.publish('page', [a, b]);
   claimOk(h, 'br', b);
-  assert.equal(stateOf(h, a.id).state, 'open', '不带 dual 的不作废');
+  assert.equal(stateOf(h, a.id).state, 'open', 'Those without dual are not invalidated');
   assert.equal(stateOf(h, a.id).lastError, null);
 });
 
-test('D1 只作废同锁键的：另一张卡的 dual 任务不受影响；同指纹的 dual 任务也不受影响', gateOpts(queueDualGate()), () => {
+test('D1 invalidates only those with the same lock key: dual tasks of another card are unaffected, and dual tasks with the same fingerprint are unaffected too', gateOpts(queueDualGate()), () => {
   const h = rig();
   const [own0, br0] = dualPair(0);
   const [ownX, brX] = dualPair(0, { contentKey: 'ck-other' });
@@ -121,12 +121,12 @@ test('D1 只作废同锁键的：另一张卡的 dual 任务不受影响；同�
   h.publish('page', [own0, br0, ownX, brX, br1]);
   claimOk(h, 'br', br0);
   assert.equal(stateOf(h, own0.id).state, 'failed');
-  assert.equal(stateOf(h, ownX.id).state, 'open', '别的卡的切分方那份不动');
-  assert.equal(stateOf(h, brX.id).state, 'open', '别的卡的浏览器那份不动');
-  assert.equal(stateOf(h, br1.id).state, 'open', '同锁键同指纹的不动');
+  assert.equal(stateOf(h, ownX.id).state, 'open', 'The splitter\'s copy of another card is left alone');
+  assert.equal(stateOf(h, brX.id).state, 'open', 'The browser\'s copy of another card is left alone');
+  assert.equal(stateOf(h, br1.id).state, 'open', 'Those with the same lock key and the same fingerprint are left alone');
 });
 
-test('D1 卡锁在第三种环境上：两份都发不进来（card-locked 回 lockedBy），不因 dual 放宽', gateOpts(queueDualGate()), () => {
+test('D1 the card is locked on a third kind of environment: neither copy can be published (card-locked returns lockedBy), and dual does not relax it', gateOpts(queueDualGate()), () => {
   const h = rig();
   h.node('third', 'n-third', { profile: 'pc', userId: 'x@y', watch: ['p1'], hello: { envFingerprint: THIRD } });
   const z = snapTask({ contentKey: CK, fp: THIRD, seg: 5 });
@@ -138,7 +138,7 @@ test('D1 卡锁在第三种环境上：两份都发不进来（card-locked 回 l
 
 /* ================================================================== D2 */
 
-test('D2 认领被锁挡回：回包带 lockIdleMs（此刻 − touchedAt）与 lockedByProfile（建锁的节点的 profile）', gateOpts(lockIdleGate()), () => {
+test('D2 claim blocked by a lock: the response carries lockIdleMs (now - touchedAt) and lockedByProfile (the profile of the node that created the lock)', gateOpts(lockIdleGate()), () => {
   const h = rig();
   const own = snapTask({ contentKey: CK, fp: OWN, seg: 1 });
   const br = snapTask({ contentKey: CK, fp: BR, seg: 0 });
@@ -152,7 +152,7 @@ test('D2 认领被锁挡回：回包带 lockIdleMs（此刻 − touchedAt）与 
   assert.equal(r.lockedByProfile, 'browser', JSON.stringify(r));
 });
 
-test('D2 发布被锁拒建：results[i] 带 lockIdleMs 与 lockedByProfile；pc 建的锁报 pc', gateOpts(lockIdleGate()), () => {
+test('D2 publish refused by a lock: results[i] carries lockIdleMs and lockedByProfile; a lock created by pc reports pc', gateOpts(lockIdleGate()), () => {
   const h = rig();
   const br = snapTask({ contentKey: CK, fp: BR, seg: 0 });
   h.publish('page', [br]);
@@ -169,7 +169,7 @@ test('D2 发布被锁拒建：results[i] 带 lockIdleMs 与 lockedByProfile；pc
   assert.deepEqual([r2.error, r2.lockIdleMs, r2.lockedByProfile], ['card-locked', 1_000, 'pc'], JSON.stringify(r2));
 });
 
-test('D2 续约（task.progress）刷新 touchedAt：产出中的锁不显得闲置；停了之后闲置时长照常增长', gateOpts(lockIdleGate()), () => {
+test('D2 lease renewal (task.progress) refreshes touchedAt: a lock that is still producing does not look idle; once it stops, the idle time grows as usual', gateOpts(lockIdleGate()), () => {
   const h = rig();
   const br = snapTask({ contentKey: CK, fp: BR, seg: 0 });
   h.publish('page', [br]);
@@ -178,7 +178,7 @@ test('D2 续约（task.progress）刷新 touchedAt：产出中的锁不显得闲
   h.clock.advance(20_000);
   h.progress('br', br.id, c.token, 10);
   const lock = h.describe().locks.find((l) => l.lockKey === `snapshot:${CK}`);
-  assert.equal(lock.touchedAt, t0 + 20_000, `续约应刷新 touchedAt：${JSON.stringify(lock)}`);
+  assert.equal(lock.touchedAt, t0 + 20_000, `Lease renewal should refresh touchedAt: ${JSON.stringify(lock)}`);
   // 进度不变的续约也刷新（续约 = 还在产出）
   h.clock.advance(10_000);
   h.progress('br', br.id, c.token, 10);
@@ -189,7 +189,7 @@ test('D2 续约（task.progress）刷新 touchedAt：产出中的锁不显得闲
   assert.equal(r.lockIdleMs, 31_000, JSON.stringify(r));
 });
 
-test('D2 闲置超过 30 s 后切分方带 takeover 重发：锁转给切分方，浏览器那份作废（原有 F.7 行为，回归）', gateOpts(lockIdleGate()), () => {
+test('D2 after more than 30 s idle, the splitter republishes with takeover: the lock moves to the splitter and the browser copy is voided (existing F.7 behavior, regression)', gateOpts(lockIdleGate()), () => {
   const h = rig();
   const br = snapTask({ contentKey: CK, fp: BR, seg: 0 });
   h.publish('page', [br]);

@@ -29,7 +29,7 @@ import {
 } from "./extensions.ts";
 import { loadAiExtensions } from "./extensionsLoad.mjs";
 
-test("显式 cloudDir 临时目录夹具：加载 ai/manifest.mjs 返回冻结条目并应用表内提供方实现", async () => {
+test("Explicit cloudDir temporary-directory fixture: loading ai/manifest.mjs returns frozen entries and applies the provider implementations in the table", async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pc-ai-ext-dir-"));
   try {
     resetAiCloudProvider();
@@ -79,7 +79,7 @@ test("显式 cloudDir 临时目录夹具：加载 ai/manifest.mjs 返回冻结�
   }
 });
 
-test("PROMPTCUT_CLOUD_DIR 环境变量覆盖：装入指定目录下的 ai/manifest.mjs 并登记提供方", async () => {
+test("PROMPTCUT_CLOUD_DIR environment variable override: loads ai/manifest.mjs under the specified directory and registers the provider", async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pc-ai-ext-env-"));
   const prevEnv = process.env.PROMPTCUT_CLOUD_DIR;
   try {
@@ -117,7 +117,7 @@ test("PROMPTCUT_CLOUD_DIR 环境变量覆盖：装入指定目录下的 ai/manif
   }
 });
 
-test("社区模式（cloudDir 指向空目录）：返回空冻结数组、不抛异常、getAiCloudProvider() 仍是 COMMUNITY_AI_CLOUD_PROVIDER", async () => {
+test("Community mode (cloudDir points to an empty directory): returns an empty frozen array, does not throw, getAiCloudProvider() is still COMMUNITY_AI_CLOUD_PROVIDER", async () => {
   const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), "pc-ai-ext-empty-"));
   try {
     resetAiCloudProvider();
@@ -136,7 +136,7 @@ test("社区模式（cloudDir 指向空目录）：返回空冻结数组、不�
   }
 });
 
-test("异常形状容错：非数组导出或缺 name 的非法条目一律跳过、不抛异常", async () => {
+test("Malformed-shape tolerance: non-array exports and invalid entries missing name are always skipped, no exception thrown", async () => {
   const tmpBad = fs.mkdtempSync(path.join(os.tmpdir(), "pc-ai-ext-bad-"));
   const tmpMixed = fs.mkdtempSync(path.join(os.tmpdir(), "pc-ai-ext-mixed-"));
   try {
@@ -168,7 +168,7 @@ test("异常形状容错：非数组导出或缺 name 的非法条目一律跳�
   }
 });
 
-test("CloudError 与会话控制策略：跨模块 instanceof 兼容且错误文案一致", () => {
+test("CloudError and session control policy: instanceof works across modules and error messages are identical", () => {
   try {
     resetAiCloudProvider();
     class ExternalCloudError extends Error {

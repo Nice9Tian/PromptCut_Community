@@ -64,27 +64,27 @@ function fakeReq(protocolHeader, remote = '10.0.0.5') {
 
 // ------------------------------------------------------------------ A1
 
-test('A1 令牌模式：不带子协议、只带 promptcut.v1、令牌错 → 401', async (t) => {
+test('A1 token mode: no subprotocol, only promptcut.v1, wrong token → 401', async (t) => {
   const token = randomToken();
   const { service, port } = await startService({ token });
   t.after(() => service.close());
 
   const cases = [
-    ['不带子协议', undefined],
-    ['只带 promptcut.v1', ['promptcut.v1']],
-    ['令牌错', tokenProtocols(randomToken())],
-    ['只带令牌项、缺 promptcut.v1', [`promptcut.token.${token}`]],
-    ['令牌前缀对但被截短', tokenProtocols(token.slice(0, -1))],
+    ['No subprotocol', undefined],
+    ['Only promptcut.v1', ['promptcut.v1']],
+    ['wrong token', tokenProtocols(randomToken())],
+    ['Only the token entry, missing promptcut.v1', [`promptcut.token.${token}`]],
+    ['Correct token prefix but truncated', tokenProtocols(token.slice(0, -1))],
   ];
   for (const [what, protocols] of cases) {
     const r = await rawHandshake(port, { protocols });
     r.sock.destroy();
-    assert.equal(r.status, 401, `${what}：${r.rawHead}`);
+    assert.equal(r.status, 401, `${what}: ${r.rawHead}`);
   }
   assert.equal(service.describe().connections, 0);
 });
 
-test('A1 auth 模块本身：令牌模式下缺协议、缺令牌、令牌错都回 null；常量与工具函数', async () => {
+test('A1 the auth module itself: in token mode a missing protocol, a missing token, or a wrong token all return null; constants and utility functions', async () => {
   const { createClusterAuth, PROTOCOL, isLoopbackHost, checkTokenFormat } = await loadAuth();
   assert.equal(PROTOCOL, 'promptcut.v1');
   const token = randomToken();
@@ -113,7 +113,7 @@ test('A1 auth 模块本身：令牌模式下缺协议、缺令牌、令牌错都
 
 // ------------------------------------------------------------------ A2
 
-test('A2 令牌对 → 101，响应头 Sec-WebSocket-Protocol 恰好是 promptcut.v1；内置 WebSocket 能连上，只能用管理接口', async (t) => {
+test('A2 correct token → 101, and the Sec-WebSocket-Protocol response header is exactly promptcut.v1; the built-in WebSocket can connect and can only use the admin interface', async (t) => {
   const token = randomToken();
   const { service, port, url } = await startService({ token });
   t.after(() => service.close());
@@ -122,8 +122,8 @@ test('A2 令牌对 → 101，响应头 Sec-WebSocket-Protocol 恰好是 promptcu
   r.sock.destroy();
   assert.equal(r.status, 101, r.rawHead);
   assert.equal(r.acceptOk, true);
-  assert.equal(r.headers['sec-websocket-protocol'], 'promptcut.v1', '只回显 promptcut.v1，从不回显令牌项');
-  assert.ok(!r.rawHead.includes(token), '响应头里不出现令牌');
+  assert.equal(r.headers['sec-websocket-protocol'], 'promptcut.v1', 'Only echoes promptcut.v1, never echoes the token entry');
+  assert.ok(!r.rawHead.includes(token), 'The token does not appear in the response headers');
 
   // 客户端给的顺序反过来也一样
   const r2 = await rawHandshake(port, { protocols: [`promptcut.token.${token}`, 'promptcut.v1'] });
@@ -146,7 +146,7 @@ test('A2 令牌对 → 101，响应头 Sec-WebSocket-Protocol 恰好是 promptcu
 
 // ------------------------------------------------------------------ A3
 
-test('A3 令牌连接的 principal 是管理身份，发任何数据面消息都回 forbidden', async (t) => {
+test('A3 the principal of a token connection is the admin identity, and any data plane message gets forbidden', async (t) => {
   const token = randomToken();
   const { service, url } = await startService({ token });
   t.after(() => service.close());
@@ -170,7 +170,7 @@ test('A3 令牌连接的 principal 是管理身份，发任何数据面消息都
 
 // 原 A3 的另一半「消息里自报的 userId 不改变 principal、任务的 userId 取连接的 principal」改由共享项目的成员身份来测：
 // 集群令牌不再能进数据面（auth-contract 第 5 节）
-test('A3 成员身份：消息里自报的 userId / tenantId 不改变它，任务的 source 取连接的 principal', async (t) => {
+test('A3 member identity: the userId / tenantId self-reported in a message does not change it, and the task\'s source comes from the connection\'s principal', async (t) => {
   const shared = await startSharedService({ mode: 'hosted' });
   t.after(() => shared.close());
   const { projectId } = await createProject(shared.base, { password: 'pw-a3' });
@@ -201,7 +201,7 @@ test('A3 成员身份：消息里自报的 userId / tenantId 不改变它，任�
   });
   await page.next(byReq('pub'));
   const opened = await node.next(byType('task.opened'));
-  assert.equal(opened.task.source.userId, principalOf(devPage).userId, '任务的 userId 取连接的 principal');
+  assert.equal(opened.task.source.userId, principalOf(devPage).userId, 'The task\'s userId comes from the connection\'s principal');
   assert.equal(opened.task.source.tenantId, projectId);
 
   const conns = service.describe().conns;
@@ -216,14 +216,14 @@ test('A3 成员身份：消息里自报的 userId / tenantId 不改变它，任�
 
 // ------------------------------------------------------------------ A4
 
-test('A4 匿名模式：不带子协议的旧客户端能连上；带 promptcut.v1 的得到回显', async (t) => {
+test('A4 anonymous mode: an old client with no subprotocol can connect; one that sends promptcut.v1 gets the echo', async (t) => {
   const { service, port, url } = await startService({ allowAnonymous: true });
   t.after(() => service.close());
 
   const r0 = await rawHandshake(port);
   r0.sock.destroy();
   assert.equal(r0.status, 101);
-  assert.equal(r0.headers['sec-websocket-protocol'], undefined, '客户端没要子协议就不回');
+  assert.equal(r0.headers['sec-websocket-protocol'], undefined, 'If the client did not ask for a subprotocol, none is returned');
 
   const r1 = await rawHandshake(port, { protocols: ['promptcut.v1'] });
   r1.sock.destroy();
@@ -243,11 +243,11 @@ test('A4 匿名模式：不带子协议的旧客户端能连上；带 promptcut.
   assert.equal(old.ws.protocol, '');
   assert.equal(modern.ws.protocol, 'promptcut.v1');
   // 前面三次原始握手的连接只断了 TCP、没发关闭帧，服务端未必马上清掉（见报告「风险」），这里只数到至少 2 条
-  await waitFor(() => service.describe().connections >= 2, 2000, '两条连接登记');
+  await waitFor(() => service.describe().connections >= 2, 2000, 'Two connections registered');
   for (const conn of service.describe().conns) assert.deepEqual(conn.principal, { userId: 'anonymous', tenantId: null });
 });
 
-test('A4 auth 模块本身：匿名模式回 anonymous，protocolFor 只在客户端给了 promptcut.v1 时回它', async () => {
+test('A4 the auth module itself: anonymous mode returns anonymous, and protocolFor returns promptcut.v1 only when the client offered it', async () => {
   const { createClusterAuth } = await loadAuth();
   const auth = createClusterAuth({ allowAnonymous: true });
   assert.deepEqual(auth.authenticate(fakeReq(undefined)), { userId: 'anonymous', tenantId: null });
@@ -259,7 +259,7 @@ test('A4 auth 模块本身：匿名模式回 anonymous，protocolFor 只在客�
 
 // ------------------------------------------------------------------ A5
 
-test('A5 被拒、通过各试几次：全部日志、describe、healthz 里都找不到令牌原文；被拒记 auth.reject', async (t) => {
+test('A5 after several rejected and several accepted attempts: the raw token cannot be found in any log, describe, or healthz; a rejection logs auth.reject', async (t) => {
   const token = randomToken();
   const wrong = randomToken();
   // 连同 stdout / stderr 一起收：实现若绕过注入的 log 直接写标准输出，也要查到
@@ -295,17 +295,17 @@ test('A5 被拒、通过各试几次：全部日志、describe、healthz 里都�
 
   const logText = JSON.stringify(logs);
   for (const secret of [token, wrong]) {
-    assert.ok(!logText.includes(secret), '注入的日志里出现了令牌');
-    assert.ok(!captured.join('').includes(secret), '标准输出里出现了令牌');
-    assert.ok(!describeText.includes(secret), 'describe() 里出现了令牌');
-    assert.ok(!healthText.includes(secret), '/healthz 里出现了令牌');
+    assert.ok(!logText.includes(secret), 'The token appeared in the injected log');
+    assert.ok(!captured.join('').includes(secret), 'The token appeared in stdout');
+    assert.ok(!describeText.includes(secret), 'The token appeared in describe()');
+    assert.ok(!healthText.includes(secret), 'The token appeared in /healthz');
   }
   const rejects = logs.filter((l) => l.event === 'auth.reject');
   const reasons = new Set(rejects.map((l) => l.reason));
   // M6a：原因改用 auth-contract 第 5 节的词表（原来是 bad-token / no-protocol / no-token）
-  assert.deepEqual([...reasons].sort(), ['bad-format', 'bad-proof', 'no-credential'], `auth.reject：${JSON.stringify(rejects)}`);
-  assert.ok(rejects.every((l) => 'remote' in l), 'auth.reject 带 remote');
-  assert.equal(rejects.length, 9, '每次被拒记一条');
+  assert.deepEqual([...reasons].sort(), ['bad-format', 'bad-proof', 'no-credential'], `auth.reject: ${JSON.stringify(rejects)}`);
+  assert.ok(rejects.every((l) => 'remote' in l), 'auth.reject carries remote');
+  assert.equal(rejects.length, 9, 'Each rejection logs one entry');
 });
 
 // ------------------------------------------------------------------ A6
@@ -335,36 +335,36 @@ async function exitWithin(run, ms) {
 // M6a：失败即关的条件由「非回环没设令牌」（token-required）改为「非回环而凭证存储加载不了」（auth-store，auth-contract 第 10 节）。
 // 「非回环」用 127.0.0.2：main.mjs 按字面只把 127.0.0.1 / ::1 / localhost 当回环，而 127.0.0.2 实际仍在本机回环网卡上，
 // 测试不用真绑 0.0.0.0（Windows 上会弹防火墙）
-test('A6 main.mjs：非回环地址而凭证存储不可用 → 退出码 1、输出含 auth-store', { timeout: 20_000 }, async () => {
+test('A6 main.mjs: non-loopback address with the credential store unavailable → exit code 1, output contains auth-store', { timeout: 20_000 }, async () => {
   const dir = tempDir('pc-a6-');
   const notADir = path.join(dir, 'data-is-a-file');
   fs.writeFileSync(notADir, 'x');
   const run = runMain({ PROMPTCUT_DOCSERVICE_HOST: '127.0.0.2', PROMPTCUT_DOCSERVICE_PORT: '0', PROMPTCUT_DOCSERVICE_DATA: notADir });
   const r = await exitWithin(run, 8000);
-  assert.ok(!r.timedOut, `没有退出（应当失败即关）；输出：${run.output()}`);
+  assert.ok(!r.timedOut, `did not exit (should fail closed); output: ${run.output()}`);
   assert.equal(r.code, 1, run.output());
   assert.match(run.output(), /auth-store/);
   assert.match(run.output(), /config\.error/);
 });
 
-test('A6 main.mjs：非回环地址、没设令牌、凭证存储可用 → 照常启动；带令牌的握手 401', { timeout: 20_000 }, async (t) => {
+test('A6 main.mjs: non-loopback address, no token set, credential store available → starts as usual; a handshake with a token gets 401', { timeout: 20_000 }, async (t) => {
   const run = runMain({ PROMPTCUT_DOCSERVICE_HOST: '127.0.0.2', PROMPTCUT_DOCSERVICE_PORT: '0', PROMPTCUT_DOCSERVICE_DATA: tempDir('pc-a6-') });
   t.after(async () => { if (run.child.exitCode === null) { run.child.kill(); await run.exited; } });
   const port = await listenPort(run);
   const h = await (await fetch(`http://127.0.0.2:${port}/healthz`)).json();
   assert.equal(h.ok, true);
   const admin = wsClient(`ws://127.0.0.2:${port}`, tokenProtocols(randomToken()));
-  await assert.rejects(admin.opened, '没设令牌：管理接口全部 401');
+  await assert.rejects(admin.opened, 'no token set: all admin interfaces return 401');
 });
 
-test('A6 main.mjs：令牌格式不对 → 退出码 1、输出含 bad-token-format，且不回显令牌', { timeout: 20_000 }, async () => {
+test('A6 main.mjs: malformed token → exit code 1, output contains bad-token-format, and the token is not echoed', { timeout: 20_000 }, async () => {
   const bad = 'short-token!';
   const run = runMain({ PROMPTCUT_DOCSERVICE_HOST: '127.0.0.1', PROMPTCUT_DOCSERVICE_PORT: '0', PROMPTCUT_CLUSTER_TOKEN: bad });
   const r = await exitWithin(run, 8000);
-  assert.ok(!r.timedOut, `没有退出；输出：${run.output()}`);
+  assert.ok(!r.timedOut, `Did not exit; output: ${run.output()}`);
   assert.equal(r.code, 1, run.output());
   assert.match(run.output(), /bad-token-format/);
-  assert.ok(!run.output().includes(bad), '输出里出现了令牌原文');
+  assert.ok(!run.output().includes(bad), 'The raw token appeared in the output');
 });
 
 /** 等子进程打出 listen 行，取端口 */
@@ -377,24 +377,24 @@ async function listenPort(run, ms = 8000) {
       } catch { /* 不是 JSON 行 */ }
     }
     return null;
-  }, ms, `main.mjs 打出 listen 行（已有输出：${run.output().slice(0, 400)}）`);
+  }, ms, `main.mjs prints the listen line (output so far: ${run.output().slice(0, 400)})`);
 }
 
-test('A6 main.mjs：回环且未设令牌 → 起得来，/healthz 正常，匿名可连', { timeout: 20_000 }, async (t) => {
+test('A6 main.mjs: loopback with no token set → starts up, /healthz is fine, anonymous connections allowed', { timeout: 20_000 }, async (t) => {
   const run = runMain({ PROMPTCUT_DOCSERVICE_HOST: '127.0.0.1', PROMPTCUT_DOCSERVICE_PORT: '0' });
   t.after(async () => { if (run.child.exitCode === null) { run.child.kill(); await run.exited; } });
   const port = await listenPort(run);
   const h = await (await fetch(`http://127.0.0.1:${port}/healthz`)).json();
   assert.equal(h.ok, true);
   assert.equal(h.protocol, 'promptcut.v1');
-  assert.equal(h.queue, true, 'main.mjs 挂着队列');
+  assert.equal(h.queue, true, 'main.mjs has the queue attached');
   assert.ok(Array.isArray(h.modules));
   const r = await rawHandshake(port);
   r.sock.destroy();
-  assert.equal(r.status, 101, '匿名模式');
+  assert.equal(r.status, 101, 'Anonymous mode');
 });
 
-test('A6 main.mjs：设了合法令牌 → 令牌错 401、令牌对 101 且只能用管理接口，输出里没有令牌', { timeout: 20_000 }, async (t) => {
+test('A6 main.mjs: a valid token set → wrong token 401, correct token 101 and only the admin interface usable, no token in the output', { timeout: 20_000 }, async (t) => {
   const token = randomToken();
   const run = runMain({ PROMPTCUT_DOCSERVICE_HOST: '127.0.0.1', PROMPTCUT_DOCSERVICE_PORT: '0', PROMPTCUT_CLUSTER_TOKEN: token, PROMPTCUT_DOCSERVICE_DATA: tempDir('pc-a6-') });
   t.after(async () => { if (run.child.exitCode === null) { run.child.kill(); await run.exited; } });
@@ -415,5 +415,5 @@ test('A6 main.mjs：设了合法令牌 → 令牌错 401、令牌对 101 且只�
   admin.send({ type: 'service.announce', reqId: 'a', announcerId: 'asset:t', kind: 'asset', urls: ['http://10.0.0.1:1/api/asset'] });
   assert.equal((await admin.next(byReq('a'))).type, 'service.announced');
   await new Promise((resolve) => setTimeout(resolve, 100));
-  assert.ok(!run.output().includes(token), '输出里出现了令牌原文');
+  assert.ok(!run.output().includes(token), 'The raw token appeared in the output');
 });

@@ -60,7 +60,7 @@ async function settleOf(promise) {
 
 /* ------------------------------------------------------------------ Q1 */
 
-test('Q1 put 后 get 取回相同的正文；missing 回 null；list 按前缀、按 key 升序；错误回包带 reason 抛出', async (t) => {
+test('Q1 get after put returns the same body; missing returns null; list filters by prefix and sorts by key ascending; an error reply carries reason and is thrown', async (t) => {
   const env = await startContentService();
   t.after(env.cleanup);
   const { content } = await connectContent(env);
@@ -69,21 +69,21 @@ test('Q1 put 后 get 取回相同的正文；missing 回 null；list 按前缀�
   const body = { v: 1, kind: 'snapshot', tier: 'shared', resultKey: rk, dirKey: rk, entryKey: null, range: { from: 0, to: 59 }, canvasHeavy: false,
     frames: [[0, 'b'.repeat(64), 123], [1, 'c'.repeat(64), 456]] };
   const stored = await content.put('snapshot-manifest', `${rk}:0-59`, body);
-  assert.equal(stored.hash, hashOf(body), 'put 回的 hash = sha256(JSON.stringify(body))');
-  assert.equal(stored.rev, undefined, '清单类没有 rev');
+  assert.equal(stored.hash, hashOf(body), 'hash returned by put = sha256(JSON.stringify(body))');
+  assert.equal(stored.rev, undefined, 'Manifest kinds have no rev');
 
   const got = await content.get('snapshot-manifest', `${rk}:0-59`);
-  assert.ok(got, 'get 取得到');
-  assert.deepEqual(got.body, body, '正文原样取回');
+  assert.ok(got, 'get finds it');
+  assert.deepEqual(got.body, body, 'Body is returned unchanged');
   assert.equal(got.hash, stored.hash);
 
-  assert.equal(await content.get('snapshot-manifest', `${rk}:60-119`), null, '没有的键回 null');
-  assert.equal(await content.get('render-manifest', `${rk}:0-59`), null, '别的 kind 下没有');
+  assert.equal(await content.get('snapshot-manifest', `${rk}:60-119`), null, 'A missing key returns null');
+  assert.equal(await content.get('render-manifest', `${rk}:0-59`), null, 'Not present under another kind');
 
   // card-source 带 rev
   const r1 = await content.put('card-source', 'card/x', { src: 1 });
   const r2 = await content.put('card-source', 'card/x', { src: 1 });
-  assert.deepEqual([r1.rev, r2.rev], [1, 2], 'card-source 的 rev 透传');
+  assert.deepEqual([r1.rev, r2.rev], [1, 2], 'rev of card-source passes through');
   assert.equal((await content.get('card-source', 'card/x')).rev, 2);
 
   // list 按前缀、升序
@@ -91,15 +91,15 @@ test('Q1 put 后 get 取回相同的正文；missing 回 null；list 按前缀�
   for (const key of [`${rk}:120-129`, `${other}:0-59`, `${rk}:60-119`]) await content.put('snapshot-manifest', key, { k: key });
   const listed = await content.list('snapshot-manifest', `${rk}:`);
   assert.equal(listed.truncated, false);
-  assert.deepEqual(listed.items.map((i) => i.key), [`${rk}:0-59`, `${rk}:120-129`, `${rk}:60-119`], '按前缀过滤、按 key 升序');
-  assert.equal(listed.items[0].hash, stored.hash, 'items 带 hash');
+  assert.deepEqual(listed.items.map((i) => i.key), [`${rk}:0-59`, `${rk}:120-129`, `${rk}:60-119`], 'Filtered by prefix, sorted by key ascending');
+  assert.equal(listed.items[0].hash, stored.hash, 'items carry hash');
   const all = await content.list('snapshot-manifest');
-  assert.equal(all.items.length, 4, '不给前缀列全部');
+  assert.equal(all.items.length, 4, 'Without a prefix, lists everything');
 
   // 服务端回 error：按 reqId 抛出，带 reason
   const tooBig = await settleOf(content.put('snapshot-manifest', 'big', { blob: 'x'.repeat(300 * 1024) }));
-  assert.equal(tooBig.ok, false, '超过 256 KiB 的正文被拒');
-  assert.equal(tooBig.error.reason, 'too-large', `错误带 reason：${tooBig.error?.message}`);
+  assert.equal(tooBig.ok, false, 'Body over 256 KiB is rejected');
+  assert.equal(tooBig.error.reason, 'too-large', `Error carries reason: ${tooBig.error?.message}`);
   const badKind = await settleOf(content.get('no-such-kind', 'k'));
   assert.equal(badKind.ok, false);
   assert.equal(badKind.error.reason, 'bad-message');
@@ -108,12 +108,12 @@ test('Q1 put 后 get 取回相同的正文；missing 回 null；list 按前缀�
 
   // render-node/index.mjs 也要转出（契约第 7 节「加出」）
   const idx = await import('../render-node/index.mjs');
-  assert.equal(idx.createContentClient, (await loadContentClient()).createContentClient, 'render-node/index.mjs 转出 createContentClient');
+  assert.equal(idx.createContentClient, (await loadContentClient()).createContentClient, 'render-node/index.mjs re-exports createContentClient');
 });
 
 /* ------------------------------------------------------------------ Q2 */
 
-test('Q2 并发 20 个请求：每个带唯一 reqId、按 reqId 配对，结果不串（真服务）', async (t) => {
+test('Q2 20 concurrent requests: each carries a unique reqId and is matched by reqId, results don\'t get crossed (real service)', async (t) => {
   const env = await startContentService();
   t.after(env.cleanup);
   const { createContentClient } = await loadContentClient();
@@ -128,7 +128,7 @@ test('Q2 并发 20 个请求：每个带唯一 reqId、按 reqId 配对，结果
   const keys = Array.from({ length: 20 }, (_, i) => `seg-${String(i).padStart(2, '0')}`);
   const bodies = keys.map((k, i) => ({ key: k, n: i, pad: 'z'.repeat(i * 97) }));
   const stored = await Promise.all(keys.map((k, i) => content.put('render-manifest', k, bodies[i])));
-  stored.forEach((s, i) => assert.equal(s.hash, hashOf(bodies[i]), `第 ${i} 个 put 的回包对得上自己的正文`));
+  stored.forEach((s, i) => assert.equal(s.hash, hashOf(bodies[i]), `Reply to put #${i} matches its own body`));
 
   // 20 个 get 与 20 个 put / list 混在一起并发
   const ops = [];
@@ -138,25 +138,25 @@ test('Q2 并发 20 个请求：每个带唯一 reqId、按 reqId 配对，结果
     if (i % 4 === 0) ops.push(content.get('render-manifest', `missing-${i}`).then((r) => ['miss', i, r]));
   }
   for (const [op, i, r] of await Promise.all(ops)) {
-    if (op === 'get') assert.deepEqual(r?.body, bodies[i], `get ${keys[i]} 取回自己的正文`);
-    else if (op === 'list') assert.deepEqual(r.items.map((x) => x.key), [keys[i]], `list ${keys[i]} 只列自己`);
-    else assert.equal(r, null, `missing-${i} 回 null`);
+    if (op === 'get') assert.deepEqual(r?.body, bodies[i], `get ${keys[i]} returns its own body`);
+    else if (op === 'list') assert.deepEqual(r.items.map((x) => x.key), [keys[i]], `list ${keys[i]} lists only itself`);
+    else assert.equal(r, null, `missing-${i} returns null`);
   }
   const reqIds = sent.map((m) => m.reqId);
-  assert.ok(reqIds.every((id) => id !== undefined && id !== null), '每个请求都带 reqId');
-  assert.equal(new Set(reqIds).size, reqIds.length, `reqId 互不相同（${reqIds.length} 个请求）`);
-  assert.ok(sent.every((m) => typeof m.type === 'string' && m.type.startsWith('content.')), '发的是 content.* 消息');
+  assert.ok(reqIds.every((id) => id !== undefined && id !== null), 'Every request carries a reqId');
+  assert.equal(new Set(reqIds).size, reqIds.length, `reqIds are all distinct (${reqIds.length} requests)`);
+  assert.ok(sent.every((m) => typeof m.type === 'string' && m.type.startsWith('content.')), 'Sends content.* messages');
 });
 
-test('Q2 回包乱序、夹着无关消息：仍按 reqId 配对（假端点）', async () => {
+test('Q2 replies out of order and interleaved with unrelated messages: still matched by reqId (fake endpoint)', async () => {
   const { createContentClient } = await loadContentClient();
   const ep = fakeEndpoint();
   const content = createContentClient(ep, { timeoutMs: 5000 });
   const N = 20;
   const pending = [];
   for (let i = 0; i < N; i++) pending.push(i % 2 ? content.get('snapshot-manifest', `k${i}`) : content.put('snapshot-manifest', `k${i}`, { i }));
-  await until(() => ep.sent.length === N, { timeoutMs: 2000, what: () => `只发出 ${ep.sent.length} 个请求` });
-  assert.equal(new Set(ep.sent.map((m) => m.reqId)).size, N, 'reqId 唯一');
+  await until(() => ep.sent.length === N, { timeoutMs: 2000, what: () => `Only ${ep.sent.length} requests were sent` });
+  assert.equal(new Set(ep.sent.map((m) => m.reqId)).size, N, 'reqId is unique');
 
   // 无关消息：别的模块的推送、没带 reqId 的、带陌生 reqId 的
   ep.deliver({ type: 'queue.snapshot', tasks: [] });
@@ -179,19 +179,19 @@ test('Q2 回包乱序、夹着无关消息：仍按 reqId 配对（假端点）'
 
 /* ------------------------------------------------------------------ Q3 */
 
-test('Q3 服务端不回：超时抛 code: timeout（真服务，挂一个不回包的模块）', async (t) => {
+test('Q3 server does not reply: times out with code: timeout (real service, with a module mounted that never replies)', async (t) => {
   const env = await startContentService({ modules: [silentModule()] });
   t.after(env.cleanup);
   const { content } = await connectContent(env, { timeoutMs: 300 });
   const r = await settleOf(content.get('snapshot-manifest', 'k'));
-  assert.equal(r.ok, false, '不回包就失败');
-  assert.equal(r.error.code, 'timeout', `错误带 code: timeout：${r.error?.message}`);
-  assert.ok(r.ms >= 250 && r.ms < 3000, `按 timeoutMs 计时：${r.ms} ms`);
+  assert.equal(r.ok, false, 'No reply means failure');
+  assert.equal(r.error.code, 'timeout', `Error carries code: timeout: ${r.error?.message}`);
+  assert.ok(r.ms >= 250 && r.ms < 3000, `Timed by timeoutMs: ${r.ms} ms`);
   const p = await settleOf(content.put('snapshot-manifest', 'k', { a: 1 }));
-  assert.equal(p.error?.code, 'timeout', 'put 同样超时');
+  assert.equal(p.error?.code, 'timeout', 'put times out the same way');
 });
 
-test('Q3 断线：在途请求立即以 code: disconnected 失败，不等超时（真服务）', async (t) => {
+test('Q3 disconnect: in-flight requests fail immediately with code: disconnected instead of waiting for the timeout (real service)', async (t) => {
   const env = await startContentService({ modules: [silentModule()] });
   t.after(env.cleanup);
   const { endpoint, content } = await connectContent(env, { timeoutMs: 20_000 });
@@ -202,14 +202,14 @@ test('Q3 断线：在途请求立即以 code: disconnected 失败，不等超时
   await closedSeen;
   const t0 = Date.now();
   const results = await Promise.all(inflight);
-  assert.ok(Date.now() - t0 < 2000, '断线后立即失败，不等 20 s 的超时');
+  assert.ok(Date.now() - t0 < 2000, 'Fails immediately after disconnect, without waiting for the 20 s timeout');
   for (const r of results) {
     assert.equal(r.ok, false);
-    assert.equal(r.error.code, 'disconnected', `错误带 code: disconnected：${r.error?.message}`);
+    assert.equal(r.error.code, 'disconnected', `Error carries code: disconnected: ${r.error?.message}`);
   }
 });
 
-test('Q3 断线不重放：重连之后不重发在途请求；超时后迟到的回包被忽略（假端点）', async () => {
+test('Q3 no replay after disconnect: in-flight requests are not resent after reconnecting; a reply that arrives after the timeout is ignored (fake endpoint)', async () => {
   const { createContentClient } = await loadContentClient();
   const ep = fakeEndpoint();
   const content = createContentClient(ep, { timeoutMs: 150 });
@@ -227,10 +227,10 @@ test('Q3 断线不重放：重连之后不重发在途请求；超时后迟到�
   await until(() => ep.sent.length === 4);
   ep.drop();
   const results = await Promise.all(inflight);
-  for (const r of results) assert.equal(r.error?.code, 'disconnected', `在途请求 disconnected：${r.error?.message}`);
+  for (const r of results) assert.equal(r.error?.code, 'disconnected', `In-flight request disconnected: ${r.error?.message}`);
   ep.reopen();
   await new Promise((resolve) => setTimeout(resolve, 50));
-  assert.equal(ep.sent.length, 4, '重连后不重放断线前的请求');
+  assert.equal(ep.sent.length, 4, 'Requests from before the disconnect are not replayed after reconnecting');
 
   // 重连之后的新请求照常配对
   const next = content.get('snapshot-manifest', 'c');
@@ -240,7 +240,7 @@ test('Q3 断线不重放：重连之后不重发在途请求；超时后迟到�
   assert.equal(await next, null);
 });
 
-test('Q3 端点从一开始就连不上：请求失败，不挂起（真服务已关）', async (t) => {
+test('Q3 endpoint is unreachable from the start: requests fail instead of hanging (real service is shut down)', async (t) => {
   const env = await startContentService();
   const url = env.url('node-a');
   const ep = await connectEndpoint(url, { env });
@@ -251,7 +251,7 @@ test('Q3 端点从一开始就连不上：请求失败，不挂起（真服务�
   await env.service.close();
   await closedSeen;
   const r = await settleOf(content.get('snapshot-manifest', 'x'));
-  assert.equal(r.ok, false, '断线状态下发请求：失败');
-  assert.ok(['disconnected', 'timeout'].includes(r.error?.code), `错误带 code（disconnected 或 timeout）：${r.error?.code} ${r.error?.message}`);
-  assert.ok(r.ms < 3000, `不挂起：${r.ms} ms`);
+  assert.equal(r.ok, false, 'Sending a request while disconnected: fails');
+  assert.ok(['disconnected', 'timeout'].includes(r.error?.code), `Error carries code (disconnected or timeout): ${r.error?.code} ${r.error?.message}`);
+  assert.ok(r.ms < 3000, `Does not hang: ${r.ms} ms`);
 });

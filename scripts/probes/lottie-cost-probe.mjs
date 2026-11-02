@@ -37,7 +37,7 @@ import { bakeFrames, createStepper } from '../../server/bakery/bake.mjs';
 
 const args = process.argv.slice(2);
 const PORT = Number(flagArg('port', '27260', args));
-if (!Number.isInteger(PORT) || PORT < 20000) throw new Error('--port 要用 20000 以上的端口');
+if (!Number.isInteger(PORT) || PORT < 20000) throw new Error('--port must be a port of 20000 or above');
 const ONLY = (flagArg('only', null, args) || 'stage,export').split(',').map((s) => s.trim()).filter(Boolean);
 const SIZES = (flagArg('sizes', null, args) || '960x540,1920x1080').split(',').map((s) => { const [w, h] = s.split('x').map(Number); return { w, h }; });
 const JSON_OUT = flagArg('json', null, args);
@@ -108,7 +108,7 @@ try {
   await fs.mkdir(WORK, { recursive: true });
   editor = await startIsolatedEditor({ port: PORT, work: WORK });
   const origin = editor.origin.replace(/\/+$/, '');
-  say(`编辑器 ${origin};案例 ${CARDS.map((c) => c.name).join(',')};分辨率 ${SIZES.map((s) => `${s.w}x${s.h}`).join(',')};项目 ${ONLY.join(',')}`);
+  say(`Editor ${origin}; cases ${CARDS.map((c) => c.name).join(',')}; resolutions ${SIZES.map((s) => `${s.w}x${s.h}`).join(',')}; projects ${ONLY.join(',')}`);
   const ed = await openEditorPage(origin);
   browser = ed.browser;
   const { page, store, frontFrame, parentDiag, pageErrors } = ed;
@@ -119,15 +119,15 @@ try {
       const total = Math.floor(card.seconds * FPS);
       const row = { card: card.name, cardId: card.cardId, size: `${size.w}x${size.h}`, frames: total };
       rows.push(row);
-      say(`── ${tag}(${total} 帧)`);
+      say(`── ${tag} (${total} frames)`);
       const clipId = await store(`actions.newProject(args[0]);
         actions.setProjectMeta({ width: args[1].w, height: args[1].h });
         const clip = actions.addCardClip(args[2].cardId, 0, { duration: args[2].seconds, params: args[2].params });
         actions.select([]); actions.pause(); actions.seek(0);
         return clip ? clip.id : null;`, `lottie-cost-${RUN}-${tag}`, size, card);
-      if (!check(!!clipId, `${tag}:片段没建成`)) continue;
+      if (!check(!!clipId, `${tag}: clip was not created`)) continue;
       const stored = await store('return JSON.parse(JSON.stringify(getState().project));');
-      check(stored.width === size.w && stored.height === size.h, `${tag}:项目分辨率没设成 ${size.w}x${size.h}`, [stored.width, stored.height]);
+      check(stored.width === size.w && stored.height === size.h, `${tag}: project resolution was not set to ${size.w}x${size.h}`, [stored.width, stored.height]);
 
       // 等成本记录落定(编辑器自己的测量趟),再等前台舞台回到这张卡的精确活渲
       const cost = await waitFor(async () => {
@@ -136,7 +136,7 @@ try {
       }, 120000, 500);
       await sleep(1500);
       row.cost = cost ? { stepMs: cost.stepMs, stepMaxMs: cost.stepMaxMs, kind: cost.kind, capped: !!cost.capped, samples: cost.samples ?? null, device: cost.device } : null;
-      check(!!cost, `${tag}:120 秒内没有成本记录`);
+      check(!!cost, `${tag}: no cost record within 120 s`);
       const budget = (1000 / FPS) * 0.7;
       row.budgetMs = +budget.toFixed(2);
 
@@ -149,7 +149,7 @@ try {
           const ok = await fr.evaluate(() => !!window.__pcStage && !!window.__pcStageDiag && window.__pcStageDiag().role === 'front').catch(() => false);
           return ok ? fr : null;
         }, 60000, 300);
-        if (!check(!!f, `${tag}:前台舞台没就绪`)) continue;
+        if (!check(!!f, `${tag}: foreground stage not ready`)) continue;
         row.pipeline = await f.evaluate((id, sec) => (typeof window.__pcStagePipelineAt === 'function' ? window.__pcStagePipelineAt(id, sec) : null), clipId, card.seconds / 2).catch(() => null);
         const warm = Array.from({ length: Math.min(30, total) }, (_, i) => i);
         await f.evaluate(`${STAGE_PASS}(${JSON.stringify(warm)}, ${FPS})`);
@@ -157,9 +157,9 @@ try {
         await f.evaluate((fps) => window.__pcStage.setTime(0), FPS);
         const jump = await f.evaluate(`${STAGE_PASS}(${JSON.stringify(shuffled(total, 20261014))}, ${FPS})`);
         row.stage = { seq: { sync: stats(seq.sync), paint: stats(seq.paint) }, jump: { sync: stats(jump.sync), paint: stats(jump.paint) } };
-        check(row.stage.seq.sync.n === total && row.stage.jump.sync.n === total, `${tag}:舞台没量满 ${total} 帧`, [row.stage.seq.sync.n, row.stage.jump.sync.n]);
-        say(`  舞台 顺推 sync ${JSON.stringify(row.stage.seq.sync)} paint ${JSON.stringify(row.stage.seq.paint)}`);
-        say(`  舞台 跳  sync ${JSON.stringify(row.stage.jump.sync)} paint ${JSON.stringify(row.stage.jump.paint)}`);
+        check(row.stage.seq.sync.n === total && row.stage.jump.sync.n === total, `${tag}: the stage did not measure all ${total} frames`, [row.stage.seq.sync.n, row.stage.jump.sync.n]);
+        say(`  stage forward sync ${JSON.stringify(row.stage.seq.sync)} paint ${JSON.stringify(row.stage.seq.paint)}`);
+        say(`  stage jump  sync ${JSON.stringify(row.stage.jump.sync)} paint ${JSON.stringify(row.stage.jump.paint)}`);
       }
 
       if (ONLY.includes('export')) {
@@ -183,17 +183,17 @@ try {
           const pageSeq = await inPage(seqOrder);
           const pageJump = await inPage(jumpOrder);
           row.export = { full: stats(full), stepSeq: stats(stepSeq), stepJump: stats(stepJump), pageSeq: stats(pageSeq), pageJump: stats(pageJump) };
-          check(row.export.full.n === total - 1, `${tag}:导出没量满`, row.export.full.n);
-          say(`  导出 整帧 ${JSON.stringify(row.export.full)} 拨时 顺 ${JSON.stringify(row.export.stepSeq)} 跳 ${JSON.stringify(row.export.stepJump)}`);
-          say(`  导出 页内 顺 ${JSON.stringify(row.export.pageSeq)} 跳 ${JSON.stringify(row.export.pageJump)}`);
+          check(row.export.full.n === total - 1, `${tag}: export not fully measured`, row.export.full.n);
+          say(`  export full frame ${JSON.stringify(row.export.full)} time step forward ${JSON.stringify(row.export.stepSeq)} jump ${JSON.stringify(row.export.stepJump)}`);
+          say(`  export in-page forward ${JSON.stringify(row.export.pageSeq)} jump ${JSON.stringify(row.export.pageJump)}`);
         } finally { await bakery?.close().catch(() => {}); await service.close().catch(() => {}); }
       }
-      say(`  成本记录 ${JSON.stringify(row.cost)};分派表此刻 ${row.pipeline}`);
+      say(`  cost record ${JSON.stringify(row.cost)}; dispatch table now ${row.pipeline}`);
     }
   }
-  check(pageErrors.length === 0, '编辑台页面没有报错', pageErrors.slice(0, 3));
+  check(pageErrors.length === 0, 'The editor page has no errors', pageErrors.slice(0, 3));
 } catch (e) {
-  fails.push(`脚本出错:${String(e?.stack || e).slice(0, 600)}`);
+  fails.push(`Script error: ${String(e?.stack || e).slice(0, 600)}`);
   say(`ERROR ${e?.stack || e}`);
 } finally {
   await browser?.close().catch(() => {});

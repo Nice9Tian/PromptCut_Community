@@ -39,7 +39,7 @@ async function rig() {
 for (const cause of ["play", "drag", "urgent"]) {
   test(`After yielding (${cause}), the current frame is blocked and cannot finish within ${YIELD_FRAME_MAX_MS} ms: abort and release immediately once, drop the late frame`, async () => {
     const r = await rig();
-    assert.equal(r.bakes.length, 1, "第 0 帧在做");
+    assert.equal(r.bakes.length, 1, "Frame 0 is in progress");
     r.node.yieldFor(cause);
     r.advance(YIELD_FRAME_MAX_MS - 1);
     r.node.tick();

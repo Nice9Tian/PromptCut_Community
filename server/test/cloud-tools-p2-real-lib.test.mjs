@@ -60,7 +60,7 @@ test('copyDeps in a worktree: own out/… first, else the main workspace; the ma
   copyDeps({ root: own, mainRoot: main });
   assert.equal(fs.readFileSync(path.join(own, 'out', 'p2-stt', 'pylibs', 'faster_whisper', '__init__.py'), 'utf8'), 'own', 'the tree\'s own copy wins');
   const empty = tmp(t);
-  assert.throws(() => copyDeps({ root: empty, mainRoot: empty }), /找不到可复制的来源/);
+  assert.throws(() => copyDeps({ root: empty, mainRoot: empty }), /No copyable source found/);
 });
 
 test('findPython looks in the tree first and then the main workspace', (t) => {

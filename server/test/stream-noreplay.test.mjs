@@ -33,14 +33,14 @@ mock.module(new URL('../bakery/index.mjs', import.meta.url).href, {
   exports: {
     openBakery: async () => fakeBakery(),
     findFfmpeg: async () => 'ffmpeg-fake',
-    streamPngVideo: () => { throw new Error('单测不编码 MOV'); },
-    bakeFrames: async () => { throw new Error('这个测试不渲快照'); },
+    streamPngVideo: () => { throw new Error('Unit tests do not encode MOV'); },
+    bakeFrames: async () => { throw new Error('This test does not render snapshots'); },
   },
 });
 
 mock.module(new URL('../bakery/bake.mjs', import.meta.url).href, {
   exports: {
-    bakeFrames: async () => { throw new Error('这个测试不渲快照'); },
+    bakeFrames: async () => { throw new Error('This test does not render snapshots'); },
     dirtyStreamLease: (bakery) => { if (bakery?.streamLease) bakery.streamLease.dirty = true; },
     bakeStream: async (bakery, opts) => {
       const { streamSignature, fromFrame, toFrame, signal } = opts;
@@ -53,7 +53,7 @@ mock.module(new URL('../bakery/bake.mjs', import.meta.url).href, {
       bakes.push({ streamSignature, fromFrame, toFrame, stride, continues, hasMountFrame: Object.hasOwn(opts, 'mountFrame'), mountFrame: opts.mountFrame, warm: opts.warm, replayed });
       let captured = 0;
       for (let frame = fromFrame; frame <= toFrame; frame += stride) {
-        if (signal?.aborted) throw Object.assign(new Error('已取消'), { cancelled: true });
+        if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { cancelled: true });
         await opts.onFrame?.(frame, Buffer.from(`png:${streamSignature}:${frame}`));
         captured++;
       }
@@ -172,18 +172,18 @@ const executorFor = (pipeline) => createPrerenderExecutor({
 const view = (task) => ({ ...structuredClone(task), state: 'claimed', version: 1, attempts: 1 });
 const signalNone = () => new AbortController().signal;
 
-test('noreplay:按段产流时,remotion 式的流不传 mountFrame、预热传 0,replayed 恒为 0;motion 式和写法没带的流照旧传挂载帧', { timeout: 60_000 }, async (t) => {
+test('noreplay: when producing streams segment by segment, remotion-style streams do not pass mountFrame, pass 0 for warm-up, and replayed is always 0; motion-style streams and streams whose style is not declared still pass the mount frame as before', { timeout: 60_000 }, async (t) => {
   t.after(cleanup);
   const A = await streamPipeline();
   const executor = executorFor(A);
   const planTask = planTaskOf({ projectId: PID, projectRev: REV });
   const ctx = await executor.plan(view(planTask), { signal: signalNone() });
-  assert.deepEqual(ctx.streams.map((s) => s.topClipId).sort(), [...CLIPS].sort(), '三张独立卡各一条流');
+  assert.deepEqual(ctx.streams.map((s) => s.topClipId).sort(), [...CLIPS].sort(), 'Three independent cards, one stream each');
   const keyOf = Object.fromEntries(ctx.streams.map((s) => [s.topClipId, s.streamKey]));
   const streamTasks = splitPlan({ ...ctx, planTask, envFingerprint: OWN, codeVersion: 'cv' }).filter((x) => x.kind === 'stream');
   const taskOf = (clipId, n) => {
     const task = streamTasks.find((x) => x.input.clipId === clipId && x.range.from <= n && n <= x.range.to);
-    assert.ok(task, `${clipId} 有覆盖分段 ${n} 的流任务`);
+    assert.ok(task, `${clipId} has a stream task covering segment ${n}`);
     return task;
   };
   // 分段不按顺序产:先 7、再 3、再 9、再 10(接得上 9 的租约),每次只产这一段
@@ -195,27 +195,27 @@ test('noreplay:按段产流时,remotion 式的流不传 mountFrame、预热传 0
       const mark = bakes.length;
       await executor.render(view(narrowed), { signal: signalNone(), progress: () => {} });
       const mine = bakes.slice(mark).filter((b) => b.streamSignature === keyOf[clipId]);
-      assert.equal(mine.length, 1, `${clipId}#${n}:产了一次`);
+      assert.equal(mine.length, 1, `${clipId}#${n}: produced once`);
       done[clipId].push(mine[0]);
     }
   }
   // remotion 式:从不传 mountFrame、预热传 0,哪怕接不上租约(7、3、9 都是跳段)也不回放
   for (const b of done['clip-d']) {
-    assert.equal(b.hasMountFrame, false, `clip-d#${(b.fromFrame - ORIGIN) / SEGMENT_FRAMES}:不传 mountFrame`);
-    assert.equal(b.warm, 0, 'clip-d:预热 0');
-    assert.equal(b.replayed, 0, 'clip-d:replayed 为 0');
+    assert.equal(b.hasMountFrame, false, `clip-d#${(b.fromFrame - ORIGIN) / SEGMENT_FRAMES}: does not pass mountFrame`);
+    assert.equal(b.warm, 0, 'clip-d: warm-up 0');
+    assert.equal(b.replayed, 0, 'clip-d: replayed is 0');
   }
-  assert.deepEqual(done['clip-d'].map((b) => b.continues), [false, false, false, true], '7、3、9 是跳段(重灌一次页面),10 接着 9 的租约');
+  assert.deepEqual(done['clip-d'].map((b) => b.continues), [false, false, false, true], '7, 3, 9 are segment jumps (the page is reset once), 10 continues the lease of 9');
   // 每一段从这条流自己的第一帧起数:第 7 段是第 120～134 帧(不是按项目帧号的 105～119)
-  assert.deepEqual(done['clip-d'].map((b) => [b.fromFrame, b.toFrame]), order.map((n) => [segStart(n), segStart(n) + 14]), '分段盖住的帧从流的第一帧起数');
+  assert.deepEqual(done['clip-d'].map((b) => [b.fromFrame, b.toFrame]), order.map((n) => [segStart(n), segStart(n) + 14]), 'The frames a segment covers are counted from the stream\'s first frame');
   // motion 式 / 写法没带:照旧传挂载帧,预热用缺省(不传),跳段时回放
   for (const clipId of ['clip-s', 'clip-x']) {
     for (const b of done[clipId]) {
-      assert.equal(b.hasMountFrame, true, `${clipId}:传 mountFrame`);
-      assert.equal(b.mountFrame, 14, '挂载帧含 LEAD:0.5 秒入点 → 第 14 帧');
-      assert.equal(b.warm, undefined, `${clipId}:预热帧数不传(用缺省)`);
+      assert.equal(b.hasMountFrame, true, `${clipId}: passes mountFrame`);
+      assert.equal(b.mountFrame, 14, 'The mount frame includes LEAD: 0.5 s in-point → frame 14');
+      assert.equal(b.warm, undefined, `${clipId}: warm-up frame count not passed (default used)`);
     }
-    assert.deepEqual(done[clipId].map((b) => b.replayed), [segStart(7) - 14, segStart(3) - 14, segStart(9) - 14, 0], `${clipId}:跳段从挂载帧回放,接得上租约的不回放`);
+    assert.deepEqual(done[clipId].map((b) => b.replayed), [segStart(7) - 14, segStart(3) - 14, segStart(9) - 14, 0], `${clipId}: a jump replays from the mount frame, one that can continue the lease does not replay`);
   }
   // 诊断:每条流的 replay 与累计回放帧数
   const status = A.streamProducer().status();

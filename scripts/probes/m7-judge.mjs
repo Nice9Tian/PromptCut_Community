@@ -27,13 +27,13 @@ export function judgeDualClip({ groups, candidates = [], layerFp = null }) {
   const takenOverMidway = names.filter((k) => !full.includes(k) && groups[k].some((t) => t.live) && groups[k].some((t) => !t.live));
   const badRanges = [];
   for (const k of names) for (const r of allRanges) if (liveCount(k, r) > 1) badRanges.push(`${k}:${r}:${liveCount(k, r)}`);
-  if (names.length < 2) reasons.push('没有两种出键');
-  if (full.length !== 1) reasons.push(full.length === 0 ? '没有哪一组出键每段恰好一份有效' : '两组出键都整份有效（没有作废）');
+  if (names.length < 2) reasons.push('There are not two kinds of result keys');
+  if (full.length !== 1) reasons.push(full.length === 0 ? 'No result-key group has exactly one valid copy per segment' : 'Both result-key groups are fully valid (none invalidated)');
   const others = names.filter((k) => !full.includes(k));
-  if (others.some((k) => !fullySuperseded.includes(k) && !takenOverMidway.includes(k))) reasons.push('另一组既不是整份作废也不是中途被接手');
-  if (badRanges.length) reasons.push('同一出键下有段不止一份有效');
-  if (!names.every((k) => candidates.includes(k))) reasons.push('层表候选里缺一组');
-  if (!layerFp || !names.includes(layerFp)) reasons.push('层表这一层没有指向其中一组');
+  if (others.some((k) => !fullySuperseded.includes(k) && !takenOverMidway.includes(k))) reasons.push('The other group was neither fully superseded nor taken over midway');
+  if (badRanges.length) reasons.push('Under the same result key some segment has more than one valid copy');
+  if (!names.every((k) => candidates.includes(k))) reasons.push('The layer table candidates are missing a group');
+  if (!layerFp || !names.includes(layerFp)) reasons.push('This layer of the layer table does not point to either group');
   return { ok: reasons.length === 0, winner: full.length === 1 ? full[0] : null, fullySuperseded, takenOverMidway, badRanges, reasons };
 }
 

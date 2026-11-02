@@ -51,7 +51,7 @@ const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 const BODY = Buffer.from('promptcut-media-fixture-'.repeat(64));
 const BODY_HASH = sha256(BODY);
 
-test('同样的内容,不同 mtime / 不同文件名 → 同一个键', async () => {
+test('Same content, different mtime / different file name → same key', async () => {
   const a = path.join(OUT, 'a.mp4');
   const b = path.join(OUT, 'b-renamed.mp4');
   fs.writeFileSync(a, BODY);
@@ -69,7 +69,7 @@ test('同样的内容,不同 mtime / 不同文件名 → 同一个键', async ()
   assert.equal(first.hash, BODY_HASH);
   assert.equal(second.hash, first.hash);
   assert.equal(first.url, `/@media/${BODY_HASH}`);
-  assert.equal(second.deduped, true, '第二次导入只认出是同一份,不再写一个新文件');
+  assert.equal(second.deduped, true, 'The second import only recognizes it as the same one and does not write a new file');
   // 内容库里只有一份文件(index.json 不算)
   const stored = fs.readdirSync(mediaDir).filter((n) => n.startsWith(BODY_HASH));
   assert.deepEqual(stored, [`${BODY_HASH}.mp4`]);
@@ -77,10 +77,10 @@ test('同样的内容,不同 mtime / 不同文件名 → 同一个键', async ()
   assert.deepEqual(fs.readdirSync(mediaDir).filter((n) => n.endsWith('.part')), []);
 });
 
-test('/@media/<hash> 给对 Content-Type,并支持 Range', async () => {
+test('/@media/<hash> returns the correct Content-Type and supports Range', async () => {
   const res = await fetch(`${origin}/@media/${BODY_HASH}`);
   assert.equal(res.status, 200);
-  assert.equal(res.headers.get('content-type'), 'video/mp4', '扩展名从入库时记下来,URL 里没有也认得出');
+  assert.equal(res.headers.get('content-type'), 'video/mp4', 'The extension is recorded at ingest time, so it is recognized even if the URL has none');
   assert.equal(res.headers.get('accept-ranges'), 'bytes');
   assert.equal(Buffer.from(await res.arrayBuffer()).equals(BODY), true);
 
@@ -102,7 +102,7 @@ test('/@media/<hash> 给对 Content-Type,并支持 Range', async () => {
   assert.equal(upper.status, 200);
 });
 
-test('索引丢了还能按目录找回来', async () => {
+test('If the index is lost it can still be recovered from the directory', async () => {
   const index = path.join(mediaDir, 'index.json');
   assert.equal(fs.existsSync(index), true);
   const saved = fs.readFileSync(index);
@@ -112,17 +112,17 @@ test('索引丢了还能按目录找回来', async () => {
   fs.writeFileSync(index, saved);
 });
 
-test('索引跨插件重启还在:换一个模块实例(缓存是空的)照样读得出原文件名和大小', async () => {
+test('The index survives a plugin restart: with a fresh module instance (empty cache) the original file name and size can still be read', async () => {
   // 每次 compile 出来的都是一份全新的模块实例 —— 模块级的 indexCache 是空的,
   // 只能从磁盘上的 index.json 读回来,正好就是 dev server 重启后的情形。
   const fresh = await import(compile('server/vite-plugin-media.ts', 'media-3.mjs'));
   const index = await fresh.readMediaIndex(projectRoot);
   const entry = index[BODY_HASH];
-  assert.ok(entry, '入库时写的那条索引要还在');
+  assert.ok(entry, 'The index entry written at ingest time must still be there');
   assert.equal(entry.file, `${BODY_HASH}.mp4`);
   // 同一份内容被导入两次(a.mp4 / b-renamed.mp4),索引记的是最后一次的原名 ——
   // 键是内容的,名字只用来显示,后导入的那次刷新它没有坏处
-  assert.equal(entry.name, 'b-renamed.mp4', '原文件名留着(列表上显示要用)');
+  assert.equal(entry.name, 'b-renamed.mp4', 'The original file name is kept (needed for display in the list)');
   assert.equal(entry.ext, 'mp4');
   assert.equal(entry.size, BODY.length);
   assert.equal(entry.contentType, 'video/mp4');
@@ -139,7 +139,7 @@ test('索引跨插件重启还在:换一个模块实例(缓存是空的)照样�
   assert.equal(await later.resolveHashFile(projectRoot, alias), path.join(mediaDir, 'collected-clip.mp4'));
 });
 
-test('迁移期:按文件名还是取得到', async () => {
+test('Migration period: lookup by file name still works', async () => {
   fs.writeFileSync(path.join(mediaDir, 'legacy-clip.mp4'), BODY);
   const res = await fetch(`${origin}/@media/legacy-clip.mp4`);
   assert.equal(res.status, 200);
@@ -151,13 +151,13 @@ test('迁移期:按文件名还是取得到', async () => {
   assert.equal(ranged.headers.get('content-range'), `bytes 10-19/${BODY.length}`);
 });
 
-test('库里没有的哈希是 404,不会掉进文件名那条路', async () => {
+test('A hash not in the store is 404 and does not fall into the file-name path', async () => {
   const missing = 'f'.repeat(64);
   const res = await fetch(`${origin}/@media/${missing}`);
   assert.equal(res.status, 404);
 });
 
-test('上传路由:边落盘边算哈希,回的就是内容键', async () => {
+test('Upload route: the hash is computed while writing to disk, and what is returned is the content key', async () => {
   const body = Buffer.from('another-fixture-payload');
   const res = await fetch(`${origin}/api/media/upload/${encodeURIComponent('照片 1.PNG')}`, { method: 'POST', body });
   assert.equal(res.status, 200);
@@ -178,7 +178,7 @@ test('上传路由:边落盘边算哈希,回的就是内容键', async () => {
   assert.equal(again.deduped, true);
 });
 
-test('adopt:素材收集下载好的文件就地补算内容键,不用再传一遍', async () => {
+test('adopt: a file downloaded by media collection gets its content key computed in place, without uploading it again', async () => {
   // collect 落盘时用的是原文件名,没有哈希 —— 补算之后它才进得了 .procp、才跨机器去重
   const collected = path.join(mediaDir, 'collected-by-agent.mp4');
   const body = Buffer.from('collected-fixture-'.repeat(50));
@@ -191,7 +191,7 @@ test('adopt:素材收集下载好的文件就地补算内容键,不用再传一�
   assert.equal(data.hash, sha256(body));
   assert.equal(data.url, `/@media/${data.hash}`);
   assert.equal(data.bytes, body.length);
-  assert.equal(fs.existsSync(collected), true, '原文件留在原处,collect 那一侧可能还按原名引用它');
+  assert.equal(fs.existsSync(collected), true, 'The original file stays where it was, since the collect side may still reference it by its original name');
 
   const back = await fetch(`${origin}/@media/${data.hash}`);
   assert.equal(back.headers.get('content-type'), 'video/mp4');
@@ -202,7 +202,7 @@ test('adopt:素材收集下载好的文件就地补算内容键,不用再传一�
   assert.equal(outside.status, 403);
 });
 
-test('大文件导入期间主服务照样在 100 ms 内答别的请求', async () => {
+test('During a large-file import the main service still answers other requests within 100 ms', async () => {
   // A1 的验收条件是「导入 4 GB 视频主服务响应 ≤ 100 ms」。4 GB 在单测里跑不动,
   // 但要证的性质和体积无关:上传是**边落盘边 update sha256**,每块几十 KiB,
   // 事件循环上没有一个长任务 —— 整份读进内存再一次性 hash 才会卡住(那正是改掉的写法)。
@@ -239,19 +239,19 @@ test('大文件导入期间主服务照样在 100 ms 内答别的请求', async 
   assert.equal(stored.bytes, TOTAL);
   assert.match(stored.hash, /^[0-9a-f]{64}$/);
   assert.equal(stored.url, `/@media/${stored.hash}`);
-  assert.ok(probes >= 3, `导入期间至少要打到几次别的路由(实际 ${probes} 次)`);
-  assert.ok(worst < 100, `导入期间别的请求最慢 ${worst.toFixed(1)} ms,应当 < 100 ms`);
+  assert.ok(probes >= 3, `Other routes must be hit at least a few times during the import (actually ${probes})`);
+  assert.ok(worst < 100, `The slowest other request during the import took ${worst.toFixed(1)} ms, should be < 100 ms`);
   fs.rmSync(path.join(mediaDir, `${stored.hash}.mp4`), { force: true });
 });
 
-test('/api/media/local 只报本地真有的哈希', async () => {
+test('/api/media/local reports only hashes that really exist locally', async () => {
   const missing = 'a'.repeat(64);
   const res = await fetch(`${origin}/api/media/local?hashes=${BODY_HASH},${missing},not-a-hash`);
   const data = await res.json();
   assert.deepEqual(data.hashes, [BODY_HASH]);
 });
 
-test('HEAD 带 Content-Length 和 Last-Modified(帧管线给没有哈希的素材打戳用,server/media-stamp.mjs)', async () => {
+test('HEAD carries Content-Length and Last-Modified (used by the frame pipeline to stamp assets without a hash, server/media-stamp.mjs)', async () => {
   // 迁移期按文件名存的素材
   const name = 'legacy-clip.mp4';
   const file = path.join(mediaDir, name);
@@ -262,7 +262,7 @@ test('HEAD 带 Content-Length 和 Last-Modified(帧管线给没有哈希的素�
   assert.equal(head.status, 200);
   assert.equal(head.headers.get('content-length'), String(BODY.length));
   assert.equal(head.headers.get('last-modified'), when.toUTCString());
-  assert.equal((await head.arrayBuffer()).byteLength, 0, 'HEAD 不带 body');
+  assert.equal((await head.arrayBuffer()).byteLength, 0, 'HEAD has no body');
   // 老 .proc 的绝对路径:/api/media/file?path= 也答 HEAD(路径在素材目录里才放行)
   const byPath = await fetch(`${origin}/api/media/file?path=${encodeURIComponent(file)}`, { method: 'HEAD' });
   assert.equal(byPath.status, 200);

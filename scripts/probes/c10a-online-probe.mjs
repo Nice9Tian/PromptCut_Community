@@ -36,7 +36,7 @@ const arg = (name, def) => { const i = argv.indexOf(`--${name}`); return i >= 0 
 const flag = (name) => argv.includes(`--${name}`);
 
 const PORT = Number(arg('port', '5650'));
-if (PORT < 5650 || PORT > 5659) console.error(`[c10a-online-probe] 注意：端口 ${PORT} 不在测试方的端口段 5650～5659 里`);
+if (PORT < 5650 || PORT > 5659) console.error(`[c10a-online-probe] Note: port ${PORT} is not in the tester's port range 5650-5659`);
 const OUT = path.resolve(ROOT, arg('out', 'out/c10a-online-probe'));
 fs.mkdirSync(OUT, { recursive: true });
 
@@ -45,7 +45,7 @@ const report = (check, ok, extra = {}) => { const r = { check, ok, ...extra }; r
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 if (!fs.existsSync(path.join(ROOT, 'src', 'online', 'mode.ts')) && !flag('force')) {
-  console.log(JSON.stringify({ summary: { ok: false, missing: '接口缺失：src/online/mode.ts 不在（C10a 在线构建未集成）；加 --force 只查探针管路' } }));
+  console.log(JSON.stringify({ summary: { ok: false, missing: 'Interface missing: src/online/mode.ts is absent (C10a online build not integrated); add --force to check only the probe pipeline' } }));
   process.exit(2);
 }
 
@@ -64,7 +64,7 @@ if (!dist) {
 }
 dist = path.resolve(dist);
 const INDEX = path.join(dist, 'index.html');
-if (!fs.existsSync(INDEX)) { report('build', false, { error: `没有 ${INDEX}` }); process.exit(1); }
+if (!fs.existsSync(INDEX)) { report('build', false, { error: `${INDEX} not found` }); process.exit(1); }
 
 // ------------------------------------------------------------------ 静态服务 + 假托管端
 
@@ -157,14 +157,14 @@ try {
     await page.screenshot({ path: path.join(OUT, 's1-start.png') });
     const api = apiRequests(rec);
     const loaded = rec.responses.some((r) => (sameOriginPath(r.url) ?? '').startsWith('/editor/assets/') && r.status === 200);
-    report('S1 开始页没有 /api/ 请求', loaded && api.length === 0, { loaded, api: api.slice(0, 10) });
+    report('S1 the start page makes no /api/ requests', loaded && api.length === 0, { loaded, api: api.slice(0, 10) });
     const cons = apiConsole(rec);
-    report('S1 控制台没有提到 /api/ 的错误（守卫没被触发）', cons.length === 0, { errors: cons.slice(0, 5) });
+    report('S1 no console errors mention /api/ (the guard was not triggered)', cons.length === 0, { errors: cons.slice(0, 5) });
     const assets = rec.responses.filter((r) => (sameOriginPath(r.url) ?? '').startsWith('/editor/assets/'));
     const badAssets = assets.filter((r) => r.status !== 200);
-    report('S1 /editor/assets/ 的资源都取到了', assets.length > 0 && badAssets.length === 0, { assets: assets.length, bad: badAssets.slice(0, 5) });
+    report('S1 all resources under /editor/assets/ were fetched', assets.length > 0 && badAssets.length === 0, { assets: assets.length, bad: badAssets.slice(0, 5) });
     const text = (await bodyText(page)).trim();
-    report('S1 页面有内容（开始页渲出来了）', text.length > 0, { text: text.slice(0, 120), pageErrors: rec.errors.slice(0, 3) });
+    report('S1 the page has content (the start page rendered)', text.length > 0, { text: text.slice(0, 120), pageErrors: rec.errors.slice(0, 3) });
     await page.close();
   }
 
@@ -177,35 +177,35 @@ try {
     await page.goto(`${ORIGIN}/editor#invite=${code}`, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch((e) => rec.errors.push(`goto: ${e.message}`));
     const sent = await waitFor(() => server.bodies.some((b) => b.ep === 'resolve'), 5000);
     const resolve = server.bodies.find((b) => b.ep === 'resolve');
-    report('S2 读到邀请码后向同源 resolve 提交', sent && resolve?.body?.code === code, { path: resolve?.path ?? null, bodyKeys: resolve?.body ? Object.keys(resolve.body) : null });
+    report('S2 after reading the invite code, it submits to the same-origin resolve', sent && resolve?.body?.code === code, { path: resolve?.path ?? null, bodyKeys: resolve?.body ? Object.keys(resolve.body) : null });
     const hash = await page.evaluate(() => location.hash);
-    report('S2 # 片段已清掉（history.replaceState）', hash === '' || hash === '#', { hash });
+    report('S2 the # fragment was cleared (history.replaceState)', hash === '' || hash === '#', { hash });
     const noHash = (u) => { try { const x = new URL(u); x.hash = ''; return x.href; } catch { return u; } };
     const inUrls = [...rec.requests.map((r) => noHash(r.url)), ...server.log.map((l) => `${l.path}${l.search ?? ''}`)].filter((u) => u.includes(code));
-    report('S2 邀请码不进任何地址（查询串、路径）', inUrls.length === 0, { urls: inUrls.slice(0, 5) });
+    report('S2 the invite code does not appear in any URL (query string, path)', inUrls.length === 0, { urls: inUrls.slice(0, 5) });
     const stored = await page.evaluate((c) => {
       const dump = (s) => { const out = []; for (let i = 0; i < s.length; i++) { const k = s.key(i); out.push(`${k}=${s.getItem(k)}`); } return out.join('\n'); };
       return { local: dump(localStorage).includes(c), session: dump(sessionStorage).includes(c) };
     }, code);
-    report('S2 邀请码不写 localStorage / sessionStorage', !stored.local && !stored.session, stored);
-    const shown = await waitText(page, '这个邀请链接已失效', 5000);
+    report('S2 the invite code is not written to localStorage / sessionStorage', !stored.local && !stored.session, stored);
+    const shown = await waitText(page, 'This invite link is no longer valid', 5000);
     await page.screenshot({ path: path.join(OUT, 's2-invalid.png') });
-    report('S2 失效提示用表 A 的文案', shown, { text: (await bodyText(page)).slice(0, 200) });
-    report('S2 没有 /api/ 请求', shown && apiRequests(rec).length === 0, { api: apiRequests(rec).slice(0, 5) });
+    report('S2 the invalid-link message uses the wording of table A', shown, { text: (await bodyText(page)).slice(0, 200) });
+    report('S2 no /api/ requests', shown && apiRequests(rec).length === 0, { api: apiRequests(rec).slice(0, 5) });
     await page.close();
   }
 
   // S3 有效的邀请码：显示项目名
   {
-    const name = `探针项目-${randomBytes(2).toString('hex')}`;
+    const name = `Probe project-${randomBytes(2).toString('hex')}`;
     server.invite = { mode: 'valid', name };
     server.bodies.length = 0;
     const { page, rec } = await openPage();
     await page.goto(`${ORIGIN}/editor#invite=${code43()}`, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch((e) => rec.errors.push(`goto: ${e.message}`));
     const shown = await waitText(page, name, 6000);
     await page.screenshot({ path: path.join(OUT, 's3-valid.png') });
-    report('S3 邀请码解析成功后显示项目名', shown, { name, text: (await bodyText(page)).slice(0, 200) });
-    report('S3 解析不扣次数：只 resolve、没有 redeem', server.bodies.every((b) => b.ep === 'resolve'), { calls: server.bodies.map((b) => b.ep) });
+    report('S3 the project name is shown after the invite code resolves successfully', shown, { name, text: (await bodyText(page)).slice(0, 200) });
+    report('S3 resolving does not consume a use: only resolve, no redeem', server.bodies.every((b) => b.ep === 'resolve'), { calls: server.bodies.map((b) => b.ep) });
     await page.close();
   }
 
@@ -216,7 +216,7 @@ try {
     const { page, rec } = await openPage();
     await page.goto(`${ORIGIN}/editor#invite=${code43().slice(0, 20)}`, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch((e) => rec.errors.push(`goto: ${e.message}`));
     await sleep(3000);
-    report('S4 长度不对的邀请码不提交', server.bodies.length === 0, { calls: server.bodies.length });
+    report('S4 an invite code of the wrong length is not submitted', server.bodies.length === 0, { calls: server.bodies.length });
     await page.close();
   }
 
@@ -228,8 +228,8 @@ try {
     await page.screenshot({ path: path.join(OUT, 's5-deep.png') });
     const text = (await bodyText(page)).trim();
     const bad = rec.responses.filter((r) => (sameOriginPath(r.url) ?? '').startsWith('/editor/assets/') && r.status !== 200);
-    report('S5 深路由照常起来', text.length > 0 && bad.length === 0, { text: text.slice(0, 120), bad: bad.slice(0, 5), pageErrors: rec.errors.slice(0, 3) });
-    report('S5 没有 /api/ 请求', text.length > 0 && apiRequests(rec).length === 0, { api: apiRequests(rec).slice(0, 5) });
+    report('S5 a deep route starts up normally', text.length > 0 && bad.length === 0, { text: text.slice(0, 120), bad: bad.slice(0, 5), pageErrors: rec.errors.slice(0, 3) });
+    report('S5 no /api/ requests', text.length > 0 && apiRequests(rec).length === 0, { api: apiRequests(rec).slice(0, 5) });
     await page.close();
   }
 } finally {

@@ -62,12 +62,12 @@ const splitArgs = (over = {}) => ({
   planTask: PLAN, entryKey: 'entry-1', envFingerprint: P, codeVersion: CV, weightOf, ...over,
 });
 
-test('M7Q-D1-S1 不给 browserFingerprints（或给空表）：切分与原来完全相同，不加 dual / bake / compositing', () => {
+test('M7Q-D1-S1 no browserFingerprints given (or an empty list): splitting is exactly the same as before, with no dual / bake / compositing added', () => {
   const a = control({ clipId: 'a', contentKey: 'ck-a' });
   const before = splitPlan(splitArgs({ cardPlan: [a] }));
   const empty = splitPlan(splitArgs({ cardPlan: [a], browserFingerprints: [] }));
   assert.deepEqual(empty, before);
-  assert.equal(before.length, 2, '70 帧切两段');
+  assert.equal(before.length, 2, '70 frames split into two segments');
   for (const t of before) {
     assert.equal(t.requires.envFingerprint, P);
     assert.equal(t.resultKey, rk('ck-a', P));
@@ -77,15 +77,15 @@ test('M7Q-D1-S1 不给 browserFingerprints（或给空表）：切分与原来�
   }
 });
 
-test('M7Q-D1-S2 浏览器可做的卡：先出自己的一份、再出浏览器的一份；两份都带 input.dual，浏览器那份另带 bake 与 compositing，都不带 takeover', () => {
+test('M7Q-D1-S2 a card the browser can render: its own copy is emitted first, then the browser copy; both copies carry input.dual, the browser copy additionally carries bake and compositing, and neither carries takeover', () => {
   const a = control({ clipId: 'a', contentKey: 'ck-a', count: 70, start: 1 });
   const tasks = splitPlan(splitArgs({ cardPlan: [a], browserFingerprints: [B] }));
-  assert.equal(tasks.length, 4, '两段 × 两种指纹');
+  assert.equal(tasks.length, 4, 'Two segments × two fingerprints');
   const own = tasks.filter((t) => t.requires.envFingerprint === P);
   const browser = tasks.filter((t) => t.requires.envFingerprint === B);
   assert.equal(own.length, 2);
   assert.equal(browser.length, 2);
-  assert.ok(tasks.indexOf(own[0]) < tasks.indexOf(browser[0]), '自己的那份在前');
+  assert.ok(tasks.indexOf(own[0]) < tasks.indexOf(browser[0]), 'Its own copy comes first');
   for (const t of own) {
     assert.equal(t.resultKey, rk('ck-a', P));
     assert.equal(t.input.dual, true);
@@ -110,25 +110,25 @@ test('M7Q-D1-S2 浏览器可做的卡：先出自己的一份、再出浏览器�
   assert.deepEqual(own.map((t) => t.priority), browser.map((t) => t.priority));
 });
 
-test('M7Q-D1-S3 浏览器做不了的卡只出自己那一份：本地档、非独立卡、用户卡、素材效果卡、改过源码、重、只在发布方本机的素材', () => {
+test('M7Q-D1-S3 a card the browser cannot render gets only its own copy: local tier, non-standalone card, user card, media effect card, modified source, heavy, media that exists only on the publisher machine', () => {
   const cases = [
-    ['本地档', control({ clipId: 'l', contentKey: 'ck-l', tier: 'local', capabilities: { frameMode: 'stateful', compositing: 'belowDependent' } }), {}],
-    ['非独立卡（sourceDependent）', control({ clipId: 's', contentKey: 'ck-s', capabilities: { frameMode: 'stateful', compositing: 'sourceDependent' } }), { weightOf: () => ({ class: 'medium', estMs: null }) }],
-    ['用户卡', control({ clipId: 'u', contentKey: 'ck-u' }), { isUserCard: () => true }],
+    ['Local tier', control({ clipId: 'l', contentKey: 'ck-l', tier: 'local', capabilities: { frameMode: 'stateful', compositing: 'belowDependent' } }), {}],
+    ['Non-standalone card (sourceDependent)', control({ clipId: 's', contentKey: 'ck-s', capabilities: { frameMode: 'stateful', compositing: 'sourceDependent' } }), { weightOf: () => ({ class: 'medium', estMs: null }) }],
+    ['user card', control({ clipId: 'u', contentKey: 'ck-u' }), { isUserCard: () => true }],
     ['素材效果卡', control({ clipId: 'g', contentKey: 'ck-g' }), { isGraphCard: () => true }],
-    ['改过源码', control({ clipId: 'c', contentKey: 'ck-c', cardId: 'title' }), { cardSourceVersions: { title: 'user:abc' } }],
-    ['重', control({ clipId: 'h', contentKey: 'ck-h', capabilities: { frameMode: 'stateful', compositing: 'independent', canvasHeavy: true } }), {}],
-    ['只在发布方本机的素材', control({ clipId: 'm', contentKey: 'ck-m' }), { localMedia: 'pc-1', usesLocalMedia: () => true }],
+    ['Modified source', control({ clipId: 'c', contentKey: 'ck-c', cardId: 'title' }), { cardSourceVersions: { title: 'user:abc' } }],
+    ['Heavy', control({ clipId: 'h', contentKey: 'ck-h', capabilities: { frameMode: 'stateful', compositing: 'independent', canvasHeavy: true } }), {}],
+    ['Media that exists only on the publisher machine', control({ clipId: 'm', contentKey: 'ck-m' }), { localMedia: 'pc-1', usesLocalMedia: () => true }],
   ];
   for (const [label, ctl, extra] of cases) {
     const tasks = splitPlan(splitArgs({ cardPlan: [ctl], browserFingerprints: [B], ...extra }));
     assert.ok(tasks.length > 0, label);
-    assert.ok(tasks.every((t) => t.requires.envFingerprint === P), `${label}：只有自己的指纹`);
-    assert.ok(tasks.every((t) => !('dual' in t.input) && !('bake' in t.input)), `${label}：不加 dual / bake`);
+    assert.ok(tasks.every((t) => t.requires.envFingerprint === P), `${label}: only its own fingerprint`);
+    assert.ok(tasks.every((t) => !('dual' in t.input) && !('bake' in t.input)), `${label}: no dual / bake added`);
   }
 });
 
-test('M7Q-D1-S4 浏览器指纹与自己相同：只出一份（不重复、不带 dual）；多个浏览器指纹去重', () => {
+test('M7Q-D1-S4 browser fingerprint equals its own: only one copy is emitted (no duplicate, no dual); multiple browser fingerprints are deduplicated', () => {
   const a = control({ clipId: 'a', contentKey: 'ck-a', count: 30 });
   const same = splitPlan(splitArgs({ cardPlan: [a], browserFingerprints: [P] }));
   assert.equal(same.length, 1);
@@ -137,14 +137,14 @@ test('M7Q-D1-S4 浏览器指纹与自己相同：只出一份（不重复、不�
   assert.deepEqual(two.map((t) => t.requires.envFingerprint), [P, B]);
 });
 
-test('M7Q-D1-S5 已锁的卡照锁出一份：锁在浏览器指纹上只出浏览器那份（带 bake），锁在自己或第三种环境上照旧', () => {
+test('M7Q-D1-S5 a locked card emits one copy as the lock dictates: if the lock is on the browser fingerprint only the browser copy is emitted (with bake); if it is on its own or on a third environment, behavior is unchanged', () => {
   const a = control({ clipId: 'a', contentKey: 'ck-a', count: 30 });
   const lockKey = 'snapshot:ck-a';
   const onB = splitPlan(splitArgs({ cardPlan: [a], browserFingerprints: [B], cardLocks: { [lockKey]: B } }));
   assert.deepEqual(onB.map((t) => t.requires.envFingerprint), [B]);
   assert.equal(onB[0].input.compositing, 'independent');
-  assert.ok(onB[0].input.bake, '锁在浏览器指纹上：那份仍带 bake');
-  assert.equal('dual' in onB[0].input, false, '只有一份，不带 dual');
+  assert.ok(onB[0].input.bake, 'Lock on the browser fingerprint: that copy still carries bake');
+  assert.equal('dual' in onB[0].input, false, 'Only one copy, no dual');
   const onP = splitPlan(splitArgs({ cardPlan: [a], browserFingerprints: [B], cardLocks: { [lockKey]: P } }));
   assert.deepEqual(onP.map((t) => t.requires.envFingerprint), [P]);
   const onX = splitPlan(splitArgs({ cardPlan: [a], browserFingerprints: [B], cardLocks: { [lockKey]: X } }));
@@ -176,7 +176,7 @@ function setup() {
 }
 const published = (out, conn) => out.one(conn, 'task.published').results;
 
-test('M7Q-D1-Q1 plan 的 task.claimed 带本项目在线、同一用户、watch 着它的 browser 节点的指纹；没有就不带这一项', () => {
+test('M7Q-D1-Q1 task.claimed of a plan carries the fingerprints of the browser nodes that are online in this project, belong to the same user and are watching it; if there are none, this field is omitted', () => {
   const h = setup();
   // 别的用户的浏览器、没 watch 这个项目的浏览器、pc 节点都不算
   h.node('bw2', 'node-bw2', { profile: 'browser', userId: 'u2', watch: ['p1'], hello: { envFingerprint: X } });
@@ -195,7 +195,7 @@ test('M7Q-D1-Q1 plan 的 task.claimed 带本项目在线、同一用户、watch 
   assert.equal('browserFingerprints' in c2, false);
 });
 
-test('M7Q-D1-Q2 两份都 open 时，切分方认领自己那份建锁：浏览器那份（dual）整张卡作废 superseded，attempts 不加；订阅者收 task.failed', () => {
+test('M7Q-D1-Q2 when both copies are open and the splitter claims its own copy and creates the lock: the browser copy (dual) is voided for the whole card as superseded, attempts is not incremented; subscribers receive task.failed', () => {
   const h = setup();
   const own0 = snap('ck1', P, 0, { dual: true }), own1 = snap('ck1', P, 60, { dual: true });
   const br0 = snap('ck1', B, 0, { dual: true }), br1 = snap('ck1', B, 60, { dual: true });
@@ -207,12 +207,12 @@ test('M7Q-D1-Q2 两份都 open 时，切分方认领自己那份建锁：浏览�
     const v = h.task(t.id);
     assert.deepEqual([v.state, v.lastError, v.attempts], ['failed', 'superseded', 0], t.id);
   }
-  assert.equal(h.task(own1.id).state, 'open', '自己那份的其余段照常');
-  assert.equal(h.task(other.id).state, 'open', '别的卡不动');
+  assert.equal(h.task(own1.id).state, 'open', 'The remaining segments of its own copy proceed as usual');
+  assert.equal(h.task(other.id).state, 'open', 'other cards untouched');
   assert.deepEqual(out.of('p', 'task.failed').map((m) => [m.id, m.error]).sort(), [[br0.id, 'superseded'], [br1.id, 'superseded']].sort());
 });
 
-test('M7Q-D1-Q3 浏览器先认领：切分方那份（dual）作废；不带 dual 的异指纹任务行为不变', () => {
+test('M7Q-D1-Q3 browser claims first: the splitter copy (dual) is voided; behavior of different-fingerprint tasks without dual is unchanged', () => {
   const h = setup();
   const own0 = snap('ck1', P, 0, { dual: true });
   const br0 = snap('ck1', B, 0, { dual: true });
@@ -223,7 +223,7 @@ test('M7Q-D1-Q3 浏览器先认领：切分方那份（dual）作废；不带 du
   assert.equal(h.task(legacy.id).state, 'open');
 });
 
-test('M7Q-D1-Q4 作废过的任务可以重新发布：锁回到它的指纹上（或带 takeover）就重建，锁还在别处就回 card-locked', () => {
+test('M7Q-D1-Q4 a voided task can be republished: it is recreated if the lock is back on its fingerprint (or with takeover), and answers card-locked if the lock is still elsewhere', () => {
   const h = setup();
   const own0 = snap('ck1', P, 0, { dual: true });
   const br0 = snap('ck1', B, 0, { dual: true });
@@ -231,14 +231,14 @@ test('M7Q-D1-Q4 作废过的任务可以重新发布：锁回到它的指纹上�
   h.claim('bw', br0.id, 1);
   assert.equal(h.task(own0.id).lastError, 'superseded');
   const r1 = published(h.publish('p', [snap('ck1', P, 0)]), 'p')[0];
-  assert.equal(r1.error, 'card-locked', '锁在 B 上、没带 takeover：拒建');
+  assert.equal(r1.error, 'card-locked', 'Lock on B, no takeover: creation refused');
   assert.equal(r1.lockedBy, B);
   const r2 = published(h.publish('p', [{ ...snap('ck1', P, 0), takeover: true }]), 'p')[0];
-  assert.deepEqual([r2.created, r2.state], [true, 'open'], '带 takeover：作废的记录当不存在，重建');
+  assert.deepEqual([r2.created, r2.state], [true, 'open'], 'With takeover: the voided record is treated as nonexistent and recreated');
   assert.equal(h.describe().locks.find((l) => l.lockKey === 'snapshot:ck1').envFingerprint, P);
 });
 
-test('M7Q-D2-L1 发布被锁拒建：回包带 lockIdleMs、lockedByProfile 与 lockUndone', () => {
+test('M7Q-D2-L1 publish refused by a lock: the response carries lockIdleMs, lockedByProfile and lockUndone', () => {
   const h = setup();
   const br0 = snap('ck1', B, 0), br1 = snap('ck1', B, 60);
   h.publish('p', [br0, br1]);
@@ -249,10 +249,10 @@ test('M7Q-D2-L1 发布被锁拒建：回包带 lockIdleMs、lockedByProfile 与 
   assert.equal(r.lockedBy, B);
   assert.equal(r.lockIdleMs, 45_000);
   assert.equal(r.lockedByProfile, 'browser');
-  assert.equal(r.lockUndone, 2, '锁定方这张卡还有两段没做完');
+  assert.equal(r.lockUndone, 2, 'The lock holder still has two segments of this card unfinished');
 });
 
-test('M7Q-D2-L2 认领被锁拒绝（card-locked）：回包带 lockIdleMs 与 lockedByProfile', () => {
+test('M7Q-D2-L2 claim rejected by a lock (card-locked): the response carries lockIdleMs and lockedByProfile', () => {
   const h = setup();
   const own0 = snap('ck1', P, 0), br0 = snap('ck1', B, 0);
   h.publish('p', [own0, br0]);
@@ -266,7 +266,7 @@ test('M7Q-D2-L2 认领被锁拒绝（card-locked）：回包带 lockIdleMs 与 l
   assert.equal(rej.lockedByProfile, 'browser');
 });
 
-test('M7Q-D2-L3 续约（task.progress）也刷新锁的 touchedAt', () => {
+test('M7Q-D2-L3 lease renewal (task.progress) also refreshes touchedAt of the lock', () => {
   const h = setup();
   const br0 = snap('ck1', B, 0);
   h.publish('p', [br0]);
@@ -279,7 +279,7 @@ test('M7Q-D2-L3 续约（task.progress）也刷新锁的 touchedAt', () => {
   assert.equal(h.describe().locks.find((l) => l.lockKey === 'snapshot:ck1').touchedAt, T0 + 27_000);
 });
 
-test('M7Q-D2-L4 做完了的锁 lockUndone 为 0', () => {
+test('M7Q-D2-L4 a finished lock has lockUndone of 0', () => {
   const h = setup();
   const br0 = snap('ck1', B, 0);
   h.publish('p', [br0]);
@@ -290,7 +290,7 @@ test('M7Q-D2-L4 做完了的锁 lockUndone 为 0', () => {
   assert.deepEqual([r.error, r.lockUndone], ['card-locked', 0]);
 });
 
-test('M7Q-D9-Q5 同一个 nodeId 不能被别的 userId 报到（回 forbidden，原节点不受影响）', () => {
+test('M7Q-D9-Q5 the same nodeId cannot be checked in by a different userId (answers forbidden, the original node is unaffected)', () => {
   const h = setup();
   const out = h.node('evil', 'node-bw', { profile: 'pc', userId: 'u2', watch: null, hello: { envFingerprint: B } });
   const err = out.one('evil', 'error');
@@ -303,7 +303,7 @@ test('M7Q-D9-Q5 同一个 nodeId 不能被别的 userId 报到（回 forbidden�
   assert.ok(again.one('bw-new', 'node.welcome'));
 });
 
-test('M7Q-D10-Q6 node.welcome 回这个节点的指纹', () => {
+test('M7Q-D10-Q6 node.welcome returns the fingerprint of this node', () => {
   const h = createQueueHarness(createRenderQueue);
   const out = h.node('a', 'node-a', { hello: { envFingerprint: P } });
   assert.equal(out.one('a', 'node.welcome').envFingerprint, P);
@@ -341,7 +341,7 @@ function moduleRig() {
 const member = (userId, owner = { kind: 'user' }) => ({ userId, tenantId: 'proj-1', scope: 'member', role: 'render', owner, username: userId.split('@')[0], deviceId: userId.split('@')[1] });
 const browserOwner = (userId) => member(userId, { kind: 'browser' });
 
-test('M7Q-D9-M1 owner: browser 的连接只能以 browser 报到；以 pc / host 报到回 forbidden，不登记节点', () => {
+test('M7Q-D9-M1 a connection with owner: browser can only check in as browser; checking in as pc / host answers forbidden and registers no node', () => {
   const rig = moduleRig();
   rig.connect('c1', browserOwner('alice@d1'));
   for (const profile of ['pc', 'host']) {
@@ -355,7 +355,7 @@ test('M7Q-D9-M1 owner: browser 的连接只能以 browser 报到；以 pc / host
   assert.equal(ok[0].type, 'node.welcome');
 });
 
-test('M7Q-D10-M2 页面报原始环境值：队列模块按 describeEnvironment 算指纹，node.welcome 回给页面；自报的 envFingerprint 不作数', () => {
+test('M7Q-D10-M2 the page reports raw environment values: the queue module computes the fingerprint with describeEnvironment and node.welcome returns it to the page; a self-reported envFingerprint does not count', () => {
   const rig = moduleRig();
   rig.connect('c1', browserOwner('alice@d1'));
   const env = envOf(UA_EDGE);
@@ -367,7 +367,7 @@ test('M7Q-D10-M2 页面报原始环境值：队列模块按 describeEnvironment 
   assert.equal(rig.mod.describeConn('c1').node.profile, 'browser');
 });
 
-test('M7Q-D10-M3 owner: browser 的连接不报环境：回 bad-message，不登记', () => {
+test('M7Q-D10-M3 a connection with owner: browser that reports no environment: answers bad-message and is not registered', () => {
   const rig = moduleRig();
   rig.connect('c1', browserOwner('alice@d1'));
   const out = rig.handle('c1', { type: 'node.hello', nodeId: 'bn-1', profile: 'browser', envFingerprint: B });
@@ -375,7 +375,7 @@ test('M7Q-D10-M3 owner: browser 的连接不报环境：回 bad-message，不登
   assert.equal(rig.q.describe().nodes.length, 0);
 });
 
-test('M7Q-D14-M4 非 Chromium 内核的浏览器拒当节点：回 error { reason: not-chromium }', () => {
+test('M7Q-D14-M4 a browser that is not Chromium-based is refused as a node: answers error { reason: not-chromium }', () => {
   for (const ua of [UA_FIREFOX, UA_SAFARI, UA_IOS_CHROME, '']) {
     const rig = moduleRig();
     rig.connect('c1', browserOwner('alice@d1'));
@@ -389,20 +389,20 @@ test('M7Q-D14-M4 非 Chromium 内核的浏览器拒当节点：回 error { reaso
   assert.equal(fingerprintModule.isChromiumUserAgent(UA_SAFARI), false);
 });
 
-test('M7Q-D9-M5 nodeId 绑到 userId：别的用户拿同一个 nodeId 报到回 forbidden；同一用户换连接照常', () => {
+test('M7Q-D9-M5 nodeId is bound to userId: another user checking in with the same nodeId gets forbidden; the same user on a new connection works as usual', () => {
   const rig = moduleRig();
   rig.connect('c1', browserOwner('alice@d1'));
   rig.handle('c1', { type: 'node.hello', nodeId: 'bn-1', profile: 'browser', environment: envOf(UA_CHROME) });
   rig.connect('c2', member('bob@d2'));
   const out = rig.handle('c2', { type: 'node.hello', nodeId: 'bn-1', profile: 'pc', envFingerprint: P });
   assert.deepEqual([out[0].type, out[0].reason], ['error', 'forbidden']);
-  assert.deepEqual(rig.mod.describeConn('c2').roles, [], '被拒的连接不记节点角色');
+  assert.deepEqual(rig.mod.describeConn('c2').roles, [], 'A rejected connection does not record node roles');
   rig.connect('c3', browserOwner('alice@d1'));
   const again = rig.handle('c3', { type: 'node.hello', nodeId: 'bn-1', profile: 'browser', environment: envOf(UA_CHROME) });
   assert.equal(again[0].type, 'node.welcome');
 });
 
-test('M7Q-D9-M6 不是 browser 归属的连接照旧：pc 自报指纹原样收下；带了 environment 又没自报时按它算', () => {
+test('M7Q-D9-M6 a connection not owned by browser is unchanged: a fingerprint self-reported by pc is accepted as is; when environment is given and nothing is self-reported, the fingerprint is computed from it', () => {
   const rig = moduleRig();
   rig.connect('c1', member('carol@d3'));
   const out = rig.handle('c1', { type: 'node.hello', nodeId: 'pc-1', profile: 'pc', envFingerprint: P });
@@ -414,7 +414,7 @@ test('M7Q-D9-M6 不是 browser 归属的连接照旧：pc 自报指纹原样收�
   assert.equal(out2[0].envFingerprint, fpOfEnv(env));
 });
 
-test('M7Q-D9-A1 归属多一种 { kind: browser }（auth-contract 第 5、8 节）', () => {
+test('M7Q-D9-A1 ownership gains one more kind, { kind: browser } (auth-contract sections 5 and 8)', () => {
   assert.deepEqual(normalizeOwner({ kind: 'browser' }), { kind: 'browser' });
   assert.equal(normalizeOwner({ kind: 'browser', c: 1 }), null);
   assert.deepEqual(normalizeOwner({ kind: 'user' }), { kind: 'user' });
@@ -461,7 +461,7 @@ const listPlan = clipsPlanTaskOf({ projectId: 'proj-m7', projectRev: 4, clips: [
 const planView = { ...listPlan, source: { ...listPlan.source, userId: 'u1' }, state: 'claimed', version: 2, attempts: 0 };
 const ok = (tasks) => tasks.map((t) => ({ id: t.id, state: 'open', version: 1, created: true }));
 
-test('M7Q-D1-N1 切分方把 plan 认领回包里的 browserFingerprints 交给切分：浏览器可做的卡出两份', async () => {
+test('M7Q-D1-N1 the splitter passes the browserFingerprints from the plan claim response to the split: a card the browser can render emits two copies', async () => {
   const a = control({ clipId: 'a', contentKey: 'ck-a', count: 30 });
   const rig = splitterRig({ respond: ok, cardPlan: [a] });
   rig.endpoint.deliver({ type: 'task.claimed', id: listPlan.id, token: 2, version: 2, leaseUntil: T0 + 30_000, task: planView, browserFingerprints: [B] });
@@ -472,9 +472,9 @@ test('M7Q-D1-N1 切分方把 plan 认领回包里的 browserFingerprints 交给�
   assert.ok(rig.endpoint.sent.some((m) => m.type === 'task.complete' && m.id === listPlan.id));
 });
 
-test('M7Q-D2-N2 idleLockTakeover：锁定方闲置超 30 s 且还没做完 → 带 takeover 按自己的指纹重发；否则照锁出键', async () => {
-  assert.equal(typeof localNodeModule.idleLockTakeover, 'function', 'local-node 转出 idleLockTakeover');
-  assert.equal(queueConstants.LOCK_IDLE_TAKEOVER_MS, CARD_LOCK_IDLE_MS, '与本机锁库同一个数');
+test('M7Q-D2-N2 idleLockTakeover: lock holder idle for more than 30 s and not finished → republish with takeover under its own fingerprint; otherwise emit keys per the lock', async () => {
+  assert.equal(typeof localNodeModule.idleLockTakeover, 'function', 'local-node re-exports idleLockTakeover');
+  assert.equal(queueConstants.LOCK_IDLE_TAKEOVER_MS, CARD_LOCK_IDLE_MS, 'Same number as in the local lock store');
   const a = control({ clipId: 'a', contentKey: 'ck-a', count: 30 });
   const scene = async (lockInfo) => {
     let round = 0;
@@ -491,18 +491,18 @@ test('M7Q-D2-N2 idleLockTakeover：锁定方闲置超 30 s 且还没做完 → �
   };
   const idle = await scene({ lockIdleMs: 45_000, lockedByProfile: 'browser', lockUndone: 1 });
   assert.equal(idle.length, 2);
-  assert.deepEqual(idle[1].map((t) => [t.requires.envFingerprint, t.takeover === true]), [[P, true]], '接手');
+  assert.deepEqual(idle[1].map((t) => [t.requires.envFingerprint, t.takeover === true]), [[P, true]], 'Take over');
   const busy = await scene({ lockIdleMs: 10_000, lockedByProfile: 'browser', lockUndone: 1 });
-  assert.deepEqual(busy[1].map((t) => [t.requires.envFingerprint, t.takeover === true]), [[B, false]], '还在产：照锁出键');
+  assert.deepEqual(busy[1].map((t) => [t.requires.envFingerprint, t.takeover === true]), [[B, false]], 'Still producing: emit keys per the lock');
   const edge = await scene({ lockIdleMs: 30_000, lockedByProfile: 'browser', lockUndone: 1 });
-  assert.deepEqual(edge[1].map((t) => [t.requires.envFingerprint, t.takeover === true]), [[B, false]], '恰好 30 s 不算超');
+  assert.deepEqual(edge[1].map((t) => [t.requires.envFingerprint, t.takeover === true]), [[B, false]], 'Exactly 30 s does not count as exceeding');
   const done = await scene({ lockIdleMs: 45_000, lockedByProfile: 'browser', lockUndone: 0 });
-  assert.deepEqual(done[1].map((t) => [t.requires.envFingerprint, t.takeover === true]), [[B, false]], '锁定方已做完：照锁投递，不重渲');
+  assert.deepEqual(done[1].map((t) => [t.requires.envFingerprint, t.takeover === true]), [[B, false]], 'Lock holder finished: deliver per the lock, no re-render');
   const legacy = await scene({});
-  assert.deepEqual(legacy[1].map((t) => [t.requires.envFingerprint, t.takeover === true]), [[B, false]], '旧队列不带这几项：不接手');
+  assert.deepEqual(legacy[1].map((t) => [t.requires.envFingerprint, t.takeover === true]), [[B, false]], 'Legacy queue lacks these fields: no takeover');
 });
 
-test('M7Q-D12-N3 切分完成后把最终发布成功的细任务交给 executor.afterSplit（写层表用），被拒建的不算', async () => {
+test('M7Q-D12-N3 after splitting, the fine-grained tasks that were finally published successfully are handed to executor.afterSplit (used to write the layer table); those refused at creation do not count', async () => {
   const a = control({ clipId: 'a', contentKey: 'ck-a', count: 30 });
   const calls = [];
   let round = 0;
@@ -526,7 +526,7 @@ function entryWith(controls) {
   return { key: 'entry-1', project: { id: 'doc-1', fps: 30, width: 1920, height: 1080 }, cardPlan: controls };
 }
 
-test('M7Q-D12-T1 层表 v 3：共享档每层带候选；第一个候选与层上的 resultKey / key / envFingerprint 一致（v 2 的读法仍对得上）', () => {
+test('M7Q-D12-T1 layer table v 3: in the shared tier each layer carries candidates; the first candidate matches the resultKey / key / envFingerprint on the layer (the v 2 way of reading still lines up)', () => {
   assert.equal(transfer.LAYER_MAP_VERSION, 3);
   const a = control({ clipId: 'a', contentKey: 'ck-a', count: 30 });
   const map = transfer.layerMapOf(entryWith([a]), { fingerprint: P, now: 0, candidatesOf: () => [P, B] });
@@ -539,7 +539,7 @@ test('M7Q-D12-T1 层表 v 3：共享档每层带候选；第一个候选与层�
   assert.deepEqual([layer.envFingerprint, layer.resultKey, layer.key, layer.dirKey, layer.contentKey], [P, rk('ck-a', P), rk('ck-a', P), rk('ck-a', P), 'ck-a']);
 });
 
-test('M7Q-D12-T2 切分方照锁只出了浏览器那份：层上的主候选是浏览器的键；自己的指纹排在后面', () => {
+test('M7Q-D12-T2 the splitter emitted only the browser copy as the lock dictates: the primary candidate on the layer is the browser key; its own fingerprint comes after', () => {
   const a = control({ clipId: 'a', contentKey: 'ck-a', count: 30 });
   const map = transfer.layerMapOf(entryWith([a]), { fingerprint: P, now: 0, candidatesOf: () => [B] });
   const layer = map.layers[0];
@@ -547,7 +547,7 @@ test('M7Q-D12-T2 切分方照锁只出了浏览器那份：层上的主候选是
   assert.deepEqual([layer.envFingerprint, layer.resultKey, layer.key], [B, rk('ck-a', B), rk('ck-a', B)]);
 });
 
-test('M7Q-D12-T3 没有切分记录：只有自己一个候选；本地档只有自己一个候选', () => {
+test('M7Q-D12-T3 no split record: only itself as candidate; the local tier also has only itself as candidate', () => {
   const a = control({ clipId: 'a', contentKey: 'ck-a', count: 30 });
   const l = control({ clipId: 'l', contentKey: 'ck-l', tier: 'local', capabilities: { frameMode: 'stateful', compositing: 'belowDependent' }, count: 30 });
   const map = transfer.layerMapOf(entryWith([a, l]), { fingerprint: P, now: 0, candidatesOf: () => [B] });
@@ -557,7 +557,7 @@ test('M7Q-D12-T3 没有切分记录：只有自己一个候选；本地档只有
   assert.deepEqual(plain.layers[0].candidates.map((c) => c.envFingerprint), [P]);
 });
 
-test('M7Q-D12-T4 splitCandidatesOf：按内容键收集最终出键的指纹（发布顺序），只收共享档快照', () => {
+test('M7Q-D12-T4 splitCandidatesOf: collects, by content key, the fingerprints that finally emitted keys (in publish order), and takes only shared-tier snapshots', () => {
   const a = control({ clipId: 'a', contentKey: 'ck-a', count: 70 });
   const l = control({ clipId: 'l', contentKey: 'ck-l', tier: 'local', capabilities: { frameMode: 'stateful', compositing: 'belowDependent' }, count: 30 });
   const tasks = splitPlan(splitArgs({ cardPlan: [a, l], browserFingerprints: [B] }));
@@ -592,26 +592,26 @@ function graphOf(entry) {
   return { files: [...seen].map((f) => path.relative(serverDir, f).replace(/\\/g, '/')), builtins };
 }
 
-test('M7Q-D11-G1 session.mjs 的依赖树里没有 node: 内置模块，不经 render-queue/index.mjs', () => {
+test('M7Q-D11-G1 the dependency tree of session.mjs has no node: built-in modules and does not go through render-queue/index.mjs', () => {
   const g = graphOf(path.join(serverDir, 'render-node', 'session.mjs'));
   assert.deepEqual(g.builtins, []);
   assert.ok(!g.files.includes('render-queue/index.mjs'), g.files.join(', '));
   assert.ok(!g.files.includes('render-queue/queue.mjs'), g.files.join(', '));
 });
 
-test('M7Q-D11-G2 细任务编排 task-runner.mjs：同构（没有 node: 内置模块），不引 split.mjs、队列本体、fingerprint.mjs', async () => {
+test('M7Q-D11-G2 fine-grained task arrangement in task-runner.mjs: isomorphic (no node: built-in modules), does not import split.mjs, the queue itself, or fingerprint.mjs', async () => {
   const file = path.join(serverDir, 'render-node', 'task-runner.mjs');
-  assert.ok(fs.existsSync(file), 'server/render-node/task-runner.mjs 存在');
+  assert.ok(fs.existsSync(file), 'server/render-node/task-runner.mjs exists');
   const g = graphOf(file);
   assert.deepEqual(g.builtins, []);
   for (const bad of ['render-node/split.mjs', 'render-queue/index.mjs', 'render-queue/queue.mjs', 'render-node/fingerprint.mjs']) {
-    assert.ok(!g.files.includes(bad), `${bad} 不在依赖树里：${g.files.join(', ')}`);
+    assert.ok(!g.files.includes(bad), `${bad} is not in the dependency tree: ${g.files.join(', ')}`);
   }
   const mod = await import('../render-node/task-runner.mjs');
   assert.equal(typeof mod.createTaskRunner, 'function');
 });
 
-test('M7Q-D11-G3 local-node 用 task-runner 编排细任务（桌面继续用它）', () => {
+test('M7Q-D11-G3 local-node arranges fine-grained tasks with task-runner (the desktop app keeps using it)', () => {
   const text = fs.readFileSync(path.join(serverDir, 'render-node', 'local-node.mjs'), 'utf8');
   assert.match(text, /from '\.\/task-runner\.mjs'/);
 });
@@ -658,7 +658,7 @@ function pageAndBrowser(env) {
   return { page, br };
 }
 
-test('M7Q-A10 进程内：浏览器认领一段后走掉；锁闲置超 30 s 后下一次切分，pc 带 takeover 接手整张卡，浏览器那份作废', async () => {
+test('M7Q-A10 in-process: the browser claims a segment and then goes away; at the next split after the lock has been idle for more than 30 s, pc takes over the whole card with takeover and the browser copy is voided', async () => {
   const env = inproc();
   const a = control({ clipId: 'a', contentKey: 'ck-a', count: 120 });
   const pc = pcSplitter(env, { cardPlan: [a] });
@@ -669,7 +669,7 @@ test('M7Q-A10 进程内：浏览器认领一段后走掉；锁闲置超 30 s 后
   pc.tick();
   await flush();
   const claimed = env.of('pc', 'task.claimed').find((m) => m.id === plan1.id);
-  assert.deepEqual(claimed?.browserFingerprints, [B], '认领回包带同用户在线浏览器的指纹');
+  assert.deepEqual(claimed?.browserFingerprints, [B], 'The claim response carries the fingerprints of the online browsers of the same user');
   const d1 = env.q.describe();
   const brTasks = d1.tasks.filter((t) => t.id.startsWith(`snapshot:${rk('ck-a', B)}`));
   const pcTasks = d1.tasks.filter((t) => t.id.startsWith(`snapshot:${rk('ck-a', P)}`));
@@ -693,19 +693,19 @@ test('M7Q-A10 进程内：浏览器认领一段后走掉；锁闲置超 30 s 后
   pc.tick();
   await flush();
   const claimed2 = env.of('pc', 'task.claimed').find((m) => m.id === plan2.id);
-  assert.ok(claimed2, '第二版计划由 pc 认领');
-  assert.equal('browserFingerprints' in claimed2, false, '浏览器已不在线：只出自己那一份');
+  assert.ok(claimed2, 'The second version of the plan is claimed by pc');
+  assert.equal('browserFingerprints' in claimed2, false, 'The browser is no longer online: only its own copy is emitted');
   const d2 = env.q.describe();
-  assert.equal(d2.locks.find((l) => l.lockKey === 'snapshot:ck-a').envFingerprint, P, '锁转给了切分方');
-  for (const t of brTasks) assert.equal(d2.tasks.find((x) => x.id === t.id).lastError, 'superseded', `${t.id} 作废`);
-  for (const t of pcTasks) assert.equal(d2.tasks.find((x) => x.id === t.id).state, 'open', `${t.id} 重建`);
+  assert.equal(d2.locks.find((l) => l.lockKey === 'snapshot:ck-a').envFingerprint, P, 'The lock was handed to the splitter');
+  for (const t of brTasks) assert.equal(d2.tasks.find((x) => x.id === t.id).lastError, 'superseded', `${t.id} invalidated`);
+  for (const t of pcTasks) assert.equal(d2.tasks.find((x) => x.id === t.id).state, 'open', `${t.id} recreated`);
   const results = env.log.filter((e) => e.connId === 'pc' && e.m.type === 'task.published').map((e) => e.m.results);
   assert.ok(results.some((rs) => rs.some((r) => r.error === 'card-locked' && r.lockIdleMs > 30_000 && r.lockUndone > 0)), JSON.stringify(results));
   pc.stop();
   await pc.settled();
 });
 
-test('M7Q-A10b 进程内：锁在浏览器上但它还在产出（闲置不到 30 s）：切分方照锁出键，不接手', async () => {
+test('M7Q-A10b in-process: the lock is on the browser but it is still producing (idle for less than 30 s): the splitter emits keys per the lock and does not take over', async () => {
   const env = inproc();
   const a = control({ clipId: 'a', contentKey: 'ck-a', count: 120 });
   const pc = pcSplitter(env, { cardPlan: [a] });
@@ -723,14 +723,14 @@ test('M7Q-A10b 进程内：锁在浏览器上但它还在产出（闲置不到 3
   pc.tick();
   await flush();
   const d = env.q.describe();
-  assert.ok(env.of('pc', 'task.claimed').some((m) => m.id === plan2.id), '第二版计划由 pc 认领、切分过');
-  assert.equal(d.locks.find((l) => l.lockKey === 'snapshot:ck-a').envFingerprint, B, '锁仍在浏览器上');
-  assert.equal(d.tasks.find((x) => x.id === brId).state, 'claimed', '浏览器手里那段不受影响');
+  assert.ok(env.of('pc', 'task.claimed').some((m) => m.id === plan2.id), 'The second version of the plan was claimed and split by pc');
+  assert.equal(d.locks.find((l) => l.lockKey === 'snapshot:ck-a').envFingerprint, B, 'The lock is still on the browser');
+  assert.equal(d.tasks.find((x) => x.id === brId).state, 'claimed', 'The segment held by the browser is unaffected');
   pc.stop();
   await pc.settled();
 });
 
-test('M7Q-D12-E1 执行器 afterSplit：记切分候选；带片段清单的 plan 在切分完成后写一次层表（主机用 publishLayerMap 选项）', async () => {
+test('M7Q-D12-E1 executor afterSplit: records split candidates; a plan with a clip manifest writes the layer table once after splitting completes (the host uses the publishLayerMap option)', async () => {
   const { createPrerenderExecutor } = await import('../prerender-executor.mjs');
   const a = control({ clipId: 'a', contentKey: 'ck-a', count: 30 });
   const entry = entryWith([a]);
@@ -743,11 +743,11 @@ test('M7Q-D12-E1 执行器 afterSplit：记切分候选；带片段清单的 pla
   };
   const exec = createPrerenderExecutor({ pipeline, projects: { get: async () => ({ tracks: [], duration: 1 }) }, publishLayerMap: (e) => written.push(e.key) });
   await exec.plan(listPlan);
-  assert.deepEqual(written, [], '切分之前不写层表');
+  assert.deepEqual(written, [], 'The layer table is not written before splitting');
   const tasks = splitPlan(splitArgs({ cardPlan: [a], browserFingerprints: [B] }));
   await exec.afterSplit(listPlan, { tasks });
   assert.deepEqual([...recorded[0].entries()], [['ck-a', [P, B]]]);
-  assert.deepEqual(written, ['entry-1'], '切分完成后写一次');
+  assert.deepEqual(written, ['entry-1'], 'Written once after splitting completes');
   // 不带片段清单的 plan：只记候选，不写层表
   await exec.afterSplit(planTaskOf({ projectId: 'proj-m7', projectRev: 4 }), { tasks });
   assert.equal(recorded.length, 2);
@@ -756,7 +756,7 @@ test('M7Q-D12-E1 执行器 afterSplit：记切分候选；带片段清单的 pla
 
 /* ================================================================== M7-A10 真页面上查出的缺陷:切分方已知锁、照锁出键时从不接手 */
 
-test('M7Q-A10c 队列：切分节点照别的指纹的锁发布（合并进锁定方的任务）时，回包也带 lockIdleMs / lockedByProfile / lockUndone，不带 lockedBy', () => {
+test('M7Q-A10c queue: when a splitting node publishes per a lock on another fingerprint (merging into the task of the lock holder), the response also carries lockIdleMs / lockedByProfile / lockUndone, but not lockedBy', () => {
   const h = setup();
   const br0 = snap('ck1', B, 0), br1 = snap('ck1', B, 60);
   h.publish('p', [br0, br1]);
@@ -767,7 +767,7 @@ test('M7Q-A10c 队列：切分节点照别的指纹的锁发布（合并进锁�
   const r = published(h.publish('pc', [br0, br1]), 'pc');
   for (const x of r) {
     assert.equal(x.error, undefined, JSON.stringify(x));
-    assert.equal('lockedBy' in x, false, '锁就在这份的指纹上，不带 lockedBy');
+    assert.equal('lockedBy' in x, false, 'The lock is on the fingerprint of this copy, so lockedBy is not carried');
     assert.deepEqual([x.lockIdleMs, x.lockedByProfile, x.lockUndone], [40_000, 'browser', 2], JSON.stringify(x));
   }
   // 发布方不是节点、或节点指纹与锁相同：形状不变
@@ -775,7 +775,7 @@ test('M7Q-A10c 队列：切分节点照别的指纹的锁发布（合并进锁�
   assert.equal('lockIdleMs' in plain, false, JSON.stringify(plain));
 });
 
-test('M7Q-A10d 切分方从执行器已知锁在浏览器指纹上、照锁出键：回包说锁定方闲置超 30 s 且没做完 → 按自己的指纹带 takeover 重发；闲置不到 30 s 不重发', async () => {
+test('M7Q-A10d the splitter knows from the executor that the lock is on the browser fingerprint and emits keys per the lock: when the response says the lock holder has been idle for more than 30 s and is unfinished → republish with takeover under its own fingerprint; no republish when idle for less than 30 s', async () => {
   const a = control({ clipId: 'a', contentKey: 'ck-a', count: 30 });
   const scene = async (info) => {
     const respond = (tasks) => tasks.map((t) => (t.requires.envFingerprint === B
@@ -796,16 +796,16 @@ test('M7Q-A10d 切分方从执行器已知锁在浏览器指纹上、照锁出�
   };
   const idle = await scene({ lockIdleMs: 45_000, lockedByProfile: 'browser', lockUndone: 1 });
   assert.equal(idle.rounds.length, 2, JSON.stringify(idle.rounds.map((r) => r.map((t) => t.requires.envFingerprint))));
-  assert.deepEqual(idle.rounds[0].map((t) => t.requires.envFingerprint), [B], '第一轮照锁出键');
-  assert.deepEqual(idle.rounds[1].map((t) => [t.requires.envFingerprint, t.takeover === true]), [[P, true]], '第二轮接手');
-  assert.deepEqual(idle.done.result.derived, [idle.rounds[1][0].id], 'derived 只列接手后那份');
+  assert.deepEqual(idle.rounds[0].map((t) => t.requires.envFingerprint), [B], 'First round emits keys per the lock');
+  assert.deepEqual(idle.rounds[1].map((t) => [t.requires.envFingerprint, t.takeover === true]), [[P, true]], 'Second round takes over');
+  assert.deepEqual(idle.done.result.derived, [idle.rounds[1][0].id], 'derived lists only the copy after the takeover');
   const busy = await scene({ lockIdleMs: 10_000, lockedByProfile: 'browser', lockUndone: 1 });
-  assert.equal(busy.rounds.length, 1, '还在产出：不重发');
+  assert.equal(busy.rounds.length, 1, 'Still producing: no republish');
   const done = await scene({ lockIdleMs: 45_000, lockedByProfile: 'browser', lockUndone: 0 });
-  assert.equal(done.rounds.length, 1, '锁定方已做完：照锁投递');
+  assert.equal(done.rounds.length, 1, 'Lock holder finished: deliver per the lock');
 });
 
-test('M7Q-A10e 进程内（真页面上的场景）：b1 持有一段时走掉，锁闲置超 30 s；同指纹的另一用户 b2 在线并发布计划，切分方从本机锁库已知锁在 B 上 —— 仍由 pc 接手整张卡', async () => {
+test('M7Q-A10e in-process (a scenario from the real page): b1 goes away while holding a segment and the lock stays idle for more than 30 s; another user b2 with the same fingerprint is online and publishes a plan, and the splitter knows from the local lock store that the lock is on B; pc still takes over the whole card', async () => {
   const env = inproc();
   const a = control({ clipId: 'a', contentKey: 'ck-a', count: 120 });
   const pc = pcSplitter(env, { cardPlan: [a] });
@@ -836,28 +836,28 @@ test('M7Q-A10e 进程内（真页面上的场景）：b1 持有一段时走掉�
   page2.send({ type: 'task.publish', tasks: [plan2] });
   pc2.tick();
   await flush();
-  assert.ok(env.of('pc', 'task.claimed').some((m) => m.id === plan2.id), 'pc 认领了第二版计划');
+  assert.ok(env.of('pc', 'task.claimed').some((m) => m.id === plan2.id), 'pc claimed the second version of the plan');
   const d = env.q.describe();
-  assert.equal(d.locks.find((l) => l.lockKey === 'snapshot:ck-a').envFingerprint, P, `锁应转给 pc：${JSON.stringify(d.locks)}`);
-  for (const t of brTasks) assert.equal(d.tasks.find((x) => x.id === t.id).lastError, 'superseded', `${t.id} 作废`);
+  assert.equal(d.locks.find((l) => l.lockKey === 'snapshot:ck-a').envFingerprint, P, `The lock should be handed to pc: ${JSON.stringify(d.locks)}`);
+  for (const t of brTasks) assert.equal(d.tasks.find((x) => x.id === t.id).lastError, 'superseded', `${t.id} invalidated`);
   const pcIds = d.tasks.filter((t) => t.id.startsWith(`snapshot:${rk('ck-a', P)}`) && t.state === 'open');
-  assert.equal(pcIds.length, 2, 'pc 那份两段重建、open');
+  assert.equal(pcIds.length, 2, 'The pc copy has its two segments recreated and open');
   pc2.stop();
   await pc2.settled();
 });
 
-test('M7Q-D1-Q5 切分方那份先按单份建过、后一版按双份发来：合并时补上 dual；浏览器那份先认领，它照样被作废', () => {
+test('M7Q-D1-Q5 the splitter copy was first built as a single copy and a later version arrives as dual copies: dual is added on merge; the browser copy claims first and is voided all the same', () => {
   const h = setup();
   const own0 = snap('ck1', P, 0);                     // 页面报到之前那一版：单份
   h.publish('p', [own0]);
   const r = published(h.publish('p', [snap('ck1', P, 0, { dual: true }), snap('ck1', B, 0, { dual: true })]), 'p');
   assert.deepEqual(r.map((x) => [x.created, x.error]), [[false, undefined], [true, undefined]]);
-  assert.equal(h.bus.of('pc', 'task.opened').filter((m) => m.task.id === own0.id).at(-1)?.task.input.dual, true, '补上 dual 后重发 task.opened');
+  assert.equal(h.bus.of('pc', 'task.opened').filter((m) => m.task.id === own0.id).at(-1)?.task.input.dual, true, 'task.opened is re-sent after dual is added');
   h.claim('bw', snap('ck1', B, 0).id, 1);
   assert.deepEqual([h.task(own0.id).state, h.task(own0.id).lastError], ['failed', 'superseded']);
 });
 
-test('M7Q-D1-Q6 锁已在别的指纹上时合并进来的 dual 一份：当场作废（回包状态 failed），不留死任务', () => {
+test('M7Q-D1-Q6 when the lock is already on another fingerprint, the dual copy being merged in is voided on the spot (response state failed), leaving no dead task', () => {
   const h = setup();
   const own0 = snap('ck1', P, 0);
   const br0 = snap('ck1', B, 0, { dual: true });
@@ -869,7 +869,7 @@ test('M7Q-D1-Q6 锁已在别的指纹上时合并进来的 dual 一份：当场�
   assert.equal(h.task(own0.id).lastError, 'superseded');
 });
 
-test('M7Q-A10f 切分方自己那份已存在、合并回包带 lockedBy 与闲置描述：闲置超 30 s 且没做完 → 带 takeover 重发', async () => {
+test('M7Q-A10f the splitter copy already exists and the merge response carries lockedBy and an idle description: idle for more than 30 s and unfinished → republish with takeover', async () => {
   const a = control({ clipId: 'a', contentKey: 'ck-a', count: 30 });
   let round = 0;
   const respond = (tasks) => { round += 1; return tasks.map((t) => (round === 1
@@ -883,7 +883,7 @@ test('M7Q-A10f 切分方自己那份已存在、合并回包带 lockedBy 与闲�
   assert.deepEqual(rounds[1].map((t) => [t.requires.envFingerprint, t.takeover === true]), [[P, true]]);
 });
 
-test('M7Q-D12-P1 管线的切分候选落盘：重启（新的 FramePipeline、同一库根）后照样按它列候选', async () => {
+test('M7Q-D12-P1 the split candidates of the pipeline are persisted to disk: after a restart (new FramePipeline, same store root) candidates are still listed from them', async () => {
   const os = await import('node:os');
   const { FramePipeline } = await import('../frame-pipeline.mjs');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'm7q-split-cand-'));
@@ -895,28 +895,28 @@ test('M7Q-D12-P1 管线的切分候选落盘：重启（新的 FramePipeline、�
     assert.deepEqual(p1.splitCandidatesFor('ck-a'), [P, B]);
     const p2 = Object.create(FramePipeline.prototype);
     p2.root = root;
-    assert.deepEqual(p2.splitCandidatesFor('ck-a'), [P, B], '重启后读得回来');
+    assert.deepEqual(p2.splitCandidatesFor('ck-a'), [P, B], 'Can be read back after a restart');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 /* ================================================================== 锚帧段先认领（笔记本 M7-A4 查出，主会话〔裁〕改契约 B.3） */
 
-test('M7Q-PICK-1 锚帧段（50）与普通段（10）同时可认领：pickCandidate 一定先给锚帧段，同档里照旧随机', async () => {
+test('M7Q-PICK-1 an anchor-frame segment (50) and a normal segment (10) are claimable at the same time: pickCandidate always hands out the anchor-frame segment first, and within the same tier the pick is still random', async () => {
   const { pickCandidate } = await import('../render-node/pick.mjs');
   const t = (id, priority, publishedAt) => ({ id, priority, source: { projectId: 'p1', publishedAt } });
   // 普通段发布得更早，前 4 名里混着两档
   const tasks = [t('h1:60', 10, 1), t('h2:120', 10, 2), t('h1:0', 50, 3), t('h2:0', 50, 4), t('h3:60', 10, 5)];
   for (const r of [0, 0.3, 0.6, 0.99]) {
     const got = pickCandidate(tasks, { k: 4, random: () => r });
-    assert.equal(got.priority, 50, `random=${r} 挑到了 ${got.id}`);
+    assert.equal(got.priority, 50, `random=${r} picked ${got.id}`);
   }
-  assert.deepEqual(new Set([0, 0.99].map((r) => pickCandidate(tasks, { k: 4, random: () => r }).id)), new Set(['h1:0', 'h2:0']), '同档内仍随机');
+  assert.deepEqual(new Set([0, 0.99].map((r) => pickCandidate(tasks, { k: 4, random: () => r }).id)), new Set(['h1:0', 'h2:0']), 'Still random within the same tier');
   // 锚帧段都认领完：普通段照旧前 k 个里随机
   const rest = tasks.filter((x) => x.priority === 10);
   assert.equal(pickCandidate(rest, { k: 4, random: () => 0.99 }).id, 'h3:60');
 });
 
-test('M7Q-PICK-2 同一档里计划先于细任务（AGENT-m7-race）：积压的锚帧段、普通段都排在后来发布的清单计划之后；预渲染重试计划仍在全部 normal 之后', async () => {
+test('M7Q-PICK-2 within the same tier, plans come before fine-grained tasks (AGENT-m7-race): backlogged anchor-frame and normal segments all rank after a manifest plan published later; prerender retry plans still rank after all normal ones', async () => {
   const { pickCandidate, rankCandidates } = await import('../render-node/pick.mjs');
   const t = (id, priority, publishedAt, kind = 'snapshot') => ({ id, kind, priority, source: { projectId: 'p1', publishedAt } });
   // pc 手里积压着接手来的重卡段（50、10），之后页面为新加的卡发布清单计划（'normal'，名次 0），还有一份预渲染重试计划

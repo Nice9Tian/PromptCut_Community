@@ -75,7 +75,7 @@ function specifiersOf(file) {
   return found;
 }
 
-test('server/** 不 import scripts/ 下的模块', () => {
+test('server/** does not import modules under scripts/', () => {
   const offenders = [];
   for (const file of walk(SERVER)) {
     const name = rel(file);
@@ -86,10 +86,10 @@ test('server/** 不 import scripts/ 下的模块', () => {
       if (target.startsWith('scripts/')) offenders.push(`${name} → ${spec}`);
     }
   }
-  assert.deepEqual(offenders, [], '依赖方向只能是 scripts/ → server/,不能反过来');
+  assert.deepEqual(offenders, [], 'The dependency direction can only be scripts/ → server/, not the reverse');
 });
 
-test('名单里允许 import scripts/ 的 server 文件确实还在', () => {
+test('The server files on the list that are allowed to import scripts/ still exist', () => {
   // 社区版（公开仓库）不带闭源的 cloud/，也不带内部发版验收（scripts/acceptance/ 与测它的四个单测，
   // 见 docs/plan/community-boundary.md 第三节）；那几条在那边本来就不在，不算过期
   const INTERNAL_ACCEPTANCE = new Set(['server/test/four-stage-acceptance.test.mjs', 'server/test/four-stage-acceptance-v18.test.mjs', 'server/test/probe-timings.test.mjs', 'server/test/wait-writes-quiet.test.mjs']);
@@ -97,11 +97,11 @@ test('名单里允许 import scripts/ 的 server 文件确实还在', () => {
   const hasAcceptance = fs.existsSync(path.join(ROOT, 'scripts', 'acceptance'));
   for (const name of ALLOWED_SCRIPT_IMPORTERS) {
     if ((!hasCloud && name.startsWith('cloud/')) || (!hasAcceptance && INTERNAL_ACCEPTANCE.has(name))) continue;
-    assert.ok(fs.existsSync(path.join(ROOT, name)), `${name} 不在了,请把它从名单里删掉`);
+    assert.ok(fs.existsSync(path.join(ROOT, name)), `${name} no longer exists, please remove it from the list`);
   }
 });
 
-test('server/bakery/** 内部的 import 图无环', () => {
+test('The import graph inside server/bakery/** has no cycles', () => {
   /** 文件 → 它 import 的同目录(或子目录)模块 */
   const graph = new Map();
   for (const file of walk(BAKERY)) {
@@ -113,7 +113,7 @@ test('server/bakery/** 内部的 import 图无环', () => {
     }
     graph.set(rel(file), edges);
   }
-  assert.ok(graph.size > 0, 'server/bakery 里应当有模块');
+  assert.ok(graph.size > 0, 'server/bakery should contain modules');
 
   const state = new Map(); // 未访问 / 1 在栈上 / 2 已完成
   const cycles = [];
@@ -130,5 +130,5 @@ test('server/bakery/** 内部的 import 图无环', () => {
     state.set(node, 2);
   };
   for (const node of graph.keys()) visit(node, []);
-  assert.deepEqual(cycles, [], 'server/bakery 内部不允许有运行时 import 环');
+  assert.deepEqual(cycles, [], 'No runtime import cycles are allowed inside server/bakery');
 });

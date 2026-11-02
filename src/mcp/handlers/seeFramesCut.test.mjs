@@ -26,10 +26,10 @@ const { effectsHandlers } = await import(srcUrl("mcp/handlers/effects.ts"));
 function load() {
   actions.loadProject({
     version: 1, id: "p-look", name: "t", width: 640, height: 360, fps: 30, duration: 4, themeId: "midnight", media: [],
-    tracks: [{ id: "t1", name: "序列 1", clips: [{ id: "red", cardId: "x", start: 0, end: 4, params: {} }] }],
+    tracks: [{ id: "t1", name: "Track 1", clips: [{ id: "red", cardId: "x", start: 0, end: 4, params: {} }] }],
     cuts: [
-      { id: "A", name: "剪辑1" },
-      { id: "B", name: "剪辑2", t: 2.5, duration: 6, transitions: [], tracks: [{ id: "t2", name: "序列 1", clips: [{ id: "blue", cardId: "x", start: 0, end: 6, params: {} }] }] },
+      { id: "A", name: "Cut 1" },
+      { id: "B", name: "Cut 2", t: 2.5, duration: 6, transitions: [], tracks: [{ id: "t2", name: "Track 1", clips: [{ id: "blue", cardId: "x", start: 0, end: 6, params: {} }] }] },
     ],
     activeCutId: "A",
   });
@@ -44,7 +44,7 @@ globalThis.fetch = async (url, init) => {
   return { ok: true, status: 200, json: async () => ({ ok: true, t: 0, __image: { mime: "image/png", base64: "AA" } }) };
 };
 
-test("页面 seePreview 带 cutId:发那条剪辑的视图,store 不动;不带照旧;不存在报错", async () => {
+test("Page seePreview with cutId: sends the view of that cut without touching the store; without it, behavior is as before; a nonexistent cut throws an error", async () => {
   load();
   const before = getState().project;
   const tBefore = getState().t;
@@ -53,43 +53,43 @@ test("页面 seePreview 带 cutId:发那条剪辑的视图,store 不动;不带�
   assert.match(sent[0].url, /\/api\/vision\/snapshot$/);
   assert.equal(sent[0].body.project.activeCutId, "B");
   assert.equal(sent[0].body.project.tracks[0].clips[0].id, "blue");
-  assert.equal(sent[0].body.t, 2.5, "不给 t 取剪辑2 上次停下的位置");
-  assert.deepEqual(r.cut, { id: "B", name: "剪辑2" });
-  assert.equal(getState().project, before, "store 里的项目还是同一个对象");
+  assert.equal(sent[0].body.t, 2.5, "Without t, use the position where Cut 2 last stopped");
+  assert.deepEqual(r.cut, { id: "B", name: "Cut 2" });
+  assert.equal(getState().project, before, "The project in the store is still the same object");
   assert.equal(getState().project.activeCutId, "A");
-  assert.equal(getState().t, tBefore, "播放头没动");
+  assert.equal(getState().t, tBefore, "The playhead did not move");
 
   sent.length = 0;
   const r2 = await visionHandlers.seePreview({ cutId: "B", times: [0, 3] });
   assert.deepEqual(sent[0].body.times, [0, 3]);
   assert.equal(sent[0].body.project.activeCutId, "B");
-  assert.deepEqual(r2.cut, { id: "B", name: "剪辑2" });
+  assert.deepEqual(r2.cut, { id: "B", name: "Cut 2" });
 
   sent.length = 0;
   const r1 = await visionHandlers.seePreview({});
   assert.equal(sent[0].body.project.activeCutId, "A");
-  assert.equal(sent[0].body.t, 1, "页面播放头");
-  assert.deepEqual(r1.cut, { id: "A", name: "剪辑1" });
+  assert.equal(sent[0].body.t, 1, "Page playhead");
+  assert.deepEqual(r1.cut, { id: "A", name: "Cut 1" });
 
   sent.length = 0;
-  await assert.rejects(() => visionHandlers.seePreview({ cutId: "Z" }), /找不到剪辑 "Z"/);
+  await assert.rejects(() => visionHandlers.seePreview({ cutId: "Z" }), /Cannot find cut "Z"/);
   assert.equal(sent.length, 0);
 });
 
-test("add_cut 只建不切:激活剪辑与界面都不动,回包说明没切过去", () => {
+test("add_cut only creates and does not switch: the active cut and the interface stay as they are, and the response says it did not switch over", () => {
   load();
-  const r = effectsHandlers.addCut({ name: "剪辑3" });
+  const r = effectsHandlers.addCut({ name: "Cut 3" });
   assert.equal(r.ok, true);
-  assert.equal(getState().project.activeCutId, "A", "没切换");
+  assert.equal(getState().project.activeCutId, "A", "Not switched");
   assert.equal(r.activeCutId, "A");
-  assert.ok(getState().project.cuts.some((c) => c.id === r.cut.id && c.name === "剪辑3"));
-  assert.match(r.note, /没有切过去/);
-  const r2 = effectsHandlers.addCut({ name: "剪辑4", switch: true });
-  assert.equal(getState().project.activeCutId, "A", "旧参数 switch:true 也不再切");
+  assert.ok(getState().project.cuts.some((c) => c.id === r.cut.id && c.name === "Cut 3"));
+  assert.match(r.note, /did not switch over/);
+  const r2 = effectsHandlers.addCut({ name: "Cut 4", switch: true });
+  assert.equal(getState().project.activeCutId, "A", "The old parameter switch:true no longer switches either");
   assert.ok(r2.cut.id);
 });
 
-test("页面执行器进门两种名字都认,网页接管新名也落到 runWebTool", () => {
+test("The page executor accepts both names at the door, and the web takeover with the new name also lands in runWebTool", () => {
   const src = fs.readFileSync(new URL("../../ai/mcpExecutor.ts", import.meta.url), "utf8");
   assert.match(src, /const tool = modelToolName\(ev\.tool\);/);
   assert.match(src, /tool === "user_interface_web_handoff"\) result = await runWebTool\(pageToolName\(tool\), args\)/);

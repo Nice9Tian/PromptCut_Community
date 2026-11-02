@@ -157,7 +157,7 @@ async function settle(sp) {
     for (let i = 0; i < 3; i++) await new Promise((resolve) => setImmediate(resolve));
     if (sp.lb.pending() === 0) return;
   }
-  throw new Error('消息往返不收敛');
+  throw new Error('message round trips do not converge');
 }
 
 /** 驱动:settle → 节点 tick → 队列 tick → 推进假时钟,直到 until() 或步数上限 */
@@ -189,7 +189,7 @@ function pcNode(sp, clock, { executor, sink, nodeId = 'pc-1' }) {
 
 /* ================================================================== S1 */
 
-test('S1 推产物超过 STALL_MS(约 150 s):推送中每推完一块算进度,一次完成、没有 lease-lost', async () => {
+test('S1 pushing the output takes longer than STALL_MS (about 150 s): each chunk pushed counts as progress, it completes in one go with no lease-lost', async () => {
   const clock = createTimerClock();
   const sp = space(clock);
   const pipeline = fakePipeline(clock, { batchMs: 1_000 });
@@ -201,12 +201,12 @@ test('S1 推产物超过 STALL_MS(约 150 s):推送中每推完一块算进度,�
   const endedAt = await drive(sp, clock, () => node.local.tick(), () => sp.doneCount(task.id) === 1 || sp.failed().length > 0);
   const view = sp.task(task.id);
   const lost = node.events.filter((e) => e.type === 'lost');
-  assert.deepEqual(sp.leaseLost().map((m) => m.reason), [], `不该丢认领;节点的 lost 事件:${JSON.stringify(lost)}`);
-  assert.ok(endedAt !== null, '应在步数上限内收尾');
-  assert.equal(view.state, 'done', `应完成(实际 ${view.state},lastError ${view.lastError})`);
-  assert.equal(view.attempts, 0, '一次完成');
-  assert.equal(sink.puts.length, 1, '只推了一遍');
-  assert.ok(sink.puts[0].end - sink.puts[0].start > STALL_MS, `推送本身就超过 STALL_MS(${sink.puts[0].end - sink.puts[0].start} ms)`);
+  assert.deepEqual(sp.leaseLost().map((m) => m.reason), [], `the claim should not be lost; the node's lost events: ${JSON.stringify(lost)}`);
+  assert.ok(endedAt !== null, 'should finish within the step limit');
+  assert.equal(view.state, 'done', `should be done (actual ${view.state}, lastError ${view.lastError})`);
+  assert.equal(view.attempts, 0, 'Completed in one attempt');
+  assert.equal(sink.puts.length, 1, 'pushed only once');
+  assert.ok(sink.puts[0].end - sink.puts[0].start > STALL_MS, `the push itself exceeds STALL_MS (${sink.puts[0].end - sink.puts[0].start} ms)`);
   await node.local.stop();
 });
 
@@ -237,34 +237,34 @@ async function hostRun({ cap = 2, batchMs, push, tasks }) {
   return { clock, sp, pipeline, sink, events, ids, endedAt };
 }
 
-test('S2 主机 maxConcurrent 2、一条串行 lane(每段 135 s):排队的那段不被判停滞,全部一次完成', async () => {
+test('S2 host with maxConcurrent 2 and one serial lane (135 s per segment): a queued segment is not judged stalled, and all complete in one go', async () => {
   const tasks = [fineTask(0, 59), fineTask(60, 119), fineTask(120, 179)];
   const { sp, pipeline, events, ids, endedAt } = await hostRun({ batchMs: 9_000, push: { blocks: 8, blockMs: 1_000 }, tasks });
   const lost = events.filter((e) => e.type === 'lost').map((e) => ({ id: e.id.slice(-8), reason: e.reason, phase: e.phase, detail: e.detail, sinceDoneMs: e.sinceDoneMs }));
-  assert.deepEqual(sp.leaseLost().map((m) => m.reason), [], `不该丢认领;lost:${JSON.stringify(lost)}`);
-  assert.ok(endedAt !== null, '应在步数上限内收尾');
+  assert.deepEqual(sp.leaseLost().map((m) => m.reason), [], `the claim should not be lost; lost: ${JSON.stringify(lost)}`);
+  assert.ok(endedAt !== null, 'should finish within the step limit');
   for (const id of ids) {
     const view = sp.task(id);
     assert.equal(view.state, 'done', `${id.slice(-8)}:${view.state} ${view.lastError}`);
-    assert.equal(view.attempts, 0, `${id.slice(-8)} 一次完成`);
+    assert.equal(view.attempts, 0, `${id.slice(-8)} completes in one go`);
   }
-  assert.equal(pipeline.laneLog.length, ids.length, '每段只渲一遍');
+  assert.equal(pipeline.laneLog.length, ids.length, 'each segment is rendered only once');
 });
 
-test('S3 主机:前一段推产物时,下一段照样认领、渲染(推送与渲染重叠)', async () => {
+test('S3 host: while the previous segment pushes its output, the next segment is still claimed and rendered (push and render overlap)', async () => {
   const tasks = [fineTask(0, 59), fineTask(60, 119)];
   // 渲一段 15 s、推一段 60 s(8 块、每块 30 s、并发 4)
   const { sp, sink, pipeline, ids } = await hostRun({ batchMs: 1_000, push: { blocks: 8, blockMs: 30_000 }, tasks });
   for (const id of ids) assert.equal(sp.task(id).state, 'done');
   const first = sink.puts.find((p) => p.id === ids[0]) ?? sink.puts[0];
   const secondLane = pipeline.laneLog.find((r) => r.range !== first.id.split(':').at(-1));
-  assert.ok(secondLane, '第二段进过 lane');
-  assert.ok(secondLane.in < first.end, `第二段在第一段推完之前就开渲(进 lane ${secondLane.in},第一段推完 ${first.end})`);
+  assert.ok(secondLane, 'the second segment entered the lane');
+  assert.ok(secondLane.in < first.end, `the second segment started rendering before the first finished pushing (entered the lane at ${secondLane.in}, first push finished at ${first.end})`);
 });
 
 /* ================================================================== S4 */
 
-test('S4 卡死仍被收回:产物库 put 永不报进度、永不返回 → STALL_MS 后按 stalled 收回', async () => {
+test('S4 a hang is still reclaimed: the output store put never reports progress and never returns → reclaimed as stalled after STALL_MS', async () => {
   const clock = createTimerClock();
   const sp = space(clock);
   const pipeline = fakePipeline(clock, { batchMs: 500 });
@@ -276,18 +276,18 @@ test('S4 卡死仍被收回:产物库 put 永不报进度、永不返回 → STA
   const t0 = clock.now();
   await drive(sp, clock, () => node.local.tick(), () => sp.leaseLost().length > 0, 1000);
   const lost = sp.leaseLost();
-  assert.equal(lost.length, 1, '应被收回一次');
+  assert.equal(lost.length, 1, 'should be reclaimed once');
   assert.equal(lost[0].reason, 'stalled');
   const at = clock.now() - t0;
-  assert.ok(at > STALL_MS && at < STALL_MS + 20_000, `STALL_MS 过后不久收回(实际 ${at} ms)`);
+  assert.ok(at > STALL_MS && at < STALL_MS + 20_000, `reclaimed shortly after STALL_MS (actual ${at} ms)`);
   const ev = node.events.find((e) => e.type === 'lost');
-  assert.equal(ev.phase, 'push', '收回时在推送阶段');
+  assert.equal(ev.phase, 'push', 'in the push phase when reclaimed');
   await node.local.stop();
 });
 
 /* ================================================================== S5 */
 
-test('S5 新节点对旧队列(队列丢掉 step 字段):照旧完成,不报错', async () => {
+test('S5 new node against an old queue (the queue drops the step field): completes as before, no error', async () => {
   const clock = createTimerClock();
   // 旧队列只认 id / token / done:把 step 去掉
   const sp = space(clock, { transformIn: (m) => { if (m?.type !== 'task.progress') return m; const { step, ...rest } = m; return rest; } });
@@ -298,14 +298,14 @@ test('S5 新节点对旧队列(队列丢掉 step 字段):照旧完成,不报错'
   const task = fineTask(0, 59);
   sp.publish([task]);
   await drive(sp, clock, () => node.local.tick(), () => sp.doneCount(task.id) === 1);
-  assert.equal(sp.task(task.id).state, 'done', '推送快时照常完成');
+  assert.equal(sp.task(task.id).state, 'done', 'completes as usual when the push is fast');
   assert.deepEqual(sp.leaseLost(), []);
   await node.local.stop();
 });
 
 /* ================================================================== Q1 */
 
-test('Q1 队列:step 变了重起停滞计时;续约不带新 step 照旧停滞;不带 step 的旧节点不变;step 不是数回 bad-message', () => {
+test('Q1 queue: a changed step restarts the stall timer; a lease renewal without a new step is stalled as before; old nodes that send no step are unchanged; a step that is not a number returns bad-message', () => {
   let t = 1_000_000;
   const sent = [];
   const q = createRenderQueue({ now: () => t, send: (connId, msg) => sent.push({ connId, msg }), epoch: 'q1' });
@@ -329,9 +329,9 @@ test('Q1 队列:step 变了重起停滞计时;续约不带新 step 照旧停滞;
     if (q.describe().tasks.find((x) => x.id === b.id).state === 'claimed') q.handle('n', { type: 'task.progress', id: b.id, token: 2, done: 60 });
   }
   const view = (id) => q.describe().tasks.find((x) => x.id === id);
-  assert.equal(view(a.id).state, 'claimed', 'step 一直在变:300 s 不收回');
+  assert.equal(view(a.id).state, 'claimed', 'step keeps changing: not reclaimed after 300 s');
   assert.equal(view(a.id).claim.progress.step, 31);
-  assert.equal(view(b.id).state, 'open', '旧节点帧数不动:照旧按停滞收回');
+  assert.equal(view(b.id).state, 'open', 'old node\'s frame count does not move: reclaimed as stalled as before');
   assert.equal(view(b.id).lastError, 'stalled');
   // a 之后只续约、step 不再变:STALL_MS 之后收回
   const since = t;
@@ -339,7 +339,7 @@ test('Q1 队列:step 变了重起停滞计时;续约不带新 step 照旧停滞;
     at(since + s * 1000);
     if (view(a.id).state === 'claimed') q.handle('n', { type: 'task.progress', id: a.id, token: 2, done: 60, step: 31 });
   }
-  assert.equal(view(a.id).state, 'open', 'step 不动就按停滞收回(卡死仍被收回)');
+  assert.equal(view(a.id).state, 'open', 'reclaimed as stalled when step does not move (a hang is still reclaimed)');
   assert.equal(view(a.id).lastError, 'stalled');
   // 格式
   sent.length = 0;

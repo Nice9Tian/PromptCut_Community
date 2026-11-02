@@ -61,7 +61,7 @@ test('isVisualId & safeFileName', () => {
 });
 
 test('formatValue', () => {
-  assert.equal(formatValue(undefined), '(无)');
+  assert.equal(formatValue(undefined), '(none)');
   assert.equal(formatValue(1.5), '1.5');
   assert.equal(formatValue(2), '2');
   assert.equal(formatValue(1.23456), '1.235');
@@ -106,7 +106,7 @@ test('diffClips', () => {
   const bParts = { ...before, parts: [{ id: 1 }] };
   const aParts = { ...before, parts: [{ id: 2 }] };
   const partsDiff = diffClips(bParts, aParts);
-  assert.deepEqual(partsDiff, [{ key: 'parts', from: '(原部件)', to: '(改动了部件)' }]);
+  assert.deepEqual(partsDiff, [{ key: 'parts', from: '(original parts)', to: '(parts changed)' }]);
 });
 
 test('saveImage', async (t) => {
@@ -159,23 +159,23 @@ function framePng(W, H, rects, opaque = false) {
   return PNG.sync.write(png);
 }
 
-test('contentCrop:取 8 帧里出现过区域的并集,留边、按舞台比例、不小于 1/4 宽、不出界', async () => {
+test('contentCrop: the union of the regions that appeared across 8 frames, with a margin, at the stage ratio, no narrower than 1/4 of the width, and not out of bounds', async () => {
   const W = 384, H = 216;
   // 进场从左边飞到右边:两帧的位置都得框进去
   const crop = await contentCrop([framePng(W, H, [[40, 90, 60, 110]]), framePng(W, H, [[150, 95, 170, 115]])]);
   assert.ok(crop);
-  assert.ok(crop.x <= 40 && crop.x + crop.w >= 171, `横向要框住 40..170:${JSON.stringify(crop)}`);
-  assert.ok(crop.y <= 90 && crop.y + crop.h >= 116, `纵向要框住 90..115:${JSON.stringify(crop)}`);
-  assert.ok(Math.abs(crop.w / crop.h - W / H) < 0.05, '比例和舞台一样');
-  assert.ok(crop.w >= W / 4, '不小于 1/4 宽');
-  assert.ok(crop.x >= 0 && crop.y >= 0 && crop.x + crop.w <= W && crop.y + crop.h <= H, '不出界');
+  assert.ok(crop.x <= 40 && crop.x + crop.w >= 171, `Horizontally it must enclose 40..170: ${JSON.stringify(crop)}`);
+  assert.ok(crop.y <= 90 && crop.y + crop.h >= 116, `Vertically it must enclose 90..115: ${JSON.stringify(crop)}`);
+  assert.ok(Math.abs(crop.w / crop.h - W / H) < 0.05, 'The ratio matches the stage');
+  assert.ok(crop.w >= W / 4, 'No narrower than 1/4 of the width');
+  assert.ok(crop.x >= 0 && crop.y >= 0 && crop.x + crop.w <= W && crop.y + crop.h <= H, 'Does not go out of bounds');
 
   // 很小的一块:按最小宽度放大裁框,贴边时往里挪而不是出界
   const tiny = await contentCrop([framePng(W, H, [[0, 0, 3, 3]])]);
   assert.deepEqual([tiny.x, tiny.y, tiny.w >= W / 4], [0, 0, true]);
 });
 
-test('contentCrop:全透明、整屏不透明、几乎整屏 —— 都不裁', async () => {
+test('contentCrop: fully transparent, fully opaque, nearly full screen, none of them is cropped', async () => {
   const W = 384, H = 216;
   assert.equal(await contentCrop([framePng(W, H, [])]), null);
   assert.equal(await contentCrop([framePng(W, H, [], true)]), null);
@@ -185,7 +185,7 @@ test('contentCrop:全透明、整屏不透明、几乎整屏 —— 都不裁', 
 test('encodeGif', async (t) => {
   const ff = findFfmpeg();
   if (!ff) {
-    t.skip('没有 ffmpeg');
+    t.skip('No ffmpeg');
     return;
   }
 

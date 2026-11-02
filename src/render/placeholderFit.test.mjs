@@ -20,21 +20,21 @@ const screenOf = (fit, _layout, view, layer) => {
 test("PF-01 viewInverse", () => {
   assert.equal(F.viewInverse(0.25), 4);
   assert.equal(F.viewInverse(1), 1);
-  assert.equal(F.viewInverse(2), 0.5, "放大预览时按比例缩回(屏幕上保持原大小)");
-  assert.equal(F.viewInverse(0.01), 16, "封顶 16");
-  assert.equal(F.viewInverse(100), 1 / 8, "封底 1/8");
+  assert.equal(F.viewInverse(2), 0.5, "Scaled back proportionally when the preview is zoomed in (keeps its original size on screen)");
+  assert.equal(F.viewInverse(0.01), 16, "Capped at 16");
+  assert.equal(F.viewInverse(100), 1 / 8, "Floored at 1/8");
   for (const bad of [0, -1, NaN, Infinity, undefined, null, "x"]) assert.equal(F.viewInverse(bad), 1, String(bad));
   assert.equal(F.viewInverse("0.5"), 2);
 });
 
-test("PF-02 沙漏:只抵消预览缩放;放不进框按框缩", () => {
+test("PF-02 hourglass: only cancels the preview scale; if it does not fit the box, scales to the box", () => {
   const box = { width: 1920, height: 1080 };
   // 27% 预览:屏幕上 28 像素
   const a = F.hourglassFit({ box, viewScale: 0.27, layerScale: 1 });
   assert.ok(Math.abs(screenOf(a, null, 0.27, 1).w - 28) < 1e-9, JSON.stringify(a));
   // 这一层缩到一半:沙漏跟着这一层缩(语义:继承该层的缩放),倍数不变
   const b = F.hourglassFit({ box, viewScale: 0.27, layerScale: 0.5 });
-  assert.equal(b.scale, a.scale, "不抵消这一层的缩放");
+  assert.equal(b.scale, a.scale, "Does not cancel this layer's scaling");
   assert.ok(Math.abs(screenOf(b, null, 0.27, 0.5).w - 14) < 1e-9);
   // 框很小:按框缩(留边距)
   const c = F.hourglassFit({ box: { width: 40, height: 40 }, viewScale: 0.25, layerScale: 1 });
@@ -46,12 +46,12 @@ test("PF-02 沙漏:只抵消预览缩放;放不进框按框缩", () => {
   assert.equal(F.hourglassFit({ box: { width: 0, height: 0 }, viewScale: 0.3 }).scale, F.FIT_MIN_SCALE);
 });
 
-test("PF-03 没有「需要本地 PC 渲染辅助」图标的排法了", () => {
+test("PF-03 no layout for the \"Needs local PC render assist\" icon anymore", () => {
   assert.equal(F.unsupportedFit, undefined);
   assert.equal(F.UNSUPPORTED_SIZES, undefined);
 });
 
-test("PF-04 相邻两个小片段:沙漏各在自己的框里,屏幕上不相交", () => {
+test("PF-04 two adjacent small clips: each hourglass sits in its own box, no overlap on screen", () => {
   const view = 0.27;
   // 两个 40×40 的片段挨着(舞台 x 0～40、40～80),沙漏都在框中心
   const boxes = [{ x: 0, w: 40 }, { x: 40, w: 40 }];

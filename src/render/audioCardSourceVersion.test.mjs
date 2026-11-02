@@ -29,8 +29,8 @@ import { loadBuiltinCards } from '../testing/loadBuiltinCards.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
-const WHY = '这个值进卡片声音的身份(cardAudioIdentity)。变了会让用户已生成的卡片声音被判「已过期,请重新生成」,用户没有同意过。'
-  + '要改这个值或改动闭包里的文件,先问过用户(出处 docs/plan/prerender-products-contract.md 第 9.2 节)。';
+const WHY = 'This value is part of the card audio identity (cardAudioIdentity). Changing it would make users\' already generated card audio be judged "expired, please regenerate", which the user has not agreed to.'
+  + 'Ask the user before changing this value or the files in the closure (source: docs/plan/prerender-products-contract.md, section 9.2).';
 
 /** 三张卡的钉住值。两张音效卡共用 sound-effects.ts 当入口,所以版本相同 */
 const AUDIO_CARDS = {
@@ -100,13 +100,13 @@ function closureOf(card, entry) {
 for (const [id, pinned] of Object.entries(AUDIO_CARDS)) {
   test(`${id}: source closure has the same files (none added, none swapped)`, () => {
     const card = kit.cards.find((c) => c.id === id);
-    assert.ok(card, `内置卡里找不到 ${id}`);
+    assert.ok(card, `${id} not found among built-in cards`);
     const { closure } = closureOf(card, pinned.entry);
     const added = closure.filter((f) => !pinned.closure.includes(f));
     const removed = pinned.closure.filter((f) => !closure.includes(f));
     assert.deepEqual({ added, removed }, { added: [], removed: [] },
-      `${id} 的源码导入闭包变了(新增 ${JSON.stringify(added)},少了 ${JSON.stringify(removed)})。${WHY}`);
-    assert.equal(closure.length, pinned.closure.length, `${id} 的闭包文件数变了。${WHY}`);
+      `The source import closure of ${id} changed (${JSON.stringify(added)} added, ${JSON.stringify(removed)} removed). ${WHY}`);
+    assert.equal(closure.length, pinned.closure.length, `The closure file count of ${id} changed. ${WHY}`);
   });
 
   test(`${id}: source version is pinned`, () => {
@@ -114,13 +114,13 @@ for (const [id, pinned] of Object.entries(AUDIO_CARDS)) {
     // 产品里的取法:不给入口,用卡的 id 在源码表里找声明它的文件。先确认找到的就是钉住的入口、并且只有这一个文件声明了这个 id
     const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const declaring = Object.keys(files).filter((file) => new RegExp(`\\bid\\s*:\\s*['"]${escaped}['"]`).test(files[file]));
-    assert.deepEqual(declaring, [pinned.entry], `源码表里声明 ${id} 的文件不止钉住的这一个,或不是它。${WHY}`);
+    assert.deepEqual(declaring, [pinned.entry], `The files declaring ${id} in the source table are not just the pinned one, or not it. ${WHY}`);
     const version = cardSourceVersion(card, files);
-    assert.ok(version.startsWith(`${pinned.entry}\n`), `${id} 的源码版本不是从 ${pinned.entry} 起头。${WHY}`);
+    assert.ok(version.startsWith(`${pinned.entry}\n`), `The source version of ${id} does not start with ${pinned.entry}. ${WHY}`);
     const actual = sha256(version);
     if (actual !== pinned.version) {
       const changed = pinned.closure.filter((f) => Object.hasOwn(files, f) && sha256(normalizeEol(files[f])) !== FILE_HASHES[f]);
-      assert.fail(`${id} 的源码版本变了(钉住 ${pinned.version.slice(0, 16)},现在 ${actual.slice(0, 16)});内容变了的闭包文件:${changed.length ? changed.join('、') : '(没有找到,可能是闭包成员变了)'}。${WHY}`);
+      assert.fail(`The source version of ${id} changed (pinned ${pinned.version.slice(0, 16)}, now ${actual.slice(0, 16)}); closure files whose content changed: ${changed.length ? changed.join(', ') : '(none found, a closure member may have changed)'}. ${WHY}`);
     }
   });
 }

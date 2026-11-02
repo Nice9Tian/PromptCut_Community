@@ -56,7 +56,7 @@ const ALL_CARDS = args.includes('--all-cards');
 const KEEP = args.includes('--keep');
 const JSON_OUT = flagArg('json', null, args);
 const OUT = path.resolve(flagArg('out', null, args) || path.join(os.tmpdir(), `pc-canvas-direct-probe-${Date.now().toString(36)}`));
-if (!ORIGIN && [5190, 5191, 5192].some((p) => p >= PORT && p <= PORT + 2)) throw new Error('这一段是用户常驻的开发服务器的端口,换一个');
+if (!ORIGIN && [5190, 5191, 5192].some((p) => p >= PORT && p <= PORT + 2)) throw new Error('This port range belongs to the user\'s resident dev servers; use another one');
 // 一个会话、一条一条地产:量出来的墙钟不掺别的流
 process.env.PROMPTCUT_STREAM_POOL = '1';
 
@@ -72,14 +72,14 @@ async function until(label, fn, timeoutMs, everyMs = 500) {
     let value = null;
     try { value = await fn(); } catch { value = null; }
     if (value) return value;
-    if (Date.now() > deadline) { fails.push(`超时:${label}`); return null; }
+    if (Date.now() > deadline) { fails.push(`Timeout: ${label}`); return null; }
     await sleep(everyMs);
   }
 }
 
 const DURATION = 3; // 秒:6 个分段
 const projectOf = (width, height) => ({
-  id: `canvas-direct-${width}x${height}`, name: '画布直取探针', width, height, fps: 30, duration: DURATION,
+  id: `canvas-direct-${width}x${height}`, name: 'Canvas direct capture probe', width, height, fps: 30, duration: DURATION,
   themeId: 'dark', media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
   tracks: [
     { id: 'tr-particles', name: 'particles', hidden: false, clips: [{ id: 'clip-particles', kind: 'card', cardId: 'particles', start: 0, end: DURATION, params: {} }] },
@@ -144,11 +144,11 @@ try {
     child.stderr.on('data', keep);
     say('spawn', { pid: child.pid, port: PORT });
     origin = `http://127.0.0.1:${PORT}`;
-    const up = await until('dev server 起来', async () => {
-      if (child.exitCode !== null) throw new Error(`dev server 退出了:${log.join('').slice(-600)}`);
+    const up = await until('dev server is up', async () => {
+      if (child.exitCode !== null) throw new Error(`dev server exited: ${log.join('').slice(-600)}`);
       return fetch(`${origin}/`, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok, () => false);
     }, 180_000, 300);
-    if (!up) throw new Error(`dev server 没起来:${log.join('').slice(-600)}`);
+    if (!up) throw new Error(`dev server did not start: ${log.join('').slice(-600)}`);
   }
   out.origin = origin;
 
@@ -178,7 +178,7 @@ try {
       return bakery;
     };
     const producer = pipeline.streamProducer();
-    check(producer.direct === 'always', `${tag}:生产者缺省是 always 档`, producer.direct);
+    check(producer.direct === 'always', `${tag}: the producer's default is the always tier`, producer.direct);
     producer.attachRoute();
     const dense = () => {
       const status = producer.status();
@@ -188,25 +188,25 @@ try {
     };
     const t0 = Date.now();
     await pipeline.preload(projectOf(width, height));
-    const first = await until(`${tag}:全部分段满密度`, dense, 900_000, 500);
-    if (!first) throw new Error(`${tag}:第一轮生产没做完:${JSON.stringify(producer.status().log.slice(-8))}`);
+    const first = await until(`${tag}: all segments at full density`, dense, 900_000, 500);
+    if (!first) throw new Error(`${tag}: the first production round did not finish: ${JSON.stringify(producer.status().log.slice(-8))}`);
     size.autoProduceMs = Date.now() - t0;
     out.encoder = first.encoder;
     const rowOf = (status, clipId) => status.streams.find((s) => s.clipIds.length === 1 && s.clipIds[0] === clipId);
     const stateOf = (clipId) => [...producer.streams.values()].find((s) => s.spec.clipIds.length === 1 && s.spec.clipIds[0] === clipId);
     for (const clipId of [...REAL, 'clip-outside']) {
       const row = rowOf(first, clipId);
-      if (!check(!!row, `${tag} ${clipId}:有流`)) continue;
+      if (!check(!!row, `${tag} ${clipId}: has a stream`)) continue;
       size.auto[clipId] = { direct: row.direct, capture: row.capture, bound: row.bound, tight: row.tight, segments: row.lastSegment - row.firstSegment + 1 };
       if (REAL.includes(clipId)) {
-        check(!!row.direct && row.direct.failed === null, `${tag} ${clipId}(always):没有判成不能直取`, row.direct);
-        check(row.direct?.checks >= 1 && (row.direct.segments + row.direct.slowSegments) >= 1, `${tag} ${clipId}(always):做过实测,而且过了`, row.direct);
+        check(!!row.direct && row.direct.failed === null, `${tag} ${clipId}(always): not judged unable to capture directly`, row.direct);
+        check(row.direct?.checks >= 1 && (row.direct.segments + row.direct.slowSegments) >= 1, `${tag} ${clipId}(always): measured, and passed`, row.direct);
       } else {
-        check(row.direct?.failed === 'differs', `${tag} ${clipId}(always):画布外面有别的元素,退回截图`, row.direct);
-        check(row.direct?.segments === 0 && row.direct?.frames === 0, `${tag} ${clipId}(always):一帧都没有走直取`, row.direct);
+        check(row.direct?.failed === 'differs', `${tag} ${clipId}(always): other elements outside the canvas, falls back to screenshots`, row.direct);
+        check(row.direct?.segments === 0 && row.direct?.frames === 0, `${tag} ${clipId}(always): not a single frame took the direct path`, row.direct);
       }
     }
-    check(first.log.some((l) => /画布直取没过\(differs/.test(l.message)), `${tag}:诊断里有「画布直取没过」那一条`, first.log.map((l) => l.message).slice(-6));
+    check(first.log.some((l) => /canvas direct capture did not pass\(differs/.test(l.message)), `${tag}: the diagnostics contain the "canvas direct capture did not pass" entry`, first.log.map((l) => l.message).slice(-6));
     say('auto', { size: tag, ms: size.autoProduceMs, direct: Object.fromEntries(Object.entries(size.auto).map(([k, v]) => [k, v.direct && { failed: v.direct.failed, segments: v.direct.segments, slow: v.direct.slowSegments, last: v.direct.last }])) });
 
     // ---------- 2. 后台别的活收尾以后,自己一条一条地产:off 对 always
@@ -228,12 +228,12 @@ try {
         const jobs = [];
         for (let n = spec.firstSegment; n <= spec.lastSegment; n++) {
           const task = { state, segment: n, stride };
-          if (!(await producer.runSegment(bakery, task))) throw new Error(`${spec.topClipId}#${n} 没产出来`);
+          if (!(await producer.runSegment(bakery, task))) throw new Error(`${spec.topClipId}#${n} was not produced`);
           jobs.push(task.job);
         }
         await Promise.all(jobs);
         const wallMs = performance.now() - started;
-        for (let n = spec.firstSegment; n <= spec.lastSegment; n++) if (state.manifest.segments[n]?.stride !== stride) throw new Error(`${spec.topClipId}#${n} 没落盘:${JSON.stringify(producer.status().log.slice(-4))}`);
+        for (let n = spec.firstSegment; n <= spec.lastSegment; n++) if (state.manifest.segments[n]?.stride !== stride) throw new Error(`${spec.topClipId}#${n} was not written to disk: ${JSON.stringify(producer.status().log.slice(-4))}`);
         return { wallMs, ...state.capture };
       };
       const sparse = await pass(SPARSE_STRIDE);
@@ -265,21 +265,21 @@ try {
 
       if (clipId === 'clip-outside') {
         size.outside = { direct: b.direct, sameBytesAsOff: sameBytes, rect };
-        check(b.direct?.failed === 'differs', `${tag} clip-outside(always):画布外面有别的元素,退回截图`, b.direct);
-        check(b.direct?.segments === 0 && b.direct?.frames === 0, `${tag} clip-outside(always):一帧都没有走直取`, b.direct);
-        check((b.direct?.last?.bad ?? 0) > (b.direct?.last?.badLimit ?? Infinity), `${tag} clip-outside:实测比出明显不同的像素`, b.direct?.last);
-        check(sameBytes, `${tag} clip-outside:退回截图以后产出的分段和 off 逐字节相同`);
-        check(b.log.some((m) => /画布直取没过\(differs/.test(m)), `${tag} clip-outside(always):有诊断`);
+        check(b.direct?.failed === 'differs', `${tag} clip-outside(always): other elements outside the canvas, falls back to screenshots`, b.direct);
+        check(b.direct?.segments === 0 && b.direct?.frames === 0, `${tag} clip-outside(always): not a single frame took the direct path`, b.direct);
+        check((b.direct?.last?.bad ?? 0) > (b.direct?.last?.badLimit ?? Infinity), `${tag} clip-outside: the measurement found clearly different pixels`, b.direct?.last);
+        check(sameBytes, `${tag} clip-outside: after falling back to screenshots, the produced segments are byte-identical to off`);
+        check(b.log.some((m) => /canvas direct capture did not pass\(differs/.test(m)), `${tag} clip-outside(always): has a diagnostic`);
         continue;
       }
 
       // 走了直取没有
       // 直取记录是稀疏、满密度两趟合起来的:分段数翻倍,帧数 = 稀疏那一趟取的 + 满密度那一趟取的
       check(b.sparseDirect?.failed === null && b.sparseDirect.segments === a.segs.length && b.sparseDirect.frames === b.sparse.frames,
-        `${tag} ${clipId}(always):稀疏那一趟每个分段、每一帧都走了直取`, b.sparseDirect);
+        `${tag} ${clipId}(always): in the sparse pass, every segment and every frame took the direct path`, b.sparseDirect);
       check(b.direct?.failed === null && b.direct.segments === 2 * a.segs.length && b.direct.frames === b.sparse.frames + frames && b.direct.misses === 0,
-        `${tag} ${clipId}(always):满密度那一趟每个分段、每一帧也都走了直取`, b.direct);
-      check(JSON.stringify(a.tight) === JSON.stringify(b.tight), `${tag} ${clipId}:两条路量出的收紧矩形相同`, [a.tight, b.tight]);
+        `${tag} ${clipId}(always): in the full-density pass, every segment and every frame also took the direct path`, b.direct);
+      check(JSON.stringify(a.tight) === JSON.stringify(b.tight), `${tag} ${clipId}: both paths measure the same tight rectangle`, [a.tight, b.tight]);
 
       // 解出来逐帧比 + 对照
       const cmp = { clipId, rect, frames, sameBytes, color: [], alpha: [], bad: [], otherColor: [], otherAlpha: [], otherBad: [], ink: [] };
@@ -287,11 +287,11 @@ try {
         const sa = a.segs[i], sb = b.segs[i];
         const ia = a.inits[sa.init], ib = b.inits[sb.init];
         const W = ia.meta.width, Hc = ia.meta.height;
-        if (!check(ib.meta.width === W && ib.meta.height === Hc, `${tag} ${clipId}#${sa.n}:两条路的编码画面一样大`, [ia.meta, ib.meta])) continue;
+        if (!check(ib.meta.width === W && ib.meta.height === Hc, `${tag} ${clipId}#${sa.n}: the encoded pictures of both paths are the same size`, [ia.meta, ib.meta])) continue;
         const da = await decodeSegment(ia.bytes, sa.bytes, cmpDir, `off-${clipId}-${sa.n}`);
         const db = await decodeSegment(ib.bytes, sb.bytes, cmpDir, `always-${clipId}-${sb.n}`);
         const frameBytes = W * Hc * 3;
-        if (!check(da.length === sa.samples * frameBytes && db.length === da.length, `${tag} ${clipId}#${sa.n}:两边都解出 ${sa.samples} 帧`, [da.length / frameBytes, db.length / frameBytes])) continue;
+        if (!check(da.length === sa.samples * frameBytes && db.length === da.length, `${tag} ${clipId}#${sa.n}: both sides decoded ${sa.samples} frames`, [da.length / frameBytes, db.length / frameBytes])) continue;
         for (let k = 0; k < sa.samples; k++) {
           const fa = da.subarray(k * frameBytes, (k + 1) * frameBytes), fb = db.subarray(k * frameBytes, (k + 1) * frameBytes);
           const same = frameDiff(fb, fa, W, Hc);
@@ -309,12 +309,12 @@ try {
         otherColorMin: round2(min(cmp.otherColor)), otherColorMedian: round2(median(cmp.otherColor)), otherAlphaMin: round2(min(cmp.otherAlpha)), otherBadMin: min(cmp.otherBad), inkMin: min(cmp.ink) };
       size.compare.push(summary);
       say('compare', { size: tag, ...summary });
-      check(cmp.color.length === frames, `${tag} ${clipId}:${frames} 帧都比过了`, cmp.color.length);
-      check(max(cmp.color) < 1, `${tag} ${clipId}:新旧两条路的流逐帧比,颜色平均差不到 1`, max(cmp.color));
-      check(max(cmp.alpha) < 0.5, `${tag} ${clipId}:新旧两条路的流逐帧比,不透明度平均差不到 0.5`, max(cmp.alpha));
-      check(min(cmp.ink) > 0, `${tag} ${clipId}:画面不是空的`, cmp.ink);
+      check(cmp.color.length === frames, `${tag} ${clipId}: all ${frames} frames were compared`, cmp.color.length);
+      check(max(cmp.color) < 1, `${tag} ${clipId}: comparing the streams of the old and new paths frame by frame, the mean color difference is under 1`, max(cmp.color));
+      check(max(cmp.alpha) < 0.5, `${tag} ${clipId}: comparing the streams of the old and new paths frame by frame, the mean opacity difference is under 0.5`, max(cmp.alpha));
+      check(min(cmp.ink) > 0, `${tag} ${clipId}: the picture is not empty`, cmp.ink);
       // 对照:别的时刻的帧明显更大 —— 明显不同的像素成百上千个,同一帧的几乎没有
-      check(min(cmp.otherBad) >= 50 && min(cmp.otherBad) > 20 * (max(cmp.bad) + 1), `${tag} ${clipId}:对照(别的时刻的帧)明显更大`, { otherBadMin: min(cmp.otherBad), badMax: max(cmp.bad), otherColorMin: min(cmp.otherColor), colorMax: max(cmp.color) });
+      check(min(cmp.otherBad) >= 50 && min(cmp.otherBad) > 20 * (max(cmp.bad) + 1), `${tag} ${clipId}: the control (frames from another time) is clearly larger`, { otherBadMin: min(cmp.otherBad), badMax: max(cmp.bad), otherColorMin: min(cmp.otherColor), colorMax: max(cmp.color) });
 
       // 每帧耗时(几轮取中位数)
       const per = (list, pick) => round2(median(list.map(pick)));
@@ -342,7 +342,7 @@ try {
       bakery.streamLease = null;
       const pngs = [], raws = [];
       await bakeStream(bakery, { streamSignature: `bench:${spec.streamKey}`, fromFrame: 30, toFrame: 44, stride: 1, fps: spec.fps, mountFrame: spec.mountFrame, clip, hasMedia: false,
-        capture: async (_f, shoot) => { const g = await grabCanvas(bakery, clipId, clip); if (!g.ok) throw new Error(`取不到:${g.reason}`); raws.push(g.rgba); return shoot(); },
+        capture: async (_f, shoot) => { const g = await grabCanvas(bakery, clipId, clip); if (!g.ok) throw new Error(`cannot grab: ${g.reason}`); raws.push(g.rgba); return shoot(); },
         onFrame: async (_f, png) => { pngs.push(png); } });
       bakery.streamLease = null;
       const bench = async (frames15, raw) => {
@@ -374,11 +374,11 @@ try {
     const table = JSON.parse(await fs.readFile(path.join(ROOT, 'src', 'cards', 'capabilities.json'), 'utf8'));
     const registered = Object.entries(table).filter(([, v]) => v && ['canvas2d', 'webgl'].includes(v.surface)).map(([k]) => k).sort();
     out.registered = registered;
-    check(JSON.stringify(registered) === JSON.stringify(['particles', 'particles-*', 'r6-canvas', 'scene-3d']), '审阅表里登记为画布卡的正好是 particles、particles-*、r6-canvas、scene-3d', registered);
-    check(Object.values(table).every((v) => !v || !Object.hasOwn(v, 'canvasHeavy')), '审阅表里不再写 canvasHeavy(由 surface 推出)', registered.map((id) => table[id].surface));
+    check(JSON.stringify(registered) === JSON.stringify(['particles', 'particles-*', 'r6-canvas', 'scene-3d']), 'the cards registered as canvas cards in the review table are exactly particles, particles-*, r6-canvas, scene-3d', registered);
+    check(Object.values(table).every((v) => !v || !Object.hasOwn(v, 'canvasHeavy')), 'the review table no longer writes canvasHeavy (derived from surface)', registered.map((id) => table[id].surface));
     const catalog = JSON.parse(await fs.readFile(path.join(ROOT, 'server', 'catalog', 'particles', 'index.json'), 'utf8'));
     const ids = ['particles', ...catalog.items.map((a) => `particles-${a.name}`), 'scene-3d', 'r6-canvas'];
-    check(ids.length === 56, '画布卡一共 56 张', ids.length);
+    check(ids.length === 56, '56 canvas cards in total', ids.length);
     const [width, height] = [960, 540];
     const emptyUrl = `${origin}/?export=1&timeline=${encodeURIComponent(`data:application/json,${encodeURIComponent(JSON.stringify({ width, height, fps: 30, duration: 1, tracks: [], media: [] }))}`)}`;
     const bakery = await openBakery({ url: emptyUrl });
@@ -423,14 +423,14 @@ try {
         } catch (error) { row.error = String(error?.message || error).split('\n')[0]; }
         out.cards.push(row);
         say('card', row);
-        check(row.canvasHeavy === true, `${cardId}:页面给出的能力对象里是 canvasHeavy`, row);
+        check(row.canvasHeavy === true, `${cardId}: it is canvasHeavy in the capability object the page returns`, row);
       }
     } finally { await bakery.close().catch(() => {}); }
     out.cardsSummary = { total: out.cards.length, pass: out.cards.filter((c) => c.pass).length, failed: out.cards.filter((c) => !c.pass).map((c) => [c.cardId, c.failed ?? c.error ?? 'miss']) };
-    check(out.cards.every((c) => !c.error), '逐张实测都跑出来了', out.cards.filter((c) => c.error));
+    check(out.cards.every((c) => !c.error), 'per-card measurements all completed', out.cards.filter((c) => c.error));
   }
 } catch (error) {
-  fails.push(`异常:${error?.stack || error}`);
+  fails.push(`Exception: ${error?.stack || error}`);
   say('ERROR', { error: String(error?.stack || error) });
 } finally {
   for (const pipeline of pipelines) { try { await pipeline.close(); } catch { /* ignore */ } }

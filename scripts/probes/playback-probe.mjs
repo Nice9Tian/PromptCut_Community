@@ -124,7 +124,7 @@ async function startServer() {
     await sleep(500);
   }
   proc.kill();
-  throw new Error(`dev server 240 秒没起来:\n${log.join('')}`);
+  throw new Error(`dev server did not start within 240 seconds:\n${log.join('')}`);
 }
 
 async function stopServer() {
@@ -423,7 +423,7 @@ try {
   step('recorders installed');
 
   /* ============================================================ 1. K4 节拍 */
-  if (wants('节拍')) {
+  if (wants('ticks')) {
     const cadence = {};
     for (const fps of [24, 25, 30, 60]) {
       step(`cadence ${fps}: build`);
@@ -461,25 +461,25 @@ try {
       cadence[fps] = { beats: rec.frames.length, want: +want.toFixed(3), gap: g, secDiffWrong: wrongSec, shortBeats, longTasks: rec.longTasks.length,
         mediaStallCount: stallDiag?.mediaStallCount ?? null, mediaGapMaxMs: stallDiag ? +Number(stallDiag.mediaGapMaxMs).toFixed(3) : null };
       check(stallDiag && stallDiag.mediaStallCount === 0,
-        `${fps} fps:播 ${seconds} 秒 mediaStalled 触发 0 次(pinned 架构 10)`,
+        `${fps} fps: played ${seconds} seconds, mediaStalled fired 0 times (pinned architecture 10)`,
         { count: stallDiag?.mediaStallCount, overBeatMaxMs: stallDiag?.mediaGapMaxMs });
-      check(g && Math.abs(g.mean - want) <= 1, `${fps} fps:frame 到达间隔的均值 = ${want.toFixed(2)} ± 1 ms`, g);
-      check(wrongSec === 0, `${fps} fps:连续两条 frame 的 sec 差恒为 1/fps`, { wrongSec, n: secDiffs.length });
+      check(g && Math.abs(g.mean - want) <= 1, `${fps} fps: mean frame arrival interval = ${want.toFixed(2)} ± 1 ms`, g);
+      check(wrongSec === 0, `${fps} fps: the sec difference between two consecutive frames is always 1/fps`, { wrongSec, n: secDiffs.length });
       /*
        * 「短拍」这一条任务书只对 **30 fps** 提(「30 fps 下没有 16.6 ms 的短拍」)。
        * 别的帧率只记数不判:60 fps 上量到的短间隔是**父页收 postMessage 的抖动**
        * —— 两条 `frame` 挨着到达,而舞台那边的拍是准的(`sec` 差恒为 1/fps、
        * 10 秒恰好 600 拍)。真跳了一拍的话 `secDiffWrong` 会非零。
        */
-      if (fps === 30) check(shortBeats === 0, `${fps} fps:没有 16.6 ms 的短拍`, { shortBeats });
+      if (fps === 30) check(shortBeats === 0, `${fps} fps: no short 16.6 ms ticks`, { shortBeats });
       // 「主文档零卡顿」:播放中主文档的长任务为 0
-      check(rec.longTasks.length === 0, `${fps} fps:播放中主文档长任务为 0`, rec.longTasks.slice(0, 3));
+      check(rec.longTasks.length === 0, `${fps} fps: 0 long tasks in the main document during playback`, rec.longTasks.slice(0, 3));
     }
-    out.cases['节拍'] = cadence;
+    out.cases['ticks'] = cadence;
   }
 
   /* ============================================================ 1b. 停顿时声音当场停(音频看门狗的正向验收) */
-  if (wants('停顿声音')) {
+  if (wants('stall-sound')) {
     /*
      * 造停顿:在**舞台页**(front 那个 iframe)里按住主线程 HOLD_MS 毫秒 —— 它的节拍循环在这段时间里一拍也发不出,
      * 父页收不到 `frame`。这就是「下一拍迟到」本身,不改 src/、不碰 `setMediaStalled`,验的是 Preview 自己的看门狗。
@@ -494,7 +494,7 @@ try {
     step('stall: add tone');
     const tone = await page.evaluate(ADD_TONE, { sec: TONE_SEC });
     step('stall: tone added');
-    check(!!tone.clipId, '停顿声音:声音片段放上了时间轴', tone);
+    check(!!tone.clipId, 'Stall sound: the sound clip was placed on the timeline', tone);
     await waitProbeIdle(page);
     await page.evaluate(SET_COSTS, { specs: { 'probe-css': { stepMs: 1, catchUpMs: 10, vtOk: true, seekOk: true, seekMs: 1 } } });
     await page.evaluate(async () => { const { actions } = await import('/src/store/project.ts'); actions.seek(0); });
@@ -509,15 +509,15 @@ try {
       const rows = window.__stallSampler.rows; const r = rows.at(-1);
       return !!r && !r.stalled && r.els.length > 0 && r.els.every((e) => !e.paused && e.ready >= 3 && e.ct > 0.2) && rows.length > 20 && (r.els[0].rms ?? 0) > 0.003;
     }, { timeout: 60000, polling: 50 }).then(() => true, () => false);
-    check(await waitT(1.0), '停顿声音:播放头走到了 1 秒(舞台在逐拍推进)');
-    check(await waitSounding(), '停顿声音:停顿之前声音在出声(没暂停、数据就绪、captureStream 量到能量)');
+    check(await waitT(1.0), 'Stall sound: the playhead reached 1 second (the stage is advancing tick by tick)');
+    check(await waitSounding(), 'Stall sound: the sound is audible before the stall (not paused, data ready, captureStream measured energy)');
     const front = await frontDiag(page);
     const frontFrame = page.frames().find((f) => f.url().includes('stage=1') && f.url().includes(`id=${front.preview.frontId}`));
-    check(!!frontFrame, '停顿声音:找到了 front 舞台的 iframe', front.preview?.frontId);
+    check(!!frontFrame, 'Stall sound: found the iframe of the front stage', front.preview?.frontId);
     const holds = [];
     for (const [i, holdMs] of HOLDS_MS.entries()) {
       // 两次停顿之间等恢复、声音重新出声、播放头往前走一截,再来下一次(看看门狗恢复之后还会不会再次起效)
-      if (i > 0) { check(await waitSounding(), `停顿声音 #${i + 1}:上一次停顿之后声音恢复出声`); await sleep(500); }
+      if (i > 0) { check(await waitSounding(), `Stall sound #${i + 1}: the sound is audible again after the previous stall`); await sleep(500); }
       step(`stall: hold #${i + 1} ${holdMs} ms`);
       const p = frontFrame.evaluate(HOLD_STAGE, holdMs);
       const win = await p;
@@ -527,7 +527,7 @@ try {
         const r = window.__stallSampler.rows.at(-1);
         return !!r && r.playing && r.stalled === false && r.els.every((e) => !e.paused);
       }, { timeout: 30000, polling: 25 }).then(() => true, () => false);
-      check(recovered, `停顿声音 #${i + 1}:停顿结束后 mediaStalled 回到假、声音重新放出来`);
+      check(recovered, `Stall sound #${i + 1}: after the stall ends, mediaStalled returns to false and the sound plays again`);
       await sleep(700);   // 恢复之后再看一小段,够判「接着放」
     }
     await page.evaluate(async () => { const { actions } = await import('/src/store/project.ts'); actions.pause(); });
@@ -542,7 +542,7 @@ try {
     const analyses = [];
     for (const [i, h] of holds.entries()) {
       const n = i + 1;
-      const tag = (s) => `停顿声音 #${n}(按住 ${h.holdMs} ms):${s}`;
+      const tag = (s) => `Stall sound #${n} (hold ${h.holdMs} ms): ${s}`;
       // 停顿前最后一拍、迟到的那一拍:按住区间 [start,end] 内最长的那个相邻 frame 间隔
       let best = null;
       for (let k = 0; k + 1 < frames.length; k++) {
@@ -550,22 +550,22 @@ try {
         if (a.w < h.end && b.w > h.start && (!best || b.w - a.w > best.b.w - best.a.w)) best = { a, b };
       }
       const A = { holdMs: h.holdMs, holdStart: h.start, holdEnd: h.end, holdActualMs: +(h.end - h.start).toFixed(1) };
-      check(!!best, tag('找到了停顿前最后一拍和迟到的那一拍'), A);
+      check(!!best, tag('found the last tick before the stall and the late tick'), A);
       if (!best) continue;
       const lastBefore = best.a.w, late = best.b.w;
       A.beatGapMs = +(late - lastBefore).toFixed(1);
       A.lateFrameSec = best.b.sec;
-      check(late - lastBefore >= 0.8 * h.holdMs, tag('舞台真的停了:相邻两拍的间隔不短于按住时长的 80%'), { gap: A.beatGapMs });
+      check(late - lastBefore >= 0.8 * h.holdMs, tag('The stage really stopped: the gap between two adjacent ticks is no shorter than 80% of the hold duration'), { gap: A.beatGapMs });
       const win = rows.filter((r) => r.w >= lastBefore - 200 && r.w <= late + 200);
       // 父页没被拖住:这一段里采样器相邻两行的间隔最大值(< 按住时长的一半,否则父页也被按住了,测量不可信)
       let maxRowGap = 0;
       for (let k = 1; k < win.length; k++) maxRowGap = Math.max(maxRowGap, win[k].w - win[k - 1].w);
       A.parentMaxSampleGapMs = +maxRowGap.toFixed(1);
-      check(maxRowGap < h.holdMs / 2, tag('父页没被一起拖住(采样器照常出行)'), { maxRowGap, holdMs: h.holdMs });
+      check(maxRowGap < h.holdMs / 2, tag('The parent page was not held up too (the sampler keeps going as usual)'), { maxRowGap, holdMs: h.holdMs });
 
       const before = rows.filter((r) => r.w <= lastBefore).at(-1);
       A.before = before && { t: before.t, stalled: before.stalled, count: before.count, ct: before.els.map((e) => +e.ct.toFixed(3)), paused: before.els.map((e) => e.paused) };
-      check(before && before.stalled === false && before.els.length > 0 && before.els.every((e) => !e.paused), tag('停顿开始前 mediaStalled 为假、声音在放'), A.before);
+      check(before && before.stalled === false && before.els.length > 0 && before.els.every((e) => !e.paused), tag('Before the stall starts, mediaStalled is false and the sound is playing'), A.before);
       const countBefore = before?.count ?? 0;
 
       // ② 看门狗在迟到那一拍到达**之前**跳闸
@@ -573,18 +573,18 @@ try {
       A.tripAt = trip ? +(trip.w - lastBefore).toFixed(1) : null;               // 距停顿前最后一拍(名义 = 拍长 + 40 ms ≈ 73 ms,只记录)
       A.tripMarginMs = trip ? +(late - trip.w).toFixed(1) : null;               // 比迟到那一拍早多少
       A.expectedTripMs = +(BEAT_MS + MEDIA_STALL_MS).toFixed(1);
-      check(!!trip && trip.w < late, tag('mediaStalled 在迟到那一拍到达之前就为真(当场跳闸,不是事后)'), { tripAfterLastBeatMs: A.tripAt, marginMs: A.tripMarginMs });
-      check(!!trip && trip.count === countBefore + 1, tag('mediaStallCount 随之 +1'), { before: countBefore, atTrip: trip?.count });
+      check(!!trip && trip.w < late, tag('mediaStalled is already true before the late tick arrives (tripped on the spot, not after the fact)'), { tripAfterLastBeatMs: A.tripAt, marginMs: A.tripMarginMs });
+      check(!!trip && trip.count === countBefore + 1, tag('mediaStallCount goes up by 1 accordingly'), { before: countBefore, atTrip: trip?.count });
 
       // ③ 声音当场停:跳闸之后、迟到那一拍到达之前,每个声音元素都已 paused,并且一直停着
       const paused = trip && rows.find((r) => r.w >= trip.w && r.els.length > 0 && r.els.every((e) => e.paused));
       A.pausedAfterTripMs = paused ? +(paused.w - trip.w).toFixed(1) : null;   // 只记录
       A.pausedAfterLastBeatMs = paused ? +(paused.w - lastBefore).toFixed(1) : null;
-      check(!!paused && paused.w < late, tag('声音元素在迟到那一拍到达之前就全部 paused'), { pausedAfterTripMs: A.pausedAfterTripMs, pausedAfterLastBeatMs: A.pausedAfterLastBeatMs });
+      check(!!paused && paused.w < late, tag('All sound elements are already paused before the late tick arrives'), { pausedAfterTripMs: A.pausedAfterTripMs, pausedAfterLastBeatMs: A.pausedAfterLastBeatMs });
       if (paused) {
         const during = rows.filter((r) => r.w >= paused.w && r.w < late);
         const resurrected = during.filter((r) => r.els.some((e) => !e.paused));
-        check(resurrected.length === 0, tag('停下之后到迟到那一拍之间没有元素被重新 play 起来'), resurrected.slice(0, 2));
+        check(resurrected.length === 0, tag('No element was played again between the stop and the late tick'), resurrected.slice(0, 2));
         /*
          * 能量:元素 paused 之后,captureStream → AnalyserNode 这条路还要排空一小截缓冲才读到静音(实测 50～90 ms,
          * 读数在这截里还会随声音的 3 Hz 起伏上下),所以不拿「paused 之后 N 毫秒」当界,
@@ -597,8 +597,8 @@ try {
         const prePeak = Math.max(0, ...rows.filter((r) => r.w <= lastBefore).flatMap((r) => r.els.map((e) => e.rms ?? 0)));
         const quietPeak = Math.max(0, ...quiet.flatMap((r) => r.els.map((e) => e.rms ?? 0)));
         A.energy = { prePeak: +prePeak.toFixed(4), quietPeak: +quietPeak.toFixed(5), samplesQuiet: quiet.length };
-        check(prePeak >= THR, tag('停顿前量到过能量(采集路是活的)'), A.energy);
-        check(quiet.length >= 3 && quietPeak < THR, tag('迟到那一拍到达之前的最后 100 ms,实时能量在阈值以下(声音确实停了)'), A.energy);
+        check(prePeak >= THR, tag('Energy was measured before the stall (the capture path is alive)'), A.energy);
+        check(quiet.length >= 3 && quietPeak < THR, tag('In the last 100 ms before the late tick arrives, the real-time energy is below the threshold (the sound really stopped)'), A.energy);
         A.ctAtPause = paused.els.map((e) => +e.ct.toFixed(3));
         A.tAtPause = +paused.t.toFixed(3);
       }
@@ -606,19 +606,19 @@ try {
       // ④ 恢复:拍子回来后 mediaStalled 回假、声音接着当前播放头继续
       const rec = rows.find((r) => r.w > late && r.stalled === false);
       A.recoveredAfterLateFrameMs = rec ? +(rec.w - late).toFixed(1) : null;
-      check(!!rec, tag('拍子回来之后 mediaStalled 回到假'), A.recoveredAfterLateFrameMs);
+      check(!!rec, tag('After ticks resume, mediaStalled returns to false'), A.recoveredAfterLateFrameMs);
       const resume = rec && rows.find((r) => r.w >= rec.w && r.els.length > 0 && r.els.every((e) => !e.paused && e.ready >= 3));
-      check(!!resume, tag('声音重新放出来'));
+      check(!!resume, tag('the sound plays again'));
       if (resume) {
         const settled = rows.find((r) => r.w >= resume.w + 400 && r.els.every((e) => !e.paused));
         const probeRow = settled ?? resume;
         const el = probeRow.els[0];
         const expected = probeRow.t - clipStart;
         A.afterResume = { t: +probeRow.t.toFixed(3), ct: +el.ct.toFixed(3), expectedCt: +expected.toFixed(3), diff: +(el.ct - expected).toFixed(3) };
-        check(Math.abs(el.ct - expected) <= 0.25, tag('声音位置跟着当前播放头(偏差 ≤ 0.25 s,即硬 seek 门槛的一半)'), A.afterResume);
-        if (paused) check(el.ct >= paused.els[0].ct - 0.02 && el.ct > 0.5, tag('没有从头重播、没有倒退(恢复后位置 ≥ 停下时位置,且不在开头)'), { ctAtPause: paused.els[0].ct, ctAfter: el.ct });
+        check(Math.abs(el.ct - expected) <= 0.25, tag('The sound position follows the current playhead (deviation ≤ 0.25 s, half of the hard-seek threshold)'), A.afterResume);
+        if (paused) check(el.ct >= paused.els[0].ct - 0.02 && el.ct > 0.5, tag('Did not replay from the start or go backward (position after resuming ≥ position at the stop, and not at the beginning)'), { ctAtPause: paused.els[0].ct, ctAfter: el.ct });
         const jump = rows.filter((r) => r.w >= resume.w).slice(0, 80).map((r, k, arr) => (k ? Math.abs(r.els[0].ct - arr[k - 1].els[0].ct) : 0));
-        check(Math.max(0, ...jump) < 0.2, tag('恢复后的头 400 ms 里位置连续(相邻两次采样的位置差 < 0.2 s,没有跳)'), { maxStep: +Math.max(0, ...jump).toFixed(3) });
+        check(Math.max(0, ...jump) < 0.2, tag('Position is continuous in the first 400 ms after resuming (position difference between adjacent samples < 0.2 s, no jumps)'), { maxStep: +Math.max(0, ...jump).toFixed(3) });
       }
       if (has('--trace')) A.frameTrace = frames.filter((f) => f.w >= lastBefore - 100 && f.w <= late + 150).map((f) => ({ dt: +(f.w - lastBefore).toFixed(1), sec: f.sec }));
       if (has('--trace')) A.trace = rows.filter((r) => r.w >= lastBefore - 30 && r.w <= late + 120).map((r) => ({ dt: +(r.w - lastBefore).toFixed(1), t: +r.t.toFixed(3), st: r.stalled, n: r.count, el: r.els.map((e) => [e.paused ? 'P' : 'p', +e.ct.toFixed(3), e.ready, e.rms === null ? null : +e.rms.toFixed(3)]) }));
@@ -630,14 +630,14 @@ try {
       if (rows[k].els[0] && rows[k - 1].els[0] && rows[k].els[0].ct < rows[k - 1].els[0].ct - 0.05) backward++;
       for (const e of rows[k].els) loads.add(e.loads);
     }
-    check(backward === 0, '停顿声音:整段采样里声音位置从不倒退(没有从头重来)', { backward });
-    check(loads.size === 1, '停顿声音:整段采样里声音元素没有重新加载', [...loads]);
-    check(finalDiag.mediaStallCount >= holds.length, `停顿声音:这一轮播放 mediaStallCount ≥ ${holds.length}`, finalDiag.mediaStallCount);
-    out.cases['停顿声音'] = { toneClip: tone, holds: analyses, samples: rows.length, maxSamplerTickMs: +maxTickMs.toFixed(2), mediaStallCount: finalDiag.mediaStallCount, mediaGapMaxMs: +Number(finalDiag.mediaGapMaxMs).toFixed(1), built: built.fps };
+    check(backward === 0, 'Stall sound: the sound position never goes backward across the whole sampling (no restart from the beginning)', { backward });
+    check(loads.size === 1, 'Stall sound: the sound element was not reloaded across the whole sampling', [...loads]);
+    check(finalDiag.mediaStallCount >= holds.length, `Stall sound: mediaStallCount ≥ ${holds.length} in this round of playback`, finalDiag.mediaStallCount);
+    out.cases['stall-sound'] = { toneClip: tone, holds: analyses, samples: rows.length, maxSamplerTickMs: +maxTickMs.toFixed(2), mediaStallCount: finalDiag.mediaStallCount, mediaGapMaxMs: +Number(finalDiag.mediaGapMaxMs).toFixed(1), built: built.fps };
   }
 
   /* ============================================================ 2. 播放到头的收尾 */
-  if (wants('到头')) {
+  if (wants('reach-end')) {
     await page.evaluate(BUILD, { fps: 30, duration: 2, cards: [{ id: 'probe-css' }] });
     await waitProbeIdle(page);
     await page.evaluate(SET_COSTS, { specs: { 'probe-css': { stepMs: 1, catchUpMs: 10, vtOk: true, seekOk: true, seekMs: 1 } } });
@@ -658,12 +658,12 @@ try {
     });
     const diag = await frontDiag(page);
     const ended = rec.events.find((e) => e.type === 'ended');
-    out.cases['到头'] = { ended, state, stage: diag.stage, settled: rec.events.filter((e) => e.type === 'settled') };
-    check(!!ended, '播放到头 post 了 ended');
-    check(state.playing === false, 'ended 之后 store.playing 是 false', state);
-    check(Math.abs(state.t - state.duration) < 1e-6, 'ended 之后 store.t = duration', state);
-    check(diag.stage && diag.stage.beatRunning === false, 'ended 之后节拍循环停了', diag.stage);
-    check(diag.stage && diag.stage.suppressed.length === 0, '最后一帧不停在抑制态(suppressed 空)', diag.stage?.suppressed);
+    out.cases['reach-end'] = { ended, state, stage: diag.stage, settled: rec.events.filter((e) => e.type === 'settled') };
+    check(!!ended, 'Playback reached the end and posted ended');
+    check(state.playing === false, 'After ended, store.playing is false', state);
+    check(Math.abs(state.t - state.duration) < 1e-6, 'After ended, store.t = duration', state);
+    check(diag.stage && diag.stage.beatRunning === false, 'After ended, the tick loop stopped', diag.stage);
+    check(diag.stage && diag.stage.suppressed.length === 0, 'The last frame does not stay in the suppression state (suppressed is empty)', diag.stage?.suppressed);
 
     /*
      * R7-11 的回归:播放头停在末尾时**再按播放要从最早那张卡重播**,不是立刻 ended。
@@ -681,15 +681,15 @@ try {
     await page.evaluate(async () => { const { actions } = await import('/src/store/project.ts'); actions.pause(); });
     await sleep(300);
     const firstSec = replay.frames[0]?.sec ?? null;
-    out.cases['到头重播'] = { frames: replay.frames.length, firstSec, lastSec: replay.frames.at(-1)?.sec ?? null,
+    out.cases['replay-after-end'] = { frames: replay.frames.length, firstSec, lastSec: replay.frames.at(-1)?.sec ?? null,
       endedAgain: replay.events.filter((e) => e.type === 'ended').length, state: replayState };
-    check(replay.frames.length > 5, '播到头再按播放:真的开始播了(收到多条 frame)', out.cases['到头重播']);
-    check(firstSec !== null && firstSec < 0.5, '播到头再按播放:从最早那张卡(0 秒)起,不是从 duration 起', out.cases['到头重播']);
-    check(out.cases['到头重播'].endedAgain === 0, '播到头再按播放:不再立刻 ended', out.cases['到头重播']);
+    check(replay.frames.length > 5, 'Pressing play again after reaching the end: it really starts playing (multiple frames received)', out.cases['replay-after-end']);
+    check(firstSec !== null && firstSec < 0.5, 'Pressing play again after reaching the end: starts from the earliest card (0 seconds), not from duration', out.cases['replay-after-end']);
+    check(out.cases['replay-after-end'].endedAgain === 0, 'Pressing play again after reaching the end: does not immediately end again', out.cases['replay-after-end']);
   }
 
   /* ============================================================ 3. 暂停后重卡追到活渲(第一路 / 第二路) */
-  if (wants('追帧')) {
+  if (wants('frame-catch-up')) {
     /* ---- 第一路:vtOk 的重卡在可见舞台里自己追,post settled 带 clipId ---- */
     const built = await page.evaluate(BUILD, {
       fps: 30, duration: 30,
@@ -711,10 +711,10 @@ try {
     let diag = await frontDiag(page);
     const cssClip = built.byCard['probe-css']?.[0];
     const firstPath = rec.events.filter((e) => e.type === 'settled' && (e.clipIds ?? []).includes(cssClip));
-    out.cases['追帧第一路'] = { clipId: cssClip, settled: firstPath, stage: diag.stage, preview: diag.preview };
-    check(firstPath.length > 0, '第一路:settled 带上了那张卡的 clipId', rec.events);
-    check(diag.stage && !diag.stage.settling.includes(cssClip), '第一路:追完之后 .pc-settling 摘掉了', diag.stage?.settling);
-    check(diag.stage && !diag.stage.snapshots.includes(cssClip), '第一路:追完之后它不在 snapshots 里', diag.stage?.snapshots);
+    out.cases['frame-catch-up-path-1'] = { clipId: cssClip, settled: firstPath, stage: diag.stage, preview: diag.preview };
+    check(firstPath.length > 0, 'Path 1: settled carries that card\'s clipId', rec.events);
+    check(diag.stage && !diag.stage.settling.includes(cssClip), 'Path 1: after the catch-up finishes, .pc-settling is removed', diag.stage?.settling);
+    check(diag.stage && !diag.stage.snapshots.includes(cssClip), 'Path 1: after the catch-up finishes, it is not in snapshots', diag.stage?.snapshots);
 
     /* ---- 第二路:vtOk = false 的重卡 → 整场景补跑后互换 ---- */
     await page.evaluate(SET_COSTS, {
@@ -734,12 +734,12 @@ try {
     diag = await frontDiag(page);
     const jsClip = built.byCard['probe-motion-js']?.[0];
     const swapped = rec.events.filter((e) => e.type === 'settled' && (e.clipIds ?? []).length === 0);
-    out.cases['追帧第二路'] = { clipId: jsClip, beforeFront, afterFront: diag.preview?.frontId, settled: swapped, stage: diag.stage };
-    check(swapped.length > 0, '第二路:互换之后新 front post 了 settled(clipIds 为空)', rec.events);
-    check(diag.preview && diag.preview.frontId !== beforeFront, '第二路:两个 iframe 换了身份', { beforeFront, after: diag.preview?.frontId });
-    check(diag.stage && diag.stage.snapshots.length === 0, '第二路:互换后快照平面全摘了', diag.stage?.snapshots);
+    out.cases['frame-catch-up-path-2'] = { clipId: jsClip, beforeFront, afterFront: diag.preview?.frontId, settled: swapped, stage: diag.stage };
+    check(swapped.length > 0, 'Path 2: after the swap the new front posted settled (clipIds empty)', rec.events);
+    check(diag.preview && diag.preview.frontId !== beforeFront, 'Path 2: the two iframes swapped identities', { beforeFront, after: diag.preview?.frontId });
+    check(diag.stage && diag.stage.snapshots.length === 0, 'Path 2: all snapshot planes were removed after the swap', diag.stage?.snapshots);
     check(diag.stage && diag.stage.suppressed.length === 0 && diag.stage.settling.length === 0,
-      '第二路:组件不在任何集合里', { suppressed: diag.stage?.suppressed, settling: diag.stage?.settling });
+      'Path 2: the component is not in any set', { suppressed: diag.stage?.suppressed, settling: diag.stage?.settling });
 
     /* ---- 连点时间轴 10 次:不触发任何重发,最后一次正常互换 ---- */
     await page.evaluate(RESET_RECORDERS);
@@ -754,13 +754,13 @@ try {
     rec = await page.evaluate(READ_RECORDERS);
     diag = await frontDiag(page);
     const swaps = rec.events.filter((e) => e.type === 'settled' && (e.clipIds ?? []).length === 0);
-    out.cases['连点十次'] = { swaps: swaps.length, front0, front1: diag.preview?.frontId, errors: errors.length };
-    check(swaps.length === 1, '连点时间轴 10 次只互换一次(前九次都被中止、没有重发)', swaps.length);
-    check(diag.preview && diag.preview.frontId !== front0, '最后一次正常互换', { front0, front1: diag.preview?.frontId });
+    out.cases['ten rapid clicks'] = { swaps: swaps.length, front0, front1: diag.preview?.frontId, errors: errors.length };
+    check(swaps.length === 1, 'Clicking the timeline 10 times in a row swaps only once (the first nine were aborted, none resent)', swaps.length);
+    check(diag.preview && diag.preview.frontId !== front0, 'The last swap goes through normally', { front0, front1: diag.preview?.frontId });
   }
 
   /* ============================================================ 4. K3(a′) seekOk 的直接定位 */
-  if (wants('跳转')) {
+  if (wants('jump')) {
     const built = await page.evaluate(BUILD, { fps: 30, duration: 60, cards: [{ id: 'probe-css', duration: 60 }] });
     await waitProbeIdle(page);
     const clipId = built.byCard['probe-css'][0];
@@ -768,7 +768,7 @@ try {
     const plan = await page.evaluate(SET_COSTS, {
       specs: { 'probe-css': { stepMs: 2, catchUpMs: 3000, vtOk: true, seekOk: true, seekMs: 3 } },
     });
-    check((plan.prerenderSet ?? []).length === 0, '(a′) 的卡不出现在 prerenderSet 里', plan.prerenderSet);
+    check((plan.prerenderSet ?? []).length === 0, 'The (a′) card does not appear in prerenderSet', plan.prerenderSet);
     await page.evaluate(async () => { const { actions } = await import('/src/store/project.ts'); actions.seek(1); });
     await sleep(500);
     const before = await frontDiag(page);
@@ -780,8 +780,8 @@ try {
     await sleep(500);
     const mid = await frontDiag(page);
     const forwardMs = Date.now() - t0;
-    check(genOf(mid, clipId) === gen0, '(a′) 向前跳不重挂载', { gen0, gen1: genOf(mid, clipId) });
-    check(Math.abs((mid.stage?.t ?? 0) - 50) < 1e-6, '(a′) 向前跳一步到位', mid.stage?.t);
+    check(genOf(mid, clipId) === gen0, '(a′) a forward jump does not remount', { gen0, gen1: genOf(mid, clipId) });
+    check(Math.abs((mid.stage?.t ?? 0) - 50) < 1e-6, '(a′) a forward jump lands in one step', mid.stage?.t);
     // 从第 55 秒拖回第 20 秒:**重挂载一次**之后一步到位
     await page.evaluate(async () => { const { actions } = await import('/src/store/project.ts'); actions.seek(55); });
     await sleep(400);
@@ -790,14 +790,14 @@ try {
     await page.evaluate(async () => { const { actions } = await import('/src/store/project.ts'); actions.seek(20); });
     await sleep(500);
     const back = await frontDiag(page);
-    out.cases['跳转'] = { clipId, gen0, gen50: genOf(mid, clipId), gen55, gen20: genOf(back, clipId), forwardMs, prerenderSet: plan.prerenderSet };
-    check(genOf(back, clipId) === gen55 + 1, '(a′) 向后跳恰好重挂载一次', { gen55, gen20: genOf(back, clipId) });
-    check(Math.abs((back.stage?.t ?? 0) - 20) < 1e-6, '(a′) 向后跳之后一步到位', back.stage?.t);
-    check((back.stage?.settling ?? []).length === 0, '(a′) 不留在追帧态', back.stage?.settling);
+    out.cases['jump'] = { clipId, gen0, gen50: genOf(mid, clipId), gen55, gen20: genOf(back, clipId), forwardMs, prerenderSet: plan.prerenderSet };
+    check(genOf(back, clipId) === gen55 + 1, '(a′) a backward jump remounts exactly once', { gen55, gen20: genOf(back, clipId) });
+    check(Math.abs((back.stage?.t ?? 0) - 20) < 1e-6, '(a′) lands in one step after a backward jump', back.stage?.t);
+    check((back.stage?.settling ?? []).length === 0, '(a′) does not stay in the frame catch-up state', back.stage?.settling);
   }
 
   /* ====================================== 4b. 时间轴点击 / 拖动松开后精确活渲(pinned 架构 9) */
-  if (wants('时间轴')) {
+  if (wants('timeline')) {
     /*
      * 这一条量的是**真的鼠标**,不是 `actions.seek()` —— R5-16 的缺口正在这里:
      * 松手坐标通常等于最后一次 flush 的位置(`t` 没变),在标尺上点一下时
@@ -827,15 +827,15 @@ try {
     }
     const ruler = await page.$('[data-pc="ruler"]');
     const box = ruler ? await ruler.boundingBox() : null;
-    check(!!box, '时间轴标尺在页面上', box);
+    check(!!box, 'The timeline ruler is on the page', box);
     if (box) {
       // 点击点真的落在标尺上(而不是某个遮罩上)——不验这一条的话下面两条会以「没发 settle」的面目失败
       const hit = await page.evaluate(([px, py]) => {
         const el = document.elementFromPoint(px, py);
         return { tag: el ? `${el.tagName}.${el.className}`.slice(0, 80) : null, onRuler: !!el?.closest('[data-pc="ruler"]') };
       }, [xAt(box, 0.25), box.y + box.height / 2]);
-      out.cases['时间轴点击命中'] = hit;
-      check(hit.onRuler, '点击点落在时间轴标尺上(没有遮罩挡着)', hit);
+      out.cases['timeline click hit'] = hit;
+      check(hit.onRuler, 'The click point lands on the timeline ruler (no overlay in the way)', hit);
     }
     const waitSettled = (id) => page.waitForFunction(
       (clip) => (window.__pcEvents ?? []).some((e) => e.type === 'settled' && (e.clipIds ?? []).includes(clip)),
@@ -866,17 +866,17 @@ try {
       const afterDrag = await page.evaluate(async () => (await import('/src/store/project.ts')).getState().t);
       const diag = await frontDiag(page);
 
-      out.cases['时间轴'] = { clipId: cssClip, beforeClick, afterClick, afterDrag, clickSettled, dragSettled, stage: diag.stage };
-      check(Math.abs(afterClick - beforeClick) > 1e-6, '点标尺把播放头挪走了', { beforeClick, afterClick });
-      check(clickSettled, '点时间轴之后 settled 到达(判重卡追成精确活渲)', out.cases['时间轴']);
-      check(dragSettled, '拖动松开之后 settled 到达', out.cases['时间轴']);
-      check(diag.stage && !diag.stage.settling.includes(cssClip), '松手之后 .pc-settling 摘掉了', diag.stage?.settling);
-      check(diag.stage && !diag.stage.snapshots.includes(cssClip), '松手之后它不在 snapshots 里', diag.stage?.snapshots);
+      out.cases['timeline'] = { clipId: cssClip, beforeClick, afterClick, afterDrag, clickSettled, dragSettled, stage: diag.stage };
+      check(Math.abs(afterClick - beforeClick) > 1e-6, 'Clicking the ruler moved the playhead', { beforeClick, afterClick });
+      check(clickSettled, 'settled arrives after clicking the timeline (cards judged heavy catch up to exact live render)', out.cases['timeline']);
+      check(dragSettled, 'settled arrives after the drag is released', out.cases['timeline']);
+      check(diag.stage && !diag.stage.settling.includes(cssClip), 'After release, .pc-settling was removed', diag.stage?.settling);
+      check(diag.stage && !diag.stage.snapshots.includes(cssClip), 'After release, it is not in snapshots', diag.stage?.snapshots);
     }
   }
 
   /* ============================================================ 5. K6 降级 */
-  if (wants('降级')) {
+  if (wants('downgrade')) {
     const built = await page.evaluate(BUILD, {
       fps: 30, duration: 20,
       cards: [{ id: 'probe-slow', duration: 20, params: { burnMs: 60, label: 'K6' } }, { id: 'probe-css', duration: 20 }],
@@ -911,25 +911,25 @@ try {
     const costs = await page.evaluate(async () => (await (await fetch('/api/data/costs')).json()));
     const demotedRecords = (costs?.costs ?? []).filter((r) => r.demoted === true && keysNow.includes(r.identityKey));
     const diag = await frontDiag(page);
-    out.cases['降级'] = {
+    out.cases['downgrade'] = {
       slowClip, demote, beatGap: stats(gaps), demotedRecords: demotedRecords.map((r) => ({ identityKey: r.identityKey, capped: r.capped, demoted: r.demoted, stepMs: r.stepMs })),
       preview: diag.preview, stagePendingDemote: diag.stage?.pendingDemote,
       secDiffWrong: rec.frames.slice(1).filter((f, i) => Math.abs(f.sec - rec.frames[i].sec - 1 / 30) > 1e-6).length,
     };
-    check(demote.length > 0, 'K6:人为把一张卡的成本拉到 60 ms 之后触发了 demote', demote);
-    check(demote[0]?.clipId === slowClip, 'K6:降的是最贵的那张(probe-slow)', { got: demote[0]?.clipId, want: slowClip });
-    check(demotedRecords.length === 1, 'K6:costs 里恰好一条 demoted: true', demotedRecords.length);
+    check(demote.length > 0, 'K6: demote fired after the cost of one card was artificially raised to 60 ms', demote);
+    check(demote[0]?.clipId === slowClip, 'K6: the card demoted is the most expensive one (probe-slow)', { got: demote[0]?.clipId, want: slowClip });
+    check(demotedRecords.length === 1, 'K6: exactly one entry in costs has demoted: true', demotedRecords.length);
     check(demotedRecords[0]?.capped === true && demotedRecords[0]?.demoted === true,
-      'K6:整条 PUT —— capped 和 demoted 都写上了,各测量值还在', demotedRecords[0]);
-    check(out.cases['降级'].secDiffWrong === 0, 'K6:慢帧不跳帧(sec 差恒为 1/fps)', out.cases['降级'].secDiffWrong);
+      'K6: whole-record PUT, with both capped and demoted written and the measured values still present', demotedRecords[0]);
+    check(out.cases['downgrade'].secDiffWrong === 0, 'K6: a slow frame does not skip frames (sec difference is always 1/fps)', out.cases['downgrade'].secDiffWrong);
     check((diag.preview?.pendingDemote ?? []).includes(slowClip),
-      'K6:死素材没就绪之前它留在 pendingDemote、照常活渲', diag.preview?.pendingDemote);
+      'K6: until the static asset is ready it stays in pendingDemote and keeps live rendering as usual', diag.preview?.pendingDemote);
     // 落盘的那一份
     if (!originArg && fs.existsSync(costsFile)) {
       const onDisk = JSON.parse(fs.readFileSync(costsFile, 'utf8'));
       const list = Array.isArray(onDisk) ? onDisk : (onDisk.records ?? onDisk.costs ?? []);
-      out.cases['降级'].onDisk = list.filter((r) => r.demoted === true && keysNow.includes(r.identityKey)).length;
-      check(out.cases['降级'].onDisk === 1, 'K6:out/card-costs.json 里那条 demoted: true 落盘了', out.cases['降级'].onDisk);
+      out.cases['downgrade'].onDisk = list.filter((r) => r.demoted === true && keysNow.includes(r.identityKey)).length;
+      check(out.cases['downgrade'].onDisk === 1, 'K6: the entry with demoted: true in out/card-costs.json was written to disk', out.cases['downgrade'].onDisk);
     }
   }
 
@@ -941,9 +941,9 @@ try {
   const benign = (m) => /Failed to load resource/.test(m);
   out.errors = errors.filter((m) => !benign(m)).slice(0, 20);
   out.resourceErrors = errors.filter(benign).length;
-  check(out.errors.length === 0, '页面没有 JS 报错', out.errors.slice(0, 5));
+  check(out.errors.length === 0, 'The page has no JS errors', out.errors.slice(0, 5));
 } catch (err) {
-  fails.push('探针自己抛了:' + (err?.stack || String(err)));
+  fails.push('The probe itself threw:' + (err?.stack || String(err)));
   exitCode = 1;
 } finally {
   out.fails = fails;
@@ -956,6 +956,6 @@ try {
   try { await browser.close(); } catch { /* 已经关了 */ }
   await stopServer();
   if (!keep) { try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch { /* 删不掉就留着 */ } }
-  else console.log('临时数据目录留着:' + dataDir);
+  else console.log('Temporary data directory kept:' + dataDir);
 }
 process.exit(fails.length ? 1 : exitCode);

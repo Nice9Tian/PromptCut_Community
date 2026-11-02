@@ -15,7 +15,7 @@ test('typing default ASCII boundaries preserve the original interval baseline', 
 });
 
 test('typing extended graphemes keep CJK, combining marks, emoji and CRLF intact', () => {
-  const parts = ['中', '文', '，', '👩🏽‍💻', 'e\u0301', '🇨🇳', ' ', '\r\n', '尾'];
+  const parts = ['Medium', '文', ',', '👩🏽‍💻', 'e\u0301', '🇨🇳', ' ', '\r\n', '尾'];
   const s = createTypingSchedule({ text: parts.join(''), duration: 10 });
   assert.deepEqual(s.events.map(e => e.grapheme), parts);
   for (let i = 0; i < parts.length; i++) {

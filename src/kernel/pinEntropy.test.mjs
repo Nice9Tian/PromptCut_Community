@@ -20,7 +20,7 @@ function makeHost() {
   };
 }
 
-test("两个独立页面装上之后,Math.random 出同一串数", () => {
+test("After two independent pages install it, Math.random produces the same sequence of numbers", () => {
   const a = makeHost(), b = makeHost();
   installPinnedEntropy(a);
   installPinnedEntropy(b);
@@ -30,7 +30,7 @@ test("两个独立页面装上之后,Math.random 出同一串数", () => {
   assert.ok(sa.every((x) => x >= 0 && x < 1));
 });
 
-test("__pcResetRandom(1) 之后的序列和原 exportClock 的 mulberry32 逐位相同", () => {
+test("The sequence after __pcResetRandom(1) is bit-for-bit identical to the original exportClock's mulberry32", () => {
   const h = makeHost();
   installPinnedEntropy(h);
   h.Math.random(); h.Math.random();          // 模块加载期先消耗几次
@@ -41,7 +41,7 @@ test("__pcResetRandom(1) 之后的序列和原 exportClock 的 mulberry32 逐位
   for (let i = 0; i < 16; i++) assert.equal(h.Math.random(), ref());
 });
 
-test("墙上时钟 = 固定纪元 + 当前帧毫秒;时钟没就位时就是纪元本身", () => {
+test("Wall clock = fixed epoch + current frame milliseconds; when the clock is not in place it is the epoch itself", () => {
   const h = makeHost();
   installPinnedEntropy(h);
   assert.equal(h.Date.now(), PINNED_EPOCH_MS);
@@ -55,7 +55,7 @@ test("墙上时钟 = 固定纪元 + 当前帧毫秒;时钟没就位时就是纪�
   assert.equal(h.Date.now(), PINNED_EPOCH_MS + 500);
 });
 
-test("带参数的 Date 是计算不是读时钟,原样不动;instanceof 照旧", () => {
+test("A Date with arguments is a calculation, not a clock read, and is left untouched; instanceof works as before", () => {
   const h = makeHost();
   installPinnedEntropy(h);
   assert.equal(new h.Date(0).getTime(), 0);
@@ -67,7 +67,7 @@ test("带参数的 Date 是计算不是读时钟,原样不动;instanceof 照旧"
   assert.ok(new h.Date(5) instanceof h.Date);
 });
 
-test("crypto 走同一个种子:两个页面填出同样的字节,UUID 格式正确且相同", () => {
+test("crypto uses the same seed: two pages fill in the same bytes, and the UUID is correctly formatted and identical", () => {
   const a = makeHost(), b = makeHost();
   installPinnedEntropy(a);
   installPinnedEntropy(b);
@@ -79,7 +79,7 @@ test("crypto 走同一个种子:两个页面填出同样的字节,UUID 格式正
   assert.match(ida, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 });
 
-test("withSeededRandom:里面从种子起出数,和外面取过几次无关;出来以后外面那一串一个数都没少", () => {
+test("withSeededRandom: inside it numbers start from the seed regardless of how many times the outside has drawn; after leaving, the outside sequence has not lost a single number", () => {
   const a = makeHost(), b = makeHost();
   installPinnedEntropy(a);
   installPinnedEntropy(b);
@@ -101,7 +101,7 @@ test("withSeededRandom:里面从种子起出数,和外面取过几次无关;出�
   assert.equal(b.Math.random(), plain[0]);
 });
 
-test("withSeededRandom:不同种子出不同的数;crypto 在里面走同一串,出来同样不留痕迹", () => {
+test("withSeededRandom: different seeds give different numbers; crypto follows the same sequence inside, and likewise leaves no trace after leaving", () => {
   const h = makeHost();
   installPinnedEntropy(h);
   const one = withSeededRandom(1, () => h.Math.random(), h);
@@ -115,7 +115,7 @@ test("withSeededRandom:不同种子出不同的数;crypto 在里面走同一串,
   assert.equal(h.Math.random(), fresh.Math.random());
 });
 
-test("withSeededRandom:可以嵌套;里面抛错也把外面的状态放回去", () => {
+test("withSeededRandom: can be nested; even if it throws inside, the outer state is restored", () => {
   const h = makeHost(), ref = makeHost();
   installPinnedEntropy(h);
   installPinnedEntropy(ref);
@@ -132,7 +132,7 @@ test("withSeededRandom:可以嵌套;里面抛错也把外面的状态放回去",
   assert.equal(h.Math.random(), first);
 });
 
-test("withSeededRandom:没钉住的页面里临时换 Math.random,数和钉住的一样,出来换回原来那个", () => {
+test("withSeededRandom: in an unpinned page it temporarily swaps Math.random, the numbers match the pinned ones, and on exit the original is swapped back", () => {
   const h = makeHost();                     // 不装钉子
   const real = () => 0.123;
   h.Math.random = real;
@@ -146,7 +146,7 @@ test("withSeededRandom:没钉住的页面里临时换 Math.random,数和钉住�
   assert.equal(h.Math.random, real);
 });
 
-test("重复安装不会把种子流拨回起点", () => {
+test("Installing again does not rewind the seed stream to the start", () => {
   const h = makeHost();
   installPinnedEntropy(h);
   const first = h.Math.random();

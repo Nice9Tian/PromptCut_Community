@@ -102,7 +102,7 @@ test("timelineMeasureArgs filter chain matches mux-audio", () => {
 
 // 进度行是 \r 分隔的、会和 ebur128 的逐帧行挤在同一行里;以前按 \n 切,一行里好几个 t: 只匹配到第一个,
 // 逐秒曲线会缺点(实测 36 秒只剩 20 个点)。现在按 \r 也切,并按 floor(t) 取每整秒的第一帧。
-test("parseEbur128:\r 分隔的进度行混进来也不丢整秒的点;timeline 带 duration 就截断", () => {
+test("parseEbur128:\r-delimited progress lines mixed in do not drop whole-second points; a timeline with duration is truncated", () => {
   const frame = (t, s) => `[Parsed_ebur128_0 @ 0] t: ${t.toFixed(1)}  TARGET:-23 LUFS  M: -20.0 S: ${s}  I: -19.0 LUFS  LRA: 2.0 LU`;
   const lines = [];
   for (let i = 0; i <= 25; i++) {

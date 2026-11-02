@@ -93,8 +93,8 @@ const BASIC = () => plain([
   { id: 't-c', clips: [clip('clip-c', 'punch-pill', 6.5, 9.5, { frame: { x: 0, y: 0, w: 301, h: 99.5 }, opacity: 0.5, fadeIn: 0.2 })] },
 ]);
 
-test('PSP-01 照抄的常量与服务端同值', () => {
-  assert.equal(PAGE_STREAM_CODE_VERSION, STREAM_CODE_VERSION, '流的代码版本(服务端加了,这里跟着改,连同 streamMemberKey)');
+test('PSP-01 copied constants have the same values as the server\'s', () => {
+  assert.equal(PAGE_STREAM_CODE_VERSION, STREAM_CODE_VERSION, 'stream code version (when the server bumps it, change it here too, along with streamMemberKey)');
   assert.equal(PAGE_STREAM_DECODER_BUDGET, STREAM_DECODER_BUDGET);
   assert.equal(PAGE_LOCAL_OVERFLOW_PX, LOCAL_OVERFLOW_PX);
   assert.equal(PAGE_STREAM_SEGMENTS_PER_TASK, QUEUE_DEFAULTS.STREAM_SEGMENTS);
@@ -103,24 +103,24 @@ test('PSP-01 照抄的常量与服务端同值', () => {
   assert.equal(STREAM_SEGMENT_FRAMES, SEGMENT_FRAMES);
 });
 
-test('PSP-02 流的键与形状逐字段相同', async () => {
+test('PSP-02 stream keys and shapes are identical field by field', async () => {
   const project = BASIC();
   const value = valueOf(project);
   const clips = ['clip-a', 'clip-b', 'clip-c'];
   const server = serverSide(project, value, clips);
   const page = await pageSide(project, value, clips);
-  assert.equal(server.specs.length, 3, '服务端出三条单卡流');
-  assert.equal(page.specs.length, 3, `页面也出三条:${JSON.stringify(page.skipped)}`);
+  assert.equal(server.specs.length, 3, 'the server produces three single-card streams');
+  assert.equal(page.specs.length, 3, `the page also produces three:${JSON.stringify(page.skipped)}`);
   for (const want of server.specs) {
     const got = page.specs.find(s => s.topClipId === want.topClipId);
-    assert.ok(got, `页面有 ${want.topClipId} 的流`);
-    assert.equal(got.contentKey, want.contentKey, `${want.topClipId} 内容键`);
-    assert.equal(got.streamKey, serverResultKeyOf(want.contentKey, BROWSER), `${want.topClipId} 结果键 = 内容键 × 本页指纹`);
-    assert.notEqual(got.streamKey, want.streamKey, '与切分方自己指纹的键不同');
+    assert.ok(got, `the page has a stream for ${want.topClipId}`);
+    assert.equal(got.contentKey, want.contentKey, `content key of ${want.topClipId}`);
+    assert.equal(got.streamKey, serverResultKeyOf(want.contentKey, BROWSER), `result key of ${want.topClipId} = content key × this page's fingerprint`);
+    assert.notEqual(got.streamKey, want.streamKey, 'differs from the key under the splitter\'s own fingerprint');
     for (const field of ['kind', 'plane', 'fps', 'total', 'firstFrame', 'lastFrame', 'firstSegment', 'lastSegment']) assert.deepEqual(got[field], want[field], `${want.topClipId}.${field}`);
     assert.deepEqual(got.clipIds, want.clipIds);
-    assert.deepEqual(got.bound, want.bound, `${want.topClipId} 矩形`);
-    assert.deepEqual(got.offset, want.offset, `${want.topClipId} 摆放`);
+    assert.deepEqual(got.bound, want.bound, `rectangle of ${want.topClipId}`);
+    assert.deepEqual(got.offset, want.offset, `placement of ${want.topClipId}`);
     assert.deepEqual(got.stage, want.stage);
   }
   // 带小数的入点:第一帧在入点之后,相位不为 0;超出项目末尾的卡被项目时长截断
@@ -128,11 +128,11 @@ test('PSP-02 流的键与形状逐字段相同', async () => {
   assert.equal(b.firstFrame, 38);
   assert.notEqual(b.bake.sampling.phase.numerator, '0');
   const c = page.specs.find(s => s.topClipId === 'clip-c');
-  assert.equal(c.lastFrame, 239, '截到项目末帧');
+  assert.equal(c.lastFrame, 239, 'cut off at the project\'s last frame');
   assert.equal(await resultKeyOf('ck', 'fp'), serverResultKeyOf('ck', 'fp'));
 });
 
-test('PSP-03 成员键只有一处:与切分方用的成员键相同', async () => {
+test('PSP-03 there is only one member key: the same as the one the splitter uses', async () => {
   const project = BASIC();
   const value = valueOf(project);
   const server = serverSide(project, value, ['clip-a', 'clip-b', 'clip-c']);
@@ -145,9 +145,9 @@ test('PSP-03 成员键只有一处:与切分方用的成员键相同', async () 
       stage: { width: project.width, height: project.height, camera3dFov: project.camera3dFov }, frame: control.frame, themeId: project.themeId,
     });
     // `planStreams` 取成员键的那个式子:`streamMemberKey ?? contentKey`(「己一」起有 `streamMemberKey`,不带生成快照的代码指纹)
-    assert.ok(theirs.streamMemberKey, '服务端的 card plan 带 streamMemberKey');
-    assert.equal(key, theirs.streamMemberKey ?? theirs.contentKey, `${control.clipId} 的成员键`);
-    assert.notEqual(key, theirs.contentKey, '不是带生成快照代码指纹的那一份');
+    assert.ok(theirs.streamMemberKey, 'the server\'s card plan carries streamMemberKey');
+    assert.equal(key, theirs.streamMemberKey ?? theirs.contentKey, `member key of ${control.clipId}`);
+    assert.notEqual(key, theirs.contentKey, 'not the copy that carries the code fingerprint for generating snapshots');
     assert.deepEqual(control.sampling, theirs.sampling);
     assert.equal(control.count, theirs.count);
     assert.equal(control.tier, theirs.tier);
@@ -155,7 +155,7 @@ test('PSP-03 成员键只有一处:与切分方用的成员键相同', async () 
   }
 });
 
-test('PSP-04 流任务与切分方给浏览器出的那一份相同;PSP-05 清单相同', async () => {
+test('PSP-04 stream tasks are identical to the copy the splitter produces for the browser; PSP-05 manifests are identical', async () => {
   const project = BASIC();
   // clip-b 拉长到第 38～185 帧(148 帧):从它自己的第一帧起分段是 0～9,超过 8 段,分两个任务;末段只有 13 帧
   project.tracks.find(t => t.id === 't-b').clips[0].end = 6.2;
@@ -165,16 +165,16 @@ test('PSP-04 流任务与切分方给浏览器出的那一份相同;PSP-05 清�
   const server = serverSide(project, value, clips);
   const page = await pageSide(project, value, clips);
   const mine = page.specs.flatMap(spec => pageStreamTasks(spec, { projectId: project.id, projectRev: 7, codeVersion: CODE_VERSION, derivedFrom: server.planTask.id }));
-  assert.ok(server.tasks.length >= 4, '服务端切出了流任务(clip-b 跨 8 段以上,分两个任务)');
+  assert.ok(server.tasks.length >= 4, 'the server split out stream tasks (clip-b spans more than 8 segments, split into two tasks)');
   assert.equal(mine.length, server.tasks.length);
   const bTasks = server.tasks.filter(t => t.input.clipId === 'clip-b');
-  assert.deepEqual(bTasks.map(t => [t.range.from, t.range.to, t.weight.frames]), [[0, 7, 120], [8, 9, 28]], '分段从 clip-b 自己的第一帧起数;帧数按实际算(末段不满)');
+  assert.deepEqual(bTasks.map(t => [t.range.from, t.range.to, t.weight.frames]), [[0, 7, 120], [8, 9, 28]], 'segments are counted from clip-b\'s own first frame; the frame count is the actual one (the last segment is not full)');
   assert.deepEqual([bTasks[0].input.stream.originFrame, bTasks[0].input.stream.lastFrame], [38, 185]);
-  assert.ok(server.tasks.every(t => t.requires.envFingerprint === BROWSER), '清单计划只给浏览器出');
+  assert.ok(server.tasks.every(t => t.requires.envFingerprint === BROWSER), 'manifest plans are produced for the browser only');
   const norm = v => JSON.parse(JSON.stringify(v));
   for (const want of server.tasks) {
     const got = mine.find(t => t.id === want.id);
-    assert.ok(got, `页面有任务 ${want.id}`);
+    assert.ok(got, `the page has task ${want.id}`);
     assert.deepEqual(norm(got), norm(want), want.id);
   }
   // 清单:同一份分段登记,两边的任务组出的清单逐字段相同
@@ -185,12 +185,12 @@ test('PSP-04 流任务与切分方给浏览器出的那一份相同;PSP-05 清�
     for (let n = want.range.from; n <= want.range.to; n++) segments[n] = { hash: (n % 10).toString().repeat(64), bytes: 1000 + n, init: 'aaaaaaaaaaaaaaaa', stride: 1, samples: 15, sig: null, encoder: 'webcodecs-avc' };
     const a = streamManifest(got, { inits, segments }), b = streamManifest(want, { inits, segments });
     assert.deepEqual(a, b);
-    assert.equal(a.header.originFrame, want.input.stream.originFrame, '清单的头带着这条流的第一帧');
+    assert.equal(a.header.originFrame, want.input.stream.originFrame, 'the manifest header carries the first frame of this stream');
     assert.equal(manifestMatches(a, { kind: 'stream', resultKey: want.resultKey, range: want.range }), true);
   }
 });
 
-test('PSP-06 层表的那一行与 layerStreamsOf 写出来的相同', async () => {
+test('PSP-06 the layer table row matches what layerStreamsOf writes', async () => {
   const project = BASIC();
   const value = valueOf(project);
   const clips = ['clip-a', 'clip-b', 'clip-c'];
@@ -202,11 +202,11 @@ test('PSP-06 层表的那一行与 layerStreamsOf 写出来的相同', async () 
   for (const want of rows) {
     const spec = page.specs.find(s => s.topClipId === want.topClipId);
     assert.deepEqual(pageStreamRow(project, spec), want, want.topClipId);
-    assert.ok(want.inputSig, '带输入签名');
+    assert.ok(want.inputSig, 'carries an input signature');
   }
 });
 
-test('PSP-07 超过解码器预算时合并的结果相同', async () => {
+test('PSP-07 merged results are identical when the decoder budget is exceeded', async () => {
   // 四张卡同时在画,预算给 2:相邻的并成组流
   const project = plain([
     { id: 't-1', clips: [clip('g-1', 'punch-pill', 0, 4)] },
@@ -220,14 +220,14 @@ test('PSP-07 超过解码器预算时合并的结果相同', async () => {
     const server = serverSide(project, value, clips, { budget });
     const page = await pageSide(project, value, clips, { budget });
     const singles = server.specs.filter(s => s.kind === 'card').map(s => s.topClipId).sort();
-    assert.deepEqual(page.specs.map(s => s.topClipId).sort(), singles, `预算 ${budget}`);
+    assert.deepEqual(page.specs.map(s => s.topClipId).sort(), singles, `budget ${budget}`);
     assert.deepEqual(page.specs.map(s => s.contentKey).sort(), server.specs.filter(s => s.kind === 'card').map(s => s.contentKey).sort());
-    for (const id of clips.filter(id => !singles.includes(id))) assert.equal(page.skipped[id], 'grouped', `${id} 并进了组流`);
-    assert.deepEqual(server.tasks.map(t => t.input.clipId).filter((id, i, a) => a.indexOf(id) === i).sort(), singles, '切分只给单卡流出浏览器那一份');
+    for (const id of clips.filter(id => !singles.includes(id))) assert.equal(page.skipped[id], 'grouped', `${id} was merged into a group stream`);
+    assert.deepEqual(server.tasks.map(t => t.input.clipId).filter((id, i, a) => a.indexOf(id) === i).sort(), singles, 'splitter issues the browser share only for single-card streams');
   }
 });
 
-test('PSP-07b 切分方单独成流的两类卡(三维外框的独立卡、源依赖卡)页面不产,但算进解码器预算:并进组流的卡两边仍然相同', async () => {
+test('PSP-07b the page does not produce the two kinds of cards the splitter gives their own stream (standalone cards with a 3D frame, source-dependent cards), but counts them in the decoder budget: cards merged into group streams still match on both sides', async () => {
   // 三张平面的独立卡同时在画,上面再压一张三维外框的独立卡、一张套在视频上的素材效果卡(接了输入,没审阅过)
   const project = projectOf([
     { id: 't-3d', clips: [clip('threed', 'punch-pill', 0, 4, { frame: { x: 0, y: 0, w: 200, h: 200, rotateY: 30 } })] },
@@ -245,17 +245,17 @@ test('PSP-07b 切分方单独成流的两类卡(三维外框的独立卡、源�
   for (const budget of [1, 2, 3, 4, 5, 6]) {
     const server = serverSide(project, value, clips, { budget });
     const page = await pageSide(project, value, clips, { budget });
-    assert.deepEqual(server.specs.filter(s => s.solo).map(s => `${s.topClipId}:${s.solo}`).sort(), ['fx:source', 'threed:spatial'], `预算 ${budget}:切分方给这两张各出一条单独的流`);
+    assert.deepEqual(server.specs.filter(s => s.solo).map(s => `${s.topClipId}:${s.solo}`).sort(), ['fx:source', 'threed:spatial'], `budget ${budget}: splitter issues a separate stream for each of these two cards`);
     const singles = server.specs.filter(s => s.kind === 'card' && !s.solo).map(s => s.topClipId).sort();
     if (singles.length < 3) merged++;
-    assert.deepEqual(page.specs.map(s => s.topClipId).sort(), singles, `预算 ${budget}:页面产的单卡流与切分方给浏览器的相同`);
-    for (const id of ['g-1', 'g-2', 'g-3'].filter(id => !singles.includes(id))) assert.equal(page.skipped[id], 'grouped', `预算 ${budget}:${id} 并进了组流`);
+    assert.deepEqual(page.specs.map(s => s.topClipId).sort(), singles, `budget ${budget}: single-card streams produced by the page match those the splitter gives the browser`);
+    for (const id of ['g-1', 'g-2', 'g-3'].filter(id => !singles.includes(id))) assert.equal(page.skipped[id], 'grouped', `budget ${budget}: ${id} was merged into a group stream`);
     assert.equal(page.skipped.threed, 'frame-3d');
     assert.equal(page.skipped.fx, 'not-independent');
-    assert.deepEqual(server.tasks.map(t => t.input.clipId).filter((id, i, a) => a.indexOf(id) === i).sort(), singles, `预算 ${budget}:浏览器那一份只有平面独立卡的单卡流`);
+    assert.deepEqual(server.tasks.map(t => t.input.clipId).filter((id, i, a) => a.indexOf(id) === i).sort(), singles, `budget ${budget}: the browser share has only the single-card streams of planar standalone cards`);
   }
   // 预算 4:五条流超了一条 —— 只按平面的三张算是不超的;算上那两条才知道要合并(这一条在页面不算它们的时候会红)
-  assert.ok(merged >= 3, '有几档预算是靠算上这两条才合并的');
+  assert.ok(merged >= 3, 'several budget tiers merge only because these two streams are counted');
 });
 
 /** 两边的单卡流集合(切分方给浏览器出的那一种:平面独立卡的单卡流)逐条比:片段与内容键都相同 */
@@ -264,8 +264,8 @@ async function assertParity(project, value, clips, opts = {}, label = '') {
   const page = await pageSide(project, value, clips, opts.budget === undefined ? {} : { budget: opts.budget });
   const want = server.specs.filter(s => s.kind === 'card' && !s.solo).map(s => `${s.topClipId}:${s.contentKey}`).sort();
   const got = page.specs.map(s => `${s.topClipId}:${s.contentKey}`).sort();
-  assert.deepEqual(got, want, `${label}:页面的单卡流与切分方的相同`);
-  for (const s of server.specs.filter(s => s.kind === 'group')) for (const id of s.clipIds) assert.equal(page.skipped[id], 'grouped', `${label}:${id} 两边都并进了组流`);
+  assert.deepEqual(got, want, `${label}: the page's single-card streams match the splitter's`);
+  for (const s of server.specs.filter(s => s.kind === 'group')) for (const id of s.clipIds) assert.equal(page.skipped[id], 'grouped', `${label}: ${id} was merged into a group stream on both sides`);
   return { server, page };
 }
 
@@ -275,40 +275,40 @@ const crowded = (extra = [], more = {}) => projectOf([
   ...[1, 2, 3, 4, 5, 6].map(n => ({ id: `t-${n}`, clips: [clip(`f-${n}`, n % 2 ? 'punch-pill' : 'focus-card', 0, 3)] })),
 ], { width: 3840, height: 2160, fps: 60, duration: 4, ...more });
 
-test('PSP-11 复现:依赖下层的流占预算,页面要算上(4K 60 帧,六张满屏独立卡 + 一张依赖下层的卡)', async () => {
+test('PSP-11 reproduction: streams that depend on the layer below take up budget, so the page has to count them (4K 60 fps, six full-screen standalone cards + one card that depends on the layer below)', async () => {
   // 七条流同屏:超过不看像素的 6 条,4K 满屏的像素远超预算 → 切分方要并;页面若不算依赖下层的那一条,只看到 6 条,一张都不并
   const project = crowded([{ id: 't-below', clips: [clip('below', 'terminal-3d', 0, 3)] }]);
   const value = valueOf(project);
   const clips = ['below', 'f-1', 'f-2', 'f-3', 'f-4', 'f-5', 'f-6'];
-  const { server, page } = await assertParity(project, value, clips, {}, '4K 七条');
-  assert.ok(server.specs.some(s => s.kind === 'below' && s.topClipId === 'below'), '切分方给依赖下层的卡出了一条流');
-  assert.ok(server.specs.some(s => s.kind === 'group'), '切分方并出了组流');
-  assert.ok(page.specs.length < 6, '页面也少出了并进组流的那几张');
+  const { server, page } = await assertParity(project, value, clips, {}, '4K seven streams');
+  assert.ok(server.specs.some(s => s.kind === 'below' && s.topClipId === 'below'), 'splitter issued a stream for the card that depends on the layer below');
+  assert.ok(server.specs.some(s => s.kind === 'group'), 'splitter produced a group stream by merging');
+  assert.ok(page.specs.length < 6, 'the page also produced fewer streams by leaving out the cards merged into group streams');
   assert.equal(page.skipped.below, 'not-independent');
 });
 
-test('PSP-12 对拍:一组有代表性的项目,页面的单卡流与切分方的逐条相同', async () => {
+test('PSP-12 parity check: for a set of representative projects, the page\'s single-card streams match the splitter\'s one by one', async () => {
   const fxNode = { id: 'n-fx', adapter: 'card', cardId: 'user-fx', kind: 'filter', params: {}, inputs: { source: { nodeId: '@clip/fx/source', offset: 0, rate: 1 } } };
   const versions = { 'punch-pill': 'builtin:a', 'focus-card': 'builtin:e', 'terminal-3d': 'builtin:d', 'user-fx': 'user:x' };
   const cases = [
     // 少于 6 条
-    ['1080p 三条', BASIC(), ['clip-a', 'clip-b', 'clip-c'], null],
+    ['1080p three streams', BASIC(), ['clip-a', 'clip-b', 'clip-c'], null],
     // 多于 6 条、1080p:七张满屏独立卡,第 7 条起看像素
-    ['1080p 七条', projectOf([1, 2, 3, 4, 5, 6, 7].map(n => ({ id: `t-${n}`, clips: [clip(`f-${n}`, 'punch-pill', 0, 3)] })), { fps: 60 }), null, null],
+    ['1080p seven streams', projectOf([1, 2, 3, 4, 5, 6, 7].map(n => ({ id: `t-${n}`, clips: [clip(`f-${n}`, 'punch-pill', 0, 3)] })), { fps: 60 }), null, null],
     // 高画幅、少于 6 条(不看像素,一张都不并)
-    ['4K 六条', crowded(), null, null],
+    ['4K six streams', crowded(), null, null],
     // 带依赖下层的卡(两张,一张外框带三维:同样出依赖下层的流)
-    ['4K 依赖下层两张', crowded([
+    ['4K two cards depending on the layer below', crowded([
       { id: 't-b1', clips: [clip('below', 'terminal-3d', 0, 3)] },
       { id: 't-b2', clips: [clip('below3d', 'terminal-3d', 1, 2, { frame: { x: 0, y: 0, w: 400, h: 300, rotateX: 20 } })] },
     ]), null, null],
     // 带三维外框的独立卡(单独成流)
-    ['4K 三维外框', crowded([{ id: 't-3d', clips: [clip('threed', 'punch-pill', 0, 3, { frame: { x: 0, y: 0, w: 800, h: 600, rotateY: 30 } })] }]), null, null],
+    ['4K 3D frame', crowded([{ id: 't-3d', clips: [clip('threed', 'punch-pill', 0, 3, { frame: { x: 0, y: 0, w: 800, h: 600, rotateY: 30 } })] }]), null, null],
     // 带源依赖卡(接了输入的素材效果卡,没审阅过)
-    ['4K 源依赖卡', crowded([{ id: 't-fx', clips: [clip('fx', 'user-fx', 0, 3, { nodeId: 'n-fx', mediaId: 'm1' })] }],
+    ['4K source-dependent card', crowded([{ id: 't-fx', clips: [clip('fx', 'user-fx', 0, 3, { nodeId: 'n-fx', mediaId: 'm1' })] }],
       { media: [{ id: 'm1', kind: 'video', hash: 'h1', url: '/@media/h1' }], cardNodes: [fxNode] }), null, versions],
     // 三样都有,1080p 小卡多条
-    ['1080p 混合', projectOf([
+    ['1080p mixed', projectOf([
       { id: 't-below', clips: [clip('below', 'terminal-3d', 0, 3)] },
       { id: 't-3d', clips: [clip('threed', 'punch-pill', 0, 3, { frame: { x: 0, y: 0, w: 200, h: 200, rotateY: 30 } })] },
       { id: 't-fx', clips: [clip('fx', 'user-fx', 0, 3, { nodeId: 'n-fx', mediaId: 'm1' })] },
@@ -320,14 +320,14 @@ test('PSP-12 对拍:一组有代表性的项目,页面的单卡流与切分方�
     const value = valueOf(project, sourceVersions);
     const clips = listed ?? project.tracks.flatMap(t => t.clips.map(c => c.id));
     for (const budget of [undefined, 3]) {
-      const { server } = await assertParity(project, value, clips, budget === undefined ? {} : { budget }, `${label} 预算 ${budget ?? '缺省'}`);
+      const { server } = await assertParity(project, value, clips, budget === undefined ? {} : { budget }, `${label} budget ${budget ?? 'default'}`);
       if (server.specs.some(s => s.kind === 'group')) grouped++;
     }
   }
-  assert.ok(grouped >= 4, `有几种项目两边都并了组流(${grouped})`);
+  assert.ok(grouped >= 4, `several kinds of project merge into group streams on both sides (${grouped})`);
 });
 
-test('PSP-08 不产的卡', async () => {
+test('PSP-08 cards that are not produced', async () => {
   const project = plain([
     { id: 't-ok', clips: [clip('ok', 'punch-pill', 0, 1)] },
     { id: 't-canvas', clips: [clip('canvas', 'particles', 0, 1)] },
@@ -347,10 +347,10 @@ test('PSP-08 不产的卡', async () => {
   // Lottie 素材卡 2026-10-14 起放开:两边都出,和普通独立卡一样
   assert.deepEqual(page.specs.map(s => s.topClipId).sort(), ['lottie', 'ok']);
   // 两边都不出的
-  for (const id of ['canvas', 'below', 'threed', 'hidden']) assert.equal(issued.includes(id), false, `切分方不给浏览器出 ${id}`);
+  for (const id of ['canvas', 'below', 'threed', 'hidden']) assert.equal(issued.includes(id), false, `splitter does not issue ${id} to the browser`);
   assert.equal(page.skipped.canvas, 'canvas');
   assert.equal(page.skipped.lottie, undefined);
-  assert.equal(issued.includes('lottie'), true, '切分方给浏览器出 lottie');
+  assert.equal(issued.includes('lottie'), true, 'splitter issues lottie to the browser');
   assert.equal(page.skipped.below, 'not-independent');
   assert.equal(page.skipped.threed, 'frame-3d');
   // 页面比切分方更紧的:不是内置卡片(用户卡在切分方那边要本页声明能运行才出,这里没声明,所以也没出)
@@ -364,10 +364,10 @@ test('PSP-08 不产的卡', async () => {
   // 挂了强调的片段:输出节点是外面那一层
   assert.equal(page.skipped.emph, 'wrapped-node');
   // 记下切分方对这种片段的做法(它的成员键只由外面那一层决定,见报告「发现的问题」):切分方出了,页面不出
-  assert.equal(issued.includes('emph'), true, '切分方给挂了强调的片段出了浏览器那一份');
+  assert.equal(issued.includes('emph'), true, 'splitter issued the browser share for the clip with emphasis attached');
 });
 
-test('PSP-09 没有指纹、没有代码指纹:一条都不算', async () => {
+test('PSP-09 no fingerprint and no code fingerprint: none counts', async () => {
   const project = BASIC();
   const value = valueOf(project);
   assert.deepEqual((await planPageStreams({ project, value, clips: ['clip-a'], codes: CODES, envFingerprint: null })).specs, []);
@@ -385,7 +385,7 @@ test('PSP-09 没有指纹、没有代码指纹:一条都不算', async () => {
   assert.notEqual(c.contentKey, a.contentKey);
 });
 
-test('PSP-10 并进现有的层表', async () => {
+test('PSP-10 merge into the existing layer table', async () => {
   const project = BASIC();
   const value = valueOf(project);
   const page = await pageSide(project, value, ['clip-a', 'clip-b']);
@@ -412,35 +412,35 @@ test('PSP-10 并进现有的层表', async () => {
   assert.deepEqual(merged.layers, existing.layers);
   assert.equal(merged.entryKey, 'e');
   assert.deepEqual(merged.streams.map(r => [r.topClipId, r.contentKey === 'z' ? 'z' : r.contentKey === rowA.contentKey ? 'A' : r.contentKey === rowB.contentKey ? 'B' : r.contentKey]),
-    [['clip-z', 'z'], ['clip-a', 'A'], ['clip-b', 'B'], ['clip-b', 'their-content']], '别的卡的行原位;本页的行在这张卡的第一行的位置;过期的去掉,没过期的留在后面');
+    [['clip-z', 'z'], ['clip-a', 'A'], ['clip-b', 'B'], ['clip-b', 'their-content']], 'rows of other cards stay in place; this page\'s rows take the position of this card\'s first row; expired rows are dropped, unexpired rows stay after them');
   assert.deepEqual(merged.streams[0], other);
   assert.deepEqual(merged.streams[1].candidates.map(c => c.envFingerprint), [BROWSER, OWN]);
   assert.deepEqual(merged.streams[3], foreign);
-  assert.equal(mergeLayerStreams(merged, { project, rows, now: 10 }), null, '并过的再并:没有变化');
+  assert.equal(mergeLayerStreams(merged, { project, rows, now: 10 }), null, 'merging again what was already merged: no change');
   // 「先查」认的候选:同内容键的;别的内容键、输入签名没过期的(连同那一行的分段范围);过期的不认
   assert.deepEqual(layerStreamCandidates(existing, rowA).map(c => c.envFingerprint), [OWN]);
   assert.deepEqual(layerStreamCandidates(existing, rowB).map(c => c.resultKey), ['their-key']);
-  assert.deepEqual(layerStreamCandidates({ ...existing, streams: [{ ...foreign, inputSig: undefined }] }, rowB).map(c => c.resultKey), ['their-key'], '那一行没带输入签名:照播,也认');
+  assert.deepEqual(layerStreamCandidates({ ...existing, streams: [{ ...foreign, inputSig: undefined }] }, rowB).map(c => c.resultKey), ['their-key'], 'a row without an input signature: still plays and is still accepted');
   assert.deepEqual(layerStreamCandidates(existing, { ...rowB, topClipId: 'clip-q' }), []);
-  assert.deepEqual(layerStreamCandidates({ ...existing, streams: [{ ...foreign, kind: 'group' }] }, rowB), [], '组流不算');
+  assert.deepEqual(layerStreamCandidates({ ...existing, streams: [{ ...foreign, kind: 'group' }] }, rowB), [], 'group streams do not count');
   // 没带这条流第一帧的行(改分段规则之前的节点写的,分段按项目帧号数):在线来源不播它,这里也不当现成的
   const { originFrame: _origin, ...oldForeign } = foreign;
   assert.equal(Number.isInteger(foreign.originFrame), true);
-  assert.deepEqual(layerStreamCandidates({ ...existing, streams: [{ ...oldForeign, firstSegment: 2 }] }, rowB), [], '旧形状的行不算');
-  assert.deepEqual(layerStreamCandidates({ ...existing, streams: [foreign] }, rowB).map(c => [c.firstSegment, c.lastSegment]), [[0, foreign.lastSegment]], '分段号从 0 起');
+  assert.deepEqual(layerStreamCandidates({ ...existing, streams: [{ ...oldForeign, firstSegment: 2 }] }, rowB), [], 'rows in the old shape do not count');
+  assert.deepEqual(layerStreamCandidates({ ...existing, streams: [foreign] }, rowB).map(c => [c.firstSegment, c.lastSegment]), [[0, foreign.lastSegment]], 'segment numbers start at 0');
   // 候选的清单按它那一行的范围分份:盖住本页这一段的是哪几份
   const cand = { envFingerprint: OWN, resultKey: 'k', firstSegment: 2, lastSegment: 20, segmentsPerTask: 8 };
   assert.deepEqual(candidateSpans(cand, 2, 9), [[2, 9]]);
   assert.deepEqual(candidateSpans(cand, 9, 11), [[2, 9], [10, 17]]);
   assert.deepEqual(candidateSpans(cand, 18, 20), [[18, 20]]);
-  assert.equal(candidateSpans(cand, 0, 9), null, '候选的范围没把这一段盖全');
+  assert.equal(candidateSpans(cand, 0, 9), null, 'the candidate\'s range does not fully cover this segment');
   assert.equal(candidateSpans(cand, 18, 21), null);
   // 别的项目的表、不认识的版本:当没有,重写
   assert.deepEqual(mergeLayerStreams({ ...existing, projectId: 'someone-else' }, { project, rows, now: 9 }).layers, []);
   assert.deepEqual(mergeLayerStreams({ ...existing, v: 9 }, { project, rows, now: 9 }).layers, []);
 });
 
-test('PSP-sparse 稀疏流任务:页面按 density 组出来的任务与切分方给浏览器出的稀疏流任务逐字段相同;满密度的那一组不变', async () => {
+test('PSP-sparse sparse stream tasks: the tasks the page builds by density are field-for-field identical to the sparse stream tasks the splitter hands the browser; the full-density group is unchanged', async () => {
   const project = BASIC();
   const value = valueOf(project);
   const clips = ['clip-a', 'clip-b', 'clip-c'];
@@ -452,18 +452,18 @@ test('PSP-sparse 稀疏流任务:页面按 density 组出来的任务与切分�
   const dense = page.specs.flatMap(spec => pageStreamTasks(spec, opts));
   const wantSparse = server.tasks.filter(t => t.input.density === 'sparse');
   const wantDense = server.tasks.filter(t => t.input.density === undefined);
-  assert.equal(PAGE_SPARSE_STREAM_PRIORITY, SPARSE_STREAM_PRIORITY, '稀疏流任务的名次与切分方同一个数');
-  assert.ok(wantSparse.length >= 3 && wantSparse.length === wantDense.length, '每个满密度任务都有一个同范围的稀疏流任务');
+  assert.equal(PAGE_SPARSE_STREAM_PRIORITY, SPARSE_STREAM_PRIORITY, 'The sparse stream task priority is the same number as the splitter\'s');
+  assert.ok(wantSparse.length >= 3 && wantSparse.length === wantDense.length, 'Every full-density task has a sparse stream task with the same range');
   assert.equal(sparse.length, wantSparse.length);
   const norm = v => JSON.parse(JSON.stringify(v));
   for (const want of wantSparse) {
     const got = sparse.find(t => t.id === want.id);
-    assert.ok(got, `页面有任务 ${want.id}`);
+    assert.ok(got, `the page has task ${want.id}`);
     assert.ok(want.id.endsWith(':sparse'));
     assert.deepEqual(norm(got), norm(want), want.id);
     // 同范围的满密度任务:结果键、范围相同(内容库里的清单键相同),id 只差结尾
     const twin = wantDense.find(t => `${t.id}:sparse` === want.id);
-    assert.ok(twin, '有同范围的满密度任务');
+    assert.ok(twin, 'Has a full-density task with the same range');
     assert.equal(twin.resultKey, want.resultKey);
     assert.deepEqual(twin.range, want.range);
     assert.ok(want.priority > twin.priority);

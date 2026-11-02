@@ -18,7 +18,7 @@ const { setSelectionLink, selectionPresenceStatus } = await import(srcUrl("edito
 const { setPresenceLink, resyncPresenceLink } = await import(srcUrl("editor/sync/presence.ts"));
 const { createEmptyProject } = await import(srcUrl("kernel/project.ts"));
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
-const wait = async (predicate, what) => { for (let i = 0; i < 600; i++) { if (predicate()) return; await pause(5); } assert.fail(`没等到:${what}`); };
+const wait = async (predicate, what) => { for (let i = 0; i < 600; i++) { if (predicate()) return; await pause(5); } assert.fail(`Timed out waiting for: ${what}`); };
 
 /** 一套受控的连接:每个 socket 自己回 project.state、selection.ok、presence.state;`hold` 里的类型先不回 */
 function rig({ hold = [] } = {}) {
@@ -57,20 +57,20 @@ function rig({ hold = [] } = {}) {
   });
   const start = async () => {
     c.start();
-    await wait(() => sockets.length === 1, "第一条连接");
+    await wait(() => sockets.length === 1, "the first connection");
     sockets[0].welcome("a".repeat(43));
-    await wait(() => c.ds.status === "online", "进项目");
+    await wait(() => c.ds.status === "online", "entering the project");
   };
   const renew = async (sid = "b".repeat(43)) => {
     const n = sockets.length;
     const done = c.renew();
-    await wait(() => sockets.length === n + 1, "新连接");
+    await wait(() => sockets.length === n + 1, "the new connection");
     return { done, next: sockets[n], welcome: () => sockets[n].welcome(sid) };
   };
   return { c, sockets, closes, start, renew, initial, setReopen: (fn) => { onReopen = fn; }, opens: () => opens };
 }
 
-test("LR-01 新会话建成后、等旧会话上的提交落定时被服务端关掉:不切过去,旧会话照常用", async (t) => {
+test("LR-01 the new session was established, then the server closed it while waiting for commits on the old session to settle: do not switch over, the old session stays in use as usual", async (t) => {
   const r = rig({ hold: [] });
   t.after(() => r.c.stop());
   await r.start();
@@ -88,21 +88,21 @@ test("LR-01 新会话建成后、等旧会话上的提交落定时被服务端�
   next.serverClose(4003, "access-revoked");
   await pause(30);
   old.push({ type: "project.op.ok", projectId: "room", opId: op.opId, rev: 2 });
-  assert.equal(await done, false, "按没换成处理");
+  assert.equal(await done, false, "treated as not replaced");
   await pause(50);
   assert.equal(r.c.connected, true);
-  assert.equal(r.c.ds.status, "online", "没有切到已经关掉的会话上(那样 DocSync 会一直等状态)");
+  assert.equal(r.c.ds.status, "online", "did not switch to the already-closed session (DocSync would then wait for a status forever)");
   assert.equal(r.c.ds.unconfirmed, 0);
-  assert.equal(old.closedByUs, false, "旧会话还在用");
-  assert.deepEqual(r.closes, [], "页面没有断线");
+  assert.equal(old.closedByUs, false, "the old session is still in use");
+  assert.deepEqual(r.closes, [], "the page did not disconnect");
   // 之后再换照常
   const again = await r.renew("c".repeat(43));
   again.welcome();
   assert.equal(await again.done, true);
-  await wait(() => r.c.ds.status === "online", "换成之后回到在线");
+  await wait(() => r.c.ds.status === "online", "back online after the replacement");
 });
 
-test("LR-02 换完之后在新连接上重新发布选区(同一个页面号)、重新取在场;旧会话没有在等的请求就当场关", async (t) => {
+test("LR-02 after the replacement, republish the selection on the new connection (same page id) and fetch presence again; if the old session has no pending requests, close it on the spot", async (t) => {
   const r = rig();
   t.after(() => { setPresenceLink(null, null, ""); r.c.stop(); });
   await r.start();
@@ -110,43 +110,43 @@ test("LR-02 换完之后在新连接上重新发布选区(同一个页面号)、
   setPresenceLink(r.c, "room", "account:acc@dev", true);
   const sel = ["clip-1"];
   setSelectionLink(r.c, "room", { readSelection: () => sel, subscribe: () => () => {} });
-  await wait(() => r.sockets[0].sent.some((m) => m.type === "selection.set" && m.selection.clipIds[0] === "clip-1"), "旧连接上发布了选区");
+  await wait(() => r.sockets[0].sent.some((m) => m.type === "selection.set" && m.selection.clipIds[0] === "clip-1"), "the selection was published on the old connection");
   const first = r.sockets[0].sent.filter((m) => m.type === "selection.set").at(-1);
   await pause(30);
   const { done, next, welcome } = await r.renew();
   welcome();
   assert.equal(await done, true);
-  assert.equal(r.sockets[0].closedByUs, true, "旧会话当场关(不留两条连接各记一份同一个页面的选区)");
-  await wait(() => next.sent.some((m) => m.type === "selection.set"), "新连接上重新发布了选区");
+  assert.equal(r.sockets[0].closedByUs, true, "the old session is closed on the spot (so two connections don't each keep a copy of the same page's selection)");
+  await wait(() => next.sent.some((m) => m.type === "selection.set"), "the selection was republished on the new connection");
   const again = next.sent.find((m) => m.type === "selection.set");
-  assert.equal(again.pageId, first.pageId, "还是同一个页面号");
+  assert.equal(again.pageId, first.pageId, "still the same page id");
   assert.deepEqual(again.selection, { clipIds: ["clip-1"] });
-  assert.ok(again.revision > first.revision, "版本号往上走");
+  assert.ok(again.revision > first.revision, "the revision number goes up");
   assert.equal(selectionPresenceStatus().pageId, first.pageId);
-  assert.ok(next.sent.some((m) => m.type === "presence.list"), "重新取了一次在场状态");
+  assert.ok(next.sent.some((m) => m.type === "presence.list"), "presence was fetched again");
   assert.equal(r.opens(), 2);
 });
 
-test("LR-03 旧会话上有在等回包的请求:留着收完再关,回包照常交给等它的人", async (t) => {
+test("LR-03 the old session has requests waiting for a response: keep it until they are all received, then close it; responses go to whoever is waiting as usual", async (t) => {
   const r = rig({ hold: ["cost.list"] });
   t.after(() => r.c.stop());
   await r.start();
   const old = r.sockets[0];
   const pending = r.c.request({ type: "cost.list", projectId: "room" }, 5000);
-  await wait(() => old.sent.some((m) => m.type === "cost.list"), "请求发出去了");
+  await wait(() => old.sent.some((m) => m.type === "cost.list"), "the request was sent");
   const { done, next, welcome } = await r.renew();
   welcome();
   assert.equal(await done, true);
-  assert.equal(old.closedByUs, false, "还有回包没收完:旧会话先留着");
+  assert.equal(old.closedByUs, false, "responses are still outstanding: keep the old session for now");
   old.push({ type: "cost.listing", reqId: old.sent.find((m) => m.type === "cost.list").reqId, records: [] });
   assert.equal((await pending).type, "cost.listing");
-  await wait(() => old.closedByUs, "回包收完,旧会话关掉");
+  await wait(() => old.closedByUs, "all responses received, the old session is closed");
   // 换完之后的请求走新会话
   next.send = ((orig) => (text) => { const m = JSON.parse(text); orig(text); if (m.type === "cost.list") next.push({ type: "cost.listing", reqId: m.reqId, records: [1] }); })(next.send.bind(next));
   assert.deepEqual((await r.c.request({ type: "cost.list", projectId: "room" }, 2000)).records, [1]);
 });
 
-test("LR-04 报到过的发布方,换完在新连接上原样再报一次", async (t) => {
+test("LR-04 a publisher that has already checked in checks in again unchanged on the new connection after the replacement", async (t) => {
   const r = rig();
   t.after(() => r.c.stop());
   await r.start();
@@ -157,7 +157,7 @@ test("LR-04 报到过的发布方,换完在新连接上原样再报一次", asyn
   const hello = next.sent.filter((m) => m.type === "publisher.hello");
   assert.equal(hello.length, 1);
   assert.equal(hello[0].publisherId, "page-abc");
-  assert.equal(hello[0].reqId, undefined, "不带原来那次请求的号");
+  assert.equal(hello[0].reqId, undefined, "does not carry the id of the original request");
   // 没报到过的连接不多发
   const plain = rig();
   t.after(() => plain.c.stop());
@@ -168,16 +168,16 @@ test("LR-04 报到过的发布方,换完在新连接上原样再报一次", asyn
   assert.equal(second.next.sent.some((m) => m.type === "publisher.hello"), false);
 });
 
-test("LR-05 传输已经脱开(正在接续)时不换:脱开期间的改动要按离线的规矩核对", async (t) => {
+test("LR-05 do not replace when the transport has already detached (resuming): changes made during the detached period must be checked against the offline rules", async (t) => {
   const r = rig();
   t.after(() => r.c.stop());
   await r.start();
   r.sockets[0].drop();
   await pause(1);
-  assert.equal(r.c.connected, true, "会话还在(保留期内接续)");
+  assert.equal(r.c.connected, true, "the session is still there (resumed within the retention period)");
   const before = r.sockets.length;
   assert.equal(await r.c.renew(), false);
   // 只有接续用的那条新传输,没有为换会话另建的
   await pause(20);
-  assert.ok(r.sockets.slice(before).every((s) => s.protocols.some((p) => p.startsWith("promptcut.session.") && p !== "promptcut.session.new")), "没有新建会话");
+  assert.ok(r.sockets.slice(before).every((s) => s.protocols.some((p) => p.startsWith("promptcut.session.") && p !== "promptcut.session.new")), "no new session was created");
 });

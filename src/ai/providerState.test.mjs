@@ -24,7 +24,7 @@ test('shared tabs update immediately, stale HTTP cannot revive invalidity, bound
     try {
       await mod.refreshProviders();await tick();assert.equal(left.at(-1)[0].auth.loggedIn,true);
       delayNext=true;const stale=mod.refreshProviders();await tick();state='invalid';revision='revoked';
-      mod.reportAuthFailure({type:'error',message:'请重新登录',authProvider:'codex',authReason:'token_revoked',authGeneration:revision});
+      mod.reportAuthFailure({type:'error',message:'Please sign in again',authProvider:'codex',authReason:'token_revoked',authGeneration:revision});
       assert.equal(left.at(-1)[0].auth.status,'invalid');assert.equal(right.at(-1)[0].auth.status,'invalid');
       await tick();staleResolve();await stale;assert.equal(left.at(-1)[0].auth.status,'invalid');
       state='normal';revision='new-login';await timers.shift()();await tick();

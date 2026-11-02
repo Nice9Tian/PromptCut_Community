@@ -95,7 +95,7 @@ export async function freePorts(n, host = '0.0.0.0') {
   const good = [];
   try {
     for (let tries = 0; good.length < n; tries++) {
-      if (tries >= n + 50) throw new Error(`freePorts：试了 ${tries} 次仍凑不够 ${n} 个可用端口（${servers.map((s) => s.address()?.port).join(', ')}）`);
+      if (tries >= n + 50) throw new Error(`freePorts: tried ${tries} times and still could not gather ${n} free ports (${servers.map((s) => s.address()?.port).join(', ')})`);
       const srv = net.createServer();
       servers.push(srv);
       await new Promise((resolve, reject) => { srv.once('error', reject); srv.listen(0, host, resolve); });
@@ -235,7 +235,7 @@ export async function getSnapshot(c, projectId, projectRev) {
     } else if (m.type === 'project.snapshot.end') {
       return text;
     } else {
-      throw new Error(`取快照：${JSON.stringify(m)}`);
+      throw new Error(`Get snapshot: ${JSON.stringify(m)}`);
     }
   }
 }
@@ -267,10 +267,10 @@ async function importOrExplain(rel, names) {
   try {
     mod = await import(rel);
   } catch (err) {
-    throw new Error(`加载 ${rel} 失败（SP 实现还没合入？）：${err?.message ?? err}`);
+    throw new Error(`Failed to load ${rel} (has the SP implementation not been merged yet?): ${err?.message ?? err}`);
   }
   for (const n of names) {
-    assert.ok(n in mod, `${rel} 要导出 ${n}；实际导出：${Object.keys(mod).join(', ')}`);
+    assert.ok(n in mod, `${rel} must export ${n}; actual exports: ${Object.keys(mod).join(', ')}`);
   }
   return mod;
 }
@@ -314,7 +314,7 @@ export async function loadLan() {
     selectInterfaces: (nics) => m.selectInterfaces(nics),
     createLanTable: ({ now } = {}) => m.createLanTable({ now }),
     createLanHost: ({ port, interfaces, projects, deviceName, docservicePort, assetPort }) => {
-      if (assetPort !== undefined && assetPort !== docservicePort) throw new Error('实现里文档服务与素材服务同端口（servicePort）');
+      if (assetPort !== undefined && assetPort !== docservicePort) throw new Error('In the implementation the document service and the asset service share one port (servicePort)');
       const list = [...interfaces];
       return m.createLanHost({ projects, hostDeviceName: deviceName, servicePort: docservicePort, port, interfaces: () => list });
     },

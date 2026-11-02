@@ -29,7 +29,7 @@ test('mu-typing uses shared grapheme times for direct seek, crop and optional pa
   } finally {await vite.close();}
 });
 
-test('mu-typing 收到挂载钟就按它取字(平铺时间轴导出),算法与旧的挂载即播相同、不加边界容差',async()=>{
+test('mu-typing takes characters by the mount clock once it receives one (flattened timeline export); the algorithm is the same as the old play-on-mount one, with no boundary tolerance added',async()=>{
   const vite=await createServer({root,configFile:false,logLevel:'error',server:{middlewareMode:true,hmr:false,ws:false,watch:null},appType:'custom',optimizeDeps:{noDiscovery:true,include:[]}});
   try {
     const {typingAnimationCard:card}=await vite.ssrLoadModule('/src/cards/magicui/typing-animation.card.tsx');

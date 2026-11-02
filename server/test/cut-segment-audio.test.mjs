@@ -17,7 +17,7 @@ const project = {
   activeCutId: 'A',
 };
 
-test('剪辑段里的声音:平移到段上,包络变成 afade', () => {
+test('Audio inside a cut segment: shifted onto the segment, with the envelope becoming afade', () => {
   const plan = buildAudioPlan(project, 'out', () => true, () => 'm.wav');
   assert.equal(plan.length, 1);
   const p = plan[0];
@@ -25,11 +25,11 @@ test('剪辑段里的声音:平移到段上,包络变成 afade', () => {
   assert.deepEqual([p.start, p.dur, p.offset], [10, 4, 1]);
   const args = buildFfmpegArgs('v.mp4', plan, 'out.mp4', 20);
   const graph = args[args.indexOf('-filter_complex') + 1];
-  assert.match(graph, /afade=t=in:st=10\.000:d=2/, '段的淡入');
-  assert.match(graph, /afade=t=out:st=13\.000:d=1/, '子片段自己按原起止的淡出');
+  assert.match(graph, /afade=t=in:st=10\.000:d=2/, 'Fade-in of the segment');
+  assert.match(graph, /afade=t=out:st=13\.000:d=1/, 'Fade-out of the sub-clip itself at its original start and end');
 });
 
-test('被引用剪辑静音那一段:不出声', () => {
+test('The part where the referenced cut is muted: produces no sound', () => {
   const muted = structuredClone(project);
   muted.tracks[0].clips[0].audioMuted = true;
   assert.equal(buildAudioPlan(muted, 'out', () => true, () => 'm.wav').length, 0);

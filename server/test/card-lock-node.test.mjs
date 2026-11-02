@@ -48,7 +48,7 @@ const GPU = {
   swiftshader: { renderer: 'ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)', vendor: 'Google Inc. (Google)' },
 };
 
-test('N1 normalizeOs：页面上报的 navigator.platform / userAgentData.platform 按前缀归类（小写后比）', () => {
+test('N1 normalizeOs: navigator.platform / userAgentData.platform reported by the page are classified by prefix (compared after lowercasing)', () => {
   // navigator.platform
   assert.equal(normalizeOs('Win32'), 'windows');
   assert.equal(normalizeOs('Win64'), 'windows');
@@ -64,7 +64,7 @@ test('N1 normalizeOs：页面上报的 navigator.platform / userAgentData.platfo
   assert.equal(normalizeOs('MACINTEL'), 'macos');
 });
 
-test('N1 normalizeOs：旧映射不变，其余输入照旧 other', () => {
+test('N1 normalizeOs: the old mapping is unchanged, the remaining inputs are still classified as other', () => {
   assert.equal(normalizeOs('win32'), 'windows');
   assert.equal(normalizeOs('windows'), 'windows');
   assert.equal(normalizeOs('darwin'), 'macos');
@@ -75,12 +75,12 @@ test('N1 normalizeOs：旧映射不变，其余输入照旧 other', () => {
   }
 });
 
-test('N1 用真实页面串算指纹：navigator.platform + WebGL 串 + 完整 UA', () => {
+test('N1 compute the fingerprint from real page strings: navigator.platform + WebGL string + full UA', () => {
   const win = describeEnvironment({ platform: 'Win32', ...GPU.nvidia, chromeVersion: UA.win });
   assert.deepEqual(win, { os: 'windows', gpuClass: 'nvidia', chromeMajor: 138, fingerprint: fpOf('windows', 'nvidia', 138) });
   const mac = describeEnvironment({ platform: 'MacIntel', ...GPU.apple, chromeVersion: UA.mac });
   assert.deepEqual(mac, { os: 'macos', gpuClass: 'apple', chromeMajor: 139, fingerprint: fpOf('macos', 'apple', 139) },
-    'Mac UA 里的「Mac OS X 10_15_7」不能被当成版本号');
+    '"Mac OS X 10_15_7" in a Mac UA must not be treated as a version number');
   const linux = describeEnvironment({ platform: 'Linux x86_64', ...GPU.intel, chromeVersion: UA.linux });
   assert.deepEqual(linux, { os: 'linux', gpuClass: 'intel', chromeMajor: 140, fingerprint: fpOf('linux', 'intel', 140) });
   // userAgentData.platform 与 navigator.platform 得到同一个指纹
@@ -159,24 +159,24 @@ function rekeyed(task, fp) {
   return { ...task, resultKey, id: `${task.kind}:${resultKey}:${task.range.from}-${task.range.to}`, requires: { ...task.requires, envFingerprint: fp } };
 }
 
-test('N2 splitPlan 不给 cardLocks（缺省 {}）或给空表：与 E.5 完全相同；锁键就是 `${kind}:${input.contentKey}`', () => {
+test('N2 splitPlan without cardLocks (default {}) or with an empty table: exactly the same as E.5; the lock key is `${kind}:${input.contentKey}`', () => {
   const plain = splitPlan(baseArgs());
   assert.deepEqual(splitPlan(baseArgs({ cardLocks: {} })), plain);
   assert.deepEqual(splitPlan(baseArgs({ cardLocks: new Map() })), plain);
   assert.deepEqual(splitPlan(baseArgs({ cardLocks: {}, takeover: false })), plain);
   const groups = byLock(plain);
-  assert.deepEqual(sorted(groups.keys()), sorted(Object.values(LK)), '每张卡、每条流一个锁键；本地档带 entryKey/');
+  assert.deepEqual(sorted(groups.keys()), sorted(Object.values(LK)), 'one lock key per card and per stream; the local tier carries entryKey/');
   for (const t of plain) {
     assert.equal(t.requires.envFingerprint, FP);
     assert.equal(t.resultKey, rkOf(t.input.contentKey, FP));
-    assert.equal('takeover' in t, false, '不锁不接手时没有 takeover 字段');
+    assert.equal('takeover' in t, false, 'no takeover field when there is no lock and no takeover');
   }
-  assert.equal(groups.get(LK.a)[0].resultKey, A.snapshotKey, 'E.5：共享档 resultKey === control.snapshotKey');
-  assert.equal(groups.get(LK.stream)[0].resultKey, STREAM.streamKey, 'E.5：流 resultKey === streamKey');
+  assert.equal(groups.get(LK.a)[0].resultKey, A.snapshotKey, 'E.5: shared tier resultKey === control.snapshotKey');
+  assert.equal(groups.get(LK.stream)[0].resultKey, STREAM.streamKey, 'E.5: stream resultKey === streamKey');
 });
 
-for (const [shape, wrap] of [['普通对象', o => o], ['Map', o => new Map(Object.entries(o))]]) {
-  test(`N2 splitPlan 带 cardLocks（${shape}）：被别的指纹锁定的卡按锁指纹出键与 requires；同指纹、没锁的照旧；本地档的锁键带 entryKey/`, () => {
+for (const [shape, wrap] of [['plain object', o => o], ['Map', o => new Map(Object.entries(o))]]) {
+  test(`N2 splitPlan with cardLocks (${shape}): a card locked by another fingerprint has its key and requires derived from the lock fingerprint; cards with the same fingerprint or without a lock stay as before; the lock key of the local tier carries entryKey/`, () => {
     const plain = splitPlan(baseArgs());
     const locks = {
       [LK.a]: X,                       // 被别的环境锁定
@@ -190,18 +190,18 @@ for (const [shape, wrap] of [['普通对象', o => o], ['Map', o => new Map(Obje
       [`snapshot:${C.snapshotKey}`]: Y,
     };
     const out = splitPlan(baseArgs({ cardLocks: wrap(locks) }));
-    assert.equal(out.length, plain.length, '任务个数不变');
+    assert.equal(out.length, plain.length, 'the number of tasks is unchanged');
     const lockedKeys = new Set([LK.a, LK.d, LK.stream, LK.old]);
     for (let i = 0; i < plain.length; i++) {
       const p = plain[i], t = out[i];
       const lk = `${p.kind}:${p.input.contentKey}`;
       if (lockedKeys.has(lk)) {
-        assert.deepEqual(t, rekeyed(p, X), `${lk}：按锁指纹出键，requires.envFingerprint = X，其余字段不变`);
+        assert.deepEqual(t, rekeyed(p, X), `${lk}: key derived from the lock fingerprint, requires.envFingerprint = X, other fields unchanged`);
         assert.equal(t.resultKey, rkOf(p.input.contentKey, X));
-        assert.equal(t.input.contentKey, p.input.contentKey, 'input.contentKey 不变');
+        assert.equal(t.input.contentKey, p.input.contentKey, 'input.contentKey is unchanged');
         assert.equal('takeover' in t, false);
       } else {
-        assert.deepEqual(t, p, `${lk}：没被别的指纹锁定，照 E.5`);
+        assert.deepEqual(t, p, `${lk}: not locked by another fingerprint, follows E.5`);
       }
     }
     // 输出顺序照 B.4：先快照（cardPlan 顺序、段升序）后流
@@ -209,24 +209,24 @@ for (const [shape, wrap] of [['普通对象', o => o], ['Map', o => new Map(Obje
   });
 }
 
-test('N2 补充：锁定方的剩余帧只给同指纹节点（requires.envFingerprint = X 让规则 1 生效），任务 id 与锁定方自己切出来的相同', () => {
+test('N2 addendum: the remaining frames of the lock owner go only to nodes with the same fingerprint (requires.envFingerprint = X makes rule 1 apply), and the task ids are the same as those the lock owner splits out itself', () => {
   const lockedByX = splitPlan(baseArgs({ cardLocks: { [LK.a]: X } })).filter(t => t.input.clipId === 'a');
   // 锁定方（指纹 X）自己切同一张卡
   const byXItself = splitPlan(baseArgs({ envFingerprint: X, cardPlan: [A], streams: [] }));
-  assert.deepEqual(lockedByX.map(t => t.id), byXItself.map(t => t.id), '两边切出的任务 id 相同，队列里合并成同一批任务');
+  assert.deepEqual(lockedByX.map(t => t.id), byXItself.map(t => t.id), 'both sides split out the same task ids, so they merge into the same set of tasks in the queue');
   assert.deepEqual(lockedByX.map(t => t.requires.envFingerprint), byXItself.map(() => X));
 });
 
 /* ================================================================== N3 */
 
 const TAKEOVER_FORMS = [
-  ['布尔 true（全部接手）', () => true, [LK.a, LK.d, LK.stream]],
-  ['Set（只接手 a 和流）', () => new Set([LK.a, LK.stream]), [LK.a, LK.stream]],
-  ['函数（只接手本地档 d）', calls => lk => { calls.push(lk); return lk === LK.d; }, [LK.d]],
+  ['boolean true (take over all)', () => true, [LK.a, LK.d, LK.stream]],
+  ['Set (take over only a and the stream)', () => new Set([LK.a, LK.stream]), [LK.a, LK.stream]],
+  ['function (take over only local tier d)', calls => lk => { calls.push(lk); return lk === LK.d; }, [LK.d]],
 ];
 
 for (const [label, make, taken] of TAKEOVER_FORMS) {
-  test(`N3 splitPlan 带 takeover（${label}）：命中的被锁卡按本节点指纹出键、每个任务带 takeover: true；没命中的照 N2`, () => {
+  test(`N3 splitPlan with takeover (${label}): matched locked cards have their keys derived from the fingerprint of this node and every task carries takeover: true; unmatched ones follow N2`, () => {
     const plain = splitPlan(baseArgs());
     const locks = { [LK.a]: X, [LK.b]: FP, [LK.d]: X, [LK.stream]: X };
     const calls = [];
@@ -237,24 +237,24 @@ for (const [label, make, taken] of TAKEOVER_FORMS) {
       const p = plain[i], t = out[i];
       const lk = `${p.kind}:${p.input.contentKey}`;
       if (takenSet.has(lk)) {
-        assert.deepEqual(t, { ...p, takeover: true }, `${lk}：接手，按本节点指纹出键、带 takeover: true`);
+        assert.deepEqual(t, { ...p, takeover: true }, `${lk}: taken over, key derived from the fingerprint of this node, with takeover: true`);
         assert.equal(t.takeover, true);
         assert.equal(t.requires.envFingerprint, FP);
       } else if (locks[lk] && locks[lk] !== FP) {
-        assert.deepEqual(t, rekeyed(p, X), `${lk}：被锁但不接手，照 N2`);
+        assert.deepEqual(t, rekeyed(p, X), `${lk}: locked but not taken over, follows N2`);
       } else {
-        assert.deepEqual(t, p, `${lk}：没锁或锁在自己指纹上，照 E.5、不带 takeover`);
+        assert.deepEqual(t, p, `${lk}: not locked, or locked on its own fingerprint, follows E.5 and carries no takeover`);
         assert.equal('takeover' in t, false);
       }
     }
     if (calls.length) {
-      for (const lk of calls) assert.equal(typeof lk, 'string', '函数收到的是锁键');
-      assert.ok(calls.includes(LK.d), '函数对被锁的卡调用，参数是锁键');
+      for (const lk of calls) assert.equal(typeof lk, 'string', 'the function receives the lock key');
+      assert.ok(calls.includes(LK.d), 'the function is called for the locked card, with the lock key as its argument');
     }
   });
 }
 
-test('N3 补充：takeover 只作用于被别的指纹锁定的卡；缺省 false 等于不接手', () => {
+test('N3 addendum: takeover applies only to cards locked by another fingerprint; the default false means no takeover', () => {
   const locks = { [LK.a]: X };
   assert.deepEqual(splitPlan(baseArgs({ cardLocks: locks })), splitPlan(baseArgs({ cardLocks: locks, takeover: false })));
   assert.deepEqual(splitPlan(baseArgs({ cardLocks: locks })), splitPlan(baseArgs({ cardLocks: locks, takeover: new Set() })));
@@ -281,7 +281,7 @@ function view(name, { priority = 10, version = 1 } = {}) {
   };
 }
 
-test('N4 节点会话收到 claim-rejected card-locked：丢掉这个候选、清掉在飞的认领，之后不再重试它', () => {
+test('N4 the node session receives claim-rejected card-locked: drops this candidate, clears the in-flight claim, and does not retry it afterwards', () => {
   let t = 1000;
   const sent = [], started = [];
   const session = createNodeSession({
@@ -295,11 +295,11 @@ test('N4 节点会话收到 claim-rejected card-locked：丢掉这个候选、�
 
   session.tick();
   const claims1 = sent.filter(m => m.type === 'task.claim');
-  assert.deepEqual(claims1.map(m => m.id), [locked.id], '先认领优先级高的');
+  assert.deepEqual(claims1.map(m => m.id), [locked.id], 'claim the higher-priority one first');
   sent.length = 0;
 
   session.receive({ type: 'task.claim-rejected', epoch: EPOCH, id: locked.id, reason: 'card-locked', state: 'open', version: 1, lockedBy: X });
-  assert.ok(!session.known().some(k => k.id === locked.id), '被锁的候选从本地视图里去掉');
+  assert.ok(!session.known().some(k => k.id === locked.id), 'the locked candidate is removed from the local view');
   assert.deepEqual(started, []);
 
   // 在飞的认领已清：下一次 tick 能认领别的；被锁的那个不再出现
@@ -308,11 +308,11 @@ test('N4 节点会话收到 claim-rejected card-locked：丢掉这个候选、�
     session.tick();
   }
   const claims2 = sent.filter(m => m.type === 'task.claim');
-  assert.deepEqual(claims2.map(m => m.id), [other.id], '只认领另一个，一次；不重试被锁的');
+  assert.deepEqual(claims2.map(m => m.id), [other.id], 'claims only the other one, once; does not retry the locked one');
   assert.equal(sent.filter(m => m.type === 'task.claim' && m.id === locked.id).length, 0);
 });
 
-test('N4 补充：被锁的候选之后若又被 task.opened 推来（锁变了），照常可以再认领', () => {
+test('N4 addendum: if the locked candidate is pushed again by task.opened later (the lock changed), it can be claimed again as usual', () => {
   let t = 1000;
   const sent = [];
   const session = createNodeSession({ nodeId: 'node-1', node: NODE, send: m => sent.push(m), now: () => t, random: () => 0, onTask: () => {}, onLost: () => {} });
@@ -324,7 +324,7 @@ test('N4 补充：被锁的候选之后若又被 task.opened 推来（锁变了�
   sent.length = 0;
   t += 1000;
   session.tick();
-  assert.equal(sent.filter(m => m.type === 'task.claim').length, 0, '没有别的候选：不发认领');
+  assert.equal(sent.filter(m => m.type === 'task.claim').length, 0, 'no other candidates: no claim is sent');
   session.receive({ type: 'task.opened', epoch: EPOCH, task: locked });
   t += 1000;
   session.tick();
@@ -478,7 +478,7 @@ async function settle(rig) {
       if (rig.lb.pending() === 0) return;
     }
   }
-  throw new Error('消息往返不收敛');
+  throw new Error('message round trips do not converge');
 }
 
 async function drive(rig, until, { maxSteps = 3_000 } = {}) {
@@ -491,7 +491,7 @@ async function drive(rig, until, { maxSteps = 3_000 } = {}) {
     if (until()) return step;
     rig.clock.advance(STEP_MS);
   }
-  assert.fail(`超过 ${maxSteps} 步仍未满足条件；queue.describe()：\n${JSON.stringify(rig.queue.describe(), null, 1)}`);
+  assert.fail(`condition still not met after more than ${maxSteps} steps; queue.describe():\n${JSON.stringify(rig.queue.describe(), null, 1)}`);
 }
 
 async function coast(rig, steps = 30) {
@@ -506,11 +506,11 @@ async function coast(rig, steps = 30) {
 }
 
 function hygiene(rig, unhandledBefore) {
-  assert.deepEqual(rig.lb.errors().map(e => String(e?.stack ?? e)), [], '端点处理器抛出了异常');
-  assert.deepEqual(rig.lb.nonJson(), [], '有消息不能 JSON 往返');
-  assert.deepEqual(rig.out('error').map(e => [e.connId, e.message]), [], '队列回过 error');
+  assert.deepEqual(rig.lb.errors().map(e => String(e?.stack ?? e)), [], 'the endpoint handler threw an exception');
+  assert.deepEqual(rig.lb.nonJson(), [], 'some message cannot round-trip through JSON');
+  assert.deepEqual(rig.out('error').map(e => [e.connId, e.message]), [], 'the queue replied with an error');
   assert.deepEqual(rig.sink.misuse(), []);
-  assert.deepEqual(unhandled.slice(unhandledBefore).map(e => String(e?.stack ?? e)), [], '有未处理的 Promise 拒绝');
+  assert.deepEqual(unhandled.slice(unhandledBefore).map(e => String(e?.stack ?? e)), [], 'there are unhandled Promise rejections');
 }
 
 const claimsOf = rig => rig.out('task.claimed').map(e => ({ connId: e.connId, id: e.message.id, task: e.message.task }));
@@ -521,14 +521,14 @@ function assertCompletedOnce(rig, page, ids) {
   const completed = new Map();
   for (const e of rig.out('task.completed')) completed.set(e.message.id, (completed.get(e.message.id) ?? 0) + 1);
   for (const id of ids) {
-    assert.equal(page.doneCount(id), 1, `${id}：页面应恰好收到一条 task.done`);
-    assert.equal(completed.get(id) ?? 0, 1, `${id}：应恰好完成一次`);
+    assert.equal(page.doneCount(id), 1, `${id}: the page should receive exactly one task.done`);
+    assert.equal(completed.get(id) ?? 0, 1, `${id}: should complete exactly once`);
   }
 }
 
 /* ================================================================== N5 */
 
-test('N5 createLocalNode 把 PlanContext.cardLocks 交给切分：被锁的卡照锁指纹出键，只被同指纹节点做完；其余照切分节点的指纹', async () => {
+test('N5 createLocalNode passes PlanContext.cardLocks to the split: locked cards are keyed by the lock fingerprint and completed only by nodes with the same fingerprint; the rest use the fingerprint of the splitting node', async () => {
   const before = unhandled.length;
   const locks = new Map([[titleLockKey(), FP_B]]);
   const rig = createRig({ planContext: task => planContextFor(task.source.projectId, { cardLocks: locks }) });
@@ -545,25 +545,25 @@ test('N5 createLocalNode 把 PlanContext.cardLocks 交给切分：被锁的卡�
   b1.local.start();
 
   const exp = expectedDerived(planContextFor('p1'), lk => (lk === titleLockKey() ? FP_B : FP_A));
-  assert.equal(exp.filter(t => t.lockKey === titleLockKey()).length, 3, '标题卡 3 段');
+  assert.equal(exp.filter(t => t.lockKey === titleLockKey()).length, 3, 'title card, 3 segments');
   const ids = [planId, ...exp.map(t => t.id)];
   await drive(rig, allDone(rig, page, ids));
   await coast(rig);
 
   assertCompletedOnce(rig, page, ids);
-  assert.deepEqual(sorted(page.done(planId).result.derived), sorted(exp.map(t => t.id)), 'plan 的 derived 是切出的全部 id');
+  assert.deepEqual(sorted(page.done(planId).result.derived), sorted(exp.map(t => t.id)), 'derived of the plan is all the ids that were split out');
   const fpOfConn = new Map(rig.nodes.map(n => [n.connId, n.fp]));
   const claims = claimsOf(rig);
   for (const t of exp) {
     const c = claims.filter(x => x.id === t.id);
-    assert.equal(c.length, 1, `${t.id} 恰好认领一次`);
-    assert.equal(fpOfConn.get(c[0].connId), t.fp, `${t.lockKey}：只被指纹 ${t.fp} 的节点认领`);
+    assert.equal(c.length, 1, `${t.id} is claimed exactly once`);
+    assert.equal(fpOfConn.get(c[0].connId), t.fp, `${t.lockKey}: claimed only by nodes with fingerprint ${t.fp}`);
     assert.equal(c[0].task.requires.envFingerprint, t.fp);
     assert.ok(rig.sink.holds(c[0].task.resultKey, c[0].task.range), t.id);
   }
   for (const e of rig.inbound('task.claim')) {
     const t = exp.find(x => x.id === e.message.id);
-    if (t) assert.equal(fpOfConn.get(e.connId), t.fp, `指纹不同的节点尝试认领 ${e.message.id}`);
+    if (t) assert.equal(fpOfConn.get(e.connId), t.fp, `a node with a different fingerprint tried to claim ${e.message.id}`);
   }
   // 发布的细任务里没有 takeover 字段
   for (const e of rig.inbound('task.publish').filter(e => e.connId === a1.connId)) {
@@ -572,7 +572,7 @@ test('N5 createLocalNode 把 PlanContext.cardLocks 交给切分：被锁的卡�
   hygiene(rig, before);
 });
 
-test('N5 createLocalNode 把 PlanContext.takeover 交给切分：被锁的卡按本节点指纹出键、带 takeover 发布，本节点指纹的节点做完', async () => {
+test('N5 createLocalNode passes PlanContext.takeover to the split: locked cards have their keys derived from the fingerprint of this node and are published with takeover, and are completed by nodes with that same fingerprint', async () => {
   const before = unhandled.length;
   const locks = { [titleLockKey()]: FP_B };
   const rig = createRig({ planContext: task => planContextFor(task.source.projectId, { cardLocks: locks, takeover: new Set([titleLockKey()]) }) });
@@ -597,14 +597,14 @@ test('N5 createLocalNode 把 PlanContext.takeover 交给切分：被锁的卡按
   const published = rig.inbound('task.publish').filter(e => e.connId === a1.connId).flatMap(e => e.message.tasks);
   for (const t of exp) {
     const p = published.find(x => x.id === t.id);
-    assert.ok(p, `${t.id} 发布过`);
-    if (t.takeover) assert.equal(p.takeover, true, `${t.id}：接手的卡带 takeover: true`);
-    else assert.equal('takeover' in p, false, `${t.id}：其余不带`);
+    assert.ok(p, `${t.id} was published`);
+    if (t.takeover) assert.equal(p.takeover, true, `${t.id}: a taken-over card carries takeover: true`);
+    else assert.equal('takeover' in p, false, `${t.id}: the rest do not carry it`);
   }
   const fpOfConn = new Map(rig.nodes.map(n => [n.connId, n.fp]));
   for (const c of claimsOf(rig)) {
     if (c.id === planId) continue;
-    assert.equal(fpOfConn.get(c.connId), FP_A, `${c.id} 应由 FP_A 节点认领`);
+    assert.equal(fpOfConn.get(c.connId), FP_A, `${c.id} should be claimed by a FP_A node`);
   }
   hygiene(rig, before);
 });
@@ -619,12 +619,12 @@ async function lockedTitleScene({ extra = {}, wrapSend } = {}) {
   const a1 = rig.addNode('node-a1', { fp: FP_A, seed: 1, extra, wrapSend });
   a1.local.start();
   await settle(rig);
-  assert.ok(page.inbox.some(m => m.type === 'card.locked' && m.granted === true), '页面锁住了标题卡');
+  assert.ok(page.inbox.some(m => m.type === 'card.locked' && m.granted === true), 'the page locked the title card');
   page.publishPlan('p1', 1);
   return { rig, page, a1, planId: planIdOf('p1', 1) };
 }
 
-test('N6 拒建后照锁指纹重发：只重发被拒的那张卡；plan 等到回包才完成，derived 是最终发布成功的全部 id；细任务继承页面订阅，由锁定方指纹的节点做完', async () => {
+test('N6 after a creation rejection, republish with the lock fingerprint: only the rejected card is republished; the plan completes only once the reply arrives, and derived is all the ids that were finally published successfully; fine-grained tasks inherit the page subscription and are completed by nodes with the fingerprint of the lock owner', async () => {
   const before = unhandled.length;
   const { rig, page, a1, planId } = await lockedTitleScene();
   await drive(rig, () => claimsOf(rig).some(c => c.id === planId));
@@ -641,21 +641,21 @@ test('N6 拒建后照锁指纹重发：只重发被拒的那张卡；plan 等到
 
   // 两次发布：第一次全部（标题卡按 FP_A、被拒建），第二次只有标题卡、按 FP_B
   const pubs = rig.inbound('task.publish').filter(e => e.connId === a1.connId);
-  assert.equal(pubs.length, 2, '先发一次，被拒建后重发一次');
+  assert.equal(pubs.length, 2, 'publish once first, then republish once after the creation is rejected');
   const [first, second] = pubs;
   const titleA = expectedDerived(planContextFor('p1'), () => FP_A).filter(t => t.lockKey === titleLockKey());
   assert.deepEqual(sorted(first.message.tasks.map(t => t.id)), sorted([...exp.filter(t => t.lockKey !== titleLockKey()), ...titleA].map(t => t.id)));
   const titleB = exp.filter(t => t.lockKey === titleLockKey());
-  assert.deepEqual(sorted(second.message.tasks.map(t => t.id)), sorted(titleB.map(t => t.id)), '只重发锁键在被拒结果里的任务');
+  assert.deepEqual(sorted(second.message.tasks.map(t => t.id)), sorted(titleB.map(t => t.id)), 'only the tasks whose lock key is in the rejection result are republished');
   for (const t of second.message.tasks) {
     assert.equal(t.requires.envFingerprint, FP_B);
-    assert.equal('takeover' in t, false, '缺省 takeoverLocked: false，照锁定方指纹重发，不带 takeover');
+    assert.equal('takeover' in t, false, 'default takeoverLocked: false, republish with the fingerprint of the lock owner, without takeover');
   }
   // 发布带 reqId；第一次的回包里标题卡是 card-locked
-  for (const p of pubs) assert.ok(typeof p.message.reqId === 'string' || Number.isFinite(p.message.reqId), '派生任务的 task.publish 带 reqId');
+  for (const p of pubs) assert.ok(typeof p.message.reqId === 'string' || Number.isFinite(p.message.reqId), 'task.publish of derived tasks carries reqId');
   const reply = reqId => rig.out('task.published').find(e => e.connId === a1.connId && e.message.reqId === reqId);
   const r1 = reply(first.message.reqId), r2 = reply(second.message.reqId);
-  assert.ok(r1 && r2, '两次发布都有回包');
+  assert.ok(r1 && r2, 'both publishes got a reply');
   for (const t of titleA) {
     assert.deepEqual(f7(r1.message.results.find(r => r.id === t.id)), { id: t.id, error: 'card-locked', lockedBy: FP_B });
   }
@@ -663,12 +663,12 @@ test('N6 拒建后照锁指纹重发：只重发被拒的那张卡；plan 等到
 
   // plan 在第二次回包之后才完成
   const planComplete = rig.inbound('task.complete').find(e => e.message.id === planId);
-  assert.ok(planComplete.index > r2.index, 'plan 等最后一次发布的回包后才 complete');
-  assert.deepEqual(sorted(planComplete.message.result.derived), sorted(exp.map(t => t.id)), 'derived 是最终发布成功的全部 id');
+  assert.ok(planComplete.index > r2.index, 'the plan completes only after the reply to the last publish');
+  assert.deepEqual(sorted(planComplete.message.result.derived), sorted(exp.map(t => t.id)), 'derived is all the ids that were finally published successfully');
 
   // 继承页面订阅：重发的细任务订阅者里有页面，source.userId 是页面的
   const view = new Map(rig.queue.describe().tasks.map(t => [t.id, t]));
-  for (const t of titleB) assert.ok(view.get(t.id).subscribers.includes(page.publisherId), `${t.id} 继承了页面订阅`);
+  for (const t of titleB) assert.ok(view.get(t.id).subscribers.includes(page.publisherId), `${t.id} inherited the page subscription`);
   // 由锁定方指纹的节点做完
   const fpOfConn = new Map(rig.nodes.map(n => [n.connId, n.fp]));
   for (const c of claimsOf(rig).filter(c => titleB.some(t => t.id === c.id))) {
@@ -676,12 +676,12 @@ test('N6 拒建后照锁指纹重发：只重发被拒的那张卡；plan 等到
     assert.equal(c.task.source.userId, 'u1');
   }
   // 队列里没有留下 FP_A 的标题卡死任务
-  for (const t of titleA) assert.equal(view.get(t.id), undefined, `${t.id} 被拒建，不在表里`);
+  for (const t of titleA) assert.equal(view.get(t.id), undefined, `${t.id} had its creation rejected and is not in the table`);
   hygiene(rig, before);
 });
 
-for (const [label, takeoverLocked] of [['布尔 true', true], ['函数', (lockKey, lockedBy) => lockKey.startsWith('snapshot:') && lockedBy === FP_B]]) {
-  test(`N6 takeoverLocked（${label}）：拒建后按本节点指纹带 takeover 重发，锁转给本节点指纹，本节点指纹的节点做完`, async () => {
+for (const [label, takeoverLocked] of [['boolean true', true], ['function', (lockKey, lockedBy) => lockKey.startsWith('snapshot:') && lockedBy === FP_B]]) {
+  test(`N6 takeoverLocked (${label}): after a creation rejection, republish with takeover using the fingerprint of this node, the lock is transferred to that fingerprint, and nodes with that fingerprint complete it`, async () => {
     const before = unhandled.length;
     const seen = [];
     const option = typeof takeoverLocked === 'function' ? (lk, by) => { seen.push([lk, by]); return takeoverLocked(lk, by); } : takeoverLocked;
@@ -695,19 +695,19 @@ for (const [label, takeoverLocked] of [['布尔 true', true], ['函数', (lockKe
     const pubs = rig.inbound('task.publish').filter(e => e.connId === a1.connId);
     assert.equal(pubs.length, 2);
     const titleIds = exp.filter(t => t.lockKey === titleLockKey()).map(t => t.id);
-    assert.deepEqual(sorted(pubs[1].message.tasks.map(t => t.id)), sorted(titleIds), '重发的是标题卡、按本节点指纹（与第一次同 id）');
-    for (const t of pubs[1].message.tasks) assert.equal(t.takeover, true, '重发带 takeover: true');
+    assert.deepEqual(sorted(pubs[1].message.tasks.map(t => t.id)), sorted(titleIds), 'the republished tasks are the title card, keyed by the fingerprint of this node (same ids as the first time)');
+    for (const t of pubs[1].message.tasks) assert.equal(t.takeover, true, 'the republish carries takeover: true');
     const lock = rig.queue.describe().locks?.find(l => l.lockKey === titleLockKey());
-    assert.equal(lock?.envFingerprint, FP_A, '锁转给本节点指纹');
+    assert.equal(lock?.envFingerprint, FP_A, 'the lock is transferred to the fingerprint of this node');
     assert.equal(lock?.source, 'takeover');
-    if (typeof takeoverLocked === 'function') assert.deepEqual(seen, [[titleLockKey(), FP_B]], '函数收到 (lockKey, lockedBy)');
+    if (typeof takeoverLocked === 'function') assert.deepEqual(seen, [[titleLockKey(), FP_B]], 'the function receives (lockKey, lockedBy)');
     const planDone = page.done(planId);
     assert.deepEqual(sorted(planDone.result.derived), sorted(exp.map(t => t.id)));
     hygiene(rig, before);
   });
 }
 
-test('N6 最多重来 2 轮：锁每轮都被别的环境抢走时，第 3 次被拒就放弃，发 plan-relocked 事件；plan 照样完成，derived 只含发布成功的', async () => {
+test('N6 at most 2 retry rounds: when another environment takes the lock away in every round, give up on the 3rd rejection and emit a plan-relocked event; the plan still completes, and derived contains only those published successfully', async () => {
   const before = unhandled.length;
   const ck = titleLockKey().slice('snapshot:'.length);
   let flips = 0;
@@ -726,14 +726,14 @@ test('N6 最多重来 2 轮：锁每轮都被别的环境抢走时，第 3 次�
   const exp = expectedDerived(planContextFor('p1'), () => FP_A).filter(t => t.lockKey !== titleLockKey());
   await drive(rig, () => page.doneCount(planId) >= 1);
   const pubs = rig.inbound('task.publish').filter(e => e.connId === a1.connId);
-  assert.equal(pubs.length, 3, '首发 1 次 + 重来 2 轮');
+  assert.equal(pubs.length, 3, '1 initial publish + 2 retry rounds');
   const ev = a1.eventsOf('plan-relocked');
-  assert.equal(ev.length >= 1, true, '发 plan-relocked 事件');
+  assert.equal(ev.length >= 1, true, 'emit a plan-relocked event');
   const last = ev.at(-1);
   assert.equal(last.id, planId);
-  assert.ok(Array.isArray(last.gaveUp) && last.gaveUp.length > 0, 'gaveUp 列出放弃的项');
-  assert.ok(Array.isArray(last.lockKeys) && last.lockKeys.includes(titleLockKey()), 'lockKeys 含标题卡的锁键');
-  assert.deepEqual(sorted(page.done(planId).result.derived), sorted(exp.map(t => t.id)), 'derived 只含最终发布成功的');
+  assert.ok(Array.isArray(last.gaveUp) && last.gaveUp.length > 0, 'gaveUp lists the items given up on');
+  assert.ok(Array.isArray(last.lockKeys) && last.lockKeys.includes(titleLockKey()), 'lockKeys contains the lock key of the title card');
+  assert.deepEqual(sorted(page.done(planId).result.derived), sorted(exp.map(t => t.id)), 'derived contains only those finally published successfully');
   // 剩下的细任务照常完成
   const ids = exp.map(t => t.id);
   rig.addNode('node-a2', { fp: FP_A, seed: 2 }).local.start();

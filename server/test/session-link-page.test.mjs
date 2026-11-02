@@ -81,14 +81,14 @@ async function startEnv(t, { gateway = true, direct = false } = {}) {
 /** 在当前项目上改一处：第 i 条轨道的名字 */
 function edit(link, i) {
   const p = link.ds.project;
-  const next = { ...p, tracks: [...(p.tracks ?? []), { id: `sl-${i}`, name: `轨道 ${i}`, clips: [] }] };
+  const next = { ...p, tracks: [...(p.tracks ?? []), { id: `sl-${i}`, name: `Track ${i}`, clips: [] }] };
   link.ds.commit(next);
 }
 
-test('SL-page-cut 页面传输被掐断：会话接续，断开期间的修改不丢、不重放；DocSync 始终在线、不重新 open', async (t) => {
+test('SL-page-cut page transport cut: the session resumes, edits made while disconnected are neither lost nor replayed; DocSync stays online and does not re-open', async (t) => {
   const env = await startEnv(t);
   const { link, events } = env.page('p-page-cut');
-  await waitFor(() => link.ds.status === 'online', 8000, '页面同步接上');
+  await waitFor(() => link.ds.status === 'online', 8000, 'page sync connected');
   await link.ds.whenSettled({ timeoutMs: 5000 });
   const rev0 = link.ds.rev;
   edit(link, 1);
@@ -98,63 +98,63 @@ test('SL-page-cut 页面传输被掐断：会话接续，断开期间的修改�
   edit(link, 3);
   await sleep(50);
   edit(link, 4);
-  await waitFor(() => events.resumes === 1, 5000, '接续');
+  await waitFor(() => events.resumes === 1, 5000, 'resumed');
   const settled = await link.ds.whenSettled({ timeoutMs: 5000 });
-  assert.equal(settled.rev, rev0 + 4, `4 次提交各落地一次：${rev0} → ${settled.rev}`);
-  assert.equal(events.opens, 1, '没有建第二个会话');
-  assert.deepEqual(events.closes, [], '没有断线');
-  assert.ok(!events.statuses.includes('offline'), `DocSync 没离线过：${JSON.stringify(events.statuses)}`);
+  assert.equal(settled.rev, rev0 + 4, `Each of the 4 commits landed once: ${rev0} → ${settled.rev}`);
+  assert.equal(events.opens, 1, 'No second session was created');
+  assert.deepEqual(events.closes, [], 'No disconnect');
+  assert.ok(!events.statuses.includes('offline'), `DocSync never went offline: ${JSON.stringify(events.statuses)}`);
   assert.equal(env.gw.stats.opened, 1);
   assert.ok(env.gw.stats.resumed >= 1);
   const st = await env.body('p-page-cut');
   assert.equal(st.rev, settled.rev);
   assert.deepEqual(st.project.tracks.map((tr) => tr.id).filter((id) => id.startsWith('sl-')), ['sl-1', 'sl-2', 'sl-3', 'sl-4']);
-  assert.deepEqual(JSON.parse(JSON.stringify(link.ds.project)), st.project, '页面副本与真身相同');
+  assert.deepEqual(JSON.parse(JSON.stringify(link.ds.project)), st.project, 'The page copy matches the original');
   const stats = link.stats();
   assert.equal(stats.transport, 'ws');
   assert.equal(stats.resumes, 1);
   assert.equal(stats.legacy, false);
 });
 
-test('SL-page-cut-inline cutTransport() 同样：只断传输，会话接续', async (t) => {
+test('SL-page-cut-inline cutTransport() likewise: only the transport is cut, the session resumes', async (t) => {
   const env = await startEnv(t);
   const { link, events } = env.page('p-page-cut2');
-  await waitFor(() => link.ds.status === 'online', 8000, '页面同步接上');
+  await waitFor(() => link.ds.status === 'online', 8000, 'page sync connected');
   await link.ds.whenSettled({ timeoutMs: 5000 });
   const rev0 = link.ds.rev;
   assert.equal(link.cutTransport(), true);
   edit(link, 1);
-  await waitFor(() => events.resumes === 1, 5000, '接续');
+  await waitFor(() => events.resumes === 1, 5000, 'resumed');
   const settled = await link.ds.whenSettled({ timeoutMs: 5000 });
   assert.equal(settled.rev, rev0 + 1);
   assert.equal(events.opens, 1);
 });
 
-test('SL-page-drop dropFor(ms) 结束会话：DocSync 离线，回来后建新会话、重新 open，断网期间的修改落地', async (t) => {
+test('SL-page-drop dropFor(ms) ends the session: DocSync goes offline, and after coming back a new session is created and re-opened, and edits made while offline land', async (t) => {
   const env = await startEnv(t);
   const { link, events } = env.page('p-page-drop');
-  await waitFor(() => link.ds.status === 'online', 8000, '页面同步接上');
+  await waitFor(() => link.ds.status === 'online', 8000, 'page sync connected');
   await link.ds.whenSettled({ timeoutMs: 5000 });
   const rev0 = link.ds.rev;
   link.dropFor(300);
-  await waitFor(() => link.ds.status === 'offline', 2000, '离线');
+  await waitFor(() => link.ds.status === 'offline', 2000, 'offline');
   edit(link, 1);
-  await waitFor(() => events.opens === 2, 5000, '新会话');
+  await waitFor(() => events.opens === 2, 5000, 'New session');
   const settled = await link.ds.whenSettled({ timeoutMs: 5000 });
   assert.equal(settled.rev, rev0 + 1);
   assert.equal(env.gw.stats.opened, 2);
   assert.equal(events.closes.length, 1);
 });
 
-test('SL-page-legacy 对着没有会话层的旧服务端：页面照旧能同步（一条传输一个会话）', async (t) => {
+test('SL-page-legacy against an old server without a session layer: the page still syncs as before (one session per transport)', async (t) => {
   const env = await startEnv(t, { gateway: false });
   const { link, events } = env.page('p-page-legacy');
-  await waitFor(() => link.ds.status === 'online', 8000, '页面同步接上');
+  await waitFor(() => link.ds.status === 'online', 8000, 'page sync connected');
   edit(link, 1);
   const settled = await link.ds.whenSettled({ timeoutMs: 5000 });
   assert.equal(link.stats().legacy, true);
   env.proxy.cutAll();
-  await waitFor(() => events.closes.length === 1 && events.opens === 2, 5000, '断线后重建');
+  await waitFor(() => events.closes.length === 1 && events.opens === 2, 5000, 'Rebuilt after disconnect');
   edit(link, 2);
   const again = await link.ds.whenSettled({ timeoutMs: 5000 });
   assert.equal(again.rev, settled.rev + 1);
@@ -171,49 +171,49 @@ async function detachedConn(env) {
     const c = env.service.describe().conns.find((x) => x.detached);
     connId = c?.connId ?? null;
     return connId !== null;
-  }, 3000, '服务端脱开');
+  }, 3000, 'server detached');
   return connId;
 }
 
 for (const [code, reason] of [[4004, 'deleted'], [4003, 'removed']]) {
-  test(`SL-page-final 脱开期间被 ${code} ${reason} 结束（真服务会话层）：页面收到的 CloseInfo 与连着时相同，不重连`, async (t) => {
+  test(`SL-page-final ended by ${code} ${reason} while detached (real server session layer): the page receives the same CloseInfo as when connected, and does not reconnect`, async (t) => {
     const env = await startEnv(t, { direct: true });
     const { link, events } = env.page(`p-page-final-${code}`);
-    await waitFor(() => link.ds.status === 'online', 8000, '页面同步接上');
+    await waitFor(() => link.ds.status === 'online', 8000, 'page sync connected');
     edit(link, 1);
     await link.ds.whenSettled({ timeoutMs: 5000 });
     env.proxy.mode = 'reject';
     env.proxy.cutAll();
     const connId = await detachedConn(env);
-    assert.equal(env.service.closeConn(connId, code, reason), true, '服务端在脱开期间结束会话');
+    assert.equal(env.service.closeConn(connId, code, reason), true, 'The server ended the session while detached');
     env.proxy.mode = 'pass';
-    await waitFor(() => events.closes.length === 1, 5000, '页面收到断线');
+    await waitFor(() => events.closes.length === 1, 5000, 'The page received the disconnect');
     assert.deepEqual(events.closes, [{ code, reason, fatal: true, neverOpened: false }]);
     await sleep(400);
-    assert.equal(events.opens, 1, '不重连');
+    assert.equal(events.opens, 1, 'No reconnect');
     assert.equal(link.connected, false);
 
     // 对照：连着时收到同一个码
     const live = env.page(`p-page-final-live-${code}`);
-    await waitFor(() => live.link.ds.status === 'online', 8000, '对照页面接上');
+    await waitFor(() => live.link.ds.status === 'online', 8000, 'Control page connected');
     const liveConn = env.service.describe().conns.find((x) => !x.detached && !x.legacy && x.connId !== connId)?.connId;
     assert.ok(liveConn);
     env.service.closeConn(liveConn, code, reason);
-    await waitFor(() => live.events.closes.length === 1, 5000, '对照页面收到断线');
-    assert.deepEqual(live.events.closes, events.closes, '脱开期间与连着时，页面收到的相同');
+    await waitFor(() => live.events.closes.length === 1, 5000, 'Control page received the disconnect');
+    assert.deepEqual(live.events.closes, events.closes, 'The page receives the same thing while detached as while connected');
   });
 }
 
-test('SL-page-4410-renew 脱开期间服务端以 1001 关停结束会话：页面按会重连的一类处理（不 fatal），建新会话后照常同步', async (t) => {
+test('SL-page-4410-renew the server ends the session with a 1001 shutdown while detached: the page treats it as the reconnecting kind (not fatal), and syncs as usual after a new session is created', async (t) => {
   const env = await startEnv(t, { direct: true });
   const { link, events } = env.page('p-page-renew');
-  await waitFor(() => link.ds.status === 'online', 8000, '页面同步接上');
+  await waitFor(() => link.ds.status === 'online', 8000, 'page sync connected');
   env.proxy.mode = 'reject';
   env.proxy.cutAll();
   const connId = await detachedConn(env);
   env.service.closeConn(connId, 1001, 'shutdown');
   env.proxy.mode = 'pass';
-  await waitFor(() => events.opens === 2, 5000, '建新会话');
+  await waitFor(() => events.opens === 2, 5000, 'New session created');
   assert.equal(events.closes.length, 1);
   assert.equal(events.closes[0].code, 4410);
   assert.equal(events.closes[0].fatal, false);

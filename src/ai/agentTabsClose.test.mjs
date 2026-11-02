@@ -24,7 +24,7 @@ function send(t) {
   return t.commitDraft(t.getActiveTabId());
 }
 
-test("AT-C1 项目里还没有会话:只有一个开始页占位页(draft),没有可关的页,「+」回到它;点发送才变成 Agent 1", async () => {
+test("AT-C1 No sessions in the project yet: there is only one start page placeholder tab (draft), no tab that can be closed, \"+\" returns to it; only sending turns it into Agent 1", async () => {
   const t = await fresh();
   const [d] = t.getTabs();
   assert.equal(t.getTabs().length, 1);
@@ -34,37 +34,37 @@ test("AT-C1 项目里还没有会话:只有一个开始页占位页(draft),没�
   assert.equal(t.hasRealTabs(), false);
   assert.equal(t.canCloseTab(d.id), false);
   t.closeTab(d.id);
-  assert.equal(t.isDraftTab(d.id), true, "占位页关不掉");
-  assert.equal(t.addTab().id, d.id, "没有会话时「+」不建真页,回到开始页");
+  assert.equal(t.isDraftTab(d.id), true, "The placeholder tab cannot be closed");
+  assert.equal(t.addTab().id, d.id, "With no sessions, \"+\" does not create a real tab and returns to the start page");
   assert.equal(t.hasRealTabs(), false);
   // 没点发送之前不进存储
   assert.equal(store.has("pc.agentTabs:p1"), false);
   // 点发送:同一个 id 变成真页
   const real = send(t);
-  assert.equal(real.id, d.id, "占位页变真页,id 不换(rail 项、页面节点都不用换)");
+  assert.equal(real.id, d.id, "The placeholder tab becomes a real tab and its id does not change (neither the rail item nor the page node needs replacing)");
   assert.equal(real.draft, undefined);
   assert.deepEqual(t.getTabs().map((x) => x.title), ["Agent 1"]);
   assert.equal(t.hasRealTabs(), true);
   assert.equal(JSON.parse(store.get("pc.agentTabs:p1")).tabs.length, 1);
 });
 
-test("AT-C2 最后一个会话也能关:关光后回到开始页(新的占位页 id),并记下「用户手动关光过」", async () => {
+test("AT-C2 The last session can also be closed: after closing all of them it returns to the start page (a new placeholder tab id) and records \"user manually closed all\"", async () => {
   const t = await fresh();
   const first = send(t);
-  assert.equal(t.canCloseTab(first.id), true, "最后一个也能关");
+  assert.equal(t.canCloseTab(first.id), true, "The last one can also be closed");
   assert.equal(t.isCleared(), false);
   t.closeTab(first.id);
   assert.equal(t.hasRealTabs(), false);
   const [d] = t.getTabs();
   assert.equal(d.draft, true);
-  assert.notEqual(d.id, first.id, "关光后的开始页是新的 id,不复用旧会话留下的键");
+  assert.notEqual(d.id, first.id, "After closing all, the start page gets a new id and does not reuse keys left by old sessions");
   assert.equal(t.getActiveTabId(), d.id);
   assert.equal(t.isCleared(), true);
   const saved = JSON.parse(store.get("pc.agentTabs:p1"));
   assert.deepEqual([saved.tabs.length, saved.cleared], [0, true]);
 });
 
-test("AT-C3 每个页都能关(含 Agent 1);关的是当前页就切到左边那页,在最左就切到右边那页;关的不是当前页,当前页不变", async () => {
+test("AT-C3 Every tab can be closed (including Agent 1); closing the current tab switches to the tab on its left, or to the one on its right if it is leftmost; closing a non-current tab leaves the current tab unchanged", async () => {
   const t = await fresh();
   const first = send(t); // Agent 1
   const a = t.addTab(); // Agent 2,激活
@@ -83,7 +83,7 @@ test("AT-C3 每个页都能关(含 Agent 1);关的是当前页就切到左边那
   assert.equal(t.getActiveTabId(), c.id);
 });
 
-test("AT-C4 新建标签取当前最小的空号:关掉 2 号后再新建得到 2 号;关掉 1 号后再新建得到 1 号", async () => {
+test("AT-C4 A new tab takes the smallest free number: after closing number 2, a new tab gets number 2; after closing number 1, a new tab gets number 1", async () => {
   const t = await fresh();
   const first = send(t);
   const a = t.addTab();
@@ -95,7 +95,7 @@ test("AT-C4 新建标签取当前最小的空号:关掉 2 号后再新建得到 
   assert.equal(t.addTab().title, "Agent 1");
 });
 
-test("AT-C5 刷新后:列表、编号、激活页原样恢复;关光过的项目刷新后仍是开始页且仍记着关光过", async () => {
+test("AT-C5 After a refresh: the list, numbers and active tab are restored as they were; a project where everything was closed still shows the start page after a refresh and still remembers that everything was closed", async () => {
   const t = await fresh();
   const first = send(t);
   const a = t.addTab();
@@ -115,13 +115,13 @@ test("AT-C5 刷新后:列表、编号、激活页原样恢复;关光过的项目
   assert.equal(t3.isCleared(), true);
 });
 
-test("AT-C6 存的激活页已不存在就落到第一个页;存坏了的清单当没存过", async () => {
+test("AT-C6 If the saved active tab no longer exists, fall back to the first tab; a corrupted saved manifest is treated as never saved", async () => {
   const t = await fresh(() => {
     store.set("pc.agentTabs:p1", JSON.stringify({ v: 2, tabs: [{ id: "p1_x1", title: "Agent 1" }, { id: "p1_x2", title: "Agent 3" }], active: "gone", cleared: false }));
   });
   assert.equal(t.getActiveTabId(), "p1_x1");
   assert.equal(t.addTab().title, "Agent 2");
-  const bad = await fresh(() => store.set("pc.agentTabs:p1", "{不是 json"));
+  const bad = await fresh(() => store.set("pc.agentTabs:p1", "{not json"));
   assert.equal(bad.hasRealTabs(), false);
   assert.equal(bad.getTabs()[0].draft, true);
 });

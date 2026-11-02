@@ -83,7 +83,7 @@ function fakeStore() {
       if (!deduped) store.set(hash, { bytes, ext: (name.split(".").pop() || "").toLowerCase() });
       return Response.json({ ok: true, hash, url: `/@media/${hash}`, bytes: bytes.length, deduped });
     }
-    throw new Error(`假 fetch 不认识这条路由: ${u}`);
+    throw new Error(`The fake fetch does not recognize this route: ${u}`);
   };
   return {
     store,
@@ -99,11 +99,11 @@ function fakeStore() {
 
 const CLIP_A = Buffer.from("fake-mp4-bytes-A-".repeat(40));
 const CLIP_B = Buffer.from("fake-png-bytes-B-".repeat(31));
-const PROC_TEXT = JSON.stringify({ format: "promptcut-project", version: 1, project: { name: "包测试" } });
+const PROC_TEXT = JSON.stringify({ format: "promptcut-project", version: 1, project: { name: "Package test" } });
 
 function projectWith(hashA, hashB) {
   return {
-    name: "包测试",
+    name: "Package test",
     media: [
       { id: "m1", kind: "video", name: "a.mp4", ext: "mp4", hash: hashA, url: `/@media/${hashA}` },
       { id: "m2", kind: "image", name: "b.png", ext: "png", hash: hashB, url: `/@media/${hashB}` },
@@ -115,18 +115,18 @@ function projectWith(hashA, hashB) {
   };
 }
 
-test("装包:首条目是 project.proc,素材按 <hash>.<ext> 且按哈希去重", async () => {
+test("Packing: the first entry is project.proc, media files are named <hash>.<ext> and deduplicated by hash", async () => {
   const fake = fakeStore();
   try {
     const hashA = fake.put(CLIP_A, "mp4");
     const hashB = fake.put(CLIP_B, "png");
     const { blob, missing } = await packProcpFrom(PROC_TEXT, projectWith(hashA, hashB));
-    assert.deepEqual(missing, [{ id: "m4", name: "legacy.mp4" }], "没有哈希的 m4 进不了包,但一定出现在返回的清单里");
+    assert.deepEqual(missing, [{ id: "m4", name: "legacy.mp4" }], "m4 has no hash so it cannot go into the package, but it always appears in the returned manifest");
 
     const entries = await readZip(blob);
-    assert.equal(entries[0].name, "project.proc", "第一个条目一定是编排,不解压也能 head 出来");
+    assert.equal(entries[0].name, "project.proc", "The first entry is always the arrangement, so it can be read with head without extracting");
     assert.deepEqual(entries.map((e) => e.name).slice(1).sort(), [`media/${hashA}.mp4`, `media/${hashB}.png`]);
-    assert.equal(entries.length, 3, "m3 和 m1 同哈希只装一份;m4 没有哈希,装不进");
+    assert.equal(entries.length, 3, "m3 and m1 share a hash so only one copy is packed; m4 has no hash and cannot be packed");
     assert.equal(await (await inflate(entries[0])).text(), PROC_TEXT);
 
     const back = new Map();
@@ -143,7 +143,7 @@ test("装包:首条目是 project.proc,素材按 <hash>.<ext> 且按哈希去重
   }
 });
 
-test("往返:拆到空库里是新写两份,再拆一次全是去重", async () => {
+test("Round trip: unpacking into an empty store writes two new files, and unpacking again is all deduplicated", async () => {
   const packer = fakeStore();
   let blob;
   let hashA;
@@ -176,7 +176,7 @@ test("往返:拆到空库里是新写两份,再拆一次全是去重", async () 
   }
 });
 
-test("别的 zip 工具压出来的 deflate 条目也读得了", async (t) => {
+test("Deflate entries produced by other zip tools can be read too", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pc-procp-"));
   try {
     const text = "PromptCut .procp deflate fixture\n".repeat(400); // 够重复,一定会被压
@@ -189,15 +189,15 @@ test("别的 zip 工具压出来的 deflate 条目也读得了", async (t) => {
       execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::CreateFromDirectory('${dir.replaceAll("'", "''")}', '${zipOutside.replaceAll("'", "''")}')`], { stdio: "pipe", windowsHide: true });
       fs.renameSync(zipOutside, zip);
     } catch (err) {
-      t.skip(`这台机器上跑不了系统 zip 实现: ${err.message}`);
+      t.skip(`The system zip implementation cannot run on this machine: ${err.message}`);
       return;
     }
     const blob = new Blob([fs.readFileSync(zip)]);
     assert.equal(await isProcpFile(blob), true);
     const entries = await readZip(blob);
     const proc = entries.find((e) => e.name === "project.proc");
-    assert.ok(proc, "PowerShell 压的包里应当有 project.proc");
-    assert.equal(proc.method, 8, "系统 zip 用的是 deflate,正好验到 method 8 那条路");
+    assert.ok(proc, "A package compressed by PowerShell should contain project.proc");
+    assert.equal(proc.method, 8, "The system zip uses deflate, which exercises the method 8 path");
     assert.equal(await (await inflate(proc)).text(), text);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -214,7 +214,7 @@ const CLIP_V = Buffer.from("fake-mp4-video-V-".repeat(37));
 /** 编排文本:和 serializeProc 一样把项目放在 project 下(这里只关心素材表) */
 const procOf = (project) => JSON.stringify({ format: "promptcut-project", version: 1, project });
 
-test("补入库后装包:带哈希的视频、只有 path 的音频、地址为 /api/media/file?path=… 的音频三份字节都进包,包内 project.proc 三条都带哈希;拆到空库后没有缺失", async () => {
+test("Packing after the store backfill: a video with a hash, an audio with only a path, and an audio whose URL is /api/media/file?path=… all have their bytes packed, all three entries in the in-package project.proc carry a hash; nothing is missing after unpacking into an empty store", async () => {
   const fake = fakeStore();
   resetTierBackfillForTest();
   let blob;
@@ -223,7 +223,7 @@ test("补入库后装包:带哈希的视频、只有 path 的音频、地址为 
     fake.disk.set(`${MEDIA_ROOT}/voice-a.mp3`, VOICE_A);
     const bPath = `${MEDIA_ROOT}/voice-决赛开场-b.mp3`;
     fake.disk.set(bPath, VOICE_B);
-    actions.newProject("补入库");
+    actions.newProject("Store backfill");
     actions.addMedia({ kind: "video", name: "v.mp4", ext: "mp4", hash: hashV, url: `/@media/${hashV}` });
     // 老形态:只有 path(Windows 反斜杠)
     const a = actions.addMedia({ kind: "audio", name: "voice-a.mp3", url: "", path: `${MEDIA_ROOT}/voice-a.mp3`.replace(/\//g, "\\") });
@@ -234,9 +234,9 @@ test("补入库后装包:带哈希的视频、只有 path 的音频、地址为 
     const r = await ingestUnhashedMedia();
     assert.deepEqual(r.failed, []);
     assert.deepEqual(r.ingested.sort(), [a.id, b.id].sort());
-    assert.equal(oldA.hash, undefined, "不原地改 store 里的旧对象");
+    assert.equal(oldA.hash, undefined, "The old object in the store is not modified in place");
     const media = getState().project.media;
-    for (const m of media) assert.match(m.hash, /^[0-9a-f]{64}$/, `${m.name} 补上了哈希`);
+    for (const m of media) assert.match(m.hash, /^[0-9a-f]{64}$/, `${m.name} got its hash backfilled`);
     assert.equal(media.find((m) => m.id === a.id).hash, sha256(VOICE_A));
     assert.equal(media.find((m) => m.id === b.id).url, `/@media/${sha256(VOICE_B)}`);
 
@@ -247,7 +247,7 @@ test("补入库后装包:带哈希的视频、只有 path 的音频、地址为 
     assert.deepEqual(entries.slice(1).map((e) => e.name).sort(), [`media/${hashV}.mp4`, `media/${sha256(VOICE_A)}.mp3`, `media/${sha256(VOICE_B)}.mp3`].sort());
     const inner = JSON.parse(await (await inflate(entries[0])).text()).project;
     assert.equal(inner.media.length, 3);
-    for (const m of inner.media) assert.match(m.hash, /^[0-9a-f]{64}$/, `包内 project.proc 里 ${m.name} 带哈希`);
+    for (const m of inner.media) assert.match(m.hash, /^[0-9a-f]{64}$/, `${m.name} carries a hash in the in-package project.proc`);
   } finally {
     fake.restore();
   }
@@ -259,19 +259,19 @@ test("补入库后装包:带哈希的视频、只有 path 的音频、地址为 
     assert.equal(stored, 3);
     const back = JSON.parse(procText).project;
     const { missing } = restoreMediaUrls(back.media, { externalPathUrl: true });
-    assert.deepEqual(missing, [], "拆到空库后按哈希都能还原,没有(缺失)");
-    for (const m of back.media) assert.equal(other.store.has(m.hash), true, `${m.name} 的字节在对面的内容库里`);
+    assert.deepEqual(missing, [], "After unpacking into an empty store everything can be restored by hash, with no (missing)");
+    for (const m of back.media) assert.equal(other.store.has(m.hash), true, `The bytes of ${m.name} are in the other side's content store`);
   } finally {
     other.restore();
   }
 });
 
-test("补入库:服务端不收那条路径(换了机器、路径对不上)时,经 /@media/<文件名> 取字节再入库", async () => {
+test("Store backfill: when the server does not accept that path (different machine, path mismatch), fetch the bytes via /@media/<filename> and then store them", async () => {
   const fake = fakeStore();
   resetTierBackfillForTest();
   try {
     fake.disk.set(`${MEDIA_ROOT}/voice-c.mp3`, VOICE_C);
-    actions.newProject("换机器");
+    actions.newProject("Switch machine");
     const c = actions.addMedia({ kind: "audio", name: "voice-c.mp3", url: "/@media/voice-c.mp3", path: "D:\\old-machine\\media\\voice-c.mp3" });
     const r = await ingestUnhashedMedia();
     assert.deepEqual(r, { ingested: [c.id], failed: [] });
@@ -282,53 +282,53 @@ test("补入库:服务端不收那条路径(换了机器、路径对不上)时,�
   }
 });
 
-test("补入库:「只要声音」那份跟着源视频的哈希;还在导入的(pending)不动", async () => {
+test("Store backfill: the \"Audio only\" copy follows the source video's hash; media still importing (pending) is left alone", async () => {
   const fake = fakeStore();
   resetTierBackfillForTest();
   try {
     const hashV = fake.put(CLIP_V, "mp4");
-    actions.newProject("派生声音");
+    actions.newProject("Derived sound");
     const v = actions.addMedia({ kind: "video", name: "v.mp4", ext: "mp4", hash: hashV, url: `/@media/${hashV}`, tiers: { original: hashV } });
-    const s = actions.addMedia({ kind: "audio", name: "v · 声音", url: `/@media/${hashV}`, soundOf: v.id });
+    const s = actions.addMedia({ kind: "audio", name: "v · Sound", url: `/@media/${hashV}`, soundOf: v.id });
     const p = actions.addMedia({ kind: "audio", name: "uploading.mp3", url: "", pending: true });
     const r = await ingestUnhashedMedia();
     assert.deepEqual(r, { ingested: [s.id], failed: [] });
     const got = getState().project.media.find((m) => m.id === s.id);
     assert.equal(got.hash, hashV);
-    assert.equal(got.tiers, undefined, "派生的声音不挂视频的两档");
+    assert.equal(got.tiers, undefined, "A derived sound does not carry the video's two tiers");
     assert.equal(getState().project.media.find((m) => m.id === p.id).hash, undefined);
   } finally {
     fake.restore();
   }
 });
 
-test("文件真的不在了:补不上的列在补入库与装包的返回值里,提示文案列出名字", async () => {
+test("The file is really gone: media that cannot be backfilled is listed in the return values of the store backfill and of packing, and the notice text lists the names", async () => {
   const fake = fakeStore();
   resetTierBackfillForTest();
   try {
     const hashV = fake.put(CLIP_V, "mp4");
-    actions.newProject("缺文件");
+    actions.newProject("Missing file");
     actions.addMedia({ kind: "video", name: "v.mp4", ext: "mp4", hash: hashV, url: `/@media/${hashV}` });
     const gone = actions.addMedia({ kind: "audio", name: "voice-gone.mp3", url: `/api/media/file?path=${encodeURIComponent(`${MEDIA_ROOT}/voice-gone.mp3`)}` });
-    const dead = actions.addMedia({ kind: "image", name: "(缺失) pic.png", url: "" });
+    const dead = actions.addMedia({ kind: "image", name: "(missing) pic.png", url: "" });
     const r = await ingestUnhashedMedia();
     assert.deepEqual(r.ingested, []);
     assert.deepEqual(r.failed.map((f) => f.id).sort(), [gone.id, dead.id].sort());
 
     const { blob, missing } = await packProcpFrom(procOf(getState().project), getState().project);
-    assert.deepEqual(missing.map((m) => m.id).sort(), [gone.id, dead.id].sort(), "进不了包的都在清单里");
-    assert.equal((await readZip(blob)).length, 2, "编排 + 那一条视频");
+    assert.deepEqual(missing.map((m) => m.id).sort(), [gone.id, dead.id].sort(), "Everything that cannot go into the package is in the manifest");
+    assert.equal((await readZip(blob)).length, 2, "The arrangement + that one video");
     const msg = packMissingMessage(missing);
     assert.match(msg, /2 media items/);
     assert.match(msg, /voice-gone\.mp3/);
-    assert.match(msg, /· pic\.png/, "名字前的(缺失)标记不重复显示");
+    assert.match(msg, /· pic\.png/, "The (missing) marker before the name is not shown twice");
     assert.equal(packMissingMessage([]), "");
   } finally {
     fake.restore();
   }
 });
 
-test("守门 mediaEntries:没哈希的条目不许悄悄跳过,一律出现在 unhashed 里", () => {
+test("Gatekeeper mediaEntries: entries without a hash must not be skipped silently, they always appear in unhashed", () => {
   const H = "a".repeat(64);
   const { entries, unhashed } = mediaEntries({
     media: [
@@ -342,7 +342,7 @@ test("守门 mediaEntries:没哈希的条目不许悄悄跳过,一律出现在 u
   assert.deepEqual(unhashed, [{ id: "2", name: "old.mp3" }, { id: "3", name: "bad.mp3" }]);
 });
 
-test("取不到字节的有哈希素材(内容库里没有)也列进 missing,每条引用它的记录都列", async () => {
+test("Hashed media whose bytes cannot be fetched (not in the content store) is also listed in missing, and every record that references it is listed", async () => {
   const fake = fakeStore();
   try {
     const H = "b".repeat(64);
@@ -356,7 +356,7 @@ test("取不到字节的有哈希素材(内容库里没有)也列进 missing,每
   }
 });
 
-test("打开包:包里带着字节的素材去掉打包方机器上的 path(导出不再去读另一台机器的文件),不在包里的原样留着", async () => {
+test("Opening a package: media whose bytes are in the package drops the path from the machine that created the package (export no longer reads files on another machine), and media not in the package is left as is", async () => {
   const { dropPackedPaths } = await import("./procp.ts");
   const H1 = "1".repeat(64);
   const H2 = "2".repeat(64);
@@ -366,15 +366,15 @@ test("打开包:包里带着字节的素材去掉打包方机器上的 path(导�
     { id: "c", kind: "audio", name: "c.mp3", url: "/api/media/file?path=x", path: "C:\old\c.mp3" },
   ] };
   const out = dropPackedPaths(project, [H1.toUpperCase()]);
-  assert.notEqual(out, project, "换新对象");
-  assert.equal(project.media[0].path.endsWith("a.mp4"), true, "不改入参");
+  assert.notEqual(out, project, "Returns a new object");
+  assert.equal(project.media[0].path.endsWith("a.mp4"), true, "The input argument is not modified");
   assert.equal("path" in out.media[0], false);
-  assert.equal(out.media[1].path, "C:\other\b.mp3", "包里没带字节的不动");
+  assert.equal(out.media[1].path, "C:\other\b.mp3", "Media whose bytes are not in the package is left untouched");
   assert.equal(out.media[2].path, "C:\old\c.mp3");
   assert.equal(dropPackedPaths(project, []), project);
 });
 
-test("拆包回报这个包带来的哈希(新写的 + 本来就有的)", async () => {
+test("Unpacking reports the hashes this package brought (newly written + already present)", async () => {
   const packer = fakeStore();
   let blob, hashA, hashB;
   try {

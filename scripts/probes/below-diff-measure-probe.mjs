@@ -56,8 +56,8 @@ const fails = [];
 const check = (cond, label, extra) => { if (!cond) { fails.push(label + (extra === undefined ? '' : ' :: ' + JSON.stringify(extra))); say('FAIL', { label, extra }); } return cond; };
 const sha = (buf) => createHash('sha256').update(buf).digest('hex').slice(0, 16);
 const pad = (n) => String(n).padStart(4, '0');
-const SCENE_NAME = { a: '甲', b: '乙' };
-const VARIANTS = ['契约', '两让', '取层', '原样'];
+const SCENE_NAME = { a: 'A', b: 'B' };
+const VARIANTS = ['contract', 'twoYield', 'extractLayer', 'asIs'];
 
 /** 契约第 5.3 节原来的算式:不透明度取「不透明度那条式子」和各颜色通道两条下限里最大的 */
 function diffContract(upper, lower, width, crop) {
@@ -191,18 +191,18 @@ try {
       } });
     run.pairRecord = perFrame(record);
     run.glass = glassOf.find((g) => g?.length) ?? null;
-    check(!record.failed && record.checks >= 1 && record.last?.lowerStable && record.last?.upperStable && !record.primeLower, `${tag}:每个分段第一帧的实测都过了(藏着连截两张相同、撤掉以后上张没变)`, run.pairRecord);
-    check(record.checks === Math.ceil(N / SEGMENT_FRAMES), `${tag}:每个分段各实测一次`, record.checks);
-    check(record.frames === N, `${tag}:两张那一趟取了 ${N} 帧`, record.frames);
-    check(absent.filter(Boolean).length === 6, `${tag}:入场前的 6 帧页面上没有目标卡`, absent.filter(Boolean).length);
-    check(record.glassFrames === N - 6, `${tag}:目标卡在场的每一帧都量到了毛玻璃的外框`, record.glassFrames);
+    check(!record.failed && record.checks >= 1 && record.last?.lowerStable && record.last?.upperStable && !record.primeLower, `${tag}: measurements of the first frame of every segment all passed (two identical shots hidden, upper shot unchanged after removal)`, run.pairRecord);
+    check(record.checks === Math.ceil(N / SEGMENT_FRAMES), `${tag}: each segment measured once`, record.checks);
+    check(record.frames === N, `${tag}: the two-shot pass captured ${N} frames`, record.frames);
+    check(absent.filter(Boolean).length === 6, `${tag}: the target card is absent from the page in the 6 frames before entrance`, absent.filter(Boolean).length);
+    check(record.glassFrames === N - 6, `${tag}: the frosted-glass bounding box was measured in every frame where the target card is present`, record.glassFrames);
     const upperSame = upperSha.filter((h, f) => h === singleSha[f]).length;
     run.upperSameAsSingle = `${upperSame}/${N}`;
-    check(upperSame === N, `${tag}:两张那一趟的上张和只截一张那一趟逐字节相同`, run.upperSameAsSingle);
-    check(!!measured, `${tag}:那一层不是空的`);
+    check(upperSame === N, `${tag}: the upper shot of the two-shot pass is byte-identical to the single-shot pass`, run.upperSameAsSingle);
+    check(!!measured, `${tag}: that layer is not empty`);
     const tight = evenRect(intersectRect(padRect(measured ?? view, MEASURE_PAD_PX), view), view);
     run.measured = measured; run.tight = tight; run.tightShare = round2(tight.w * tight.h / (width * height));
-    check(tight.w * tight.h < width * height * 0.85, `${tag}:目标卡没有改动的地方是全透明的(量出来的实体框明显小于整幅)`, { tight, share: run.tightShare });
+    check(tight.w * tight.h < width * height * 0.85, `${tag}: areas of the target card without changes are fully transparent (the measured solid box is clearly smaller than the full frame)`, { tight, share: run.tightShare });
 
     // 计时:只截一张对截两张,轮流走 ROUNDS 轮取中位数(前 60 帧)
     const COUNT = Math.min(N, 60);
@@ -244,7 +244,7 @@ try {
       if (cache.has(key)) return cache.get(key);
       const file = path.join(dir, `${name}-${pad(frame)}.png`);
       const data = decodePngRgba(await fs.readFile(file))?.data;
-      if (!data) throw new Error(`解不开 ${file}`);
+      if (!data) throw new Error(`Cannot decode ${file}`);
       cache.set(key, data);
       if (cache.size > 96) cache.delete(cache.keys().next().value);
       return data;
@@ -266,10 +266,10 @@ try {
         if (dl.differ) { pairVsExport.lower.differFrames++; pairVsExport.lower.differPixels += dl.differ; pairVsExport.lower.max = Math.max(pairVsExport.lower.max, dl.max); }
         const glass = glassOf[f]?.length ? glassOf[f] : null;
         const made = {
-          契约: absent[f] ? Buffer.alloc(tight.w * tight.h * 4) : diffContract(upper, lower, width, tight),
-          两让: absent[f] ? Buffer.alloc(tight.w * tight.h * 4) : diffLayer(upper, lower, width, height, { crop: tight }).rgba,
-          取层: absent[f] ? Buffer.alloc(tight.w * tight.h * 4) : diffLayer(upper, lower, width, height, { crop: tight, mask: glass ? glassMask(glass, tight) : null }).rgba,
-          原样: cropRgba(upper, width, tight),
+          contract: absent[f] ? Buffer.alloc(tight.w * tight.h * 4) : diffContract(upper, lower, width, tight),
+          twoYield: absent[f] ? Buffer.alloc(tight.w * tight.h * 4) : diffLayer(upper, lower, width, height, { crop: tight }).rgba,
+          extractLayer: absent[f] ? Buffer.alloc(tight.w * tight.h * 4) : diffLayer(upper, lower, width, height, { crop: tight, mask: glass ? glassMask(glass, tight) : null }).rgba,
+          asIs: cropRgba(upper, width, tight),
         };
         for (const v of VARIANTS) {
           tallyStraight(errors[v].before, made[v], tight, below, full, width);
@@ -283,15 +283,15 @@ try {
         for (const layer of layers[v]) await enc.write(layer);
         const done = await enc.finish();
         const { init, segments: parts } = splitFmp4(done.bytes);
-        if (!check(parts.length === 1 && init.length > 0, `${tag} ${v}#${seg}:编出一个分段`, parts.length)) continue;
+        if (!check(parts.length === 1 && init.length > 0, `${tag} ${v}#${seg}: encoded one segment`, parts.length)) continue;
         errors[v].bytes += parts[0].length;
         const decoded = await decodeSegment(ffmpeg, init, parts[0], dir, `dec-${seg}`);
         const frameBytes = tight.w * (2 * (tight.h + 8)) * 3;
-        if (!check(decoded.length === (to - from + 1) * frameBytes, `${tag} ${v}#${seg}:解出 ${to - from + 1} 帧`, decoded.length / frameBytes)) continue;
+        if (!check(decoded.length === (to - from + 1) * frameBytes, `${tag} ${v}#${seg}: decoded ${to - from + 1} frames`, decoded.length / frameBytes)) continue;
         for (let f = from; f <= to; f++) {
           const picture = decoded.subarray((f - from) * frameBytes, (f - from + 1) * frameBytes);
           tallyDecoded(errors[v].after, picture, tight, await load('lower', f), await load('full', f), width);
-          if (v === '原样') tallyDecodedDirect(floor, picture, tight, await load('full', f), width);
+          if (v === 'asIs') tallyDecodedDirect(floor, picture, tight, await load('full', f), width);
           // 对照:同一帧盖回去的画面,和 7 帧以后(回绕)的真画面比
           const g = (f + 7) % N;
           tallyDecoded(errors[v].other, picture, tight, await load('lower', f), await load('full', g), width);
@@ -308,27 +308,27 @@ try {
     await savePreview(path.join(OUT, 'previews', `${kind}-${width}x${height}-truth-next.png`), cropRgba(await load('full', previewAt + 1), width, tight), tight.w, tight.h);
     await savePreview(path.join(OUT, 'previews', `${kind}-${width}x${height}-whole.png`), await load('full', previewAt), width, height);
     run.pairVsExport = pairVsExport;
-    check(pairVsExport.lower.differFrames === 0, `${tag}:藏起目标卡截的下张,和「只有下层」的工程照导出的办法渲出来的同一帧逐像素相同`, pairVsExport.lower);
-    check(pairVsExport.upper.differFrames === 0, `${tag}:上张和「带目标卡」的工程照导出的办法渲出来的同一帧逐像素相同`, pairVsExport.upper);
+    check(pairVsExport.lower.differFrames === 0, `${tag}: the lower shot captured with the target card hidden is pixel-identical to the same frame rendered by the export method for a "lower layer only" project`, pairVsExport.lower);
+    check(pairVsExport.upper.differFrames === 0, `${tag}: the upper shot is pixel-identical to the same frame rendered by the export method for a project "with the target card"`, pairVsExport.upper);
     run.errors = Object.fromEntries(VARIANTS.map((v) => [v, {
-      编码前: errorSummary(errors[v].before), 编码后: errorSummary(errors[v].after), 对照_别的时刻: errorSummary(errors[v].other), 下层错开一帧: errorSummary(errors[v].shifted),
-      流的字节: errors[v].bytes, 不透明像素占收紧矩形: round2(errors[v].covered / (N * tight.w * tight.h)),
+      beforeEncode: errorSummary(errors[v].before), afterEncode: errorSummary(errors[v].after), control_otherMoment: errorSummary(errors[v].other), lowerShiftedOneFrame: errorSummary(errors[v].shifted),
+      streamBytes: errors[v].bytes, opaquePixelShareOfTightRect: round2(errors[v].covered / (N * tight.w * tight.h)),
     }]));
     for (const v of VARIANTS) say('errors', { tag, v, ...run.errors[v] });
     run.codecFloor = errorSummary(floor);
     say('floor', { tag, ...run.codecFloor });
-    const mine = run.errors.取层, asIs = run.errors.原样;
-    check(mine.编码前.mean <= 0.5 && mine.编码前.max <= 2.5, `${tag}:取层在编码前盖回去和真画面差在量化误差以内`, mine.编码前);
+    const mine = run.errors.extractLayer, asIs = run.errors.asIs;
+    check(mine.beforeEncode.mean <= 0.5 && mine.beforeEncode.max <= 2.5, `${tag}: the extracted layer, composited back before encoding, differs from the real frame within quantization error`, mine.beforeEncode);
     // 「编码误差以内」的参照:真画面原样过一遍同一个编码器的误差
-    check(mine.编码后.mean <= run.codecFloor.mean + 0.5 && mine.编码后.bad <= run.codecFloor.bad * 1.25 + mine.编码后.pixels * 0.001,
-      `${tag}:取层在编码后盖回去和真画面的差,不超过真画面原样过一遍编码器的差`, { layer: mine.编码后, floor: run.codecFloor });
-    check(mine.对照_别的时刻.mean > 3 * mine.编码后.mean && mine.对照_别的时刻.bad > 5 * (mine.编码后.bad + 1), `${tag}:对照(别的时刻的真画面)明显更大`, { same: mine.编码后, other: mine.对照_别的时刻 });
-    run.verdict = { 取层比原样_编码后平均差: [mine.编码后.mean, asIs.编码后.mean], 取层比原样_下层错开一帧: [mine.下层错开一帧.mean, asIs.下层错开一帧.mean] };
+    check(mine.afterEncode.mean <= run.codecFloor.mean + 0.5 && mine.afterEncode.bad <= run.codecFloor.bad * 1.25 + mine.afterEncode.pixels * 0.001,
+      `${tag}: the difference between the extracted layer composited back after encoding and the real frame does not exceed the difference of the real frame passed through the encoder as is`, { layer: mine.afterEncode, floor: run.codecFloor });
+    check(mine.control_otherMoment.mean > 3 * mine.afterEncode.mean && mine.control_otherMoment.bad > 5 * (mine.afterEncode.bad + 1), `${tag}: the control (real frame from another moment) is clearly larger`, { same: mine.afterEncode, other: mine.control_otherMoment });
+    run.verdict = { layerVsAsIs_meanDiffAfterEncode: [mine.afterEncode.mean, asIs.afterEncode.mean], layerVsAsIs_lowerShiftedOneFrame: [mine.lowerShiftedOneFrame.mean, asIs.lowerShiftedOneFrame.mean] };
     cache.clear();
     if (!KEEP) for (const name of await fs.readdir(dir)) await fs.rm(path.join(dir, name), { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 } catch (error) {
-  fails.push(`异常:${error?.stack || error}`);
+  fails.push(`Exception: ${error?.stack || error}`);
   say('ERROR', { error: String(error?.stack || error) });
 } finally {
   try { await bakery?.close(); } catch { /* ignore */ }

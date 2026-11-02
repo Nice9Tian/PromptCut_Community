@@ -16,13 +16,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { openRecoveryVault, PROTECT_MAX_BUFFER } from '../recovery/vault.mjs';
 
-test('RVL-01 大项目的离线修改记录写得进保护存储、重开读得回来', () => {
+test('RVL-01 a large project\'s offline edit log can be written to the protected store and read back after reopening', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-vault-large-'));
   try {
     const descriptor = { version: 1, roomId: 'sp_aaaaaaaaaaaaaaaaaaaaaaaaaa', service: 'http://127.0.0.1:1', where: 'lan' };
-    const project = { id: 'content', name: '大正文', tracks: [], media: [], note: '正文'.repeat(800_000) };
+    const project = { id: 'content', name: 'Large text', tracks: [], media: [], note: 'body'.repeat(800_000) };
     const journal = { version: 1, projectId: descriptor.roomId, project, rev: 7, offlineRev: null, pending: [] };
-    assert.ok(Buffer.byteLength(JSON.stringify(journal)) > 4 * 1024 * 1024, '记录本身大于 4 MiB');
+    assert.ok(Buffer.byteLength(JSON.stringify(journal)) > 4 * 1024 * 1024, 'the record itself is larger than 4 MiB');
     openRecoveryVault({ dir }).journal(descriptor, 'content', journal);
     const back = openRecoveryVault({ dir }).select(descriptor, 'content').journal;
     assert.equal(back.rev, 7);
@@ -31,7 +31,7 @@ test('RVL-01 大项目的离线修改记录写得进保护存储、重开读得�
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('RVL-02 保护存储的输出上限是个明确的数', () => {
+test('RVL-02 the protected store\'s output limit is an explicit number', () => {
   assert.equal(PROTECT_MAX_BUFFER, 256 * 1024 * 1024);
-  assert.ok(PROTECT_MAX_BUFFER >= 64 * 1024 * 1024, '不小于恢复接口请求体的上限');
+  assert.ok(PROTECT_MAX_BUFFER >= 64 * 1024 * 1024, 'not smaller than the request body limit of the recovery endpoint');
 });

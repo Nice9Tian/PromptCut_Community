@@ -58,7 +58,7 @@ const costs = [
     catchUpMs: 0, kind: 'random', demoted: false, measuredAt: 10 },
 ];
 
-test('两端对同一输入算出逐字段相同的表', () => {
+test('both sides compute field-by-field identical tables from the same input', () => {
   // 页面那一端
   const pageIndex = clipCostIndex(project, graph, sourceVersionOf);
   const pagePlan = planPipelines(project, costs, fps, { ...pageIndex });
@@ -77,7 +77,7 @@ test('两端对同一输入算出逐字段相同的表', () => {
   assert.equal(wire(serverPlan), wire(pagePlan));
 });
 
-test('预渲染集合就是 planPipelines 的那一份,不再按声明兜底', () => {
+test('the prerender set is the one planPipelines produces, with no fallback to declarations anymore', () => {
   const set = prerenderSetOfPlan(controls, { fps, costs, tuning: null });
   // 18 秒那张超了追帧上界 → 各位置都重、整段在集合里;6 秒那张走 (b)、各位置都轻 → 不在
   assert.deepEqual([...set].sort(), ['b']);
@@ -86,18 +86,18 @@ test('预渲染集合就是 planPipelines 的那一份,不再按声明兜底', (
   assert.deepEqual([...declared].sort(), ['a', 'b']);
 });
 
-test('一条记录都没有时按声明兜底(和接上 planPipelines 之前一致)', () => {
+test('with no records at all, fall back to declarations (same as before planPipelines was wired in)', () => {
   const set = prerenderSetOf(project, [], fps, (clip) => caps[clip.id]);
   assert.deepEqual([...set].sort(), ['a', 'b']);
 });
 
-test('K6 降级:costs 里写上 demoted 之后,那张卡进预渲染集合', () => {
+test('K6 downgrade: once demoted is written into costs, that card enters the prerender set', () => {
   const demoted = costs.map((r) => (r.identityKey === controls[0].costKey ? { ...r, capped: true, demoted: true } : r));
   const set = prerenderSetOfPlan(controls, { fps, costs: demoted, tuning: null });
   assert.deepEqual([...set].sort(), ['a', 'b']);
 });
 
-test('同一个 identityKey 有多台 device 时取 measuredAt 最新的那一条', () => {
+test('when one identityKey has several devices, take the entry with the latest measuredAt', () => {
   const two = [
     { identityKey: 'k', device: 'old', measuredAt: 1, stepMs: 99 },
     { identityKey: 'k', device: 'new', measuredAt: 2, stepMs: 1 },
@@ -107,7 +107,7 @@ test('同一个 identityKey 有多台 device 时取 measuredAt 最新的那一�
   assert.equal(picked[0].device, 'new');
 });
 
-test('3D 模式 (includeLightCardsFor3D / view3d) 将独立轻卡也纳入 prerenderSet', () => {
+test('3D mode (includeLightCardsFor3D / view3d) also includes standalone light cards in prerenderSet', () => {
   // 原本 6 秒那张 'a' 走 (b) 轻管线、'c' 是 direct 轻卡，只有 'b' 进 prerenderSet
   const setNormal = prerenderSetOfPlan(controls, { fps, costs, tuning: null });
   assert.deepEqual([...setNormal].sort(), ['b']);

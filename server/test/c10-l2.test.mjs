@@ -50,66 +50,66 @@ async function setup({ deviceMemory, remaining = 10 * 1024 * MiB, noEstimate = f
 /** 读回来的块字节数 */
 const lenOf = (v) => (v === null ? -1 : bytesIn(v) || (typeof v === 'string' ? v.length : -1));
 
-it('C10-L2-01 一个库、三张表：costs、snapshots、ranges；没有 backups', async () => {
+it('C10-L2-01 one database, three object stores: costs, snapshots, ranges; no backups', async () => {
   const { factory, l2 } = await setup();
   await l2.putCost('card-a|env-1', { stepMs: 3 });
   await l2.putBlock(snapKey(1), block(1024));
   await l2.putRange('layer-a', 0, 29);
-  assert.equal(factory.dbNames().length, 1, `应只有一个库，实际 ${JSON.stringify(factory.dbNames())}`);
+  assert.equal(factory.dbNames().length, 1, `Expected only one database, got ${JSON.stringify(factory.dbNames())}`);
   assert.deepEqual(factory.storeNamesOf(l2DbName(factory)), L2_TABLES);
 });
 
-it('C10-L2-02 软上限按环境分配的几个数由 L2 模块导出（不按档定固定数）', async () => {
+it('C10-L2-02 the figures behind the environment-based soft limit are exported by the L2 module (no fixed number per tier)', async () => {
   const mod = await importRepo(gate.file);
   const nums = exportedNumbers(mod);
-  for (const [name, v] of Object.entries(L2_SOFT_LIMIT)) assert.ok(nums.includes(v), `L2 模块导出里没有 ${name}（${v / MiB} MiB）：${JSON.stringify(nums)}`);
+  for (const [name, v] of Object.entries(L2_SOFT_LIMIT)) assert.ok(nums.includes(v), `The L2 module exports do not include ${name} (${v / MiB} MiB): ${JSON.stringify(nums)}`);
 });
 
-it('C10-L2-03 剩余 320 MiB 时软上限是 32 MiB（剩余 10%，夹在 [32 MiB, 1 GiB]），LRU 守住', async () => {
+it('C10-L2-03 with 320 MiB remaining the soft limit is 32 MiB (10% of the remaining, clamped to [32 MiB, 1 GiB]), and LRU enforces it', async () => {
   const { factory, l2 } = await setup({ remaining: 320 * MiB });
   const limit = 32 * MiB;
   const keys = [];
   for (let i = 0; i < 12; i++) {
     keys.push(snapKey(i));
     await l2.putBlock(keys[i], block(4 * MiB));
-    assert.ok(storedBlockBytes(factory) <= limit, `写第 ${i + 1} 块之后库里 ${storedBlockBytes(factory) / MiB} MiB，超过软上限 32 MiB`);
+    assert.ok(storedBlockBytes(factory) <= limit, `After writing chunk ${i + 1}, the database holds ${storedBlockBytes(factory) / MiB} MiB, exceeding the soft limit of 32 MiB`);
   }
-  assert.ok(blockRecords(factory, keys.at(-1)).length > 0, '最新写的块在库里');
-  assert.ok(storedBlockBytes(factory) >= 24 * MiB, `淘汰过头：只剩 ${storedBlockBytes(factory) / MiB} MiB（软上限 32 MiB，4 MiB 一块至少该留 6 块）`);
+  assert.ok(blockRecords(factory, keys.at(-1)).length > 0, 'The most recently written chunk is in the database');
+  assert.ok(storedBlockBytes(factory) >= 24 * MiB, `Evicted too much: only ${storedBlockBytes(factory) / MiB} MiB left (soft limit 32 MiB, at 4 MiB per chunk at least 6 chunks should remain)`);
   // 留下的是最近写的一段后缀
   const kept = keys.map((k) => blockRecords(factory, k).length > 0);
   const firstKept = kept.indexOf(true);
-  assert.ok(kept.slice(firstKept).every(Boolean), `留下的不是最近写的那一段：${JSON.stringify(kept)}`);
+  assert.ok(kept.slice(firstKept).every(Boolean), `The chunks that remain are not the most recently written ones: ${JSON.stringify(kept)}`);
 });
 
-it('C10-L2-04 拿不到额度（没有 storage.estimate）时按内存：报 2 GB → 64 MiB', async () => {
+it('C10-L2-04 when no quota is available (no storage.estimate), the limit is based on memory: 2 GB reported → 64 MiB', async () => {
   const { factory, l2 } = await setup({ deviceMemory: 2, noEstimate: true });
   for (let i = 0; i < 20; i++) {
     await l2.putBlock(snapKey(i), block(4 * MiB));
-    assert.ok(storedBlockBytes(factory) <= L2_SOFT_LIMIT.memoryMin, `写第 ${i + 1} 块之后库里 ${storedBlockBytes(factory) / MiB} MiB，超过 64 MiB`);
+    assert.ok(storedBlockBytes(factory) <= L2_SOFT_LIMIT.memoryMin, `After writing chunk ${i + 1}, the database holds ${storedBlockBytes(factory) / MiB} MiB, exceeding 64 MiB`);
   }
-  assert.ok(storedBlockBytes(factory) >= 48 * MiB, `淘汰过头：只剩 ${storedBlockBytes(factory) / MiB} MiB`);
+  assert.ok(storedBlockBytes(factory) >= 48 * MiB, `Evicted too much: only ${storedBlockBytes(factory) / MiB} MiB left`);
 });
 
-it('C10-L2-05 LRU：读过的块比没读过的晚淘汰', async () => {
+it('C10-L2-05 LRU: chunks that were read are evicted later than chunks that were not', async () => {
   const { factory, l2 } = await setup({ remaining: 320 * MiB }); // 软上限 32 MiB
   const k = (i) => snapKey(i, 'c');
   for (let i = 0; i < 8; i++) await l2.putBlock(k(i), block(4 * MiB)); // 正好 32 MiB
-  assert.equal(lenOf(await l2.getBlock(k(0))), 4 * MiB, '第 0 块读得回来');
+  assert.equal(lenOf(await l2.getBlock(k(0))), 4 * MiB, 'Chunk 0 can be read back');
   await l2.putBlock(k(8), block(4 * MiB));
-  assert.ok(blockRecords(factory, k(0)).length > 0, '刚读过的第 0 块不该被淘汰');
-  assert.equal(blockRecords(factory, k(1)).length, 0, '最久没用的第 1 块该先被淘汰');
+  assert.ok(blockRecords(factory, k(0)).length > 0, 'Chunk 0, just read, should not be evicted');
+  assert.equal(blockRecords(factory, k(1)).length, 0, 'Chunk 1, the least recently used, should be evicted first');
   assert.ok(blockRecords(factory, k(8)).length > 0);
 });
 
-it('C10-L2-06 costs 不参与淘汰', async () => {
+it('C10-L2-06 costs do not take part in eviction', async () => {
   const { factory, l2 } = await setup({ remaining: 320 * MiB });
   for (let i = 0; i < 40; i++) await l2.putCost(`card-${i}|env-1`, { stepMs: i, kind: 'random' });
   for (let i = 0; i < 12; i++) await l2.putBlock(snapKey(i, 'd'), block(4 * MiB));
-  assert.equal(factory.records(l2DbName(factory), 'costs').length, 40, 'costs 表 40 条一条不少');
+  assert.equal(factory.records(l2DbName(factory), 'costs').length, 40, 'The costs store has all 40 records, none missing');
   for (let i = 0; i < 40; i += 13) {
     const rec = await l2.getCost(`card-${i}|env-1`);
-    assert.equal(rec?.stepMs ?? rec?.record?.stepMs, i, `card-${i} 的成本记录读得回来`);
+    assert.equal(rec?.stepMs ?? rec?.record?.stepMs, i, `The cost record of card-${i} can be read back`);
   }
 });
 
@@ -125,28 +125,28 @@ async function quotaReclaim(quotaMode) {
     await l2.putBlock(keys[i], block(2 * MiB));
   }
   const failed = factory.log.filter((tx) => tx.outcome === 'abort' && tx.error === 'QuotaExceededError');
-  assert.ok(failed.length > 0, '桩的配额应被撞到至少一次（否则这条用例没测到东西）');
+  assert.ok(failed.length > 0, 'The stub\'s quota should be hit at least once (otherwise this case tests nothing)');
   for (const tx of failed) {
     const put = tx.ops.find((o) => o.store === 'snapshots' && (o.op === 'put' || o.op === 'add'));
     if (!put) continue;
     const key = keys.find((k) => putsOf(factory, k).some((p) => p.tx === tx));
-    assert.ok(key, '认得出失败的是哪一块');
+    assert.ok(key, 'Can tell which chunk failed');
     const attempts = putsOf(factory, key);
-    assert.equal(attempts.length, 2, `${key.slice(0, 16)}… 应写两次（失败一次、再试一次），实际 ${attempts.length} 次`);
+    assert.equal(attempts.length, 2, `${key.slice(0, 16)}… should be written twice (one failure, one retry), got ${attempts.length}`);
     const retry = attempts[1].tx;
-    assert.equal(retry.outcome, 'complete', '再试一次成功');
+    assert.equal(retry.outcome, 'complete', 'The retry succeeds');
     const between = factory.log.filter((t) => t.id > tx.id && t.id <= retry.id && t.ops.some((o) => o.store === 'snapshots' && o.op === 'delete'));
-    assert.equal(between.length, 1, `回收应在一个事务里做完，实际 ${between.length} 个删除事务`);
+    assert.equal(between.length, 1, `Reclaiming should finish in one transaction, got ${between.length} delete transactions`);
     assert.equal(between[0].outcome, 'complete');
     const freed = between[0].ops.filter((o) => o.store === 'snapshots' && o.op === 'delete').reduce((s, o) => s + o.bytes, 0);
-    assert.ok(freed >= L2_RECLAIM.min && freed <= L2_RECLAIM.max + MiB, `回收了 ${(freed / MiB).toFixed(2)} MiB，应在 16～64 MiB`);
+    assert.ok(freed >= L2_RECLAIM.min && freed <= L2_RECLAIM.max + MiB, `Reclaimed ${(freed / MiB).toFixed(2)} MiB, should be within 16-64 MiB`);
   }
-  assert.ok(blockRecords(factory, keys.at(-1)).length > 0, '最后一块写进了库');
+  assert.ok(blockRecords(factory, keys.at(-1)).length > 0, 'The last chunk was written to the database');
   assert.equal(lenOf(await l2.getBlock(keys.at(-1))), 2 * MiB);
 }
 
-it('C10-L2-07 QuotaExceededError（请求报错 → 事务 error → abort）：一个事务回收 16～64 MiB 再试一次', () => quotaReclaim('request'));
-it('C10-L2-08 QuotaExceededError（只有事务 abort，没有 error 事件）：同样回收再试一次', () => quotaReclaim('abort'));
+it('C10-L2-07 QuotaExceededError (request error → transaction error → abort): one transaction reclaims 16-64 MiB, then retries once', () => quotaReclaim('request'));
+it('C10-L2-08 QuotaExceededError (only the transaction abort, no error event): reclaims and retries once in the same way', () => quotaReclaim('abort'));
 
 async function quotaStillFails(quotaMode) {
   const { factory, l2 } = await setup({ quotaMode });
@@ -154,20 +154,20 @@ async function quotaStillFails(quotaMode) {
   for (let i = 0; i < 12; i++) await l2.putBlock(snapKey(i, salt), block(2 * MiB)); // 24 MiB，回收够得着 16 MiB
   factory.forceQuota = true;
   const x = snapKey(99, salt);
-  await within(l2.putBlock(x, block(3 * MiB)), 5000, '回收后仍失败的写入');
-  assert.equal(putsOf(factory, x).length, 2, `写库只试两次（失败、回收后再试一次），实际 ${putsOf(factory, x).length} 次`);
-  assert.equal(blockRecords(factory, x).length, 0, '库里没有这一块');
-  assert.equal(lenOf(await l2.getBlock(x)), 3 * MiB, '这一块放在内存里，读得回来');
+  await within(l2.putBlock(x, block(3 * MiB)), 5000, 'A write that still fails after reclaiming');
+  assert.equal(putsOf(factory, x).length, 2, `Database writes are attempted only twice (a failure, then one retry after reclaiming), got ${putsOf(factory, x).length}`);
+  assert.equal(blockRecords(factory, x).length, 0, 'This chunk is not in the database');
+  assert.equal(lenOf(await l2.getBlock(x)), 3 * MiB, 'This chunk is kept in memory and can be read back');
   factory.forceQuota = false;
   await l2.putBlock(snapKey(100, salt), block(MiB));
-  assert.equal(lenOf(await l2.getBlock(x)), 3 * MiB, '之后照样从内存读得回来');
-  assert.equal(putsOf(factory, x).length, 2, '之后不再为这一块写库');
+  assert.equal(lenOf(await l2.getBlock(x)), 3 * MiB, 'It can still be read back from memory afterwards');
+  assert.equal(putsOf(factory, x).length, 2, 'No more database writes for this chunk afterwards');
 }
 
-it('C10-L2-09 回收之后仍失败（请求报错）：这一块只放内存，不再写库', () => quotaStillFails('request'));
-it('C10-L2-10 回收之后仍失败（只有 abort）：这一块只放内存，不再写库', () => quotaStillFails('abort'));
+it('C10-L2-09 still failing after reclaiming (request error): this chunk stays in memory only and is no longer written to the database', () => quotaStillFails('request'));
+it('C10-L2-10 still failing after reclaiming (abort only): this chunk stays in memory only and is no longer written to the database', () => quotaStillFails('abort'));
 
-it('C10-L2-11 ranges 写入即通知订阅方，并落进 ranges 表', async () => {
+it('C10-L2-11 a write to ranges notifies subscribers immediately and lands in the ranges store', async () => {
   const { factory, l2 } = await setup();
   const seen = [];
   const off = l2.subscribe((...args) => seen.push(args));
@@ -176,12 +176,12 @@ it('C10-L2-11 ranges 写入即通知订阅方，并落进 ranges 表', async () 
   await within(new Promise((resolve) => {
     const poll = () => (seen.length ? resolve() : setTimeout(poll, 5));
     poll();
-  }), 1000, 'ranges 写入后的通知');
-  assert.ok(factory.records(l2DbName(factory), 'ranges').length > 0, 'ranges 表里有记录');
+  }), 1000, 'Notification after a ranges write');
+  assert.ok(factory.records(l2DbName(factory), 'ranges').length > 0, 'The ranges store has records');
   if (typeof off === 'function') off();
 });
 
-it('C10-L2-12 成本记录关掉再开还在（已有记录的卡不再测）', async () => {
+it('C10-L2-12 cost records survive closing and reopening (cards that already have a record are not measured again)', async () => {
   const factory = new FakeIDBFactory();
   restores.push(installFakeIndexedDB(factory));
   const estimate = async () => ({ quota: 10 * 1024 * MiB, usage: factory.usage() });

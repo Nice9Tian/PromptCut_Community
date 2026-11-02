@@ -151,7 +151,7 @@ const shot = async (page, file) => {
 
 try {
   /* ============================================================ 直连 */
-  if (wants('直连')) {
+  if (wants('direct')) {
     /* ---- 路线 1:上下文数 + 3 张卡同一张贴图 ---- */
     const texUrl = '/@media/gl-migrate-texture.png';
     {
@@ -171,11 +171,11 @@ try {
       const mainCreated = await page.evaluate(() => window.__pcGlCtxCreated?.() ?? null);
       await shot(page, 'worker.png');
       result.cases.route1 = { painted, diag: { mode: diag.mode, route: diag.route, beats: diag.beats }, worker, mainAlive, mainCreated, errors };
-      check(!painted.timeout, '路线 1:4 个 gl 平面都贴上了当前帧的位图', painted);
-      check(diag.mode === 'worker', '路线 1:glHost 走自己的 Worker', diag.mode);
-      check(mainAlive === 0, '路线 1:舞台主线程 0 个活的 WebGL 上下文', { mainAlive, mainCreated });
-      check(worker?.contexts === 1, '路线 1:Worker 里恰好 1 个上下文', worker);
-      check(worker?.threeTextures === 1 && worker?.uploads === 1, '同一张贴图被 3 张卡引用:THREE.Texture 一个、上传一次', worker);
+      check(!painted.timeout, 'Route 1: all 4 gl planes were painted with the current frame\'s bitmap', painted);
+      check(diag.mode === 'worker', 'Route 1: glHost uses its own Worker', diag.mode);
+      check(mainAlive === 0, 'Route 1: the stage main thread has 0 live WebGL contexts', { mainAlive, mainCreated });
+      check(worker?.contexts === 1, 'Route 1: exactly 1 context in the Worker', worker);
+      check(worker?.threeTextures === 1 && worker?.uploads === 1, 'The same texture is referenced by 3 cards: one THREE.Texture, uploaded once', worker);
 
       /* ---- 节拍:点一次时间轴只发一拍;同步 advanceTo 只在结束后发一拍 ---- */
       const beats0 = diag.beats;
@@ -186,8 +186,8 @@ try {
       await page.evaluate(WAIT_PAINTED, 4);
       const beats2 = (await page.evaluate(() => window.__pcStageDiag().gl)).beats;
       result.cases.beatCount = { beats0, beats1, beats2 };
-      check(beats1 - beats0 === 1, '点一次时间轴(远跳)只发一拍 beat', { beats0, beats1 });
-      check(beats2 - beats1 === 1, 'K3(a) 的同步 advanceTo(往前 0.3 秒 = 9 帧)只在结束后发一拍 beat', { beats1, beats2 });
+      check(beats1 - beats0 === 1, 'One click on the timeline (far jump) emits only one beat', { beats0, beats1 });
+      check(beats2 - beats1 === 1, 'K3(a) synchronous advanceTo (forward 0.3 s = 9 frames) emits one beat only after it ends', { beats1, beats2 });
 
       /* ---- 快照:back 角色下生成快照 ---- */
       await page.evaluate(() => window.__pcStage.setRole('back'));
@@ -202,9 +202,9 @@ try {
         return window.__pcCreateSnapshot().lossy;
       });
       result.cases.snapshot = { probeReply, snap, tampered };
-      check(snap.lossy === 0 && snap.imgs.every((n) => n >= 1), '生成快照:three 卡是非空 <img>、lossy = 0', snap);
-      check(tampered === 1, '把一张卡的 data-pc-gl-frame 改成不符的值:lossy 计到它(= 1)', tampered);
-      check(typeof probeReply?.stepMs === 'number', 'setTime({ probe }) 回包带 stepMs(含 beat → done 往返)', probeReply);
+      check(snap.lossy === 0 && snap.imgs.every((n) => n >= 1), 'Generate snapshots: the three cards are non-empty <img>, lossy = 0', snap);
+      check(tampered === 1, 'Change a card\'s data-pc-gl-frame to a mismatched value: lossy counts it (= 1)', tampered);
+      check(typeof probeReply?.stepMs === 'number', 'The setTime({ probe }) reply carries stepMs (including the beat → done round trip)', probeReply);
       await page.close();
     }
 
@@ -220,9 +220,9 @@ try {
       const mainAlive = await page.evaluate(() => window.__pcGlCtxAlive?.() ?? null);
       await shot(page, 'twenty.png');
       result.cases.twenty = { painted, worker, mainAlive, lost, errors };
-      check(!painted.timeout && painted.planes === 20, '20 张 scene-3d 同时活跃:20 个平面都贴上了位图', painted);
-      check(worker?.contextLost === 0 && worker?.contexts === 1 && lost.length === 0, '20 张卡不触发 webglcontextlost,Worker 里仍是 1 个上下文', { worker, lost });
-      check(mainAlive === 0, '20 张卡:舞台主线程 0 个活的 WebGL 上下文', mainAlive);
+      check(!painted.timeout && painted.planes === 20, '20 scene-3d cards active at once: all 20 planes were painted with bitmaps', painted);
+      check(worker?.contextLost === 0 && worker?.contexts === 1 && lost.length === 0, '20 cards do not trigger webglcontextlost, still 1 context in the Worker', { worker, lost });
+      check(mainAlive === 0, '20 cards: the stage main thread has 0 live WebGL contexts', mainAlive);
       await page.close();
     }
 
@@ -246,15 +246,15 @@ try {
       let diff = 0, maxd = 0;
       for (let i = 0; i < w.img.data.length; i++) { const d = Math.abs(w.img.data[i] - m.img.data[i]); if (d) { diff++; maxd = Math.max(maxd, d); } }
       result.cases.fallback = { worker: { ...w, img: undefined }, main: { ...m, img: undefined }, diffBytes: diff, maxDiff: maxd };
-      check(m.offscreenGl === false && m.mode === 'main', '能力退路:offscreenGl 强制为 false 时 glHost 走主线程', { offscreenGl: m.offscreenGl, mode: m.mode });
-      check(!m.painted.timeout, '能力退路:beat / done 协议不变,平面照样贴上当前帧', m.painted);
-      check(m.mainAlive === 1, '能力退路:主线程恰好 1 个上下文(顶替 Worker 的那一个)', m.mainAlive);
-      check(diff === 0, '能力退路:画面和 Worker 那条路逐像素相同', { diff, maxd });
+      check(m.offscreenGl === false && m.mode === 'main', 'Capability fallback: with offscreenGl forced to false, glHost runs on the main thread', { offscreenGl: m.offscreenGl, mode: m.mode });
+      check(!m.painted.timeout, 'Capability fallback: the beat / done protocol is unchanged, planes are still painted with the current frame', m.painted);
+      check(m.mainAlive === 1, 'Capability fallback: exactly 1 context on the main thread (the one that replaces the Worker\'s)', m.mainAlive);
+      check(diff === 0, 'Capability fallback: the picture is pixel-identical to the Worker route', { diff, maxd });
     }
   }
 
   /* ============================================================ 编辑台 */
-  if (wants('编辑台')) {
+  if (wants('editor')) {
     const page = await browser.newPage();
     await page.setViewport({ width: 1600, height: 1000 });
     await page.evaluateOnNewDocument(COUNT_GL);
@@ -299,10 +299,10 @@ try {
     const buf = await page.screenshot({ type: 'png' });
     fs.writeFileSync(path.join(out, 'editor-front.png'), buf);
     result.cases.route2 = { front: fronts, painted, dA: { mode: dA.mode, route: dA.route, stageId: dA.stageId }, dB: { mode: dB.mode, route: dB.route, stageId: dB.stageId }, mainA, mainB, shared, parentAlive };
-    check(!painted.timeout, '路线 2:可见舞台的 3 个平面都贴上了当前帧', painted);
-    check(dA.mode === 'port' && dA.route === 'shared', '路线 2:可见舞台走父页交来的端口', dA.mode);
-    check(mainA === 0 && mainB === 0, '路线 2:两个舞台文档主线程都是 0 个活的上下文', { mainA, mainB });
-    check(shared?.contexts === 1, '路线 2:父页的共享 Worker 里 1 个上下文', shared);
+    check(!painted.timeout, 'Route 2: all 3 planes of the visible stage were painted with the current frame', painted);
+    check(dA.mode === 'port' && dA.route === 'shared', 'Route 2: the visible stage uses the port handed over by the parent page', dA.mode);
+    check(mainA === 0 && mainB === 0, 'Route 2: both stage documents have 0 live contexts on the main thread', { mainA, mainB });
+    check(shared?.contexts === 1, 'Route 2: 1 context in the parent page\'s shared Worker', shared);
     // 后台舞台也画一次(它平时只在探针 / 补跑时画),然后 setRole('back') 释放它那一份
     await fb.evaluate(async () => {
       const { getState } = await import('/src/store/project.ts').catch(() => ({ getState: null }));
@@ -317,9 +317,9 @@ try {
     const after = await page.evaluate(() => window.__pcSharedGlDiag());
     const dB2 = await fb.evaluate(() => window.__pcStageDiag().gl);
     result.cases.release = { before: before?.atlas, after: after?.atlas, stageIdAfter: dB2.stageId, releases: dB2.releases };
-    check(!!before?.atlas?.[other] && !!before?.atlas?.[fronts], `释放前:共享 Worker 里 ${fronts} / ${other} 各一份图集`, before?.atlas);
-    check(!after?.atlas?.[other] && !!after?.atlas?.[fronts], `对 ${other} 发 setRole('back') 后:它那份图集被释放,${fronts} 的不动`, after?.atlas);
-    check(dB2.stageId === other && dB2.mode === 'port', 'stageId 不随角色变、端口不换', dB2);
+    check(!!before?.atlas?.[other] && !!before?.atlas?.[fronts], `Before release: the shared Worker holds one atlas each for ${fronts} / ${other}`, before?.atlas);
+    check(!after?.atlas?.[other] && !!after?.atlas?.[fronts], `After setRole('back') is sent to ${other}: its atlas is released, ${fronts}'s is untouched`, after?.atlas);
+    check(dB2.stageId === other && dB2.mode === 'port', 'stageId does not change with the role and the port stays the same', dB2);
 
     /* ---- 播放节拍 + Worker 睡 100 ms ---- */
     await build(3, 'perDocument');
@@ -363,9 +363,9 @@ try {
     const rt = [...glNormal.roundTrips].sort((a, b) => a - b);
     result.cases.play = { normal, slow, stallCount: stall?.mediaStallCount, gapMax: stall?.mediaGapMaxMs,
       roundTrip: { p50: rt[Math.floor(rt.length / 2)], p90: rt[Math.floor(rt.length * 0.9)], max: rt[rt.length - 1], timeouts: glNormal.timeouts } };
-    check(normal.n > 20 && normal.badSec === 0, '播放:frame 的 sec 差恒为 1/fps', normal);
-    check(slow.n > 5 && slow.badSec === 0 && slow.gapMin >= 95, 'Worker 睡 100 ms:舞台等它、不跳帧(sec 差仍是 1/fps,到达间隔 ≥ 100 ms)', slow);
-    check((stall?.mediaStallCount ?? 0) > 0, 'Worker 睡 100 ms:主文档判卡顿(40 ms 后暂停音频 / 素材)', stall);
+    check(normal.n > 20 && normal.badSec === 0, 'Playback: the sec difference between frames is always 1/fps', normal);
+    check(slow.n > 5 && slow.badSec === 0 && slow.gapMin >= 95, 'Worker sleeps 100 ms: the stage waits for it and does not skip frames (sec difference is still 1/fps, arrival gap ≥ 100 ms)', slow);
+    check((stall?.mediaStallCount ?? 0) > 0, 'Worker sleeps 100 ms: the main document detects a stall (pauses audio / media after 40 ms)', stall);
 
     /* ---- 追帧(K5 第一路)---- */
     const setCosts = await page.evaluate(SET_COSTS, { heavy: true });
@@ -401,12 +401,12 @@ try {
       return { clipId, planInfo, sawSettling, settlingBeats, unset: unset[0] ?? null, beats0, beatsEnd: window.__pcStageDiag().gl.beats };
     });
     result.cases.catchup = { setCosts, ...catchup };
-    check(catchup.sawSettling, '追帧:判重、vtOk 的 canvas 卡进了 .pc-settling(K5 第一路)', catchup);
-    check(!!catchup.unset && catchup.unset.glFrame === catchup.unset.localFrame, '追帧:摘 .pc-settling 的那一刻平面上已是目标帧的位图(gl-frame = 本地帧号)', catchup.unset);
+    check(catchup.sawSettling, 'Frame catch-up: canvas cards classified as heavy with vtOk entered .pc-settling (K5 first route)', catchup);
+    check(!!catchup.unset && catchup.unset.glFrame === catchup.unset.localFrame, 'Frame catch-up: at the moment .pc-settling is removed, the plane already holds the target frame\'s bitmap (gl-frame = local frame number)', catchup.unset);
     // setTime 自己一拍 + 追上那一拍;中间步(3 秒 × 30 帧 = 90 步)一拍都不发
     // 从进 .pc-settling 到摘掉:只有追上那一拍(3 秒 × 30 帧 = 90 步的中间步一拍都不发)
     // 进 .pc-settling 之后:setTime 自己落定那一拍(卡被 .pc-settling 藏着,画的是挂载帧)+ 追上那一拍;90 个中间步一拍不发
-    check(catchup.unset && catchup.settlingBeats !== null && catchup.unset.beats - catchup.settlingBeats <= 2, '追帧中间步不发 beat(进 .pc-settling 到摘掉之间 ≤ 2 拍:setTime 那一拍 + 追上那一拍)', catchup);
+    check(catchup.unset && catchup.settlingBeats !== null && catchup.unset.beats - catchup.settlingBeats <= 2, 'Frame catch-up intermediate steps emit no beat (between entering and removing .pc-settling there are ≤ 2 beats: the setTime beat + the catch-up beat)', catchup);
     result.cases.editorErrors = errors;
     await page.close();
   }
@@ -416,6 +416,6 @@ try {
 
 fs.writeFileSync(path.join(out, 'report.json'), JSON.stringify({ ...result, fails }, null, 2));
 console.log(JSON.stringify(result, (k, v) => (k === 'roundTrips' ? undefined : v), 2).slice(0, 6000));
-console.log(fails.length ? `FAIL ${fails.length}:\n  ${fails.join('\n  ')}` : 'PASS 全部');
-console.log('产物:', out);
+console.log(fails.length ? `FAIL ${fails.length}:\n  ${fails.join('\n  ')}` : 'PASS all');
+console.log('Output:', out);
 process.exitCode = fails.length ? 1 : 0;

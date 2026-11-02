@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { smallScale, smallSize, SMALL_MAX_WIDTH, SMALL_MAX_HEIGHT, SMALL_WEBP_QUALITY } from "./bakeSmall.ts";
 import * as desk from "../../server/bakery/small-bitmap.mjs";
 
-test("M7-SM-01 小尺寸的缩放比与像素尺寸与桌面同一套;WebP 质量 80", () => {
+test("M7-SM-01 small-size scale ratio and pixel size are the same as desktop; WebP quality 80", () => {
   assert.equal(SMALL_MAX_WIDTH, desk.SMALL_MAX_WIDTH);
   assert.equal(SMALL_MAX_HEIGHT, desk.SMALL_MAX_HEIGHT);
   assert.equal(Math.round(SMALL_WEBP_QUALITY * 100), desk.SMALL_WEBP_QUALITY);

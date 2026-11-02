@@ -47,7 +47,7 @@ const PORT = Number(arg('--port', 7450));
 const OUT = path.resolve(arg('--out', path.join(ROOT, 'out', 'online-remotion-card-probe')));
 const KEEP_TEMP = argv.includes('--keep-temp');
 if ([5190, 5191, 5192].some((p) => p >= PORT && p <= PORT + 2) || (PORT >= 5800 && PORT < 6000)) {
-  console.log(JSON.stringify({ ok: false, fails: ['这一段端口是用户常驻或别的探针占的，换一个'] }));
+  console.log(JSON.stringify({ ok: false, fails: ['This port range is taken by the user\'s always-on dev server or another probe, pick another'] }));
   process.exit(2);
 }
 fs.mkdirSync(OUT, { recursive: true });
@@ -55,7 +55,7 @@ fs.mkdirSync(OUT, { recursive: true });
 const fails = [];
 let pass = 0;
 const short = (v) => { const s = typeof v === 'string' ? v : JSON.stringify(v); return s === undefined ? '' : (s.length > 500 ? `${s.slice(0, 500)}…` : s); };
-const check = (label, ok, detail) => { console.log(`${ok ? '  过' : '不过'}  ${label}${detail !== undefined ? `  〔${short(detail)}〕` : ''}`); if (ok) pass++; else fails.push(label); return !!ok; };
+const check = (label, ok, detail) => { console.log(`${ok ? '  pass' : 'fail'}  ${label}${detail !== undefined ? `  [${short(detail)}]` : ''}`); if (ok) pass++; else fails.push(label); return !!ok; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function waitFor(fn, ms, what) {
   const t0 = Date.now();
@@ -63,7 +63,7 @@ async function waitFor(fn, ms, what) {
     let v = null;
     try { v = await fn(); } catch { v = null; }
     if (v) return v;
-    if (Date.now() - t0 > ms) throw new Error(`等 ${what} 超时(${ms} ms)`);
+    if (Date.now() - t0 > ms) throw new Error(`Timed out waiting for ${what} (${ms} ms)`);
     await sleep(150);
   }
 }
@@ -71,7 +71,7 @@ async function waitFor(fn, ms, what) {
 /* ------------------------------------------------------------------ 卡片源码 */
 const FIX = path.join(ROOT, 'server', 'test', 'fixtures', 'remotion-style');
 const fixture = (n) => fs.readFileSync(path.join(FIX, n), 'utf8').replace(/\r\n/g, '\n');
-const markCard = (id, mode) => `/** 探针卡：用框架写，把算出来的值写成 DOM 的数据属性 */
+const markCard = (id, mode) => `/** Probe card: written with the framework, the computed values are written as DOM data attributes */
 import type { CardDef, CardProps } from "../../kernel/types";
 import { Easing, interpolate, random } from "../../kernel/remotionStyle";
 
@@ -96,14 +96,14 @@ function OnlineMark({ params, t = 0 }: CardProps<Params>) {
 
 export const onlineMark: CardDef<Params> = {
   id: "${id}",
-  name: "在线框架探针卡",
-  description: "用框架写的探针卡：一个色块从左往右移，数据属性里记着算出来的值",
+  name: "Online framework probe card",
+  description: "Probe card written with the framework: a color block moves from left to right, and the data attributes record the computed values",
   source: "user",
-  useWhen: "探针用，不用于真实项目。",
-  tags: ["探针"],
+  useWhen: "For probes only, not for real projects.",
+  tags: ["probe"],
   frameMode: "${mode}",
   defaults: { seed: 5 },
-  controls: [{ key: "seed", label: "种子", type: "number", min: 0, max: 9999, step: 1 }],
+  controls: [{ key: "seed", label: "Seed", type: "number", min: 0, max: 9999, step: 1 }],
   Component: OnlineMark,
 };
 `;
@@ -142,9 +142,9 @@ try {
   child.stderr.on('data', keep);
   const HARNESS = `http://127.0.0.1:${PORT}/scripts/probes/online-runtime-harness.html`;
   await waitFor(async () => {
-    if (child.exitCode !== null) throw new Error(`开发服务器退出了：${log.join('').slice(-600)}`);
+    if (child.exitCode !== null) throw new Error(`The dev server exited: ${log.join('').slice(-600)}`);
     return fetch(HARNESS, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok, () => false);
-  }, 180_000, '开发服务器起来');
+  }, 180_000, 'dev server is up');
 
   browser = await puppeteer.launch({
     headless: true, defaultViewport: { width: 1920, height: 1080, deviceScaleFactor: 1 },
@@ -160,21 +160,21 @@ try {
   const settle = () => page.evaluate(async () => { await document.fonts.ready; await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); });
   const clip = { x: 0, y: 0, width: 1920, height: 1080 };
 
-  console.log('\n== R1 转译、载入');
+  console.log('\n== R1 transpile, load');
   const loaded = await page.evaluate((s, e) => window.__ors.setSources(s, e), SOURCES, ENTRIES);
   summary.R1 = { runtime: await page.evaluate(() => window.__ors.runtime), ...loaded };
-  check('R1 四张卡都转译成功', loaded.bundled.length === 4 && loaded.bundled.every((b) => b.ok), loaded.bundled);
-  check('R1 四张卡都载入成功（运行状态 ready，卡定义都认出来了）', loaded.loaded.length === 4 && loaded.loaded.every((l) => l.ok) && CARD_IDS.every((id) => loaded.cards.some((c) => c.id === id)), loaded.loaded);
+  check('R1 all four cards transpiled successfully', loaded.bundled.length === 4 && loaded.bundled.every((b) => b.ok), loaded.bundled);
+  check('R1 all four cards loaded successfully (run state ready, all card definitions recognized)', loaded.loaded.length === 4 && loaded.loaded.every((l) => l.ok) && CARD_IDS.every((id) => loaded.cards.some((c) => c.id === id)), loaded.loaded);
   const lockOf = Object.fromEntries(loaded.bundled.map((b) => [b.entry.split('/').pop().replace('.tsx', ''), b.lockSuffix]));
-  check('R1 转译结果里：引用了框架的 remotion 式的卡（示例卡两张、探针卡）接着「载入时锁只读」那一句；motion 式的对照卡不接',
+  check('R1 in the transpile output: remotion-style cards that reference the framework (two example cards, the probe card) get the "read-only lock on load" line appended; the motion-style control card does not',
     lockOf['rs-title-reveal'] && lockOf['rs-orbit-canvas'] && lockOf['rs-online-mark'] && !lockOf['rs-online-control'], lockOf);
 
-  console.log('\n== R2 画出来了');
+  console.log('\n== R2 it renders');
   await page.evaluate(() => window.__ors.mount('rs-title-reveal', 3));
   await settle();
   const title = await page.evaluate(() => ({ text: document.getElementById('stage').textContent, error: window.__ors.error() }));
   await page.screenshot({ path: path.join(OUT, 'online-title-t3.png'), clip });
-  check('R2 示例卡画的字（默认文字「由 t 直接算」）都在，没有渲染错误', title.text === '由 t 直接算' && !title.error, title);
+  check('R2 the text drawn by the example card (default text "computed directly from t") is all there, no render errors', title.text === '由 t 直接算' && !title.error, title);
   await page.evaluate(() => window.__ors.unmount());
   /** 画布卡的画面：用截图的哈希比（对画布 getImageData 会让 Chrome 把它换成软件画布、边缘的抗锯齿就变了，所以读像素放在最后） */
   const shotHash = async (name) => { const buf = Buffer.from(await page.screenshot({ clip })); if (name) fs.writeFileSync(path.join(OUT, name), buf); return createHash('sha256').update(buf).digest('hex').slice(0, 16); };
@@ -189,17 +189,17 @@ try {
   await page.evaluate(() => window.__ors.mount('rs-orbit-canvas', 1));
   await settle();
   const h1 = await shotHash('online-orbit-t1.png');
-  console.log('\n== R5 画布卡每一帧整张重画');
+  console.log('\n== R5 the canvas card redraws the whole canvas every frame');
   const seq = [h1];
   for (const t of [1, 2.5, 1, 2.5, 1]) { await page.evaluate((x) => window.__ors.set(x), t); await settle(); seq.push(await shotHash(t === 2.5 ? 'online-orbit-t25.png' : null)); }
   summary.R5seq = seq;
-  check('R5 两个不同的 t 上画布的画面不同；回到先前的 t 上（连着换几次）与先前逐像素相同', seq[0] === seq[1] && seq[0] === seq[3] && seq[0] === seq[5] && seq[2] === seq[4] && seq[0] !== seq[2], seq);
+  check('R5 the canvas images differ at two different t values; returning to an earlier t (switching several times in a row) is pixel-identical to before', seq[0] === seq[1] && seq[0] === seq[3] && seq[0] === seq[5] && seq[2] === seq[4] && seq[0] !== seq[2], seq);
   const c1 = await inkOf();
-  check('R2 画布卡的画布上有像素', (c1?.ink ?? 0) > 500, c1);
+  check('R2 the canvas card\'s canvas has pixels', (c1?.ink ?? 0) > 500, c1);
   await page.evaluate(() => window.__ors.unmount());
 
 
-  console.log('\n== R3 画得对');
+  console.log('\n== R3 drawn correctly');
   const ease = Easing.out(Easing.cubic);
   const expected = (t) => ({ x: interpolate(t, [0, 1], [0, 400], { easing: ease }).toFixed(4), r: random(5, 1).toFixed(6) });
   let mounted = false;
@@ -215,29 +215,29 @@ try {
   for (const t of TS) first.push(await markAt('rs-online-mark', t));
   const rows = first.map((m, i) => ({ t: TS[i], got: m, want: expected(TS[i]) }));
   summary.R3 = rows;
-  check('R3 探针卡里 interpolate / random 算出来的值，和本进程里用同一套框架按同一个 t 算的逐字相同（三个 t）', rows.every((r) => r.got.t === r.t.toFixed(4) && r.got.x === r.want.x && r.got.r === r.want.r), rows);
-  check('R3 三个 t 上位置各不相同', new Set(first.map((m) => m.x)).size === 3, first.map((m) => m.x));
+  check('R3 the values computed by interpolate / random in the probe card are character-for-character identical to those computed in this process with the same framework at the same t (three t values)', rows.every((r) => r.got.t === r.t.toFixed(4) && r.got.x === r.want.x && r.got.r === r.want.r), rows);
+  check('R3 the positions at the three t values are all different', new Set(first.map((m) => m.x)).size === 3, first.map((m) => m.x));
   const again = [];
   for (const t of [...TS].reverse()) again.push(await markAt('rs-online-mark', t));
   again.reverse();
-  check('R3 先到靠后的 t 再倒回靠前的：同一个 t 上的值与第一次逐字相同（直接算，与先后无关）', again.every((m, i) => m.t === first[i].t && m.x === first[i].x && m.r === first[i].r), { first: first.map((m) => m.x), again: again.map((m) => m.x) });
+  check('R3 go to a later t and then back to an earlier one: the values at the same t are character-for-character identical to the first time (computed directly, independent of order)', again.every((m, i) => m.t === first[i].t && m.x === first[i].x && m.r === first[i].r), { first: first.map((m) => m.x), again: again.map((m) => m.x) });
   await page.screenshot({ path: path.join(OUT, 'online-mark-t16.png'), clip });
   await unmount();
 
-  console.log('\n== R4 锁只读');
+  console.log('\n== R4 read-only lock');
   const ro = await markAt('rs-online-mark', 1);
   await unmount();
   const ctl = await markAt('rs-online-control', 1);
   await unmount();
-  check('R4 探针卡（remotion 式、引用框架）里 Object.isFrozen(顶层常量对象) 为真——载入时锁只读那一句在真浏览器里接上了', ro.readonly === 'true', ro);
-  check('R4 对照卡（同一张卡声明成 motion 式）为假——不是白给的', ctl.readonly === 'false', ctl);
+  check('R4 Object.isFrozen(top-level constant object) is true in the probe card (remotion-style, referencing the framework): the read-only lock line added on load is hooked up in a real browser', ro.readonly === 'true', ro);
+  check('R4 it is false in the control card (the same card declared as motion-style), so the true result above is not a freebie', ctl.readonly === 'false', ctl);
   const defs = Object.fromEntries(loaded.cards.map((c) => [c.id, c]));
-  check('R4 载入出来的卡定义：remotion 式的是冻住的，对照卡不是', defs['rs-online-mark']?.frozen === true && defs['rs-online-mark']?.defaultsFrozen === true && defs['rs-online-control']?.frozen === false, defs);
+  check('R4 loaded card definitions: the remotion-style one is frozen, the control card is not', defs['rs-online-mark']?.frozen === true && defs['rs-online-mark']?.defaultsFrozen === true && defs['rs-online-control']?.frozen === false, defs);
 
-  console.log('\n== R6 页面没有报错');
-  check('R6 页面没有未捕获的错误', pageErrors.length === 0, pageErrors.slice(0, 3));
+  console.log('\n== R6 no errors on the page');
+  check('R6 no uncaught errors on the page', pageErrors.length === 0, pageErrors.slice(0, 3));
 } catch (e) {
-  check('探针没有中途出错', false, String(e?.stack ?? e).slice(0, 600));
+  check('the probe did not error midway', false, String(e?.stack ?? e).slice(0, 600));
 } finally {
   await browser?.close().catch(() => {});
   if (child?.pid && child.exitCode === null) {

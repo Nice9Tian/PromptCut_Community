@@ -19,7 +19,7 @@ function line(n, { x0 = 100, y0 = 50, dx = 10, dy = 0 } = {}) {
 const MEDIA = { id: "m1", width: 1920, height: 1080, duration: 10 };
 const STAGE = { width: 1920, height: 1080 };
 
-test("卡片压满整段素材：位移逐帧累积，锚点归零", () => {
+test("A card covers the whole media: displacement accumulates frame by frame, the anchor resets to zero", () => {
   const n = 100; // 10 秒 / 100 帧 → frameStep 0.1
   const { motion, summary } = buildClipMotion({
     xy: line(n), visible: Array(n).fill(true),
@@ -29,14 +29,14 @@ test("卡片压满整段素材：位移逐帧累积，锚点归零", () => {
     pointIndex: 0, whenHidden: "hold",
   });
 
-  assert.deepEqual(motion.offsets[0], [0, 0], "第一帧位移必须是 0");
-  assert.equal(motion.offsets[1][0], 10, "舞台和素材同尺寸时，位移就是原始位移");
+  assert.deepEqual(motion.offsets[0], [0, 0], "The displacement of the first frame must be 0");
+  assert.equal(motion.offsets[1][0], 10, "When the stage and the media are the same size, the displacement is the raw displacement");
   assert.ok(Math.abs(motion.frameStep - 0.1) < 1e-9);
   assert.equal(summary.rangeX, (n - 1) * 10);
   assert.equal(summary.rangeY, 0);
 });
 
-test("舞台比素材小：按 cover 缩放，位移跟着缩", () => {
+test("The stage is smaller than the media: scaled by cover, and the displacement scales with it", () => {
   const n = 100;
   const { motion } = buildClipMotion({
     xy: line(n), visible: Array(n).fill(true),
@@ -45,10 +45,10 @@ test("舞台比素材小：按 cover 缩放，位移跟着缩", () => {
     clipOfMedia: { start: 0, mediaOffset: 0 },
     pointIndex: 0, whenHidden: "hold",
   });
-  assert.equal(motion.offsets[1][0], 5, "素材位移 10 → 舞台位移 5");
+  assert.equal(motion.offsets[1][0], 5, "Media displacement 10 → stage displacement 5");
 });
 
-test("卡片只压在素材中间一截：轨迹要从对应的那一帧切起", () => {
+test("A card covers only a middle section of the media: the trajectory must be cut starting from the corresponding frame", () => {
   const n = 100; // frameStep 0.1s
   // 素材段从时间轴 2s 开始播，且从素材第 3s 处开始播
   // 卡片放在时间轴 5s → 素材时间 3 + (5 - 2) = 6s → 第 60 帧
@@ -67,7 +67,7 @@ test("卡片只压在素材中间一截：轨迹要从对应的那一帧切起",
   assert.equal(motion.offsets.length, Math.ceil(1 / 0.1) + 1);
 });
 
-test("卡片开头目标正被挡：锚点要取第一个可见帧", () => {
+test("The target is blocked at the start of the card: the anchor must be taken from the first visible frame", () => {
   const n = 50;
   const visible = Array(n).fill(true);
   for (let i = 0; i < 5; i++) visible[i] = false; // 开头 5 帧看不见
@@ -85,16 +85,16 @@ test("卡片开头目标正被挡：锚点要取第一个可见帧", () => {
   assert.equal(motion.offsets[0][0], -50);
 });
 
-test("素材缺分辨率或时长要直接报错，不能悄悄产出错的轨迹", () => {
+test("Media missing its resolution or duration must raise an error directly, and must not silently produce a wrong trajectory", () => {
   const base = {
     xy: line(10), visible: Array(10).fill(true), stage: STAGE,
     card: { start: 0, end: 1 }, clipOfMedia: { start: 0, mediaOffset: 0 },
     pointIndex: 0, whenHidden: "hold",
   };
   assert.throws(
-    () => buildClipMotion({ ...base, media: { ...MEDIA, duration: 0 } }), /时长/);
+    () => buildClipMotion({ ...base, media: { ...MEDIA, duration: 0 } }), /duration/);
   assert.throws(
-    () => buildClipMotion({ ...base, media: { ...MEDIA, width: 0 } }), /分辨率/);
+    () => buildClipMotion({ ...base, media: { ...MEDIA, width: 0 } }), /resolution/);
 });
 
 // ── motionAt ──────────────────────────────────────────────────────────
@@ -107,25 +107,25 @@ const M = {
   whenHidden: "hold",
 };
 
-test("两帧之间线性插值", () => {
+test("Linear interpolation between two frames", () => {
   const a = motionAt(M, 0.15); // 第 1 帧和第 2 帧正中间
-  assert.ok(Math.abs(a.dx - 15) < 1e-6, `插值结果 ${a.dx}`);
+  assert.ok(Math.abs(a.dx - 15) < 1e-6, `Interpolation result ${a.dx}`);
 });
 
-test("hold：目标不可见时停在最后一次看见的位置", () => {
+test("hold: when the target is not visible, stay at the last position where it was seen", () => {
   const a = motionAt(M, 0.2); // 第 2 帧，不可见
   assert.equal(a.visible, false);
-  assert.equal(a.dx, 10, "该停在第 1 帧的位置，而不是用第 2 帧那个外推值");
+  assert.equal(a.dx, 10, "Should stay at the position of frame 1, instead of using the extrapolated value from frame 2");
 });
 
-test("超出轨迹末尾要夹住，不能跳回原点或外推出画面", () => {
+test("Beyond the end of the trajectory it must be clamped, and must not jump back to the origin or extrapolate out of frame", () => {
   const a = motionAt(M, 99);
   assert.equal(a.dx, 30);
   const b = motionAt(M, -5);
   assert.equal(b.dx, 0);
 });
 
-test("空轨迹不崩", () => {
+test("An empty trajectory does not crash", () => {
   const a = motionAt({ ...M, offsets: [], visible: [] }, 1);
   assert.deepEqual([a.dx, a.dy], [0, 0]);
 });

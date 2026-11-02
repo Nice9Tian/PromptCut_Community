@@ -86,10 +86,10 @@ test('OV-8 Follows the display language: Chinese reads as it did before English 
     return c.window.pcOverlay;
   };
   const zh = load('zh-CN');
-  assert.equal(zh.summarize({ skill: false }).title, 'PromptCut 在后台运行');
-  assert.equal(zh.summarize({ skill: true, sessions: [{ label: 'Claude Code', current: { tool: 'update_clip' } }] }).sub, 'Claude Code 正在改卡片');
-  assert.equal(zh.toolName(undefined), '操作');
+  assert.equal(zh.summarize({ skill: false }).title, 'PromptCut 在后台运行'); // i18n-allow: the expected Chinese and Japanese output
+  assert.equal(zh.summarize({ skill: true, sessions: [{ label: 'Claude Code', current: { tool: 'update_clip' } }] }).sub, 'Claude Code 正在改卡片'); // i18n-allow: the expected Chinese and Japanese output
+  assert.equal(zh.toolName(undefined), '操作'); // i18n-allow: the expected Chinese and Japanese output
   const ja = load('ja-JP');
-  assert.equal(ja.summarize({ skill: true, sessions: [{ label: 'Codex', last: { tool: 'remove_clip', ok: false } }] }).sub, 'Codex 前回のステップが失敗：カードを削除');
+  assert.equal(ja.summarize({ skill: true, sessions: [{ label: 'Codex', last: { tool: 'remove_clip', ok: false } }] }).sub, 'Codex 前回のステップが失敗：カードを削除'); // i18n-allow: the expected Chinese and Japanese output
   assert.equal(load('en-US').t('Last step'), 'Last step');
 });

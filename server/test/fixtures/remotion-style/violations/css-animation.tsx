@@ -11,9 +11,9 @@ function C({ params, t = 0 }: CardProps<Params>) {
   );
 }
 export const card: CardDef<Params> = {
-  id: "rs-bad-css-animation", name: "CSS 动画与过渡", description: "remotion 式的规矩的违规样例", source: "user",
+  id: "rs-bad-css-animation", name: "CSS animations and transitions", description: "Violation example of the remotion-style rules", source: "user",
   frameMode: "direct",
   defaults: { text: "" },
-  controls: [{ key: "text", label: "文字", type: "text" }],
+  controls: [{ key: "text", label: "Text", type: "text" }],
   Component: C,
 };

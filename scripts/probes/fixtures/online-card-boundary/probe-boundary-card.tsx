@@ -29,9 +29,9 @@ let audioStarted = false;
 
 export const probeBoundaryCard = {
   id: "probe-boundary-card",
-  name: "探针越权探测用户卡",
-  description: "安全验收探针用:尝试读凭证、票据、本机存储、父页对象,并向外部地址发请求",
-  tags: ["探针"],
+  name: "Overreach probe user card",
+  description: "Used by the security acceptance probe: tries to read credentials, tickets, local storage and parent page objects, and sends requests to external addresses",
+  tags: ["probe"],
   frameMode: "stateful",
   defaults: { ctx: null },
   controls: [],

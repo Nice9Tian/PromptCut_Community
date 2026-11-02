@@ -79,10 +79,10 @@ async function setup({ tier = "small", layers, p = project() } = {}) {
   return { w, src, index, advance: (ms) => { now += ms; }, coverageCalls: () => coverageCalls };
 }
 
-test("SL-1 改参数:旧层马上撤、在路上时沙漏(不确认)、过了等待期才确认;新层表到了换上", async () => {
+test("SL-1 parameter change: the old layer is removed immediately, shows an hourglass (unconfirmed) while the result is in transit, and is confirmed only after the grace period; the new layer table replaces it on arrival", async () => {
   const p0 = project();
   const { w, src, index, advance, coverageCalls } = await setup({ p: p0, layers: (p) => [layer("a", "KA1", clipInputSig(p, "a")), layer("b", "KB1", clipInputSig(p, "b"))] });
-  assert.deepEqual(layerOf(index, "a", "html").ranges, [[0, 59]], "改之前照贴");
+  assert.deepEqual(layerOf(index, "a", "html").ranges, [[0, 59]], "Still applied before the change");
   assert.equal(src.frameConfirmedMissing("a", 10), false);
   assert.equal(src.coverage("a"), "full");
   await assert.doesNotReject(src.fetchSnapshot("html", "KA1", 3));
@@ -91,35 +91,35 @@ test("SL-1 改参数:旧层马上撤、在路上时沙漏(不确认)、过了等
   const before = coverageCalls();
   src.setInputs(p1);
   // 同步撤掉:不等下一轮轮询
-  assert.deepEqual(layerOf(index, "a", "html"), { clipId: "a", kind: "html", key: "KA1", ranges: [] }, "旧层撤掉(就绪发空)");
-  assert.deepEqual(layerOf(index, "b", "html").ranges, [[0, 59]], "没改的片段照贴");
-  await assert.rejects(src.fetchSnapshot("html", "KA1", 3), /没有这一帧/, "旧层的字节不再给");
-  assert.equal(src.frameConfirmedMissing("a", 10), false, "新结果在路上:不确认(沙漏)");
-  assert.equal(src.coverage("a"), "unknown", "时间轴不出徽标");
-  assert.ok(coverageCalls() > before, "覆盖订阅方被叫(父页重算图标)");
-  assert.equal(src.layerClipIds().has("a"), false, "过期的层不算有产物");
+  assert.deepEqual(layerOf(index, "a", "html"), { clipId: "a", kind: "html", key: "KA1", ranges: [] }, "Old layer removed (ready sends empty)");
+  assert.deepEqual(layerOf(index, "b", "html").ranges, [[0, 59]], "Unchanged clips are still applied");
+  await assert.rejects(src.fetchSnapshot("html", "KA1", 3), /no such frame/, "Bytes of the old layer are no longer served");
+  assert.equal(src.frameConfirmedMissing("a", 10), false, "New result in transit: unconfirmed (hourglass)");
+  assert.equal(src.coverage("a"), "unknown", "The timeline shows no badge");
+  assert.ok(coverageCalls() > before, "Coverage subscriber is called (parent page recomputes the icon)");
+  assert.equal(src.layerClipIds().has("a"), false, "An expired layer does not count as having output");
   assert.equal(src.debug().stale[0].clipId, "a");
 
   // 等满等待期:确认缺料
   advance(STALE_AWAIT_MS + 1);
   const mid = coverageCalls();
   await src.tickNow();
-  assert.equal(src.frameConfirmedMissing("a", 10), true, "等满还没新层:确认(图标)");
+  assert.equal(src.frameConfirmedMissing("a", 10), true, "Waited the full period with no new layer: confirmed (icon)");
   assert.equal(src.coverage("a"), "none");
-  assert.ok(coverageCalls() > mid, "到期时叫覆盖订阅方");
+  assert.ok(coverageCalls() > mid, "Coverage subscriber is called on expiry");
 
   // 渲染节点按新输入重写层表、渲完:照常换上
   w.layerMap([layer("a", "KA2", clipInputSig(p1, "a")), layer("b", "KB1", clipInputSig(p1, "b"))]);
   w.manifest("KA2", 60, 7);
   advance(10_000);
   await src.tickNow();
-  assert.deepEqual(layerOf(index, "a", "html"), { clipId: "a", kind: "html", key: "KA2", ranges: [[0, 59]] }, "新结果换上");
+  assert.deepEqual(layerOf(index, "a", "html"), { clipId: "a", kind: "html", key: "KA2", ranges: [[0, 59]] }, "New result swapped in");
   assert.equal(src.frameConfirmedMissing("a", 10), false);
   assert.equal(src.coverage("a"), "full");
   assert.deepEqual(src.debug().stale, []);
 });
 
-test("SL-2 改回原来的参数:原来那一层还在就照贴", async () => {
+test("SL-2 parameters changed back to the original: if the original layer is still there, it is applied", async () => {
   const p0 = project();
   const { src, index } = await setup({ p: p0, layers: (p) => [layer("a", "KA1", clipInputSig(p, "a"))] });
   src.setInputs(project({ title: "world" }));
@@ -129,10 +129,10 @@ test("SL-2 改回原来的参数:原来那一层还在就照贴", async () => {
   assert.deepEqual(src.debug().stale, []);
 });
 
-test("SL-3 旧层表没有签名、页面没给项目:照旧贴(向后兼容)", async () => {
+test("SL-3 old layer table has no signature and the page gave no project: applied as before (backward compatible)", async () => {
   const { src, index } = await setup({ layers: () => [layer("a", "KA1", null)] });
   src.setInputs(project({ title: "world" }));
-  assert.deepEqual(layerOf(index, "a", "html").ranges, [[0, 59]], "层表没有 inputSig:不比");
+  assert.deepEqual(layerOf(index, "a", "html").ranges, [[0, 59]], "Layer table has no inputSig: no comparison");
   assert.equal(src.frameConfirmedMissing("a", 10), false);
 
   const w = world();
@@ -144,27 +144,27 @@ test("SL-3 旧层表没有签名、页面没给项目:照旧贴(向后兼容)", 
   src2.subscribeReady("s", 0, (m) => applyReadyMessage(index2, m));
   src2.setProject("p1");
   await src2.tickNow();
-  assert.deepEqual(layerOf(index2, "a", "html").ranges, [[0, 59]], "没给项目:不比");
+  assert.deepEqual(layerOf(index2, "a", "html").ranges, [[0, 59]], "No project given: no comparison");
 });
 
-test("SL-4 取原尺寸(v 3 候选)同样撤;layerRefOf 带签名比对", async () => {
+test("SL-4 fetching the original size (v 3 candidate) is likewise withdrawn; layerRefOf compares signatures", async () => {
   const p0 = project();
   const sigB = clipInputSig(p0, "b");
   const { src, index } = await setup({ tier: "original", p: p0, layers: (p) => [layer("b", "KB1", clipInputSig(p, "b"), {
     candidates: [{ envFingerprint: "f".repeat(16), resultKey: "KB1", key: "KB1" }] })] });
-  assert.deepEqual(layerOf(index, "b", "html").ranges, [[0, 59]], "内置重卡:原尺寸照贴");
+  assert.deepEqual(layerOf(index, "b", "html").ranges, [[0, 59]], "built-in heavy card: original size pasted as is");
   const p1 = { ...p0, tracks: p0.tracks.map((tr) => ({ ...tr, clips: tr.clips.map((c) => (c.id === "b" ? { ...c, params: { k: 2 } } : c)) })) };
   src.setInputs(p1);
-  assert.deepEqual(layerOf(index, "b", "html").ranges, [], "内置重卡改了参数:旧层撤掉(播放占位、暂停活渲)");
-  await assert.rejects(src.fetchSnapshot("html", "KB1", 0), /没有这一帧的预渲染原尺寸/);
+  assert.deepEqual(layerOf(index, "b", "html").ranges, [], "built-in heavy card had parameters changed: old layer withdrawn (playback placeholder, live render paused)");
+  await assert.rejects(src.fetchSnapshot("html", "KB1", 0), /no prerender original size for this frame/);
 
   const table = { v: 3, kind: "layer-map", projectId: "p1", fps: 30, span: 60, layers: [layer("b", "KB1", sigB)] };
   assert.equal(layerRefOf(table, "b", { inputSig: sigB })?.key, "KB1");
-  assert.equal(layerRefOf(table, "b", { inputSig: clipInputSig(p1, "b") }), null, "旧参数的层");
-  assert.equal(layerRefOf(table, "b")?.key, "KB1", "不给签名:照旧");
+  assert.equal(layerRefOf(table, "b", { inputSig: clipInputSig(p1, "b") }), null, "layer with old parameters");
+  assert.equal(layerRefOf(table, "b")?.key, "KB1", "no signature given: unchanged");
 });
 
-test("SL-5 导出:给了项目时旧输入的层算缺,对得上的照取", async () => {
+test("SL-5 export: when a project is given, layers with old input count as missing, matching ones are fetched as usual", async () => {
   const O = await import(srcUrl("export/originals.ts"));
   const p0 = project();
   const map = { v: 3, kind: "layer-map", projectId: "p1", fps: 30, span: 60, layers: [
@@ -179,9 +179,9 @@ test("SL-5 导出:给了项目时旧输入的层算缺,对得上的照取", asyn
   const same = await O.loadOriginalsIndex("p1", deps, { project: p0 });
   assert.deepEqual(same.missing, []);
   const edited = await O.loadOriginalsIndex("p1", deps, { project: project({ title: "world" }) });
-  assert.deepEqual(edited.missing, ["a"], "改了参数的卡:旧层不导出,算缺");
+  assert.deepEqual(edited.missing, ["a"], "card with changed parameters: old layer not exported, counted as missing");
   assert.equal(edited.hashAt("a", 0), null);
   assert.equal(edited.hashAt("b", 0), H(1));
   const legacy = await O.loadOriginalsIndex("p1", deps);
-  assert.deepEqual(legacy.missing, [], "不给项目:照旧");
+  assert.deepEqual(legacy.missing, [], "no project given: unchanged");
 });

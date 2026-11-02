@@ -23,33 +23,33 @@ function store(initial = {}) {
 
 const base = { project: null };
 
-test("两种工作方式都要说得出人话;对话式布局已去掉,旧报告里的 layout 字段不影响", () => {
+test("Both working modes must be described in plain words; the chat-style layout has been removed, and the layout field in old reports has no effect", () => {
   assert.equal(describeMode({}), "Classic mode");
   assert.equal(describeMode({ layout: "chat" }), "Classic mode");
   assert.match(describeMode({ skill: { active: true } }), /SKILL/);
-  assert.doesNotMatch(describeMode({ skill: { active: true } }), /对话式|只读/);
+  assert.doesNotMatch(describeMode({ skill: { active: true } }), /chat-style|read-only/);
   assert.match(describeMode({ agentTabs: 3 }), /Multi-Agent \(3 tabs\)/);
   assert.equal(describeMode({ agentTabs: 1 }), "Classic mode");
 });
 
-test("没保存过的项目要**显式**说出来 —— 素材在临时目录的怪事都是从这儿来的", () => {
-  const r = buildEnvReport({ ...base, project: { name: "未命名", filePath: null, media: [], tracks: [] } });
+test("A project that has never been saved must say so **explicitly**: the odd cases of media sitting in the temporary directory all come from here", () => {
+  const r = buildEnvReport({ ...base, project: { name: "Untitled", filePath: null, media: [], tracks: [] } });
   assert.equal(r.project.saved, false);
   assert.match(r.project.savedNote, /temp directory/);
 
   const saved = buildEnvReport({ ...base, project: { name: "x", filePath: "D:\\片子\\a.proc", media: [], tracks: [] } });
   assert.equal(saved.project.saved, true);
-  assert.equal(saved.project.savedNote, undefined, "存过盘就不该再挂那句提示");
+  assert.equal(saved.project.savedNote, undefined, "Once saved to disk, that note must no longer be attached");
   assert.equal(saved.project.filePath, "D:\\片子\\a.proc");
 });
 
-test("素材库是空的时候要写在报告里 —— 模型说得出名字就是对质证据", () => {
+test("When the media library is empty, the report must say so: if the model can still name media, that is the evidence to confront it with", () => {
   const r = buildEnvReport({ ...base, project: { media: [], tracks: [] } });
   assert.equal(r.media.count, 0);
   assert.match(r.media.note, /library is empty/);
 });
 
-test("素材要报到文件一级,还要单列它们在哪些目录", () => {
+test("Media must be reported down to the file level, and the directories they are in must also be listed separately", () => {
   const media = [
     { id: "m1", name: "a.mp4", kind: "video", duration: 12, path: "C:\\Temp\\promptcut\\work\\a.mp4" },
     { id: "m2", name: "b.mp4", kind: "video", path: "C:\\Temp\\promptcut\\work\\b.mp4" },
@@ -62,12 +62,12 @@ test("素材要报到文件一级,还要单列它们在哪些目录", () => {
   assert.deepEqual(r.media.dirs.sort(), ["C:\\Temp\\promptcut\\work", "D:\\素材"]);
 });
 
-test("没有磁盘路径的素材不能只是缺个字段,要说清是什么情况", () => {
+test("Media without a disk path must not simply lack a field; the report must say what the situation is", () => {
   const r = buildEnvReport({ ...base, project: { media: [{ id: "m", name: "x", kind: "video" }], tracks: [] } });
   assert.match(r.media.items[0].path, /blob/);
 });
 
-test("可见 0 条 + 会话 id 还在 = 后端接着旧历史,两个数必须摆在一起", () => {
+test("0 visible messages + session id still present = the backend continues the old history, so the two numbers must be shown together", () => {
   const r = buildEnvReport({
     ...base,
     visibleMessages: 0,
@@ -76,30 +76,30 @@ test("可见 0 条 + 会话 id 还在 = 后端接着旧历史,两个数必须摆
   assert.equal(r.chat.visibleMessages, 0);
   assert.deepEqual(r.chat.backendSessionIds, { "aiSession:api": "api-9433c3ac" });
   assert.match(r.chat.note, /1 backend session ids/);
-  assert.deepEqual(r.localSettings, { aiProvider: "api" }, "会话 id 不该同时混进偏好那一段");
+  assert.deepEqual(r.localSettings, { aiProvider: "api" }, "The session id must not also get mixed into the preferences section");
 });
 
-test("干净起步时也要说清「就是干净的」,而不是留一个空对象让人猜", () => {
+test("Even on a clean start it must say \"it is clean\", instead of leaving an empty object for people to guess", () => {
   const r = buildEnvReport({ ...base, visibleMessages: 0, storage: store({ aiProvider: "api" }) });
   assert.deepEqual(r.chat.backendSessionIds, {});
   assert.match(r.chat.note, /starts from scratch/);
 });
 
-test("用户写的剧本正文不许进报告 —— 这份报告是要上传的", () => {
+test("The body of the script the user wrote must not go into the report: this report is meant to be uploaded", () => {
   /*
    * pc.ai.script 存的是用户手写的剧本(ai/script.ts)。原来这里按 `ai*` / `pc.*`
    * 前缀通配收值,于是剧本前 200 字静默进了要上传的报告(ai/reportSubmit.ts)。
    * 通配还意味着将来任何新加的同前缀键都会自动跟着外发,加键的人不会想到这一层。
    */
-  const 剧本 = "第一幕:主角喝完野生狗奶,直接化身快乐小狗,镜头推近";
-  const r = buildEnvReport({ ...base, storage: store({ "pc.ai.script": 剧本 }) });
+  const script = "Act 1: The hero finishes drinking wild dog milk and turns straight into a happy puppy, the shot pushes in";
+  const r = buildEnvReport({ ...base, storage: store({ "pc.ai.script": script }) });
   const dumped = JSON.stringify(r);
-  assert.ok(!dumped.includes("快乐小狗"), `剧本正文漏进报告了:${dumped}`);
-  assert.match(r.localSettings["pc.ai.script"], /has a value/, "但要让人知道有这么个键");
-  assert.match(r.localSettings["pc.ai.script"], new RegExp(`${剧本.length} characters in total`), "长度要报出来");
+  assert.ok(!dumped.includes("happy puppy"), `The script body leaked into the report: ${dumped}`);
+  assert.match(r.localSettings["pc.ai.script"], /has a value/, "But people must be able to tell that such a key exists");
+  assert.match(r.localSettings["pc.ai.script"], new RegExp(`${script.length} characters in total`), "The length must be reported");
 });
 
-test("白名单里的纯设置项照旧带值 —— 不然排查时什么也看不出来", () => {
+test("Plain setting items on the allowlist still carry their values: otherwise nothing can be seen when troubleshooting", () => {
   const r = buildEnvReport({
     ...base,
     storage: store({ aiProvider: "api", aiShowThinking: "1", "pc.volume": "0.5", "pc.ai.effort.codex": "high" }),
@@ -112,39 +112,39 @@ test("白名单里的纯设置项照旧带值 —— 不然排查时什么也看
   });
 });
 
-test("没见过的同前缀新键默认不带原文 —— 加键的人不必记得这条规矩", () => {
-  const r = buildEnvReport({ ...base, storage: store({ "pc.某个以后才加的键": "谁知道里面装了什么" }) });
-  assert.ok(!JSON.stringify(r).includes("谁知道"), "白名单外的一律不带原文");
+test("New keys with the same prefix that have not been seen before do not include their original content by default: whoever adds a key does not need to remember this rule", () => {
+  const r = buildEnvReport({ ...base, storage: store({ "pc.someKeyAddedLater": "Who knows what is inside" }) });
+  assert.ok(!JSON.stringify(r).includes("Who knows"), "Anything outside the allowlist never carries the original content");
 });
 
-test("跟我们无关的键一个都不收", () => {
+test("Keys unrelated to us are not collected at all", () => {
   const r = buildEnvReport({ ...base, storage: store({ "some-other-app": "x", token: "abc" }) });
   assert.deepEqual(r.localSettings, {});
 });
 
-test("长值要截断:一条草稿能把整份报告顶爆", () => {
+test("Long values must be truncated: a single draft can blow up the whole report", () => {
   const r = buildEnvReport({ ...base, storage: store({ aiProvider: "x".repeat(5000) }) });
   assert.ok(r.localSettings.aiProvider.length < 300);
   assert.match(r.localSettings.aiProvider, /5000 characters in total/);
 });
-test("读不到 localStorage 时报一句话,不许整份报告跟着挂", () => {
+test("When localStorage cannot be read, report one sentence; the whole report must not fail along with it", () => {
   const r = buildEnvReport({ ...base, storage: null });
   assert.match(r.localNote, /Can.t read localStorage/);
   assert.deepEqual(r.chat.backendSessionIds, {});
 });
 
-test("序列只报条数,不把整条时间轴塞进报告", () => {
+test("Tracks report only counts and do not stuff the whole timeline into the report", () => {
   const r = buildEnvReport({
     ...base,
-    project: { media: [], tracks: [{ id: "t-1", name: "序列 1", clips: [{}, {}] }, { id: "t-2", clips: [] }] },
+    project: { media: [], tracks: [{ id: "t-1", name: "Track 1", clips: [{}, {}] }, { id: "t-2", clips: [] }] },
   });
   assert.deepEqual(r.project.tracks, [
-    { id: "t-1", name: "序列 1", clips: 2 },
+    { id: "t-1", name: "Track 1", clips: 2 },
     { id: "t-2", name: undefined, clips: 0 },
   ]);
   assert.equal(r.project.clipCount, 2);
 });
 
-test("posix 根目录下的素材,目录就是根,不是「没有目录」", () => {
+test("Media under a posix root directory: the directory is the root, not \"no directory\"", () => {
   assert.deepEqual(mediaDirs([{ id: "m", name: "a.mp4", kind: "video", path: "/a.mp4" }]), ["/"]);
 });

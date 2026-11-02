@@ -271,7 +271,7 @@ async function settle(rig) {
       if (rig.lb.pending() === 0) return;
     }
   }
-  throw new Error('消息往返不收敛');
+  throw new Error('message round trips do not converge');
 }
 
 /** 等 `promise` 落定，最多让出 `turns` 轮事件循环（不推进假时钟）；到时还没落定就失败。 */
@@ -303,8 +303,8 @@ async function drive(rig, until, { maxSteps = 4_000, stepMs = STEP_MS, onStep } 
     if (until()) return step;
     rig.clock.advance(stepMs);
   }
-  assert.fail(`超过 ${maxSteps} 步仍未满足条件；queue.describe()：\n${JSON.stringify(rig.queue.describe(), null, 1)}`
-    + `\n节点在跑：${JSON.stringify(rig.nodes.map(n => [n.nodeId, n.stopped ? 'stopped' : n.local.running()]))}`);
+  assert.fail(`condition still not met after more than ${maxSteps} steps; queue.describe():\n${JSON.stringify(rig.queue.describe(), null, 1)}`
+    + `\nNodes running: ${JSON.stringify(rig.nodes.map(n => [n.nodeId, n.stopped ? 'stopped' : n.local.running()]))}`);
 }
 
 /** 条件满足后再空转几拍，看有没有迟到的重复完成之类。 */
@@ -321,16 +321,16 @@ const allRunningEmpty = (rig, except = []) => rig.nodes.every(n => n.stopped || 
 
 /** 每条用例都要成立的卫生条件（D.4 末段）。 */
 function hygiene(rig, { unhandledBefore = 0 } = {}) {
-  assert.deepEqual(rig.lb.errors().map(e => String(e?.stack ?? e)), [], '端点处理器 / queue.handle 抛出了异常');
-  assert.deepEqual(rig.lb.nonJson(), [], '有消息不能 JSON 往返');
+  assert.deepEqual(rig.lb.errors().map(e => String(e?.stack ?? e)), [], 'The endpoint handler / queue.handle threw an exception');
+  assert.deepEqual(rig.lb.nonJson(), [], 'some message cannot round-trip through JSON');
   for (const e of rig.lb.log()) {
-    assert.deepEqual(JSON.parse(JSON.stringify(e.message)), e.message, `消息 JSON 往返后变样：${JSON.stringify(e.message)}`);
+    assert.deepEqual(JSON.parse(JSON.stringify(e.message)), e.message, `Message changed after JSON round trip: ${JSON.stringify(e.message)}`);
   }
   const errors = rig.out('error').map(e => [e.connId, e.message]);
-  assert.deepEqual(errors, [], '队列回过 error（格式错误或角色不对）');
-  assert.deepEqual(rig.sink.misuse(), [], '产物库收到了不合 D.1 的调用');
-  assert.deepEqual(rig.exec.errors().map(String), [], '执行器的 progress 回调抛出了异常');
-  assert.deepEqual(unhandled.slice(unhandledBefore).map(e => String(e?.stack ?? e)), [], '有未处理的 Promise 拒绝');
+  assert.deepEqual(errors, [], 'Queue replied with an error (format error or wrong role)');
+  assert.deepEqual(rig.sink.misuse(), [], 'Output store received a call that does not conform to D.1');
+  assert.deepEqual(rig.exec.errors().map(String), [], 'The executor\'s progress callback threw an exception');
+  assert.deepEqual(unhandled.slice(unhandledBefore).map(e => String(e?.stack ?? e)), [], 'there are unhandled Promise rejections');
 }
 
 /** 每个 id：页面恰好一条 task.done、队列恰好回过一次 task.completed、describe 里是 done。 */
@@ -338,9 +338,9 @@ function assertCompletedOnce(rig, page, ids) {
   const completed = counts(rig.out('task.completed').map(e => e.message.id));
   const view = new Map(rig.queue.describe().tasks.map(t => [t.id, t]));
   for (const id of ids) {
-    assert.equal(page.doneCount(id), 1, `${id}：页面应恰好收到一条 task.done，实际 ${page.doneCount(id)}`);
-    assert.equal(completed.get(id) ?? 0, 1, `${id}：队列应恰好确认一次完成，实际 ${completed.get(id) ?? 0}`);
-    assert.equal(view.get(id)?.state, 'done', `${id}：describe 里应是 done`);
+    assert.equal(page.doneCount(id), 1, `${id}: the page should receive exactly one task.done, got ${page.doneCount(id)}`);
+    assert.equal(completed.get(id) ?? 0, 1, `${id}: the queue should acknowledge completion exactly once, got ${completed.get(id) ?? 0}`);
+    assert.equal(view.get(id)?.state, 'done', `${id}: should be done in describe`);
   }
 }
 
@@ -352,7 +352,7 @@ const allDone = (rig, page, ids, except = []) => () => ids.every(id => page.done
 
 // ================================================================ I1
 
-test('I1 全链路：页面发布 plan，两个 pc 节点认领、切分、执行、推产物、报完成；页面收到全部 task.done', async () => {
+test('I1 full pipeline: the page publishes a plan, two pc nodes claim, split, execute, push output and report completion; the page receives all task.done', async () => {
   const before = unhandled.length;
   const rig = createRig();
   const page = rig.addPage('page', { userId: 'u1', tenantId: 't1', publisherId: 'page-u1' });
@@ -366,7 +366,7 @@ test('I1 全链路：页面发布 plan，两个 pc 节点认领、切分、执�
 
   const planId = planIdOf('p1', 1);
   const expected = expectedDerived(planContextFor('p1'), FP_A);
-  assert.equal(expected.length, 9, '夹具应切出 9 个细任务(6 个快照、1 个稀疏流、2 个满密度流)');
+  assert.equal(expected.length, 9, 'The fixture should split out 9 fine-grained tasks (6 snapshots, 1 sparse stream, 2 full-density streams)');
   assert.ok(expected.some(t => t.kind === 'snapshot') && expected.some(t => t.kind === 'stream'));
   const ids = [planId, ...expected.map(t => t.id)];
 
@@ -375,14 +375,14 @@ test('I1 全链路：页面发布 plan，两个 pc 节点认领、切分、执�
 
   // 恰有一个节点认领并切分 plan
   const planClaims = claimsOf(rig).filter(c => c.id === planId);
-  assert.equal(planClaims.length, 1, 'plan 应恰好被认领一次');
+  assert.equal(planClaims.length, 1, 'plan should be claimed exactly once');
   const splitter = rig.nodes.find(n => n.connId === planClaims[0].connId);
   const splits = rig.nodes.flatMap(n => n.eventsOf('plan-split').map(e => ({ nodeId: n.nodeId, e })));
-  assert.equal(splits.length, 1, '应恰好切分一次');
+  assert.equal(splits.length, 1, 'Should be split exactly once');
   assert.equal(splits[0].nodeId, splitter.nodeId);
   assert.equal(splits[0].e.id, planId);
   assert.deepEqual(sorted(splits[0].e.derived), sorted(expected.map(t => t.id)));
-  assert.equal(rig.exec.calls({ kind: 'plan' }).length, 1, 'executor.plan 只调一次');
+  assert.equal(rig.exec.calls({ kind: 'plan' }).length, 1, 'executor.plan is called only once');
 
   // plan 的 task.done：result = { ranges: null, derived }（D.2 第 4 步）
   const planDone = page.done(planId);
@@ -397,41 +397,41 @@ test('I1 全链路：页面发布 plan，两个 pc 节点认领、切分、执�
     assert.equal(t.state, 'done', t.id);
     assert.equal(t.attempts, 0, `${t.id} attempts`);
   }
-  assert.equal(rig.out('task.lease-lost').length, 0, '顺利路径上不应丢认领');
+  assert.equal(rig.out('task.lease-lost').length, 0, 'No claim should be lost on the happy path');
 
   // 细任务：继承页面的用户与订阅；指纹、代码版本是切分节点的
   const derivedClaims = claimsOf(rig).filter(c => c.id !== planId);
-  assert.deepEqual(sorted(derivedClaims.map(c => c.id)), sorted(expected.map(t => t.id)), '每个细任务恰好认领一次');
+  assert.deepEqual(sorted(derivedClaims.map(c => c.id)), sorted(expected.map(t => t.id)), 'Each fine-grained task is claimed exactly once');
   for (const { id, task } of derivedClaims) {
     const exp = expected.find(t => t.id === id);
     assert.equal(task.kind, exp.kind, id);
     assert.equal(task.resultKey, exp.resultKey, id);
     assert.deepEqual(task.range, exp.range, id);
-    assert.equal(task.source.userId, 'u1', `${id}：source.userId 应是页面的用户`);
+    assert.equal(task.source.userId, 'u1', `${id}: source.userId should be the page's user`);
     assert.equal(task.source.tenantId, 't1', id);
     assert.equal(task.source.projectId, 'p1', id);
     assert.equal(task.source.projectRev, 1, id);
     assert.equal(task.source.derivedFrom, planId, id);
-    assert.equal(task.source.publisher.id, splitter.nodeId, `${id}：发布方是切分节点（publisherId 缺省等于 nodeId）`);
+    assert.equal(task.source.publisher.id, splitter.nodeId, `${id}: the publisher is the splitter node (publisherId defaults to nodeId)`);
     assert.equal(task.requires.envFingerprint, FP_A, id);
     assert.equal(task.requires.codeVersion, CV, id);
   }
   for (const t of view.tasks.filter(t => t.id !== planId)) {
-    assert.ok(t.subscribers.includes('page-u1'), `${t.id}：页面应继承订阅`);
+    assert.ok(t.subscribers.includes('page-u1'), `${t.id}: the page should inherit the subscription`);
   }
 
   // 产物库：每个结果键的每一段都在，每段恰好推了一次，记账信息对得上完成者
   const completer = new Map(rig.out('task.completed').map(e => [e.message.id, rig.nodes.find(n => n.connId === e.connId).nodeId]));
   for (const t of expected) {
-    assert.ok(rig.sink.holds(t.resultKey, t.range), `${t.id}：产物库里应有这一段`);
+    assert.ok(rig.sink.holds(t.resultKey, t.range), `${t.id}: the output store should hold this segment`);
     // 一条流的稀疏流任务和满密度任务推的是同一个键、同一段,各推一次:按任务 id 分开数
     const puts = rig.sink.puts().filter(p => p.resultKey === t.resultKey && p.range.from === t.range.from && p.range.to === t.range.to && p.meta?.taskId === t.id);
-    assert.equal(puts.length, 1, `${t.id}：应恰好推一次`);
+    assert.equal(puts.length, 1, `${t.id}: should be pushed exactly once`);
     assert.equal(puts[0].meta.taskId, t.id);
-    assert.equal(puts[0].meta.nodeId, completer.get(t.id), `${t.id}：meta.nodeId 应是完成它的节点`);
+    assert.equal(puts[0].meta.nodeId, completer.get(t.id), `${t.id}: meta.nodeId should be the node that completed it`);
     assert.ok(Number.isInteger(puts[0].meta.token));
-    assert.equal(rig.exec.renderCount(t.id), 1, `${t.id}：应恰好渲染一次`);
-    assert.deepEqual(page.done(t.id).result.ranges, [[t.range.from, t.range.to]], `${t.id}：ranges`);
+    assert.equal(rig.exec.renderCount(t.id), 1, `${t.id}: should be rendered exactly once`);
+    assert.deepEqual(page.done(t.id).result.ranges, [[t.range.from, t.range.to]], `${t.id}: ranges`);
     assert.equal(page.done(t.id).resultKey, t.resultKey);
   }
   // 产物库按「结果键 + 范围」存(同 writeManifest):每个任务自己的键一项;稀疏流整条流一个任务,另按 8 段一桶写,
@@ -439,15 +439,15 @@ test('I1 全链路：页面发布 plan，两个 pc 节点认领、切分、执�
   const keyOf = t => `${t.resultKey}#${t.range.from}-${t.range.to}`;
   assert.equal(rig.sink.entries().length, new Set(expected.map(keyOf)).size);
   for (const t of expected.filter(x => x.kind === 'stream' && !x.density)) {
-    assert.ok(rig.sink.stores(t.resultKey, t.range), `${t.id}：满密度任务的键(也是桶)存着`);
-    assert.notEqual(rig.sink.entries().find(e => keyOf(e) === keyOf(t)).sparse, true, `${t.id}：桶是满密度的那一版`);
+    assert.ok(rig.sink.stores(t.resultKey, t.range), `${t.id}: the key (also the bucket) of the full-density task is stored`);
+    assert.notEqual(rig.sink.entries().find(e => keyOf(e) === keyOf(t)).sparse, true, `${t.id}: the bucket is the full-density version`);
   }
   hygiene(rig, { unhandledBefore: before });
 });
 
 // ================================================================ I2
 
-test('I2 产物库已有部分结果：这些段不调 executor.render，直接完成（dedup）；其余照常渲染', async () => {
+test('I2 The output store already has some of the results: those segments skip executor.render and complete directly (dedup); the rest render as usual', async () => {
   const before = unhandled.length;
   const rig = createRig();
   const expected = expectedDerived(planContextFor('p1'), FP_A);
@@ -481,15 +481,15 @@ test('I2 产物库已有部分结果：这些段不调 executor.render，直接�
   assertCompletedOnce(rig, page, ids);
   const dedupIds = rig.nodes.flatMap(n => n.eventsOf('dedup').map(e => e.id));
   for (const t of seededAll) {
-    assert.equal(rig.exec.renderCount(t.id), 0, `${t.id}：已在产物库里，不应渲染`);
-    assert.equal(page.done(t.id).result.dedup, true, `${t.id}：task.done 的 result 应带 dedup: true`);
+    assert.equal(rig.exec.renderCount(t.id), 0, `${t.id}: already in the output store, should not render`);
+    assert.equal(page.done(t.id).result.dedup, true, `${t.id}: the result of task.done should carry dedup: true`);
     assert.deepEqual(page.done(t.id).result.ranges, [[t.range.from, t.range.to]]);
-    assert.equal(rig.sink.puts().filter(p => p.meta?.taskId === t.id).length, 0, `${t.id}：不应再推产物`);
-    assert.ok(dedupIds.includes(t.id), `${t.id}：应报 dedup 事件`);
+    assert.equal(rig.sink.puts().filter(p => p.meta?.taskId === t.id).length, 0, `${t.id}: should not push output again`);
+    assert.ok(dedupIds.includes(t.id), `${t.id}: should report a dedup event`);
   }
   for (const t of expected.filter(t => !seededAll.includes(t))) {
-    assert.equal(rig.exec.renderCount(t.id), 1, `${t.id}：应恰好渲染一次`);
-    assert.notEqual(page.done(t.id).result.dedup, true, `${t.id}：不是去重完成的`);
+    assert.equal(rig.exec.renderCount(t.id), 1, `${t.id}: should be rendered exactly once`);
+    assert.notEqual(page.done(t.id).result.dedup, true, `${t.id}: was not completed by dedup`);
     assert.ok(rig.sink.holds(t.resultKey, t.range));
   }
   hygiene(rig, { unhandledBefore: before });
@@ -497,7 +497,7 @@ test('I2 产物库已有部分结果：这些段不调 executor.render，直接�
 
 // ================================================================ I3
 
-test('I3 执行中节点断开（partition 后 close）：宽限期后另一节点接手完成；断开节点的迟到结果被丢弃', async () => {
+test('I3 A node disconnects during execution (close after partition): after the grace period another node takes over and completes the task; the late result from the disconnected node is discarded', async () => {
   const before = unhandled.length;
   const rig = createRig();
   // node-a 的细任务渲染一律卡住（直到测试放开），这样它断开时手里一定有一个在跑的任务
@@ -519,7 +519,7 @@ test('I3 执行中节点断开（partition 后 close）：宽限期后另一节�
   const victim = rig.exec.hung().find(c => c.nodeId === 'node-a').id;
   assert.ok(a.local.running().includes(victim));
   const token = a.local.session.held().find(h => h.id === victim)?.token;
-  assert.ok(Number.isInteger(token), 'node-a 此刻应持有 victim');
+  assert.ok(Number.isInteger(token), 'node-a should hold victim at this moment');
 
   // 2) 分区：双向消息丢弃；2 秒后关闭连接
   rig.lb.partition(a.connId);
@@ -541,22 +541,22 @@ test('I3 执行中节点断开（partition 后 close）：宽限期后另一节�
       }
     },
   });
-  assert.ok(reclaimedAt !== null, 'victim 应被回收过');
-  assert.ok(reclaimedAt - closedAt > RECONNECT_GRACE_MS, `应在宽限期（${RECONNECT_GRACE_MS} ms）之后才回收，实际 ${reclaimedAt - closedAt} ms`);
+  assert.ok(reclaimedAt !== null, 'victim should have been reclaimed');
+  assert.ok(reclaimedAt - closedAt > RECONNECT_GRACE_MS, `Should be reclaimed only after the grace period (${RECONNECT_GRACE_MS} ms), actual ${reclaimedAt - closedAt} ms`);
   // 回收发生在某一拍的 queue.tick，下一拍开头才读到，所以上界放宽三拍
-  assert.ok(reclaimedAt - closedAt <= RECONNECT_GRACE_MS + 3 * STEP_MS, '宽限期一过就应回收');
+  assert.ok(reclaimedAt - closedAt <= RECONNECT_GRACE_MS + 3 * STEP_MS, 'Should be reclaimed as soon as the grace period is over');
   assert.equal(reclaimError, 'disconnected');
   const finisher = rig.out('task.completed').filter(e => e.message.id === victim);
   assert.equal(finisher.length, 1);
-  assert.equal(finisher[0].connId, b.connId, 'victim 应由另一节点完成');
+  assert.equal(finisher[0].connId, b.connId, 'victim should be completed by another node');
   assert.equal(rig.task(victim).attempts, 1);
 
   // 4) 放开 node-a 卡住的渲染：它以为自己还持有，迟到的完成报告发到已关闭的连接上，被丢弃
   assert.equal(rig.exec.release({ nodeId: 'node-a' }), 1);
   await coast(rig);
   const lateFromA = rig.lb.log().slice(cutIndex).filter(e => e.dir === 'in' && e.connId === a.connId);
-  assert.deepEqual(lateFromA, [], '分区之后 node-a 的消息一条都不应到达队列');
-  assert.deepEqual(a.local.running(), [], '放开之后 node-a 的执行应落定');
+  assert.deepEqual(lateFromA, [], 'Not a single message from node-a should reach the queue after the partition');
+  assert.deepEqual(a.local.running(), [], 'node-a\'s execution should settle after unblocking');
   assertCompletedOnce(rig, page, ids);
   for (const t of rig.queue.describe().tasks) assert.equal(t.state, 'done', t.id);
   hygiene(rig, { unhandledBefore: before });
@@ -564,7 +564,7 @@ test('I3 执行中节点断开（partition 后 close）：宽限期后另一节�
 
 // ================================================================ I4
 
-test('I4 执行失败：可重试的失败一次后成功（attempts 1）；不可重试的进 failed，页面收到 task.failed', async () => {
+test('I4 Execution failure: a retryable failure succeeds after failing once (attempts 1); a non-retryable one enters failed and the page receives task.failed', async () => {
   const before = unhandled.length;
   const rig = createRig();
   const expected = expectedDerived(planContextFor('p1'), FP_A);
@@ -591,7 +591,7 @@ test('I4 执行失败：可重试的失败一次后成功（attempts 1）；不�
   assert.equal(rig.task(retryId).state, 'done');
   assert.equal(rig.task(retryId).attempts, 1);
   assert.equal(rig.exec.renderCount(retryId), 2);
-  assert.equal(page.failedOf(retryId).length, 0, '可重试的失败不应通知 task.failed');
+  assert.equal(page.failedOf(retryId).length, 0, 'A retryable failure should not notify task.failed');
   const retryFails = rig.inbound('task.fail').filter(e => e.message.id === retryId);
   assert.equal(retryFails.length, 1);
   assert.equal(retryFails[0].message.error, 'gpu-hiccup');
@@ -602,7 +602,7 @@ test('I4 执行失败：可重试的失败一次后成功（attempts 1）；不�
   assert.equal(fatal.state, 'failed');
   assert.equal(fatal.attempts, 1);
   assert.equal(fatal.lastError, 'card-crashed');
-  assert.equal(rig.exec.renderCount(fatalId), 1, '不可重试的不应再渲染');
+  assert.equal(rig.exec.renderCount(fatalId), 1, 'A non-retryable one should not render again');
   const failedMsgs = page.failedOf(fatalId);
   assert.equal(failedMsgs.length, 1);
   assert.equal(failedMsgs[0].error, 'card-crashed');
@@ -610,7 +610,7 @@ test('I4 执行失败：可重试的失败一次后成功（attempts 1）；不�
   const fatalFails = rig.inbound('task.fail').filter(e => e.message.id === fatalId);
   assert.equal(fatalFails.length, 1);
   assert.equal(fatalFails[0].message.retryable, false);
-  assert.ok(rig.nodes.some(n => n.eventsOf('failed').some(e => e.id === fatalId)), '应报 failed 事件');
+  assert.ok(rig.nodes.some(n => n.eventsOf('failed').some(e => e.id === fatalId)), 'Should report a failed event');
   assert.ok(!rig.sink.holds(expected.find(t => t.id === fatalId).resultKey, expected.find(t => t.id === fatalId).range));
 
   // 其余照常：attempts 0
@@ -622,7 +622,7 @@ test('I4 执行失败：可重试的失败一次后成功（attempts 1）；不�
 
 // ================================================================ I5
 
-test('I5 纯浏览器节点 + pc 节点，另有别的用户的项目：浏览器只做本人的 light / medium 快照', async () => {
+test('I5 Browser-only node + pc node, plus another user\'s project: the browser only does the user\'s own light / medium snapshots', async () => {
   const before = unhandled.length;
   const rig = createRig();
   const page1 = rig.addPage('page-u1', { userId: 'u1', tenantId: 't1', publisherId: 'page-u1' });
@@ -641,7 +641,7 @@ test('I5 纯浏览器节点 + pc 节点，另有别的用户的项目：浏览�
   const exp2 = expectedDerived(planContextFor('p2'), FP_A);
   const ids1 = [planIdOf('p1', 1), ...exp1.map(t => t.id)];
   const ids2 = [planIdOf('p2', 1), ...exp2.map(t => t.id)];
-  assert.equal(new Set([...ids1, ...ids2]).size, ids1.length + ids2.length, '两个项目的任务 id 互不重叠');
+  assert.equal(new Set([...ids1, ...ids2]).size, ids1.length + ids2.length, 'Task ids of the two projects do not overlap');
 
   await drive(rig, () => allDone(rig, page1, ids1)() && ids2.every(id => page2.doneCount(id) >= 1));
   await coast(rig);
@@ -653,28 +653,28 @@ test('I5 纯浏览器节点 + pc 节点，另有别的用户的项目：浏览�
   const eligible = new Set(exp1.filter(t => t.kind === 'snapshot' && (t.weightClass === 'light' || t.weightClass === 'medium')).map(t => t.id));
   assert.ok(eligible.size > 0);
   const brClaims = claimsOf(rig).filter(c => c.connId === br.connId);
-  assert.ok(brClaims.length > 0, '浏览器节点应认领到本人的轻任务');
+  assert.ok(brClaims.length > 0, 'The browser node should claim the user\'s own light tasks');
   for (const { id, task } of brClaims) {
-    assert.equal(task.kind, 'snapshot', `${id}：浏览器不认领 plan / 流任务`);
-    assert.ok(['light', 'medium'].includes(task.weight.class), `${id}：浏览器只认 light / medium`);
-    assert.equal(task.source.userId, 'u1', `${id}：浏览器只认本人的任务`);
+    assert.equal(task.kind, 'snapshot', `${id}: the browser does not claim plan / stream tasks`);
+    assert.ok(['light', 'medium'].includes(task.weight.class), `${id}: the browser only claims light / medium`);
+    assert.equal(task.source.userId, 'u1', `${id}: the browser only claims the user's own tasks`);
     assert.ok(eligible.has(id), id);
   }
   // 连认领都不该去试（节点本地过滤：规则 2、4、6；别人的任务它根本看不到）
   const brTries = rig.inbound('task.claim').filter(e => e.connId === br.connId).map(e => e.message.id);
-  for (const id of brTries) assert.ok(eligible.has(id), `浏览器不应尝试认领 ${id}`);
+  for (const id of brTries) assert.ok(eligible.has(id), `The browser should not try to claim ${id}`);
   const brCompleted = rig.out('task.completed').filter(e => e.connId === br.connId).map(e => e.message.id);
   assert.ok(brCompleted.length > 0);
-  for (const id of brCompleted) assert.ok(eligible.has(id), `浏览器完成的 ${id} 应是本人的 light / medium 快照`);
+  for (const id of brCompleted) assert.ok(eligible.has(id), `${id} completed by the browser should be the user's own light / medium snapshot`);
 
   // 别人的任务连看都看不到（契约 A.9 可见性、设计 Q2）
   const own = new Set(ids1);
   for (const e of rig.lb.log().filter(e => e.dir === 'out' && e.connId === br.connId)) {
     const m = e.message;
     const views = m.type === 'queue.snapshot' ? m.tasks : (m.type === 'task.opened' || m.type === 'task.claimed') ? [m.task] : [];
-    for (const v of views) assert.equal(v.source.userId, 'u1', `浏览器收到了别人的任务 ${v.id}（${m.type}）`);
+    for (const v of views) assert.equal(v.source.userId, 'u1', `The browser received another user's task ${v.id} (${m.type})`);
     if (['task.taken', 'task.closed', 'task.lease-lost', 'task.claim-rejected'].includes(m.type)) {
-      assert.ok(own.has(m.id), `浏览器收到了别人任务的 ${m.type}：${m.id}`);
+      assert.ok(own.has(m.id), `The browser received ${m.type} of another user's task: ${m.id}`);
     }
   }
   // 别的用户的细任务继承 u2，全由 pc 完成
@@ -687,7 +687,7 @@ test('I5 纯浏览器节点 + pc 节点，另有别的用户的项目：浏览�
 
 // ================================================================ I6
 
-test('I6 两种环境指纹的 pc 节点：第一轮细任务只被与 plan 认领者同指纹的节点认领；第二轮被第一轮锁住的卡照锁定方指纹出键、由锁定方指纹的节点做完（契约 F.7）；PlanContext 盖不掉切分节点与锁的指纹', async () => {
+test('I6 pc nodes with two different environment fingerprints: in the first round the fine-grained tasks are claimed only by nodes with the same fingerprint as the plan claimant; in the second round the cards locked by the first round are keyed with the lock owner\'s fingerprint and finished by nodes with the lock owner\'s fingerprint (contract F.7); PlanContext cannot override the fingerprints of the splitter node and the lock', async () => {
   const before = unhandled.length;
   // 执行器返回的 PlanContext 里夹带别的指纹和代码版本：D.2 规定切分节点自己的指纹、代码版本一定生效
   const rig = createRig({
@@ -732,20 +732,20 @@ test('I6 两种环境指纹的 pc 节点：第一轮细任务只被与 plan 认�
   for (const [round, exp, fp] of [[1, exp1, FP_B], [2, exp2, FP_B]]) {
     const expIds = new Set(exp.map(t => t.id));
     const roundClaims = claims.filter(c => expIds.has(c.id));
-    assert.deepEqual(sorted(roundClaims.map(c => c.id)), sorted(expIds), `第 ${round} 轮：每个细任务恰好认领一次`);
+    assert.deepEqual(sorted(roundClaims.map(c => c.id)), sorted(expIds), `Round ${round}: each fine-grained task is claimed exactly once`);
     for (const c of roundClaims) {
-      assert.equal(fpOf.get(c.connId), fp, `第 ${round} 轮：${c.id} 被指纹不同的节点认领`);
+      assert.equal(fpOf.get(c.connId), fp, `Round ${round}: ${c.id} was claimed by a node with a different fingerprint`);
       assert.equal(c.task.requires.envFingerprint, fp, c.id);
       assert.equal(c.task.requires.codeVersion, CV, c.id);
     }
     // 指纹不同的节点连试都不该试（规则 1）
     for (const e of rig.inbound('task.claim').filter(e => expIds.has(e.message.id))) {
-      assert.equal(fpOf.get(e.connId), fp, `第 ${round} 轮：指纹不同的节点尝试认领 ${e.message.id}`);
+      assert.equal(fpOf.get(e.connId), fp, `Round ${round}: a node with a different fingerprint tried to claim ${e.message.id}`);
     }
   }
   // 第二轮照锁定方指纹出键：与第一轮是同一批任务，不重渲（F.7 之前这里断言两轮的结果键互不相同、第二轮全是真渲染）
   assert.deepEqual(sorted(exp2.map(t => t.id)), sorted(exp1.map(t => t.id)));
-  assert.deepEqual(sorted(page.done(plan2).result.derived), sorted(exp2.map(t => t.id)), '第二轮 plan 的 derived 是照锁指纹出键的那批');
+  assert.deepEqual(sorted(page.done(plan2).result.derived), sorted(exp2.map(t => t.id)), 'In the second round the plan\'s derived is the batch keyed with the lock fingerprint');
   for (const t of [...exp1, ...exp2]) assert.ok(rig.sink.holds(t.resultKey, t.range), t.id);
   for (const t of exp2) assert.equal(rig.exec.renderCount(t.id), 1, t.id);
   assert.equal(rig.nodes.flatMap(n => n.eventsOf('dedup')).length, 0);
@@ -758,7 +758,7 @@ test('I6 两种环境指纹的 pc 节点：第一轮细任务只被与 plan 认�
 
 // ================================================================ I7
 
-test('I7 执行中节点转为不空闲并 yieldAll：任务放回（attempts 不加）、被另一节点完成；让路节点的执行被中止、结果丢弃', async () => {
+test('I7 An executing node becomes not idle and yieldAll is called: the task is put back (attempts not incremented) and completed by another node; the yielding node\'s execution is aborted and its result discarded', async () => {
   const before = unhandled.length;
   const rig = createRig();
   // node-a 渲染得慢，便于在执行中途让路
@@ -791,8 +791,8 @@ test('I7 执行中节点转为不空闲并 yieldAll：任务放回（attempts �
     },
   });
 
-  assert.ok(victim, 'node-a 应在执行中途让过路');
-  assert.ok(releaseIndex !== null, 'node-a 应对 victim 发 task.release');
+  assert.ok(victim, 'node-a should have yielded in the middle of execution');
+  assert.ok(releaseIndex !== null, 'node-a should send task.release for victim');
   assert.equal(rig.inbound('task.release').find(e => e.index === releaseIndex).message.reason, 'playing');
   // 放回不算失败（C2）：attempts 不加；open(1) → claimed(2) → open(3) → claimed(4) → done(5)
   const t = rig.task(victim);
@@ -801,14 +801,14 @@ test('I7 执行中节点转为不空闲并 yieldAll：任务放回（attempts �
   assert.equal(t.version, 5);
   const finisher = rig.out('task.completed').filter(e => e.message.id === victim);
   assert.equal(finisher.length, 1);
-  assert.equal(finisher[0].connId, b.connId, 'victim 应由另一节点完成');
+  assert.equal(finisher[0].connId, b.connId, 'victim should be completed by another node');
 
   // 让路节点：执行被中止，结果丢弃，不再为 victim 发任何消息，也没往产物库推
   const aCall = rig.exec.calls({ kind: 'render', nodeId: 'node-a', id: victim })[0];
-  assert.equal(aCall.abortSeen, true, 'node-a 的执行应被中止');
-  assert.ok(a.eventsOf('discarded').some(e => e.id === victim), 'node-a 应报 discarded');
+  assert.equal(aCall.abortSeen, true, 'node-a\'s execution should be aborted');
+  assert.ok(a.eventsOf('discarded').some(e => e.id === victim), 'node-a should report discarded');
   const afterRelease = rig.lb.log().slice(releaseIndex + 1).filter(e => e.dir === 'in' && e.connId === a.connId && e.message.id === victim);
-  assert.deepEqual(afterRelease, [], 'node-a 放回之后不应再为 victim 发消息');
+  assert.deepEqual(afterRelease, [], 'node-a should not send any more messages for victim after putting it back');
   assert.equal(rig.sink.puts().filter(p => p.meta?.taskId === victim && p.meta?.nodeId === 'node-a').length, 0);
   assert.ok(!a.local.running().includes(victim));
   assert.deepEqual(a.local.session.held(), []);
@@ -856,29 +856,29 @@ async function runHungNode({ seedA, seedB, onHang }) {
     },
   });
   const lostMsgs = rig.out('task.lease-lost').filter(e => e.connId === a.connId && e.message.id === victim);
-  assert.equal(lostMsgs.length, 1, '卡死节点应收到一条 lease-lost');
-  assert.equal(lostMsgs[0].message.reason, reclaimError, 'lease-lost 的 reason 是回收原因（契约 A.12〔裁〕）');
-  assert.ok(a.eventsOf('lost').some(e => e.id === victim), '卡死节点应报 lost');
-  assert.equal(rig.exec.hung().find(c => c.id === victim)?.abortSeen, true, '丢认领后应中止对应的执行');
+  assert.equal(lostMsgs.length, 1, 'The hung node should receive one lease-lost');
+  assert.equal(lostMsgs[0].message.reason, reclaimError, 'The reason of lease-lost is the reclaim reason (contract A.12 [ruling])');
+  assert.ok(a.eventsOf('lost').some(e => e.id === victim), 'The hung node should report lost');
+  assert.equal(rig.exec.hung().find(c => c.id === victim)?.abortSeen, true, 'After losing the claim, the corresponding execution should be aborted');
   const finisher = rig.out('task.completed').filter(e => e.message.id === victim);
   assert.equal(finisher.length, 1);
-  assert.equal(finisher[0].connId, b.connId, 'victim 应由另一节点完成');
+  assert.equal(finisher[0].connId, b.connId, 'victim should be completed by another node');
   assert.equal(rig.task(victim).attempts, 1);
 
   // 放开卡住的渲染：迟到的结果被丢弃，不发任何消息，也不往产物库推
   assert.equal(rig.exec.release({ nodeId: 'node-a' }), 1);
   await coast(rig);
-  assert.ok(a.eventsOf('discarded').some(e => e.id === victim), '迟到的结果应报 discarded');
+  assert.ok(a.eventsOf('discarded').some(e => e.id === victim), 'A late result should report discarded');
   const lateFromA = rig.lb.log().slice(lostMsgs[0].index + 1).filter(e => e.dir === 'in' && e.connId === a.connId && e.message.id === victim);
-  assert.deepEqual(lateFromA, [], '丢认领之后卡死节点不应再为 victim 发消息');
+  assert.deepEqual(lateFromA, [], 'After losing the claim, the hung node should not send any more messages for victim');
   assert.equal(rig.sink.puts().filter(p => p.meta?.taskId === victim && p.meta?.nodeId === 'node-a').length, 0);
-  assert.deepEqual(a.local.running(), [], '放开之后卡死节点的执行应落定');
+  assert.deepEqual(a.local.running(), [], 'After unblocking, the hung node\'s execution should settle');
   assertCompletedOnce(rig, page, ids);
   hygiene(rig, { unhandledBefore: before });
   return { hungCall, reclaimedAt, reclaimError };
 }
 
-test('I8 执行器卡死（不报进度），卡死节点照常 tick：开工时的 progress(0) 之后 STALL_MS 按停滞回收，另一节点完成；迟到结果被丢弃', async () => {
+test('I8 The executor hangs (reports no progress) while the hung node keeps ticking as usual: STALL_MS after the progress(0) sent at start, the task is reclaimed as a stall and another node completes it; the late result is discarded', async () => {
   const { hungCall, reclaimedAt, reclaimError } = await runHungNode({
     seedA: 16, seedB: 17,
     // 卡死节点照常 tick（续约照发），但不再认领新活：免得把放回的任务又抢回去卡住
@@ -886,11 +886,11 @@ test('I8 执行器卡死（不报进度），卡死节点照常 tick：开工时
   });
   assert.equal(reclaimError, 'stalled');
   // 开工时 progress(0) 与开工同一时刻；此后进度不变，严格超过 STALL_MS 才回收（A.8 第 2 项）
-  assert.ok(reclaimedAt - hungCall.startedAt > STALL_MS, `应在 STALL_MS 之后回收，实际 ${reclaimedAt - hungCall.startedAt} ms`);
-  assert.ok(reclaimedAt - hungCall.startedAt <= STALL_MS + 3 * STEP_MS, 'STALL_MS 一过就应回收');
+  assert.ok(reclaimedAt - hungCall.startedAt > STALL_MS, `Should be reclaimed after STALL_MS, actual ${reclaimedAt - hungCall.startedAt} ms`);
+  assert.ok(reclaimedAt - hungCall.startedAt <= STALL_MS + 3 * STEP_MS, 'Should be reclaimed as soon as STALL_MS has passed');
 });
 
-test('I8 补充：卡死节点连心跳也停了（不再 tick）：租约到期回收，另一节点完成；迟到结果被丢弃', async () => {
+test('I8 supplement: the hung node\'s heartbeat stops too (no more ticks): reclaimed when the lease expires, another node completes it; the late result is discarded', async () => {
   const { hungCall, reclaimedAt, reclaimError } = await runHungNode({
     seedA: 18, seedB: 19,
     onHang: a => { a.ticking = false; },
@@ -898,13 +898,13 @@ test('I8 补充：卡死节点连心跳也停了（不再 tick）：租约到期
   assert.equal(reclaimError, 'lease-expired');
   // 认领、开工时的 progress(0)、卡住都在同一拍（同一时刻）；此后这个节点不再 tick、不再续约，
   // 所以租约恰在那一刻 + LEASE_MS 到期，严格超过才回收（A.8 第 1 项）
-  assert.ok(reclaimedAt - hungCall.startedAt > LEASE_MS, `回收得太早：${reclaimedAt - hungCall.startedAt} ms`);
-  assert.ok(reclaimedAt - hungCall.startedAt <= LEASE_MS + 3 * STEP_MS, `租约一过就应回收，实际 ${reclaimedAt - hungCall.startedAt} ms`);
+  assert.ok(reclaimedAt - hungCall.startedAt > LEASE_MS, `Reclaimed too early: ${reclaimedAt - hungCall.startedAt} ms`);
+  assert.ok(reclaimedAt - hungCall.startedAt <= LEASE_MS + 3 * STEP_MS, `Should be reclaimed as soon as the lease ends, actual ${reclaimedAt - hungCall.startedAt} ms`);
 });
 
 // ================================================================ I9
 
-test('I9 产物库推送没收全（failNextPut）：任务报失败后被重试完成；最终每段恰好完成一次', async () => {
+test('I9 The output store receives a push only partially (failNextPut): the task reports failure, is retried and completes; in the end each segment completes exactly once', async () => {
   const before = unhandled.length;
   const rig = createRig();
   rig.sink.failNextPut(2);
@@ -927,16 +927,16 @@ test('I9 产物库推送没收全（failNextPut）：任务报失败后被重试
   assert.equal(badPuts.length, 2);
   const failures = counts(badPuts.map(p => p.meta.taskId));
   const fails = rig.inbound('task.fail');
-  assert.equal(fails.length, 2, '每次没收全都应报一次失败');
+  assert.equal(fails.length, 2, 'Each partial receipt should report one failure');
   for (const e of fails) {
     assert.equal(e.message.error, 'sink-incomplete');
-    assert.notEqual(e.message.retryable, false, '没收全按可重试处理');
+    assert.notEqual(e.message.retryable, false, 'A partial receipt is handled as retryable');
   }
   assert.deepEqual(sorted(fails.map(e => e.message.id)), sorted(badPuts.map(p => p.meta.taskId)));
   for (const [id, n] of failures) {
     assert.equal(rig.task(id).state, 'done', id);
-    assert.equal(rig.task(id).attempts, n, `${id}：attempts 应等于没收全的次数`);
-    assert.equal(rig.exec.renderCount(id), n + 1, `${id}：没收全后要重新渲染`);
+    assert.equal(rig.task(id).attempts, n, `${id}: attempts should equal the number of partial receipts`);
+    assert.equal(rig.exec.renderCount(id), n + 1, `${id}: must re-render after a partial receipt`);
   }
   for (const t of expected) {
     assert.ok(rig.sink.holds(t.resultKey, t.range), t.id);
@@ -948,7 +948,7 @@ test('I9 产物库推送没收全（failNextPut）：任务报失败后被重试
 
 // ================================================================ I10
 
-test('I10 队列重启（新实例、新 epoch）：页面重新发布后全部完成；已在产物库里的段走 dedup，不重复渲染', async () => {
+test('I10 Queue restart (new instance, new epoch): everything completes after the page republishes; segments already in the output store go through dedup and are not rendered again', async () => {
   const before = unhandled.length;
   // 第一段：跑到一半（至少两个细任务已完成、还有在渲染的）
   const rig1 = createRig({ epoch: 'epoch-1' });
@@ -972,15 +972,15 @@ test('I10 队列重启（新实例、新 epoch）：页面重新发布后全部�
   a1.stop();
   b1.stop();
   await settle(rig1);
-  assert.equal(rig1.lb.pending(), 0, '停掉的节点不应再发消息');
+  assert.equal(rig1.lb.pending(), 0, 'A stopped node should not send any more messages');
   // stop 中止在跑的任务；假执行器对中止立即拒绝，所以 settled() 应在几轮事件循环内落定（不推进时钟）
-  await within(Promise.all([a1.local.settled(), b1.local.settled()]), 'stop() 之后 settled() 应落定（在跑的任务被中止）');
+  await within(Promise.all([a1.local.settled(), b1.local.settled()]), 'settled() should settle after stop() (running tasks are aborted)');
   await settle(rig1);
-  assert.equal(rig1.lb.pending(), 0, '停掉的节点不应再发消息');
-  assert.deepEqual([...a1.local.running(), ...b1.local.running()], [], 'stop() 之后不应还有在跑的任务');
+  assert.equal(rig1.lb.pending(), 0, 'A stopped node should not send any more messages');
+  assert.deepEqual([...a1.local.running(), ...b1.local.running()], [], 'No tasks should still be running after stop()');
   const inSink = new Set(expected.filter(t => rig1.sink.holds(t.resultKey, t.range)).map(t => t.id));
-  assert.ok(inSink.size >= 2, '重启前产物库里应已有段');
-  assert.ok(inSink.size < expected.length, '重启前还应有没做完的段');
+  assert.ok(inSink.size >= 2, 'The output store should already contain segments before the restart');
+  assert.ok(inSink.size < expected.length, 'There should still be unfinished segments before the restart');
   const rendersBefore = new Map(derivedIds.map(id => [id, rig1.exec.renderCount(id)]));
 
   // 第二段：新队列（新 epoch），产物库与执行器沿用；页面以同一发布方身份重连并重新发布
@@ -999,20 +999,20 @@ test('I10 队列重启（新实例、新 epoch）：页面重新发布后全部�
 
   assert.equal(rig2.queue.describe().epoch, 'epoch-2');
   assert.notEqual(rig1.queue.describe().epoch, rig2.queue.describe().epoch);
-  for (const m of page2.inbox) assert.equal(m.epoch, 'epoch-2', `${m.type} 应带新 epoch`);
+  for (const m of page2.inbox) assert.equal(m.epoch, 'epoch-2', `${m.type} should carry the new epoch`);
   const hello = rig2.inbound('node.hello').find(e => e.connId === a2.connId);
-  assert.deepEqual(hello.message.resume ?? [], [], '新实例不接续旧队列的认领');
+  assert.deepEqual(hello.message.resume ?? [], [], 'The new instance does not resume the old queue\'s claims');
 
   assertCompletedOnce(rig2, page2, ids);
   for (const t of rig2.queue.describe().tasks) assert.equal(t.state, 'done', t.id);
   for (const t of expected) {
     const done = page2.done(t.id);
     if (inSink.has(t.id)) {
-      assert.equal(done.result.dedup, true, `${t.id}：重启前已在产物库里，应走 dedup`);
-      assert.equal(rig2.exec.renderCount(t.id), rendersBefore.get(t.id), `${t.id}：不应重复渲染`);
+      assert.equal(done.result.dedup, true, `${t.id}: already in the output store before the restart, should go through dedup`);
+      assert.equal(rig2.exec.renderCount(t.id), rendersBefore.get(t.id), `${t.id}: should not be rendered again`);
     } else {
-      assert.notEqual(done.result.dedup, true, `${t.id}：重启前没收全，应重新渲染`);
-      assert.equal(rig2.exec.renderCount(t.id), rendersBefore.get(t.id) + 1, `${t.id}：重启后恰好渲染一次`);
+      assert.notEqual(done.result.dedup, true, `${t.id}: partially received before the restart, should re-render`);
+      assert.equal(rig2.exec.renderCount(t.id), rendersBefore.get(t.id) + 1, `${t.id}: rendered exactly once after the restart`);
     }
     assert.ok(rig2.sink.holds(t.resultKey, t.range), t.id);
   }
@@ -1049,10 +1049,10 @@ function createVersionRig() {
 /** I11 共同的收尾断言。 */
 function assertVersions({ rig, pageA, pageB, v1, v2, unchanged, changed, ids1, ids2 }) {
   // 页面 A：v1、v2 的每个任务恰好一条 task.done（不变的那些是 v1 时收到的，不重复）
-  for (const id of new Set([...ids1, ...ids2])) assert.equal(pageA.doneCount(id), 1, `页面 A 对 ${id} 应恰好一条 task.done`);
+  for (const id of new Set([...ids1, ...ids2])) assert.equal(pageA.doneCount(id), 1, `Page A should get exactly one task.done for ${id}`);
   // 页面 B：v2 的每个任务恰好一条（不变的那些靠并入订阅 / 补发）
-  for (const id of ids2) assert.equal(pageB.doneCount(id), 1, `页面 B 对 ${id} 应恰好一条 task.done`);
-  for (const id of ids1.filter(id => !ids2.includes(id))) assert.equal(pageB.doneCount(id), 0, `页面 B 没订阅 v1 的 ${id}`);
+  for (const id of ids2) assert.equal(pageB.doneCount(id), 1, `Page B should get exactly one task.done for ${id}`);
+  for (const id of ids1.filter(id => !ids2.includes(id))) assert.equal(pageB.doneCount(id), 0, `Page B did not subscribe to ${id} of v1`);
   assert.equal(pageA.of('task.failed').length + pageB.of('task.failed').length, 0);
   // v2 plan 的结果列出全部 v2 细任务（含已存在的）
   assert.deepEqual(sorted(pageB.done(planIdOf('p1', 2)).result.derived), sorted(v2.map(t => t.id)));
@@ -1060,22 +1060,22 @@ function assertVersions({ rig, pageA, pageB, v1, v2, unchanged, changed, ids1, i
   const completed = counts(rig.out('task.completed').map(e => e.message.id));
   const claimed = counts(claimsOf(rig).map(c => c.id));
   for (const t of [...v1, ...changed]) {
-    assert.equal(completed.get(t.id), 1, `${t.id} 应恰好完成一次`);
-    assert.equal(claimed.get(t.id), 1, `${t.id} 应恰好认领一次`);
-    assert.equal(rig.exec.renderCount(t.id), 1, `${t.id} 应恰好渲染一次`);
+    assert.equal(completed.get(t.id), 1, `${t.id} should complete exactly once`);
+    assert.equal(claimed.get(t.id), 1, `${t.id} should be claimed exactly once`);
+    assert.equal(rig.exec.renderCount(t.id), 1, `${t.id} should render exactly once`);
     assert.ok(rig.sink.holds(t.resultKey, t.range), t.id);
   }
   for (const t of unchanged) {
     const d = rig.task(t.id);
-    assert.deepEqual([d.state, d.version, d.attempts], ['done', 3, 0], `${t.id}：v2 不重新打开它`);
+    assert.deepEqual([d.state, d.version, d.attempts], ['done', 3, 0], `${t.id}: v2 does not reopen it`);
     assert.deepEqual(pageB.done(t.id).result.ranges, [[t.range.from, t.range.to]]);
     assert.equal(pageB.done(t.id).resultKey, t.resultKey);
-    assert.ok(d.subscribers.includes('page-a') && d.subscribers.includes('page-b'), `${t.id} 应并入两个页面的订阅`);
+    assert.ok(d.subscribers.includes('page-a') && d.subscribers.includes('page-b'), `${t.id} should have the subscriptions of both pages merged in`);
   }
   for (const t of changed) assert.equal(rig.task(t.id).state, 'done', t.id);
 }
 
-test('I11 同一页面先发布 v1 并全部完成，再发布 v2（只改了一张卡）：v2 的细任务页面都有 task.done，不变的补发、不重渲，改了的照常渲染', async () => {
+test('I11 The same page first publishes v1 and everything completes, then publishes v2 (only one card changed): the page gets task.done for all v2 fine-grained tasks, unchanged ones are backfilled without re-rendering, changed ones render as usual', async () => {
   const before = unhandled.length;
   const env = createVersionRig();
   const { rig, pageA, pageB, ids1, ids2 } = env;
@@ -1094,14 +1094,14 @@ test('I11 同一页面先发布 v1 并全部完成，再发布 v2（只改了一
   await drive(rig, () => allDone(rig, pageA, ids2)() && allDone(rig, pageB, ids2)());
   await coast(rig);
 
-  assert.equal(pageB.inbox.slice(0, bBefore).filter(m => m.type === 'task.done').length, 0, 'v2 之前页面 B 什么都没订阅');
+  assert.equal(pageB.inbox.slice(0, bBefore).filter(m => m.type === 'task.done').length, 0, 'Page B had subscribed to nothing before v2');
   // 不变的在 v2 发布时都已 done：页面 B 收到的是补发（A.4「已存在的同 id 任务」）
-  for (const t of env.unchanged) assert.equal(pageB.doneCount(t.id), 1, `${t.id}：页面 B 应收到补发的 task.done`);
+  for (const t of env.unchanged) assert.equal(pageB.doneCount(t.id), 1, `${t.id}: page B should receive the backfilled task.done`);
   assertVersions(env);
   hygiene(rig, { unhandledBefore: before });
 });
 
-test('I11 v1 的细任务还 open / claimed 时 v2 的 plan 就被切分：页面最终收到它们的 task.done，且只一次', async () => {
+test('I11 v2\'s plan is split while v1\'s fine-grained tasks are still open / claimed: the page eventually receives their task.done, exactly once', async () => {
   const before = unhandled.length;
   const env = createVersionRig();
   const { rig, pageA, pageB, ids1, ids2 } = env;
@@ -1127,14 +1127,14 @@ test('I11 v1 的细任务还 open / claimed 时 v2 的 plan 就被切分：页�
     return statesAtSplit !== null;
   });
   const inFlight = [...statesAtSplit].filter(([, s]) => s === 'open' || s === 'claimed').map(([id]) => id);
-  assert.ok(inFlight.length > 0, `前提：v2 切分时应有不变的细任务还在 open / claimed，实际 ${JSON.stringify([...statesAtSplit])}`);
+  assert.ok(inFlight.length > 0, `Precondition: when v2 is split, some unchanged fine-grained tasks should still be open / claimed, actual ${JSON.stringify([...statesAtSplit])}`);
 
   await drive(rig, () => allDone(rig, pageA, [...ids1, ...ids2])() && allDone(rig, pageB, ids2)());
   await coast(rig);
 
   for (const id of inFlight) {
-    assert.equal(pageA.doneCount(id), 1, `${id}：页面 A 只收到一条`);
-    assert.equal(pageB.doneCount(id), 1, `${id}：页面 B（并入订阅）收到且只收到一条`);
+    assert.equal(pageA.doneCount(id), 1, `${id}: page A received only one`);
+    assert.equal(pageB.doneCount(id), 1, `${id}: page B (merged subscription) received exactly one`);
   }
   assertVersions(env);
   hygiene(rig, { unhandledBefore: before });

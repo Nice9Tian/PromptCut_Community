@@ -28,56 +28,56 @@ function scripted(rounds) {
 }
 const reports = events => events.filter(e => e.type === 'tool_call' && e.name === 'report_progress');
 
-test('只回文字、没交汇报:不再代交汇报(文字由界面当一句「在做什么」显示),这一轮照常算完成', async () => {
-  const s = scripted([{ text: '好' }]);
+test('Text-only reply, no report submitted: the report is no longer submitted on its behalf (the interface shows the text as a "what I\'m doing" line), and this round still counts as complete', async () => {
+  const s = scripted([{ text: 'OK' }]);
   const events = [];
-  const out = await new Agent({ provider: s.provider, system: 's', tools: [REPORT], onEvent: e => events.push(e) }).run('请只回复一个字：好');
+  const out = await new Agent({ provider: s.provider, system: 's', tools: [REPORT], onEvent: e => events.push(e) }).run('Please reply with just one word: OK');
   assert.equal(out.outcome, 'completed'); assert.equal(s.calls, 1);
-  assert.equal(reports(events).length, 0, '不代交');
-  assert.ok(events.some(e => e.type === 'text' && e.delta === '好'), '文字照常发给界面');
+  assert.equal(reports(events).length, 0, 'Not submitted on its behalf');
+  assert.ok(events.some(e => e.type === 'text' && e.delta === 'OK'), 'The text is still sent to the interface as usual');
 });
 
-test('有 send_message 时,执行规则让模型用它说明在做什么;没有时沿用「用一句话说明」', async () => {
-  const a = scripted([{ text: '好' }]);
-  await new Agent({ provider: a.provider, system: 's', tools: [REPORT, SAY], onEvent: () => {} }).run('做');
-  assert.match(a.systems[0], /send_message（to 填 "user"）/);
-  assert.match(a.systems[0], /收尾仍调 final 为 true 的 report_progress/);
-  const b = scripted([{ text: '好' }]);
-  await new Agent({ provider: b.provider, system: 's', tools: [REPORT], onEvent: () => {} }).run('做');
+test('With send_message, the execution rules tell the model to use it to say what it is doing; without it, keep "state in one sentence"', async () => {
+  const a = scripted([{ text: 'OK' }]);
+  await new Agent({ provider: a.provider, system: 's', tools: [REPORT, SAY], onEvent: () => {} }).run('Do it');
+  assert.match(a.systems[0], /send_message \(set "to" to "user"\)/);
+  assert.match(a.systems[0], /to wrap up, still call report_progress with final set to true/);
+  const b = scripted([{ text: 'OK' }]);
+  await new Agent({ provider: b.provider, system: 's', tools: [REPORT], onEvent: () => {} }).run('Do it');
   assert.doesNotMatch(b.systems[0], /send_message/);
-  assert.match(b.systems[0], /每组操作前用一句简短的话说明将做什么/);
+  assert.match(b.systems[0], /before each group of operations, state in one short sentence what you are about to do/);
 });
 
-test('用 send_message 对用户说过话、最后一次没说话:不报「API 没有返回文字」', async () => {
-  const s = scripted([{ say: '先加一张标题卡', tool: true, stop: 'tool_use' }, { say: '加好了', stop: 'tool_use' }, { text: '' }]);
+test('Has spoken to the user via send_message but said nothing on the last turn: do not report "API returned no text"', async () => {
+  const s = scripted([{ say: 'Add a title card first', tool: true, stop: 'tool_use' }, { say: 'Added', stop: 'tool_use' }, { text: '' }]);
   const events = [];
-  const out = await new Agent({ provider: s.provider, system: 's', tools: [NOOP, SAY], onEvent: e => events.push(e) }).run('加卡');
+  const out = await new Agent({ provider: s.provider, system: 's', tools: [NOOP, SAY], onEvent: e => events.push(e) }).run('Add a card');
   assert.equal(out.outcome, 'completed'); assert.equal(s.calls, 3);
-  assert.deepEqual(events.filter(e => e.type === 'tool_call' && e.name === 'send_message').map(e => e.input.text), ['先加一张标题卡', '加好了']);
+  assert.deepEqual(events.filter(e => e.type === 'tool_call' && e.name === 'send_message').map(e => e.input.text), ['Add a title card first', 'Added']);
 });
 
-test('工具做完、交了收尾汇报,最后一次没说话:不报「API 没有返回文字」', async () => {
-  const s = scripted([{ tool: true, stop: 'tool_use' }, { report: { final: true, done: ['加了一张标题卡'] }, stop: 'tool_use' }, { text: '' }]);
+test('Tools finished and the final report was submitted, silent on the last turn: do not report "API returned no text"', async () => {
+  const s = scripted([{ tool: true, stop: 'tool_use' }, { report: { final: true, done: ['Added a title card'] }, stop: 'tool_use' }, { text: '' }]);
   const events = [];
-  const out = await new Agent({ provider: s.provider, system: 's', tools: [REPORT, NOOP], onEvent: e => events.push(e) }).run('加卡');
+  const out = await new Agent({ provider: s.provider, system: 's', tools: [REPORT, NOOP], onEvent: e => events.push(e) }).run('Add a card');
   assert.equal(out.outcome, 'completed'); assert.equal(s.calls, 3); assert.equal(reports(events).length, 1);
 });
 
-test('真的什么都没回(没有文字、没有工具、没交汇报、没说过话):照旧以错误结束', async () => {
+test('Truly nothing returned (no text, no tools, no report submitted, nothing said): still ends with an error', async () => {
   const s = scripted([{ text: '' }]);
-  await assert.rejects(new Agent({ provider: s.provider, system: 's', tools: [REPORT, SAY], onEvent: () => {} }).run('做'), /API 没有返回文字或工具调用/);
+  await assert.rejects(new Agent({ provider: s.provider, system: 's', tools: [REPORT, SAY], onEvent: () => {} }).run('Do it'), /API returned no text or tool calls/);
   assert.equal(s.calls, 1);
 });
 
-test('轮数到顶的收尾摘要:不代交汇报,停下的原因照旧写进结局(outcome)与文字', async () => {
-  const s = scripted([{ tool: true, stop: 'tool_use' }, { text: '已完成一半' }]);
+test('Wrap-up summary when the round limit is reached: no report is submitted on its behalf, and the reason for stopping is still written into the outcome and the text', async () => {
+  const s = scripted([{ tool: true, stop: 'tool_use' }, { text: 'Half of it is done' }]);
   const events = [];
-  const out = await new Agent({ provider: s.provider, system: 's', tools: [REPORT, NOOP], maxIterations: 1, onEvent: e => events.push(e) }).run('做');
+  const out = await new Agent({ provider: s.provider, system: 's', tools: [REPORT, NOOP], maxIterations: 1, onEvent: e => events.push(e) }).run('Do it');
   assert.equal(out.outcome, 'round_limit'); assert.equal(reports(events).length, 0);
-  assert.match(out.text, /轮模型往返上限/);
+  assert.match(out.text, /model round trips/);
 });
 
-test('认得对用户说话的调用:名字可带前缀,收件人只认 user', () => {
+test('Recognizes a call that speaks to the user: the name may carry a prefix, and only user counts as the recipient', () => {
   assert.equal(isUserMessageCall('send_message', { to: 'user', text: 'x' }), true);
   assert.equal(isUserMessageCall('mcp__promptcut__send_message', { to: ' User ', text: 'x' }), true);
   assert.equal(isUserMessageCall('send_message', { to: 'cc-1', text: 'x' }), false);
@@ -85,54 +85,54 @@ test('认得对用户说话的调用:名字可带前缀,收件人只认 user', (
   assert.equal(isUserMessageCall('send_message', null), false);
 });
 
-test('buildTools:send_message 发给 user 就地答,不交给 callTool;发给别的 Agent 照旧交给 callTool', async () => {
+test('buildTools: send_message to user is answered in place and not handed to callTool; to another Agent it is still handed to callTool', async () => {
   const called = [];
   const callTool = async (name, input) => { called.push([name, input?.to]); if (name === 'list_cards' || name === 'list_parts') return []; return { ok: true, delivered: [input?.to] }; };
   const tools = await buildTools({ callTool, workspaceDir: process.cwd(), localTools: false });
   const say = tools.find(t => t.name === 'send_message');
-  assert.match(say.description, /to 填 "user" 是对用户说话/);
-  assert.deepEqual(await say.execute({ to: 'user', text: '先看画面' }), { ok: true, shown: true, note: '已显示在用户的对话气泡里' });
-  assert.equal((await say.execute({ to: 'user', text: '  ' })).ok, false, '空话退回去');
-  assert.equal(called.filter(([n]) => n === 'send_message').length, 0, '对用户说的话不经公告板');
-  await say.execute({ to: 'cc-other', text: '序列2 我来改' });
+  assert.match(say.description, /set "to" to "user" to speak to the user/);
+  assert.deepEqual(await say.execute({ to: 'user', text: 'Let me look at the picture first' }), { ok: true, shown: true, note: 'Shown in the user\'s chat bubble' });
+  assert.equal((await say.execute({ to: 'user', text: '  ' })).ok, false, 'Empty text is rejected');
+  assert.equal(called.filter(([n]) => n === 'send_message').length, 0, 'Messages to the user do not go through the bulletin board');
+  await say.execute({ to: 'cc-other', text: 'Track 2, I\'ll edit it' });
   assert.deepEqual(called.filter(([n]) => n === 'send_message'), [['send_message', 'cc-other']]);
 });
 
-test('buildTools:开放清单里没有 send_message 时补一个只能发给用户的', async () => {
+test('buildTools: when the open list has no send_message, add one that can only send to the user', async () => {
   const callTool = async () => [];
   const tools = await buildTools({ callTool, workspaceDir: process.cwd(), localTools: false, only: new Set(['report_progress']) });
   const say = tools.find(t => t.name === 'send_message');
   assert.ok(say); assert.deepEqual(say.inputSchema.properties.to.enum, ['user']);
-  assert.equal((await say.execute({ to: 'user', text: '好' })).ok, true);
-  assert.equal((await say.execute({ to: 'cc-1', text: '好' })).ok, false);
+  assert.equal((await say.execute({ to: 'user', text: 'OK' })).ok, true);
+  assert.equal((await say.execute({ to: 'cc-1', text: 'OK' })).ok, false);
 });
 
-test('经 MCP 的路(CLI 驱动、公告板):send_message 发给 user 直接答「已显示」,不投递、不报「没有这个 Agent」', () => {
+test('Via the MCP route (CLI driver, bulletin board): send_message to user answers "Shown" directly, without delivering and without reporting "No such Agent"', () => {
   const board = createAgentBoard();
-  assert.deepEqual(board.sendMessage('cc-me', { to: 'user', text: '先看画面' }), { ok: true, shown: true, note: '已显示在用户的对话气泡里' });
-  assert.throws(() => board.sendMessage('cc-me', { to: 'cc-nobody', text: 'x' }), /没有这个 Agent/);
+  assert.deepEqual(board.sendMessage('cc-me', { to: 'user', text: 'Let me look at the picture first' }), { ok: true, shown: true, note: 'Shown in the user\'s chat bubble' });
+  assert.throws(() => board.sendMessage('cc-me', { to: 'cc-nobody', text: 'x' }), /No such Agent/);
 });
 
-test('工具出错时调试信息(debug)与错误码一并交给模型:去掉凭证、截短', async () => {
+test('When a tool fails, the debug info (debug) and the error code are handed to the model together, with credentials stripped and truncated', async () => {
   const { toolErrorResult, TOOL_DEBUG_CHARS } = await import('../harness/agent.mjs');
   const debug = { card: 'user-card-1', line: 42, stage: 'render', pageError: 'ReferenceError: x is not defined',
     token: 'abc', headers: { Authorization: 'Bearer abcdef123456' }, note: 'key sk-ABCDEFGHIJKLMNOP and ticket v1.AAAAAAAAAAAAAAAAAAAA.BBBB' };
-  const r = toolErrorResult(Object.assign(new Error('渲染超时'), { code: 'look-timeout', debug }));
-  assert.equal(r.error, '渲染超时'); assert.equal(r.code, 'look-timeout');
+  const r = toolErrorResult(Object.assign(new Error('Render timed out'), { code: 'look-timeout', debug }));
+  assert.equal(r.error, 'Render timed out'); assert.equal(r.code, 'look-timeout');
   assert.match(r.debug, /user-card-1/); assert.match(r.debug, /"line":42/); assert.match(r.debug, /ReferenceError/);
   assert.doesNotMatch(r.debug, /abcdef123456|sk-ABCDEFGHIJKLMNOP|v1\.AAAA/); assert.doesNotMatch(r.debug, /"token":"abc"/);
   const long = toolErrorResult(Object.assign(new Error('x'), { debug: 'y'.repeat(5000) }));
-  assert.ok(long.debug.length < TOOL_DEBUG_CHARS + 40); assert.match(long.debug, /已截断/);
+  assert.ok(long.debug.length < TOOL_DEBUG_CHARS + 40); assert.match(long.debug, /truncated/);
   assert.deepEqual(toolErrorResult(new Error('plain')), { error: 'plain' });
 
   // 走一遍 Agent:模型拿到的 tool_result 里有 debug
   const BOOM = { name: 'see_frames', description: 'x', inputSchema: { type: 'object', properties: {} },
-    async execute() { throw Object.assign(new Error('渲染超时'), { debug: { card: 'c9', line: 7 } }); } };
+    async execute() { throw Object.assign(new Error('Render timed out'), { debug: { card: 'c9', line: 7 } }); } };
   let n = 0; const seen = [];
   const provider = { name: 'f', async *stream(messages) { seen.push(structuredClone(messages));
     if (n++ === 0) { yield { type: 'tool_use', id: 'c1', name: 'see_frames', input: {} }; yield { type: 'stop', reason: 'tool_use' }; }
-    else { yield { type: 'text_delta', text: '看不了' }; yield { type: 'stop', reason: 'stop' }; } } };
-  await new Agent({ provider, system: 's', tools: [BOOM], onEvent: () => {} }).run('看');
+    else { yield { type: 'text_delta', text: 'Can\'t see it' }; yield { type: 'stop', reason: 'stop' }; } } };
+  await new Agent({ provider, system: 's', tools: [BOOM], onEvent: () => {} }).run('Look');
   const toolResult = seen[1].flatMap(m => Array.isArray(m.content) ? m.content : []).find(b => b.type === 'tool_result');
   assert.equal(toolResult.is_error, true); assert.match(toolResult.content, /"debug":"\{\\"card\\":\\"c9\\",\\"line\\":7\}"/);
 });

@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { tools } from '../mcp-tools.mjs';
 import { buildCodexArgs } from '../runners/codex.mjs';
 
-test('Codex 启动参数逐个放行 PromptCut 工具并免批 MCP，不放宽 shell 沙箱', () => {
+test('Codex launch arguments allow PromptCut tools one by one and skip MCP approval, without loosening the shell sandbox', () => {
   const argv = buildCodexArgs({
     cwd: 'C:\\project',
     mcp: { command: 'node', args: ['mcp-server.mjs'], env: { PROMPTCUT_PORT: '5195' } },

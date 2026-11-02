@@ -58,7 +58,7 @@ test("OCN-08 registry: only cards that are ready and have a computable identity 
     const off = subscribeNodeCardInfo(() => { notified++; });
     assert.equal(setNodeCardInfo({ cardRuntime: RUNTIME, userCards: true, graphCards: false, cardSources: { a: "ia" } }, 10_000), true);
     assert.equal(notified, 1);
-    assert.equal(setNodeCardInfo({ cardRuntime: RUNTIME, userCards: true, graphCards: false, cardSources: { a: "ia" } }, 10_100), false, "没变不通知");
+    assert.equal(setNodeCardInfo({ cardRuntime: RUNTIME, userCards: true, graphCards: false, cardSources: { a: "ia" } }, 10_100), false, "No notification when nothing changed");
     assert.deepEqual(getNodeCardInfo(10_000 + NODE_CARD_SETTLE_MS - 1).cardSources, {}, "newly appeared card: not reported before it settles");
     assert.deepEqual(getNodeCardInfo(10_000 + NODE_CARD_SETTLE_MS).cardSources, { a: "ia" }, "reported once the time has passed");
     const last = timers.filter((t) => !t.cleared).at(-1);

@@ -18,7 +18,7 @@ const arg = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) +
 const MIN_MS = Number(arg('--min-ms', 50));
 const URL_PART = arg('--url-part', '?editor');
 const TOP = Number(arg('--top', 15));
-if (!file) { console.error('用法:node scripts/probes/longtask-stacks.mjs <trace.json>'); process.exit(2); }
+if (!file) { console.error('Usage: node scripts/probes/longtask-stacks.mjs <trace.json>'); process.exit(2); }
 
 const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
 const events = Array.isArray(raw) ? raw : raw.traceEvents;

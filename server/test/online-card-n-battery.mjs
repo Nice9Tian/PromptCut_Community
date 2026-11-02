@@ -41,16 +41,16 @@ const cards = () => [
 export function batteryInputs() {
   const base = { planTask, entryKey: 'entry-1', cardPlan: cards(), prerenderSet: null, envFingerprint: OWN, codeVersion: 'cv-1', anchorFrames: [0, 70], weightOf };
   return [
-    ['无浏览器', { ...base }],
-    ['浏览器指纹(docservice 给的)', { ...base, browserFingerprints: [BR] }],
-    ['浏览器指纹等于自己', { ...base, browserFingerprints: [OWN] }],
-    ['browser 对象写法', { ...base, browser: { nodeId: 'n-br', envFingerprint: BR } }],
-    ['锁在第三种环境', { ...base, browserFingerprints: [BR], cardLocks: { 'snapshot:ck-a': THIRD } }],
-    ['锁在第三种环境并接手', { ...base, browserFingerprints: [BR], cardLocks: { 'snapshot:ck-a': THIRD }, takeover: true }],
-    ['预渲染重试档', { ...base, browserFingerprints: [BR], lane: 'backfill' }],
-    ['改过源码的内置卡', { ...base, browserFingerprints: [BR], cardSourceVersions: { 'card-a': 'ver-a' } }],
-    ['含本地素材', { ...base, browserFingerprints: [BR], localMedia: 'node-1', usesLocalMedia: (c) => c.clipId === 'a' }],
-    ['有流', { ...base, browserFingerprints: [BR], streams: [{ streamKey: sk('st', OWN), contentKey: 'st', topClipId: 'bg', firstSegment: 0, lastSegment: 11 }] }],
+    ['no browser', { ...base }],
+    ['browser fingerprint (given by docservice)', { ...base, browserFingerprints: [BR] }],
+    ['browser fingerprint equals its own', { ...base, browserFingerprints: [OWN] }],
+    ['browser object form', { ...base, browser: { nodeId: 'n-br', envFingerprint: BR } }],
+    ['locked to a third environment', { ...base, browserFingerprints: [BR], cardLocks: { 'snapshot:ck-a': THIRD } }],
+    ['locked to a third environment, with takeover', { ...base, browserFingerprints: [BR], cardLocks: { 'snapshot:ck-a': THIRD }, takeover: true }],
+    ['prerender retry lane', { ...base, browserFingerprints: [BR], lane: 'backfill' }],
+    ['builtinCardWithModifiedSource', { ...base, browserFingerprints: [BR], cardSourceVersions: { 'card-a': 'ver-a' } }],
+    ['includes local media', { ...base, browserFingerprints: [BR], localMedia: 'node-1', usesLocalMedia: (c) => c.clipId === 'a' }],
+    ['has streams', { ...base, browserFingerprints: [BR], streams: [{ streamKey: sk('st', OWN), contentKey: 'st', topClipId: 'bg', firstSegment: 0, lastSegment: 11 }] }],
   ];
 }
 
@@ -62,7 +62,7 @@ export function runBattery() {
     const keys = [...new Set(tasks.map((t) => t.resultKey))];
     out[label] = { count: tasks.length, digest: sha256(JSON.stringify(tasks)), keys };
   }
-  out['指纹函数'] = {
+  out['fingerprint function'] = {
     count: 3,
     digest: sha256(JSON.stringify([OWN, BR, envFingerprintOf({ os: 'linux', gpuClass: 'software', chromeMajor: 152 }), resultKeyOf('x', OWN)])),
     keys: [OWN, BR],

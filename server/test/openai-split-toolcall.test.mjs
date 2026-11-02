@@ -24,11 +24,11 @@ async function toolUses(toolCalls) {
   ];
   const p = createProvider({ apiKey: 'k', model: 'm', baseUrl: 'http://x/v1' }, { fetchImpl: fakeFetch(chunks) });
   const out = [];
-  for await (const ev of p.stream([{ role: 'user', content: [{ type: 'text', text: '挪一下' }] }], [], '', undefined)) if (ev.type === 'tool_use') out.push(ev);
+  for await (const ev of p.stream([{ role: 'user', content: [{ type: 'text', text: 'Move it a bit' }] }], [], '', undefined)) if (ev.type === 'tool_use') out.push(ev);
   return out;
 }
 
-test('「有名无参」后面紧跟「无名有参」:合成一次调用', async () => {
+test('"name, no arguments" immediately followed by "arguments, no name": merged into one call', async () => {
   const uses = await toolUses([
     { index: 0, id: 'call_a', type: 'function', function: { name: 'set_position', arguments: '{}' } },
     { index: 1, id: 'call_b', type: 'function', function: { arguments: '{"clipId":"c-6","x":1500,"y":600}' } },
@@ -38,7 +38,7 @@ test('「有名无参」后面紧跟「无名有参」:合成一次调用', asyn
   assert.deepEqual(uses[0].input, { clipId: 'c-6', x: 1500, y: 600 });
 });
 
-test('正常的两个并行调用各自有名字:不合并', async () => {
+test('two normal parallel calls each have a name: not merged', async () => {
   const uses = await toolUses([
     { index: 0, id: 'call_a', type: 'function', function: { name: 'get_project', arguments: '{}' } },
     { index: 1, id: 'call_b', type: 'function', function: { name: 'list_media', arguments: '{}' } },

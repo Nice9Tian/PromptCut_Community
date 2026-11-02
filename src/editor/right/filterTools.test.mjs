@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { createServer } from "vite";
 import { tools } from "../../../server/mcp-tools.mjs";
 
-test("滤镜库:建、挂、改、删,门槛、撤销、跨剪辑清理", async () => {
+test("Filter library: create, attach, edit, delete; gate, undo, cross-cut cleanup", async () => {
   const server = await createServer({ configFile: false, server: { middlewareMode: true, hmr: false, ws: false, watch: null }, appType: "custom", optimizeDeps: { noDiscovery: true, include: [] } });
   try {
     const { actions, getState } = await server.ssrLoadModule("/src/store/project.ts");
@@ -22,7 +22,7 @@ test("滤镜库:建、挂、改、删,门槛、撤销、跨剪辑清理", async 
       { id: "t1", name: "Video", clips: [{ id: "c1", cardId: "", params: {}, mediaId: "v", start: 0, end: 5 }, { id: "c2", cardId: "", params: {}, mediaId: "v", start: 5, end: 10 }] },
       { id: "t2", name: "Cards", clips: [{ id: "k1", cardId: "caption-track", params: {}, start: 0, end: 5 }] },
       { id: "t3", name: "Audio", clips: [{ id: "s1", cardId: "", params: {}, mediaId: "a", start: 0, end: 5 }] },
-      { id: "t4", name: "锁住的", locked: true, clips: [{ id: "c3", cardId: "", params: {}, mediaId: "v", start: 0, end: 5 }] },
+      { id: "t4", name: "Locked", locked: true, clips: [{ id: "c3", cardId: "", params: {}, mediaId: "v", start: 0, end: 5 }] },
     ];
     actions.loadProject(p);
 
@@ -30,9 +30,9 @@ test("滤镜库:建、挂、改、删,门槛、撤销、跨剪辑清理", async 
     assert.throws(() => ft.createFilter({ name: "x", ops: [{ kind: "blur", value: 1 }], clipId: "k1" }), /cards use their own style parameters/);
     assert.throws(() => ft.createFilter({ name: "x", ops: [{ kind: "blur", value: 1 }], clipId: "s1" }), /audio with no picture/);
     assert.throws(() => ft.createFilter({ name: "x", ops: [{ kind: "blur", value: 1 }], clipId: "c3" }), /is locked/);
-    assert.equal(getState().project.filters, undefined, "校验没过不能留下半个滤镜");
+    assert.equal(getState().project.filters, undefined, "A failed validation must not leave half a filter behind");
     const made = ft.createFilter({
-      name: "呼吸", params: { amount: { default: 0.2, min: 0, max: 0.5 } },
+      name: "Breathing", params: { amount: { default: 0.2, min: 0, max: 0.5 } },
       ops: [{ kind: "brightness", value: "1 + amount*sin(t*2*PI)" }], clipId: "c1", clipParams: { amount: 9 },
     });
     const fid = made.filterId;
@@ -49,11 +49,11 @@ test("滤镜库:建、挂、改、删,门槛、撤销、跨剪辑清理", async 
 
     // 挂到第二段、换参数、摘掉
     assert.equal(ft.applyFilter({ clipId: "c2", filterId: fid }).filterId, fid);
-    assert.throws(() => ft.applyFilter({ clipId: "c2", filterId: fid, params: { nope: 1 } }), /没有参数 nope/);
+    assert.throws(() => ft.applyFilter({ clipId: "c2", filterId: fid, params: { nope: 1 } }), /no parameter nope/);
     assert.throws(() => ft.applyFilter({ clipId: "c2", filterId: "fx-none" }), /No fx-none in the filter library.*呼吸/);
     assert.equal(ft.listFilters().filters[0].usedBy.length, 2);
     assert.equal(ft.applyFilter({ clipId: "c2", filterId: "" }).removed, true);
-    assert.equal("filter" in getState().project.tracks[0].clips[1], false, "摘掉要把字段整个拿掉");
+    assert.equal("filter" in getState().project.tracks[0].clips[1], false, "Detaching must remove the field entirely");
     actions.undo();
     assert.equal(getState().project.tracks[0].clips[1].filter.id, fid);
 
@@ -64,7 +64,7 @@ test("滤镜库:建、挂、改、删,门槛、撤销、跨剪辑清理", async 
     assert.throws(() => ft.updateFilter({ filterId: fid, ops: [{ kind: "saturate", value: 9 }] }), /0~2/);
 
     // 删:挂着要 force + reason;停放剪辑里挂着的也要摘
-    const other = actions.addCut("剪辑备份", { switchTo: false });
+    const other = actions.addCut("Cut backup", { switchTo: false });
     const q = getState().project;
     actions.loadProject({
       ...q,
@@ -73,18 +73,18 @@ test("滤镜库:建、挂、改、删,门槛、撤销、跨剪辑清理", async 
     assert.equal(ft.listFilters().filters[0].usedBy.length, 3);
     assert.throws(() => ft.removeFilter({ filterId: fid }), /is still attached to 3 clips.*cp of 剪辑备份/);
     assert.throws(() => ft.removeFilter({ filterId: fid, force: true }), /reason/);
-    const rm = ft.removeFilter({ filterId: fid, force: true, reason: "用户不要了" });
+    const rm = ft.removeFilter({ filterId: fid, force: true, reason: "The user no longer wants it" });
     assert.equal(rm.detached.length, 3);
     const after = getState().project;
     assert.deepEqual(after.filters, []);
     for (const t of after.tracks) for (const c of t.clips) assert.equal(c.filter, undefined);
-    for (const cut of after.cuts) for (const t of cut.tracks ?? []) for (const c of t.clips) assert.equal(c.filter, undefined, "停放剪辑里也要摘干净");
+    for (const cut of after.cuts) for (const t of cut.tracks ?? []) for (const c of t.clips) assert.equal(c.filter, undefined, "Must be fully detached in parked cuts too");
   } finally {
     await server.close();
   }
 });
 
-test("滤镜工具的声明:必填项", () => {
+test("Filter tool declaration: required fields", () => {
   const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
   for (const n of ["list_filters", "create_filter", "update_filter", "remove_filter", "apply_filter"]) assert.equal(byName[n]?.side, "agent", n);
   assert.deepEqual(byName.create_filter.inputSchema.required, ["name", "ops"]);

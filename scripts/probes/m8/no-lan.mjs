@@ -77,7 +77,7 @@ function netstat() {
  *   `netstat`、`discover: false` 只给单测注入（单测不做真的局域网发现）
  */
 export function startNoLanWatch(ip, { everyMs = 2000, discoverMs = 3000, log = () => {}, netstat: run = netstat, discover = true } = {}) {
-  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(String(ip ?? ''))) throw new TypeError(`--assert-no-lan 要给 IPv4 地址，收到 ${ip}`);
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(String(ip ?? ''))) throw new TypeError(`--assert-no-lan needs an IPv4 address, got ${ip}`);
   const state = { ip, baselineOk: false, baseline: [], samples: 0, failedSamples: 0, maxTcp: 0, seen: [] };
   const baselineKeys = new Set();
   const describe = (l) => `${pairKey(l)}${l.state ? ` ${l.state}` : ''}`;

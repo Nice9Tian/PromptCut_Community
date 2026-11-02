@@ -52,18 +52,18 @@ test("Invisible (StoreHold true) subtree: does not re-render when the store chan
 });
 
 test("Invisible as soon as it is mounted: the first read gets the current value as usual, and it does not follow afterwards", async () => {
-  actions.newProject("起点");
+  actions.newProject("Starting point");
   const { log, App } = harness();
   const root = mount(h(App, { hidden: true }));
   await flush();
-  assert.deepEqual(log.held, ["起点"]);
-  actions.setProjectMeta({ name: "改过" });
+  assert.deepEqual(log.held, ["Starting point"]);
+  actions.setProjectMeta({ name: "Changed" });
   await flush();
-  assert.deepEqual(log.held, ["起点"]);
-  assert.equal(log.live.at(-1), "改过");
+  assert.deepEqual(log.held, ["Starting point"]);
+  assert.equal(log.live.at(-1), "Changed");
   root.render(h(App, { hidden: false }));
   await flush();
-  assert.equal(log.held.at(-1), "改过");
+  assert.equal(log.held.at(-1), "Changed");
   root.unmount();
 });
 

@@ -91,9 +91,9 @@ const INTERVENTIONS = INTERVENE === 'none' ? [] : INTERVENE.split(',').map((x) =
 const VERBOSE = process.argv.includes('--verbose');
 const JSON_OUT = flagArg('json', null);
 const OUT = flagArg('out', null);
-if (!fs.existsSync(path.join(DIST, 'stage.html'))) { console.error(`没有在线构建:${DIST}(先跑 npx vite build --mode online)`); process.exit(2); }
-if (!FRAMES.length) { console.error('没有要核对的帧'); process.exit(2); }
-if (INTERVENTIONS.some((x) => !['sync-finish', 'exact-steps', 'settle', 'real-raf'].includes(x))) { console.error(`不认识的干预:${INTERVENE}`); process.exit(2); }
+if (!fs.existsSync(path.join(DIST, 'stage.html'))) { console.error(`No online build: ${DIST} (run npx vite build --mode online first)`); process.exit(2); }
+if (!FRAMES.length) { console.error('No frames to check'); process.exit(2); }
+if (INTERVENTIONS.some((x) => !['sync-finish', 'exact-steps', 'settle', 'real-raf'].includes(x))) { console.error(`Unknown intervention: ${INTERVENE}`); process.exit(2); }
 
 /* ───────────────────────── 比对 ───────────────────────── */
 
@@ -124,7 +124,7 @@ function styleDecls(text) {
 const REACT_ID = /_r_[0-9a-z]+_|:r[0-9a-z]+:|«r[0-9a-z]+»/g;
 const renumberIds = (html) => { const seen = new Map(); return html.replace(REACT_ID, (m) => { if (!seen.has(m)) seen.set(m, `_r_#${seen.size}_`); return seen.get(m); }); };
 
-const clip = (v, n = 60) => { const s = String(v ?? '(无)'); return s.length > n ? `${s.slice(0, n)}…` : s; };
+const clip = (v, n = 60) => { const s = String(v ?? '(none)'); return s.length > n ? `${s.slice(0, n)}…` : s; };
 
 /** 两份快照的所有不同处。结构对不上(记号数、标签名)时只报第一处,`structural: true` */
 function allDiffs(a, b) {
@@ -136,10 +136,10 @@ function allDiffs(a, b) {
   for (let i = 0; i < n; i++) {
     const x = ta[i], y = tb[i];
     if (x.kind !== y.kind || ((x.kind === 'open' || x.kind === 'close') && x.name !== y.name)) {
-      diffs.push({ kind: 'structure', where: `第 ${i} 个记号`, a: x.kind === 'text' ? `文本「${clip(x.text, 20)}」` : `<${x.kind === 'close' ? '/' : ''}${x.name ?? x.kind}>`, b: y.kind === 'text' ? `文本「${clip(y.text, 20)}」` : `<${y.kind === 'close' ? '/' : ''}${y.name ?? y.kind}>` });
+      diffs.push({ kind: 'structure', where: `token #${i}`, a: x.kind === 'text' ? `text "${clip(x.text, 20)}"` : `<${x.kind === 'close' ? '/' : ''}${x.name ?? x.kind}>`, b: y.kind === 'text' ? `text "${clip(y.text, 20)}"` : `<${y.kind === 'close' ? '/' : ''}${y.name ?? y.kind}>` });
       return { diffs, structural: true };
     }
-    if (x.kind === 'text' || x.kind === 'comment') { if (x.text !== y.text) diffs.push({ kind: 'text', where: `<${tag}> 里的文本`, a: x.text, b: y.text }); continue; }
+    if (x.kind === 'text' || x.kind === 'comment') { if (x.text !== y.text) diffs.push({ kind: 'text', where: `text inside <${tag}>`, a: x.text, b: y.text }); continue; }
     if (x.kind === 'close') continue;
     tag = x.name;
     for (const name of new Set([...x.attrs.keys(), ...y.attrs.keys()])) {
@@ -150,17 +150,17 @@ function allDiffs(a, b) {
         for (const prop of new Set([...da.keys(), ...db.keys()])) {
           const pa = da.get(prop), pb = db.get(prop);
           if (pa === pb || (pa !== undefined && pb !== undefined && valuesCloseEnough(pa, pb))) continue;
-          diffs.push({ kind: 'style', where: `<${x.name}> 的样式`, prop, a: pa, b: pb });
+          diffs.push({ kind: 'style', where: `style of <${x.name}>`, prop, a: pa, b: pb });
         }
       } else {
         // 两份的内联样式里都写着同名的样式、值相同:这个属性被样式盖住,不起作用
         const da = styleDecls(x.attrs.get('style')), db = styleDecls(y.attrs.get('style'));
         const shadowed = da.has(name) && db.has(name) && valuesCloseEnough(da.get(name), db.get(name));
-        diffs.push({ kind: shadowed ? 'shadowed' : 'attr', where: `<${x.name}> 的属性`, prop: name, a: va, b: vb });
+        diffs.push({ kind: shadowed ? 'shadowed' : 'attr', where: `attribute of <${x.name}>`, prop: name, a: va, b: vb });
       }
     }
   }
-  if (ta.length !== tb.length) { diffs.push({ kind: 'structure', where: '记号数', a: String(ta.length), b: String(tb.length) }); return { diffs, structural: true }; }
+  if (ta.length !== tb.length) { diffs.push({ kind: 'structure', where: 'token count', a: String(ta.length), b: String(tb.length) }); return { diffs, structural: true }; }
   return { diffs, structural: false };
 }
 
@@ -177,7 +177,7 @@ function benignTags(diffs) {
 const tagsCls = (tags) => [...tags].sort().join('+');
 /** 分档:`same` 相同 / `diff` 画面不同 / 其余是用 + 连起来的几样(`hint` 提示属性、`shadow` 被样式盖住的属性、`ids` 自动编号) */
 function classify(a, b) {
-  if (a === null || b === null) return { cls: 'diff', diffs: [{ kind: 'structure', where: '快照', a: a === null ? '没拿到' : '有', b: b === null ? '没拿到' : '有' }] };
+  if (a === null || b === null) return { cls: 'diff', diffs: [{ kind: 'structure', where: 'snapshot', a: a === null ? 'not obtained' : 'present', b: b === null ? 'not obtained' : 'present' }] };
   const raw = allDiffs(a, b);
   if (!raw.diffs.length) return { cls: 'same', diffs: [] };
   if (!raw.structural) { const tags = benignTags(raw.diffs); if (tags) return { cls: tagsCls(tags), diffs: raw.diffs }; }
@@ -197,14 +197,14 @@ const worse = (x, y) => {
   if (y === 'same') return x;
   return tagsCls(new Set([...x.split('+'), ...y.split('+')]));
 };
-const TAG_TEXT = { hint: '提示属性', shadow: '被样式盖住的属性', ids: '自动编号' };
-const clsText = (c) => (c === 'same' ? '相同' : c === 'diff' ? '画面不同' : `只差${c.split('+').map((t) => TAG_TEXT[t]).join('、')}`);
-const diffText = (diffs, limit = 4) => diffs.slice(0, limit).map((d) => `${d.where}${d.prop ? ` ${d.prop}` : ''}:${clip(d.a, 40)} → ${clip(d.b, 40)}`).join(';') + (diffs.length > limit ? `;…共 ${diffs.length} 处` : '');
+const TAG_TEXT = { hint: 'hint attribute', shadow: 'attribute shadowed by a style', ids: 'auto numbering' };
+const clsText = (c) => (c === 'same' ? 'same' : c === 'diff' ? 'picture differs' : `differs only in ${c.split('+').map((t) => TAG_TEXT[t]).join(', ')}`);
+const diffText = (diffs, limit = 4) => diffs.slice(0, limit).map((d) => `${d.where}${d.prop ? ` ${d.prop}` : ''}:${clip(d.a, 40)} → ${clip(d.b, 40)}`).join(';') + (diffs.length > limit ? `; … ${diffs.length} places in total` : '');
 
 /* ───────────────────────── 页面 ───────────────────────── */
 
 const projectOf = (cardId) => ({
-  id: `sj-${cardId}`, name: '顺着做与从头推对照', width: 1920, height: 1080, fps: FPS, duration: SECONDS,
+  id: `sj-${cardId}`, name: 'Sequential vs from-start stepping comparison', width: 1920, height: 1080, fps: FPS, duration: SECONDS,
   themeId: 'dark', media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
   tracks: [{ id: 'tr', name: cardId, hidden: false, clips: [{ id: 'clip', kind: 'card', cardId, start: 0, end: SECONDS, params: {} }] }],
 });
@@ -224,7 +224,7 @@ addEventListener('message', (e) => {
 });
 window.__rpc = (method, ...args) => new Promise((res, rej) => { const id = ++seq; waiting.set(id, { res, rej }); stageWin.postMessage({ type: 'pc-rpc', id, method, args }, stageOrigin); });
 window.__setup = async (src) => { ready = null; htmlOf.clear(); const f = document.getElementById('bg'); f.src = src; stageWin = f.contentWindow; stageOrigin = new URL(src).origin;
-  const t0 = performance.now(); while (!ready) { if (performance.now() - t0 > 60000) throw new Error('舞台 60 秒没就绪'); await new Promise((r) => setTimeout(r, 50)); } stageWin = f.contentWindow; return ready; };
+  const t0 = performance.now(); while (!ready) { if (performance.now() - t0 > 60000) throw new Error('stage not ready within 60 seconds'); await new Promise((r) => setTimeout(r, 50)); } stageWin = f.contentWindow; return ready; };
 </script>`;
 
 /** 贴快照比像素的页面:带上在线构建的样式表(快照只内联了与缺省值不同的样式,缺省值要和舞台文档一样) */
@@ -316,7 +316,7 @@ function installTracer(interventions, deep) {
     const post = MessagePort.prototype.postMessage;
     MessagePort.prototype.postMessage = function (...args) { push('post', {}); return post.apply(this, args); };
   }
-  const label = (n) => `${n.tagName.toLowerCase()}「${(n.textContent || '').slice(0, 12)}」`;
+  const label = (n) => `${n.tagName.toLowerCase()} "${(n.textContent || '').slice(0, 12)}"`;
   new MutationObserver((records) => {
     for (const rec of records) {
       if (!(rec.target instanceof Element) || !rec.target.closest('[data-pc-clip]')) continue;
@@ -359,7 +359,7 @@ try {
   report.chrome = await browser.version();
   const page = await browser.newPage();
   await page.setViewport({ width: 1000, height: 640 });
-  page.on('pageerror', (e) => report.failures.push(`页面报错:${String(e.message || e).slice(0, 160)}`));
+  page.on('pageerror', (e) => report.failures.push(`Page error: ${String(e.message || e).slice(0, 160)}`));
   await page.goto(`http://127.0.0.1:${BASE}/probe-parent`, { waitUntil: 'load' });
   await page.bringToFront();
 
@@ -412,16 +412,16 @@ try {
 
   const note = (...a) => { if (VERBOSE) console.error(`[${new Date().toISOString().slice(11, 23)}]`, ...a); };
   /** 等待上限只为防卡死(一步最多 5 分钟):到了头算这一步没跑出来 */
-  const guard = (what, job) => { let timer; return Promise.race([job, new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`${what} 5 分钟没有结果`)), 300000); })]).finally(() => clearTimeout(timer)); };
+  const guard = (what, job) => { let timer; return Promise.race([job, new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`${what} produced no result in 5 minutes`)), 300000); })]).finally(() => clearTimeout(timer)); };
   const stageFrame = () => page.frames().find((f) => f.url().includes('/editor/stage.html')) ?? null;
-  const rpc = (method, ...args) => { note('rpc', method, method === 'bakeFrame' ? args[0].localFrame : ''); return guard(`舞台调用 ${method}`, page.evaluate((m, a) => window.__rpc(m, ...a), method, args)); };
+  const rpc = (method, ...args) => { note('rpc', method, method === 'bakeFrame' ? args[0].localFrame : ''); return guard(`stage call ${method}`, page.evaluate((m, a) => window.__rpc(m, ...a), method, args)); };
   const htmlAt = (n) => page.evaluate((k) => window.__html(k), n);
   const bake = async (cardId, n) => {
     const r = await rpc('bakeFrame', { session: 'sj', clipId: 'clip', localFrame: n, mode: 'seq', small: false });
-    if (!r?.ok) { report.failures.push(`${cardId} 第 ${n} 帧:${r?.reason}${r?.detail ? ` ${String(r.detail).slice(0, 80)}` : ''}`); return null; }
+    if (!r?.ok) { report.failures.push(`${cardId} frame ${n}: ${r?.reason}${r?.detail ? ` ${String(r.detail).slice(0, 80)}` : ''}`); return null; }
     return r;
   };
-  const takeTrace = async () => { const f = stageFrame(); if (!f) return []; return guard('取记录', f.evaluate(() => (window.__sj ? window.__sj.ev.splice(0) : []))); };
+  const takeTrace = async () => { const f = stageFrame(); if (!f) return []; return guard('Get trace', f.evaluate(() => (window.__sj ? window.__sj.ev.splice(0) : []))); };
   /** 记录 → 摘要:每条动画从被拨到结尾到结束事件送到,隔了多少舞台毫秒和真实毫秒;元素换入换出的舞台时刻 */
   const digest = (ev) => {
     const called = new Map(); const lags = []; const swaps = []; let undelivered = 0; let realFrames = 0;
@@ -439,8 +439,8 @@ try {
 
   for (const cardId of CARDS) {
     // 每张卡重新载入一次舞台:上一张卡留下的东西(挂着的动画、React 的编号计数)带不过来
-    note('载入舞台', cardId);
-    await guard('载入舞台', page.evaluate((src) => window.__setup(src), `http://127.0.0.1:${BASE + 2}/editor/stage.html?stage=1&id=B&preview=stage&dual=1&lm=0`));
+    note('Load stage', cardId);
+    await guard('Load stage', page.evaluate((src) => window.__setup(src), `http://127.0.0.1:${BASE + 2}/editor/stage.html?stage=1&id=B&preview=stage&dual=1&lm=0`));
     await sleep(500);
     if (FRAME_RATE && !report.frameRate) {
       // 用各自文档里真实的 requestAnimationFrame 数 1.5 秒(舞台文档的那个被接管了,原始的留在 `__pcRealRaf`)
@@ -453,10 +453,10 @@ try {
         raf(loop);
         wait(() => { on = false; resolve(+(n / ((now() - t0) / 1000)).toFixed(1)); }, 1500);
       });
-      report.frameRate = { parent: await guard('量出帧', page.evaluate(count)), stage: await guard('量出帧', stageFrame().evaluate(count)) };
-      console.log(`真实出帧:父页每秒 ${report.frameRate.parent} 帧,舞台文档每秒 ${report.frameRate.stage} 帧`);
+      report.frameRate = { parent: await guard('Measure frame rate', page.evaluate(count)), stage: await guard('Measure frame rate', stageFrame().evaluate(count)) };
+      console.log(`Real frame output: parent page ${report.frameRate.parent} frames per second, stage document ${report.frameRate.stage} frames per second`);
     }
-    if (TRACE || INTERVENTIONS.length) { const f = stageFrame(); if (!f) throw new Error('找不到舞台文档'); note('装记录器'); note(await guard('装记录器', f.evaluate(installTracer, INTERVENTIONS, TRACE_DEEP))); }
+    if (TRACE || INTERVENTIONS.length) { const f = stageFrame(); if (!f) throw new Error('Stage document not found'); note('Install tracer'); note(await guard('Install tracer', f.evaluate(installTracer, INTERVENTIONS, TRACE_DEEP))); }
     await rpc('setRole', 'back', { job: 'bake' });
     await rpc('setProject', projectOf(cardId), { reset: true });
     const row = { cardId, verdict: 'same', frames: [], seqStable: null, traces: [] };
@@ -469,11 +469,11 @@ try {
       const got = new Map();
       for (let n = 0; n <= top; n++) { const b = await bake(cardId, n); if (!b) break; const h = await htmlAt(n); if (FRAMES.includes(n)) got.set(n, h); }
       seqRuns.push(got);
-      if (TRACE) row.traces.push({ how: `顺着做第 ${k + 1} 遍`, ...digest(await takeTrace()) });
+      if (TRACE) row.traces.push({ how: `Sequential run pass ${k + 1}`, ...digest(await takeTrace()) });
     }
     if (SEQ_REPEAT > 1) {
       row.seqStable = true;
-      for (const n of FRAMES) for (let k = 1; k < SEQ_REPEAT; k++) { const c = classify(seqRuns[0].get(n) ?? null, seqRuns[k].get(n) ?? null); if (c.cls !== 'same') { row.seqStable = false; row.frames.push({ frame: n, how: `顺着做第 1 遍 对 第 ${k + 1} 遍`, cls: c.cls, why: diffText(c.diffs) }); row.verdict = worse(row.verdict, c.cls); } }
+      for (const n of FRAMES) for (let k = 1; k < SEQ_REPEAT; k++) { const c = classify(seqRuns[0].get(n) ?? null, seqRuns[k].get(n) ?? null); if (c.cls !== 'same') { row.seqStable = false; row.frames.push({ frame: n, how: `sequential pass 1 vs pass ${k + 1}`, cls: c.cls, why: diffText(c.diffs) }); row.verdict = worse(row.verdict, c.cls); } }
     }
     // 从头推
     for (const n of FRAMES) {
@@ -484,7 +484,7 @@ try {
         await takeTrace();
         const b = await bake(cardId, n);
         jumps.push(b ? await htmlAt(n) : null);
-        if (TRACE) row.traces.push({ how: `从头推到第 ${n} 帧,第 ${k + 1} 次`, ...digest(await takeTrace()) });
+        if (TRACE) row.traces.push({ how: `advance from the start to frame ${n}, run ${k + 1}`, ...digest(await takeTrace()) });
       }
       const entry = { frame: n, sec: +(n / FPS).toFixed(2), vsSeq: [], among: [], cls: 'same', stable: 'same' };
       for (let k = 0; k < REPEAT; k++) { const p = pair(want, jumps[k], `${cardId}-${n}-seq-vs-jump${k + 1}`); entry.vsSeq.push(p); entry.cls = worse(entry.cls, p.cls); }
@@ -497,13 +497,13 @@ try {
       }
     }
     report.cards.push(row);
-    const brief = row.frames.filter((f) => f.vsSeq).map((f) => `${f.frame}:${clsText(f.cls)}${f.stable !== 'same' ? `(几次从头推之间${clsText(f.stable)})` : ''}`).join(' ');
+    const brief = row.frames.filter((f) => f.vsSeq).map((f) => `${f.frame}:${clsText(f.cls)}${f.stable !== 'same' ? `(${clsText(f.stable)} between runs from the start)` : ''}`).join(' ');
     console.log(`[${cardId}] ${clsText(row.verdict)}  ${brief}`);
   }
-  note(`比像素 ${pixelJobs.length} 对`);
-  for (const job of pixelJobs) job.out.pixels = await guard('比像素', pixelDiff(job.a, job.b, job.label));
+  note(`compare pixels: ${pixelJobs.length} pairs`);
+  for (const job of pixelJobs) job.out.pixels = await guard('compare pixels', pixelDiff(job.a, job.b, job.label));
 } catch (e) {
-  report.failures.push(`探针自己出错:${String(e?.stack || e).slice(0, 400)}`);
+  report.failures.push(`Probe itself failed: ${String(e?.stack || e).slice(0, 400)}`);
 } finally {
   if (browser) await browser.close().catch(() => {});
   for (const s of servers) await new Promise((resolve) => { s.close(() => resolve()); s.closeAllConnections?.(); });
@@ -512,29 +512,29 @@ try {
 if (JSON_OUT) fs.writeFileSync(JSON_OUT, JSON.stringify(report, null, 2));
 
 console.log('');
-console.log(`机器:${report.host.cpu},${report.host.logicalCores} 个逻辑核;${report.chrome}`);
-console.log(`每张卡一个 ${SECONDS} 秒的片段(${FPS} 帧/秒);核对第 ${FRAMES.join('、')} 帧;每帧从头推 ${REPEAT} 次${SEQ_REPEAT > 1 ? `;顺着做 ${SEQ_REPEAT} 遍` : ''}${INTERVENE !== 'none' ? `;干预:${INTERVENE}` : ''}`);
-const px = (p) => (p?.pixels ? (p.pixels.differ ? `,像素差 ${p.pixels.differ} 个、最大差 ${p.pixels.max}` : ',像素相同') : '');
+console.log(`machine: ${report.host.cpu}, ${report.host.logicalCores} logical cores; ${report.chrome}`);
+console.log(`one ${SECONDS}-second clip per card (${FPS} fps); checking frames ${FRAMES.join(', ')}; each frame advanced from the start ${REPEAT} times${SEQ_REPEAT > 1 ? `; ${SEQ_REPEAT} sequential passes` : ''}${INTERVENE !== 'none' ? `; intervention: ${INTERVENE}` : ''}`);
+const px = (p) => (p?.pixels ? (p.pixels.differ ? `, ${p.pixels.differ} pixels differ, max difference ${p.pixels.max}` : ', pixels identical') : '');
 for (const c of report.cards) {
-  console.log(`卡 ${c.cardId}:${clsText(c.verdict)}${c.seqStable === false ? '(顺着做的几遍互不相同)' : ''}`);
+  console.log(`card ${c.cardId}: ${clsText(c.verdict)} ${c.seqStable === false ? '(the sequential passes differ from one another)' : ''}`);
   for (const f of c.frames) {
-    if (!f.vsSeq) { console.log(`   第 ${f.frame} 帧 ${f.how}:${clsText(f.cls)}〔${f.why}〕`); continue; }
+    if (!f.vsSeq) { console.log(`   frame ${f.frame} ${f.how}: ${clsText(f.cls)} [${f.why}]`); continue; }
     if (f.cls === 'same' && f.stable === 'same') continue;
-    console.log(`   第 ${f.frame} 帧(${f.sec} 秒):和顺着做比 ${clsText(f.cls)};几次从头推之间 ${clsText(f.stable)}`);
-    f.vsSeq.forEach((p, k) => { if (p.cls !== 'same') console.log(`      顺着做 → 第 ${k + 1} 次从头推:${clsText(p.cls)}${px(p)}〔${p.why}〕`); });
-    f.among.forEach((p, k) => { if (p.cls !== 'same') console.log(`      第 1 次 → 第 ${k + 2} 次从头推:${clsText(p.cls)}${px(p)}〔${p.why}〕`); });
+    console.log(`   frame ${f.frame} (${f.sec} s): compared with sequential: ${clsText(f.cls)}; between runs from the start: ${clsText(f.stable)}`);
+    f.vsSeq.forEach((p, k) => { if (p.cls !== 'same') console.log(`      sequential → run ${k + 1} from the start: ${clsText(p.cls)}${px(p)} [${p.why}]`); });
+    f.among.forEach((p, k) => { if (p.cls !== 'same') console.log(`      run 1 → run ${k + 2} from the start: ${clsText(p.cls)}${px(p)} [${p.why}]`); });
   }
   if (TRACE) {
     for (const t of c.traces) {
       const lagV = t.lags.map((l) => l.lagV), lagR = t.lags.map((l) => l.lagR);
-      const stat = (xs) => (xs.length ? `${Math.min(...xs)}～${Math.max(...xs)}` : '无');
-      console.log(`   〔记录〕${t.how}:结束事件 ${t.lags.length} 次,迟到 舞台 ${stat(lagV)} 毫秒 / 真实 ${stat(lagR)} 毫秒${t.undelivered ? `,${t.undelivered} 次到生成快照时还没送到` : ''}${INTERVENTIONS.includes('real-raf') ? `;这一段真实 ${t.realMs} 毫秒里出了 ${t.realFrames} 帧` : ''}`);
-      if (t.swaps.length) console.log(`      元素换入(+)换出(-)的舞台时刻:${t.swaps.slice(0, 40).join(' ')}${t.swaps.length > 40 ? ` …共 ${t.swaps.length} 次` : ''}`);
+      const stat = (xs) => (xs.length ? `${Math.min(...xs)}-${Math.max(...xs)}` : 'none');
+      console.log(`   [record] ${t.how}: ${t.lags.length} end events, late: stage ${stat(lagV)} ms / real ${stat(lagR)} ms${t.undelivered ? `, ${t.undelivered} not yet delivered when snapshots were generated` : ''}${INTERVENTIONS.includes('real-raf') ? `; in this stretch's ${t.realMs} ms of real time, ${t.realFrames} frames were produced` : ''}`);
+      if (t.swaps.length) console.log(`      stage times of element swap-in (+) and swap-out (-): ${t.swaps.slice(0, 40).join(' ')}${t.swaps.length > 40 ? ` … ${t.swaps.length} times in total` : ''}`);
     }
   }
 }
 const bad = report.cards.filter((c) => c.verdict === 'diff');
-if (report.failures.length) console.log(`失败:\n  ${report.failures.join('\n  ')}`);
-if (bad.length) console.log(`画面不同的卡:${bad.map((c) => c.cardId).join('、')}`);
+if (report.failures.length) console.log(`Failed:\n  ${report.failures.join('\n  ')}`);
+if (bad.length) console.log(`cards with different frames: ${bad.map((c) => c.cardId).join(', ')}`);
 if (report.failures.length || bad.length) process.exit(1);
-console.log('全部落在「相同」或「只差提示属性、被样式盖住的属性、自动编号」');
+console.log('all fall under "same" or "differ only in hint attributes, attributes masked by styles, auto-numbering"');

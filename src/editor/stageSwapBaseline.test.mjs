@@ -77,7 +77,7 @@ beforeEach(async () => {
   });
 });
 
-test("暂停态:补跑期间删片段 → 互换后新 front 不含被删片段,而且是增量补上的", async () => {
+test("Paused state: clip deleted during the catch-up run → after the swap the new front no longer contains the deleted clip, and it was brought up to date with a delta", async () => {
   let release; rpc.B.gate = new Promise((r) => { release = r; });
   const running = swap.runSettleSwap(1);
   await new Promise((r) => setTimeout(r, 10));
@@ -86,12 +86,12 @@ test("暂停态:补跑期间删片段 → 互换后新 front 不含被删片段,
   state.project = P1;
   await bridge.syncProject("front", P1);   // Preview 的项目 effect:只推给当时的 front(A)
   release();
-  assert.equal(await running, true, "互换发生了");
+  assert.equal(await running, true, "the swap happened");
 
   const front = bridge.frontStage();
   assert.equal(front.name, "B");
-  assert.deepEqual(idsOf(front.project), ["h"], "新 front 已经不含被删片段(互换后补推了一次)");
-  assert.equal(front.received.at(-1), "patch", "补推的是增量,不是整份重灌(那会掐掉刚起的节拍)");
+  assert.deepEqual(idsOf(front.project), ["h"], "the new front no longer contains the deleted clip (a catch-up push was sent after the swap)");
+  assert.equal(front.received.at(-1), "patch", "the catch-up push is a delta, not a full reload (that would cut off the tick loop that just started)");
   assert.equal(bridge.pushedProject("front"), P1);
 
   // 之后再改一次:增量打在正确的底子上
@@ -104,7 +104,7 @@ test("暂停态:补跑期间删片段 → 互换后新 front 不含被删片段,
   assert.equal(bridge.pushedProject("back"), P1);
 });
 
-test("播放态:补跑期间删片段 → 互换后新 front 同样补齐", async () => {
+test("Playing state: clip deleted during the catch-up run → the new front is brought up to date the same way after the swap", async () => {
   state.playing = true;
   let release; rpc.B.gate = new Promise((r) => { release = r; });
   const running = swap.runPlayingSwap(["h"]);
@@ -113,23 +113,23 @@ test("播放态:补跑期间删片段 → 互换后新 front 同样补齐", asyn
   state.project = P1;
   await bridge.syncProject("front", P1);
   release();
-  assert.equal(await running, true, "互换发生了");
+  assert.equal(await running, true, "the swap happened");
   const front = bridge.frontStage();
   assert.equal(front.name, "B");
   assert.deepEqual(idsOf(front.project), ["h"]);
   assert.equal(front.received.at(-1), "patch");
 });
 
-test("没有编辑时互换不多发:新 front 的基线就是它拿着的那份,补推什么都不发", async () => {
+test("A swap with no edits sends nothing extra: the new front's baseline is the one it already holds, and the catch-up push sends nothing", async () => {
   const running = swap.runSettleSwap(1);
   assert.equal(await running, true);
   const front = bridge.frontStage();
   assert.equal(front.name, "B");
-  assert.deepEqual(front.received, ["full+reset"], "只有补跑开始时那一次整份灌入");
+  assert.deepEqual(front.received, ["full+reset"], "only the single full load at the start of the catch-up run");
 });
 
-test("基线跟着客户端走:同一个客户端换到另一个位置,基线不丢", async () => {
+test("The baseline follows the client: when the same client moves to another position, the baseline is not lost", async () => {
   bridge.swapStageClients({ client: rpc.B }, { client: rpc.A });
-  assert.equal(bridge.pushedProject("back"), P0, "A 的基线跟着 A 到了 back");
-  assert.equal(bridge.pushedProject("front"), null, "B 从没收到过项目");
+  assert.equal(bridge.pushedProject("back"), P0, "A's baseline followed A to back");
+  assert.equal(bridge.pushedProject("front"), null, "B never received the project");
 });

@@ -100,9 +100,9 @@ test('SYNC-02 cloud is newer than this machine, this machine has no unsent chang
 test('SYNC-03 changes are debounced before upload; several consecutive changes upload only once; no upload before the timer fires', async () => {
   const h = harness();
   await h.sync.refresh();
-  h.edit(org({ groups: [{ id: 'a', name: '一' }] }));
-  h.edit(org({ groups: [{ id: 'a', name: '一' }, { id: 'b', name: '二' }] }));
-  h.edit(org({ groups: [{ id: 'a', name: '一' }, { id: 'b', name: '二' }, { id: 'c', name: '三' }] }));
+  h.edit(org({ groups: [{ id: 'a', name: 'One' }] }));
+  h.edit(org({ groups: [{ id: 'a', name: 'One' }, { id: 'b', name: 'Two' }] }));
+  h.edit(org({ groups: [{ id: 'a', name: 'One' }, { id: 'b', name: 'Two' }, { id: 'c', name: 'three' }] }));
   await tick();
   assert.equal(h.server.puts, 0, 'No upload during debounce');
   assert.equal(h.live().length, 1, 'Only one task queued');
@@ -111,7 +111,7 @@ test('SYNC-03 changes are debounced before upload; several consecutive changes u
   assert.equal(h.sync.status(), 'pending');
   await h.fire();
   assert.equal(h.server.puts, 1);
-  assert.deepEqual(names(h.server.org), ['一', '二', '三']);
+  assert.deepEqual(names(h.server.org), ['One', 'Two', 'three']);
   assert.equal(h.sync.status(), 'synced');
   assert.equal(h.state.meta.dirty, false);
 });

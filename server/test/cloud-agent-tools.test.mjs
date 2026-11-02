@@ -37,7 +37,7 @@ const tmpDir = (t) => {
 };
 const OWNER = 'c'.repeat(32);
 
-test('CA-HT-01 纯函数:文件名、种类、图片宽高、WAV 时长', () => {
+test('CA-HT-01 pure functions: file name, kind, image width and height, WAV duration', () => {
   assert.equal(safeName('../../etc/passwd'), 'passwd');
   assert.equal(safeName('C:\\Windows\\win.ini'), 'win.ini');
   assert.equal(safeName('a<b>:c|d?.png'), 'a_b__c_d_.png');
@@ -63,7 +63,7 @@ test('CA-HT-01 纯函数:文件名、种类、图片宽高、WAV 时长', () => 
   assert.equal(wavDuration(Buffer.from('nope')), undefined);
 });
 
-test('CA-HT-02 附件:只进对话工作区,回 work: 地址;提示词里只有真有的文件', async (t) => {
+test('CA-HT-02 attachments: go only into the chat workspace and return a work: address; the prompt lists only files that really exist', async (t) => {
   const ws = createWorkspaces({ dataDir: tmpDir(t) });
   const w = ws.open({ projectId: 'p-a', ownerKey: OWNER, conversationId: 'c1' });
   const other = ws.open({ projectId: 'p-a', ownerKey: OWNER, conversationId: 'c2' });
@@ -71,7 +71,7 @@ test('CA-HT-02 附件:只进对话工作区,回 work: 地址;提示词里只有�
   assert.deepEqual({ name: a.name, url: a.url, kind: a.kind }, { name: '字幕.srt', url: 'work:attachments/字幕.srt', kind: 'text' });
   assert.match(a.text, /你好/);
   const b = await saveAttachment(w, '字幕.srt', Readable.from([Buffer.from('second')]));
-  assert.equal(b.url, 'work:attachments/字幕-1.srt', '重名自动改名,不覆盖');
+  assert.equal(b.url, 'work:attachments/字幕-1.srt', 'A duplicate name is renamed automatically, not overwritten');
   const v = await saveAttachment(w, 'clip.mp4', Readable.from([Buffer.alloc(2048, 1)]));
   assert.deepEqual({ kind: v.kind, size: v.size, text: v.text }, { kind: 'video', size: 2048, text: undefined });
   // 带路径的名字:只留最后一段,落在 attachments/ 下
@@ -79,11 +79,11 @@ test('CA-HT-02 附件:只进对话工作区,回 work: 地址;提示词里只有�
     const r = await saveAttachment(w, name, Readable.from([Buffer.from('x')]));
     assert.match(r.url, /^work:attachments\/evil\d?\.txt$/);
   }
-  assert.equal(fs.readdirSync(path.join(ws.root, 'p-a', OWNER)).sort().join(','), 'c1', '别的地方没有多出东西');
+  assert.equal(fs.readdirSync(path.join(ws.root, 'p-a', OWNER)).sort().join(','), 'c1', 'Nothing extra appears anywhere else');
   await assert.rejects(saveAttachment(w, 'nul', Readable.from([Buffer.from('x')])), (err) => err instanceof WorkspaceError);
-  await assert.rejects(saveAttachment(w, 'empty.txt', Readable.from([])), /空的/);
-  await assert.rejects(saveAttachment(w, 'big.bin', Readable.from([Buffer.alloc(600), Buffer.alloc(600)]), { maxBytes: 1000 }), /太大/);
-  assert.equal(w.exists('attachments/big.bin'), false, '超限的不留半个文件');
+  await assert.rejects(saveAttachment(w, 'empty.txt', Readable.from([])), /empty/);
+  await assert.rejects(saveAttachment(w, 'big.bin', Readable.from([Buffer.alloc(600), Buffer.alloc(600)]), { maxBytes: 1000 }), /too large/);
+  assert.equal(w.exists('attachments/big.bin'), false, 'An over-limit upload leaves no partial file');
   // 提示词:只认这个对话工作区里真有的;别的对话的、乱写的、往上走的都不进
   await saveAttachment(other, 'secret.txt', Readable.from([Buffer.from('FAKE-CREDENTIAL-other')]));
   const text = attachmentsPrompt(w, [
@@ -92,17 +92,17 @@ test('CA-HT-02 附件:只进对话工作区,回 work: 地址;提示词里只有�
   ]);
   assert.match(text, /字幕\.srt · 地址 work:attachments\/字幕\.srt/);
   assert.match(text, /你好/);
-  assert.match(text, /\[视频\] clip\.mp4/);
+  assert.match(text, /\[video\] clip\.mp4/);
   assert.equal(text.includes('FAKE-CREDENTIAL'), false);
   assert.equal(text.includes('secret.txt'), false);
-  assert.equal(text.includes(ws.root), false, '不给磁盘路径');
+  assert.equal(text.includes(ws.root), false, 'No disk path is given');
   assert.equal(attachmentsPrompt(w, []), '');
   // 页面发送时已放进素材库的(2026-10-18 用户定):写明是哪一条、叫它别再 import_media;放不进去的写原因
   const lib = attachmentsPrompt(w, [{ url: v.url, library: { mediaId: 'm-abc', url: '/@media/abc.mp4' } }]);
-  assert.match(lib, /clip\.mp4 · 地址 work:attachments\/clip\.mp4 · 已在素材库:mediaId m-abc · cardUrl \/@media\/abc\.mp4\(直接用这一条,不要再 import_media\)/);
-  assert.match(lib, /^\n\n附件\(页面已放进素材库/);
-  const mixed = attachmentsPrompt(w, [{ url: v.url, library: { mediaId: 'm-abc', url: '/@media/abc.mp4' } }, { url: a.url, libraryError: '上传超时' }]);
-  assert.match(mixed, /标了「已在素材库」的直接用那一条/);
+  assert.match(lib, /clip\.mp4 · address work:attachments\/clip\.mp4 · already in media library: mediaId m-abc · cardUrl \/@media\/abc\.mp4\(use this one directly, do not call import_media again\)/);
+  assert.match(lib, /^\n\nAttachments \(the page has already put them in the media library/);
+  const mixed = attachmentsPrompt(w, [{ url: v.url, library: { mediaId: 'm-abc', url: '/@media/abc.mp4' } }, { url: a.url, libraryError: 'upload timed out' }]);
+  assert.match(mixed, /for those marked "already in media library", use that one directly/);
   assert.match(mixed, /字幕\.srt · 地址 work:attachments\/字幕\.srt · 页面没能把它放进素材库:上传超时/);
 });
 
@@ -112,10 +112,10 @@ const CARD = (id, marker = '') => [
   'interface Params { text: string; size: number }',
   'function C({ params }: CardProps<Params>) { return <div style={{ fontSize: params.size }}>{params.text}</div>; }',
   'export const probeCard: CardDef<Params> = {',
-  `  id: "${id}", name: "测试卡", description: "单测建的卡", source: "user",`,
+  `  id: "${id}", name: "Test card", description: "Card created by a unit test", source: "user",`,
   '  frameMode: "stateless",',
   '  defaults: { text: "你好", size: 48 },',
-  '  controls: [{ key: "text", label: "文字", type: "text" }, { key: "size", label: "字号", type: "number" }],',
+  '  controls: [{ key: "text", label: "Text", type: "text" }, { key: "size", label: "Font size", type: "number" }],',
   '  Component: C,',
   '};',
   '',
@@ -124,9 +124,9 @@ const CARD = (id, marker = '') => [
 const A = { projectId: 'p-a', userId: 'alice@dev-a', username: 'alice' };
 const toolResults = (events) => events.filter((e) => e.type === 'tool_result').map((e) => ({ name: e.name, ok: e.ok === true, summary: String(e.summary ?? '') }));
 
-test('CA-HT-03 / CA-HT-04 / CA-HT-05 建卡改卡、创造力等级、导入素材的前置检查(整条链,模拟模型)', { timeout: 240_000 }, async (t) => {
+test('CA-HT-03 / CA-HT-04 / CA-HT-05 preconditions for creating and editing cards, creativity level, and importing media (full chain, simulated model)', { timeout: 240_000 }, async (t) => {
   const kit = await startKit(t);
-  await kit.doc.seed(project('p-a', '甲'));
+  await kit.doc.seed(project('p-a', 'A'));
   const svc = kit.service;
   const id = 'unit-probe-card';
   const key = `src/cards/user/${id}.tsx`;
@@ -136,7 +136,7 @@ test('CA-HT-03 / CA-HT-04 / CA-HT-05 建卡改卡、创造力等级、导入素�
   console.log = (...args) => { logged.push(args.join(' ')); realLog(...args); };
   t.after(() => { console.log = realLog; });
 
-  await t.test('CA-HT-03 建卡 → 认得 → 读回 → 改 → 重复建被拒;登记是临时的;卡片代码没有执行', async () => {
+  await t.test('CA-HT-03 create card → recognized → read back → edit → duplicate create rejected; registration is temporary; the card code was not executed', async () => {
     await svc.send(A, 'c-card', { creativity: 'high', prompt: script([
       { tool: 'create_card', input: { id, source: CARD(id, marker) } },
       { tool: 'list_cards', input: { cardId: id } },
@@ -148,19 +148,19 @@ test('CA-HT-03 / CA-HT-04 / CA-HT-05 建卡改卡、创造力等级、导入素�
       { tool: 'create_card', input: { id: 'timer-card', source: CARD('timer-card').replace('return <div', 'setTimeout(() => {}, 1); return <div') } },
       { tool: 'get_card_source', input: { cardId: 'title' } },
       { tool: 'card_authoring_guide', input: {} },
-      { say: '完' },
+      { say: 'Done' },
     ]) });
     const r = toolResults(await kit.finished(A, 'c-card', 120_000));
     assert.deepEqual(r.map((x) => `${x.name}:${x.ok}`), [
       'create_card:true', 'list_cards:true', 'add_clip:true', 'get_card_source:true', 'edit_card:true',
       'create_card:false', 'create_card:false', 'create_card:false', 'get_card_source:true', 'card_authoring_guide:true',
     ], JSON.stringify(r.filter((x) => !x.ok).map((x) => x.summary.slice(0, 160))));
-    assert.match(r[5].summary, /已存在/);
+    assert.match(r[5].summary, /already exists/);
     assert.match(r[7].summary, /setTimeout/);
     // 源码在这个项目的内容库里(别的成员、渲染节点从这里取);改过的那一处到了
     const pa = await kit.doc.stateOf('p-a');
     const clip = pa.project.tracks.flatMap((tr) => tr.clips).find((c) => c.cardId === id);
-    assert.ok(clip, '用新卡加的片段落地了');
+    assert.ok(clip, 'The clip added with the new card has landed');
     assert.deepEqual(clip.params, { text: '单测', size: 30 });
     const inst = svc._instance(A);
     const stored = await inst.callTool('get_card_source', { cardId: id }, 'c-card');
@@ -170,16 +170,16 @@ test('CA-HT-03 / CA-HT-04 / CA-HT-05 建卡改卡、创造力等级、导入素�
     // 托管端每个项目各是一个空间,由隔离探针 T5 与 auth 探针 P3 对着真的托管组合验。这里验登记是临时的:
     // 不带项目卡片的调用(别的实例进锁)之后,这个项目仍然认得它,而卡片表里平时没有它
     const host = await (await import('../agent/ssr-host.mjs')).loadSsrHost((m) => kit.vite.ssrLoadModule(m));
-    assert.equal(host.cardIds().includes(id), false, '出锁之后卡片表里不留项目的卡');
+    assert.equal(host.cardIds().includes(id), false, 'After the lock is released, the card table keeps none of the project\'s cards');
     assert.equal((await inst.callTool('list_cards', { cardId: id }, 'c-card'))[0].id, id);
     assert.equal(host.cardIds().includes(id), false);
     // 卡片代码没有在服务进程里执行
     assert.equal(logged.some((l) => l.includes(marker)), false);
     assert.equal(globalThis.__PC_TEST_CARD_RAN, undefined);
-    assert.equal(fs.existsSync(path.join(kit.vite.config.root, key)), false, '检出目录里没有多出这张卡的文件');
+    assert.equal(fs.existsSync(path.join(kit.vite.config.root, key)), false, 'The checkout directory has no extra file for this card');
   });
 
-  await t.test('CA-HT-03b remotion 式的卡:违规的被拒并指出行号、不入库;用框架写的入库;改卡新加违规被拒', async () => {
+  await t.test('CA-HT-03b remotion-style card: violating ones are rejected with the line number and not stored; ones written with the framework are stored; adding a violation when editing a card is rejected', async () => {
     const FIX = path.join(kit.vite.config.root, 'server', 'test', 'fixtures', 'remotion-style');
     const fixture = (name) => fs.readFileSync(path.join(FIX, name), 'utf8').replace(/\r\n/g, '\n');
     const lineOf = (source, needle) => source.slice(0, source.indexOf(needle)).split('\n').length;
@@ -188,10 +188,10 @@ test('CA-HT-03 / CA-HT-04 / CA-HT-05 建卡改卡、创造力等级、导入素�
     const call = (tool, args) => inst.callTool(tool, args, 'c-rs').catch((err) => ({ ok: false, error: String(err?.message ?? err), errors: err?.errors }));
     // 每条规矩的违规样例:云端这条路同样拒绝,报错带行号,源码不进内容库
     const cases = [
-      ['random.tsx', 'Math.random()', /不带种子的随机/], ['real-time.tsx', 'performance.now()', /真实时间/], ['timer.tsx', 'setTimeout(', /定时器/],
-      ['frame-callback.tsx', 'requestAnimationFrame(', /逐帧回调/], ['motion.tsx', '<motion.div', /Motion/], ['presence.tsx', '<AnimatePresence>', /进出场组件/],
-      ['css-animation.tsx', 'transition: "opacity', /CSS 的动画和过渡/], ['state.tsx', 'useState(0)', /活得比一帧长/], ['top-level.tsx', 'let frames = 0', /顶层写了 let/],
-      ['import.tsx', 'from "lottie-web"', /只许引用框架/],
+      ['random.tsx', 'Math.random()', /unseeded randomness/], ['real-time.tsx', 'performance.now()', /real time/], ['timer.tsx', 'setTimeout(', /timer/],
+      ['frame-callback.tsx', 'requestAnimationFrame(', /per-frame callback/], ['motion.tsx', '<motion.div', /Motion/], ['presence.tsx', '<AnimatePresence>', /entrance\/exit component/],
+      ['css-animation.tsx', 'transition: "opacity', /CSS animations and transitions/], ['state.tsx', 'useState(0)', /lives longer than one frame/], ['top-level.tsx', 'let frames = 0', /declares let at the top level/],
+      ['import.tsx', 'from "lottie-web"', /only framework imports are allowed/],
     ];
     for (const [file, needle, says] of cases) {
       const source = fixture(`violations/${file}`);
@@ -199,11 +199,11 @@ test('CA-HT-03 / CA-HT-04 / CA-HT-05 建卡改卡、创造力等级、导入素�
       const r = await call('create_card', { id, source });
       assert.equal(r.ok, false, file);
       const text = String(r.error ?? '');
-      assert.match(text, new RegExp(`\\[remotion 式\\] 第 ${lineOf(source, needle)} 行：`), `${file}: ${text.slice(0, 400)}`);
+      assert.match(text, new RegExp(`\\[remotion style\\] line ${lineOf(source, needle)}:`), `${file}: ${text.slice(0, 400)}`);
       assert.match(text, says, file);
-      assert.doesNotMatch(text, /交给 motion|用 motion\/react|改用 motion|initial \+ animate/, file);
+      assert.doesNotMatch(text, /hand off to motion|use motion\/react|switch to motion|initial \+ animate/, file);
       const stored = await call('get_card_source', { cardId: id });
-      assert.equal(stored.ok, false, `${file} 被拒的源码不该入库`);
+      assert.equal(stored.ok, false, `${file} rejected source should not be stored`);
     }
     // 用框架写的示例卡:入库,同一轮里认得它
     for (const file of ['rs-title-reveal.tsx', 'rs-bar-race.tsx', 'rs-orbit-canvas.tsx']) {
@@ -212,62 +212,62 @@ test('CA-HT-03 / CA-HT-04 / CA-HT-05 建卡改卡、创造力等级、导入素�
       const r = await call('create_card', { id, source });
       assert.equal(r.ok, true, `${file}: ${String(r.error ?? '').slice(0, 400)}`);
       const stored = await call('get_card_source', { cardId: id });
-      assert.equal(stored.source, source, '入库的源码与交上来的一字不差');
+      assert.equal(stored.source, source, 'The stored source matches the submitted source character for character');
       assert.equal((await call('list_cards', { cardId: id }))[0].id, id);
     }
     // 改卡:往合规的卡里新加一条违规,被拒并指出行号;改文案照常
     const edit = await call('edit_card', { cardId: 'rs-bar-race', find: '  const count = Math.max(', replace: '  const jitter = Math.random();\n  const count = Math.max(' });
     assert.equal(edit.ok, false);
-    assert.match(String(edit.error), /\[remotion 式\] 第 \d+ 行：用了不带种子的随机（Math\.random）/);
-    const rename = await call('edit_card', { cardId: 'rs-bar-race', find: 'name: "随机柱状起伏"', replace: 'name: "随机柱子"' });
+    assert.match(String(edit.error), /\[remotion style\] line \d+: uses unseeded randomness \(Math\.random\)/);
+    const rename = await call('edit_card', { cardId: 'rs-bar-race', find: 'name: "Random bar fluctuation"', replace: 'name: "Random bars"' });
     assert.equal(rename.ok, true, String(rename.error ?? ''));
-    assert.equal(fs.existsSync(path.join(kit.vite.config.root, 'src/cards/user/rs-bar-race.tsx')), false, '检出目录里没有多出文件');
+    assert.equal(fs.existsSync(path.join(kit.vite.config.root, 'src/cards/user/rs-bar-race.tsx')), false, 'The checkout directory has no extra files');
     svc.abort(A, 'c-rs');
   });
 
-  await t.test('CA-HT-04 创造力「中」:建不了新卡,能重写这个项目里已有的卡', async () => {
+  await t.test('CA-HT-04 creativity "medium": cannot create new cards, can rewrite cards that already exist in this project', async () => {
     const inst = svc._instance(A);
     await svc.send(A, 'c-mid', { creativity: 'medium', prompt: script([{ sleepMs: 30_000 }]) });
     const fresh = await inst.callTool('create_card', { id: 'another-new-card', source: CARD('another-new-card') }, 'c-mid');
     assert.equal(fresh.ok, false);
-    assert.ok(fresh.creativity, '被创造力等级的闸拦下');
+    assert.ok(fresh.creativity, 'Blocked by the creativity level gate');
     const rewrite = await inst.callTool('create_card', { id, source: CARD(id), overwrite: true }, 'c-mid');
     assert.equal(rewrite.ok, true, JSON.stringify(rewrite).slice(0, 300));
     assert.equal(rewrite.overwritten, true);
     svc.abort(A, 'c-mid');
   });
 
-  await t.test('CA-HT-05 导入素材:没配素材服务时在最前面回明确的原因', async () => {
+  await t.test('CA-HT-05 import media: with no asset service configured, return a clear reason up front', async () => {
     const inst = svc._instance(A);
     await svc.send(A, 'c-net', { prompt: script([{ sleepMs: 30_000 }]) });
     // 这套单测的服务没配素材服务:导入在最前面就明说
     const none = await inst.callTool('import_media', { url: 'https://example.com/a.png' }, 'c-net').catch((err) => ({ ok: false, error: err.message }));
     assert.equal(none.ok, false);
-    assert.match(none.error, /没有配置素材服务/);
+    assert.match(none.error, /No asset service configured/);
     svc.abort(A, 'c-net');
   });
 });
 
-test('CA-HT-06 用量:外部服务的调用单记一类,不占 token 额度', (t) => {
+test('CA-HT-06 usage: external service calls are recorded as their own kind and do not count against the token quota', (t) => {
   const dir = tmpDir(t);
   const usage = createUsageLog({ dir });
   t.after(() => usage.close());
   const base = { projectId: 'p-a', userId: 'alice@dev-a', username: 'alice', conversationId: 'c1', runId: 'r1' };
   usage.append({ ...base, vendor: 'mock', model: 'mock-1', input: 100, output: 20, ms: 5 });
-  const row = usage.append({ ...base, kind: 'service', service: 'voice', vendor: 'minimax', model: 'speech-2.8-hd', units: 12, unit: 'chars', ms: 300, prompt: '不该落盘的正文' });
+  const row = usage.append({ ...base, kind: 'service', service: 'voice', vendor: 'minimax', model: 'speech-2.8-hd', units: 12, unit: 'chars', ms: 300, prompt: 'Body text that must not be written to disk' });
   usage.append({ ...base, userId: 'bob@dev-b', username: 'bob', kind: 'service', service: 'voice', vendor: 'minimax', model: 'speech-2.8-hd', units: 8, unit: 'chars', ok: false });
   assert.deepEqual({ kind: row.kind, service: row.service, units: row.units, unit: row.unit, input: row.input }, { kind: 'service', service: 'voice', units: 12, unit: 'chars', input: 0 });
-  assert.equal('prompt' in row, false, '多的字段不落盘');
-  assert.equal(usage.used('p-a'), 120, '外部服务的调用不占 token 额度');
+  assert.equal('prompt' in row, false, 'Extra fields are not written to disk');
+  assert.equal(usage.used('p-a'), 120, 'External service calls do not count against the token quota');
   const s = usage.summary('p-a');
-  assert.deepEqual(s.project, { tokens: 120, calls: 1 }, '不混进模型的调用次数');
+  assert.deepEqual(s.project, { tokens: 120, calls: 1 }, 'Not mixed into the model call count');
   assert.deepEqual(s.services, [{ service: 'voice', vendor: 'minimax', calls: 2, units: 20, unit: 'chars', members: [
     { userId: 'alice@dev-a', username: 'alice', calls: 1, units: 12 }, { userId: 'bob@dev-b', username: 'bob', calls: 1, units: 8 },
   ] }]);
   const q = queryUsage(dir, { projectId: 'p-a' });
   assert.equal(q.rows.length, 3);
   assert.equal(q.rows.filter((r) => r.kind === 'service').length, 2);
-  assert.equal(fs.readFileSync(path.join(dir, fs.readdirSync(dir).find((f) => f.endsWith('.jsonl'))), 'utf8').includes('不该落盘'), false);
+  assert.equal(fs.readFileSync(path.join(dir, fs.readdirSync(dir).find((f) => f.endsWith('.jsonl'))), 'utf8').includes('must not be written to disk'), false);
   // 重启后从流水重建:结果相同
   usage.close();
   const again = createUsageLog({ dir });
@@ -277,9 +277,9 @@ test('CA-HT-06 用量:外部服务的调用单记一类,不占 token 额度', (t
 });
 
 // 配音配置要闭源侧的 service-keys 扩展（cloud/agent/manifest.mjs）；社区版没有 cloud/，readHostedVoiceConfig 本来就回 null
-test('CA-HT-07 托管方的配音配置:从数据目录读,令牌密文落盘', { skip: fs.existsSync(new URL('../../cloud', import.meta.url)) ? false : '当前工作区无 cloud/ 目录（社区版）' }, async (t) => {
+test('CA-HT-07 host\'s voiceover configuration: read from the data directory, token ciphertext is written to disk', { skip: fs.existsSync(new URL('../../cloud', import.meta.url)) ? false : 'The current checkout has no cloud/ directory (community edition)' }, async (t) => {
   const dataDir = tmpDir(t);
-  assert.equal(await readHostedVoiceConfig(dataDir), null, '没配回 null');
+  assert.equal(await readHostedVoiceConfig(dataDir), null, 'Not configured returns null');
   assert.equal(await readHostedVoiceConfig(null), null);
   const { file, keyFile } = voiceConfigPaths(dataDir);
   fs.mkdirSync(path.dirname(keyFile), { recursive: true });
@@ -288,7 +288,7 @@ test('CA-HT-07 托管方的配音配置:从数据目录读,令牌密文落盘', 
   assert.deepEqual([noKey.provider, noKey.effectiveBaseUrl, noKey.apiKey], ['kling', 'http://127.0.0.1:9', '']);
   const FAKE = 'FAKE-VOICE-KEY-unit';
   fs.writeFileSync(keyFile, `${sealKey(FAKE, 'voice')}\n`);
-  assert.equal(fs.readFileSync(keyFile, 'utf8').includes(FAKE), false, '落盘的是密文');
+  assert.equal(fs.readFileSync(keyFile, 'utf8').includes(FAKE), false, 'What is written to disk is ciphertext');
   assert.equal((await readHostedVoiceConfig(dataDir)).apiKey, FAKE);
   // 别的种类的密文(模型 Key)放错位置不认
   fs.writeFileSync(keyFile, `${sealKey(FAKE, 'custom')}\n`);

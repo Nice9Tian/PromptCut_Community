@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
 const WAV = path.join(ROOT, 'src', 'audio', 'assets', 'missing-material.wav');
 
-test('ACC018-VOICE-1 占位人声文件与契约写的一致:大小、SHA-256、PCM16/48kHz/单声道、时长 1.37 秒', () => {
+test('ACC018-VOICE-1 the placeholder voice file matches what the contract says: size, SHA-256, PCM16/48kHz/mono, duration 1.37 s', () => {
   const bytes = fs.readFileSync(WAV);
   assert.equal(bytes.length, 131_564);
   assert.equal(createHash('sha256').update(bytes).digest('hex').toUpperCase(), '5E615376504BDD9350A88E890E3FE320109719A5DAB42D760BC658B993CCF4E7');
@@ -30,10 +30,10 @@ test('ACC018-VOICE-1 占位人声文件与契约写的一致:大小、SHA-256、
     p += 8 + size + (size % 2);
   }
   assert.deepEqual(fmt, { format: 1, channels: 1, rate: 48_000, bits: 16 });
-  assert.ok(Math.abs(dataBytes / 2 / 48_000 - 1.37) < 0.005, `时长 ${dataBytes / 2 / 48_000} 秒`);
+  assert.ok(Math.abs(dataBytes / 2 / 48_000 - 1.37) < 0.005, `duration ${dataBytes / 2 / 48_000} s`);
 });
 
-test('ACC018-VOICE-2 占位人声不是项目素材:项目文件(.proc 序列化)里不含它的路径或哈希', () => {
+test('ACC018-VOICE-2 the placeholder voice is not project media: the project file (.proc serialization) contains neither its path nor its hash', () => {
   // 序列化只在 proc.ts;这里只守「仓库里没有任何东西把这个 wav 登记成项目素材或预置进素材库」的文本事实。
   const hash = '5e615376504bdd9350a88e890e3fe320109719a5dab42d760bc658b993ccf4e7';
   const hits = [];
@@ -50,5 +50,5 @@ test('ACC018-VOICE-2 占位人声不是项目素材:项目文件(.proc 序列化
   // A3 之后闭源的那几摊在 cloud/ 下（公开仓库里没有这个目录）；这道检查原来就管着它们，搬走以后也要接着管
   for (const d of ['cloud/src', 'cloud/server']) if (fs.existsSync(path.join(ROOT, d))) walk(path.join(ROOT, d));
   const isTest = (h) => /\.test\./.test(h) || h.split(path.sep).includes('test');
-  assert.deepEqual(hits.filter(h => !isTest(h)), [], '项目/素材/打包相关代码不登记这个文件');
+  assert.deepEqual(hits.filter(h => !isTest(h)), [], 'project/media/packaging code does not register this file');
 });

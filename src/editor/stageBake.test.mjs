@@ -168,7 +168,7 @@ function rig({ stages, afterFrame = null }) {
     /** 节点的节拍（宿主每 250 ms 一次）走到 until 成立 */
     async run(until, max = 300) {
       for (let i = 0; i < max; i++) { node.tick(); await flush(); if (until()) return; }
-      throw new Error(`剧本没走到：${JSON.stringify(log.map((m) => m.type))}`);
+      throw new Error(`The script did not run to the end: ${JSON.stringify(log.map((m) => m.type))}`);
     },
   };
 }
@@ -193,18 +193,18 @@ async function baseline() {
   return { r, html, frames: r.result.frames };
 }
 
-test("QM-F-01 基线：不互换，一台后台舞台做完 10 帧（灌一次隔离单卡工程，每帧只出自后台）", async () => {
+test("QM-F-01 Baseline: no swap, one background stage bakes all 10 frames (push an isolated single-card project once, every frame comes only from the background)", async () => {
   const { r, html, frames } = await baseline();
   assert.equal(frames.length, FRAMES);
   assert.deepEqual(frames.map((f) => f[0]), [...Array(FRAMES).keys()]);
   assert.equal(r.stages.B.calls.filter((c) => c[0] === "setProject").length, 1);
-  assert.deepEqual(r.stages.B.calls.find((c) => c[0] === "setProject"), ["setProject", true, "c"], "整份重灌、只有目标片段可见");
-  assert.equal(r.stages.A.bakedFrames().length, 0, "可见舞台一帧不做");
-  assert.ok(html[0].includes('data-t="0.00000"'), "隔离单卡工程里本地帧 0 就是片段起点");
+  assert.deepEqual(r.stages.B.calls.find((c) => c[0] === "setProject"), ["setProject", true, "c"], "Whole project re-pushed, only the target clip is visible");
+  assert.equal(r.stages.A.bakedFrames().length, 0, "The visible stage bakes no frames");
+  assert.ok(html[0].includes('data-t="0.00000"'), "In the isolated single-card project, local frame 0 is the clip start");
   assert.equal(r.of("task.release").length + r.of("task.fail").length, 0);
 });
 
-test("QM-F-02 契约的互换流程：第 4 帧在飞时补跑排进来 → 当前帧做完、放回 → 补跑 → 互换 → 新后台上重灌、从第 5 帧接着做；与基线逐字节相同", async () => {
+test("QM-F-02 The contract's swap flow: while frame 4 is in flight a catch-up run is queued → the current frame finishes, release → catch-up run → swap → re-push on the new background stage and continue from frame 5; byte-for-byte identical to the baseline", async () => {
   const base = await baseline();
   const A = fakeStage("A", "front"), B = fakeStage("B", "back");
   bridge.setStageClient("front", A);
@@ -212,7 +212,7 @@ test("QM-F-02 契约的互换流程：第 4 帧在飞时补跑排进来 → 当�
   B.hold = (f) => f === 4;
   const r = rig({ stages: { A, B } });
   await r.run(() => B.waiting.has(4));
-  assert.deepEqual(B.bakedFrames(), [0, 1, 2, 3, 4], "0～3 做完，第 4 帧在飞（顺推时先发的那一帧）");
+  assert.deepEqual(B.bakedFrames(), [0, 1, 2, 3, 4], "Frames 0~3 are done, frame 4 is in flight (the frame sent ahead during the sequential run)");
 
   // 补跑（更急）排进来：单飞队列 abort 生成快照的活，节点要求让路
   const catchupOrder = [];
@@ -221,39 +221,39 @@ test("QM-F-02 契约的互换流程：第 4 帧在飞时补跑排进来 → 当�
     await bridge.pushProject("back", PROJECT, { reset: true });
   });
   await flush();
-  assert.equal(r.of("task.release").length, 0, "当前帧还没做完：不放回");
-  assert.equal(catchupOrder.length, 0, "生成快照的活没交还之前补跑不开工（单飞）");
+  assert.equal(r.of("task.release").length, 0, "The current frame is not finished yet: do not release");
+  assert.equal(catchupOrder.length, 0, "The catch-up run does not start until the generate-snapshots job has been handed back (single-flight)");
   B.release(4);
   await catchup;
   const release = r.of("task.release");
   assert.equal(release.length, 1);
   assert.equal(release[0].reason, "yield-urgent");
   const lastProgressBefore = r.log.slice(0, r.log.indexOf(r.log.find((m) => m.type === "task.release"))).filter((m) => m.type === "task.progress").at(-1);
-  assert.equal(lastProgressBefore.done, 5, "当前帧（第 4 帧）做完、报了 5 帧之后才放回");
-  assert.deepEqual(catchupOrder, [["catchup-start", "B", 1]], "放回之后补跑才在旧后台 B 上开工");
-  assert.deepEqual(B.bakedFrames(), [0, 1, 2, 3, 4], "让路之后旧后台上不再先发下一帧");
+  assert.equal(lastProgressBefore.done, 5, "Release only after the current frame (frame 4) is finished and 5 frames have been reported");
+  assert.deepEqual(catchupOrder, [["catchup-start", "B", 1]], "The catch-up run starts on the old background B only after the release");
+  assert.deepEqual(B.bakedFrames(), [0, 1, 2, 3, 4], "After yielding, the old background no longer sends the next frame ahead");
 
   // K5：补跑完 B 转到前台，A 接任后台
   await swap(B, A);
   assert.equal(bridge.backStage(), A);
   await r.run(() => r.result !== null);
 
-  assert.deepEqual(A.bakedFrames(), [5, 6, 7, 8, 9], "新后台从留着的帧之后接着做，不重做 0～4");
-  assert.deepEqual(B.bakedFrames(), [0, 1, 2, 3, 4], "互换之后旧后台（现在是前台）一帧不做");
+  assert.deepEqual(A.bakedFrames(), [5, 6, 7, 8, 9], "The new background continues after the frames that were kept, without redoing 0~4");
+  assert.deepEqual(B.bakedFrames(), [0, 1, 2, 3, 4], "After the swap, the old background (now the front) bakes no frames");
   const aFirstBake = A.calls.findIndex((c) => c[0] === "bakeFrame");
   const aPush = A.calls.findIndex((c) => c[0] === "setProject");
-  assert.ok(aPush >= 0 && aPush < aFirstBake, `新后台先整份重灌隔离单卡工程再做帧：${JSON.stringify(A.calls)}`);
+  assert.ok(aPush >= 0 && aPush < aFirstBake, `The new background first re-pushes the whole isolated single-card project and then bakes frames: ${JSON.stringify(A.calls)}`);
   assert.deepEqual(A.calls[aPush], ["setProject", true, "c"]);
-  assert.ok(A.calls.some((c) => c[0] === "setRole" && c[1] === "back" && c[2] === "bake"), "单飞队列把 bake 工作项发给了新后台");
-  assert.deepEqual(r.result.frames, base.frames, "清单（帧号、哈希、字节数）与不互换时相同");
+  assert.ok(A.calls.some((c) => c[0] === "setRole" && c[1] === "back" && c[2] === "bake"), "The single-flight queue sent the bake work item to the new background");
+  assert.deepEqual(r.result.frames, base.frames, "The manifest (frame numbers, hashes, byte counts) is the same as without a swap");
   const html = [...r.htmlOf.entries()].sort((a, b) => a[0] - b[0]).map(([, h]) => h);
-  assert.deepEqual(html, base.html, "每帧 HTML 与不互换时逐字节相同");
+  assert.deepEqual(html, base.html, "Each frame's HTML is byte-for-byte identical to the one without a swap");
   assert.deepEqual([...r.bakedOn.entries()].sort((a, b) => a[0] - b[0]).map(([, s]) => s), ["B", "B", "B", "B", "B", "A", "A", "A", "A", "A"]);
   assert.equal(r.of("task.fail").length, 0);
-  assert.equal(r.of("task.claim").length, 2, "重新认领了一次");
+  assert.equal(r.of("task.claim").length, 2, "Claimed once again");
 });
 
-test("QM-F-03 两帧之间后台位置换了人（没有补跑先行）：下一帧前核到换人 → 改用新后台、先重灌再做；先发的那一帧作废；不放回不失败", async () => {
+test("QM-F-03 The background slot changes hands between two frames (no catch-up run ahead of it): the change is detected before the next frame → switch to the new background, re-push first and then bake; the frame sent ahead is invalidated; no release and no failure", async () => {
   const base = await baseline();
   const A = fakeStage("A", "front"), B = fakeStage("B", "back");
   bridge.setStageClient("front", A);
@@ -269,19 +269,19 @@ test("QM-F-03 两帧之间后台位置换了人（没有补跑先行）：下一
   await flush();
   pushDone();
   await r.run(() => r.result !== null);
-  assert.equal(r.baker.diag().redos, 0, "两帧之间换人：靠每帧前核位置，不走中途重做");
-  assert.deepEqual(B.bakedFrames(), [0, 1, 2, 3], "B 上只有互换前的，先发的第 3 帧（回 cancelled）作废");
-  assert.deepEqual(A.bakedFrames(), [3, 4, 5, 6, 7, 8, 9], "第 3 帧起在新后台上做");
+  assert.equal(r.baker.diag().redos, 0, "Change of hands between two frames: relies on checking the slot before each frame, not on a mid-frame redo");
+  assert.deepEqual(B.bakedFrames(), [0, 1, 2, 3], "B has only the frames from before the swap; frame 3 sent ahead (answered with cancelled) is invalidated");
+  assert.deepEqual(A.bakedFrames(), [3, 4, 5, 6, 7, 8, 9], "From frame 3 on, baking happens on the new background");
   const aPush = A.calls.findIndex((c) => c[0] === "setProject");
-  assert.ok(aPush >= 0 && aPush < A.calls.findIndex((c) => c[0] === "bakeFrame"), "先重灌再做帧");
-  assert.equal(r.baker.diag().restages, 1, "每帧前核后台位置：核到换人一次");
-  assert.equal(r.of("task.release").length + r.of("task.fail").length, 0, "不放回、不失败");
+  assert.ok(aPush >= 0 && aPush < A.calls.findIndex((c) => c[0] === "bakeFrame"), "Re-push first, then bake frames");
+  assert.equal(r.baker.diag().restages, 1, "Check the background slot before each frame: a change of hands is detected once");
+  assert.equal(r.of("task.release").length + r.of("task.fail").length, 0, "No release, no failure");
   assert.deepEqual(r.result.frames, base.frames);
-  assert.deepEqual([...r.htmlOf.entries()].sort((a, b) => a[0] - b[0]).map(([, h]) => h), base.html, "逐字节相同");
+  assert.deepEqual([...r.htmlOf.entries()].sort((a, b) => a[0] - b[0]).map(([, h]) => h), base.html, "byte-for-byte identical");
 });
 
 for (const variant of ["cancelled", "late-event"]) {
-  test(`QM-F-04 一帧中途后台位置换了人（${variant === "cancelled" ? "旧舞台回 cancelled" : "旧舞台做完了、事件在互换后才到被按角色滤掉"}）：在新后台上重灌重做这一帧，不计失败；逐字节相同`, async () => {
+  test(`QM-F-04 The background slot changes hands in the middle of a frame (${variant === "cancelled" ? "The old stage replies cancelled" : "The old stage finished, but its event arrived after the swap and was filtered out by role"}): re-push and redo this frame on the new background, not counted as a failure; byte-for-byte identical`, async () => {
     const base = await baseline();
     const A = fakeStage("A", "front"), B = fakeStage("B", "back");
     bridge.setStageClient("front", A);
@@ -307,17 +307,17 @@ for (const variant of ["cancelled", "late-event"]) {
       B.flushLate();
     }
     await r.run(() => r.result !== null);
-    assert.equal(r.of("task.fail").length, 0, "不计失败");
+    assert.equal(r.of("task.fail").length, 0, "Not counted as a failure");
     assert.equal(r.of("task.release").length, 0);
-    assert.ok(A.bakedFrames().includes(5), `第 5 帧在新后台上重做：A ${JSON.stringify(A.bakedFrames())}`);
+    assert.ok(A.bakedFrames().includes(5), `Frame 5 redone on the new background: A ${JSON.stringify(A.bakedFrames())}`);
     assert.ok(r.baker.diag().redos >= 1, JSON.stringify(r.baker.diag()));
     assert.equal(r.bakedOn.get(5), "A");
     assert.deepEqual(r.result.frames, base.frames);
-    assert.deepEqual([...r.htmlOf.entries()].sort((a, b) => a[0] - b[0]).map(([, h]) => h), base.html, "逐字节相同");
+    assert.deepEqual([...r.htmlOf.entries()].sort((a, b) => a[0] - b[0]).map(([, h]) => h), base.html, "byte-for-byte identical");
   });
 }
 
-test("QM-F-04b 后台位置没换人时，舞台回 cancelled 照旧按可重试失败交回（行为不变）", async () => {
+test("QM-F-04b When the background slot has not changed hands, a stage reply of cancelled is still handed back as a retryable failure (behavior unchanged)", async () => {
   const A = fakeStage("A", "front"), B = fakeStage("B", "back");
   bridge.setStageClient("front", A);
   bridge.setStageClient("back", B);
@@ -330,14 +330,14 @@ test("QM-F-04b 后台位置没换人时，舞台回 cancelled 照旧按可重试
   };
   const r = rig({ stages: { A, B } });
   await r.run(() => r.of("task.fail").length > 0 || r.result !== null);
-  assert.equal(r.of("task.fail").length, 1, "按失败交回");
+  assert.equal(r.of("task.fail").length, 1, "Handed back as a failure");
   const f = r.of("task.fail")[0];
   assert.equal(f.retryable, true);
   assert.match(String(f.error), /cancelled/);
-  assert.equal(r.baker.diag().redos, 0, "没换人不重做");
+  assert.equal(r.baker.diag().redos, 0, "No change of hands, no redo");
 });
 
-test("QM-F-05 补跑刚完、互换之前开出的 bake 活：帧只出自互换后的后台；新前台最后留在 front 角色", async () => {
+test("QM-F-05 A bake job opened just after a catch-up run finished and before the swap: frames come only from the background after the swap; the new front ends up in the front role", async () => {
   const base = await baseline();
   const A = fakeStage("A", "front"), B = fakeStage("B", "back");
   bridge.setStageClient("front", A);
@@ -350,7 +350,7 @@ test("QM-F-05 补跑刚完、互换之前开出的 bake 活：帧只出自互换
   // 节点在补跑期间不认领（不闲）；这里直接让它的活排在补跑后面：模拟认领到时还在取项目（prep），补跑才来
   const r = rig({ stages: { A, B } });
   await flush();
-  assert.equal(r.of("task.claim").length, 0, "补跑在跑：节点不闲，不认领");
+  assert.equal(r.of("task.claim").length, 0, "The catch-up run is running: the node is not idle and does not claim");
   // 认领一次（绕过闲判据，模拟补跑来之前已认领、还在 prep）
   r.node.receive({ type: "task.claimed", id: TASK.id, token: 1, version: 2, leaseUntil: Infinity, task: { ...TASK, state: "claimed", version: 2 } });
   await flush();
@@ -360,11 +360,11 @@ test("QM-F-05 补跑刚完、互换之前开出的 bake 活：帧只出自互换
   await swap(B, A);
   await r.run(() => r.result !== null || r.of("task.fail").length > 0);
   assert.equal(r.of("task.fail").length, 0, JSON.stringify(r.of("task.fail")));
-  assert.deepEqual(B.bakedFrames(), [], `帧不出自旧后台（现在是前台）：${JSON.stringify(B.calls)}`);
+  assert.deepEqual(B.bakedFrames(), [], `Frames do not come from the old background (now the front): ${JSON.stringify(B.calls)}`);
   assert.deepEqual(A.bakedFrames(), [...Array(FRAMES).keys()]);
-  assert.equal(B.role, "front", `新前台最后的角色：${JSON.stringify(B.calls)}`);
+  assert.equal(B.role, "front", `The new front's final role: ${JSON.stringify(B.calls)}`);
   // 剧本看到的：bake 活是在互换前从单飞队列里开出来的，活记的舞台是旧后台 B；第一帧前核位置时改到 A、在 A 上重灌
-  assert.equal(r.baker.diag().restages, 1, "活开在旧后台上，第一帧前核到换人");
-  assert.equal(B.calls.filter((c) => c[0] === "setProject").length, 1, "B 只收过补跑那一份整场景项目，没收隔离单卡工程");
+  assert.equal(r.baker.diag().restages, 1, "The job was opened on the old background, and the change of hands is detected before the first frame");
+  assert.equal(B.calls.filter((c) => c[0] === "setProject").length, 1, "B received only the whole-scene project of the catch-up run, not the isolated single-card project");
   assert.deepEqual(r.result.frames, base.frames);
 });

@@ -56,12 +56,12 @@ async function serve(file, beforeBody) {
 const bytes = Buffer.alloc(300_000, 7);
 const fresh = (name) => { const f = path.join(OUT, name); fs.writeFileSync(f, bytes); return f; };
 
-test('SF1 文件不存在:回 404,不抛', async () => {
+test('SF1 file does not exist: answers 404 without throwing', async () => {
   const r = await fetch(await serve(path.join(OUT, 'nope.wav')));
   assert.equal(r.status, 404);
 });
 
-test('SF2 取完大小、开始读之前文件被删:进程不崩,这一条响应照样读完', async () => {
+test('SF2 file deleted after its size is fetched and before reading starts: the process does not crash, and this response is still read to the end', async () => {
   const file = fresh('gone-200.wav');
   const uncaught = [];
   const onErr = (e) => uncaught.push(e);
@@ -71,13 +71,13 @@ test('SF2 取完大小、开始读之前文件被删:进程不崩,这一条响�
     assert.equal(r.status, 200);
     const got = Buffer.from(await r.arrayBuffer());
     await new Promise((res) => setTimeout(res, 50));
-    assert.deepEqual(uncaught, [], '读流的 error 不得冒成未捕获异常');
+    assert.deepEqual(uncaught, [], 'An error from the read stream must not surface as an uncaught exception');
     assert.equal(got.length, bytes.length);
     assert.equal(fs.existsSync(file), false);
   } finally { process.off('uncaughtException', onErr); }
 });
 
-test('SF3 Range 请求同样:删文件后进程不崩,区间字节数对', async () => {
+test('SF3 same for Range requests: the process does not crash after the file is deleted, and the byte count of the range is right', async () => {
   const file = fresh('gone-206.wav');
   const uncaught = [];
   const onErr = (e) => uncaught.push(e);
@@ -93,7 +93,7 @@ test('SF3 Range 请求同样:删文件后进程不崩,区间字节数对', async
   } finally { process.off('uncaughtException', onErr); }
 });
 
-test('SF4 HEAD 与越界 Range 不留打开的句柄(文件随后删得掉)', async () => {
+test('SF4 HEAD and out-of-range Range leave no open handle (the file can be deleted afterwards)', async () => {
   const file = fresh('head.wav');
   const url = await serve(file);
   const h = await fetch(url, { method: 'HEAD' });

@@ -39,13 +39,13 @@ async function hosted(t, trust) {
   return ['--base', `http://127.0.0.1:${r.doc}`, '--asset', `http://127.0.0.1:${r.asset}/api/asset`, '--admin', `http://127.0.0.1:${r.asset}`, '--timeout-ms', '5000'];
 }
 
-test('HT7-probe-no-base 不给 --base：不连任何地址，退出码 2', async () => {
+test('HT7-probe-no-base without --base: connects to no address, exit code 2', async () => {
   const r = await runProbe([]);
   assert.equal(r.code, 2);
   assert.equal(r.result?.error, 'usage');
 });
 
-test('HT7-probe-local 本机托管组合、信任开关 0：五项匿名拒绝全过，退出码 0', { skip: SKIP_TRUST, timeout: 60_000 }, async (t) => {
+test('HT7-probe-local local hosted setup, trust switch 0: all five anonymous rejections pass, exit code 0', { skip: SKIP_TRUST, timeout: 60_000 }, async (t) => {
   const r = await runProbe(await hosted(t, '0'));
   assert.equal(r.code, 0, r.out);
   assert.equal(r.result.ok, true);
@@ -54,7 +54,7 @@ test('HT7-probe-local 本机托管组合、信任开关 0：五项匿名拒绝�
   ]);
 });
 
-test('HT7-probe-discriminates 信任回环的组合（=1）从回环敲：探针报失败，退出码 1', { skip: SKIP_TRUST, timeout: 60_000 }, async (t) => {
+test('HT7-probe-discriminates a setup that trusts loopback (=1) hit from loopback: the probe reports failure, exit code 1', { skip: SKIP_TRUST, timeout: 60_000 }, async (t) => {
   const r = await runProbe(await hosted(t, '1'));
   assert.equal(r.code, 1, r.out);
   assert.equal(r.result.ok, false);

@@ -45,11 +45,11 @@ async function rig(t) {
   t.after(() => ep.close());
   let opens = 0;
   ep.onOpen(() => { opens += 1; });
-  await waitFor(() => opens === 1, 10_000, '建会话');
+  await waitFor(() => opens === 1, 10_000, 'session created');
   return { doc, gw, proxy, ep, lines, secret, opens: () => opens };
 }
 
-test('SD-cut 掐一次传输：接续 +1、脱开 +1、建立 1、不重建、不丢；lastDetach 是 1006；日志有 detach / resume 且不含凭证与会话号', async (t) => {
+test('SD-cut cut the transport once: resume +1, detach +1, 1 established, not rebuilt, nothing lost; lastDetach is 1006; the log has detach / resume and contains no credentials or session id', async (t) => {
   const { gw, proxy, ep, lines, secret } = await rig(t);
   const before = sessionCountersOf(ep);
   assert.deepEqual(
@@ -58,7 +58,7 @@ test('SD-cut 掐一次传输：接续 +1、脱开 +1、建立 1、不重建、�
   );
   assert.equal(before.lastClose, null);
   proxy.cutAll();
-  await waitFor(() => sessionCountersOf(ep).resumes === 1, 5000, '接续');
+  await waitFor(() => sessionCountersOf(ep).resumes === 1, 5000, 'resumed');
   const after = sessionCountersOf(ep);
   assert.equal(after.opens, 1);
   assert.equal(after.detaches, 1);
@@ -77,14 +77,14 @@ test('SD-cut 掐一次传输：接续 +1、脱开 +1、建立 1、不重建、�
   assert.ok(lines.some((l) => l.event === 'session.resume' && Number.isFinite(l.gapMs)));
   const sid = [...gw.sessions.keys()][0];
   const text = JSON.stringify({ diag, lines });
-  assert.ok(!text.includes(secret), '诊断与日志里没有凭证');
-  assert.ok(!text.includes(sid), '诊断与日志里没有会话号');
+  assert.ok(!text.includes(secret), 'No credentials in diagnostics or logs');
+  assert.ok(!text.includes(sid), 'No session id in diagnostics or logs');
 });
 
-test('SD-end 服务端以 4003 结束会话：closes +1、lastClose { 4003, kicked }，之后重建 +1', async (t) => {
+test('SD-end the server ends the session with 4003: closes +1, lastClose { 4003, kicked }, then rebuild +1', async (t) => {
   const { gw, ep, opens } = await rig(t);
   gw.endAll(4003, 'kicked');
-  await waitFor(() => opens() === 2, 5000, '重建会话');
+  await waitFor(() => opens() === 2, 5000, 'session rebuilt');
   const c = sessionCountersOf(ep);
   assert.equal(c.closes, 1);
   assert.equal(c.opens, 2);
@@ -94,14 +94,14 @@ test('SD-end 服务端以 4003 结束会话：closes +1、lastClose { 4003, kick
   assert.equal(c.lastClose.reason, 'kicked');
 });
 
-test('SD-lost 换了一个服务端：接续被 4404 拒，lost +1、lastClose 4404，重建 +1', async (t) => {
+test('SD-lost swapped to a different server: resume rejected with 4404, lost +1, lastClose 4404, rebuild +1', async (t) => {
   const { proxy, ep, opens } = await rig(t);
   const doc2 = await startDoc(t);
   const gw2 = await startSessionGateway({ upstream: doc2.url });
   t.after(() => gw2.close());
   proxy.retarget(gw2.port);
   proxy.cutAll();
-  await waitFor(() => opens() === 2, 5000, '在新服务上重建会话');
+  await waitFor(() => opens() === 2, 5000, 'session rebuilt on the new service');
   const c = sessionCountersOf(ep);
   assert.equal(c.lost, 1);
   assert.equal(c.detaches, 1);
@@ -109,7 +109,7 @@ test('SD-lost 换了一个服务端：接续被 4404 拒，lost +1、lastClose 4
   assert.equal(c.lastClose.code, 4404);
 });
 
-test('SD-no-stats 没有 stats() 的端点：计数 null、诊断空', () => {
+test('SD-no-stats endpoint without stats(): counts are null, diagnostics empty', () => {
   assert.equal(sessionCountersOf({}), null);
   assert.deepEqual(sessionDiagOf(null), {});
   // 旧端点（只有 HT-a 之前的几项）缺的计数给 0
@@ -119,14 +119,14 @@ test('SD-no-stats 没有 stats() 的端点：计数 null、诊断空', () => {
   assert.equal(c.lastClose, null);
 });
 
-test('SD-throttle 节流：每个键一个窗口 burst 条，压下的随下一条带出，窗口过了重新计', () => {
+test('SD-throttle throttling: each key allows burst entries per window, suppressed ones are carried out with the next one, and counting restarts after the window passes', () => {
   let t = 0;
   const th = createLogThrottle({ burst: 2, windowMs: 1000, now: () => t });
   assert.deepEqual(th.take('a'), { suppressed: 0 });
   assert.deepEqual(th.take('a'), { suppressed: 0 });
   assert.equal(th.take('a'), null);
   assert.equal(th.take('a'), null);
-  assert.deepEqual(th.take('b'), { suppressed: 0 }, '别的键不受影响');
+  assert.deepEqual(th.take('b'), { suppressed: 0 }, 'Other keys are unaffected');
   assert.deepEqual(th.pending(), { a: 2 });
   t = 1000;
   assert.deepEqual(th.take('a'), { suppressed: 2 });
@@ -134,7 +134,7 @@ test('SD-throttle 节流：每个键一个窗口 burst 条，压下的随下一�
   assert.deepEqual(th.pending(), {});
 });
 
-test('SD-logger 会话日志：只放会话事件，按事件节流，带 extra 与 suppressed；断网时的退避不刷屏', () => {
+test('SD-logger session log: only session events, throttled per event, with extra and suppressed; backoff while offline does not flood the log', () => {
   let t = 0;
   const out = [];
   const log = sessionLogger((event, fields) => out.push({ event, ...fields }), { extra: { project: 1 }, throttle: createLogThrottle({ burst: 3, windowMs: 60_000, now: () => t }) });
@@ -151,7 +151,7 @@ test('SD-logger 会话日志：只放会话事件，按事件节流，带 extra 
   for (const e of ['session.open', 'session.close', 'session.detach', 'session.resume', 'session.lost']) assert.ok(SESSION_FORWARD_EVENTS.has(e), e);
 });
 
-test('SD-forward 编辑器进程按行转发：块在行中间断开也拼得上，只转会话事件行，按事件节流', () => {
+test('SD-forward the editor process forwards line by line: chunks split mid-line are still reassembled, only session event lines are forwarded, throttled per event', () => {
   let t = 0;
   const out = [];
   const fwd = createSessionLineForwarder((line) => out.push(line), { throttle: createLogThrottle({ burst: 2, windowMs: 1000, now: () => t }) });
@@ -170,12 +170,12 @@ test('SD-forward 编辑器进程按行转发：块在行中间断开也拼得上
   assert.equal(out.at(-1), '[queue-node] docservice.session.connect-failed {"code":1006} (suppressed 3)');
 });
 
-test('SD-status 主机状态行：只在计数变化时换 key；只带 projectId、nodeId、connected、transport、session', () => {
+test('SD-status host status line: key changes only when a count changes; carries only projectId, nodeId, connected, transport, session', () => {
   const session = { opens: 1, resumes: 0, detaches: 0, renews: 0, lost: 0, expired: 0, connectFails: 0, closes: 0, dropped: 0, detached: false, lastClose: null, lastDetach: null };
   const summary = (s) => ({ profile: 'host', nodes: [{ projectId: 'p1', nodeId: 'host:x/p0', connected: true, transport: 'ws', claimed: 3, assetBase: 'http://a', session: s }] });
   const a = sessionStatusOf(summary(session));
   const b = sessionStatusOf({ ...summary(session), nodes: [{ ...summary(session).nodes[0], claimed: 9 }] });
-  assert.equal(a.key, b.key, '认领数变化不算');
+  assert.equal(a.key, b.key, 'Changes in the claim count do not count');
   const c = sessionStatusOf(summary({ ...session, resumes: 1, detaches: 1 }));
   assert.notEqual(a.key, c.key);
   assert.deepEqual(Object.keys(c.status.nodes[0]).sort(), ['connected', 'nodeId', 'projectId', 'session', 'transport']);

@@ -43,9 +43,9 @@ if (who === 'python') {
     const file = argv.shift();
     const fps = Number(argv[argv.indexOf('--fps') + 1]);
     const plan = planOf(file);
-    if (!plan) { emit({ event: 'error', message: `找不到视频文件:${file}` }); process.exit(2); }
+    if (!plan) { emit({ event: 'error', message: `Video file not found: ${file}` }); process.exit(2); }
     if (plan.python === 'crash') { process.stderr.write(`Traceback (most recent call last):\n  File "x.py"\nRuntimeError: boom at ${file}\n`); process.exit(1); }
-    if (plan.python === 'errorevent') { emit({ event: 'error', message: plan.message ?? '镜头识别拓展未就绪' }); process.exit(3); }
+    if (plan.python === 'errorevent') { emit({ event: 'error', message: plan.message ?? 'Shot detection extension not ready' }); process.exit(3); }
     if (plan.python === 'hang') { emit({ event: 'progress', phase: 'decoded', frames: 10, fps }); hang({ fps }); }
     else {
       for (const p of [10, 50, 90]) { emit({ event: 'progress', phase: 'infer', percent: p }); await wait(30); }

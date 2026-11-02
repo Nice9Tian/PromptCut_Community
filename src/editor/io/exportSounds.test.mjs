@@ -13,9 +13,9 @@ const { startSoundGeneration, waitSoundGeneration, setSoundEffectRenderer } = aw
 const { configureOnlineSoundJudge, soundTargetOf } = await import('./onlineSoundJudge.ts');
 
 let sourceVersion = 'v1', evaluations = 0, failAudio = null;
-const def = { id: 'av-export', name: '声画导出卡', source: 'native', defaults: { value: .25 }, controls: [], frameMode: 'direct', kind: 'animation', inputs: {}, Component() {},
-  audio(_sources, range, p) { evaluations++; if (failAudio === p.value) throw new Error('合成器炸了'); return new Float32Array(range.count * 2).fill(p.value); } };
-const silentDef = { id: 'plain-export', name: '无声卡', source: 'native', defaults: {}, controls: [], frameMode: 'direct', kind: 'animation', Component() {} };
+const def = { id: 'av-export', name: 'Audio-visual export card', source: 'native', defaults: { value: .25 }, controls: [], frameMode: 'direct', kind: 'animation', inputs: {}, Component() {},
+  audio(_sources, range, p) { evaluations++; if (failAudio === p.value) throw new Error('Synthesizer crashed'); return new Float32Array(range.count * 2).fill(p.value); } };
+const silentDef = { id: 'plain-export', name: 'Silent card', source: 'native', defaults: {}, controls: [], frameMode: 'direct', kind: 'animation', Component() {} };
 registerCards([def, silentDef]);
 configureCardAudio({ getCard: id => id === def.id ? def : id === silentDef.id ? silentDef : undefined, sourceVersionOf: () => sourceVersion });
 
@@ -39,7 +39,7 @@ const signal = () => new AbortController().signal;
 /** 一个要先生成声音的项目:两张没生成过声音的有声卡、一段音效(生成过,之后按需把字节弄丢)、一张无声卡 */
 async function project() {
   sourceVersion = 'v1'; failAudio = null;
-  actions.newProject('导出时自动生成声音');
+  actions.newProject('Auto-generate sounds on export');
   const a = actions.addCardClip(def.id, 0, { duration: .2, params: { value: .25 } });
   const b = actions.addCardClip(def.id, 1, { duration: .2, params: { value: .5 } });
   const plain = actions.addCardClip(silentDef.id, 2, { duration: .5 });
@@ -48,20 +48,20 @@ async function project() {
   return { a, b, plain, effectId: job.result.clipId };
 }
 
-test('A1 不含声音的项目:清单为空,不问素材服务、不改项目(导出照原样往下走)', async () => {
+test('A1 A project with no sounds: the manifest is empty, the asset service is not queried, the project is not changed (export proceeds as usual)', async () => {
   const f = service();
   try {
-    actions.newProject('无声'); actions.addCardClip(silentDef.id, 0, { duration: 1 });
+    actions.newProject('silent'); actions.addCardClip(silentDef.id, 0, { duration: 1 });
     const before = getState().project;
     assert.deepEqual(await listExportSoundNeeds(signal()), []);
     const progress = [];
     assert.deepEqual(await prepareExportSounds({ signal: signal(), onProgress: (d, t) => progress.push([d, t]) }), { total: 0, generated: [] });
-    assert.deepEqual(progress, [], '没有要生成的声音:不出现生成阶段');
+    assert.deepEqual(progress, [], 'No sounds to generate: no generation stage appears');
     assert.equal(f.calls.length, 0); assert.equal(getState().project, before);
   } finally { f.restore(); }
 });
 
-test('A2 清单认得出未生成、过期、缺失三种,带片段名;静音的片段和序列不算', async () => {
+test('A2 The manifest recognizes three cases, not generated, stale and missing, with clip names; muted clips and tracks do not count', async () => {
   const f = service();
   try {
     const { a, b, effectId } = await project();
@@ -71,21 +71,21 @@ test('A2 清单认得出未生成、过期、缺失三种,带片段名;静音的
     const needs = await listExportSoundNeeds(signal());
     const by = Object.fromEntries(needs.map(n => [n.clipId, n]));
     assert.equal(needs.length, 3);
-    assert.equal(by[a.id].kind, 'card'); assert.equal(by[a.id].reason, 'ungenerated'); assert.match(by[a.id].detail, /尚未生成/);
-    assert.equal(by[b.id].reason, 'stale'); assert.match(by[b.id].detail, /已过期/);
+    assert.equal(by[a.id].kind, 'card'); assert.equal(by[a.id].reason, 'ungenerated'); assert.match(by[a.id].detail, /not yet generated/);
+    assert.equal(by[b.id].reason, 'stale'); assert.match(by[b.id].detail, /stale/);
     assert.equal(by[effectId].kind, 'effect'); assert.equal(by[effectId].reason, 'missing'); assert.match(by[effectId].detail, /The asset service has no file/);
     assert.ok(needs.every(n => typeof n.label === 'string' && n.label.length > 0));
     actions.setClipMuted(a.id, true);
-    assert.equal((await listExportSoundNeeds(signal())).some(n => n.clipId === a.id), false, '静音的片段不出声,不用生成');
+    assert.equal((await listExportSoundNeeds(signal())).some(n => n.clipId === a.id), false, 'A muted clip makes no sound, so no generation is needed');
   } finally { f.restore(); }
 });
 
-test('A3 项目里素材记录还在、素材服务里没有字节,也算缺失(只问一次同一个哈希)', async () => {
+test('A3 The media record is still in the project but the asset service has no bytes: this also counts as missing (the same hash is queried only once)', async () => {
   const f = service();
   try {
     const { a, b, effectId } = await project();
     await generateCardAudio(a.id); await generateCardAudio(b.id);
-    assert.deepEqual(await listExportSoundNeeds(signal()), [], '都生成好了:不用再生成');
+    assert.deepEqual(await listExportSoundNeeds(signal()), [], 'All generated: no need to generate again');
     const hash = getState().project.media.find(m => m.id === findClip(getState().project, a.id).clip.cardAudio.mediaId).hash;
     f.stored.delete(hash);
     const needs = await listExportSoundNeeds(signal());
@@ -94,53 +94,53 @@ test('A3 项目里素材记录还在、素材服务里没有字节,也算缺失(
   } finally { f.restore(); }
 });
 
-test('A4 导出开始时把清单里的声音都生成好:之后混音计划不再报缺,进度按段数走完', async () => {
+test('A4 At export start, generate all sounds in the manifest: afterwards the mix plan no longer reports missing, and progress completes by segment count', async () => {
   const f = service();
   try {
     const { a, b, effectId } = await project();
     await generateCardAudio(b.id); actions.setClipParams(b.id, { value: .75 });
     f.stored.clear();
-    assert.throws(() => assertProjectCardAudio(getState().project), /尚未生成|已过期/, '改动前:这样的项目导出直接失败');
+    assert.throws(() => assertProjectCardAudio(getState().project), /not generated yet|stale/, 'Before the change: exporting such a project fails outright');
     const progress = [];
     const result = await prepareExportSounds({ signal: signal(), onProgress: (done, total) => progress.push([done, total]) });
     assert.equal(result.total, 3); assert.deepEqual(result.generated.sort(), [a.id, b.id, effectId].sort());
     assert.deepEqual(progress[0], [0, 3]); assert.deepEqual(progress.at(-1), [3, 3]);
-    assert.ok(progress.every(([done, total], i) => total === 3 && (i === 0 || done >= progress[i - 1][0])), '进度单调');
-    assert.ok(progress.some(([done]) => done > 0 && done < 1), '一段之内也报进度');
+    assert.ok(progress.every(([done, total], i) => total === 3 && (i === 0 || done >= progress[i - 1][0])), 'Progress is monotonic');
+    assert.ok(progress.some(([done]) => done > 0 && done < 1), 'Progress is also reported within a single segment');
     const p = getState().project;
     assertProjectCardAudio(p);
     const plan = audioPlanOf(p);
-    assert.equal(plan.length, 3, '三段声音都进混音计划');
-    for (const entry of plan) { const m = p.media.find(x => x.id === entry.mediaId); assert.ok(f.stored.has(m.hash), `${m.name} 的字节在素材服务里`); }
-    assert.equal(findClip(p, b.id).clip.cardAudio.identity.params.value, .75, '过期的那段按当前参数重新生成');
+    assert.equal(plan.length, 3, 'All three sounds enter the mix plan');
+    for (const entry of plan) { const m = p.media.find(x => x.id === entry.mediaId); assert.ok(f.stored.has(m.hash), `The bytes of ${m.name} are in the asset service`); }
+    assert.equal(findClip(p, b.id).clip.cardAudio.identity.params.value, .75, 'The stale one is regenerated with the current parameters');
     assert.deepEqual(await listExportSoundNeeds(signal()), []);
   } finally { f.restore(); }
 });
 
-test('A5 缺字节的独立音效按原配方补回同一份声音:项目不动、不新建片段和素材', async () => {
+test('A5 A standalone sound effect missing its bytes restores the same sound from its original recipe: the project is untouched, and no new clip or media is created', async () => {
   const f = service();
   try {
-    actions.newProject('补音效');
+    actions.newProject('Restore sound effect');
     const job = await waitSoundGeneration(startSoundGeneration({ preset: 'notification', start: 0 }).id);
     const before = getState().project, hash = before.media[0].hash;
     f.stored.clear();
     const result = await prepareExportSounds({ signal: signal() });
     assert.deepEqual(result.generated, [job.result.clipId]);
-    assert.equal(getState().project, before, '同一份声音:只把字节补回素材服务');
+    assert.equal(getState().project, before, 'Same sound: only the bytes are restored to the asset service');
     assert.ok(f.stored.has(hash));
   } finally { f.restore(); }
 });
 
-test('A6 音效的素材记录被删了:补回记录、片段指过去,不进撤销栈、不改选区', async () => {
+test('A6 The sound effect\'s media record was deleted: the record is restored and the clip points to it, without entering the undo stack or changing the selection', async () => {
   const f = service();
   try {
-    actions.newProject('补素材记录');
+    actions.newProject('Restore media record');
     const job = await waitSoundGeneration(startSoundGeneration({ preset: 'notification', start: 0 }).id);
     const clipId = job.result.clipId, hash = getState().project.media[0].hash;
     actions.loadProject({ ...structuredClone(getState().project), media: [] });
     actions.select([]);
     const selection = getState().selection;
-    assert.throws(() => audioPlanOf(getState().project), /缺失/);
+    assert.throws(() => audioPlanOf(getState().project), /missing/);
     await prepareExportSounds({ signal: signal() });
     const p = getState().project, clip = findClip(p, clipId).clip;
     assert.equal(p.media.length, 1); assert.equal(p.media[0].hash, hash); assert.equal(clip.mediaId, p.media[0].id);
@@ -148,11 +148,11 @@ test('A6 音效的素材记录被删了:补回记录、片段指过去,不进撤
     assert.deepEqual(getState().selection, selection);
     assert.equal(audioPlanOf(p).length, 1);
     actions.undo();
-    assert.equal(getState().project.media.length, 1, '补回素材记录不是一步用户操作');
+    assert.equal(getState().project.media.length, 1, 'Restoring a media record is not a user action step');
   } finally { f.restore(); }
 });
 
-test('A7 生成中取消:导出与生成都停,正在做的那一段不提交、不留半截;之前做完的那段是完整的', async () => {
+test('A7 Cancel during generation: export and generation both stop, the segment in progress is not committed and leaves no partial result; the segment finished earlier is complete', async () => {
   let release;
   const f = service({ holdComplete: () => new Promise(r => { release = r; }) });
   try {
@@ -170,21 +170,21 @@ test('A7 生成中取消:导出与生成都停,正在做的那一段不提交、
     const { error } = await settled;
     assert.equal(error.cancelled, true); assert.match(error.message, /Export canceled/);
     const p = getState().project;
-    assert.ok(findClip(p, a.id).clip.cardAudio, '取消之前做完的那一段是完整的声音');
-    assert.equal(findClip(p, b.id).clip.cardAudio, undefined, '正在做的那一段没提交');
-    assert.equal(p.media.length, 1, '没有半截的素材记录');
+    assert.ok(findClip(p, a.id).clip.cardAudio, 'The segment finished before the cancel is a complete sound');
+    assert.equal(findClip(p, b.id).clip.cardAudio, undefined, 'The segment in progress was not committed');
+    assert.equal(p.media.length, 1, 'No half-finished media record');
     for (const m of p.media) assert.ok(f.stored.has(m.hash));
     await new Promise(r => setTimeout(r, 20));
-    assert.equal(evaluations, evaluated, '取消后不再合成');
-    assert.equal(getState().project, p, '迟到的入库回包不改项目');
-    assert.ok(progress.every(([done]) => done < 2), '进度没有走到第二段完成');
+    assert.equal(evaluations, evaluated, 'No more synthesis after cancel');
+    assert.equal(getState().project, p, 'A late store response does not change the project');
+    assert.ok(progress.every(([done]) => done < 2), 'Progress did not reach the completion of the second segment');
   } finally { f.restore(); }
 });
 
-test('A8 还没开始就取消:什么都不做', async () => {
+test('A8 Cancel before starting: do nothing', async () => {
   const f = service();
   try {
-    actions.newProject('先取消'); actions.addCardClip(def.id, 0, { duration: .2 });
+    actions.newProject('Cancel first'); actions.addCardClip(def.id, 0, { duration: .2 });
     const before = getState().project, abort = new AbortController();
     abort.abort();
     await assert.rejects(() => prepareExportSounds({ signal: abort.signal }), (e) => e.cancelled === true);
@@ -192,7 +192,7 @@ test('A8 还没开始就取消:什么都不做', async () => {
   } finally { f.restore(); }
 });
 
-test('A9 某一段生成不出来:导出失败并指出是哪个片段;它之后的不再做,它之前做完的留着', async () => {
+test('A9 A segment cannot be generated: export fails and names the clip; segments after it are not processed, those finished before it are kept', async () => {
   const f = service();
   try {
     sourceVersion = 'v1';
@@ -204,24 +204,24 @@ test('A9 某一段生成不出来:导出失败并指出是哪个片段;它之后
     const error = await prepareExportSounds({ signal: signal() }).then(() => null, (e) => e);
     assert.ok(error instanceof ExportSoundError);
     assert.equal(error.code, 'export-sound-failed'); assert.equal(error.clipId, bad.id); assert.equal(error.cancelled, undefined);
-    assert.match(error.message, new RegExp(`Cannot generate sound for clip ".+" \\(${bad.id}\\)`)); assert.match(error.message, /合成器炸了/);
+    assert.match(error.message, new RegExp(`Cannot generate sound for clip ".+" \\(${bad.id}\\)`)); assert.match(error.message, /Synthesizer crashed/);
     const p = getState().project;
     assert.ok(findClip(p, a.id).clip.cardAudio); assert.equal(findClip(p, bad.id).clip.cardAudio, undefined); assert.equal(findClip(p, c.id).clip.cardAudio, undefined);
     assert.equal(p.media.length, 1);
   } finally { failAudio = null; f.restore(); }
 });
 
-test('A10 音效合成失败同样指出片段;锁住的序列上的有声卡生成不了也说明原因', async () => {
+test('A10 A sound effect synthesis failure also names the clip; an AV card on a locked track that cannot be generated also explains why', async () => {
   const f = service();
   try {
-    actions.newProject('音效失败');
+    actions.newProject('Sound effect failure');
     const job = await waitSoundGeneration(startSoundGeneration({ preset: 'notification', start: 0 }).id);
     f.stored.clear();
-    setSoundEffectRenderer(async () => { throw new Error('合成进程启动失败'); });
+    setSoundEffectRenderer(async () => { throw new Error('Synthesis process failed to start'); });
     const error = await prepareExportSounds({ signal: signal() }).then(() => null, (e) => e);
-    assert.ok(error instanceof ExportSoundError); assert.equal(error.clipId, job.result.clipId); assert.match(error.message, /合成进程启动失败/);
+    assert.ok(error instanceof ExportSoundError); assert.equal(error.clipId, job.result.clipId); assert.match(error.message, /Synthesis process failed to start/);
     setSoundEffectRenderer(null);
-    actions.newProject('锁住');
+    actions.newProject('Locked');
     const clip = actions.addCardClip(def.id, 0, { duration: .2 });
     actions.updateTrack(getState().project.tracks.find(t => t.clips.some(c => c.id === clip.id)).id, { locked: true });
     const locked = await prepareExportSounds({ signal: signal() }).then(() => null, (e) => e);
@@ -229,24 +229,24 @@ test('A10 音效合成失败同样指出片段;锁住的序列上的有声卡生
   } finally { setSoundEffectRenderer(null); f.restore(); }
 });
 
-test('A11 在线页面:判轻的在浏览器里生成;判重、又没有产物的不合成,导出失败并指出片段', async () => {
+test('A11 Online page: sounds classified as light are generated in the browser; those classified as heavy with no output are not synthesized, and export fails naming the clip', async () => {
   const f = service();
   const store = createMemorySoundCostStore();
   const restore = configureOnlineSoundJudge({ online: () => true, store: () => store, device: () => 'test-device' });
   try {
     sourceVersion = 'v1'; failAudio = null;
-    actions.newProject('在线导出');
+    actions.newProject('Online export');
     const light = actions.addCardClip(def.id, 0, { duration: .2, params: { value: .25 } });
     await prepareExportSounds({ signal: signal() });
-    assert.ok(findClip(getState().project, light.id).clip.cardAudio, '判轻:在线页面自己生成');
+    assert.ok(findClip(getState().project, light.id).clip.cardAudio, 'Classified as light: the online page generates it itself');
     const heavy = actions.addCardClip(def.id, 1, { duration: .2, params: { value: .5 } });
     const p = getState().project, key = soundTargetOf(p, findClip(p, heavy.id).clip).soundKey;
     await store.putCost(soundCostStoreKey(key, 'test-device'), { soundKey: key, kind: 'card', device: 'test-device', blockMs: 300, blockMaxMs: 300, blockFrames: 4096, sampleRate: 48000, samples: 16, measuredAt: 1 });
     const before = evaluations, handed = [];
     const error = await prepareExportSounds({ signal: signal(), deps: { backfill: async (request) => { handed.push([request.clip.id, request.reason]); return false; } } }).then(() => null, (e) => e);
     assert.ok(error instanceof ExportSoundError); assert.equal(error.clipId, heavy.id); assert.match(error.message, /too slow to synthesize on this device/);
-    assert.equal(evaluations, before, '判重:一块都不在浏览器里合成');
-    assert.deepEqual(handed, [[heavy.id, 'heavy']], '没有产物:交给渲染节点的接口被调到');
+    assert.equal(evaluations, before, 'Classified as heavy: not a single chunk is synthesized in the browser');
+    assert.deepEqual(handed, [[heavy.id, 'heavy']], 'No output: the interface that hands off to a render node was called');
     assert.equal(findClip(getState().project, heavy.id).clip.cardAudio, undefined);
   } finally { restore(); f.restore(); }
 });
@@ -262,8 +262,8 @@ test('A11 在线页面:判轻的在浏览器里生成;判重、又没有产物�
  */
 async function nestedProject({ muted = false } = {}) {
   sourceVersion = 'v1'; failAudio = null;
-  actions.newProject('剪辑段里的有声卡');
-  const child = actions.addCut('剪辑2', { switchTo: true });
+  actions.newProject('Audio cards inside a cut segment');
+  const child = actions.addCut('Cut 2', { switchTo: true });
   const inner = actions.addCardClip(def.id, 0.5, { duration: .4, params: { value: .25 } });
   const outside = actions.addCardClip(def.id, 5, { duration: .4, params: { value: .5 } }); // 落在剪辑段窗口外
   const root = getState().project.cuts[0].id;
@@ -277,47 +277,47 @@ async function nestedProject({ muted = false } = {}) {
 }
 const parked = (cutId, clipId) => getState().project.cuts.find(c => c.id === cutId).tracks.flatMap(t => t.clips).find(c => c.id === clipId);
 
-test('C1 剪辑段:清单走进被引用剪辑,窗口外和重复引用的不重复列;生成写回停放的剪辑;混音按段音量出声', async () => {
+test('C1 Cut segment: the manifest walks into the referenced cut, items outside the window are not listed and repeated references are not listed twice; generation writes back to the parked cut; the mix sounds at the segment volume', async () => {
   const f = service();
   try {
     const { child, inner, outside, seg } = await nestedProject();
-    assert.throws(() => assertProjectCardAudio(getState().project), new RegExp(`${inner.id} 的卡片声音尚未生成`), '改动前:导出直接失败并点名原片段');
+    assert.throws(() => assertProjectCardAudio(getState().project), new RegExp(`Card audio of ${inner.id} is not generated yet`), 'Before the change: export fails outright and names the original clip');
     const needs = await listExportSoundNeeds(signal());
     assert.deepEqual(needs.map(n => [n.clipId, n.cutId, n.kind, n.reason]), [[inner.id, child.id, 'card', 'ungenerated']]);
     assert.match(needs[0].label, /in cut "剪辑2"/);
-    assert.ok(!needs.some(n => n.clipId === outside.id), '落在剪辑段窗口外的不出声,不用生成');
+    assert.ok(!needs.some(n => n.clipId === outside.id), 'A clip outside the cut segment\'s window makes no sound, so no generation is needed');
     const activeBefore = getState().project.tracks;
     const result = await prepareExportSounds({ signal: signal() });
     assert.deepEqual(result.generated, [inner.id]);
     const p = getState().project;
-    assert.ok(parked(child.id, inner.id).cardAudio, '声音记在被引用剪辑里的原片段上');
+    assert.ok(parked(child.id, inner.id).cardAudio, 'The sound is recorded on the original clip inside the referenced cut');
     assert.equal(parked(child.id, outside.id).cardAudio, undefined);
-    assert.equal(p.tracks, activeBefore, '激活剪辑的序列不动');
+    assert.equal(p.tracks, activeBefore, 'The tracks of the active cut are untouched');
     assertProjectCardAudio(p);
     const plan = audioPlanOf(p);
-    assert.equal(plan.length, 2, '两个剪辑段各出一份(同一份 WAV):1.5 秒与 4.5 秒');
+    assert.equal(plan.length, 2, 'Each of the two cut segments contributes one copy (the same WAV): at 1.5 s and 4.5 s');
     assert.deepEqual(plan.map(e => e.start).sort(), [1.5, 4.5]);
     assert.equal(new Set(plan.map(e => e.mediaId)).size, 1);
     const first = plan.find(e => e.clipId.startsWith(`${seg.id}/`));
-    assert.ok(first, '第一个剪辑段的那份进了混音');
-    assert.equal(first.start, 1.5); assert.equal(first.volume, .5, '音量乘上剪辑段的音量');
+    assert.ok(first, 'The copy from the first cut segment entered the mix');
+    assert.equal(first.start, 1.5); assert.equal(first.volume, .5, 'The volume is multiplied by the cut segment\'s volume');
     assert.ok(f.stored.has(p.media.find(m => m.id === first.mediaId).hash));
     assert.deepEqual(await listExportSoundNeeds(signal()), []);
   } finally { f.restore(); }
 });
 
-test('C2 剪辑段静音:里面的有声卡不出声,不用生成;取消静音后要生成', async () => {
+test('C2 Cut segment muted: the AV cards inside make no sound and need no generation; after unmuting they must be generated', async () => {
   const f = service();
   try {
     const { inner, seg } = await nestedProject({ muted: true });
     const needs = await listExportSoundNeeds(signal());
-    assert.ok(!needs.some(n => n.clipId === inner.id), '两个剪辑段都静音:里面的不列');
+    assert.ok(!needs.some(n => n.clipId === inner.id), 'Both cut segments muted: nothing inside them is listed');
     actions.setClipMuted(seg.id, false);
     assert.deepEqual((await listExportSoundNeeds(signal())).map(n => n.clipId), [inner.id]);
   } finally { f.restore(); }
 });
 
-test('C3 被引用剪辑里的片段已经生成过、又改了参数:判过期,导出前按新参数重生成', async () => {
+test('C3 A clip in the referenced cut was already generated and then had its parameters changed: judged stale, and regenerated with the new parameters before export', async () => {
   const f = service();
   try {
     const { child, inner, root } = await nestedProject();

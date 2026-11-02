@@ -107,29 +107,29 @@ const closure = closureOf(entryFiles);
  */
 const KNOWN = [];
 
-test('SEAM-1 独立入口两个目录(含子目录)里除 ssr-host 外没有指向 src/ 的 import', () => {
+test('SEAM-1 apart from ssr-host, nothing in the two standalone-entry directories (subdirectories included) has an import pointing to src/', () => {
   // 0.7.18 工具表接线之后是硬断言:镜头、主体两个工具包要的内核函数经 ssr-host 的载入缝取来、由宿主(account-tools.mjs)注入,
   // 两个独立入口目录里(含 perception 子目录)不再有任何文件直接引用 src/
-  assert.ok(entryFiles.length > 40, `应扫到不少文件,实际 ${entryFiles.length}`);
-  assert.ok(entryFiles.some((f) => rel(f).startsWith('server/agent/service/perception/')), '应包含 perception 子目录');
+  assert.ok(entryFiles.length > 40, `should scan quite a few files, actual ${entryFiles.length}`);
+  assert.ok(entryFiles.some((f) => rel(f).startsWith('server/agent/service/perception/')), 'should include the perception subdirectory');
   assert.deepEqual(srcImportsOf(entryFiles), []);
 });
 
-test('SEAM-2 独立入口的传递闭包里除 ssr-host 外没有任何文件 import src/', () => {
-  assert.ok(closure.length > entryFiles.length, '闭包应比入口目录本身大');
+test('SEAM-2 apart from ssr-host, no file in the transitive closure of the standalone entry imports src/', () => {
+  assert.ok(closure.length > entryFiles.length, 'the closure should be larger than the entry directory itself');
   assert.deepEqual(srcImportsOf(closure), []);
 });
 
-test('SEAM-3 棘轮:指向 src/ 的直接引用只许少、不许多', () => {
+test('SEAM-3 ratchet: direct references to src/ may only decrease, never increase', () => {
   const now = srcImportsOf(closure);
   const added = now.filter((x) => !KNOWN.includes(x));
-  assert.deepEqual(added, [], '新增了指向 src/ 的直接引用:要么改走 ssr-host 的载入缝,要么先在契约里写明再加进 KNOWN');
+  assert.deepEqual(added, [], 'New direct references to src/ were added: either route them through the ssr-host load seam, or document them in the contract first and then add them to KNOWN');
   const gone = KNOWN.filter((x) => !now.includes(x));
   // 少了是好事,只提示不拦
-  if (gone.length) console.log(`# SEAM-3 已修掉 ${gone.length} 处,请从 KNOWN 里删掉:\n#   ${gone.join('\n#   ')}`);
+  if (gone.length) console.log(`# SEAM-3 fixed ${gone.length} references, please remove them from KNOWN:\n#   ${gone.join('\n#   ')}`);
 });
 
-test('SEAM-4 独立入口的传递闭包里没有文件 import desktop/ 下的东西', () => {
+test('SEAM-4 no file in the transitive closure of the standalone entry imports anything under desktop/', () => {
   const bad = [];
   for (const f of closure) {
     if (rel(f) === SEAM_FILE) continue;
@@ -141,7 +141,7 @@ test('SEAM-4 独立入口的传递闭包里没有文件 import desktop/ 下的�
   assert.deepEqual(bad, []);
 });
 
-test('SEAM-5 扫描器自检:各种写法的引用都抓得到;ssr-host 自己确实在用 load("/src/…")', () => {
+test('SEAM-5 scanner self-check: references written in every style are caught; ssr-host itself really uses load("/src/…")', () => {
   const sample = [
     "import { a } from '../../src/kernel/x.mjs';",
     "export { b } from '../../../src/kernel/y.mjs';",
@@ -164,5 +164,5 @@ test('SEAM-5 扫描器自检:各种写法的引用都抓得到;ssr-host 自己�
   assert.equal(inSrc(targetOf(fake, '../session.mjs')), false);
   // 缝还在
   const seam = specsOf(fs.readFileSync(path.join(ROOT, SEAM_FILE), 'utf8')).filter((s) => s.startsWith('/src/'));
-  assert.ok(seam.length >= 10, `ssr-host 应经 load('/src/…') 载入十几个前端模块,实际 ${seam.length}`);
+  assert.ok(seam.length >= 10, `ssr-host should load a dozen or so frontend modules via load('/src/…'), actual ${seam.length}`);
 });

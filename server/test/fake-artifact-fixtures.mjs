@@ -110,12 +110,12 @@ export async function seedSnapshots(pipeline, task, frames, { html = htmlOf, tag
 
 /** `collect*` 的回值（C6.2 第 11 节第 1 条：`{ result, readBlob }`） */
 export function unpack(out) {
-  assert.ok(out && typeof out === 'object', 'collect* 要回一个对象');
+  assert.ok(out && typeof out === 'object', 'collect* must return an object');
   const direct = out.v !== undefined || out.kind !== undefined;
   const result = direct ? out : out.result;
   const readBlob = direct ? out.readBlob : (out.readBlob ?? out.result?.readBlob);
-  assert.ok(result && typeof result === 'object', '拿不到清单（result）');
-  assert.equal(typeof readBlob, 'function', 'collect* 要同时给出 readBlob(hash)');
+  assert.ok(result && typeof result === 'object', 'Cannot get the manifest (result)');
+  assert.equal(typeof readBlob, 'function', 'collect* must also provide readBlob(hash)');
   return { result: wire(result), readBlob, raw: result };
 }
 
@@ -204,7 +204,7 @@ export function makeRoots(FramePipeline, prefix = 'pc-c64-lib-') {
 /** 流生产者：接上读口、定下编码器名（不探测、不开 worker） */
 export function producerOf(pipeline, encoder = B_ENCODER) {
   const p = pipeline.streamProducer();
-  assert.ok(p, '拿不到流生产者（streamProducer()，只在 interactive: true 的管线上有）');
+  assert.ok(p, 'cannot get the stream producer (streamProducer(), which exists only on a pipeline with interactive: true)');
   p.attachRoute();
   p.encoderName = encoder;
   return p;

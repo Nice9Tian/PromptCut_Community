@@ -24,17 +24,17 @@ const agentSent = [];
 window.addEventListener("keydown", (e) => {
   const op = undoRedoKey(e);
   if (op === "undo") actions.undo();
-  if (e.key === "Delete") actions.setProjectMeta({ name: "按 Delete 改的" });
-  if (e.key === "Enter" && e.pcTarget === "agent-input") agentSent.push("帮我把标题改成 X");
+  if (e.key === "Delete") actions.setProjectMeta({ name: "Changed by Delete" });
+  if (e.key === "Enter" && e.pcTarget === "agent-input") agentSent.push("Help me change the title to X");
 });
 window.addEventListener("drop", () => {
   actions.addMedia({ kind: "image", name: "拖进来的.png", url: "" });
 });
 window.addEventListener("pointerdown", () => {
-  actions.setProjectMeta({ name: "鼠标改的" });
+  actions.setProjectMeta({ name: "Changed by mouse" });
 });
 window.addEventListener("paste", () => {
-  actions.setProjectMeta({ name: "粘贴改的" });
+  actions.setProjectMeta({ name: "Changed by paste" });
 });
 // 桌面版标题栏菜单的「撤销」(TopBar 收这个事件)
 window.addEventListener("pc-titlebar-command", (e) => {
@@ -75,12 +75,12 @@ function heldDeps(overrides = {}) {
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
 function startProject() {
-  actions.newProject("起点");
-  actions.setProjectMeta({ name: "改过一次" });
+  actions.newProject("Starting point");
+  actions.setProjectMeta({ name: "Changed once" });
   agentSent.length = 0;
 }
 
-test("保存进行中:快捷键撤销、Delete、拖放、鼠标、粘贴、Agent 面板回车都改不动项目", async () => {
+test("While saving is in progress: the undo shortcut, Delete, drag-and-drop, mouse, paste and Enter in the Agent panel cannot change the project", async () => {
   startProject();
   const mediaBefore = getState().project.media.length;
   const projectBefore = getState().project;
@@ -96,18 +96,18 @@ test("保存进行中:快捷键撤销、Delete、拖放、鼠标、粘贴、Agen
     fire("keydown", { key: "Enter", pcTarget: "agent-input" });
     fire("pc-titlebar-command", { detail: "undo" });
 
-    assert.equal(getState().project, projectBefore, "保存期间项目对象一次都没换");
-    assert.equal(getState().project.name, "改过一次");
+    assert.equal(getState().project, projectBefore, "The project object was not replaced even once during saving");
+    assert.equal(getState().project.name, "Changed once");
     assert.equal(getState().project.media.length, mediaBefore);
-    assert.deepEqual(agentSent, [], "Agent 面板没有发出去");
+    assert.deepEqual(agentSent, [], "The Agent panel sent nothing");
   } finally {
     h.release();
   }
   assert.equal(await saving, "saved");
-  assert.equal(JSON.parse(h.written[0].text).name, "改过一次");
+  assert.equal(JSON.parse(h.written[0].text).name, "Changed once");
 });
 
-test("被拦下的输入事件取消了缺省动作(浏览器不会再去打字、粘贴、放下文件)", async () => {
+test("Blocked input events had their default action canceled (the browser will no longer type, paste or drop files)", async () => {
   startProject();
   const h = heldDeps();
   const saving = saveProcFile("a.proc", h.deps);
@@ -115,7 +115,7 @@ test("被拦下的输入事件取消了缺省动作(浏览器不会再去打字�
   try {
     for (const type of ["keydown", "beforeinput", "drop", "dragover", "paste", "cut", "pointerdown", "mousedown", "click", "wheel", "contextmenu"]) {
       const e = fire(type, { key: "x" });
-      assert.equal(e.defaultPrevented, true, `${type} 的缺省动作被取消`);
+      assert.equal(e.defaultPrevented, true, `The default action of ${type} was canceled`);
     }
   } finally {
     h.release();
@@ -123,7 +123,7 @@ test("被拦下的输入事件取消了缺省动作(浏览器不会再去打字�
   }
 });
 
-test("保存成功结束后恢复编辑:同样的快捷键又能改了", async () => {
+test("After a successful save, editing resumes: the same shortcut can change things again", async () => {
   startProject();
   const h = heldDeps();
   const saving = saveProcFile("a.proc", h.deps);
@@ -131,12 +131,12 @@ test("保存成功结束后恢复编辑:同样的快捷键又能改了", async (
   h.release();
   assert.equal(await saving, "saved");
   fire("keydown", { key: "z", ctrlKey: true });
-  assert.equal(getState().project.name, "起点", "撤销生效");
+  assert.equal(getState().project.name, "Starting point", "Undo takes effect");
   fire("drop");
   assert.ok(getState().project.media.some((m) => m.name === "拖进来的.png"));
 });
 
-test("等确认超时(不写文件)之后恢复编辑", async () => {
+test("Editing resumes after the wait for confirmation times out (no file written)", async () => {
   startProject();
   let timeUp;
   const h = heldDeps({ settle: () => new Promise((_, reject) => { timeUp = () => reject(new Error("timeout")); }) });
@@ -145,27 +145,27 @@ test("等确认超时(不写文件)之后恢复编辑", async () => {
   while (!timeUp) await new Promise((r) => setTimeout(r, 20));
   try {
     fire("keydown", { key: "Delete" });
-    assert.equal(getState().project.name, "改过一次", "等的时候也改不动");
+    assert.equal(getState().project.name, "Changed once", "Cannot be changed while waiting either");
   } finally {
     timeUp();
   }
   assert.equal(await saving, "failed");
   assert.equal(h.written.length, 0);
   fire("keydown", { key: "Delete" });
-  assert.equal(getState().project.name, "按 Delete 改的", "超时之后能改");
+  assert.equal(getState().project.name, "Changed by Delete", "Can be changed after the timeout");
 });
 
-test("写盘失败之后恢复编辑", async () => {
+test("Editing resumes after a disk write failure", async () => {
   startProject();
   const h = heldDeps({
-    writeProc: async (produce) => { await produce(); throw new Error("磁盘满了"); },
+    writeProc: async (produce) => { await produce(); throw new Error("Disk full"); },
   });
   assert.equal(await saveProcFile("a.proc", h.deps), "failed");
   fire("pointerdown");
-  assert.equal(getState().project.name, "鼠标改的");
+  assert.equal(getState().project.name, "Changed by mouse");
 });
 
-test("用户在「另存为」里点取消:整个过程不上锁", async () => {
+test("The user clicks Cancel in \"Save as\": the whole process is not locked", async () => {
   startProject();
   let pickerOpen;
   const opened = new Promise((r) => { pickerOpen = r; });
@@ -176,12 +176,12 @@ test("用户在「另存为」里点取消:整个过程不上锁", async () => {
   const saving = saveProcFile("a.proc", h.deps);
   await opened;
   fire("keydown", { key: "Delete" });
-  assert.equal(getState().project.name, "按 Delete 改的", "挑落点期间(还没开始存)照常能改");
+  assert.equal(getState().project.name, "Changed by Delete", "While the save destination is being picked (saving has not started yet), editing works as usual");
   answer();
   assert.equal(await saving, "cancelled");
 });
 
-test("打包保存同样上锁,挑好落点之后到写完之间改不动", async () => {
+test("Package save is locked in the same way: nothing can be changed between picking the destination and the write finishing", async () => {
   startProject();
   let release;
   const gate = new Promise((r) => { release = r; });
@@ -204,16 +204,16 @@ test("打包保存同样上锁,挑好落点之后到写完之间改不动", asyn
   await tick(); await tick();
   try {
     fire("keydown", { key: "Delete" });
-    assert.equal(getState().project.name, "改过一次");
+    assert.equal(getState().project.name, "Changed once");
   } finally {
     release();
   }
   assert.equal(await saving, "saved");
   fire("keydown", { key: "Delete" });
-  assert.equal(getState().project.name, "按 Delete 改的");
+  assert.equal(getState().project.name, "Changed by Delete");
 });
 
-test("保存进行中再点一次保存:不另起一次", async () => {
+test("Clicking save again while a save is in progress does not start another one", async () => {
   startProject();
   const h = heldDeps();
   const first = saveProcFile("a.proc", h.deps);
@@ -227,6 +227,6 @@ test("保存进行中再点一次保存:不另起一次", async () => {
     h.release();
   }
   assert.equal(second, "busy");
-  assert.equal(other.written.length, 0, "第二次什么都没写");
+  assert.equal(other.written.length, 0, "The second one wrote nothing");
   assert.equal(await first, "saved");
 });

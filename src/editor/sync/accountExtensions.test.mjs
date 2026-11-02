@@ -41,21 +41,21 @@ describe("accountExtensions & lanMemberSource seam", () => {
   it("splitLanMembers merges duplicate connections, ensures self is online, and sorts creator first", () => {
     const { online, offline } = splitLanMembers(
       [
-        { username: "小王", role: "member", online: false },
-        { username: "小王", role: "member", online: true },
-        { username: "老张", role: "creator", online: true },
-        { username: "小李", role: "member", online: false },
+        { username: "Xiao Wang", role: "member", online: false },
+        { username: "Xiao Wang", role: "member", online: true },
+        { username: "Lao Zhang", role: "creator", online: true },
+        { username: "Xiao Li", role: "member", online: false },
       ],
-      "我",
+      "Me",
       false,
     );
     assert.deepEqual(
       online.map((m) => m.username),
-      ["老张", "我", "小王"],
+      ["Lao Zhang", "Me", "Xiao Wang"],
     );
     assert.deepEqual(
       offline.map((m) => m.username),
-      ["小李"],
+      ["Xiao Li"],
     );
   });
 
@@ -67,14 +67,14 @@ describe("accountExtensions & lanMemberSource seam", () => {
           where: "lan",
           base: "http://192.168.1.10:5180/doc/p_lan1",
           projectId: "p_lan1",
-          name: "局域网测试片",
+          name: "LAN test video",
           mode: "free",
           as: "creator",
-          username: "房主",
+          username: "Room owner",
         },
         members: [
-          { username: "房主", creator: true, online: true, deviceId: "dev_host", deviceName: "HostPC" },
-          { username: "成员甲", creator: false, online: true, deviceId: "dev_a", deviceName: "AlicePC" },
+          { username: "Room owner", creator: true, online: true, deviceId: "dev_host", deviceName: "HostPC" },
+          { username: "Member A", creator: false, online: true, deviceId: "dev_a", deviceName: "AlicePC" },
         ],
       }),
       adminOp: async (op, auth, fields) => {
@@ -98,18 +98,18 @@ describe("accountExtensions & lanMemberSource seam", () => {
     const snap = await getMemberSource().fetchMembers();
     assert.ok(snap);
     assert.equal(snap.projectId, "p_lan1");
-    assert.equal(snap.creatorAccountId, "房主");
+    assert.equal(snap.creatorAccountId, "Room owner");
     assert.equal(snap.members.length, 2);
     assert.equal(snap.devices.length, 2);
 
     const kickRes = await getMemberSource().kickLanMember(
-      { username: "成员甲", deviceId: "dev_a" },
+      { username: "Member A", deviceId: "dev_a" },
       { password: "pw_creator_secret" },
     );
     assert.deepEqual(kickRes, { ok: true, key: "k_delegated" });
     assert.equal(adminCalls.length, 1);
     assert.equal(adminCalls[0].op, "kick");
-    assert.deepEqual(adminCalls[0].fields, { username: "成员甲", deviceId: "dev_a" });
+    assert.deepEqual(adminCalls[0].fields, { username: "Member A", deviceId: "dev_a" });
 
     const inviteRes = await getMemberSource().createInvite("pw_creator_secret");
     assert.equal(inviteRes.ok, true);
@@ -126,12 +126,12 @@ describe("accountExtensions & lanMemberSource seam", () => {
       resolveInvite: async ({ base, code: c }) => {
         assert.equal(base, "http://192.168.1.20:5180/doc/p_lan2");
         assert.equal(c, code);
-        return { projectId: "p_lan2", name: "周末粗剪", mode: "free" };
+        return { projectId: "p_lan2", name: "Weekend rough cut", mode: "free" };
       },
       redeemInvite: async ({ username, deviceId }) => {
-        assert.equal(username, "小陈");
+        assert.equal(username, "Xiao Chen");
         assert.equal(deviceId, "dev_chen");
-        return { projectId: "p_lan2", name: "周末粗剪", mode: "free", key: "k_member_ticket" };
+        return { projectId: "p_lan2", name: "Weekend rough cut", mode: "free", key: "k_member_ticket" };
       },
       ensureDevice: async () => ({ deviceId: "dev_chen", deviceName: "ChenPhone" }),
       enterShared: async (candidate, cred) => {
@@ -149,13 +149,13 @@ describe("accountExtensions & lanMemberSource seam", () => {
       const joined = await getJoinSource().joinLanByInvite({
         base: resolved.base,
         code: resolved.code,
-        username: "小陈",
+        username: "Xiao Chen",
       });
       assert.deepEqual(joined, { ok: true, projectId: "p_lan2" });
       assert.equal(enteredCandidate.projectId, "p_lan2");
       assert.equal(enteredCred.key, "k_member_ticket");
     }
-    assert.equal(lanUsernameOk("小陈"), true);
+    assert.equal(lanUsernameOk("Xiao Chen"), true);
     assert.equal(lanUsernameOk(" bad "), false);
   });
 
@@ -183,7 +183,7 @@ describe("accountExtensions & lanMemberSource seam", () => {
     // `server/vite-plugin-cloud-seams.ts`）。node --test 里没有别名表，所以必然是 false ——
     // 那正是「没装云端扩展」，局域网默认实现继续生效。
     assert.equal(await loadAccountExtensions({ includeUi: false }), false);
-    assert.equal(getMemberSource(), getDefaultLanMemberSource(), "别名解析不到时成员源还是局域网那个");
+    assert.equal(getMemberSource(), getDefaultLanMemberSource(), "when the alias cannot be resolved, the member source is still the LAN one");
     // 要验「装上之后」就显式给路径 —— 这是不变量 2 里「从调用方拿」的那种形式
     assert.equal(
       await loadAccountExtensions({ manifestUrl: cloudManifest.href, includeUi: false }),
@@ -192,7 +192,7 @@ describe("accountExtensions & lanMemberSource seam", () => {
     assert.equal(
       formatUploadRejectionReason("guest-file-too-large"),
       // 装上云端扩展后文案由云端那份给(还是中文);没装就是公开侧内置的英文
-      hasCloudManifest ? "游客上传的每一条源文件不能超过 100 MB。" : "Each source file uploaded by a guest cannot exceed 100 MB.",
+      hasCloudManifest ? "Each source file uploaded by a guest cannot exceed 100 MB." : "Each source file uploaded by a guest cannot exceed 100 MB.",
     );
     assert.equal(
       projectLink("https://accounts.example/editor", "prj_0123456789abcdef01234567", "tok_abc"),

@@ -165,7 +165,7 @@ test('persist across fresh process; home isolation; corrupt record yields unknow
 
 test('persistence failure keeps memory invalid and exposes limitation; unexpected record data is discarded', () => {
   const s=createCodexAuthState(home,{io:{...fs,writeFileSync(){throw new Error('read-only');}}});
-  assert.equal(s.invalidate(s.snapshot().generation,'token_revoked'),true);assert.equal(s.effective({loggedIn:true}).loggedIn,false);assert.match(s.snapshot().persistenceWarning,/重启/);
+  assert.equal(s.invalidate(s.snapshot().generation,'token_revoked'),true);assert.equal(s.effective({loggedIn:true}).loggedIn,false);assert.match(s.snapshot().persistenceWarning,/restart/);
 });
 
 test('successful raw login clears old invalidity and persisted marker; duplicate clicks reuse one job', async () => {
@@ -206,7 +206,7 @@ test('auth error passes text protocol and permission fallback without executing 
     const s=codexAuthState();s.completeLogin(s.beginLogin());write({scenario:'stdout',denied:true});let tools=0;
     const before=calls().filter(c=>c.args?.[0]==='exec').length;const r=run({toolProtocol,callTool:()=>{tools++;}});await r.done;
     assert.equal(terminals(r.events).length,1);assert.equal(terminals(r.events)[0].authReason,'token_revoked');assert.equal(tools,0);
-    assert.equal(calls().filter(c=>c.args?.[0]==='exec').length-before,1);assert.ok(!r.events.some(e=>e.text?.includes('文本协议重试')));
+    assert.equal(calls().filter(c=>c.args?.[0]==='exec').length-before,1);assert.ok(!r.events.some(e=>e.text?.includes('text protocol retry')));
   }
 });
 

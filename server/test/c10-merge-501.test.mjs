@@ -40,21 +40,21 @@ async function serve() {
 
 const KEY = 'a'.repeat(64);
 
-it('C10-MG-01 POST merge/<projectId>/<共享键> 回 501', async () => {
+it('C10-MG-01 POST merge/<projectId>/<shared key> returns 501', async () => {
   const b = await serve();
   const r = await fetch(`${b}${MERGE_PATH('proj-c10', KEY)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
   assert.equal(r.status, 501, await r.text());
 });
 
-it('C10-MG-02 不解析 projectId：什么样的都回 501', async () => {
+it('C10-MG-02 projectId is not parsed: any value returns 501', async () => {
   const b = await serve();
   for (const pid of ['x', 'Project_With-Odd.chars', '00000000-0000-0000-0000-000000000000', encodeURIComponent('名字 带空格')]) {
     const r = await fetch(`${b}${MERGE_PATH(pid, KEY)}`, { method: 'POST' });
-    assert.equal(r.status, 501, `projectId ${pid}：${r.status} ${await r.text()}`);
+    assert.equal(r.status, 501, `projectId ${pid}: ${r.status} ${await r.text()}`);
   }
 });
 
-it('C10-MG-03 占位不影响原有路由：GET media/<hash> 照旧', async () => {
+it('C10-MG-03 the placeholder does not affect existing routes: GET media/<hash> works as before', async () => {
   const b = await serve();
   const r = await fetch(`${b}/api/asset/media/${'b'.repeat(64)}`);
   assert.equal(r.status, 404, await r.text());

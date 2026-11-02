@@ -17,7 +17,7 @@ function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "pc-post-"));
 }
 
-test("shrink 等比缩到长边 MAX_EDGE,输出不透明", () => {
+test("shrink scales proportionally so the long edge is MAX_EDGE, and the output is opaque", () => {
   const src = png(1920, 1080, (d, o) => { d[o] = 255; d[o + 3] = 255; });
   const { png: out, width, height } = shrink(src);
   assert.equal(width, MAX_EDGE);
@@ -26,25 +26,25 @@ test("shrink 等比缩到长边 MAX_EDGE,输出不透明", () => {
   assert.equal(out.data[0], 255); // 全盖住的地方看不到棋盘格
 });
 
-test("shrink:全透明的地方铺棋盘格(不是黑色)", () => {
+test("shrink: fully transparent areas get a checkerboard (not black)", () => {
   const src = png(64, 64, () => {});
   const { png: out } = shrink(src);
-  assert.ok(out.data[0] > 0x50, "透明处应该是中间调的格子色");
+  assert.ok(out.data[0] > 0x50, "Transparent areas should have a mid-tone checker color");
 });
 
-test("flatten 把透明压到底色上", () => {
+test("flatten composites transparency onto the background color", () => {
   const p = png(2, 1, (d, o, x) => { if (x === 0) { d[o] = 10; d[o + 3] = 255; } });
   flatten(p, "ff0000");
   assert.deepEqual([...p.data.subarray(0, 4)], [10, 0, 0, 255]);
   assert.deepEqual([...p.data.subarray(4, 8)], [255, 0, 0, 255]);
 });
 
-test("transparentRatio 数全透明像素", () => {
+test("transparentRatio counts fully transparent pixels", () => {
   const p = png(4, 1, (d, o, x) => { if (x < 1) d[o + 3] = 255; });
   assert.equal(transparentRatio(p), 0.75);
 });
 
-test("postFrame:什么都不用做就原样拷贝,不解码", async () => {
+test("postFrame: when nothing needs doing, copy as is without decoding", async () => {
   const dir = tmpDir();
   const cards = path.join(dir, "c.png");
   fs.writeFileSync(cards, PNG.sync.write(png(8, 8, (d, o) => { d[o + 3] = 255; })));
@@ -54,7 +54,7 @@ test("postFrame:什么都不用做就原样拷贝,不解码", async () => {
   assert.deepEqual(fs.readFileSync(out), fs.readFileSync(cards));
 });
 
-test("postFrame:素材层垫在卡片下面,再压底色、数透明", async () => {
+test("postFrame: the media layer goes under the card, then composite the background color and count transparency", async () => {
   const dir = tmpDir();
   const cards = path.join(dir, "c.png");
   const layer = path.join(dir, "l.png");
@@ -70,7 +70,7 @@ test("postFrame:素材层垫在卡片下面,再压底色、数透明", async () 
   assert.deepEqual([...img.data.subarray(12, 16)], [0, 255, 0, 255]); // 右边露出素材
 });
 
-test("postFrame:bg + stats 的顺序和原来一致(先压底色,再数)", async () => {
+test("postFrame: the order of bg + stats is the same as before (composite the background color first, then count)", async () => {
   const dir = tmpDir();
   const cards = path.join(dir, "c.png");
   fs.writeFileSync(cards, PNG.sync.write(png(2, 2, () => {})));

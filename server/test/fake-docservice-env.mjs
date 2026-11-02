@@ -21,8 +21,8 @@ import { wsClient } from './fake-ws-kit.mjs';
 
 export async function loadStore() {
   const mod = await import('../docservice/store/index.mjs');
-  assert.equal(typeof mod.createFileStore, 'function', `store/index.mjs 要导出 createFileStore；导出：${Object.keys(mod).join(', ')}`);
-  assert.equal(typeof mod.createMemoryStore, 'function', `store/index.mjs 要导出 createMemoryStore；导出：${Object.keys(mod).join(', ')}`);
+  assert.equal(typeof mod.createFileStore, 'function', `store/index.mjs must export createFileStore; exports: ${Object.keys(mod).join(', ')}`);
+  assert.equal(typeof mod.createMemoryStore, 'function', `store/index.mjs must export createMemoryStore; exports: ${Object.keys(mod).join(', ')}`);
   return mod;
 }
 
@@ -30,24 +30,24 @@ const isModule = (v) => v && typeof v === 'object' && Array.isArray(v.types) && 
 
 export async function loadProject() {
   const mod = await import('../docservice/modules/project.mjs');
-  assert.equal(typeof mod.projectModule, 'function', `modules/project.mjs 要导出 projectModule；导出：${Object.keys(mod).join(', ')}`);
+  assert.equal(typeof mod.projectModule, 'function', `modules/project.mjs must export projectModule; exports: ${Object.keys(mod).join(', ')}`);
   return (options) => {
     const m = mod.projectModule(options);
-    assert.ok(isModule(m), 'projectModule 要返回模块对象');
-    assert.deepEqual(m.types, ['project.'], 'types 是 [\'project.\']（契约第 1 节）');
-    assert.deepEqual(m.channels, ['project'], 'channels 是 [\'project\']（契约第 1 节）');
+    assert.ok(isModule(m), 'projectModule must return a module object');
+    assert.deepEqual(m.types, ['project.'], 'types is [\'project.\'] (contract section 1)');
+    assert.deepEqual(m.channels, ['project'], 'channels is [\'project\'] (contract section 1)');
     return m;
   };
 }
 
 export async function loadContent() {
   const mod = await import('../docservice/modules/content.mjs');
-  assert.equal(typeof mod.contentModule, 'function', `modules/content.mjs 要导出 contentModule；导出：${Object.keys(mod).join(', ')}`);
+  assert.equal(typeof mod.contentModule, 'function', `modules/content.mjs must export contentModule; exports: ${Object.keys(mod).join(', ')}`);
   return (options) => {
     const m = mod.contentModule(options);
-    assert.ok(isModule(m), 'contentModule 要返回模块对象');
-    assert.deepEqual(m.types, ['content.'], 'types 是 [\'content.\']（契约第 2 节）');
-    assert.deepEqual(m.channels, ['content'], 'channels 是 [\'content\']（契约第 2 节）');
+    assert.ok(isModule(m), 'contentModule must return a module object');
+    assert.deepEqual(m.types, ['content.'], 'types is [\'content.\'] (contract section 2)');
+    assert.deepEqual(m.channels, ['content'], 'channels is [\'content\'] (contract section 2)');
     return m;
   };
 }
@@ -94,7 +94,7 @@ export async function startStandalone({ modules, path = '/', authenticate = auth
       await c.opened;
     } catch (err) {
       await new Promise((resolve) => setTimeout(resolve, 20));
-      throw new Error(`${err.message}：${url(user)}${why}`);
+      throw new Error(`${err.message}: ${url(user)}${why}`);
     }
     return c;
   };

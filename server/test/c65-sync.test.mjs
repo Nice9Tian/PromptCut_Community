@@ -37,7 +37,7 @@ async function converged(env, pages, ms = 10_000) {
   await waitFor(async () => {
     st = await serverState(env, PID);
     return pages.every((p) => JSON.stringify(p.project) === JSON.stringify(st.project));
-  }, ms, '各页面与文档服务一致').catch(() => {});
+  }, ms, 'all pages match the document service').catch(() => {});
   return st ?? serverState(env, PID);
 }
 
@@ -65,7 +65,7 @@ function randomEdit(r, page, tag, n) {
       const [c] = tr.clips.splice(tr.clips.findIndex((x) => x.id === cid), 1);
       tr.clips.splice(r.int(tr.clips.length + 1), 0, c);
     } else {
-      p.name = `${tag} 改名 ${n}`;
+      p.name = `${tag} renamed ${n}`;
       p.fps = r.pick([24, 25, 30]);
     }
   });
@@ -73,7 +73,7 @@ function randomEdit(r, page, tag, n) {
 
 // ------------------------------------------------------------------ V2
 
-test('C65-V2-01 两个页面各做 200 次随机编辑、交错提交：两边与文档服务三份逐字节相同', async (t) => {
+test('C65-V2-01 two pages each make 200 random edits and commit interleaved: both pages and the document service are byte-for-byte identical (all three copies)', async (t) => {
   const { env, open } = await setup(t);
   const A = await open({ user: 'alice', session: 'page-a' });
   const B = await open({ user: 'bob', session: 'page-b' });
@@ -88,15 +88,15 @@ test('C65-V2-01 两个页面各做 200 次随机编辑、交错提交：两边�
     else if (r.chance(0.5)) await new Promise((res) => setImmediate(res));
   }
   const st = await converged(env, [A, B], 20_000);
-  assertSameBytes(A.project, st.project, '页面 A 与文档服务');
-  assertSameBytes(B.project, st.project, '页面 B 与文档服务');
+  assertSameBytes(A.project, st.project, 'page A and the document service');
+  assertSameBytes(B.project, st.project, 'page B and the document service');
   assert.equal(A.pending(), 0);
   assert.equal(B.pending(), 0);
 });
 
 // ------------------------------------------------------------------ V6
 
-test('C65-V6-01 断线期间改 20 次，恢复后按顺序落地（每次一条提交，别人按序收到）', async (t) => {
+test('C65-V6-01 20 edits made while disconnected land in order after reconnecting (one commit each, and others receive them in order)', async (t) => {
   const { env, open } = await setup(t);
   const link = await createLink(env);
   t.after(link.close);
@@ -106,20 +106,20 @@ test('C65-V6-01 断线期间改 20 次，恢复后按顺序落地（每次一条
 
   await link.offline(A);
   for (let i = 1; i <= 20; i++) A.edit((p) => { clipOf(p, 'c1').frame.x = 1000 + i; });
-  assert.equal(clipOf(A.project, 'c1').frame.x, 1020, '离线时照常本地落地');
-  assert.equal(A.pending(), 20, '20 次进待发队列');
+  assert.equal(clipOf(A.project, 'c1').frame.x, 1020, 'edits still land locally while offline');
+  assert.equal(A.pending(), 20, 'the 20 edits go into the outgoing queue');
   await sleep(200);
-  assert.deepEqual(w.ops(), [], '断线期间服务端什么都没收到');
+  assert.deepEqual(w.ops(), [], 'the server received nothing while disconnected');
 
   link.online();
   await A.settled(20_000);
   const mine = w.ops().filter((m) => byIs(m.actor, { user: 'alice', session: 'page-a' }));
-  assert.equal(mine.length, 20, `20 次提交各自落地：${mine.length}`);
-  assert.deepEqual(mine.map((m) => m.rev), Array.from({ length: 20 }, (_, i) => rev0 + 1 + i), '版本号连续');
+  assert.equal(mine.length, 20, `each of the 20 commits landed: ${mine.length}`);
+  assert.deepEqual(mine.map((m) => m.rev), Array.from({ length: 20 }, (_, i) => rev0 + 1 + i), 'version numbers are consecutive');
   const xs = mine.map((m) => m.ops.find((o) => o.path.endsWith('/frame/x'))?.value);
-  assert.deepEqual(xs, Array.from({ length: 20 }, (_, i) => 1001 + i), '按离线时的顺序落地');
+  assert.deepEqual(xs, Array.from({ length: 20 }, (_, i) => 1001 + i), 'landed in the order made while offline');
   const st = await serverState(env, PID);
-  assertSameBytes(A.project, st.project, '恢复后页面与文档服务');
+  assertSameBytes(A.project, st.project, 'page and document service after recovery');
 });
 
 /** 离线期间别人也改过：A 断线改 5 次，B 在线改 c1、c2，A 恢复 */
@@ -130,46 +130,46 @@ async function offlineConflict(t) {
   const A = await open({ user: 'alice', session: 'page-a', via: link });
   const B = await open({ user: 'bob', session: 'page-b' });
   await link.offline(A);
-  for (let i = 1; i <= 5; i++) A.edit((p) => { clipOf(p, 'c1').frame.x = 100 + i; clipOf(p, 'c3').params = { text: `离线 ${i}` }; });
+  for (let i = 1; i <= 5; i++) A.edit((p) => { clipOf(p, 'c1').frame.x = 100 + i; clipOf(p, 'c3').params = { text: `Offline ${i}` }; });
   B.edit((p) => { clipOf(p, 'c1').frame.x = -5; clipOf(p, 'c2').frame.x = 555; });
   await B.settled();
   const afterB = await serverState(env, PID);
 
   link.online();
-  await waitFor(() => A.conflicts.length > 0, 15_000, '第一条被拒后通知页面（onOfflineConflict）');
+  await waitFor(() => A.conflicts.length > 0, 15_000, 'the page is notified after the first one is rejected (onOfflineConflict)');
   await sleep(300);
-  assert.equal(A.conflicts.length, 1, '只通知一次');
-  assert.equal(A.pending(), 5, '整批停下：5 条都还在待发队列');
+  assert.equal(A.conflicts.length, 1, 'notified only once');
+  assert.equal(A.pending(), 5, 'the whole batch stops: all 5 are still in the outgoing queue');
   const still = await serverState(env, PID);
-  assert.equal(still.rev, afterB.rev, '被拒之后没有继续提交');
+  assert.equal(still.rev, afterB.rev, 'no further commits after the rejection');
   assert.deepEqual(still.project, afterB.project);
   return { env, A, B, afterB };
 }
 
-test('C65-V6-02 离线期间别人也改过：第一条被拒、整批停下；选「重放」后去掉期望版本依次提交', async (t) => {
+test('C65-V6-02 others also edited during the offline period: the first one is rejected and the whole batch stops; after choosing "Replay", the expected version is dropped and the edits are committed one by one', async (t) => {
   const { env, A, B, afterB } = await offlineConflict(t);
   await A.resolveOffline('replay');
   await A.settled(15_000);
   const st = await converged(env, [A, B]);
-  assert.equal(st.rev, afterB.rev + 5, '5 条依次落地');
-  assert.equal(clipOf(st.project, 'c1').frame.x, 105, '重放后最后写的（A）赢');
-  assert.equal(clipOf(st.project, 'c2').frame.x, 555, 'A 没碰的 c2 保留 B 的');
-  assert.deepEqual(clipOf(st.project, 'c3').params, { text: '离线 5' });
-  assertSameBytes(A.project, st.project, '页面 A');
-  assertSameBytes(B.project, st.project, '页面 B');
+  assert.equal(st.rev, afterB.rev + 5, 'the 5 edits land one after another');
+  assert.equal(clipOf(st.project, 'c1').frame.x, 105, 'after replay, the last writer (A) wins');
+  assert.equal(clipOf(st.project, 'c2').frame.x, 555, 'c2, which A did not touch, keeps B\'s');
+  assert.deepEqual(clipOf(st.project, 'c3').params, { text: 'Offline 5' });
+  assertSameBytes(A.project, st.project, 'page A');
+  assertSameBytes(B.project, st.project, 'page B');
 });
 
-test('C65-V6-03 离线期间别人也改过：选「丢弃」后本地回到服务端版本，丢掉的那批先存本地备份', async (t) => {
+test('C65-V6-03 others also edited during the offline period: after choosing "Discard", local state returns to the server version, and the discarded batch is first saved as a local backup', async (t) => {
   const { env, A, afterB } = await offlineConflict(t);
   const nBackups = A.backups.length;
   await A.resolveOffline('discard');
-  await waitFor(() => A.pending() === 0, 5000, '待发队列清空');
+  await waitFor(() => A.pending() === 0, 5000, 'outgoing queue cleared');
   await sleep(200);
   const st = await serverState(env, PID);
-  assert.equal(st.rev, afterB.rev, '丢弃不提交任何东西');
-  assertSameBytes(A.project, st.project, '页面 A 回到服务端版本');
+  assert.equal(st.rev, afterB.rev, 'discarding commits nothing');
+  assertSameBytes(A.project, st.project, 'page A returns to the server version');
   assert.equal(clipOf(A.project, 'c1').frame.x, -5);
-  assert.ok(A.backups.length > nBackups, '丢弃前把那批本地修改存进本地备份（设计稿第 8 节裁定）');
+  assert.ok(A.backups.length > nBackups, 'before discarding, that batch of local changes is saved to a local backup (design draft section 8 ruling)');
 
   // 丢弃之后照常在线编辑
   A.edit((p) => { clipOf(p, 'c4').frame.x = 44; });
@@ -179,30 +179,30 @@ test('C65-V6-03 离线期间别人也改过：选「丢弃」后本地回到服�
 
 // ------------------------------------------------------------------ V7
 
-test('C65-V7-01 有未确认的操作时保存 .proc：等所有操作确认后才写，写出的内容与文档服务的 rev 一致', async (t) => {
+test('C65-V7-01 saving .proc while operations are unacknowledged: it writes only after all operations are acknowledged, and the written content matches the document service\'s rev', async (t) => {
   const { env, open } = await setup(t);
   const link = await createLink(env);
   t.after(link.close);
   const A = await open({ user: 'alice', session: 'page-a', via: link });
   await link.offline(A);
   A.edit((p) => { clipOf(p, 'c1').frame.x = 71; });
-  A.edit((p) => { p.name = '保存前'; });
+  A.edit((p) => { p.name = 'Before save'; });
   const writes = [];
   const saving = A.save((project, rev) => { writes.push({ project: structuredClone(project), rev }); });
   saving.catch(() => {}); // 断线期间可能提示超时；这里只看写没写
   await sleep(400);
-  assert.deepEqual(writes, [], '还有未确认的操作时不写');
+  assert.deepEqual(writes, [], 'does not write while operations are still unacknowledged');
 
   link.online();
-  await waitFor(() => writes.length > 0, 15_000, '确认后写 .proc');
-  assert.equal(writes.length, 1, '只写一次');
+  await waitFor(() => writes.length > 0, 15_000, 'writes .proc after acknowledgement');
+  assert.equal(writes.length, 1, 'written only once');
   const st = await serverState(env, PID);
-  assert.equal(writes[0].rev, st.rev, '写出时带的 rev 就是文档服务的当前版本');
-  assertSameBytes(writes[0].project, st.project, '写出的内容与文档服务的这一版相同');
-  assert.equal(writes[0].project.name, '保存前');
+  assert.equal(writes[0].rev, st.rev, 'the rev carried when writing is the document service\'s current version');
+  assertSameBytes(writes[0].project, st.project, 'the written content is identical to this version in the document service');
+  assert.equal(writes[0].project.name, 'Before save');
 });
 
-test('C65-V7-02 没有未确认的操作：保存立即写，rev 是最新', async (t) => {
+test('C65-V7-02 no unacknowledged operations: save writes immediately, and rev is the latest', async (t) => {
   const { env, open } = await setup(t);
   const A = await open({ user: 'alice', session: 'page-a' });
   A.edit((p) => { clipOf(p, 'c2').frame.x = 3; });
@@ -217,26 +217,26 @@ test('C65-V7-02 没有未确认的操作：保存立即写，rev 是最新', asy
 
 // ------------------------------------------------------------------ V4 页面侧
 
-test('C65-V4-10 被覆盖的页面：先把自己那一版的该实体存成本地备份，再应用新版本', async (t) => {
+test('C65-V4-10 an overwritten page: first saves its own version of that entity as a local backup, then applies the new version', async (t) => {
   const { open } = await setup(t);
   const A = await open({ user: 'alice', session: 'page-a' });
   const B = await open({ user: 'bob', session: 'page-b' });
-  A.edit((p) => { clipOf(p, 'c1').frame.x = 1; clipOf(p, 'c1').params = { text: 'A 的版本' }; });
+  A.edit((p) => { clipOf(p, 'c1').frame.x = 1; clipOf(p, 'c1').params = { text: 'A\'s version' }; });
   await A.settled();
   const mine = structuredClone(clipOf(A.project, 'c1'));
-  await waitFor(() => clipOf(B.project, 'c1').frame.x === 1, 5000, 'B 收到 A 的改动');
-  B.edit((p) => { clipOf(p, 'c1').frame.x = 2; clipOf(p, 'c1').params = { text: 'B 的版本' }; });
+  await waitFor(() => clipOf(B.project, 'c1').frame.x === 1, 5000, 'B receives A\'s change');
+  B.edit((p) => { clipOf(p, 'c1').frame.x = 2; clipOf(p, 'c1').params = { text: 'B\'s version' }; });
   await B.settled();
-  await waitFor(() => clipOf(A.project, 'c1').frame.x === 2, 5000, 'A 应用了 B 的新版本');
+  await waitFor(() => clipOf(A.project, 'c1').frame.x === 2, 5000, 'A applied B\'s new version');
   const bk = A.backups.filter((b) => b.entity === '/tracks/@t1/clips/@c1');
-  assert.equal(bk.length, 1, `被覆盖方存了一份备份：${JSON.stringify(A.backups).slice(0, 400)}`);
-  assert.deepEqual(bk[0].value, mine, '备份的内容是它原来那一版');
-  assert.equal(B.backups.length, 0, '覆盖方不存备份');
+  assert.equal(bk.length, 1, `the overwritten side saved one backup: ${JSON.stringify(A.backups).slice(0, 400)}`);
+  assert.deepEqual(bk[0].value, mine, 'the backup holds its original version');
+  assert.equal(B.backups.length, 0, 'the overwriting side saves no backup');
 });
 
 // ------------------------------------------------------------------ V8 回环延迟
 
-test('C65-V8-02 本机回环：一个页面改完到另一页面看到变化 ≤ 300 ms', async (t) => {
+test('C65-V8-02 local loopback: from one page\'s edit to the other page seeing the change ≤ 300 ms', async (t) => {
   const { open } = await setup(t, { clips: 50 });
   const A = await open({ user: 'alice', session: 'page-a' });
   const B = await open({ user: 'bob', session: 'page-b' });
@@ -245,9 +245,9 @@ test('C65-V8-02 本机回环：一个页面改完到另一页面看到变化 ≤
     const x = 5000 + i;
     const t0 = performance.now();
     A.edit((p) => { clipOf(p, `c${1 + (i % 50)}`).start = x; }); // 拖动松手 = 一次提交
-    await waitFor(() => clipOf(B.project, `c${1 + (i % 50)}`).start === x, 3000, `第 ${i} 次改动到达 B`);
+    await waitFor(() => clipOf(B.project, `c${1 + (i % 50)}`).start === x, 3000, `change ${i} reaches B`);
     lat.push(performance.now() - t0);
   }
   const warm = lat.slice(2);
-  assert.ok(Math.max(...warm) <= 300, `延迟（ms）：${lat.map((x) => x.toFixed(1)).join(', ')}`);
+  assert.ok(Math.max(...warm) <= 300, `latency (ms): ${lat.map((x) => x.toFixed(1)).join(', ')}`);
 });

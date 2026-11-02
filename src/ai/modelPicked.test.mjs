@@ -15,32 +15,32 @@ const cfg = {
   cliModels: { claude: "opus|sonnet", codex: "gpt-5.6-terra", agy: "gemini-3.8-flash-low|gemini-3.1-pro-high" },
 };
 
-test("清单从哪来:api 读 api.model,三家 CLI 各读自己那条", () => {
+test("Where the model list comes from: api reads api.model, each of the three CLIs reads its own entry", () => {
   assert.deepEqual(modelsFor("api", cfg), ["gpt-4o", "gpt-4o-mini"]);
   assert.deepEqual(modelsFor("claude", cfg), ["opus", "sonnet"]);
   // agy 的档位编在名字里,面板上列的是基名(配对规则见 agyEffort.test.mjs)
   assert.deepEqual(modelsFor("agy", cfg), ["gemini-3.8-flash", "gemini-3.1-pro"]);
 });
 
-test("没配清单、或者根本没有 config:是空数组,不是抛出去", () => {
+test("No model list configured, or no config at all: an empty array, not a throw", () => {
   assert.deepEqual(modelsFor("agy", null), []);
   assert.deepEqual(modelsFor("agy", { cliModels: {} }), []);
   assert.deepEqual(modelsFor("api", {}), []);
 });
 
-test("不在清单里的名字一律退回「默认」——事故里那个点号写法就该被拦在这儿", () => {
+test("Any name not in the model list always falls back to \"Default\": the dotted spelling from the incident must be caught here", () => {
   const models = modelsFor("agy", cfg);
-  assert.equal(normalizeModel("gemini-3.8.flash", models), "", "写错一个字符就不该发出去");
+  assert.equal(normalizeModel("gemini-3.8.flash", models), "", "One mistyped character means it must not be sent");
   // 清单折成基名了,所以对得上的是基名;带后缀那种老写法由 pairModelEffort 先折回来
   assert.equal(normalizeModel("gemini-3.8-flash", models), "gemini-3.8-flash");
 });
 
-test("清单空的时候,任何存着的旧名字都要退回「默认」", () => {
+test("When the model list is empty, any stored old name must fall back to \"Default\"", () => {
   // 用户在设置里把 agy 的模型清单清空了,localStorage 里还留着上次选的名字
   assert.equal(normalizeModel("gemini-3.8-flash-low", modelsFor("agy", { cliModels: { agy: "" } })), "");
 });
 
-test("换了驱动之后,上一家的模型名不会跟着过去", () => {
+test("After the driver is switched, the previous provider's model name does not carry over", () => {
   // 每家的选择是分开记的,但清单也得按家算 —— 拿 claude 的名字去 agy 的清单里找不到
   assert.equal(normalizeModel("opus", modelsFor("agy", cfg)), "");
   assert.equal(normalizeModel("gemini-3.8-flash-low", modelsFor("claude", cfg)), "");

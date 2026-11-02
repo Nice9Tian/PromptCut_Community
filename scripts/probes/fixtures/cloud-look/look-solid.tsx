@@ -14,11 +14,11 @@ function LookSolid({ params }: CardProps<P>) {
 
 export const lookSolid: CardDef<P> = {
   id: "look-solid",
-  name: "看画面探针的纯色卡",
-  description: "测试夹具：整个舞台涂成 color 参数的颜色",
-  tags: ["探针"],
+  name: "Solid color card for the look probe",
+  description: "Test fixture: paints the entire stage in the color given by the color parameter",
+  tags: ["probe"],
   frameMode: "stateful",
   defaults: { color: "#ff0000" },
-  controls: [{ key: "color", label: "颜色", type: "color" }],
+  controls: [{ key: "color", label: "Color", type: "color" }],
   Component: LookSolid,
 };

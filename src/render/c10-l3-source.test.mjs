@@ -23,7 +23,7 @@ function world({ fps = 30 } = {}) {
   const blobs = new Map();
   const deps = {
     async request(msg) {
-      if (msg.type !== "content.get") throw new Error("只认 content.get");
+      if (msg.type !== "content.get") throw new Error("only content.get is recognized");
       if (!content.has(msg.key)) return { type: "content.item", kind: msg.kind, key: msg.key, missing: true };
       return { type: "content.item", kind: msg.kind, key: msg.key, body: structuredClone(content.get(msg.key)) };
     },
@@ -59,7 +59,7 @@ async function settle(src) {
   for (let i = 0; i < 6; i++) { await src.tickNow(); await src.idle(); await new Promise((r) => setTimeout(r, 5)); }
 }
 
-test("C10-L3-1 层表:`original` 只认 v 2 且两项齐的层;最低一档 v 1、v 2 都认;不认得的 v 整张当没有", () => {
+test("C10-L3-1 layer map: `original` only accepts layers with v 2 and both fields present; the lowest tier accepts both v 1 and v 2; an unrecognized v makes the whole map count as absent", () => {
   const v2 = parseLayerMap({ v: 2, kind: "layer-map", projectId: "p", fps: 30, span: 60, layers: [
     { clipId: "a", kind: "html", key: "K", resultKey: "R", firstFrame: 0, count: 10, contentKey: "ck", envFingerprint: FP },
     { clipId: "b", kind: "html", key: "K2", resultKey: "R2", firstFrame: 0, count: 10, contentKey: null, envFingerprint: FP },
@@ -70,9 +70,9 @@ test("C10-L3-1 层表:`original` 只认 v 2 且两项齐的层;最低一档 v 1�
   assert.deepEqual(v2.layers.filter((l) => usableLayer(v2, l, { anyVersion: true })).map((l) => l.clipId), ["a", "b", "c"]);
   const v1 = parseLayerMap({ kind: "layer-map", projectId: "p", fps: 30, span: 60, layers: [{ clipId: "a", kind: "html", key: "K", resultKey: "R", firstFrame: 0, count: 10 }] });
   assert.equal(v1.v, 1);
-  assert.equal(usableLayer(v1, v1.layers[0]), false, "`original` 不认 v 1");
+  assert.equal(usableLayer(v1, v1.layers[0]), false, "`original` does not accept v 1");
   assert.equal(usableLayer(v1, v1.layers[0], { anyVersion: true }), true);
-  assert.equal(parseLayerMap({ v: 9, kind: "layer-map", layers: [] }), null, "不认得的 v 整张当没有");
+  assert.equal(parseLayerMap({ v: 9, kind: "layer-map", layers: [] }), null, "an unrecognized v makes the whole map count as absent");
   // layerRefOf:对得上回带 contentKey / envFingerprint 的那一层;对不上回 null,不抛
   const body = { v: 2, kind: "layer-map", layers: [{ clipId: "a", kind: "html", key: "K", resultKey: "R", firstFrame: 0, count: 10, contentKey: "ck", envFingerprint: FP }] };
   assert.equal(layerRefOf(body, "a").contentKey, "ck");
@@ -81,10 +81,10 @@ test("C10-L3-1 层表:`original` 只认 v 2 且两项齐的层;最低一档 v 1�
   assert.equal(layerRefOf({ ...body, v: 1 }, "a"), null);
   assert.equal(layerRefOf(null, "a"), null);
   assert.equal(layerRefOf("garbage", "a"), null);
-  assert.equal(layerRefOf(v2, "b"), null, "缺内容键");
+  assert.equal(layerRefOf(v2, "b"), null, "missing content key");
 });
 
-test("C10-L3-2 原尺寸:撤快照后不自动预取;按需拉取 snap/<hash> 进 L2;小尺寸请求 0;一层只出自层表那一种环境", async () => {
+test("C10-L3-2 original size: no automatic prefetch after snapshots are withdrawn; fetch snap/<hash> into L2 on demand; small-size requests are 0; a layer comes only from the single environment in the layer map", async () => {
   const w = world();
   w.layerMap([w.layer("a")]);
   w.manifest("R-a", 0, 59);
@@ -98,23 +98,23 @@ test("C10-L3-2 原尺寸:撤快照后不自动预取;按需拉取 snap/<hash> �
   src.setProject("p1");
   src.focus(1, 30);
   await settle(src);
-  assert.equal(w.fetches.filter((f) => f.ns === "px").length, 0, "`original` 不拉小尺寸");
-  assert.equal(w.fetches.filter((f) => f.ns === "snap").length, 0, "撤快照后不自动预取原尺寸快照块");
+  assert.equal(w.fetches.filter((f) => f.ns === "px").length, 0, "`original` does not fetch small sizes");
+  assert.equal(w.fetches.filter((f) => f.ns === "snap").length, 0, "original-size snapshot chunks are not prefetched automatically after snapshots are withdrawn");
   // 按需拉取:凭只读票据拉取并写进 L2
   const html = await src.fetchSnapshot("html", "K-a", 5);
   assert.match(html, /data-f="5"/);
   const snaps = w.fetches.filter((f) => f.ns === "snap");
-  assert.equal(snaps.length, 1, "按需拉取了一块");
-  assert.equal(snaps[0].auth, "Bearer RT", "凭只读票据");
+  assert.equal(snaps.length, 1, "one chunk was fetched on demand");
+  assert.equal(snaps[0].auth, "Bearer RT", "with the read-only ticket");
   await new Promise((r) => setTimeout(r, 20));
   const stored = idb.dump(L2_DB_NAME, "snapshots");
-  assert.ok(stored.some((r) => r.key.startsWith("snap/")), "按需拉取的块进 L2 的 snapshots");
+  assert.ok(stored.some((r) => r.key.startsWith("snap/")), "chunks fetched on demand go into the L2 snapshots");
   assert.equal(src.debug().layers[0].envFingerprint, FP);
   src.stop();
   l2.close();
 });
 
-test("C10-L3-3 关掉再开:已在 L2 的块不再请求,就绪照样出来", async () => {
+test("C10-L3-3 turn off and on again: chunks already in L2 are not requested again, and readiness still comes out", async () => {
   const w = world();
   w.layerMap([w.layer("a")]);
   w.manifest("R-a", 0, 59);
@@ -139,16 +139,16 @@ test("C10-L3-3 关掉再开:已在 L2 的块不再请求,就绪照样出来", as
   again.setProject("p1");
   again.focus(1, 30);
   await settle(again);
-  assert.equal(w.fetches.length - before, 0, "重开之后一个块都没再请求");
+  assert.equal(w.fetches.length - before, 0, "no chunk was requested again after reopening");
   const ranges = layerOf(index, "a", "html")?.ranges;
-  assert.ok(ranges && ranges.some(([lo, hi]) => lo <= 3 && hi >= 3), "就绪从 L2 的 ranges 读回来(含第 3 帧)");
+  assert.ok(ranges && ranges.some(([lo, hi]) => lo <= 3 && hi >= 3), "readiness is read back from the L2 ranges (including frame 3)");
   assert.match(await again.fetchSnapshot("html", "K-a", 3), /data-f="3"/);
   assert.equal(again.stats.snapFetches, 0);
   assert.ok(again.stats.l2Hits >= 1);
   again.stop();
 });
 
-test("C10-L3-4 撤快照后不自动预取原尺寸;v 1 层表的层 `original` 不认(一个请求都不发)", async () => {
+test("C10-L3-4 after snapshot removal, original size is not prefetched automatically; the `original` layer of a v 1 layer table is not recognized (no request is sent at all)", async () => {
   const w = world();
   w.layerMap([w.layer("a")]);
   for (let s = 0; s < 600; s += 60) w.manifest("R-a", s, s + 59);
@@ -157,7 +157,7 @@ test("C10-L3-4 撤快照后不自动预取原尺寸;v 1 层表的层 `original` 
   src.setProject("p1");
   src.focus(10, 30);                 // 全局帧 300,窗口 240..360
   await settle(src);
-  assert.equal(w.fetches.filter((f) => f.ns === "snap").length, 0, "撤快照后不自动预取原尺寸快照块");
+  assert.equal(w.fetches.filter((f) => f.ns === "snap").length, 0, "original-size snapshot chunks are not prefetched automatically after snapshots are withdrawn");
   src.stop();
 
   const w1 = world();
@@ -169,13 +169,13 @@ test("C10-L3-4 撤快照后不自动预取原尺寸;v 1 层表的层 `original` 
   src1.setProject("p1");
   src1.focus(0, 30);
   await settle(src1);
-  assert.equal(w1.fetches.length, 0, "层表对不上:不拉");
-  assert.equal(layerOf(idx, "a", "html"), null, "没有这一层的就绪(按没有预渲染结果处理)");
+  assert.equal(w1.fetches.length, 0, "layer table mismatch: no fetch");
+  assert.equal(layerOf(idx, "a", "html"), null, "this layer has no ready state (treated as no prerender output)");
   assert.deepEqual(src1.debug().skipped, ["a"]);
   src1.stop();
 });
 
-test("C10-L3-5 最低一档:撤快照后不自动预取小尺寸;按需存进 L2(只存 px/),重开后不再请求", async () => {
+test("C10-L3-5 lowest tier: after snapshot removal, small size is not prefetched automatically; stored into L2 on demand (only px/), no more requests after reopening", async () => {
   const w = world();
   w.layerMap([{ clipId: "a", kind: "html", key: "K-a", resultKey: "R-a", firstFrame: 0, count: 120 }], 1);
   w.manifest("R-a", 0, 59);
@@ -186,14 +186,14 @@ test("C10-L3-5 最低一档:撤快照后不自动预取小尺寸;按需存进 L2
   src.setProject("p1");
   src.focus(0, 30);
   await settle(src);
-  assert.equal(w.fetches.filter((f) => f.ns === "px").length, 0, "撤快照后不自动预取小尺寸块");
+  assert.equal(w.fetches.filter((f) => f.ns === "px").length, 0, "after snapshot removal, small-size chunks are not prefetched automatically");
   // 按需取一块进 L2
   const html = await src.fetchSnapshot("html", "K-a", 2);
   assert.match(html, /^<img /);
-  assert.equal(w.fetches.filter((f) => f.ns === "px").length, 1, "按需拉取小尺寸图片");
+  assert.equal(w.fetches.filter((f) => f.ns === "px").length, 1, "small-size image fetched on demand");
   await new Promise((r) => setTimeout(r, 30));
   const stored = idb.dump(L2_DB_NAME, "snapshots");
-  assert.ok(stored.length > 0 && stored.every((r) => r.key.startsWith("px/")), "L2 只存小尺寸");
+  assert.ok(stored.length > 0 && stored.every((r) => r.key.startsWith("px/")), "L2 stores only small size");
   src.stop();
   l2.close();
   const before = w.fetches.length;
@@ -202,8 +202,8 @@ test("C10-L3-5 最低一档:撤快照后不自动预取小尺寸;按需存进 L2
   again.setProject("p1");
   again.focus(0, 30);
   await settle(again);
-  assert.equal(w.fetches.length - before, 0, "重开之后不再请求");
+  assert.equal(w.fetches.length - before, 0, "no more requests after reopening");
   assert.match(await again.fetchSnapshot("html", "K-a", 2), /^<img /);
-  assert.equal(w.fetches.length - before, 0, "命中缓存不再请求");
+  assert.equal(w.fetches.length - before, 0, "cache hit, no more requests");
   again.stop();
 });

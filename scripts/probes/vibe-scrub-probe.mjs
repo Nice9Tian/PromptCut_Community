@@ -43,7 +43,7 @@ const arg = (name, dflt) => { const i = argv.indexOf(name); return i >= 0 ? argv
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const OUT = path.resolve(arg('--out', path.join(os.tmpdir(), 'vibe-scrub-shots')));
 const PORT = Number(arg('--port', 5953));
-if (PORT < 5950 || PORT > 5959) throw new Error(`端口 ${PORT} 不在分给本探针的 5950～5959 里`);
+if (PORT < 5950 || PORT > 5959) throw new Error(`Port ${PORT} is not within 5950-5959, the range assigned to this probe`);
 fs.mkdirSync(OUT, { recursive: true });
 
 const fails = [];
@@ -52,7 +52,7 @@ const check = (cond, label, extra) => { if (!cond) fails.push(label + (extra ===
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const portOpen = (port) => new Promise((resolve) => { const s = net.connect(port, '127.0.0.1'); s.once('connect', () => { s.destroy(); resolve(true); }); s.once('error', () => resolve(false)); });
-if (await portOpen(PORT)) throw new Error(`端口 ${PORT} 已被占用`);
+if (await portOpen(PORT)) throw new Error(`Port ${PORT} is already in use`);
 
 /* ================================================================ V5 源码静态核对 */
 {
@@ -61,8 +61,8 @@ if (await portOpen(PORT)) throw new Error(`端口 ${PORT} 已被占用`);
   const detailHasClear = /start-detail-scrub[\s\S]{0,240}onPointerDown=\{[^}]*getSelection\(\)\?\.removeAllRanges\(\)/.test(detailSrc);
   const extHasClear = /start-ext-scrub[\s\S]{0,240}onPointerDown=\{[^}]*getSelection\(\)\?\.removeAllRanges\(\)/.test(extSrc);
   out.V5 = { detailHasClear, extHasClear };
-  check(detailHasClear, 'V5 DetailEdit.tsx 的进度滑杆在 onPointerDown 清掉选区', out.V5);
-  check(extHasClear, 'V5 ChatSidePanel.tsx 的进度滑杆在 onPointerDown 清掉选区', out.V5);
+  check(detailHasClear, 'V5 the progress slider in DetailEdit.tsx clears the selection on onPointerDown', out.V5);
+  check(extHasClear, 'V5 the progress slider in ChatSidePanel.tsx clears the selection on onPointerDown', out.V5);
 }
 
 const vite = await createViteServer({
@@ -86,9 +86,9 @@ const now = Date.now();
 const tool = (name, input = {}, ok) => ({ kind: 'tool', name: `mcp__promptcut__${name}`, input, ...(ok === undefined ? {} : { ok }) });
 const say = (text) => tool('send_message', { to: 'user', text }, true);
 const MSGS = [
-  { id: 'u1', role: 'user', text: '把开场节奏调快一点，让镜头推进更干脆。' },
+  { id: 'u1', role: 'user', text: 'Speed up the opening pacing a bit, and make the shot push-in crisper.' },
   { id: 'a1', role: 'assistant', text: '', startedAt: now, finishedAt: now, outcome: 'completed', parts: [
-    say('已经把前两段的切换提前了 0.8 秒，你拖一下进度条看看卡点顺不顺。'),
+    say('I moved the switch between the first two segments 0.8 s earlier. Drag the progress bar to see whether the beat points feel smooth.'),
     tool('set_clip_param', { id: 'c1' }, true),
   ] },
 ];
@@ -148,17 +148,17 @@ try {
   });
 
   out.V1 = { detailScrub: styleInfo.detailScrub, extScrub: styleInfo.extScrub };
-  check(styleInfo.detailScrub?.boxShadow === 'none' && styleInfo.detailScrub?.outlineStyle === 'none', 'V1 详细编辑进度条无矩形 box-shadow 与 outline', styleInfo.detailScrub);
-  check(styleInfo.detailScrub?.filter?.includes('drop-shadow('), 'V1 详细编辑进度条用 drop-shadow 顺着轨道发光', styleInfo.detailScrub);
-  check(styleInfo.extScrub?.boxShadow === 'none' && styleInfo.extScrub?.outlineStyle === 'none', 'V1 小窗进度条无矩形 box-shadow 与 outline', styleInfo.extScrub);
-  check(styleInfo.extScrub?.filter?.includes('drop-shadow('), 'V1 小窗进度条用 drop-shadow 顺着轨道发光', styleInfo.extScrub);
+  check(styleInfo.detailScrub?.boxShadow === 'none' && styleInfo.detailScrub?.outlineStyle === 'none', 'V1 the detail editing progress bar has no rectangular box-shadow or outline', styleInfo.detailScrub);
+  check(styleInfo.detailScrub?.filter?.includes('drop-shadow('), 'V1 the detail editing progress bar uses drop-shadow to glow along the track', styleInfo.detailScrub);
+  check(styleInfo.extScrub?.boxShadow === 'none' && styleInfo.extScrub?.outlineStyle === 'none', 'V1 the mini window progress bar has no rectangular box-shadow or outline', styleInfo.extScrub);
+  check(styleInfo.extScrub?.filter?.includes('drop-shadow('), 'V1 the mini window progress bar uses drop-shadow to glow along the track', styleInfo.extScrub);
 
   out.V3 = styleInfo;
   for (const [k, v] of Object.entries(styleInfo)) {
-    check(v?.userSelect === 'none', `V3 ${k} 已设 user-select: none`, v);
+    check(v?.userSelect === 'none', `V3 ${k} has user-select: none set`, v);
   }
-  check(styleInfo.detailScrub?.caretColor === 'rgba(0, 0, 0, 0)', 'V3 详细编辑进度条 caret-color 为透明', styleInfo.detailScrub);
-  check(styleInfo.extScrub?.caretColor === 'rgba(0, 0, 0, 0)', 'V3 小窗进度条 caret-color 为透明', styleInfo.extScrub);
+  check(styleInfo.detailScrub?.caretColor === 'rgba(0, 0, 0, 0)', 'V3 the detail editing progress bar\'s caret-color is transparent', styleInfo.detailScrub);
+  check(styleInfo.extScrub?.caretColor === 'rgba(0, 0, 0, 0)', 'V3 the mini window progress bar\'s caret-color is transparent', styleInfo.extScrub);
 
   /* ================================================================ V2 像素核对(发光不截断成矩形框) */
   const detailShotPath = path.join(OUT, 'scrub-detail-focus.png');
@@ -195,8 +195,8 @@ try {
   const lumMidGlow = lumAt(sampleX, centerY - 10 * dpr);
   const lumFarBg = lumAt(sampleX, centerY - 16 * dpr);
   out.V2 = { lumNearTrack, lumMidGlow, lumFarBg };
-  check(lumNearTrack > lumFarBg + 3, 'V2 轨道外侧 (<input> 盒内) 有真实发光而非被裁空的黑框', out.V2);
-  check(lumNearTrack >= lumMidGlow && lumMidGlow >= lumFarBg, 'V2 发光从轨道向外平滑衰减、没有矩形边界跳变', out.V2);
+  check(lumNearTrack > lumFarBg + 3, 'V2 outside the track (inside the <input> box) there is a real glow, not a clipped-out black box', out.V2);
+  check(lumNearTrack >= lumMidGlow && lumMidGlow >= lumFarBg, 'V2 the glow fades smoothly outward from the track, with no jump at a rectangular boundary', out.V2);
 
   /* ================================================================ V4 拖动与选区核对 */
   // 1) 先故意全选一段聊天文字,再按下并拖动详细编辑进度条:旧选区应立刻被清掉,且拖动后无选区
@@ -259,14 +259,14 @@ try {
   await page.screenshot({ path: path.join(OUT, 'scrub-after-drag.png') });
 
   out.V4 = { preSelLen: preSel.length, afterDetailDrag, afterDetailMissDrag, afterExtDrag, afterExtMissDrag, errors };
-  check(preSel.length > 0, 'V4 拖动前先造出一条非空选区供对照', out.V4);
-  check(afterDetailDrag.selType === 'None' && afterDetailDrag.selText === '', 'V4 按下拖动详细编辑进度条后选区被清空、不留竖线光标', afterDetailDrag);
-  check(afterDetailDrag.value > 30, 'V4 拖动详细编辑进度条后进度值更新', afterDetailDrag);
-  check(afterDetailMissDrag.selType === 'None' && afterDetailMissDrag.selText === '', 'V4 从详细编辑传输栏留白拖过时间与标题不意外选中内容', afterDetailMissDrag);
-  check(afterExtDrag.selType === 'None' && afterExtDrag.selText === '', 'V4 拖动小窗进度条不产生选区与竖线光标', afterExtDrag);
-  check(afterExtDrag.value > 35, 'V4 拖动小窗进度条后进度值更新', afterExtDrag);
-  check(afterExtMissDrag.selType === 'None' && afterExtMissDrag.selText === '', 'V4 从小窗传输栏留白拖向下方聊天区不意外选中内容', afterExtMissDrag);
-  check(errors.length === 0, 'V4 页面无报错', errors.slice(0, 3));
+  check(preSel.length > 0, 'V4 create a non-empty selection before dragging, for comparison', out.V4);
+  check(afterDetailDrag.selType === 'None' && afterDetailDrag.selText === '', 'V4 after pressing and dragging the detail editing progress bar, the selection is cleared and no vertical-line caret is left', afterDetailDrag);
+  check(afterDetailDrag.value > 30, 'V4 the progress value updates after dragging the detail editing progress bar', afterDetailDrag);
+  check(afterDetailMissDrag.selType === 'None' && afterDetailMissDrag.selText === '', 'V4 dragging across the time and title from the blank area of the detail editing transport bar does not unexpectedly select content', afterDetailMissDrag);
+  check(afterExtDrag.selType === 'None' && afterExtDrag.selText === '', 'V4 dragging the mini window progress bar produces no selection or vertical-line caret', afterExtDrag);
+  check(afterExtDrag.value > 35, 'V4 the progress value updates after dragging the mini window progress bar', afterExtDrag);
+  check(afterExtMissDrag.selType === 'None' && afterExtMissDrag.selText === '', 'V4 dragging from the blank area of the mini window transport bar down to the chat area does not unexpectedly select content', afterExtMissDrag);
+  check(errors.length === 0, 'V4 the page has no errors', errors.slice(0, 3));
 } finally {
   await browser.close().catch(() => {});
   await new Promise((r) => server.close(r));

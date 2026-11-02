@@ -43,11 +43,11 @@
  */
 import { createServer, connect } from 'node:net';
 
-const USAGE = `用法：node scripts/probes/render-queue-proxy.mjs --listen 127.0.0.1:8795 --target <host:port>
+const USAGE = `Usage: node scripts/probes/render-queue-proxy.mjs --listen 127.0.0.1:8795 --target <host:port>
   [--delay-ms 200] [--stall-prob 0.05] [--stall-ms 200..1000] [--close-prob 0.001]
   [--stall-after-ms N] [--cut-after-ms N] [--cut-once] [--stdin-control]
-  --stall-prob / --stall-ms 旧名 --loss / --loss-hold-ms。不是 IP 丢包：字节从不丢，只按概率扣住一块（队头阻塞）或按概率断开连接。
-  --stdin-control 的命令：cut、stall、resume、status。`;
+  --stall-prob / --stall-ms (old names: --loss / --loss-hold-ms). This is not IP packet loss: bytes are never dropped; with a given probability a chunk is held back (head-of-line blocking) or the connection is closed.
+  Commands for --stdin-control: cut, stall, resume, status.`;
 
 function usage(msg) {
   if (msg) console.error(msg);
@@ -64,26 +64,26 @@ const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (FLAGS.has(a)) { args[a.slice(2)] = true; continue; }
-  if (!VALUED.has(a)) usage(`不认识的参数：${a}`);
+  if (!VALUED.has(a)) usage(`Unknown argument: ${a}`);
   const v = argv[++i];
-  if (v === undefined) usage(`${a} 缺值`);
+  if (v === undefined) usage(`${a} is missing a value`);
   const name = ALIAS[a.slice(2)] ?? a.slice(2);
-  if (args[name] !== undefined) usage(`${a} 与它的旧名 / 新名重复给了`);
+  if (args[name] !== undefined) usage(`${a} was given together with its old / new name`);
   args[name] = v;
 }
-if (!args.listen || !args.target) usage(argv.length ? '缺 --listen 或 --target' : undefined);
+if (!args.listen || !args.target) usage(argv.length ? 'Missing --listen or --target' : undefined);
 
 function hostPort(s, what) {
   const i = s.lastIndexOf(':');
   const host = i > 0 ? s.slice(0, i).replace(/^\[|\]$/g, '') : '127.0.0.1';
   const port = Number(i >= 0 ? s.slice(i + 1) : s);
-  if (!Number.isInteger(port) || port < 0 || port > 65535) usage(`${what} 的端口不对：${s}`);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) usage(`Invalid port for ${what}: ${s}`);
   return { host, port };
 }
 const num = (name, dflt, { min = 0, max = Infinity } = {}) => {
   if (args[name] === undefined) return dflt;
   const n = Number(args[name]);
-  if (!Number.isFinite(n) || n < min || n > max) usage(`--${name} 要是 ${min}～${max} 之间的数`);
+  if (!Number.isFinite(n) || n < min || n > max) usage(`--${name} must be a number between ${min} and ${max}`);
   return n;
 };
 
@@ -95,14 +95,14 @@ let holdMin = 200;
 let holdMax = 1000;
 if (args['loss-hold-ms'] !== undefined) {
   const m = /^(\d+)(?:\.\.(\d+))?$/.exec(args['loss-hold-ms']);
-  if (!m) usage('--stall-ms（--loss-hold-ms）写成 200..1000 或单个数');
+  if (!m) usage('--stall-ms (--loss-hold-ms) must be written as 200..1000 or a single number');
   holdMin = Number(m[1]);
   holdMax = m[2] === undefined ? holdMin : Number(m[2]);
-  if (holdMax < holdMin) usage('--stall-ms（--loss-hold-ms）的上界小于下界');
+  if (holdMax < holdMin) usage('The upper bound of --stall-ms (--loss-hold-ms) is below the lower bound');
 }
 const closeProb = num('close-prob', 0, { max: 1 });
 /** 写进 listen / summary 行，免得有人把 loss 读成 IP 丢包率 */
-const DISTURB_MEANING = '每块按概率 stallProb 扣住 stallMs 再按序转发、按概率 closeProb 断开整条连接；字节从不丢，不是 IP 丢包率';
+const DISTURB_MEANING = 'Each chunk is held back for stallMs with probability stallProb and then forwarded in order, and the whole connection is closed with probability closeProb; bytes are never dropped, so this is not an IP packet loss rate';
 const stallAfterMs = args['stall-after-ms'] === undefined ? null : num('stall-after-ms', 0);
 const cutAfterMs = args['cut-after-ms'] === undefined ? null : num('cut-after-ms', 0);
 const cutOnce = args['cut-once'] === true;

@@ -119,8 +119,8 @@ export const gateClear = (page, ms = 60_000) => page.waitForFunction(() => !docu
 export function emptyProject(name) {
   return {
     version: 1, id: `mobile-seed-${Date.now().toString(36)}`, name, width: 1920, height: 1080, fps: 30, duration: 30, themeId: 'midnight', media: [],
-    tracks: [{ id: 't-1', name: '序列 1', clips: [] }, { id: 't-2', name: '序列 2', clips: [] }],
-    cuts: [{ id: 'cut-1', name: '剪辑 1' }, { id: 'cut-2', name: '片头', tracks: [{ id: 't-a', name: '序列 1', clips: [] }], duration: 3 }],
+    tracks: [{ id: 't-1', name: 'Track 1', clips: [] }, { id: 't-2', name: 'Track 2', clips: [] }],
+    cuts: [{ id: 'cut-1', name: 'Cut 1' }, { id: 'cut-2', name: 'Intro', tracks: [{ id: 't-a', name: 'Track 1', clips: [] }], duration: 3 }],
     activeCutId: 'cut-1',
   };
 }

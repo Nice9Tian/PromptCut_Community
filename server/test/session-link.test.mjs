@@ -75,60 +75,60 @@ async function gatewayPair(t, { retainMs = 60_000 } = {}) {
   });
   t.after(() => ep.close());
   const ev = watch(ep);
-  await waitFor(() => ev.opens === 1, 3000, '建会话');
+  await waitFor(() => ev.opens === 1, 3000, 'session created');
   return { doc, gw, proxy, ep, ev, logs };
 }
 
-test('SL-resume 传输被掐断：自动接续，断开期间两边的消息各到一次、按序；核心只见一条连接；日志不含会话号', async (t) => {
+test('SL-resume transport cut: resumes automatically, messages from both sides during the break arrive exactly once and in order; the core sees only one connection; the log contains no session id', async (t) => {
   const { doc, gw, proxy, ep, ev, logs } = await gatewayPair(t);
   assert.equal(ep.stats().legacy, false);
   ep.send({ type: 'sl.echo', n: 1 });
-  await waitFor(() => ev.got.some((m) => m.n === 1), 2000, '第 1 条回包');
+  await waitFor(() => ev.got.some((m) => m.n === 1), 2000, 'reply 1');
   proxy.cutAll();
   ep.send({ type: 'sl.echo', n: 2 });
   ep.send({ type: 'sl.echo', n: 3 });
-  await waitFor(() => gw.stats.resumed >= 0 && [...gw.sessions.values()].some((s) => s.ws === null), 2000, '网关脱开');
+  await waitFor(() => gw.stats.resumed >= 0 && [...gw.sessions.values()].some((s) => s.ws === null), 2000, 'Gateway detached');
   doc.mod.ctx.send(doc.mod.connects[0], { type: 'sl.pushed' });
-  await waitFor(() => ev.got.filter((m) => m.type === 'sl.echoed').length === 3 && ev.got.some((m) => m.type === 'sl.pushed'), 5000, '接续后到齐');
+  await waitFor(() => ev.got.filter((m) => m.type === 'sl.echoed').length === 3 && ev.got.some((m) => m.type === 'sl.pushed'), 5000, 'All arrived after resume');
   assert.equal(ev.resumes, 1);
   assert.equal(ev.opens, 1);
   assert.deepEqual(ev.closes, []);
-  assert.deepEqual(doc.mod.seen.map((s) => s.msg.n), [1, 2, 3], '模块每条一次、按序');
+  assert.deepEqual(doc.mod.seen.map((s) => s.msg.n), [1, 2, 3], 'The module gets each message once, in order');
   assert.deepEqual(ev.got.filter((m) => m.type === 'sl.echoed').map((m) => m.n), [1, 2, 3]);
-  for (const m of ev.got) assert.ok(!('seq' in m) && !('ack' in m), `上层看不到 seq / ack：${JSON.stringify(m)}`);
+  for (const m of ev.got) assert.ok(!('seq' in m) && !('ack' in m), `the upper layer cannot see seq / ack: ${JSON.stringify(m)}`);
   assert.equal(doc.mod.connects.length, 1);
   assert.equal(doc.mod.disconnects.length, 0);
   assert.equal(ep.stats().resumes, 1);
   assert.equal(ep.stats().transport, 'ws');
-  await waitFor(() => ep.stats().pendingBytes === 0, 3000, '确认释放');
+  await waitFor(() => ep.stats().pendingBytes === 0, 3000, 'Acknowledgement released');
   const sid = [...gw.sessions.keys()][0];
-  assert.ok(!JSON.stringify(logs).includes(sid), '会话号不进日志');
+  assert.ok(!JSON.stringify(logs).includes(sid), 'the session id stays out of the log');
   assert.ok(logs.some((l) => l.event === 'session.detach') && logs.some((l) => l.event === 'session.resume'));
 });
 
-test('SL-drop-transport dropTransport() 只断传输：会话接续，onClose 不调', async (t) => {
+test('SL-drop-transport dropTransport() only cuts the transport: the session resumes, onClose is not called', async (t) => {
   const { gw, ep, ev } = await gatewayPair(t);
   assert.equal(ep.dropTransport(), true);
   ep.send({ type: 'sl.echo', n: 7 });
-  await waitFor(() => ev.got.some((m) => m.n === 7), 3000, '接续后回包');
+  await waitFor(() => ev.got.some((m) => m.n === 7), 3000, 'Reply after resume');
   assert.equal(ev.resumes, 1);
   assert.deepEqual(ev.closes, []);
   assert.equal(gw.stats.opened, 1);
 });
 
-test('SL-4410 会话在服务端已过期：接续被 4410 关，onClose 一次、重建会话', async (t) => {
+test('SL-4410 the session has expired on the server: resume is closed with 4410, onClose once, session rebuilt', async (t) => {
   const { doc, proxy, ev } = await gatewayPair(t, { retainMs: 200 });
   proxy.mode = 'reject';
   proxy.cutAll();
-  await waitFor(() => doc.mod.disconnects.length === 1, 3000, '网关保留期满、上游断线');
+  await waitFor(() => doc.mod.disconnects.length === 1, 3000, 'Gateway retention period elapsed, upstream disconnected');
   proxy.mode = 'pass';
-  await waitFor(() => ev.opens === 2, 5000, '重建会话');
+  await waitFor(() => ev.opens === 2, 5000, 'session rebuilt');
   assert.equal(ev.closes.length, 1);
   assert.ok([4410, 1006].includes(ev.closes[0].code), JSON.stringify(ev.closes));
   assert.equal(doc.mod.connects.length, 2);
 });
 
-test('SL-4404 换了一个服务端（会话不存在）：接续被 4404 关，立刻重建，不等保留期', async (t) => {
+test('SL-4404 swapped to a different server (session does not exist): resume is closed with 4404, rebuilt immediately without waiting for the retention period', async (t) => {
   const { proxy, ev } = await gatewayPair(t, { retainMs: 60_000 });
   const doc2 = await startDoc(t);
   const gw2 = await startSessionGateway({ upstream: doc2.url });
@@ -136,33 +136,33 @@ test('SL-4404 换了一个服务端（会话不存在）：接续被 4404 关，
   proxy.retarget(gw2.port);
   const t0 = Date.now();
   proxy.cutAll();
-  await waitFor(() => ev.opens === 2, 5000, '在新服务上重建会话');
+  await waitFor(() => ev.opens === 2, 5000, 'session rebuilt on the new service');
   assert.ok(Date.now() - t0 < 5000);
   assert.deepEqual(ev.closes.map((c) => c.code), [4404]);
   assert.equal(doc2.mod.connects.length, 1);
 });
 
-test('SL-server-end 服务端以 4003 结束会话：onClose { 4003 }、不接续、建新会话', async (t) => {
+test('SL-server-end the server ends the session with 4003: onClose { 4003 }, no resume, new session', async (t) => {
   const { gw, ev } = await gatewayPair(t);
   gw.endAll(4003, 'kicked');
   await waitFor(() => ev.closes.length === 1, 3000, 'onClose');
   assert.deepEqual(ev.closes[0], { code: 4003, reason: 'kicked' });
-  await waitFor(() => ev.opens === 2, 3000, '新会话');
+  await waitFor(() => ev.opens === 2, 3000, 'New session');
   assert.equal(ev.resumes, 0);
   assert.equal(gw.stats.resumed, 0);
 });
 
-test('SL-close close()：服务端立刻结束会话（上游断线），端点不再重连', async (t) => {
+test('SL-close close(): the server ends the session immediately (upstream disconnected), the endpoint no longer reconnects', async (t) => {
   const { doc, gw, ep, ev } = await gatewayPair(t);
   ep.close();
-  await waitFor(() => doc.mod.disconnects.length === 1, 3000, '上游断线');
+  await waitFor(() => doc.mod.disconnects.length === 1, 3000, 'Upstream disconnected');
   assert.equal(gw.sessions.size, 0);
   await sleep(150);
   assert.equal(gw.stats.opened, 1);
   assert.deepEqual(ev.closes, [{ code: 1000, reason: 'closed' }]);
 });
 
-test('SL-legacy 旧服务端（没有会话层）：退化为一条传输一个会话，收发照常，探测的 error 不交上层，断了报 onClose 再建', async (t) => {
+test('SL-legacy old server (no session layer): degrades to one session per transport, send and receive work as usual, the probe error is not passed to the upper layer, a disconnect reports onClose and then rebuilds', async (t) => {
   const doc = await startDoc(t);
   const front = await startLegacyFront({ upstream: doc.url });
   t.after(() => front.close());
@@ -171,21 +171,21 @@ test('SL-legacy 旧服务端（没有会话层）：退化为一条传输一个�
   const ep = createDocEndpoint({ url: `ws://127.0.0.1:${proxy.port}/`, backoff: BACKOFF, transport: 'ws', log: () => {} });
   t.after(() => ep.close());
   const ev = watch(ep);
-  await waitFor(() => ev.opens === 1, 3000, '旧服务端上建成');
+  await waitFor(() => ev.opens === 1, 3000, 'Established on the old server');
   assert.equal(ep.stats().legacy, true);
   ep.send({ type: 'sl.echo', n: 1 });
-  await waitFor(() => ev.got.some((m) => m.n === 1), 2000, '回包');
+  await waitFor(() => ev.got.some((m) => m.n === 1), 2000, 'reply');
   await sleep(100);
-  assert.deepEqual(ev.got, [{ type: 'sl.echoed', n: 1 }], '探测的 error unsupported 不交上层，消息原样');
-  assert.deepEqual(doc.mod.seen.map((s) => s.msg), [{ type: 'sl.echo', n: 1 }], '旧服务端收到的消息不带 seq');
+  assert.deepEqual(ev.got, [{ type: 'sl.echoed', n: 1 }], 'The probe error unsupported is not passed to the upper layer, messages unchanged');
+  assert.deepEqual(doc.mod.seen.map((s) => s.msg), [{ type: 'sl.echo', n: 1 }], 'Messages received by the old server carry no seq');
   proxy.cutAll();
-  await waitFor(() => ev.closes.length === 1, 3000, '断了就是会话结束');
-  assert.equal(ep.send({ type: 'sl.echo', n: 2 }), false, '断开期间丢弃');
-  await waitFor(() => ev.opens === 2, 3000, '再建');
+  await waitFor(() => ev.closes.length === 1, 3000, 'A disconnect means the session ends');
+  assert.equal(ep.send({ type: 'sl.echo', n: 2 }), false, 'Dropped while disconnected');
+  await waitFor(() => ev.opens === 2, 3000, 'Rebuilt');
   assert.equal(ev.resumes, 0);
 });
 
-test('SL-renew-false 握手被拒：onConnectFail，端点自己关掉，不再重试；会话结束同样关掉', async (t) => {
+test('SL-renew-false handshake rejected: onConnectFail, the endpoint closes itself and does not retry; when the session ends it closes in the same way', async (t) => {
   const doc = await startDoc(t, { deny: true });
   const ep = createDocEndpoint({ url: doc.url, backoff: BACKOFF, transport: 'ws', renew: false, log: () => {} });
   t.after(() => ep.close());
@@ -200,15 +200,15 @@ test('SL-renew-false 握手被拒：onConnectFail，端点自己关掉，不再�
   const ep2 = createDocEndpoint({ url: gw.url, backoff: BACKOFF, transport: 'ws', renew: false, log: () => {} });
   t.after(() => ep2.close());
   const ev2 = watch(ep2);
-  await waitFor(() => ev2.opens === 1, 3000, '建会话');
+  await waitFor(() => ev2.opens === 1, 3000, 'session created');
   gw.endAll(4003, 'kicked');
   await waitFor(() => ev2.closes.length === 1, 3000, 'onClose');
   assert.equal(ep2.closed, true);
   await sleep(150);
-  assert.equal(ev2.opens, 1, '不再建新会话');
+  assert.equal(ev2.opens, 1, 'No new session is created');
 });
 
-test('SL-transport 传输取值：auto / ws 照认，http 在 HT-a 回未启用，其余抛错；环境变量在选项之后', () => {
+test('SL-transport transport values: auto / ws are accepted, http returns not enabled in HT-a, anything else throws; the environment variable comes after the options', () => {
   assert.equal(transportOf(undefined, undefined), 'auto');
   assert.equal(transportOf('WS', undefined), 'ws');
   assert.equal(transportOf(undefined, 'ws'), 'ws');
@@ -224,7 +224,7 @@ test('SL-transport 传输取值：auto / ws 照认，http 在 HT-a 回未启用�
   assert.equal(utf8Length('aé中😀'), 1 + 2 + 3 + 4);
 });
 
-test('SL-agent-link Agent 服务端的连接（doc-link）走会话：传输被掐断，在途请求照样拿到回包，连接不算断线', async (t) => {
+test('SL-agent-link the Agent server connection (doc-link) goes through a session: when the transport is cut, in-flight requests still get their replies, and the connection does not count as disconnected', async (t) => {
   const http = await import('node:http');
   const { createSharedDocService } = await import('../docservice/shared-service.mjs');
   const { createAgentLink } = await import('../agent/doc-link.mjs');
@@ -244,9 +244,9 @@ test('SL-agent-link Agent 服务端的连接（doc-link）走会话：传输被�
   proxy.cutAll();
   const reply = await conv.request({ type: 'project.op', projectId: 'p-sl', opId: 'sl-op-1', session: 'agent-sl', ops: [{ op: 'set', path: '', value: { id: 'p-sl', tracks: [] } }] });
   assert.equal(reply.type, 'project.op.ok', JSON.stringify(reply));
-  assert.ok(logs.some((l) => l.event === 'agent.link.resume'), `接续过：${JSON.stringify(logs.map((l) => l.event))}`);
-  assert.ok(!logs.some((l) => l.event === 'agent.link.close'), '没有断线');
-  assert.equal(gw.stats.opened, 1, '只建过一个会话');
+  assert.ok(logs.some((l) => l.event === 'agent.link.resume'), `Resumed: ${JSON.stringify(logs.map((l) => l.event))}`);
+  assert.ok(!logs.some((l) => l.event === 'agent.link.close'), 'No disconnect');
+  assert.equal(gw.stats.opened, 1, 'Only one session was ever created');
   assert.equal(link.describe().conversations[0].state, 'open');
 });
 
@@ -269,7 +269,7 @@ function fakeSocketClass() {
   return { FakeWs, sockets };
 }
 
-test('SL-resume-route 接续带新路由能力', async () => {
+test('SL-resume-route resume carries the new routing capability', async () => {
   const { FakeWs, sockets } = fakeSocketClass();
   let release, calls = 0;
   const ep = createDocEndpoint({ url: 'ws://relay.test/', WebSocket: FakeWs, transport: 'ws', legacyProbeMs: -1,
@@ -284,7 +284,7 @@ test('SL-resume-route 接续带新路由能力', async () => {
   ep.close();
 });
 
-test('SL-resume-route-error 暂时路由失败保留会话重试；关闭后迟到结果不建连接', async () => {
+test('SL-resume-route-error a temporary routing failure keeps the session and retries; after close, a late result does not create a connection', async () => {
   const { FakeWs, sockets } = fakeSocketClass();
   let release, calls = 0;
   const ep = createDocEndpoint({ url: 'ws://relay.test/', WebSocket: FakeWs, transport: 'ws', legacyProbeMs: -1,
@@ -297,7 +297,7 @@ test('SL-resume-route-error 暂时路由失败保留会话重试；关闭后迟�
   assert.equal(sockets.length, 1);
 });
 
-test('SL-ack-bytes 收到的未确认原文满 64 KiB 就立刻单发 session.ack，不等 1 s（〔裁〕2026-09-27，两端同一条）', () => {
+test('SL-ack-bytes once 64 KiB of unacknowledged raw text has been received, send session.ack immediately on its own without waiting 1 s ([ruling] 2026-09-27, same rule on both ends)', () => {
   const { FakeWs, sockets } = fakeSocketClass();
   const ep = createDocEndpoint({ url: 'ws://doc.test/', WebSocket: FakeWs, transport: 'ws', log: () => {}, legacyProbeMs: -1 });
   try {
@@ -307,13 +307,13 @@ test('SL-ack-bytes 收到的未确认原文满 64 KiB 就立刻单发 session.ac
     s.open();
     const pad = 'p'.repeat(40 * 1024);
     s.push({ type: 'x', seq: 1, pad });
-    assert.deepEqual(s.acks(), [], '40 KiB：还不到 64 KiB，不立刻确认');
+    assert.deepEqual(s.acks(), [], '40 KiB: not yet 64 KiB, no immediate ack');
     s.push({ type: 'x', seq: 2, pad });
-    assert.deepEqual(s.acks(), [{ type: 'session.ack', ack: 2 }], '累计过 64 KiB：当场确认到 2');
+    assert.deepEqual(s.acks(), [{ type: 'session.ack', ack: 2 }], 'Over 64 KiB cumulatively: acknowledges up to 2 on the spot');
     s.push({ type: 'x', seq: 3, pad: 'q' });
-    assert.equal(s.acks().length, 1, '计数从确认处重新算：一条小消息不立刻确认');
+    assert.equal(s.acks().length, 1, 'Counting restarts from the ack point: a single small message is not acknowledged immediately');
     for (let n = 4; n <= 34; n++) s.push({ type: 'x', seq: n });
-    assert.deepEqual(s.acks().at(-1), { type: 'session.ack', ack: 34 }, '满 32 条照旧立刻确认');
+    assert.deepEqual(s.acks().at(-1), { type: 'session.ack', ack: 34 }, 'Reaching 32 messages still acknowledges immediately as before');
     assert.equal(got.length, 34);
     assert.deepEqual(SESSION_DEFAULTS.ackBytes, 64 * 1024);
   } finally {
@@ -343,7 +343,7 @@ async function realPair(t, { retainMs = 60_000, renew = true } = {}) {
   });
   t.after(() => ep.close());
   const ev = watch(ep);
-  await waitFor(() => ev.opens === 1, 3000, '建会话');
+  await waitFor(() => ev.opens === 1, 3000, 'session created');
   const health = async () => (await fetch(`http://127.0.0.1:${port}/healthz`)).json();
   return { service, mod, port, proxy, ep, ev, logs, health };
 }
@@ -352,10 +352,10 @@ async function realPair(t, { retainMs = 60_000, renew = true } = {}) {
 async function detach(pair) {
   pair.proxy.mode = 'reject';
   pair.proxy.cutAll();
-  await waitFor(async () => (await pair.health()).sessions.detached === 1, 3000, '服务端脱开');
+  await waitFor(async () => (await pair.health()).sessions.detached === 1, 3000, 'server detached');
 }
 
-test('SL-closed-code 4410 的 reason 里取原关闭码：session-closed <码>[ <原因>]；别的写法回 null', () => {
+test('SL-closed-code extract the original close code from the reason of 4410: session-closed <code>[ <reason>]; any other form returns null', () => {
   assert.deepEqual(closedCodeOf('session-closed 4004 deleted'), { code: 4004, reason: 'deleted' });
   assert.deepEqual(closedCodeOf('session-closed 4003 removed'), { code: 4003, reason: 'removed' });
   assert.deepEqual(closedCodeOf('session-closed 1006 timeout'), { code: 1006, reason: 'timeout' });
@@ -367,55 +367,55 @@ test('SL-closed-code 4410 的 reason 里取原关闭码：session-closed <码>[ 
 });
 
 for (const [code, reason] of [[4004, 'deleted'], [4003, 'kicked'], [4003, 'removed']]) {
-  test(`SL-4410-final 脱开期间服务端以 ${code} ${reason} 结束会话：接续得 4410，上层收到的是 ${code} ${reason}，与连着时一样`, async (t) => {
+  test(`SL-4410-final the server ends the session with ${code} ${reason} while detached: resume gets 4410, the upper layer receives ${code} ${reason}, same as when connected`, async (t) => {
     const pair = await realPair(t, { renew: false });
     const connId = pair.mod.connects[0];
     await detach(pair);
-    assert.equal(pair.mod.ctx.close(connId, code, reason), true, '服务端关掉脱开中的会话');
-    await waitFor(() => pair.mod.disconnects.length === 1, 3000, '服务端断线');
+    assert.equal(pair.mod.ctx.close(connId, code, reason), true, 'The server closed the detached session');
+    await waitFor(() => pair.mod.disconnects.length === 1, 3000, 'Server disconnected');
     pair.proxy.mode = 'pass';
     await waitFor(() => pair.ev.closes.length === 1, 5000, 'onClose');
-    assert.deepEqual(pair.ev.closes, [{ code, reason }], '按原关闭码与原因报');
+    assert.deepEqual(pair.ev.closes, [{ code, reason }], 'Reported with the original close code and reason');
     assert.equal(pair.ev.resumes, 0);
-    assert.ok(pair.logs.some((l) => l.event === 'session.lost' && l.code === 4410 && l.closedCode === code), '日志里记着 4410 与原码');
+    assert.ok(pair.logs.some((l) => l.event === 'session.lost' && l.code === 4410 && l.closedCode === code), 'The log records 4410 and the original code');
     // 对照：连着时收到同一个码，上层看到的一样
     const live = await realPair(t, { renew: false });
     live.mod.ctx.close(live.mod.connects[0], code, reason);
-    await waitFor(() => live.ev.closes.length === 1, 3000, '连着时的 onClose');
-    assert.deepEqual(live.ev.closes, pair.ev.closes, '脱开期间与连着时，上层收到的相同');
+    await waitFor(() => live.ev.closes.length === 1, 3000, 'onClose while connected');
+    assert.deepEqual(live.ev.closes, pair.ev.closes, 'The upper layer receives the same thing while detached as while connected');
   });
 }
 
-test('SL-4410-final-renew 缺省 renew 的端点（节点）：脱开期间删项目，onClose { 4004 } 后与连着时一样按退避建新会话', async (t) => {
+test('SL-4410-final-renew endpoint with the default renew (node): the project is deleted while detached, and after onClose { 4004 } a new session is created with backoff, same as when connected', async (t) => {
   const pair = await realPair(t);
   await detach(pair);
   pair.mod.ctx.close(pair.mod.connects[0], 4004, 'deleted');
-  await waitFor(() => pair.mod.disconnects.length === 1, 3000, '服务端断线');
+  await waitFor(() => pair.mod.disconnects.length === 1, 3000, 'Server disconnected');
   pair.proxy.mode = 'pass';
-  await waitFor(() => pair.ev.opens === 2, 5000, '新会话');
+  await waitFor(() => pair.ev.opens === 2, 5000, 'New session');
   assert.deepEqual(pair.ev.closes, [{ code: 4004, reason: 'deleted' }]);
 });
 
 for (const [code, reason] of [[1013, 'backpressure'], [1001, 'shutdown'], [1000, '']]) {
-  test(`SL-4410-renew 脱开期间会话以会重连的 ${code} 结束：照报 4410 并重建`, async (t) => {
+  test(`SL-4410-renew the session ends with ${code}, a code that reconnects, while detached: 4410 is still reported and the session is rebuilt`, async (t) => {
     const pair = await realPair(t);
     await detach(pair);
     pair.mod.ctx.close(pair.mod.connects[0], code, reason);
-    await waitFor(() => pair.mod.disconnects.length === 1, 3000, '服务端断线');
+    await waitFor(() => pair.mod.disconnects.length === 1, 3000, 'Server disconnected');
     pair.proxy.mode = 'pass';
-    await waitFor(() => pair.ev.opens === 2, 5000, '重建会话');
+    await waitFor(() => pair.ev.opens === 2, 5000, 'session rebuilt');
     assert.equal(pair.ev.closes.length, 1);
     assert.equal(pair.ev.closes[0].code, 4410);
-    assert.equal(closedCodeOf(pair.ev.closes[0].reason)?.code, code, `reason 里带原码：${pair.ev.closes[0].reason}`);
+    assert.equal(closedCodeOf(pair.ev.closes[0].reason)?.code, code, `The reason carries the original code: ${pair.ev.closes[0].reason}`);
   });
 }
 
-test('SL-4410-expired 保留期满：报 4410（墓碑 1006 timeout）或本端先判出期满（1006 retain-expired），都重建，不报 4003 / 4004', async (t) => {
+test('SL-4410-expired retention period elapsed: reports 4410 (tombstone 1006 timeout) or this end decides it expired first (1006 retain-expired), both rebuild, and 4003 / 4004 are not reported', async (t) => {
   const pair = await realPair(t, { retainMs: 300 });
   await detach(pair);
-  await waitFor(() => pair.mod.disconnects.length === 1, 3000, '保留期满');
+  await waitFor(() => pair.mod.disconnects.length === 1, 3000, 'Retention period elapsed');
   pair.proxy.mode = 'pass';
-  await waitFor(() => pair.ev.opens === 2, 5000, '重建会话');
+  await waitFor(() => pair.ev.opens === 2, 5000, 'session rebuilt');
   assert.equal(pair.ev.closes.length, 1);
   const c = pair.ev.closes[0];
   assert.ok(c.code === 1006 || (c.code === 4410 && closedCodeOf(c.reason)?.code === 1006), JSON.stringify(c));

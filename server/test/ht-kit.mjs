@@ -85,10 +85,10 @@ export const HAS_TRUST_SWITCH = (() => {
 })();
 
 /** `test(name, { skip }, fn)` 用：到位就是 false（真跑），没到位就是写明原因的字符串 */
-export const SKIP_SERVER = HAS_SERVER_SESSION ? false : '服务端会话层未到位：server/docservice/session.mjs 不存在（HT-a 集成后自动转为真跑，假设 H1）';
-export const SKIP_CLIENT = HAS_CLIENT_SESSION ? false : '客户端会话层未到位：server/render-node/session-link.mjs 不存在（HT-a 集成后自动转为真跑，假设 H10）';
+export const SKIP_SERVER = HAS_SERVER_SESSION ? false : 'server session layer not in place: server/docservice/session.mjs does not exist (switches to a real run automatically once HT-a is integrated, assumption H1)';
+export const SKIP_CLIENT = HAS_CLIENT_SESSION ? false : 'client session layer not in place: server/render-node/session-link.mjs does not exist (switches to a real run automatically once HT-a is integrated, assumption H10)';
 export const SKIP_BOTH = SKIP_SERVER || SKIP_CLIENT;
-export const SKIP_TRUST = HAS_TRUST_SWITCH ? false : '本机信任开关未到位：server/hosted/*.mjs 里没有 PROMPTCUT_TRUST_LOOPBACK（HT-a 集成后自动转为真跑，假设 H13）';
+export const SKIP_TRUST = HAS_TRUST_SWITCH ? false : 'local trust switch not in place: PROMPTCUT_TRUST_LOOPBACK is not in server/hosted/*.mjs (switches to a real run automatically once HT-a is integrated, assumption H13)';
 
 // ================================================================== 服务端
 
@@ -196,7 +196,7 @@ export async function openSession(env, { user = 'alice', resume = null, startSeq
   try {
     await c.opened;
   } catch (err) {
-    throw new Error(`会话握手失败（${resume ? '接续' : '新建'}）：${err.message}`);
+    throw new Error(`session handshake failed (${resume ? 'resumed' : 'new'}): ${err.message}`);
   }
   const welcome = await c.next((m) => m?.type === 'session.welcome', 3000);
   return decorate(c, welcome, startSeq);
@@ -225,7 +225,7 @@ function addEnded(c) {
   c.closeEvent = c.closed.then((e) => ({ code: e.code, reason: e.reason }));
   c.ended = (ms = 3000) => Promise.race([
     c.closeEvent,
-    new Promise((_, reject) => { setTimeout(() => reject(new Error(`等连接关闭超时（${ms} ms）`)), ms).unref?.(); }),
+    new Promise((_, reject) => { setTimeout(() => reject(new Error(`timed out waiting for the connection to close (${ms} ms)`)), ms).unref?.(); }),
   ]);
 }
 
@@ -256,31 +256,31 @@ export async function resumeStatus(env, sid, ack = 0) {
 
 /** `/healthz.sessions` 的形状（H7），返回 sessions */
 export function checkSessionsShape(h) {
-  assert.ok(h && typeof h.sessions === 'object' && h.sessions !== null, `/healthz 要有 sessions 字段：${JSON.stringify(h).slice(0, 600)}`);
-  assert.ok(!Object.hasOwn(h, 'transports'), '第 1 版的 transports 字段不再有（契约第 8 节、第 14 节）');
+  assert.ok(h && typeof h.sessions === 'object' && h.sessions !== null, `/healthz must have a sessions field: ${JSON.stringify(h).slice(0, 600)}`);
+  assert.ok(!Object.hasOwn(h, 'transports'), 'the transports field from version 1 no longer exists (contract section 8, section 14)');
   const s = h.sessions;
   for (const k of ['total', 'ws', 'http', 'detached', 'legacy', 'opened', 'resumed', 'expired', 'fallbacks']) {
-    assert.ok(Number.isInteger(s[k]) && s[k] >= 0, `sessions.${k} 要是非负整数：${JSON.stringify(s)}`);
+    assert.ok(Number.isInteger(s[k]) && s[k] >= 0, `sessions.${k} must be a non-negative integer: ${JSON.stringify(s)}`);
   }
-  assert.ok(Array.isArray(s.list), `sessions.list 要是数组：${JSON.stringify(s)}`);
+  assert.ok(Array.isArray(s.list), `sessions.list must be an array: ${JSON.stringify(s)}`);
   for (const item of s.list) {
     assert.deepEqual(Object.keys(item).sort(), ['connId', 'detached', 'fallback', 'legacy', 'transport'],
-      `sessions.list 每项恰好五个键（不含身份、地址与会话号）：${JSON.stringify(item)}`);
-    assert.ok(item.transport === 'ws' || item.transport === 'http' || item.transport === null, `transport 取值：${JSON.stringify(item)}`);
-    if (item.detached) assert.equal(item.transport, null, `脱开时 transport 为 null：${JSON.stringify(item)}`);
+      `each sessions.list item has exactly five keys (no identity, address or session ID): ${JSON.stringify(item)}`);
+    assert.ok(item.transport === 'ws' || item.transport === 'http' || item.transport === null, `transport value: ${JSON.stringify(item)}`);
+    if (item.detached) assert.equal(item.transport, null, `transport is null when detached: ${JSON.stringify(item)}`);
   }
-  assert.equal(s.total, s.list.length, `total 等于 list 的条数：${JSON.stringify(s)}`);
-  assert.equal(s.ws, s.list.filter((i) => i.transport === 'ws').length, `ws 与 list 对得上：${JSON.stringify(s)}`);
-  assert.equal(s.http, s.list.filter((i) => i.transport === 'http').length, `http 与 list 对得上：${JSON.stringify(s)}`);
-  assert.equal(s.detached, s.list.filter((i) => i.detached).length, `detached 与 list 对得上：${JSON.stringify(s)}`);
-  assert.equal(s.legacy, s.list.filter((i) => i.legacy).length, `legacy 与 list 对得上：${JSON.stringify(s)}`);
+  assert.equal(s.total, s.list.length, `total equals the number of entries in list: ${JSON.stringify(s)}`);
+  assert.equal(s.ws, s.list.filter((i) => i.transport === 'ws').length, `ws matches list: ${JSON.stringify(s)}`);
+  assert.equal(s.http, s.list.filter((i) => i.transport === 'http').length, `http matches list: ${JSON.stringify(s)}`);
+  assert.equal(s.detached, s.list.filter((i) => i.detached).length, `detached matches list: ${JSON.stringify(s)}`);
+  assert.equal(s.legacy, s.list.filter((i) => i.legacy).length, `legacy matches list: ${JSON.stringify(s)}`);
   return s;
 }
 
 /** 断言一段文本里没有会话号 */
 export function assertNoSid(text, sid, where) {
-  assert.ok(typeof sid === 'string' && sid.length > 10, '会话号要是字符串');
-  assert.ok(!String(text).includes(sid), `会话号不许出现在${where}里`);
+  assert.ok(typeof sid === 'string' && sid.length > 10, 'session ID must be a string');
+  assert.ok(!String(text).includes(sid), `session ID must not appear in ${where}`);
 }
 
 // ================================================================== 客户端（H10）
@@ -293,16 +293,16 @@ export async function loadDocEndpoint() {
   try {
     mod = await import(pathToFileURL(path.join(ROOT, 'server', 'render-node', 'session-link.mjs')).href);
   } catch (err) {
-    assert.fail(`载不进 server/render-node/session-link.mjs：${err?.message ?? err}`);
+    assert.fail(`cannot load server/render-node/session-link.mjs: ${err?.message ?? err}`);
   }
-  assert.equal(typeof mod.createDocEndpoint, 'function', `session-link.mjs 要导出 createDocEndpoint；实际导出：${Object.keys(mod).join(', ')}`);
+  assert.equal(typeof mod.createDocEndpoint, 'function', `session-link.mjs must export createDocEndpoint; actual exports: ${Object.keys(mod).join(', ')}`);
   clientMod = mod;
   return mod;
 }
 
 /** 一律失败的 fetch（「HTTP 也连不上」）：HT-a 不接 HTTP，实现若去试也只会得到网络错误 */
 export function refusingFetch() {
-  const f = async () => { f.calls += 1; throw new TypeError('fetch failed (ht-kit: 测试里 HTTP 一律连不上)'); };
+  const f = async () => { f.calls += 1; throw new TypeError('fetch failed (ht-kit: HTTP always fails to connect in tests)'); };
   f.calls = 0;
   return f;
 }
@@ -409,7 +409,7 @@ export function fakeWebSocketEnv() {
     async nth(n, ms = 3000) {
       const until = Date.now() + ms;
       while (sockets.length < n) {
-        if (Date.now() > until) throw new Error(`等第 ${n} 次 WebSocket 构造超时（${ms} ms），目前 ${sockets.length} 次`);
+        if (Date.now() > until) throw new Error(`timed out waiting for WebSocket construction #${n} (${ms} ms), ${sockets.length} so far`);
         await new Promise((resolve) => { waiters.push(resolve); setTimeout(resolve, 20); });
       }
       return sockets[n - 1];

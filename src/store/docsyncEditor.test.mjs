@@ -29,8 +29,8 @@ function clipsProject() {
   return {
     version: 1, id: "p", name: "p", width: 1920, height: 1080, fps: 30, duration: 30, themeId: "midnight", media: [],
     tracks: [{ id: "t1", name: "Track 1", clips: [
-      { id: "c1", cardId: "title", start: 0, end: 2, params: { text: "一" } },
-      { id: "c2", cardId: "title", start: 3, end: 5, params: { text: "二" } },
+      { id: "c1", cardId: "title", start: 0, end: 2, params: { text: "One" } },
+      { id: "c2", cardId: "title", start: 3, end: 5, params: { text: "Two" } },
     ] }],
   };
 }
@@ -59,11 +59,11 @@ test("undo this step: undo the whole step, carry undoOf, enter the page's own un
   assert.equal(r.done, true);
   assert.deepEqual(r.skipped, []);
   svc.drain();
-  assert.equal(textOf(svc.project, "c1"), "一");
-  assert.equal(textOf(svc.project, "c2"), "二");
+  assert.equal(textOf(svc.project, "c1"), "One");
+  assert.equal(textOf(svc.project, "c2"), "Two");
   assert.equal(lastOp(svc).session, "A", "committed as the page");
   assert.equal(lastOp(svc).undoOf, agentOp, "undoOf points to that Agent commit");
-  assert.equal(textOf(B.ds.project, "c1"), "一", "others receive it as usual");
+  assert.equal(textOf(B.ds.project, "c1"), "One", "others receive it as usual");
   assert.equal(A.ds.canUndo(), true, "entered the page's own undo stack");
   A.ds.undo();
   svc.drain();
@@ -85,7 +85,7 @@ test("undo this step: entities edited later by others are not undone and who did
   assert.equal(r.done, true);
   assert.deepEqual(r.skipped.map((s) => [s.entity, s.by.session]), [["/tracks/@t1/clips/@c2", "B"]]);
   svc.drain();
-  assert.equal(textOf(svc.project, "c1"), "一", "c1, edited later by the Agent itself, is still undone (back to before that step)");
+  assert.equal(textOf(svc.project, "c1"), "One", "c1, edited later by the Agent itself, is still undone (back to before that step)");
   assert.equal(textOf(svc.project, "c2"), "B2", "B's later edits are kept");
 });
 
@@ -120,10 +120,10 @@ test("undo this step: the inverse carried by the event takes priority; when no i
   const agentOp = lastOp(svc).opId;
   assert.equal(A.ds.canRevertRemote("nope"), false);
   // 事件给的逆操作(这里故意给一个只改 c1 为「事件」的,验证用的是它)
-  const r = A.ds.revertRemote({ opId: agentOp, inverse: [{ op: "set", path: "/tracks/@t1/clips/@c1/params/text", value: "事件" }] });
+  const r = A.ds.revertRemote({ opId: agentOp, inverse: [{ op: "set", path: "/tracks/@t1/clips/@c1/params/text", value: "Event" }] });
   assert.equal(r.done, true);
   svc.drain();
-  assert.equal(textOf(svc.project, "c1"), "事件");
+  assert.equal(textOf(svc.project, "c1"), "Event");
 });
 
 test("others' edits emit a remote notice carrying the entity and the writer identity; one's own do not", () => {
@@ -162,7 +162,7 @@ async function serverCopy(env) {
 
 function bigProject(n = 900) {
   const p = clipsProject();
-  p.tracks[0].clips = Array.from({ length: n }, (_, i) => ({ id: `c${i}`, cardId: "title", start: i * 2, end: i * 2 + 1, params: { text: `片段 ${i} ${"字".repeat(120)}` } }));
+  p.tracks[0].clips = Array.from({ length: n }, (_, i) => ({ id: `c${i}`, cardId: "title", start: i * 2, end: i * 2 + 1, params: { text: `clip ${i} ${"x".repeat(120)}` } }));
   return p;
 }
 

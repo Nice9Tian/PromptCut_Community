@@ -44,7 +44,7 @@ async function main() {
     const { entry } = await service.planForQueue(renderProject(project));
     const clipIds = project.tracks.filter((t) => !t.hidden).flatMap((t) => t.clips).filter((c) => c.cardId).map((c) => c.id);
     const specs = service.listStreamSpecs(entry, clipIds).filter((s) => s.kind === 'card' || s.kind === 'below');
-    if (!specs.length) throw new Error('这一版一条流都没有（看 envFingerprint、streams 开关）');
+    if (!specs.length) throw new Error('This version has no streams at all (check envFingerprint and the streams toggle)');
     for (const spec of specs) {
       const need = streamNeed(spec);
       const sub = expandProject(project, need);
@@ -63,8 +63,8 @@ async function main() {
       const b = await renderFrames(origin, part, at, path.join(dir, 'multi'));
       const per = at.map((f) => ({ frame: f, ...comparePng(a.get(f), b.get(f)) }));
       frames.push(...per.map((p) => ({ stream: `${spec.kind}:${spec.topClipId}`, ...p })));
-      console.log(`[MPS-PROBE] ${spec.kind}:${spec.topClipId}：片段 ${k.clipsFull} → ${k.clipsSubset}（${sub.clipIds.join(',')}）；键 ${k.same ? '相同' : '不同'}（${k.contentKey} / ${k.nodeContentKey}）；`
-        + per.map((p) => `帧 ${p.frame} 不同像素 ${p.pixels}/${p.total}（不透明 ${p.opaque}）`).join('；'));
+      console.log(`[MPS-PROBE] ${spec.kind}:${spec.topClipId}: clips ${k.clipsFull} → ${k.clipsSubset} (${sub.clipIds.join(',')}); key ${k.same ? 'same' : 'different'} (${k.contentKey} / ${k.nodeContentKey});`
+        + per.map((p) => `frame ${p.frame} differing pixels ${p.pixels}/${p.total} (opaque ${p.opaque})`).join(';'));
     }
   } finally {
     await service.close();

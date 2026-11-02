@@ -31,14 +31,14 @@
 import crypto from 'node:crypto';
 import { discoverLanAsset, firstReachableAsset } from './asset-lan-discover.mjs';
 
-const USAGE = `用法:PROMPTCUT_SHARED_CONFIG=<配置> node scripts/probes/asset-lan-probe.mjs [--docservice <ws://…>] [--asset <http://…/api/asset>] [--no-lan] [--mb 20] [--timeout-ms 60000]
-  --docservice  控制面(文档服务)地址,ws:// 或 wss://;缺省用局域网发现到的那台,没发现到用共享项目配置里的 url
-  --asset       直接指定素材服务基址(…/api/asset),跳过发现
-  --no-lan      不做局域网发现,只从控制面的 service.endpoints 取素材服务地址
-  --mb          测试数据大小,单位 MB(缺省 20)
-  --timeout-ms  整趟的超时(缺省 60000)
-  凭证从环境变量 PROMPTCUT_SHARED_CONFIG 指向的共享项目配置读(素材票据经文档服务取)。
-  退出码:0 全过,1 有断言失败,2 连不上(或用法不对)。`;
+const USAGE = `Usage: PROMPTCUT_SHARED_CONFIG=<config> node scripts/probes/asset-lan-probe.mjs [--docservice <ws://…>] [--asset <http://…/api/asset>] [--no-lan] [--mb 20] [--timeout-ms 60000]
+  --docservice  control plane (document service) address, ws:// or wss://; defaults to the one found via LAN discovery, or the url in the shared project config if none was found
+  --asset       set the asset service base address (…/api/asset) directly, skipping discovery
+  --no-lan      skip LAN discovery, only take the asset service address from the control plane's service.endpoints
+  --mb          test data size in MB (default 20)
+  --timeout-ms  timeout for the whole run (default 60000)
+  Credentials are read from the shared project config pointed to by the environment variable PROMPTCUT_SHARED_CONFIG (asset tickets are fetched via the document service).
+  Exit codes: 0 all passed, 1 assertion failed, 2 unreachable (or bad usage).`;
 
 const CHUNK_DEFAULT = 8 * 1024 * 1024;
 const LAN_ORIGIN = 'http://192.168.50.247:9999';
@@ -50,12 +50,12 @@ function parseArgs(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (!a.startsWith('--')) return { error: `多余的参数 ${a}` };
+    if (!a.startsWith('--')) return { error: `Unexpected argument ${a}` };
     const eq = a.indexOf('=');
     const key = eq > 0 ? a.slice(2, eq) : a.slice(2);
     if (FLAGS.has(key) && eq < 0) { out[key] = true; continue; }
     const val = eq > 0 ? a.slice(eq + 1) : argv[++i];
-    if (val === undefined) return { error: `--${key} 缺值` };
+    if (val === undefined) return { error: `--${key} is missing a value` };
     out[key] = val;
   }
   return out;
@@ -97,7 +97,7 @@ class Unreachable extends Error {}
 const deadline = Date.now() + TIMEOUT_MS;
 const left = () => Math.max(1, deadline - Date.now());
 const watchdog = setTimeout(() => {
-  result.fails.push({ step: 'timeout', detail: `整趟超过 ${TIMEOUT_MS} ms` });
+  result.fails.push({ step: 'timeout', detail: `Whole run exceeded ${TIMEOUT_MS} ms` });
   finish(1);
 }, TIMEOUT_MS);
 watchdog.unref?.();
@@ -137,27 +137,27 @@ function check(cond, detail) {
  */
 async function connectAndDiscover(docservice, wantDiscovery, lanAssets = []) {
   let parsed;
-  try { parsed = new URL(docservice); } catch { throw new Unreachable(`--docservice 不是合法地址:${docservice}`); }
-  if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') throw new Unreachable('--docservice 要 ws:// 或 wss://');
-  if (typeof WebSocket !== 'function') throw new Unreachable('这个 Node 没有全局 WebSocket(要 Node 22 起)');
+  try { parsed = new URL(docservice); } catch { throw new Unreachable(`--docservice is not a valid address: ${docservice}`); }
+  if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') throw new Unreachable('--docservice must be ws:// or wss://');
+  if (typeof WebSocket !== 'function') throw new Unreachable('This Node has no global WebSocket (requires Node 22 or later)');
   let protocols;
   try {
     const { sharedProtocols } = await import(new URL('../../server/auth/shared-config.mjs', import.meta.url));
     protocols = await sharedProtocols({ ...SHARED, url: docservice }, { role: 'page' })();
   } catch (err) {
-    throw new Unreachable(`取进入挑战失败:${safe(err?.message || err)}`);
+    throw new Unreachable(`Failed to get the entry challenge: ${safe(err?.message || err)}`);
   }
   const ws = new WebSocket(docservice, protocols);
   try {
     const ask = (message) => new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Unreachable(`等 ${message.type} 的回包超时`)), Math.min(left(), 15000));
+      const timer = setTimeout(() => reject(new Unreachable(`Timed out waiting for the reply to ${message.type}`)), Math.min(left(), 15000));
       const onMessage = (e) => {
         let m;
         try { m = JSON.parse(String(e.data)); } catch { return; }
         if (m?.reqId !== message.reqId) return;
         clearTimeout(timer);
         ws.removeEventListener('message', onMessage);
-        if (m.type === 'error') reject(new Unreachable(`控制面回 error:${m.reason ?? ''}`));
+        if (m.type === 'error') reject(new Unreachable(`Control plane replied with error: ${m.reason ?? ''}`));
         else resolve(m);
       };
       ws.addEventListener('message', onMessage);
@@ -165,7 +165,7 @@ async function connectAndDiscover(docservice, wantDiscovery, lanAssets = []) {
     });
     await new Promise((resolve, reject) => {
       ws.addEventListener('open', resolve, { once: true });
-      ws.addEventListener('error', () => reject(new Unreachable(`连不上控制面(凭证不对也是这样) ${parsed.protocol}//${parsed.host}${parsed.pathname}`)), { once: true });
+      ws.addEventListener('error', () => reject(new Unreachable(`Cannot reach the control plane (also happens with bad credentials) ${parsed.protocol}//${parsed.host}${parsed.pathname}`)), { once: true });
     });
     TICKET = (await ask({ type: 'auth.ticket', reqId: 'rw', kind: 'asset', access: 'rw' })).ticket;
     READ_TICKET = (await ask({ type: 'auth.ticket', reqId: 'r', kind: 'asset', access: 'r' })).ticket;
@@ -177,18 +177,18 @@ async function connectAndDiscover(docservice, wantDiscovery, lanAssets = []) {
     if (lanAssets.length) {
       const hit = await reach(lanAssets);
       if (hit) return hit;
-      throw new Unreachable(`局域网发现到的素材服务地址都不通:${lanAssets.join(', ')}`);
+      throw new Unreachable(`None of the asset service addresses found via LAN discovery are reachable: ${lanAssets.join(', ')}`);
     }
     const registrations = await new Promise((resolve, reject) => {
-      const why = args['no-lan'] ? '' : '(局域网发现也没找到这个项目)';
-      const timer = setTimeout(() => reject(new Unreachable(`等控制面的 service.endpoints 超时${why}`)), Math.min(left(), 15000));
+      const why = args['no-lan'] ? '' : '(LAN discovery did not find this project either)';
+      const timer = setTimeout(() => reject(new Unreachable(`Timed out waiting for the control plane's service.endpoints${why}`)), Math.min(left(), 15000));
       ws.send(JSON.stringify({ type: 'service.watch', kinds: ['asset'] }));
-      ws.addEventListener('error', () => { clearTimeout(timer); reject(new Unreachable(`连不上控制面 ${parsed.protocol}//${parsed.host}${parsed.pathname}`)); });
-      ws.addEventListener('close', (e) => { clearTimeout(timer); reject(new Unreachable(`控制面关了连接(${e.code}${e.reason ? ` ${e.reason}` : ''})`)); });
+      ws.addEventListener('error', () => { clearTimeout(timer); reject(new Unreachable(`Cannot reach the control plane ${parsed.protocol}//${parsed.host}${parsed.pathname}`)); });
+      ws.addEventListener('close', (e) => { clearTimeout(timer); reject(new Unreachable(`Control plane closed the connection (${e.code}${e.reason ? ` ${e.reason}` : ''})`)); });
       ws.addEventListener('message', (e) => {
         let m;
         try { m = JSON.parse(String(e.data)); } catch { return; }
-        if (m?.type === 'error') { clearTimeout(timer); reject(new Unreachable(`控制面回 error:${m.reason ?? ''}`)); return; }
+        if (m?.type === 'error') { clearTimeout(timer); reject(new Unreachable(`Control plane replied with error: ${m.reason ?? ''}`)); return; }
         if (m?.type !== 'service.endpoints' || !Array.isArray(m.endpoints)) return;
         const list = m.endpoints.filter((x) => x?.kind === 'asset' && Array.isArray(x.urls) && x.urls.length);
         if (list.length) { clearTimeout(timer); resolve(list); }
@@ -197,7 +197,7 @@ async function connectAndDiscover(docservice, wantDiscovery, lanAssets = []) {
     });
     const hit = await reach(registrations.flatMap((r) => r.urls));
     if (hit) return hit;
-    throw new Unreachable(`控制面登记的素材服务地址都不通:${registrations.flatMap((r) => r.urls).join(', ')}`);
+    throw new Unreachable(`None of the asset service addresses registered with the control plane are reachable: ${registrations.flatMap((r) => r.urls).join(', ')}`);
   } finally {
     await closeAndWait(ws);
   }
@@ -228,7 +228,7 @@ async function main() {
   } catch (err) {
     throw new Unreachable(safe(err?.message || err));
   }
-  if (!SHARED) throw new Unreachable('没有共享项目配置:设环境变量 PROMPTCUT_SHARED_CONFIG');
+  if (!SHARED) throw new Unreachable('No shared project config: set the environment variable PROMPTCUT_SHARED_CONFIG');
   let lanAssets = [];
   let lanDocservice = null;
   if (!args.asset && !args['no-lan']) {
@@ -256,9 +256,9 @@ async function main() {
     hash = sha256(buf);
     result.bytes = buf.length;
     const r = await request(`${base}/media/${hash}/chunks`, { headers: auth });
-    check(r.status === 200, `chunks 回 ${r.status}`);
+    check(r.status === 200, `chunks returned ${r.status}`);
     const st = await r.json();
-    check(st.complete === false && Array.isArray(st.received) && st.received.length === 0, `新哈希的对账不对:${JSON.stringify(st)}`);
+    check(st.complete === false && Array.isArray(st.received) && st.received.length === 0, `Wrong reconciliation for a new hash: ${JSON.stringify(st)}`);
     if (Number.isSafeInteger(st.chunkSize) && st.chunkSize > 0) chunkSize = st.chunkSize;
   });
   if (!buf) return;
@@ -274,70 +274,70 @@ async function main() {
 
   await step('put-without-ticket-401', async () => {
     const r = await putChunk(0, false);
-    check(r.status === 401, `不带票据 PUT 第 0 片回 ${r.status}:${r.text.slice(0, 200)}`);
+    check(r.status === 401, `PUT of chunk 0 without a ticket returned ${r.status}: ${r.text.slice(0, 200)}`);
   });
 
   await step('read-without-ticket-401', async () => {
     const r = await request(`${base}/media/${hash}/chunks`);
     await r.arrayBuffer().catch(() => {});
-    check(r.status === 401, `不带票据读 chunks 回 ${r.status}`);
+    check(r.status === 401, `Reading chunks without a ticket returned ${r.status}`);
   });
 
   await step('put-read-only-403', async () => {
     const r = await putChunk(0, false, READ_TICKET);
-    check(r.status === 403, `只读票据 PUT 回 ${r.status}:${r.text.slice(0, 200)}`);
+    check(r.status === 403, `PUT with a read-only ticket returned ${r.status}: ${r.text.slice(0, 200)}`);
   });
 
   const first = Math.min(2, count);
   await step('put-0-1-received', async () => {
     for (let n = 0; n < first; n++) {
       const r = await putChunk(n, true);
-      check(r.status === 200, `PUT 第 ${n} 片回 ${r.status}:${r.text.slice(0, 200)}`);
+      check(r.status === 200, `PUT of chunk ${n} returned ${r.status}: ${r.text.slice(0, 200)}`);
     }
     const st = await (await request(`${base}/media/${hash}/chunks`, { headers: auth })).json();
     const want = Array.from({ length: first }, (_, i) => i);
-    check(JSON.stringify(st.received) === JSON.stringify(want), `chunks 报 received ${JSON.stringify(st.received)},应为 ${JSON.stringify(want)}`);
+    check(JSON.stringify(st.received) === JSON.stringify(want), `chunks reported received ${JSON.stringify(st.received)}, expected ${JSON.stringify(want)}`);
   });
 
   await step('put-rest-complete', async () => {
     for (let n = first; n < count; n++) {
       const r = await putChunk(n, true);
-      check(r.status === 200, `PUT 第 ${n} 片回 ${r.status}:${r.text.slice(0, 200)}`);
+      check(r.status === 200, `PUT of chunk ${n} returned ${r.status}: ${r.text.slice(0, 200)}`);
     }
     const r = await request(`${base}/media/${hash}/complete`, { method: 'POST', headers: auth });
     const text = await r.text().catch(() => '');
-    check(r.status === 200, `complete 回 ${r.status}:${text.slice(0, 200)}`);
+    check(r.status === 200, `complete returned ${r.status}: ${text.slice(0, 200)}`);
   });
 
   await step('cors-get', async () => {
     const r = await request(`${base}/media/${hash}`, { headers: { Origin: LAN_ORIGIN, Range: 'bytes=0-0', ...auth } });
     await r.arrayBuffer().catch(() => {});
-    check(r.status === 200 || r.status === 206, `GET 回 ${r.status}`);
-    check(r.headers.get('access-control-allow-origin') === '*', `Access-Control-Allow-Origin 是 ${r.headers.get('access-control-allow-origin')}`);
+    check(r.status === 200 || r.status === 206, `GET returned ${r.status}`);
+    check(r.headers.get('access-control-allow-origin') === '*', `Access-Control-Allow-Origin is ${r.headers.get('access-control-allow-origin')}`);
   });
 
   await step('range-206', async () => {
     const r = await request(`${base}/media/${hash}`, { headers: { Range: 'bytes=100-199', ...auth } });
     const got = Buffer.from(await r.arrayBuffer());
-    check(r.status === 206, `Range 回 ${r.status}`);
-    check(got.equals(buf.subarray(100, 200)), `Range 字节不对(收到 ${got.length} 字节)`);
+    check(r.status === 206, `Range returned ${r.status}`);
+    check(got.equals(buf.subarray(100, 200)), `Range bytes are wrong (received ${got.length} bytes)`);
   });
 
   await step('query-ticket-range-206', async () => {
     const r = await request(`${base}/media/${hash}?t=${encodeURIComponent(READ_TICKET)}`, { headers: { Range: 'bytes=100-199' } });
     const got = Buffer.from(await r.arrayBuffer());
-    check(r.status === 206, `查询串票据的 Range 回 ${r.status}`);
-    check(got.equals(buf.subarray(100, 200)), '查询串票据的 Range 字节不对');
-    check(r.headers.get('cache-control') === 'no-store', `Cache-Control 是 ${r.headers.get('cache-control')}`);
-    check(r.headers.get('referrer-policy') === 'no-referrer', `Referrer-Policy 是 ${r.headers.get('referrer-policy')}`);
+    check(r.status === 206, `Range with a query-string ticket returned ${r.status}`);
+    check(got.equals(buf.subarray(100, 200)), 'Range bytes with a query-string ticket are wrong');
+    check(r.headers.get('cache-control') === 'no-store', `Cache-Control is ${r.headers.get('cache-control')}`);
+    check(r.headers.get('referrer-policy') === 'no-referrer', `Referrer-Policy is ${r.headers.get('referrer-policy')}`);
   });
 
   await step('download-sha256', async () => {
     const r = await request(`${base}/media/${hash}`, { headers: auth });
     const got = Buffer.from(await r.arrayBuffer());
-    check(r.status === 200, `GET 全件回 ${r.status}`);
-    check(got.length === buf.length, `长度 ${got.length},应为 ${buf.length}`);
-    check(sha256(got) === hash, 'sha256 不符');
+    check(r.status === 200, `Full GET returned ${r.status}`);
+    check(got.length === buf.length, `Length ${got.length}, expected ${buf.length}`);
+    check(sha256(got) === hash, 'sha256 mismatch');
   });
 }
 

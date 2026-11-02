@@ -13,7 +13,7 @@ import { fontFamilyNames, fontFingerprintOf } from "./fontFingerprint.ts";
 /** FontFaceSet 是可迭代的 FontFace 集合;这里只用到 family / status 两个字段。 */
 const set = (...faces) => faces.map(([family, status = "loaded"]) => ({ family, status }));
 
-test("只取已加载的 family:声明了但没下下来的 @font-face 不影响这一帧的排版", () => {
+test("only take loaded families: an @font-face that is declared but not downloaded does not affect this frame's layout", () => {
   assert.deepEqual(fontFamilyNames(set(["Inter"], ["Noto Sans CJK SC", "unloaded"], ["Fira Code", "loading"])), ["Inter"]);
   // 一个都没加载:是空列表,不是「没算过」。
   assert.deepEqual(fontFamilyNames(set(["Inter", "unloaded"])), []);
@@ -22,21 +22,21 @@ test("只取已加载的 family:声明了但没下下来的 @font-face 不影响
   assert.deepEqual(fontFamilyNames(undefined), []);
 });
 
-test("同一族的多个字重 / 字形只算一次,空名字不算", () => {
+test("multiple weights / glyph styles of one family count once, empty names do not count", () => {
   // 一个 family 的 400 / 700 / italic 是三个 FontFace,但排版落到的是同一族。
   assert.deepEqual(fontFamilyNames(set(["Inter"], ["Inter"], ["Inter"])), ["Inter"]);
-  assert.deepEqual(fontFamilyNames(set(["Inter"], ["  Inter  "])), ["Inter"], "前后空白不是另一个族");
+  assert.deepEqual(fontFamilyNames(set(["Inter"], ["  Inter  "])), ["Inter"], "leading and trailing whitespace is not a different family");
   assert.deepEqual(fontFamilyNames(set(["", "loaded"], ["   "], ["Inter"])), ["Inter"]);
 });
 
-test("和 FontFaceSet 的迭代顺序无关 —— 顺序跟加载先后有关,不排序两台机器必不同键", () => {
+test("independent of FontFaceSet iteration order: order depends on load timing, and without sorting two machines would get different keys", () => {
   const a = fontFingerprintOf(set(["Inter"], ["Noto Sans CJK SC"], ["Fira Code"]));
   const b = fontFingerprintOf(set(["Fira Code"], ["Inter"], ["Noto Sans CJK SC"]));
   assert.equal(a, b);
-  assert.deepEqual(fontFamilyNames(set(["Fira Code"], ["Inter"])), ["Fira Code", "Inter"], "输出本身是排好序的");
+  assert.deepEqual(fontFamilyNames(set(["Fira Code"], ["Inter"])), ["Fira Code", "Inter"], "the output itself is sorted");
 });
 
-test("字体集合变了指纹就变,缺字体的机器和装齐的机器不共用快照", () => {
+test("the fingerprint changes when the font set changes; a machine missing fonts and a fully installed machine do not share snapshots", () => {
   const full = fontFingerprintOf(set(["Inter"], ["Noto Sans CJK SC"]));
   const missingCjk = fontFingerprintOf(set(["Inter"]));
   assert.notEqual(full, missingCjk);
@@ -50,7 +50,7 @@ test("字体集合变了指纹就变,缺字体的机器和装齐的机器不共�
   assert.notEqual(empty, full);
 });
 
-test("同一个输入永远同一个值(纯函数,跨进程跨机器可复算)", () => {
+test("the same input always gives the same value (pure function, reproducible across processes and machines)", () => {
   const fonts = set(["Inter"], ["Noto Sans CJK SC"]);
   assert.equal(fontFingerprintOf(fonts), fontFingerprintOf(fonts));
   assert.match(fontFingerprintOf(fonts), /^[0-9a-f]{16}$/);

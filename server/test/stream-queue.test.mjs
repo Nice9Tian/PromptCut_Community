@@ -44,14 +44,14 @@ mock.module(new URL('../bakery/index.mjs', import.meta.url).href, {
   exports: {
     openBakery: async () => fakeBakery(),
     findFfmpeg: async () => 'ffmpeg-fake',
-    streamPngVideo: () => { throw new Error('单测不编码 MOV'); },
-    bakeFrames: async () => { throw new Error('这个测试不渲快照'); },
+    streamPngVideo: () => { throw new Error('Unit tests do not encode MOV'); },
+    bakeFrames: async () => { throw new Error('This test does not render snapshots'); },
   },
 });
 
 mock.module(new URL('../bakery/bake.mjs', import.meta.url).href, {
   exports: {
-    bakeFrames: async () => { throw new Error('这个测试不渲快照'); },
+    bakeFrames: async () => { throw new Error('This test does not render snapshots'); },
     dirtyStreamLease: (bakery) => { if (bakery?.streamLease) bakery.streamLease.dirty = true; },
     bakeStream: async (bakery, opts) => {
       const { streamSignature, fromFrame, toFrame, signal } = opts;
@@ -62,7 +62,7 @@ mock.module(new URL('../bakery/bake.mjs', import.meta.url).href, {
       const continues = !!lease && !lease.dirty && lease.page === bakery.page && lease.streamSignature === streamSignature && fromFrame === lease.lastFrame + 1;
       let captured = 0;
       for (let frame = fromFrame; frame <= toFrame; frame += stride) {
-        if (signal?.aborted) throw Object.assign(new Error('已取消'), { cancelled: true });
+        if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { cancelled: true });
         await opts.onFrame?.(frame, Buffer.from(`png:${streamSignature}:${frame}`));
         captured++;
       }
@@ -252,7 +252,7 @@ async function segmentHashes(pipeline, key, n) {
 
 /* ================================================================== 过滤与切分 */
 
-test('X1-filter 流任务要求 capabilities.streams:报 true 的节点收,报 false 的不收(规则 2 streams);没报这一项的旧节点按 transcode;纯浏览器不收', () => {
+test('X1-filter stream tasks require capabilities.streams: nodes that report true accept them, nodes that report false do not (rule 2 streams); older nodes that do not report this item follow transcode; browser-only nodes do not accept them', () => {
   const task = {
     id: 'stream:k:0-7', kind: 'stream', resultKey: 'k', range: { unit: 'segment', from: 0, to: 7 }, source: { projectId: PID, projectRev: REV },
     weight: { class: 'heavy', frames: 120 },
@@ -262,17 +262,17 @@ test('X1-filter 流任务要求 capabilities.streams:报 true 的节点收,报 f
   assert.deepEqual(checkClaimable(task, node('pc', { userCards: true, graphCards: false, transcode: true, streams: true })), { ok: true });
   assert.deepEqual(checkClaimable(task, node('host', { userCards: true, graphCards: false, transcode: true, streams: true })), { ok: true });
   assert.deepEqual(checkClaimable(task, node('pc', { userCards: true, graphCards: false, transcode: false, streams: false })), { ok: false, rule: 2, reason: 'streams' });
-  assert.deepEqual(checkClaimable(task, node('pc', { userCards: true, transcode: true, streams: false })), { ok: false, rule: 2, reason: 'streams' }, '报了 false 就不收,不看 transcode');
-  assert.deepEqual(checkClaimable(task, node('pc', { userCards: true, transcode: true })), { ok: true }, '没报 streams 的旧形状按 transcode');
+  assert.deepEqual(checkClaimable(task, node('pc', { userCards: true, transcode: true, streams: false })), { ok: false, rule: 2, reason: 'streams' }, 'Reporting false means not accepting, regardless of transcode');
+  assert.deepEqual(checkClaimable(task, node('pc', { userCards: true, transcode: true })), { ok: true }, 'The old shape that does not report streams follows transcode');
   assert.deepEqual(checkClaimable(task, node('pc', { userCards: true })), { ok: false, rule: 2, reason: 'streams' });
   const browser = node('browser', { userCards: false, graphCards: false, transcode: false, streams: false }, { userId: 'u1' });
-  assert.equal(checkClaimable({ ...task, source: { ...task.source, userId: 'u1' } }, browser).ok, false, '纯浏览器一律不收流任务');
+  assert.equal(checkClaimable({ ...task, source: { ...task.source, userId: 'u1' } }, browser).ok, false, 'Browser-only nodes never accept stream tasks');
   // 快照任务不受这一条影响
   const snap = { ...task, kind: 'snapshot', requires: { ...task.requires, transcode: false, capabilities: undefined } };
   assert.equal(checkClaimable(snap, node('pc', { userCards: true, streams: false })).ok, true);
 });
 
-test('X1-split 流任务带 requires.capabilities.streams = true;快照任务不带;结果键 = 内容键 × 指纹', () => {
+test('X1-split stream tasks carry requires.capabilities.streams = true; snapshot tasks do not; result key = content key × fingerprint', () => {
   const tasks = splitPlan({
     planTask: planTaskOf({ projectId: PID, projectRev: REV }), entryKey: 'e'.repeat(64), envFingerprint: OWN, codeVersion: CV,
     cardPlan: [{ clipId: 'clip-a', snapshotKey: 's'.repeat(64), contentKey: 'c'.repeat(64), tier: 'shared', capabilities: CAPS['clip-a'], count: 60 }],
@@ -280,7 +280,7 @@ test('X1-split 流任务带 requires.capabilities.streams = true;快照任务不
   });
   const streams = tasks.filter((t) => t.kind === 'stream');
   const snaps = tasks.filter((t) => t.kind === 'snapshot');
-  assert.deepEqual(streams.map((t) => [t.range.from, t.range.to]), [[0, 9]], 'motion 卡不足 30s(60段)整张一口气做完');
+  assert.deepEqual(streams.map((t) => [t.range.from, t.range.to]), [[0, 9]], 'A motion card under 30s (60 segments) is done as a whole in one go');
   for (const t of streams) {
     assert.deepEqual(t.requires.capabilities, { streams: true });
     assert.equal(t.requires.transcode, true);
@@ -295,20 +295,20 @@ test('X1-split 流任务带 requires.capabilities.streams = true;快照任务不
     streams: [{ streamKey: resultKeyOf('d'.repeat(64), OWN), contentKey: 'd'.repeat(64), topClipId: 'clip-r', firstSegment: 0, lastSegment: 9 }],
   });
   const remotionStreams = remotionTasks.filter((t) => t.kind === 'stream');
-  assert.deepEqual(remotionStreams.map((t) => [t.range.from, t.range.to]), [[0, 7], [8, 9]], 'remotion 卡保持 8 段切分');
+  assert.deepEqual(remotionStreams.map((t) => [t.range.from, t.range.to]), [[0, 7], [8, 9]], 'a remotion card keeps the 8-segment split');
 });
 
 /* ================================================================== plan 出流 */
 
-test('X1-plan 开关开着、探到编码器:plan 的 streams 是这一版的全部流(流键 = 内容键 × 本机指纹,与生产者算的相同);PROMPTCUT_STREAMS=0 时为空、不能产流', { timeout: 30_000 }, async (t) => {
+test('X1-plan with the switch on and an encoder detected: the plan\'s streams are all the streams of this version (stream key = content key × local fingerprint, same as the producer computes); with PROMPTCUT_STREAMS=0 it is empty and cannot produce streams', { timeout: 30_000 }, async (t) => {
   t.after(cleanup);
   const A = await streamPipeline();
   const ctx = await executorFor(A).plan(planView(), { signal: signalNone() });
   const clips = ctx.streams.map((s) => s.topClipId).sort();
-  assert.deepEqual(clips, ['clip-a', 'clip-b', 'clip-c'], '独立卡各一条单卡流,毛玻璃一条依赖下层的流');
+  assert.deepEqual(clips, ['clip-a', 'clip-b', 'clip-c'], 'Each independent card gets one single-card stream, and the frosted glass gets one stream that depends on the layer below');
   assert.deepEqual(ctx.streams.map((s) => `${s.kind}:${s.topClipId}`).sort(), ['below:clip-b', 'card:clip-a', 'card:clip-c']);
   for (const s of ctx.streams) {
-    assert.equal(s.streamKey, resultKeyOf(s.contentKey, OWN), '流键 = 内容键 × 本机指纹');
+    assert.equal(s.streamKey, resultKeyOf(s.contentKey, OWN), 'Stream key = content key × local fingerprint');
     assert.ok(Number.isInteger(s.firstSegment) && s.lastSegment >= s.firstSegment);
   }
   const a = ctx.streams.find((s) => s.topClipId === 'clip-a');
@@ -319,20 +319,20 @@ test('X1-plan 开关开着、探到编码器:plan 的 streams 是这一版的全
 
   const off = await streamPipeline({ env: { PROMPTCUT_STREAMS: '0' } });
   assert.equal(off.streamProducer().enabled, false);
-  assert.equal(await off.streamCapable(), false, 'PROMPTCUT_STREAMS=0:streams 能力为 false');
+  assert.equal(await off.streamCapable(), false, 'PROMPTCUT_STREAMS=0: streams capability is false');
   const offCtx = await executorFor(off).plan(planView(), { signal: signalNone() });
-  assert.deepEqual(offCtx.streams, [], 'PROMPTCUT_STREAMS=0:不发布流任务(与 M5b 相同)');
+  assert.deepEqual(offCtx.streams, [], 'PROMPTCUT_STREAMS=0: no stream tasks are published (same as M5b)');
   const err = await executorFor(off).render(view(streamTasksOf(ctx)[0]), { signal: signalNone(), progress: () => {} }).then(() => null, (e) => e);
   assert.equal(err?.code, 'no-streams');
   assert.equal(err?.retryable, false);
 });
 
-test('X1-encoder-probe 探不到编码器:streamCapable 为 false,plan 不出流,生产者关掉', { timeout: 30_000 }, async (t) => {
+test('X1-encoder-probe no encoder detected: streamCapable is false, the plan yields no streams, and the producer is turned off', { timeout: 30_000 }, async (t) => {
   t.after(cleanup);
   const A = await streamPipeline();
   const producer = A.streamProducer();
   producer.encoderName = undefined;
-  producer.encoder = async () => { throw new Error('没有能用的 H.264 编码器(假)'); };
+  producer.encoder = async () => { throw new Error('No usable H.264 encoder (fake)'); };
   assert.equal(await A.streamCapable(), false);
   assert.equal(producer.enabled, false);
   const ctx = await executorFor(A).plan(planView(), { signal: signalNone() });
@@ -341,7 +341,7 @@ test('X1-encoder-probe 探不到编码器:streamCapable 为 false,plan 不出流
 
 /* ================================================================== 执行器产流、推送、另一节点取用 */
 
-test('X1-render 执行器按段产出流任务的分段(满密度)、报进度;sink 推 px、写每段清单(<resultKey>:<from>-<to>)、回 StreamResult;另一节点 applyResult 经 adoptSegments 落地,逐段 sha256 一致、不判旧', { timeout: 60_000 }, async (t) => {
+test('X1-render the executor produces the stream task\'s segments segment by segment (full density) and reports progress; the sink pushes px, writes each segment\'s manifest (<resultKey>:<from>-<to>), and returns StreamResult; another node\'s applyResult lands them via adoptSegments, with sha256 matching segment by segment and nothing marked stale', { timeout: 60_000 }, async (t) => {
   t.after(cleanup);
   const A = await streamPipeline({ encoder: 'h264_nvenc' });
   const B = await streamPipeline({ encoder: 'libx264' });
@@ -356,19 +356,19 @@ test('X1-render 执行器按段产出流任务的分段(满密度)、报进度;s
 
   for (const task of tasks) {
     const ref = { resultKey: task.resultKey, kind: 'stream', tier: null, range: task.range, input: task.input, requires: task.requires };
-    assert.equal(await sink.has(ref), false, '开工前本机、内容库都没有');
+    assert.equal(await sink.has(ref), false, 'Before starting, neither this machine nor the content store has it');
     const progress = [];
     const out = await executor.render(view(task), { signal: signalNone(), progress: (n) => progress.push(n) });
-    assert.equal(out, null, 'render 回 null:产物在流库里');
+    assert.equal(out, null, 'render returns null: the output is in the stream store');
     const segs = task.range.to - task.range.from + 1;
-    assert.equal(progress.length, segs, '每个分段报一次进度');
-    assert.ok(progress.every((n, i) => i === 0 || n > progress[i - 1]), '进度单调增');
+    assert.equal(progress.length, segs, 'Progress is reported once per segment');
+    assert.ok(progress.every((n, i) => i === 0 || n > progress[i - 1]), 'Progress increases monotonically');
     // 满密度、样本数对、签名带本机编码器
     const manifest = await manifestOf(A, task.resultKey);
     for (let n = task.range.from; n <= task.range.to; n++) {
       const seg = manifest.segments[n];
-      assert.ok(seg, `分段 ${n} 在清单里`);
-      assert.equal(seg.stride, 1, '队列产的是满密度分段');
+      assert.ok(seg, `Segment ${n} is in the manifest`);
+      assert.equal(seg.stride, 1, 'The queue produces full-density segments');
       assert.equal(manifest.inits[seg.init].encoder, 'h264_nvenc');
       assert.equal(seg.sig, segmentSignature({ streamKey: task.resultKey, segment: n, stride: 1, encoder: 'h264_nvenc', rect: manifest.tight ?? manifest.bound }));
     }
@@ -383,41 +383,41 @@ test('X1-render 执行器按段产出流任务的分段(满密度)、报进度;s
     assert.deepEqual(result.range, { from: task.range.from, to: task.range.to });
     assert.deepEqual(Object.keys(result.segments).map(Number).sort((x, y) => x - y), Array.from({ length: segs }, (_, i) => task.range.from + i));
     for (const seg of Object.values(result.segments)) {
-      assert.equal(seg.encoder, 'h264_nvenc', '编码器只进清单');
-      assert.ok(client.blobs.has(`px/${seg.hash}`), '分段在素材服务的 px 里');
-      assert.ok(client.blobs.has(`px/${result.inits[seg.init].hash}`), 'init 在 px 里');
+      assert.equal(seg.encoder, 'h264_nvenc', 'The encoder goes only into the manifest');
+      assert.ok(client.blobs.has(`px/${seg.hash}`), 'The segment is in the asset service\'s px');
+      assert.ok(client.blobs.has(`px/${result.inits[seg.init].hash}`), 'init is in px');
     }
     const key = `${task.resultKey}:${task.range.from}-${task.range.to}`;
-    assert.deepEqual(content.items.get(`render-manifest\u0000${key}`), result, '每段清单写进内容库,键 <resultKey>:<from>-<to>');
+    assert.deepEqual(content.items.get(`render-manifest\u0000${key}`), result, 'Each segment\'s manifest is written to the content store, with key <resultKey>:<from>-<to>');
 
     // 另一节点(编码器不同)取用
     const applied = await applyResult(B, client, structuredClone(result));
-    assert.equal(applied.written, segs, 'B 落地了这一段的全部分段');
+    assert.equal(applied.written, segs, 'B landed all the segments of this range');
     const bManifest = await manifestOf(B, task.resultKey);
     for (let n = task.range.from; n <= task.range.to; n++) {
       const a = await segmentHashes(A, task.resultKey, n);
       const b = await segmentHashes(B, task.resultKey, n);
-      assert.deepEqual(b, a, `分段 ${n}:两边 sha256 一致(分段与 init)`);
+      assert.deepEqual(b, a, `Segment ${n}: sha256 matches on both sides (segment and init)`);
       assert.equal(bManifest.segments[n].adopted, true);
-      assert.equal(bManifest.segments[n].encoder, 'h264_nvenc', 'B 记着对方的编码器');
+      assert.equal(bManifest.segments[n].encoder, 'h264_nvenc', 'B records the other side\'s encoder');
       const state = B.streamProducer().streams.get(task.resultKey);
-      assert.equal(B.streamProducer().segmentState(state, n), 'dense', `分段 ${n}:编码器不同也不判旧`);
+      assert.equal(B.streamProducer().segmentState(state, n), 'dense', `Segment ${n}: a different encoder is not marked stale either`);
     }
     // B 再拉同一份:全部跳过、不下载
     const before = client.calls.get;
     const again = await applyResult(B, client, structuredClone(result));
     assert.equal(again.written, 0);
-    assert.equal(client.calls.get, before, '已有的不再下载');
+    assert.equal(client.calls.get, before, 'Existing ones are not downloaded again');
   }
   // 编码器不进结果键:B 用自己的编码器(libx264)算的这一版流键与 A 相同
   const bCtx = await executorFor(B).plan(planView(), { signal: signalNone() });
-  assert.deepEqual(bCtx.streams.map((s) => s.streamKey).sort(), ctx.streams.map((s) => s.streamKey).sort(), '编码器不同,流键相同');
+  assert.deepEqual(bCtx.streams.map((s) => s.streamKey).sort(), ctx.streams.map((s) => s.streamKey).sort(), 'Different encoders, same stream key');
   // 而分段签名带编码器
   assert.notEqual(segmentSignature({ streamKey: tasks[0].resultKey, segment: 0, stride: 1, encoder: 'h264_nvenc', rect: { x: 0, y: 0, w: 2, h: 2 } }),
     segmentSignature({ streamKey: tasks[0].resultKey, segment: 0, stride: 1, encoder: 'libx264', rect: { x: 0, y: 0, w: 2, h: 2 } }));
 });
 
-test('X1-render-skip 已经是满密度、不旧的分段不重产;本机只有稀疏分段时补成满密度', { timeout: 60_000 }, async (t) => {
+test('X1-render-skip segments that are already full-density and not stale are not regenerated; when this machine has only sparse segments, they are topped up to full density', { timeout: 60_000 }, async (t) => {
   t.after(cleanup);
   const A = await streamPipeline();
   const executor = executorFor(A);
@@ -427,7 +427,7 @@ test('X1-render-skip 已经是满密度、不旧的分段不重产;本机只有�
   const mark = streamBakes.length;
   const first = await segmentHashes(A, task.resultKey, 8);
   await executor.render(view(task), { signal: signalNone(), progress: () => {} });
-  assert.equal(streamBakes.length, mark, '第二次一帧都不截');
+  assert.equal(streamBakes.length, mark, 'The second time, not a single frame is captured');
   assert.deepEqual(await segmentHashes(A, task.resultKey, 8), first);
   // 把分段 9 改成稀疏版的样子:要补成满密度
   const producer = A.streamProducer();
@@ -437,10 +437,10 @@ test('X1-render-skip 已经是满密度、不旧的分段不重产;本机只有�
   assert.equal(producer.segmentState(state, 9), 'sparse');
   await executor.render(view(task), { signal: signalNone(), progress: () => {} });
   assert.equal(producer.segmentState(state, 9), 'dense');
-  assert.deepEqual(streamBakes.slice(mark).map((b) => [b.fromFrame, b.stride]), [[9 * SEGMENT_FRAMES, 1]], '只补产分段 9');
+  assert.deepEqual(streamBakes.slice(mark).map((b) => [b.fromFrame, b.stride]), [[9 * SEGMENT_FRAMES, 1]], 'Only segment 9 is topped up');
 });
 
-test('X1-sparse 稀疏流任务:每个分段只截第一帧、清单与满密度同一个键;sink 认它完成、不拿它当满密度任务的结果;满密度任务随后在同一个键上补成满密度;晚到的稀疏流任务不降级', { timeout: 60_000 }, async (t) => {
+test('X1-sparse sparse stream tasks: each segment captures only the first frame, and the manifest shares the same key as full density; the sink accepts it as done but does not take it as the result of a full-density task; the full-density task then tops up to full density under the same key; a late-arriving sparse stream task does not downgrade', { timeout: 60_000 }, async (t) => {
   t.after(cleanup);
   const A = await streamPipeline();
   const executor = executorFor(A);
@@ -452,7 +452,7 @@ test('X1-sparse 稀疏流任务:每个分段只截第一帧、清单与满密度
   assert.equal(sparse.id, `${dense.id}:sparse`);
   assert.equal(sparse.resultKey, dense.resultKey);
   assert.deepEqual(sparse.range, dense.range);
-  assert.ok(sparse.priority > dense.priority, '稀疏流任务排在满密度任务前面');
+  assert.ok(sparse.priority > dense.priority, 'Sparse stream tasks rank ahead of full-density tasks');
   // 同一条流里稀疏流任务排在满密度任务前面发
   const order = all.filter((x) => x.resultKey === dense.resultKey).map((x) => x.input.density ?? 'dense');
   assert.deepEqual(order, [...order.filter((d) => d === 'sparse'), ...order.filter((d) => d === 'dense')]);
@@ -475,17 +475,17 @@ test('X1-sparse 稀疏流任务:每个分段只截第一帧、清单与满密度
   for (let n = dense.range.from; n <= dense.range.to; n++) {
     assert.equal(producer.segmentState(state, n), 'sparse');
     assert.equal(state.manifest.segments[n].stride, SPARSE_STRIDE);
-    assert.equal(state.manifest.segments[n].samples, SEGMENT_FRAMES, '样本数照满:一张重复到整段');
+    assert.equal(state.manifest.segments[n].samples, SEGMENT_FRAMES, 'Sample count is the full count: one picture repeated across the whole segment');
   }
   // sink:稀疏流任务算完成、写清单;同一份本机产物不能当满密度任务的结果
-  assert.equal(await sink.has(refOf(dense)), false, '只有稀疏版:满密度任务不走去重');
+  assert.equal(await sink.has(refOf(dense)), false, 'Sparse version only: the full-density task skips deduplication');
   const put = await sink.put({ ...refOf(sparse), artifacts: null, meta: { taskId: sparse.id, nodeId: 'A', token: 1 } });
   assert.equal(put.complete, true);
-  assert.ok(Object.values(content.items.get(key).segments).every((seg) => seg.stride === SPARSE_STRIDE), '内容库里这个键下是稀疏版');
-  assert.equal(await sink.has(refOf(sparse)), true, '稀疏流任务:有一版就算有');
-  assert.equal(await sink.has(refOf(dense)), false, '内容库里只有稀疏版:满密度任务仍不走去重');
+  assert.ok(Object.values(content.items.get(key).segments).every((seg) => seg.stride === SPARSE_STRIDE), 'Under this key the content store holds the sparse version');
+  assert.equal(await sink.has(refOf(sparse)), true, 'Sparse stream task: having any version counts as having it');
+  assert.equal(await sink.has(refOf(dense)), false, 'The content store has only the sparse version: the full-density task still skips deduplication');
   const densePutEarly = await sink.put({ ...refOf(dense), artifacts: null, meta: { taskId: dense.id, nodeId: 'A', token: 1 } });
-  assert.equal(densePutEarly.complete, false, '满密度任务拿稀疏版交不了差');
+  assert.equal(densePutEarly.complete, false, 'A full-density task cannot be satisfied with the sparse version');
   // 再做一次稀疏流任务:一帧都不截
   mark = streamBakes.length;
   await executor.render(view(sparse), { signal: signalNone(), progress: () => {} });
@@ -497,13 +497,13 @@ test('X1-sparse 稀疏流任务:每个分段只截第一帧、清单与满密度
   for (let n = dense.range.from; n <= dense.range.to; n++) assert.equal(producer.segmentState(state, n), 'dense');
   const putDense = await sink.put({ ...refOf(dense), artifacts: null, meta: { taskId: dense.id, nodeId: 'A', token: 1 } });
   assert.equal(putDense.complete, true);
-  assert.ok(Object.values(content.items.get(key).segments).every((seg) => seg.stride === 1), '同一个键换成了满密度的');
+  assert.ok(Object.values(content.items.get(key).segments).every((seg) => seg.stride === 1), 'The same key was switched to full density');
   assert.equal(await sink.has(refOf(dense)), true);
   assert.equal(await sink.has(refOf(sparse)), true);
   // 稀疏流任务晚到(本机已经是满密度):不截、不降级
   mark = streamBakes.length;
   await executor.render(view(sparse), { signal: signalNone(), progress: () => {} });
-  assert.equal(streamBakes.length, mark, '已经有满密度的:稀疏流任务一帧都不截');
+  assert.equal(streamBakes.length, mark, 'Full density already exists: the sparse stream task captures no frames');
 
   // 不降级:别的节点(同指纹)晚到的稀疏清单写同一个键,已有的满密度分段留着;它多出来的分段并进去
   const denseBody = content.items.get(key);
@@ -511,7 +511,7 @@ test('X1-sparse 稀疏流任务:每个分段只截第一帧、清单与满密度
   const lateSparse = structuredClone(denseBody);
   for (const seg of Object.values(lateSparse.segments)) { seg.stride = SPARSE_STRIDE; seg.hash = 'e'.repeat(64); }
   const merged = mergeStreamResult(denseBody, lateSparse);
-  assert.deepEqual(merged.segments, denseBody.segments, '已有的满密度分段一个都没被稀疏的换掉');
+  assert.deepEqual(merged.segments, denseBody.segments, 'None of the existing full-density segments was replaced by a sparse one');
   assert.equal(await writeManifest(content, lateSparse), true);
   assert.deepEqual(content.items.get(key).segments, denseBody.segments);
   // 新清单只列了一段(边产边写):已有清单里别的分段留着;新的满密度分段盖掉已有的稀疏分段
@@ -534,15 +534,15 @@ test('X1-sparse 稀疏流任务:每个分段只截第一帧、清单与满密度
   await executorB.render(view(sparse), { signal: signalNone(), progress: () => {} });
   const stateB = B.streamProducer().streams.get(dense.resultKey);
   assert.equal(B.streamProducer().segmentState(stateB, first), 'sparse');
-  assert.equal((await applyResult(B, client, structuredClone(put.result))).written, 0, '对方也是稀疏的:不收');
-  assert.equal((await applyResult(B, client, structuredClone(denseBody))).written, segs, '对方是满密度的:升上去');
+  assert.equal((await applyResult(B, client, structuredClone(put.result))).written, 0, 'The other side is also sparse: not accepted');
+  assert.equal((await applyResult(B, client, structuredClone(denseBody))).written, segs, 'The other side is full-density: upgrade');
   for (let n = dense.range.from; n <= dense.range.to; n++) {
     assert.equal(B.streamProducer().segmentState(stateB, n), 'dense');
     assert.equal(stateB.manifest.segments[n].adopted, true);
   }
 });
 
-test('X1-mismatch 流任务对不上这一版的流:内容键、结果键(别的指纹)、分段范围越界 → plan-mismatch(不可重试),不截图', { timeout: 30_000 }, async (t) => {
+test('X1-mismatch a stream task that does not match this version\'s streams: content key, result key (another fingerprint), segment range out of bounds → plan-mismatch (not retryable), no screenshots taken', { timeout: 30_000 }, async (t) => {
   t.after(cleanup);
   const A = await streamPipeline();
   const executor = executorFor(A);
@@ -550,9 +550,9 @@ test('X1-mismatch 流任务对不上这一版的流:内容键、结果键(别的
   const [task] = streamTasksOf(ctx);
   const mut = (fn) => { const copy = view(task); fn(copy); return copy; };
   const cases = [
-    ['内容键不同', mut((x) => { x.input.contentKey = 'f'.repeat(64); })],
-    ['结果键是别的指纹的', mut((x) => { x.resultKey = resultKeyOf(x.input.contentKey, 'aaaaaaaaaaaaaaaa'); })],
-    ['分段越界', mut((x) => { x.range = { unit: 'segment', from: 8, to: 12 }; })],
+    ['Content keys differ', mut((x) => { x.input.contentKey = 'f'.repeat(64); })],
+    ['The result key belongs to a different fingerprint', mut((x) => { x.resultKey = resultKeyOf(x.input.contentKey, 'aaaaaaaaaaaaaaaa'); })],
+    ['Segment out of range', mut((x) => { x.range = { unit: 'segment', from: 8, to: 12 }; })],
   ];
   const mark = streamBakes.length;
   for (const [what, bad] of cases) {
@@ -563,7 +563,7 @@ test('X1-mismatch 流任务对不上这一版的流:内容键、结果键(别的
   assert.equal(streamBakes.length, mark);
 });
 
-test('X1-abort 中途中止:拒绝(cancelled),不再产后面的分段;之后用新信号重做能补齐', { timeout: 60_000 }, async (t) => {
+test('X1-abort aborting midway: rejects (cancelled) and no longer produces the later segments; redoing with a new signal afterward can fill the gaps', { timeout: 60_000 }, async (t) => {
   t.after(cleanup);
   const A = await streamPipeline();
   const executor = executorFor(A);
@@ -572,18 +572,18 @@ test('X1-abort 中途中止:拒绝(cancelled),不再产后面的分段;之后用
   const controller = new AbortController();
   onBakeStream = async ({ fromFrame }) => { if (fromFrame === 2 * SEGMENT_FRAMES) controller.abort(); };
   const err = await executor.render(view(task), { signal: controller.signal, progress: () => {} }).then(() => null, (e) => e);
-  assert.ok(err, '中止要拒绝');
+  assert.ok(err, 'Abort must reject');
   onBakeStream = null;
   const manifest = await manifestOf(A, task.resultKey).catch(() => ({ segments: {} }));
-  assert.ok(!manifest.segments[3], '中止之后的分段没产');
+  assert.ok(!manifest.segments[3], 'Segments after the abort were not produced');
   await executor.render(view(task), { signal: signalNone(), progress: () => {} });
   const full = await manifestOf(A, task.resultKey);
-  for (let n = 0; n <= 7; n++) assert.equal(full.segments[n]?.stride, 1, `分段 ${n} 补齐`);
+  for (let n = 0; n <= 7; n++) assert.equal(full.segments[n]?.stride, 1, `Segment ${n} filled in`);
 });
 
 /* ================================================================== 队列模式与自动生产 */
 
-test('X1-owned 队列模式的 entry(queueSnapshots)的流不自动产;退回本机(queueSnapshots=false)后自动生产接手', { timeout: 30_000 }, async (t) => {
+test('X1-owned streams of an entry in queue mode (queueSnapshots) are not produced automatically; after falling back to this machine (queueSnapshots=false), automatic production takes over', { timeout: 30_000 }, async (t) => {
   t.after(cleanup);
   const A = await streamPipeline();
   const executor = executorFor(A);
@@ -594,34 +594,34 @@ test('X1-owned 队列模式的 entry(queueSnapshots)的流不自动产;退回本
   entry.queueSnapshots = true;
   const mark = streamBakes.length;
   await producer.update(entry);
-  assert.ok(producer.streams.size >= 2, '流的 state 照常建(读回、发层要用)');
-  assert.equal(producer.nextTask(null), null, '归队列的流:自动生产没有活');
+  assert.ok(producer.streams.size >= 2, 'The stream\'s state is still created as usual (needed for reading back and sending layers)');
+  assert.equal(producer.nextTask(null), null, 'Streams assigned to the queue: automatic production has no work');
   await producer.drain();
-  assert.equal(streamBakes.length, mark, '一帧都没自己截');
+  assert.equal(streamBakes.length, mark, 'It captured no frames itself');
   entry.queueSnapshots = false;
-  assert.ok(producer.nextTask(null), '退回本机后自动生产有活');
+  assert.ok(producer.nextTask(null), 'After falling back to this machine, automatic production has work');
 });
 
-test('X1-local-fallback 切分方没切出流任务:releaseQueueStreams 把这一版的流交还本机自动生产,快照仍归队列;不是队列模式 / 重复调用回 0', { timeout: 30_000 }, async (t) => {
+test('X1-local-fallback the splitter produced no stream tasks: releaseQueueStreams hands this version\'s streams back to this machine\'s automatic production while snapshots stay with the queue; not in queue mode / repeated calls return 0', { timeout: 30_000 }, async (t) => {
   t.after(cleanup);
   const A = await streamPipeline();
   const executor = executorFor(A);
   await executor.plan(planView(), { signal: signalNone() });
   const entry = await A.entry(projectJson());
   const producer = A.streamProducer();
-  assert.equal(A.releaseQueueStreams(entry.key), 0, '不是队列模式的 entry:不动');
+  assert.equal(A.releaseQueueStreams(entry.key), 0, 'An entry not in queue mode: left untouched');
   entry.queueSnapshots = true;
   await producer.update(entry);
-  assert.equal(producer.nextTask(null), null, '归队列的流:自动生产没有活');
-  assert.equal(A.releaseQueueStreams('no-such-entry'), 0, '没有这个 entry:不动');
-  assert.equal(A.releaseQueueStreams(entry.key), 1, '交还一个 entry');
-  assert.equal(entry.queueSnapshots, true, '快照照旧归队列');
+  assert.equal(producer.nextTask(null), null, 'Streams assigned to the queue: automatic production has no work');
+  assert.equal(A.releaseQueueStreams('no-such-entry'), 0, 'No such entry: left untouched');
+  assert.equal(A.releaseQueueStreams(entry.key), 1, 'One entry handed back');
+  assert.equal(entry.queueSnapshots, true, 'Snapshots stay with the queue as before');
   assert.equal(entry.queueStreamsLocal, true);
-  assert.ok(producer.nextTask(null), '交还之后自动生产有活');
-  assert.equal(A.releaseQueueStreams(entry.key), 0, '重复调用:不动');
+  assert.ok(producer.nextTask(null), 'After handing back, automatic production has work');
+  assert.equal(A.releaseQueueStreams(entry.key), 0, 'Repeated call: left untouched');
 });
 
-test('X1-hold 队列正在产的流:换一版(新计划里没有它)时 state 不丢,在产的分段照常落盘', { timeout: 60_000 }, async (t) => {
+test('X1-hold a stream the queue is producing: when switching to another version (it is not in the new plan), state is not dropped and the segments in production are still written to disk as usual', { timeout: 60_000 }, async (t) => {
   t.after(cleanup);
   const A = await streamPipeline();
   const executor = executorFor(A);
@@ -641,22 +641,22 @@ test('X1-hold 队列正在产的流:换一版(新计划里没有它)时 state �
   const otherEntry = await A.entry(other);
   otherEntry.cardPlan = [];
   await producer.update(otherEntry);
-  assert.ok(producer.streams.has(task.resultKey), '在产的流留在生产者里');
+  assert.ok(producer.streams.has(task.resultKey), 'The stream in production stays in the producer');
   onBakeStream = null;
   release();
   await running;
   const manifest = await manifestOf(A, task.resultKey);
-  for (let n = task.range.from; n <= task.range.to; n++) assert.equal(manifest.segments[n]?.stride, 1, `分段 ${n} 落盘`);
+  for (let n = task.range.from; n <= task.range.to; n++) assert.equal(manifest.segments[n]?.stride, 1, `Segment ${n} written to disk`);
 });
 
-test('X1-attempts 一个分段连续失败 QUEUE_SEGMENT_ATTEMPTS 次:任务以可重试的错误失败', { timeout: 30_000 }, async (t) => {
+test('X1-attempts a segment fails QUEUE_SEGMENT_ATTEMPTS times in a row: the task fails with a retryable error', { timeout: 30_000 }, async (t) => {
   t.after(cleanup);
   const A = await streamPipeline();
   const executor = executorFor(A);
   const ctx = await executor.plan(planView(), { signal: signalNone() });
   const [task] = streamTasksOf(ctx).filter((x) => x.input.clipId === 'clip-c');
   let calls = 0;
-  onBakeStream = async () => { calls++; throw new Error('截图坏了(假)'); };
+  onBakeStream = async () => { calls++; throw new Error('Screenshot failed (fake)'); };
   const err = await executor.render(view(task), { signal: signalNone(), progress: () => {} }).then(() => null, (e) => e);
   assert.equal(err?.code, 'stream-segment-failed');
   assert.notEqual(err?.retryable, false);

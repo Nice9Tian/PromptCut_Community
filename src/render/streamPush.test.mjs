@@ -34,13 +34,13 @@ function planeData(key, segs, { drop = [] } = {}) {
 }
 const plane = (segs) => ({ clipIds: ['a'], key: 'K', ranges: segs.length ? [[segs[0], segs[segs.length - 1]]] : [], originFrame: 0 });
 
-test('manifestBlockHashes:开头文件 + 分段;桌面的清单(文件名、没有 hash)一块都不列', () => {
+test('manifestBlockHashes: init file + segments; a desktop manifest (file names, no hash) lists no chunk at all', () => {
   assert.deepEqual(new Set(manifestBlockHashes(planeData('K', [0, 1]).manifest)), new Set([INIT, H(0x100), H(0x101)]));
   assert.deepEqual(manifestBlockHashes({ inits: { i: { codec: 'x', width: 1, height: 1, rect: { x: 0, y: 0, w: 1, h: 1 } } }, segments: { 0: { init: 'i', file: '0-abc.m4s', stride: 1, samples: 15 } } }), []);
   assert.deepEqual(manifestBlockHashes(null), []);
 });
 
-test('按哈希取:第一次带上清单和全部块;舞台从推来的块里取开头文件和分段', async () => {
+test('Fetch by hash: the first time carries the manifest and all chunks; the stage takes the init file and segments from the pushed chunks', async () => {
   let data = planeData('K', [0, 1]);
   const sender = new StreamPlaneSender((key) => (key === 'K' ? data : null));
   const stage = new PushedStreamSource();
@@ -51,7 +51,7 @@ test('按哈希取:第一次带上清单和全部块;舞台从推来的块里取
   assert.deepEqual(sent[0].ranges, [[0, 1]]);
   assert.equal(sent[0].manifest, data.manifest);
   assert.deepEqual(new Set(Object.keys(sent[0].blocks)), new Set([INIT, H(0x100), H(0x101)]));
-  assert.ok(sent[0].blocks[INIT] instanceof ArrayBuffer, '块是 ArrayBuffer(经 postMessage 克隆到舞台)');
+  assert.ok(sent[0].blocks[INIT] instanceof ArrayBuffer, 'Chunks are ArrayBuffer (cloned to the stage via postMessage)');
   stage.accept(sent);
   assert.equal(await stage.manifest('K'), data.manifest);
   assert.deepEqual([...new Uint8Array(await stage.init('K', INIT_ID))], [9, 9]);
@@ -62,7 +62,7 @@ test('按哈希取:第一次带上清单和全部块;舞台从推来的块里取
   assert.equal(again[0].manifest, data.manifest);
   assert.equal('blocks' in again[0], false);
   stage.accept(again);
-  assert.equal(stage.size, 3, '舞台手里的块还在');
+  assert.equal(stage.size, 3, 'The chunks held by the stage are still there');
   // 多取到一段:只发新的那一块
   data = planeData('K', [0, 1, 2]);
   const more = sender.decorate([plane([0, 1, 2])]);
@@ -72,7 +72,7 @@ test('按哈希取:第一次带上清单和全部块;舞台从推来的块里取
   assert.equal(sender.heldCount, 4);
 });
 
-test('两边的账:清单不再用到的块舞台当场丢掉;以后又用到时父页重发', async () => {
+test('Bookkeeping on both sides: chunks the manifest no longer uses are dropped by the stage immediately; when used again later, the parent page resends them', async () => {
   let data = planeData('K', [0, 1]);
   const sender = new StreamPlaneSender(() => data);
   const stage = new PushedStreamSource();
@@ -82,7 +82,7 @@ test('两边的账:清单不再用到的块舞台当场丢掉;以后又用到时
   const next = sender.decorate([plane([1, 2])]);
   assert.deepEqual(Object.keys(next[0].blocks), [H(0x102)]);
   stage.accept(next);
-  assert.equal(stage.has(H(0x100)), false, '第 0 段没人用了:丢掉');
+  assert.equal(stage.has(H(0x100)), false, 'Segment 0 is no longer used by anyone: dropped');
   assert.equal(stage.has(H(0x101)) && stage.has(H(0x102)) && stage.has(INIT), true);
   // 往回拖:第 0 段又要了,父页认得舞台手里没有它
   data = planeData('K', [0, 1]);
@@ -97,7 +97,7 @@ test('两边的账:清单不再用到的块舞台当场丢掉;以后又用到时
   assert.equal(Object.keys(sender.decorate([plane([0, 1])])[0].blocks).length, 3);
 });
 
-test('缺块:舞台手里没有的清单、开头文件、分段,取的时候当场回绝(那一拍落到快照),不挂着等', async () => {
+test('Missing chunks: a manifest, init file or segment the stage does not hold is rejected immediately on fetch (that beat falls back to the snapshot), without waiting', async () => {
   const data = planeData('K', [0, 1], { drop: [H(0x101)] });   // 清单列着第 1 段,字节却不在父页手里
   const sender = new StreamPlaneSender(() => data);
   const stage = new PushedStreamSource();
@@ -108,17 +108,17 @@ test('缺块:舞台手里没有的清单、开头文件、分段,取的时候当
   await assert.rejects(stage.manifest('nope'), (e) => e.status === 404);
   await assert.rejects(stage.init('K', 'ffffffffffffffff'), (e) => e.status === 404);
   await assert.rejects(new PushedStreamSource().init('K', INIT_ID), (e) => e.status === 404);
-  assert.deepEqual([...new Uint8Array(await stage.segment('K', H(0x100)))], [0, 0, 0], '别的段照取');
+  assert.deepEqual([...new Uint8Array(await stage.segment('K', H(0x100)))], [0, 0, 0], 'Other segments are fetched as usual');
   // 父页认为舞台没有这一块:字节到了之后补发
   data.blocks.set(H(0x101), buf(1, 1, 1));
   assert.deepEqual(Object.keys(sender.decorate([plane([0, 1])])[0].blocks), [H(0x101)]);
 });
 
-test('父页没有这条流的清单(还没取到):平面原样发,不带清单;调用失败后清账,全部重发', () => {
+test('The parent page has no manifest for this stream (not fetched yet): the plane is sent as is, without a manifest; after a failed call, the bookkeeping is cleared and everything is resent', () => {
   let data = null;
   const sender = new StreamPlaneSender(() => data);
   assert.deepEqual(sender.decorate([plane([0])]), [{ clipIds: ['a'], key: 'K', ranges: [[0, 0]], originFrame: 0 }]);
-  assert.deepEqual(sender.decorate([{ clipIds: ['x'] }]), [{ clipIds: ['x'] }], '没有流键的平面(只占位)不问');
+  assert.deepEqual(sender.decorate([{ clipIds: ['x'] }]), [{ clipIds: ['x'] }], 'A plane with no stream key (placeholder only) is not queried');
   data = planeData('K', [0]);
   assert.equal(Object.keys(sender.decorate([plane([0])])[0].blocks).length, 2);
   assert.equal('blocks' in sender.decorate([plane([0])])[0], false);
@@ -126,7 +126,7 @@ test('父页没有这条流的清单(还没取到):平面原样发,不带清单;
   assert.equal(Object.keys(sender.decorate([plane([0])])[0].blocks).length, 2);
 });
 
-test('两条平面用到同一块(同一条流挂在两张卡上):一次只发一份', () => {
+test('Two planes use the same chunk (the same stream attached to two cards): send only one copy at a time', () => {
   const data = planeData('K', [0]);
   const sender = new StreamPlaneSender(() => data);
   const sent = sender.decorate([{ clipIds: ['a'], key: 'K', ranges: [[0, 0]], originFrame: 0 }, { clipIds: ['b'], key: 'K', ranges: [[0, 0]], originFrame: 0 }]);
@@ -147,7 +147,7 @@ function spySource() {
   return { calls, manifest: (k) => { calls.push(['manifest', k]); return never(); }, init: (k, id) => { calls.push(['init', k, id]); return never(); }, segment: (k, f) => { calls.push(['segment', k, f]); return never(); } };
 }
 
-test('带清单的流平面:清单当场生效,分段按哈希向推来的块要;预渲染进程那个字节源一次都不问', async () => {
+test('Stream plane with a manifest: the manifest takes effect immediately, segments are requested from the pushed chunks by hash; the prerender process\'s byte source is never asked', async () => {
   const data = planeData('K', [0, 1]);
   const http = spySource();
   const player = new StreamPlayer({ root: () => fakeRoot({ a: fakeCanvas() }), source: http });
@@ -159,10 +159,10 @@ test('带清单的流平面:清单当场生效,分段按哈希向推来的块要
   await flush();
   const [track] = player.diag().tracks;
   assert.equal(track.pushed, true);
-  assert.equal(track.manifest, true, '不用等一次清单请求');
+  assert.equal(track.manifest, true, 'No need to wait for a manifest request');
   assert.deepEqual(track.bound, { x: 0, y: 0, w: 300, h: 200 });
-  assert.deepEqual(asked, [H(0x100)], '第 0 段按哈希向推来的块要');
-  assert.deepEqual(http.calls, [], '带了清单的平面不碰预渲染进程的地址');
+  assert.deepEqual(asked, [H(0x100)], 'segment 0 asks for the pushed chunk by hash');
+  assert.deepEqual(http.calls, [], 'a plane that carries a manifest does not touch the prerender process address');
   assert.deepEqual(player.diag().pushed, { blocks: 3, bytes: 2 + 3 + 3 });
   // 暂停:父页发空表,流关掉,推来的块全丢
   player.setPlanes([], 30);
@@ -170,7 +170,7 @@ test('带清单的流平面:清单当场生效,分段按哈希向推来的块要
   assert.equal(player.diag().tracks.length, 0);
 });
 
-test('父页带来新的清单(多了分段):同一条轨道当场换上,不重建', async () => {
+test('parent page brings a new manifest (more segments): the same track is swapped in place, not rebuilt', async () => {
   let data = planeData('K', [0]);
   const sender = new StreamPlaneSender(() => data);
   const player = new StreamPlayer({ root: () => fakeRoot({ a: fakeCanvas() }), source: spySource() });
@@ -191,13 +191,13 @@ test('父页带来新的清单(多了分段):同一条轨道当场换上,不重�
   player.setPlanes(sender.decorate([{ clipIds: ['a'], key: 'K', ranges: [[0, 1]], originFrame: 0 }]), 30);
   player.present(16 / 30);
   await flush();
-  assert.ok(asked.includes(H(0x101)), '新清单里有第 1 段了:去要它的字节');
+  assert.ok(asked.includes(H(0x101)), 'the new manifest has segment 1: go request its bytes');
   assert.equal(asked.includes('rejected'), false);
   assert.equal(player.diag().tracks.length, 1);
-  assert.ok(player.diag().tracks[0].seeks >= seeks, '还是原来那条轨道');
+  assert.ok(player.diag().tracks[0].seeks >= seeks, 'still the same track as before');
 });
 
-test('桌面的流平面(不带清单)照旧问播放器的字节源', async () => {
+test('desktop stream plane (no manifest) still asks the player\'s byte source', async () => {
   const http = spySource();
   const player = new StreamPlayer({ root: () => fakeRoot({ a: fakeCanvas() }), source: http });
   player.setPlanes([{ clipIds: ['a'], key: 'K', ranges: [[0, 0]], originFrame: 0 }], 30);

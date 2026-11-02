@@ -72,7 +72,7 @@ export const repoUrl = (rel) => pathToFileURL(repoPath(rel)).href;
 export const exists = (rel) => fs.existsSync(repoPath(rel));
 
 /** `node:test` 的 skip 选项：接口在就是 false（真跑），不在就是「接口缺失：…」 */
-export const skipIf = (missing, what) => (missing ? `接口缺失：${what}（C10a 实现未集成，集成后自动转为真跑）` : false);
+export const skipIf = (missing, what) => (missing ? `interface missing: ${what} (C10a implementation not integrated yet; runs for real automatically once integrated)` : false);
 
 export function tempDir(prefix = 'pc-c10a-') {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -98,9 +98,9 @@ export function inviteSupport() {
       env = await startHost();
       const r = await env.http('shared/invite/resolve', { method: 'POST', body: { code: newInviteCode() } });
       const ok = r.status === 404 && r.json?.error === 'invite-invalid';
-      return { ok, detail: ok ? '' : `POST shared/invite/resolve 回 ${r.status} ${r.text.slice(0, 120)}` };
+      return { ok, detail: ok ? '' : `POST shared/invite/resolve returned ${r.status} ${r.text.slice(0, 120)}` };
     } catch (err) {
-      return { ok: false, detail: `起托管端失败：${err?.message ?? err}` };
+      return { ok: false, detail: `failed to start the hosted side: ${err?.message ?? err}` };
     } finally {
       await env?.close();
     }
@@ -118,7 +118,7 @@ export function redeemInvite(env, { code, username, deviceId }, { remote } = {})
 
 /** `invite-status` 的回包：字段平铺，或包在 `status` 里（K1） */
 export function inviteStatusOf(reply) {
-  assert.equal(reply?.type, 'shared.admin.ok', `invite-status 应 shared.admin.ok：${JSON.stringify(reply)}`);
+  assert.equal(reply?.type, 'shared.admin.ok', `invite-status should be shared.admin.ok: ${JSON.stringify(reply)}`);
   return reply.status && typeof reply.status === 'object' ? reply.status : reply;
 }
 
@@ -243,7 +243,7 @@ function muxerAdapter(mod, opts) {
       push({ kind: 'a', data: chunkBytes(chunk), timestampUs: chunk.timestamp, durationUs: chunk.duration });
     },
     async finalize() {
-      assert.ok(real, `封装器没建起来：视频解码配置 ${video ? '有' : '没有'}，音频 ${wantAudio ? (audio ? '有' : '没有') : '不要'}`);
+      assert.ok(real, `the muxer was not built: video decoder config ${video ? 'present' : 'missing'}, audio ${wantAudio ? (audio ? 'present' : 'missing') : 'does not want'}`);
       await real.finalize();
       return sink.bytes();
     },
@@ -270,7 +270,7 @@ export async function muxerBytes(muxer, finalized) {
   if (out && typeof out.arrayBuffer === 'function') out = await out.arrayBuffer();
   if (out instanceof ArrayBuffer) return Buffer.from(out);
   if (ArrayBuffer.isView(out)) return Buffer.from(out.buffer, out.byteOffset, out.byteLength);
-  assert.fail(`封装器 finalize() 没交出字节：${Object.prototype.toString.call(out)}`);
+  assert.fail(`muxer finalize() returned no bytes: ${Object.prototype.toString.call(out)}`);
 }
 
 /** WebCodecs 的 EncodedVideoChunk / EncodedAudioChunk 形状 */
@@ -309,7 +309,7 @@ export function run(cmd, args, { timeoutMs = 120_000 } = {}) {
       clearTimeout(timer);
       const buf = Buffer.concat(out);
       if (code === 0) resolve({ out: buf.toString('utf8'), buf, err });
-      else reject(new Error(`${path.basename(cmd)} ${args.join(' ')} 退出码 ${code}：${err.slice(-800)}`));
+      else reject(new Error(`${path.basename(cmd)} ${args.join(' ')} exit code ${code}: ${err.slice(-800)}`));
     });
   });
 }
@@ -360,7 +360,7 @@ export function annexBToAvcc(buf) {
       key = false;
     }
   }
-  assert.ok(sps && pps, 'H.264 样本里没有 SPS / PPS');
+  assert.ok(sps && pps, 'no SPS / PPS in the H.264 sample');
   const avcC = Buffer.concat([
     Buffer.from([1, sps[1], sps[2], sps[3], 0xff, 0xe1]),
     Buffer.from([sps.length >> 8, sps.length & 0xff]), sps,
@@ -377,7 +377,7 @@ export function adtsToRaw(buf) {
   let i = 0;
   let profile = 1, srIdx = 4, ch = 2;
   while (i + 7 <= buf.length) {
-    assert.ok(buf[i] === 0xff && (buf[i + 1] & 0xf6) === 0xf0, `ADTS 同步字不对（偏移 ${i}）`);
+    assert.ok(buf[i] === 0xff && (buf[i + 1] & 0xf6) === 0xf0, `ADTS sync word is wrong (offset ${i})`);
     const protectionAbsent = buf[i + 1] & 1;
     profile = (buf[i + 2] >> 6) + 1;
     srIdx = (buf[i + 2] >> 2) & 0xf;

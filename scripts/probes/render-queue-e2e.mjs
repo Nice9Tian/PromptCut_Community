@@ -39,10 +39,10 @@
  */
 import { randomBytes } from 'node:crypto';
 
-const USAGE = `用法：node scripts/probes/render-queue-e2e.mjs --url <ws://…> --role publisher|node|both
+const USAGE = `Usage: node scripts/probes/render-queue-e2e.mjs --url <ws://…> --role publisher|node|both
   [--tasks 50] [--project <id>] [--node-id <id>] [--task-ms 200] [--max-concurrent 2]
   [--exit-after-claim] [--announce <http-url>] [--watch-endpoints] [--timeout-ms 120000] [--transport auto|ws]
-凭证从环境变量 PROMPTCUT_SHARED_CONFIG 指向的共享项目配置读；不设就是本机身份（只能连本机回环）。`;
+Credentials are read from the shared project config that the environment variable PROMPTCUT_SHARED_CONFIG points to; if it is not set, the local identity is used (it can only connect to the local loopback).`;
 
 function usage(msg) {
   if (msg) console.error(msg);
@@ -60,27 +60,27 @@ function parseArgs(argv) {
     if (FLAGS.has(a)) { out[a.slice(2)] = true; continue; }
     if (VALUED.has(a)) {
       const v = argv[++i];
-      if (v === undefined || v.startsWith('--')) usage(`${a} 缺值`);
+      if (v === undefined || v.startsWith('--')) usage(`${a} is missing a value`);
       out[a.slice(2)] = v;
       continue;
     }
-    if (a === '--token') usage('集群令牌不再用于数据面；共享项目的凭证从环境变量 PROMPTCUT_SHARED_CONFIG 读');
-    usage(`不认识的参数：${a}`);
+    if (a === '--token') usage('The cluster token is no longer used for the data plane; shared project credentials are read from the environment variable PROMPTCUT_SHARED_CONFIG');
+    usage(`Unknown argument: ${a}`);
   }
   return out;
 }
 
 const args = parseArgs(process.argv.slice(2));
-if (!args.url || !args.role) usage(process.argv.length > 2 ? '缺 --url 或 --role' : undefined);
-if (!['publisher', 'node', 'both'].includes(args.role)) usage(`--role 只能是 publisher、node、both，收到 ${args.role}`);
+if (!args.url || !args.role) usage(process.argv.length > 2 ? 'Missing --url or --role' : undefined);
+if (!['publisher', 'node', 'both'].includes(args.role)) usage(`--role must be publisher, node, or both, got ${args.role}`);
 const intArg = (name, dflt, min = 0) => {
   if (args[name] === undefined) return dflt;
   const n = Number(args[name]);
-  if (!Number.isInteger(n) || n < min) usage(`--${name} 要是不小于 ${min} 的整数`);
+  if (!Number.isInteger(n) || n < min) usage(`--${name} must be an integer not less than ${min}`);
   return n;
 };
 const url = args.url;
-if (!/^(wss?|https?):\/\//.test(url)) usage('--url 要是 ws(s):// 或 http(s)://');
+if (!/^(wss?|https?):\/\//.test(url)) usage('--url must be ws(s):// or http(s)://');
 const role = args.role;
 const taskCount = intArg('tasks', 50, 1);
 const taskMs = intArg('task-ms', 200, 0);
@@ -101,7 +101,7 @@ if (process.env.PROMPTCUT_SHARED_CONFIG) {
   }
 }
 if (args.announce !== undefined) {
-  try { new URL(args.announce); } catch { usage('--announce 要是 http(s):// 地址'); }
+  try { new URL(args.announce); } catch { usage('--announce must be an http(s):// address'); }
 }
 
 // 被测模块和假件按需动态引入：参数不对时只打用法，不因模块缺失而崩
@@ -116,7 +116,7 @@ const [{ createDocEndpoint, transportOf }, { watchServiceEndpoints }, { createLo
 
 let transportOption = {};
 if (args.transport !== undefined) {
-  try { transportOption = { transport: transportOf(args.transport, undefined) }; } catch (error) { usage(`--transport ${args.transport}：${error?.message ?? error}`); }
+  try { transportOption = { transport: transportOf(args.transport, undefined) }; } catch (error) { usage(`--transport ${args.transport}: ${error?.message ?? error}`); }
 }
 
 const log = (event, fields = {}) => console.log(JSON.stringify({ t: new Date().toISOString(), event, ...fields }));
@@ -304,21 +304,21 @@ if (role === 'node' || role === 'both') eps.push(runNode());
 const connectDeadline = Math.min(timeoutMs, 15_000);
 const connectCheck = setTimeout(() => {
   if (eps.some((ep) => ep.stats().opens === 0)) {
-    result.fails.push(`${connectDeadline} ms 内没连上 ${url}`);
+    result.fails.push(`Could not connect to ${url} within ${connectDeadline} ms`);
     finish(2);
   }
 }, connectDeadline);
 connectCheck.unref?.();
 
 setTimeout(() => {
-  if (role !== 'node') result.fails.push(`${timeoutMs} ms 内没全部完成（完成 ${result.completed}/${taskCount}）`);
+  if (role !== 'node') result.fails.push(`Not all tasks completed within ${timeoutMs} ms (completed ${result.completed}/${taskCount})`);
   finish();
 }, timeoutMs).unref?.();
 timers.push(setInterval(() => {}, 1 << 30)); // 保持进程存活，直到 finish
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {
-    if (role !== 'node') result.fails.push(`被 ${sig} 中断（完成 ${result.completed}/${taskCount}）`);
+    if (role !== 'node') result.fails.push(`Interrupted by ${sig} (completed ${result.completed}/${taskCount})`);
     finish();
   });
 }

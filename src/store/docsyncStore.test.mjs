@@ -14,7 +14,7 @@ const { actions, getState } = await import(srcUrl("store/project.ts"));
 const core = await import(srcUrl("store/core.ts"));
 const { DocSync, bindStore } = await import(srcUrl("store/docsync.ts"));
 
-function fresh(name = "起点") {
+function fresh(name = "Starting point") {
   actions.newProject(name);
   return getState().project;
 }
@@ -40,7 +40,7 @@ test("V5-snapshot stack mode: consecutive edits with the same mergeKey within 30
   assert.equal(getState().project, p0);
   fresh();
   core.setProject({ ...getState().project, width: 1 }, { mergeKey: "w" });
-  actions.setProjectMeta({ name: "别的" });
+  actions.setProjectMeta({ name: "Other" });
   core.setProject({ ...getState().project, width: 2 }, { mergeKey: "w" });
   assert.equal(core.history.length, 3);
   // 不传 mergeKey 与以前完全一样:每次一步
@@ -51,7 +51,7 @@ test("V5-snapshot stack mode: consecutive edits with the same mergeKey within 30
 });
 
 test("Connected to the document service: setProject goes through docsync, undo is per page session, other people's changes are written to state and not pushed onto the undo stack; after unbinding, falls back to the snapshot stack", () => {
-  const p0 = fresh("共享");
+  const p0 = fresh("Shared");
   const svc = new MemDocService({ project: structuredClone(p0), rev: 3 });
   let linkA;
   const A = new DocSync(p0, { projectId: "P", session: "A", send: (m) => linkA.send(m) });
@@ -80,7 +80,7 @@ test("Connected to the document service: setProject goes through docsync, undo i
   assert.equal(getState().project.tracks[0].name, "Track edited by B");
   assert.equal(getState().dirty, true);
   actions.undo();
-  assert.equal(getState().project.name, "共享");
+  assert.equal(getState().project.name, "Shared");
   assert.equal(getState().project.tracks[0].name, "Track edited by B");
   assert.equal(actions.canUndo(), false);
   assert.equal(actions.canRedo(), true);

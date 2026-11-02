@@ -63,7 +63,7 @@ export async function rawWsClient(port, { host = '127.0.0.1', path = '/', protoc
 
   let buf = Buffer.alloc(0);
   const head = await new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error('等握手响应超时')), 3000);
+    const t = setTimeout(() => reject(new Error('timed out waiting for the handshake response')), 3000);
     const onData = (d) => {
       buf = Buffer.concat([buf, d]);
       const end = buf.indexOf('\r\n\r\n');
@@ -75,13 +75,13 @@ export async function rawWsClient(port, { host = '127.0.0.1', path = '/', protoc
       resolve(text);
     };
     sock.on('data', onData);
-    sock.once('close', () => { clearTimeout(t); reject(new Error('握手时连接被关闭')); });
+    sock.once('close', () => { clearTimeout(t); reject(new Error('connection closed during the handshake')); });
   });
   const status = Number(head.split('\r\n')[0].split(' ')[1]);
   const accept = createHash('sha1').update(key + GUID).digest('base64');
   if (status !== 101 || !head.toLowerCase().includes(`sec-websocket-accept: ${accept.toLowerCase()}`)) {
     sock.destroy();
-    throw new Error(`握手失败：${head.split('\r\n')[0]}`);
+    throw new Error(`handshake failed: ${head.split('\r\n')[0]}`);
   }
 
   const inbox = [];
@@ -108,7 +108,7 @@ export async function rawWsClient(port, { host = '127.0.0.1', path = '/', protoc
         waiters.push(w);
         setTimeout(() => {
           const k = waiters.indexOf(w);
-          if (k >= 0) { waiters.splice(k, 1); reject(new Error(`等消息超时（原始客户端，已收 ${stats.messages} 条）`)); }
+          if (k >= 0) { waiters.splice(k, 1); reject(new Error(`timed out waiting for a message (raw client, ${stats.messages} received so far)`)); }
         }, ms);
       });
     },

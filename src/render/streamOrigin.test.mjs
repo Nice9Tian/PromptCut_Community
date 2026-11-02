@@ -76,9 +76,9 @@ const fedOf = (decoder) => decoder.fed.map((c) => [frameOfTimestamp(c.timestamp,
 
 beforeEach(() => { decoders.length = 0; });
 
-test('随机访问逐帧核对:片段从第 100 帧开始、共 50 帧 —— 项目的第 F 帧取的是第 floor((F−100)/15) 段的第 (F−100)%15 个样本', async () => {
+test('frame-by-frame random access check: the clip starts at frame 100 and has 50 frames; project frame F takes sample (F−100)%15 of segment floor((F−100)/15)', async () => {
   const stream = streamOf(100, 149);
-  assert.deepEqual([stream.originFrame, stream.lastSegment], [100, 3], '第 100～149 帧:分段 0～3,末段 5 帧');
+  assert.deepEqual([stream.originFrame, stream.lastSegment], [100, 3], 'frames 100~149: segments 0~3, last segment has 5 frames');
   for (let f = 100; f <= 149; f++) {
     decoders.length = 0;
     stream.asked.length = 0;
@@ -86,21 +86,21 @@ test('随机访问逐帧核对:片段从第 100 帧开始、共 50 帧 —— �
     player.present(f / FPS);
     await flush();
     const seg = Math.floor((f - 100) / 15), index = (f - 100) % 15;
-    assert.equal(stream.asked[0], `${seg}-seg.m4s`, `第 ${f} 帧先要第 ${seg} 段`);
+    assert.equal(stream.asked[0], `${seg}-seg.m4s`, `frame ${f} requests segment ${seg} first`);
     assert.equal(decoders.length, 1);
     const fed = fedOf(decoders[0]);
     // 从这一段的关键帧起一路解到目标帧:每一块的时间戳都是它自己的项目帧号,字节是这一段里对应序号的那个样本
     const upTo = fed.filter(([frame]) => frame <= f);
-    assert.deepEqual(upTo, Array.from({ length: index + 1 }, (_, i) => [100 + seg * 15 + i, seg, i, i === 0]), `第 ${f} 帧`);
+    assert.deepEqual(upTo, Array.from({ length: index + 1 }, (_, i) => [100 + seg * 15 + i, seg, i, i === 0]), `Frame ${f}`);
     // 目标帧解出来以后记在它自己的项目帧号上,分段号是这条流自己的
     const track = [...player.tracks.values()][0];
-    assert.equal(track.frames.get(f)?.segment, seg, `第 ${f} 帧记在第 ${seg} 段`);
-    assert.ok([...track.frames.keys()].every((k) => k >= f), '目标之前的帧一出来就关');
+    assert.equal(track.frames.get(f)?.segment, seg, `frame ${f} is recorded under segment ${seg}`);
+    assert.ok([...track.frames.keys()].every((k) => k >= f), 'frames before the target are closed as soon as they come out');
     player.stop();
   }
 });
 
-test('顺序播放逐帧核对:从第 100 帧播到第 149 帧,每一帧恰好喂一次,帧号、分段、样本序号一一对上;末段只有 5 个样本,不越界', async () => {
+test('sequential playback frame-by-frame check: playing from frame 100 to frame 149, each frame is fed exactly once, and frame number, segment and sample index match one to one; the last segment has only 5 samples and does not go out of bounds', async () => {
   const stream = streamOf(100, 149);
   const player = playerFor(stream);
   for (let f = 100; f <= 149; f++) { player.present(f / FPS); await flush(2); }
@@ -108,17 +108,17 @@ test('顺序播放逐帧核对:从第 100 帧播到第 149 帧,每一帧恰好�
   const fed = decoders.flatMap(fedOf);
   assert.deepEqual(fed, Array.from({ length: 50 }, (_, k) => [100 + k, Math.floor(k / 15), k % 15, k % 15 === 0]));
   assert.deepEqual(stream.asked, ['0-seg.m4s', '1-seg.m4s', '2-seg.m4s', '3-seg.m4s']);
-  assert.equal(decoders.reduce((n, d) => n + d.resets, 0), 0, '顺着播不跳段:不重置解码器');
+  assert.equal(decoders.reduce((n, d) => n + d.resets, 0), 0, 'playing forward does not skip segments: the decoder is not reset');
   player.stop();
 });
 
-test('早于这条流第一帧的帧没有分段:不取字节、不建解码器、这一拍没有流画面;按项目帧号数的分段(原来的做法)不会被取到', async () => {
+test('frames earlier than the first frame of this stream have no segment: no bytes fetched, no decoder created, no stream picture on this tick; segments numbered by project frame number (the old behavior) would not be fetched', async () => {
   const stream = streamOf(100, 149);
   for (const f of [0, 14, 85, 99]) {
     const player = playerFor(stream);
     player.present(f / FPS);
     await flush();
-    assert.deepEqual(stream.asked, [], `第 ${f} 帧`);
+    assert.deepEqual(stream.asked, [], `Frame ${f}`);
     assert.equal(decoders.length, 0);
     assert.deepEqual([...player.showingClips()], []);
     player.stop();
@@ -132,7 +132,7 @@ test('早于这条流第一帧的帧没有分段:不取字节、不建解码器�
   player.stop();
 });
 
-test('第一帧是 0 的流和原来按项目帧号分段是同一回事', async () => {
+test('a stream whose first frame is 0 is the same as the old segmenting by project frame number', async () => {
   const stream = streamOf(0, 44);
   for (const f of [0, 1, 14, 15, 29, 30, 44]) {
     decoders.length = 0;
@@ -146,7 +146,7 @@ test('第一帧是 0 的流和原来按项目帧号分段是同一回事', async
   }
 });
 
-test('没带第一帧的流平面播放器不收(没法把帧号换成分段号);同一条流换了第一帧(被摆到别的帧上)就从头来', async () => {
+test('the stream plane player does not accept a stream without a first frame (frame numbers cannot be converted to segment numbers); when the same stream changes its first frame (moved to another frame) it starts over', async () => {
   const stream = streamOf(100, 149);
   const { originFrame: _dropped, ...noOrigin } = stream.plane;
   const none = playerFor(stream, noOrigin);
@@ -166,10 +166,10 @@ test('没带第一帧的流平面播放器不收(没法把帧号换成分段号)
   player.setPlanes([{ ...stream.plane, originFrame: 200 }], FPS);
   player.present(205 / FPS);
   await flush();
-  assert.equal([...player.tracks.values()][0], track, '还是同一条轨道');
-  assert.ok(![...track.frames.keys()].some((k) => k < 200), '按旧位置记的帧都放掉了');
+  assert.equal([...player.tracks.values()][0], track, 'still the same track');
+  assert.ok(![...track.frames.keys()].some((k) => k < 200), 'frames recorded at the old position were all released');
   const fed = decoders.flatMap(fedOf).filter(([frame]) => frame >= 200 && frame <= 205);
-  assert.deepEqual(fed, Array.from({ length: 6 }, (_, i) => [200 + i, 0, i, i === 0]), '第 205 帧现在是第 0 段的第 5 个样本,时间戳按新位置给');
+  assert.deepEqual(fed, Array.from({ length: 6 }, (_, i) => [200 + i, 0, i, i === 0]), 'frame 205 is now sample 5 of segment 0, and the timestamp is given by the new position');
   assert.equal(chunkTimestamp(205, FPS), Math.round(205 * 1e6 / FPS));
   player.stop();
 });

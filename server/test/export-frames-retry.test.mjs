@@ -28,10 +28,10 @@ const specOf = (over = {}) => ({
 const planTask = { id: 'plan:p1@7#clips:abc', kind: 'plan', resultKey: 'p1@7#clips:abc', source: { projectId: 'p1', projectRev: 7 }, input: { clips: ['c1'], exportOnly: true, exportSalt: 'r1abc' } };
 const base = { planTask, entryKey: 'e1', cardPlan: [], prerenderSet: new Set(), streams: [], envFingerprint: FP, codeVersion: 'cv1' };
 
-test('EFR-01 重新做的标识换导出键', () => {
+test('EFR-01 a retry identifier changes the export key', () => {
   const plain = exportFramesKey(STREAM_KEY);
   assert.equal(exportFramesKey(STREAM_KEY, ''), plain);
-  assert.equal(exportFramesKey(STREAM_KEY, 'Bad Salt!'), plain, '形状不对的标识当没带');
+  assert.equal(exportFramesKey(STREAM_KEY, 'Bad Salt!'), plain, 'a malformed identifier is treated as not provided');
   assert.notEqual(exportFramesKey(STREAM_KEY, 'r1abc'), plain);
   assert.notEqual(exportFramesKey(STREAM_KEY, 'r1abc'), exportFramesKey(STREAM_KEY, 'r2abc'));
   assert.equal(exportSaltOf('r1abc'), 'r1abc');
@@ -44,7 +44,7 @@ test('EFR-01 重新做的标识换导出键', () => {
   assert.equal(exportStreamOf(b).salt, 'r1abc');
 });
 
-test('EFR-02 标识从计划一路带到任务', () => {
+test('EFR-02 the identifier is carried from the plan all the way to the task', () => {
   let got = null;
   const over = listPlanOverrides(planTask, { exportStreamsFor: (clips, salt) => { got = salt; return { streams: [exportStreamOf(exportSpecOf(specOf(), FP, salt))], unsupported: [] }; } });
   assert.equal(got, 'r1abc');
@@ -59,7 +59,7 @@ test('EFR-02 标识从计划一路带到任务', () => {
   assert.notEqual(plain.id, task.id);
 });
 
-test('EFR-03 索引带着每条流的任务原样一份', () => {
+test('EFR-03 the index carries one unchanged copy of each stream\'s tasks', () => {
   const stream = exportStreamOf(exportSpecOf(specOf({ lastFrame: 143, lastSegment: 8 }), FP));
   const tasks = splitPlan({ ...base, exportStreams: [stream] });
   const index = exportIndexOf({ exportStreams: [stream], published: tasks, projectRev: 7, segmentsPerTask: 8 });
@@ -74,7 +74,7 @@ test('EFR-03 索引带着每条流的任务原样一份', () => {
   assert.equal(parsed.body.tasks[0].input.exportFrames, true);
 });
 
-test('EFR-04 差分取层判过失败的记录不跨任务留着', async () => {
+test('EFR-04 the record of a failed differential layer capture does not persist across tasks', async () => {
   const spec = exportSpecOf(specOf({ kind: 'below', plane: 'stage', belowClipIds: ['v0'] }), FP);
   const calls = [];
   const state = { spec: { ...spec, streamKey: spec.exportResultKey }, manifest: {}, isolated: {}, reserved: new Set(), failures: new Map(), exportOnly: true, below: { failed: 'upper-changed' } };
@@ -87,11 +87,11 @@ test('EFR-04 差分取层判过失败的记录不跨任务留着', async () => {
   };
   const frames = [];
   const out = await StreamProducer.prototype.produceExportRange.call(fake, { project: {} }, spec, { from: 0, to: 0 }, { onFrame: f => frames.push(f) });
-  assert.deepEqual(calls, [0], '上一份任务判过失败,这一份照样重新试');
+  assert.deepEqual(calls, [0], 'the previous task judged it failed, and this one retries anyway');
   assert.equal(state.below, null);
   assert.equal(out.frames, 9);
   // 这一份任务里又判失败:本任务尽早停、不可重试
-  fake.runSegment = async () => { state.below = { failed: 'upper-changed' }; throw Object.assign(new Error('差分取层没过'), { code: 'below-capture-failed', retryable: false }); };
+  fake.runSegment = async () => { state.below = { failed: 'upper-changed' }; throw Object.assign(new Error('differential layer capture failed'), { code: 'below-capture-failed', retryable: false }); };
   await assert.rejects(StreamProducer.prototype.produceExportRange.call(fake, { project: {} }, spec, { from: 0, to: 0 }, { onFrame() {} }), e => e.code === 'below-capture-failed' && e.retryable === false);
 });
 
@@ -101,7 +101,7 @@ const { createRenderQueue } = await import('../render-queue/index.mjs');
 const { createQueueHarness } = await import('./fake-render-queue-env.mjs');
 const { QUEUE_DEFAULTS } = await import('../render-queue/constants.mjs');
 
-test('EFR-05 真队列:失败的导出位图任务原样再发布只回 failed、不重开;带新标识的是新任务', () => {
+test('EFR-05 real queue: republishing a failed export bitmap task unchanged only returns failed and does not reopen it; a task with a new identifier is a new task', () => {
   const h = createQueueHarness(createRenderQueue);
   h.publisher('page', 'page-1');
   h.node('node', 'n1', { profile: 'host', hello: { envFingerprint: FP, codeVersions: ['cv1'], capabilities: {} } });
@@ -125,14 +125,14 @@ test('EFR-05 真队列:失败的导出位图任务原样再发布只回 failed�
   assert.deepEqual([fresh.state, fresh.created], ['open', true]);
 });
 
-test('EFR-06 真队列:页面断线超过宽限,没人认领的任务被删;重连后原样再发布就重建', () => {
+test('EFR-06 real queue: when the page stays disconnected beyond the grace period, unclaimed tasks are deleted; republishing unchanged after reconnecting rebuilds them', () => {
   const h = createQueueHarness(createRenderQueue);
   h.publisher('page', 'page-1');
   const [task] = splitPlan({ ...base, planTask: { ...planTask, id: null }, exportStreams: [exportStreamOf(exportSpecOf(specOf(), FP))] });
   h.publish('page', [task]);
   h.disconnect('page');
   h.advance(QUEUE_DEFAULTS.RECONNECT_GRACE_MS + 1);
-  assert.equal(h.task(task.id), null, '订阅被清、还 open 的任务删掉了');
+  assert.equal(h.task(task.id), null, 'tasks that were still open after their subscription was cleared were deleted');
   h.publisher('page2', 'page-1');
   const back = h.publish('page2', [task]).one('page2', 'task.published').results[0];
   assert.deepEqual([back.state, back.created], ['open', true]);

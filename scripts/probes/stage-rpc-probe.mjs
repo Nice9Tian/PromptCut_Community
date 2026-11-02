@@ -49,7 +49,7 @@ async function stageOrigins() {
   if (legacy) return [origin, origin];
   const r = await fetch(origin + '/api/stage/ports');
   const j = await r.json();
-  if (!j.ok || !Array.isArray(j.ports) || j.ports.length < 2) throw new Error(`舞台端口没起来:${JSON.stringify(j)}`);
+  if (!j.ok || !Array.isArray(j.ports) || j.ports.length < 2) throw new Error(`Stage ports did not come up: ${JSON.stringify(j)}`);
   const u = new URL(origin);
   return j.ports.slice(0, 2).map((p) => `${u.protocol}//${u.hostname}:${p}`);
 }
@@ -59,7 +59,7 @@ const hostHtml = (oa, ob) => `<!doctype html><html><head><meta charset="utf-8"><
 <iframe id="a" src="${oa}/?stage=1&id=A&prerender=1" style="width:1920px;height:1080px;border:0;display:block"></iframe>
 <iframe id="b" src="${ob}/?stage=1&id=B&prerender=1" style="width:1920px;height:1080px;border:0;display:block;opacity:0;pointer-events:none"></iframe>
 <script type="module">
-// 一个最小的 RPC 客户端(和 src/render/stageRpc.ts 同一协议),内联在这里是为了同一份探针也能打 vite preview 的产物包(那里没有 /src/*.ts)
+// A minimal RPC client (same protocol as src/render/stageRpc.ts), inlined here so the same probe can also hit the vite preview build output (there is no /src/*.ts there)
 function createStageRpc(target, targetOrigin) {
   let nextId = 1; const pending = new Map(); const listeners = new Set();
   window.addEventListener('message', (e) => {
@@ -210,7 +210,7 @@ try {
   out.drag = { ...drag, setPaths: paths.filter((p) => p === 'set').length };
   check(drag.kept, 'wrappers (playToken) unchanged across 60 setTime', out.drag);
   check(out.drag.setPaths > 0 && paths.every((p) => p === 'set' || p === 'continuous'), 'setTime paths', paths.slice(0, 8));
-  check(typeof drag.p90 === 'number', 'setTime 的舞台主线程耗时量到了 p90(只记录;原先要求 ≤ 5 ms —— 耗时只记录,不当闸门(verification.md,2026-10-07 用户改定);2026-10-23 探针总审第二遍扫描补改)', { p90: drag.p90, max: drag.max });
+  check(typeof drag.p90 === 'number', 'the stage main-thread time of setTime yielded a p90 (record only; previously required ≤ 5 ms: timings are only recorded, not used as a gate (verification.md, user decision 2026-10-07); amended during the second scan of the 2026-10-23 overall probe audit)', { p90: drag.p90, max: drag.max });
 
   // 同一组拖动在含三维卡的项目上再量一遍,只报数不判(卡自己的渲染代价)
   await page.evaluate(async (p) => { await window.__rpc.setProject(p, { reset: true }); await window.__rpc.setTime(0.5); }, small);

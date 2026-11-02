@@ -12,11 +12,11 @@ test('every window.__* the bake page protocol uses is listed in docs/guides/bake
 test('the two columns cover the scan and stay disjoint', () => {
   const usage = scanUsage();
   const { html, png } = readDocLists();
-  assert.ok(usage.size > 0, '扫描的文件里应当有 window.__* 调用');
+  assert.ok(usage.size > 0, 'The scanned files should contain window.__* calls');
   assert.deepEqual([...html].filter(name => png.has(name)), []);
   assert.deepEqual([...usage.keys()].filter(name => !html.has(name) && !png.has(name)), []);
   // HTML 路不能只剩 puppeteer 专用那一栏:生成快照与推进的关键几步都必须在 HTML 路上。
   for (const name of ['__pcReady', '__pcSetT', '__bfSettle', '__pcCreateSnapshot', '__pcPrepareFrameMedia']) {
-    assert.ok(html.has(name), `${name} 应在「HTML 路必需」一栏`);
+    assert.ok(html.has(name), `${name} should be in the "required by the HTML path" column`);
   }
 });

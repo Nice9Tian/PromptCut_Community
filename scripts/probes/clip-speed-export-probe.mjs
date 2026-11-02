@@ -86,15 +86,15 @@ async function writeCard() {
 import type { CardDef } from "../../kernel/types";
 import { glsl } from "../../render/cards/graphValues";
 
-/** 探针用(clip-speed-export-probe.mjs 临时写进改动层):输入画面取反色 */
+/** For the probe (clip-speed-export-probe.mjs temporarily writes it into the overlay layer): inverts the input image */
 export const probeSpeedTint: CardDef<{ amount: number }> = {
   id: "${TINT}",
-  name: "速度探针:反色",
-  description: "输入画面取反色",
+  name: "Speed probe: invert",
+  description: "Inverts the colors of the input image",
   source: "user",
   kind: "filter",
   frameMode: "direct",
-  inputs: { source: { description: "输入画面" } },
+  inputs: { source: { description: "Input image" } },
   defaults: { amount: 1 },
   controls: [],
   card: (sources, t, params) => glsl(
@@ -131,11 +131,11 @@ function projectOf(media) {
   return {
     version: 1, id: 'p-speed-probe', name: 'speed-probe', width: W, height: H, fps: FPS, duration: DURATION, themeId: 'midnight',
     // 音画分离出来的声音素材(和视频共用同一个文件,kind 为 audio,同 store 的 soundAssetFrom)
-    media: [media, { ...media, id: 'm-coded-sound', kind: 'audio', name: 'coded.mp4 的声音', soundOf: media.id }], filters: [], audioFx: [],
+    media: [media, { ...media, id: 'm-coded-sound', kind: 'audio', name: 'Sound of coded.mp4', soundOf: media.id }], filters: [], audioFx: [],
     cardNodes: [{ id: 'n-tint', adapter: 'card', cardId: TINT, kind: 'filter', params: { amount: 1 }, inputs: { source: '@clip/G/source' } }],
-    tracks: [{ id: 't-main', name: '序列 1', clips: clips.map((c) => (c.id === 'B' || c.id === 'C' ? { ...c, audioMuted: true } : c)) },
-      { id: 't-sound', name: '声音', clips: SEGMENTS.filter((x) => x.id === 'B' || x.id === 'C').map((x) => ({ id: `${x.id}-sound`, cardId: '', mediaId: 'm-coded-sound', mediaOffset: x.mediaOffset, start: x.start, end: x.end, speed: x.speed, params: {} })) }],
-    cuts: [{ id: 'outer', name: '剪辑1' }, { id: 'inner', name: '内', duration: 8, transitions: [], tracks: [{ id: 't-in', name: '序列 1', clips: [
+    tracks: [{ id: 't-main', name: 'Track 1', clips: clips.map((c) => (c.id === 'B' || c.id === 'C' ? { ...c, audioMuted: true } : c)) },
+      { id: 't-sound', name: 'Sound', clips: SEGMENTS.filter((x) => x.id === 'B' || x.id === 'C').map((x) => ({ id: `${x.id}-sound`, cardId: '', mediaId: 'm-coded-sound', mediaOffset: x.mediaOffset, start: x.start, end: x.end, speed: x.speed, params: {} })) }],
+    cuts: [{ id: 'outer', name: 'Cut 1' }, { id: 'inner', name: 'Inner', duration: 8, transitions: [], tracks: [{ id: 't-in', name: 'Track 1', clips: [
       { id: 'b1', cardId: '', mediaId: media.id, mediaOffset: inner.mediaOffset, speed: inner.speed, start: inner.start, end: 8, params: {}, frame: full },
     ] }] }],
     activeCutId: 'outer',
@@ -230,10 +230,10 @@ try {
   // 1. 画面:逐帧
   let code = 1;
   for (let attempt = 1; attempt <= 3 && code !== 0; attempt++) {
-    say(`导出 PNG 第 ${attempt} 次`);
+    say(`Exporting PNG, attempt ${attempt}`);
     code = await run(process.execPath, ['scripts/export-frames.mjs', '--url', url, '--out', path.join(OUT, 'frames-run'), '--fps', String(FPS), '--workers', '1', '--no-video'], env, path.join(OUT, 'export-frames.log'));
   }
-  if (code !== 0) throw new Error(`PNG 导出退出码 ${code}(日志 ${path.join(OUT, 'export-frames.log')})`);
+  if (code !== 0) throw new Error(`PNG export exit code ${code} (log ${path.join(OUT, 'export-frames.log')})`);
   const dir = path.join(OUT, 'frames-run', 'frames');
   const files = (await fs.readdir(dir)).filter((f) => f.endsWith('.png')).sort();
   const rows = [];
@@ -252,8 +252,8 @@ try {
   const match = rows.filter((r) => r.want === r.got).length;
   result.frames = { total: rows.length, expected: DURATION * FPS, match, bySeg };
   await fs.writeFile(path.join(OUT, 'frames.json'), JSON.stringify(rows));
-  if (rows.length !== DURATION * FPS) result.fails.push(`导出了 ${rows.length} 帧,应为 ${DURATION * FPS}`);
-  if (match !== rows.length) result.fails.push(`画面逐帧:${match}/${rows.length} 帧取到了该取的素材帧`);
+  if (rows.length !== DURATION * FPS) result.fails.push(`Exported ${rows.length} frames, expected ${DURATION * FPS}`);
+  if (match !== rows.length) result.fails.push(`Frame by frame: ${match}/${rows.length} frames fetched the media frame they should have`);
 
   // 2. 声音:两条混音路各导一次成片
   if (!SKIP_AUDIO) {
@@ -269,16 +269,16 @@ try {
       const url = `${dev.origin}/?export=1&timeline=${encodeURIComponent(`/@export/${id}/project.json`)}`;
       let c = 1;
       for (let attempt = 1; attempt <= 3 && c !== 0; attempt++) {
-        say(`导出成片(${name} 混音)第 ${attempt} 次`);
+        say(`Exporting final video (${name} mix), attempt ${attempt}`);
         c = await run(process.execPath, ['scripts/export-frames.mjs', '--url', url, '--out', outDir, '--fps', String(FPS), '--workers', '1', ...extra], env, path.join(OUT, `export-${name}.log`));
       }
-      if (c !== 0) { result.fails.push(`成片(${name} 混音)导出退出码 ${c}`); continue; }
+      if (c !== 0) { result.fails.push(`Final video (${name} mix) export exit code ${c}`); continue; }
       // 核实两条路真的各走各的:Chrome 那一次必须真在 Chrome 里混、没有退回 ffmpeg
       const log = await fs.readFile(path.join(OUT, `export-${name}.log`), 'utf8');
-      const mixedIn = /退回 ffmpeg/.test(log) ? 'ffmpeg(Chrome 失败后退回)' : /in Chrome/.test(log) ? 'chrome' : /Muxing .* with ffmpeg/.test(log) ? 'ffmpeg' : '不明';
-      if (mixedIn !== name) result.fails.push(`${name} 那一次实际在 ${mixedIn} 里混音`);
+      const mixedIn = /falling back to ffmpeg/.test(log) ? 'ffmpeg (fell back after Chrome failed)' : /in Chrome/.test(log) ? 'chrome' : /Muxing .* with ffmpeg/.test(log) ? 'ffmpeg' : 'unknown';
+      if (mixedIn !== name) result.fails.push(`The ${name} attempt actually mixed in ${mixedIn}`);
       const mp4 = (await fs.readdir(outDir)).find((f) => f.endsWith('.mp4'));
-      if (!mp4) { result.fails.push(`成片(${name} 混音)没有 mp4`); continue; }
+      if (!mp4) { result.fails.push(`Final video (${name} mix) has no mp4`); continue; }
       const file = path.join(outDir, mp4);
       const pcm = await pcmOf(ffmpeg, file);
       pcms[name] = pcm;
@@ -288,9 +288,9 @@ try {
         const hz = pitch(pcm, s.start + 0.3, s.end - 0.3);
         const okDb = s.audible ? db > -30 : db < -70;
         const okHz = !s.hz || Math.abs(hz - s.hz) <= s.hz * 0.02;
-        segs[s.id] = { dBFS: Number.isFinite(db) ? +db.toFixed(1) : null, hz: s.audible ? +hz.toFixed(1) : null, expect: s.audible ? `有声 ${s.hz} Hz` : '无声', ok: okDb && okHz };
-        if (!okDb) result.fails.push(`${name} 混音:${s.id} 段 ${s.start}～${s.end} 秒应${s.audible ? '有声' : '无声'},实测 ${db.toFixed(1)} dBFS`);
-        if (s.audible && !okHz) result.fails.push(`${name} 混音:${s.id} 段主频应为 ${s.hz} Hz,实测 ${hz.toFixed(1)} Hz`);
+        segs[s.id] = { dBFS: Number.isFinite(db) ? +db.toFixed(1) : null, hz: s.audible ? +hz.toFixed(1) : null, expect: s.audible ? `audible ${s.hz} Hz` : 'silent', ok: okDb && okHz };
+        if (!okDb) result.fails.push(`${name} mix: segment ${s.id} (${s.start} to ${s.end} seconds) should be ${s.audible ? 'audible' : 'silent'}, measured ${db.toFixed(1)} dBFS`);
+        if (s.audible && !okHz) result.fails.push(`${name} mix: the dominant frequency of segment ${s.id} should be ${s.hz} Hz, measured ${hz.toFixed(1)} Hz`);
       }
       result.audio[name] = { file, mixedIn, segs };
     }
@@ -307,7 +307,7 @@ try {
       result.audio.oneXFloor = floor;
       for (const s of SEGMENTS.filter((x) => x.audible && x.speed)) {
         const d = result.audio.chromeVsFfmpeg[s.id];
-        if (!(d <= floor + 1e-9)) result.fails.push(`两条混音路 ${s.id} 段(${s.speed}×)差 ${d} dB,比 1 倍段的 ${floor} dB 还大`);
+        if (!(d <= floor + 1e-9)) result.fails.push(`The two mix paths differ by ${d} dB in segment ${s.id} (${s.speed}×), more than the ${floor} dB of the 1× segment`);
       }
     }
   }

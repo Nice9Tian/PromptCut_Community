@@ -46,8 +46,8 @@ function staticSpecs(text) {
 
 const isNodeBuiltin = (spec) => spec.startsWith("node:") || BUILTIN.has(spec) || BUILTIN.has(spec.split("/")[0]) && !spec.includes(".");
 
-test("页面的静态依赖链里没有 Node 内置模块(否则开发服务器整页白屏)", () => {
-  assert.ok(fs.existsSync(ENTRY), "入口 src/main.tsx 在");
+test("the page's static dependency chain has no Node built-in modules (otherwise the dev server shows a blank page)", () => {
+  assert.ok(fs.existsSync(ENTRY), "entry src/main.tsx exists");
   const parent = new Map([[ENTRY, null]]);
   const queue = [ENTRY];
   const bad = [];
@@ -72,7 +72,7 @@ test("页面的静态依赖链里没有 Node 内置模块(否则开发服务器�
       queue.push(next);
     }
   }
-  assert.ok(visited > 100, `走到了页面的模块:${visited}`);
-  assert.ok(serverModules > 0, "页面确实引了 server/ 下的模块(纯浏览器节点、会话层),守门才有意义");
-  assert.deepEqual(bad, [], `页面的静态依赖链里出现了 Node 内置模块:\n${bad.join("\n")}`);
+  assert.ok(visited > 100, `reached page modules: ${visited}`);
+  assert.ok(serverModules > 0, "the page does import modules under server/ (pure browser node, session layer), otherwise the gatekeeper test is meaningless");
+  assert.deepEqual(bad, [], `Node built-in modules appear in the page's static dependency chain:\n${bad.join("\n")}`);
 });

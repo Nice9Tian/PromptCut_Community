@@ -40,21 +40,21 @@ function synthFrames(width, height, count) {
 }
 const pngOf = (data, width, height) => { const png = new PNG({ width, height }); data.copy(png.data); return PNG.sync.write(png); };
 
-test('命令行:原始像素只换输入那一段,滤镜链和编码参数不变;PNG 那一种逐项不变', () => {
+test('Command line: raw pixels only swap the input section, the filter chain and encoding parameters are unchanged; the PNG variant stays unchanged item by item', () => {
   const png = streamSegmentArgs({ encoder: 'libx264', fps: 30 });
   const raw = streamSegmentArgs({ encoder: 'libx264', fps: 30, raw: { width: 640, height: 360 } });
   assert.match(png.join(' '), /-probesize 32 -analyzeduration 0 -threads 1 -f image2pipe -c:v png -framerate 30 -i pipe:0/);
   assert.match(raw.join(' '), /-probesize 32 -analyzeduration 0 -threads 1 -f rawvideo -pix_fmt rgba -video_size 640x360 -framerate 30 -i pipe:0/);
   const at = (args) => args.indexOf('-framerate');
-  assert.deepEqual(raw.slice(at(raw)), png.slice(at(png)), '从 -framerate 往后(输入口、滤镜链、编码器、封装)逐项相同');
+  assert.deepEqual(raw.slice(at(raw)), png.slice(at(png)), 'From -framerate onward (input, filter chain, encoder, muxing) identical item by item');
   const head = (args) => args.slice(0, args.indexOf('-f'));
-  assert.deepEqual(head(raw), head(png), '输入格式之前的选项逐项相同');
-  assert.deepEqual(streamSegmentArgs({ encoder: 'libx264', fps: 30, raw: null }), png, '不给 raw 就是原来那条命令行');
-  assert.throws(() => streamSegmentArgs({ encoder: 'libx264', fps: 30, raw: { width: 0, height: 10 } }), /整数宽高/);
-  assert.throws(() => streamSegmentArgs({ encoder: 'libx264', fps: 30, raw: { width: 10.5, height: 10 } }), /整数宽高/);
+  assert.deepEqual(head(raw), head(png), 'The options before the input format are identical item by item');
+  assert.deepEqual(streamSegmentArgs({ encoder: 'libx264', fps: 30, raw: null }), png, 'Without raw it is the original command line');
+  assert.throws(() => streamSegmentArgs({ encoder: 'libx264', fps: 30, raw: { width: 0, height: 10 } }), /integer width and height/);
+  assert.throws(() => streamSegmentArgs({ encoder: 'libx264', fps: 30, raw: { width: 10.5, height: 10 } }), /integer width and height/);
 });
 
-test('同样的像素:喂原始 RGBA 和喂 PNG 编出来的 fMP4 逐字节相同', { skip: !ffmpegOk }, async () => {
+test('Same pixels: the fMP4 encoded from raw RGBA and from PNG is byte-identical', { skip: !ffmpegOk }, async () => {
   const width = 96, height = 64, count = 15;
   const frames = synthFrames(width, height, count);
   const viaPng = openStreamSegmentEncoder('ffmpeg', { encoder: 'libx264', fps: 30, prewarm: false });
@@ -66,13 +66,13 @@ test('同样的像素:喂原始 RGBA 和喂 PNG 编出来的 fMP4 逐字节相�
   assert.equal(b.written, count);
   const sa = splitFmp4(a.bytes), sb = splitFmp4(b.bytes);
   assert.equal(sb.segments.length, 1);
-  assert.equal(segmentInfo(sb.segments[0]).sampleCount, count, '喂几帧原始像素就编出几帧');
+  assert.equal(segmentInfo(sb.segments[0]).sampleCount, count, 'As many frames are encoded as raw-pixel frames were fed');
   assert.equal(segmentInfo(sb.segments[0]).firstSampleIsSync, true);
-  assert.equal(Buffer.compare(sa.init, sb.init), 0, 'init(ftyp + moov)逐字节相同');
-  assert.equal(Buffer.compare(sa.segments[0], sb.segments[0]), 0, '分段(moof + mdat)逐字节相同');
+  assert.equal(Buffer.compare(sa.init, sb.init), 0, 'init (ftyp + moov) is byte-identical');
+  assert.equal(Buffer.compare(sa.segments[0], sb.segments[0]), 0, 'Segment (moof + mdat) is byte-identical');
 });
 
-test('原始像素的帧不够整帧:ffmpeg 只编出完整的那几帧(样本数对不上,由切分那一侧判)', { skip: !ffmpegOk }, async () => {
+test('Raw pixel data does not make up a whole frame: ffmpeg encodes only the complete frames (the sample count then does not match, which the splitter side judges)', { skip: !ffmpegOk }, async () => {
   const width = 32, height = 32;
   const frames = synthFrames(width, height, 3);
   const enc = openStreamSegmentEncoder('ffmpeg', { encoder: 'libx264', fps: 30, prewarm: false, raw: { width, height } });
@@ -83,7 +83,7 @@ test('原始像素的帧不够整帧:ffmpeg 只编出完整的那几帧(样本�
   assert.equal(segmentInfo(splitFmp4(out.bytes).segments[0]).sampleCount, 2);
 });
 
-test('预先拉起的进程:原始像素按宽高各算一种,产出和现拉的相同;空等的最多留 3 个', { skip: !ffmpegOk }, async () => {
+test('Pre-started process: each width and height of raw pixels counts as its own kind, output matches the on-demand one; at most 3 idle ones are kept', { skip: !ffmpegOk }, async () => {
   dropStreamEncoderSpares();
   const frames = synthFrames(48, 32, 4);
   const run = async (prewarm) => {
@@ -95,17 +95,17 @@ test('预先拉起的进程:原始像素按宽高各算一种,产出和现拉的
   assert.equal(streamEncoderSpareCount(), 0);
   const first = await run(true);
   await settle();
-  assert.equal(streamEncoderSpareCount(), 1, '领走以后补拉一个同样宽高的');
+  assert.equal(streamEncoderSpareCount(), 1, 'After one is taken, another with the same width and height is started to replace it');
   const warm = await run(true);
   assert.equal(Buffer.compare(cold, first), 0);
-  assert.equal(Buffer.compare(cold, warm), 0, '预先拉起的进程产出和现拉的逐字节相同');
+  assert.equal(Buffer.compare(cold, warm), 0, 'Output of the pre-started process is byte-identical to the on-demand one');
   // 换五种宽高各开一次:空等的不超过 3 个
   for (const w of [50, 52, 54, 56, 58]) {
     const enc = openStreamSegmentEncoder('ffmpeg', { encoder: 'libx264', fps: 30, prewarm: true, raw: { width: w, height: 32 } });
     await enc.abort();
     await settle();
   }
-  assert.ok(streamEncoderSpareCount() <= 3, `空等的进程 ${streamEncoderSpareCount()} 个`);
+  assert.ok(streamEncoderSpareCount() <= 3, `${streamEncoderSpareCount()} idle processes`);
   dropStreamEncoderSpares();
   assert.equal(streamEncoderSpareCount(), 0);
 });

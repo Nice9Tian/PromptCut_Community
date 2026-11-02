@@ -28,18 +28,18 @@ const budgetMs = (fps) => (1000 / fps) * 0.7;
 
 async function fitFn() {
   const hit = beatFitOf();
-  assert.ok(hit, `假设 K3：${BEAT_FILES.join('、')} 里找不到换帧取舍函数（${BEAT_FIT_NAMES.join(' / ')}）`);
+  assert.ok(hit, `Assumption K3: no frame-swap selection function found in ${BEAT_FILES.join(', ')} (${BEAT_FIT_NAMES.join(' / ')})`);
   const mod = await importRepo(hit.file);
   return (args) => normalizeFit(mod[hit.name](args));
 }
 const layers = (n) => Array.from({ length: n }, (_, i) => `L${String(i).padStart(2, '0')}`);
 
-it('C10-BS-01 SWAP_MS 缺省 3 ms', async () => {
+it('C10-BS-01 SWAP_MS defaults to 3 ms', async () => {
   const mod = await importRepo(gate.file);
   assert.equal(mod.SWAP_MS, SWAP_MS_DEFAULT);
 });
 
-it('C10-BS-02 swapMs 计入每拍预算：装得下的换快照、装不下的占位，两组不重不漏', async () => {
+it('C10-BS-02 swapMs counts toward the per-tick budget: layers that fit are swapped to snapshots, those that do not fit get placeholders, and the two groups neither overlap nor leave any layer out', async () => {
   const fit = await fitFn();
   for (const [fps, occupiedMs] of [[30, 0], [30, 10], [30, 20], [60, 0], [60, 5], [24, 12], [25, 0]]) {
     const all = layers(20);
@@ -47,40 +47,40 @@ it('C10-BS-02 swapMs 计入每拍预算：装得下的换快照、装不下的�
     const lo = Math.max(0, Math.floor((budgetMs(fps) - occupiedMs) / 3));
     const hi = Math.max(0, Math.floor((beatMs(fps) - occupiedMs) / 3));
     const k = r.swap.length;
-    assert.ok(k >= Math.min(lo, 20) && k <= Math.min(hi, 20), `fps ${fps}、已占用 ${occupiedMs} ms：换了 ${k} 层，应在 ${Math.min(lo, 20)}～${Math.min(hi, 20)}`);
-    assert.deepEqual([...r.swap, ...r.placeholder].sort(), all, '换快照与占位合起来正好是全部重层');
-    assert.equal(new Set(r.swap).size + new Set(r.placeholder).size, all.length, '不重复');
+    assert.ok(k >= Math.min(lo, 20) && k <= Math.min(hi, 20), `fps ${fps}, ${occupiedMs} ms already occupied: swapped ${k} layers, should be ${Math.min(lo, 20)}-${Math.min(hi, 20)}`);
+    assert.deepEqual([...r.swap, ...r.placeholder].sort(), all, 'Swapped layers and placeholder layers together are exactly all the heavy layers');
+    assert.equal(new Set(r.swap).size + new Set(r.placeholder).size, all.length, 'No duplicates');
   }
 });
 
-it('C10-BS-03 已占用越多、swapMs 越大，装得下的越少；占满一拍全部占位；不给 swapMs 时按 SWAP_MS', async () => {
+it('C10-BS-03 the more is occupied and the larger swapMs is, the fewer layers fit; a fully occupied tick gives everything a placeholder; without swapMs, SWAP_MS is used', async () => {
   const fit = await fitFn();
   const all = layers(30);
   let prev = Infinity;
   for (const occupiedMs of [0, 5, 10, 15, 20, 25, 30, 33.4, 50]) {
     const k = fit({ fps: 30, occupiedMs, layers: all, swapMs: 3 }).swap.length;
-    assert.ok(k <= prev, `已占用 ${occupiedMs} ms 时换了 ${k} 层，比已占用更少时（${prev}）还多`);
+    assert.ok(k <= prev, `With ${occupiedMs} ms occupied, ${k} layers were swapped, which is more than with less occupied (${prev})`);
     prev = k;
   }
-  assert.equal(fit({ fps: 30, occupiedMs: 40, layers: all, swapMs: 3 }).swap.length, 0, '已占用超过一拍：全部占位');
+  assert.equal(fit({ fps: 30, occupiedMs: 40, layers: all, swapMs: 3 }).swap.length, 0, 'Occupied time exceeds one tick: everything gets a placeholder');
   const k3 = fit({ fps: 30, occupiedMs: 0, layers: all, swapMs: 3 }).swap.length;
   const k6 = fit({ fps: 30, occupiedMs: 0, layers: all, swapMs: 6 }).swap.length;
-  assert.ok(k6 < k3, `swapMs 6 ms 装下 ${k6} 层，不该不少于 3 ms 的 ${k3} 层`);
+  assert.ok(k6 < k3, `swapMs 6 ms fits ${k6} layers, which should be fewer than the ${k3} layers fitting at 3 ms`);
   const kDefault = fit({ fps: 30, occupiedMs: 0, layers: all }).swap.length;
-  assert.equal(kDefault, k3, '不给 swapMs 时按 SWAP_MS（3 ms）');
+  assert.equal(kDefault, k3, 'Without swapMs, SWAP_MS (3 ms) is used');
   const none = fit({ fps: 30, occupiedMs: 0, layers: [], swapMs: 3 });
-  assert.deepEqual([none.swap, none.placeholder], [[], []], '没有重层：两组都空');
+  assert.deepEqual([none.swap, none.placeholder], [[], []], 'No heavy layers: both groups are empty');
 });
 
-it('C10-BS-04 回包带 deadMs 时，它等于拍长（或预算）减去已占用', async (t) => {
+it('C10-BS-04 when the response carries deadMs, it equals the tick length (or the budget) minus the occupied time', async (t) => {
   const fit = await fitFn();
   const r = fit({ fps: 30, occupiedMs: 8, layers: layers(3), swapMs: 3 });
   if (r.deadMs === undefined) {
-    t.diagnostic('回包没带 deadMs，这一条不核对');
+    t.diagnostic('The response has no deadMs, so this item is not checked');
     return;
   }
   const ok = [beatMs(30) - 8, budgetMs(30) - 8].some((v) => Math.abs(v - r.deadMs) < 0.01);
-  assert.ok(ok, `deadMs ${r.deadMs} 既不是拍长减已占用（${(beatMs(30) - 8).toFixed(3)}）也不是预算减已占用（${(budgetMs(30) - 8).toFixed(3)}）`);
+  assert.ok(ok, `deadMs ${r.deadMs} is neither the tick length minus occupied (${(beatMs(30) - 8).toFixed(3)}) nor the budget minus occupied (${(budgetMs(30) - 8).toFixed(3)})`);
 });
 
 /* ------------------------------------------------------------------ 节流（snapshotFeed.ts） */
@@ -100,7 +100,7 @@ async function loadFeed() {
 }
 function beatSwitch(f) {
   for (const n of BEAT_SWITCH_NAMES) if (typeof f[n] === 'function') return f[n];
-  throw new Error(`假设 K3：snapshotFeed.ts 没有导出按拍换帧的开关（${BEAT_SWITCH_NAMES.join(' / ')}）；导出的有：${Object.keys(f).join(', ')}`);
+  throw new Error(`Assumption K3: snapshotFeed.ts does not export a per-tick frame-swap switch (${BEAT_SWITCH_NAMES.join(' / ')}); what it exports: ${Object.keys(f).join(', ')}`);
 }
 
 const FPS = 60;
@@ -151,7 +151,7 @@ async function twoBeats({ on, playing }) {
     src.push({ type: 'layer', clipId: 'h', kind: 'html', key: 'k-h', ranges: [[0, 600]] });
     const stage = fakeStage();
     await primeAt(f, stage, 60, playing);
-    assert.equal(await f.deliverSnapshots(stage, 'front', { project: project([card('h', 0, 10)]), t: 60 / FPS, playing }), 0, '快照退役后不投');
+    assert.equal(await f.deliverSnapshots(stage, 'front', { project: project([card('h', 0, 10)]), t: 60 / FPS, playing }), 0, 'Nothing is delivered once snapshots are retired');
     // 下一拍（60 fps，约 16.7 ms 后），换到第 61 帧
     now += 1000 / FPS;
     const head2 = await primeAt(f, stage, 61, playing);
@@ -161,15 +161,15 @@ async function twoBeats({ on, playing }) {
   }
 }
 
-it('C10-BS-05 在线按拍换帧：快照退役后 deliverSnapshots 返回 0', async () => {
+it('C10-BS-05 online per-tick frame swap: deliverSnapshots returns 0 once snapshots are retired', async () => {
   assert.equal(await twoBeats({ on: true, playing: true }), 0);
 });
 
-it('C10-BS-06 节流只留给非播放时的投递：快照退役后 deliverSnapshots 返回 0', async () => {
+it('C10-BS-06 throttling is reserved for delivery while not playing: deliverSnapshots returns 0 once snapshots are retired', async () => {
   assert.equal(await twoBeats({ on: true, playing: false }), 0);
 });
 
-it('C10-BS-07 桌面（开关关着）播放中：快照退役后 deliverSnapshots 返回 0', async () => {
+it('C10-BS-07 desktop (switch off) while playing: deliverSnapshots returns 0 once snapshots are retired', async () => {
   const f = await loadFeed();
   beatSwitch(f)(false);
   assert.equal(await twoBeats({ on: false, playing: true }), 0);

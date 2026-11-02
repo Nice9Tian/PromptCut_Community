@@ -73,18 +73,18 @@ function makeVideo() {
 const CARD_SOURCE = [
   'import type { CardDef, CardProps } from "../../kernel/types";',
   '',
-  '/** 探针用(av-card-speed-sound-probe.mjs 临时写进改动层):声画一体卡,声音把输入的声音原样交出去;画面是一根红条,宽 = 卡片时钟 ÷ 10 秒 */',
+  '/** Probe only (temporarily written into the override layer by av-card-speed-sound-probe.mjs): audio-visual card whose sound passes the input sound through unchanged; the picture is a red bar, width = card clock ÷ 10 seconds */',
   'function Frame({ t = 0 }: CardProps<{ gain: number }>) {',
   '  return <div style={{ position: "absolute", left: 0, top: 0, height: "100%", width: `${Math.min(1, Math.max(0, t / 10)) * 100}%`, background: "#ff0000" }} />;',
   '}',
   'export const probeAvPass: CardDef<{ gain: number }> = {',
   `  id: "${PASS}",`,
-  '  name: "速度探针:声画直通",',
-  '  description: "画面画卡片时钟,声音把输入原样输出",',
+  '  name: "Speed probe: audio-visual passthrough",',
+  '  description: "The picture draws the card clock, the sound outputs the input unchanged",',
   '  source: "user",',
   '  kind: "animation",',
   '  frameMode: "direct",',
-  '  inputs: { source: { description: "输入素材" } },',
+  '  inputs: { source: { description: "Input media" } },',
   '  defaults: { gain: 1 },',
   '  controls: [],',
   '  Component: Frame,',
@@ -115,7 +115,7 @@ function projectOf(media) {
       params: { gain: 1 }, frame: full, ...(s.speed ? { speed: s.speed } : {}) });
   }
   return { version: 1, id: 'p-av-card-speed', name: 'av-card-speed-sound', width: W, height: H, fps: FPS, duration: DURATION, themeId: 'midnight',
-    media: [media], filters: [], audioFx: [], cardNodes, tracks: [{ id: 't-main', name: '序列 1', clips }] };
+    media: [media], filters: [], audioFx: [], cardNodes, tracks: [{ id: 't-main', name: 'Track 1', clips }] };
 }
 
 /** 成片第 n 帧(rgb24),量第 y 行最左边连续红色像素的个数 */
@@ -196,7 +196,7 @@ try {
     const needs = await sound.listExportSoundNeeds(new AbortController().signal);
     return needs.map((n) => ({ clipId: n.clipId, reason: n.reason }));
   });
-  check('N0', pre.length === 4 && pre.every((n) => n.reason === 'ungenerated'), '导出前四段都要生成声音', pre);
+  check('N0', pre.length === 4 && pre.every((n) => n.reason === 'ungenerated'), 'Before export, all four segments need sound generated', pre);
 
   const gen = await page.evaluate(async () => {
     try {
@@ -206,7 +206,7 @@ try {
       return { ok: true, generated: p.tracks[0].clips.filter((c) => c.cardAudio).map((c) => c.id) };
     } catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
   });
-  check('G', gen.ok && gen.generated?.length === 4, '先生成四段的声音', gen);
+  check('G', gen.ok && gen.generated?.length === 4, 'Generate the sound for the four segments first', gen);
 
   const split = await page.evaluate(async (at) => {
     const a = window.__pcStore.actions;
@@ -221,7 +221,7 @@ try {
     return { rightId: right?.id ?? null, rightMediaOffset: r?.mediaOffset, needs: needs.map((n) => ({ clipId: n.clipId, reason: n.reason, detail: n.detail })), offsets, error };
   }, SPLIT_AT);
   check('S', split.rightId && split.needs.length === 0 && split.offsets?.sameWav && Math.abs(split.offsets.right - split.offsets.left - (SPLIT_AT - 6)) < 1e-6,
-    `切开 D 之后清单为空,两半共用同一份 WAV,后半段偏移 = 前半段 + ${SPLIT_AT - 6} 秒`, split);
+    `After splitting D the manifest is empty, both halves share the same WAV, and the second half's offset = first half + ${SPLIT_AT - 6} seconds`, split);
 
   const exp = await page.evaluate(async () => {
     const progress = [];
@@ -231,7 +231,7 @@ try {
     } catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
   });
   const file = exp.outDir ? path.join(exp.outDir, 'preview.mp4') : '';
-  check('E', exp.ok && fs.existsSync(file), '桌面导出成功', exp);
+  check('E', exp.ok && fs.existsSync(file), 'Desktop export succeeded', exp);
   if (exp.ok && fs.existsSync(file)) {
     const mp4 = path.join(OUT, 'export.mp4');
     fs.copyFileSync(file, mp4);
@@ -247,19 +247,19 @@ try {
       const db = loudness(pcm, a, b), hz = pitch(pcm, a, b), peak = peakHz(pcm, a, b);
       const ok = db > -30 && Math.abs(hz - s.hz) <= s.hz * 0.02 && Math.abs(peak - s.hz) <= s.hz * 0.02;
       report.segs[s.id] = { speed: s.speed, expectHz: s.hz, zeroCrossHz: +hz.toFixed(1), dftPeakHz: peak, dBFS: +db.toFixed(1) };
-      check(s.id, ok, `${s.id} 段 ${s.speed}× 应为 ${s.hz} Hz 有声:过零 ${hz.toFixed(1)} Hz、DFT 峰 ${peak} Hz、${db.toFixed(1)} dBFS`);
+      check(s.id, ok, `Segment ${s.id} at ${s.speed}x should be ${s.hz} Hz with sound: zero-crossing ${hz.toFixed(1)} Hz, DFT peak ${peak} Hz, ${db.toFixed(1)} dBFS`);
     }
     const dx = { hz: pitch(pcm, SPLIT_AT - 0.5, SPLIT_AT + 0.5), peak: peakHz(pcm, SPLIT_AT - 0.5, SPLIT_AT + 0.5), db: loudness(pcm, SPLIT_AT - 0.5, SPLIT_AT + 0.5) };
     report.segs.DX = { zeroCrossHz: +dx.hz.toFixed(1), dftPeakHz: dx.peak, dBFS: +dx.db.toFixed(1) };
     check('DX', Math.abs(dx.hz - 880) <= 880 * 0.02 && Math.abs(dx.peak - 880) <= 880 * 0.02 && Math.abs(dx.db - report.segs.D1.dBFS) < 1,
-      `跨切点 ${SPLIT_AT - 0.5}～${SPLIT_AT + 0.5} 秒:过零 ${dx.hz.toFixed(1)} Hz、DFT 峰 ${dx.peak} Hz、${dx.db.toFixed(1)} dBFS(D1 ${report.segs.D1.dBFS})`);
+      `Across the cut point ${SPLIT_AT - 0.5}~${SPLIT_AT + 0.5} s: zero-crossing ${dx.hz.toFixed(1)} Hz, DFT peak ${dx.peak} Hz, ${dx.db.toFixed(1)} dBFS (D1 ${report.segs.D1.dBFS})`);
     const before = redBar(mp4, SPLIT_AT * FPS - 1, path.join(OUT, `frame-${SPLIT_AT * FPS - 1}.png`)), at = redBar(mp4, SPLIT_AT * FPS, path.join(OUT, `frame-${SPLIT_AT * FPS}.png`));
     report.bar = { before, at, expect: 0.4 * W };
-    check('V', Math.abs(at - before) < 4 && Math.abs(at - 0.4 * W) < 6, `画面:切点前一帧红条 ${before} 像素、切点那一帧 ${at} 像素(应都约 ${0.4 * W})`);
+    check('V', Math.abs(at - before) < 4 && Math.abs(at - 0.4 * W) < 6, `Frame: red bar is ${before} px in the frame before the cut point and ${at} px in the cut-point frame (both should be about ${0.4 * W})`);
   }
-  check('E0', errors.length === 0, '页面零报错', errors);
+  check('E0', errors.length === 0, 'Page has zero errors', errors);
 } catch (error) {
-  check('X', false, `探针异常:${String(error?.stack || error)}`);
+  check('X', false, `Probe error: ${String(error?.stack || error)}`);
 } finally {
   await browser.close();
   server.stop();

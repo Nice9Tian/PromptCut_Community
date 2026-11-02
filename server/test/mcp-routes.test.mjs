@@ -19,29 +19,29 @@ const EXECUTOR = readFileSync(new URL('../../src/ai/mcpExecutor.ts', import.meta
 const browserTools = mcpTools.filter((t) => t.side === 'page' || t.side === 'agent').map((t) => t.name);
 const routed = Object.keys(TOOL_ROUTES);
 
-test('每个 browser 工具要么在路由表里,要么在表外特殊分支的名单里', () => {
+test('Every browser tool is either in the route table or in the list of special branches outside the table', () => {
   const handled = new Set([...routed, ...SPECIAL_TOOLS]);
   const missing = browserTools.filter((n) => !handled.has(n));
-  assert.deepEqual(missing, [], `没登记的工具：${missing.join('、')}`);
+  assert.deepEqual(missing, [], `Unregistered tools: ${missing.join(', ')}`);
 });
 
-test('路由表里没有工具表中不存在的名字', () => {
+test('The route table has no names that do not exist in the tool table', () => {
   const declared = new Set(mcpTools.map((t) => t.name));
   const orphans = routed.filter((n) => !declared.has(n));
-  assert.deepEqual(orphans, [], `路由表里多出来的名字：${orphans.join('、')}`);
+  assert.deepEqual(orphans, [], `Extra names in the route table: ${orphans.join(', ')}`);
 });
 
-test('表外特殊分支的名单里也没有工具表中不存在的名字', () => {
+test('The list of special branches outside the table also has no names that do not exist in the tool table', () => {
   const declared = new Set(mcpTools.map((t) => t.name));
   const orphans = SPECIAL_TOOLS.filter((n) => !declared.has(n));
-  assert.deepEqual(orphans, [], `特殊分支名单里多出来的名字：${orphans.join('、')}`);
+  assert.deepEqual(orphans, [], `Extra names in the special-branch list: ${orphans.join(', ')}`);
 });
 
-test('路由表和特殊分支不重叠,而且都只放 browser 侧的工具', () => {
+test('The route table and the special branches do not overlap, and both hold only browser-side tools', () => {
   const dup = routed.filter((n) => SPECIAL_TOOLS.includes(n));
-  assert.deepEqual(dup, [], '同一个工具不能既查表又走特殊分支');
+  assert.deepEqual(dup, [], 'The same tool cannot both use the table and take a special branch');
   const browser = new Set(browserTools);
-  assert.deepEqual([...routed, ...SPECIAL_TOOLS].filter((n) => !browser.has(n)), [], 'server 侧的工具不经过编辑台');
+  assert.deepEqual([...routed, ...SPECIAL_TOOLS].filter((n) => !browser.has(n)), [], 'Server-side tools do not go through the editor');
 });
 
 /**
@@ -49,31 +49,31 @@ test('路由表和特殊分支不重叠,而且都只放 browser 侧的工具', (
  * 直接 import),TypeScript 只看得到它的 .d.mts 声明,看不到里面写了什么字符串 ——
  * 方法名打错了编译不会报。所以这一条直接读 EditorApi 的声明来核。
  */
-test('路由表里的每个方法名都在 EditorApi 上', () => {
+test('Every method name in the route table exists on EditorApi', () => {
   const start = EXECUTOR.indexOf('export interface EditorApi {');
-  assert.ok(start >= 0, '找不到 EditorApi 的声明');
+  assert.ok(start >= 0, 'Cannot find the declaration of EditorApi');
   const body = EXECUTOR.slice(start, EXECUTOR.indexOf('\n}', start));
   const declared = new Set([...body.matchAll(/^ {2}([A-Za-z][A-Za-z0-9_]*)\(/gm)].map((m) => m[1]));
-  assert.ok(declared.size > 100, `EditorApi 只解析出 ${declared.size} 个方法,解析多半错了`);
+  assert.ok(declared.size > 100, `Only ${declared.size} methods were parsed from EditorApi, so the parsing is probably wrong`);
   const bad = routed.filter((n) => !declared.has(TOOL_ROUTES[n].method));
-  assert.deepEqual(bad, [], `方法名在 EditorApi 上不存在：${bad.map((n) => `${n} → ${TOOL_ROUTES[n].method}`).join('、')}`);
+  assert.deepEqual(bad, [], `Method names that do not exist on EditorApi: ${bad.map((n) => `${n} → ${TOOL_ROUTES[n].method}`).join(', ')}`);
 });
 
-test('每项的 passArgs / awaited 都是布尔值', () => {
+test('passArgs / awaited of every entry are booleans', () => {
   const bad = routed.filter((n) => typeof TOOL_ROUTES[n].passArgs !== 'boolean' || typeof TOOL_ROUTES[n].awaited !== 'boolean');
   assert.deepEqual(bad, []);
 });
 
 /** 特殊分支是「有意留在表外」的,不是「忘了登记」。它们必须在执行器里真有自己的分支。 */
-test('表外的特殊分支在执行器里都真的有接住的地方', () => {
+test('Every special branch outside the table has a place in the executor that actually handles it', () => {
   const missing = SPECIAL_TOOLS.filter((n) =>
     n.startsWith('web_')
       ? !EXECUTOR.includes(`case "${n}":`)
       : !EXECUTOR.includes(`tool === "${n}"`));
-  assert.deepEqual(missing, [], `特殊分支名单里的工具在执行器里没有分支：${missing.join('、')}`);
-  assert.ok(EXECUTOR.includes('tool.startsWith("web_")'), 'web_* 靠前缀分发,这一句没了八个网页工具就全掉了');
+  assert.deepEqual(missing, [], `Tools in the special-branch list that have no branch in the executor: ${missing.join(', ')}`);
+  assert.ok(EXECUTOR.includes('tool.startsWith("web_")'), 'web_* is dispatched by prefix; without this line all eight web tools would be lost');
 });
 
-test('未知工具名的报错文案没变', () => {
-  assert.ok(EXECUTOR.includes('throw new Error(trText("Unknown tool: {0}", tool))'), 'Agent 和测试都按这句文案认「这个工具不存在」');
+test('The error message for an unknown tool name is unchanged', () => {
+  assert.ok(EXECUTOR.includes('throw new Error(trText("Unknown tool: {0}", tool))'), 'The Agent and the tests both rely on this message text to recognize "this tool does not exist"');
 });

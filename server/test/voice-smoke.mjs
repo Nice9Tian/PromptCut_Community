@@ -14,7 +14,7 @@ const fixture = JSON.parse(fs.readFileSync(new URL('./fixtures/voices.json', imp
 const saved = readVoiceConfig();
 const apiKey = process.env.VOICE_API_KEY || saved.apiKey;
 if (!apiKey) {
-  console.error('没有 API Key:设 VOICE_API_KEY,或者先在「配音设置」里保存一个。');
+  console.error('No API Key: set VOICE_API_KEY, or first save one in "Voiceover settings".');
   process.exit(2);
 }
 
@@ -24,15 +24,15 @@ const customVoices = [
 ];
 const cfg = { ...saved, apiKey, effectiveBaseUrl: saved.effectiveBaseUrl || fixture.apiBaseUrl, customVoices };
 const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-voice-smoke-'));
-const text = '任务完成了，你回来看一下就行。';
+const text = 'The task is done, just come back and take a look.';
 
 const cases = [
   ...customVoices.map((v) => ({ provider: 'minimax', voiceId: v.voiceId, label: v.name })),
-  { provider: 'kling', voiceId: fixture.kling.official[0].voiceId, label: `可灵 ${fixture.kling.official[0].name}` },
+  { provider: 'kling', voiceId: fixture.kling.official[0].voiceId, label: `Kling ${fixture.kling.official[0].name}` },
   { provider: 'vidu', voiceId: fixture.vidu.system[0], label: `Vidu ${fixture.vidu.system[0]}` },
 ];
 
-console.log(`API 地址: ${cfg.effectiveBaseUrl}`);
+console.log(`API URL: ${cfg.effectiveBaseUrl}`);
 let failed = 0;
 for (const c of cases) {
   try {
@@ -43,5 +43,5 @@ for (const c of cases) {
     console.log(`FAIL ${c.label.padEnd(20)} ${e.message}`);
   }
 }
-console.log(`\n输出目录: ${outDir}`);
+console.log(`\nOutput directory: ${outDir}`);
 process.exit(failed ? 1 : 0);

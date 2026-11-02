@@ -60,12 +60,12 @@ function audit(tag, file) {
   const w = (at) => rmsOf(file, at + 0.02, at + 0.28);
   const lv = { S1: w(1.5), S2: w(4.5), S3: w(7.5), S4: w(10.5), S5: w(13.5) };
   const gaps = { g0: rmsOf(file, 0, 1.45), g1: rmsOf(file, 2.0, 4.45), g2: rmsOf(file, 5.0, 10.45), g3: rmsOf(file, 11.0, 13.45), g4: rmsOf(file, 14.0, 15.9) };
-  check(`${tag}-S1`, lv.S1 !== null && lv.S1 > -45, `剪辑段 S1(音量 1)里听得到提示音:${lv.S1} dB`, lv);
-  check(`${tag}-S2`, lv.S2 !== null && Math.abs(lv.S1 - lv.S2 - 6.02) < 1.5, `S2 音量 0.5:比 S1 低 ${(lv.S1 - lv.S2).toFixed(2)} dB(应约 6.02)`);
-  check(`${tag}-S3`, quiet(lv.S3), `S3 静音:${lv.S3} dB`);
-  check(`${tag}-S4`, lv.S4 !== null && lv.S1 - lv.S4 > 1 && lv.S1 - lv.S4 < 8, `S4 淡入中段:比 S1 低 ${(lv.S1 - lv.S4).toFixed(2)} dB`);
-  check(`${tag}-S5`, lv.S5 !== null && Math.abs(lv.S1 - lv.S5) < 1.5, `S5 两层嵌套:与 S1 差 ${(lv.S1 - lv.S5).toFixed(2)} dB`);
-  check(`${tag}-gaps`, Object.values(gaps).every(quiet), '段与段之间无声', gaps);
+  check(`${tag}-S1`, lv.S1 !== null && lv.S1 > -45, `The notification sound is audible in cut segment S1 (volume 1): ${lv.S1} dB`, lv);
+  check(`${tag}-S2`, lv.S2 !== null && Math.abs(lv.S1 - lv.S2 - 6.02) < 1.5, `S2 volume 0.5: ${(lv.S1 - lv.S2).toFixed(2)} dB lower than S1 (should be about 6.02)`);
+  check(`${tag}-S3`, quiet(lv.S3), `S3 muted: ${lv.S3} dB`);
+  check(`${tag}-S4`, lv.S4 !== null && lv.S1 - lv.S4 > 1 && lv.S1 - lv.S4 < 8, `S4 midway through the fade-in: ${(lv.S1 - lv.S4).toFixed(2)} dB lower than S1`);
+  check(`${tag}-S5`, lv.S5 !== null && Math.abs(lv.S1 - lv.S5) < 1.5, `S5 two-level nesting: differs from S1 by ${(lv.S1 - lv.S5).toFixed(2)} dB`);
+  check(`${tag}-gaps`, Object.values(gaps).every(quiet), 'silence between segments', gaps);
   return { levels: lv, gaps };
 }
 
@@ -86,12 +86,12 @@ try {
   /* 摆项目,存一份「声音都没生成过」的原样,两条路各从它开始 */
   const setup = await page.evaluate(() => {
     const a = window.__pcStore.actions;
-    a.newProject('剪辑段里的有声卡');
+    a.newProject('Audio cards inside a cut segment');
     a.setProjectMeta({ width: 480, height: 270, fps: 15 });
-    const c2 = a.addCut('剪辑2', { switchTo: true });
+    const c2 = a.addCut('Cut 2', { switchTo: true });
     const card = a.addCardClip('av-pulse', 0.5, { duration: 0.6, params: { frequency: 880, gain: 0.3, duration: 0.3 } });
     a.setProjectMeta({ duration: 2 });
-    const c3 = a.addCut('剪辑3', { switchTo: true });
+    const c3 = a.addCut('Cut 3', { switchTo: true });
     a.addCutSegment(c2.id, 0, { duration: 2 });
     a.setProjectMeta({ duration: 2 });
     const root = window.__pcStore.getState().project.cuts[0].id;
@@ -123,8 +123,8 @@ try {
       try { assertProjectCardAudio(window.__pcStore.getState().project); } catch (e) { err = String(e?.message ?? e); }
       return { needs: needs.map((n) => ({ clipId: n.clipId, cutId: n.cutId, kind: n.kind, reason: n.reason, label: n.label })), err };
     });
-    check(`${tag}-N`, pre.needs.length === 1 && pre.needs[0].clipId === setup.ids.card && pre.needs[0].cutId === setup.ids.c2 && pre.needs[0].reason === 'ungenerated' && /尚未生成/.test(pre.err ?? ''),
-      '导出前清单只有剪辑2 里那张有声卡(带 cutId),改动前的核对点名原片段', pre);
+    check(`${tag}-N`, pre.needs.length === 1 && pre.needs[0].clipId === setup.ids.card && pre.needs[0].cutId === setup.ids.c2 && pre.needs[0].reason === 'ungenerated' && /not yet generated/.test(pre.err ?? ''),
+      'The pre-export list contains only the audio card in Cut 2 (with its cutId), and the check before the change names the original clip', pre);
     const activeBefore = await page.evaluate(() => JSON.stringify(window.__pcStore.getState().project.tracks));
 
     const file = path.join(OUT, mode === 'browser' ? 'browser.wav' : 'desktop.mp4');
@@ -162,7 +162,7 @@ try {
           return { base64: btoa(bin), entries: plan.length, envs: plan.filter((e) => e.env).length, progress: progress.slice(-1)[0] ?? null };
         } catch (e) { return { error: String(e?.message ?? e) }; }
       });
-      check(`${tag}-export`, !r.error && r.base64 && r.entries === 4, '浏览器那一路:先生成声音,再 Chrome 离线混音(混音计划 4 条,S3 静音不进)', { error: r.error, entries: r.entries, envs: r.envs, progress: r.progress });
+      check(`${tag}-export`, !r.error && r.base64 && r.entries === 4, 'Browser path: generate the sound first, then Chrome offline mixdown (4 entries in the mix plan, muted S3 is not included)', { error: r.error, entries: r.entries, envs: r.envs, progress: r.progress });
       if (r.base64) fs.writeFileSync(file.replace(/\.mp4$/, '.wav'), Buffer.from(r.base64, 'base64'));
     } else {
       const r = await page.evaluate(async () => {
@@ -172,7 +172,7 @@ try {
           return { ok: true, outDir: out.outDir, sound: progress.filter((x) => x[0] === 'sound').slice(-1)[0] ?? null };
         } catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
       });
-      check(`${tag}-export`, r.ok && fs.existsSync(path.join(r.outDir ?? '', 'preview.mp4')), '桌面导出成功(进度里有声音生成阶段)', r);
+      check(`${tag}-export`, r.ok && fs.existsSync(path.join(r.outDir ?? '', 'preview.mp4')), 'Desktop export succeeded (progress includes a sound generation stage)', r);
       if (r.ok) fs.copyFileSync(path.join(r.outDir, 'preview.mp4'), file);
     }
     const post = await page.evaluate(async (ids) => {
@@ -181,10 +181,10 @@ try {
       const sound = await window.__pcIo.sound();
       return { hasAudio: !!clip?.cardAudio, mediaId: clip?.cardAudio?.mediaId ?? null, active: JSON.stringify(p.tracks), needs: (await sound.listExportSoundNeeds(new AbortController().signal)).length };
     }, setup.ids);
-    check(`${tag}-G`, post.hasAudio && post.active === activeBefore && post.needs === 0, '声音记在剪辑2 的原片段上,激活剪辑的序列不动,再列清单为空', { hasAudio: post.hasAudio, activeSame: post.active === activeBefore, needs: post.needs });
+    check(`${tag}-G`, post.hasAudio && post.active === activeBefore && post.needs === 0, 'The sound is recorded on the original clip in Cut 2, the active cut\'s tracks are untouched, and the list is empty when listed again', { hasAudio: post.hasAudio, activeSame: post.active === activeBefore, needs: post.needs });
     if (fs.existsSync(file)) report[mode] = audit(tag, file);
   }
-  check('E0', errors.length === 0, '页面零报错', errors);
+  check('E0', errors.length === 0, 'Page has zero errors', errors);
 } finally {
   await browser.close();
   server.stop();

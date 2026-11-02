@@ -55,7 +55,7 @@ export async function startProbeServices({ dataDir, docPort, assetPort, host = '
   const assetDir = path.join(dataDir, 'assets');
   fs.mkdirSync(docDir, { recursive: true });
   const layout = ensureLayoutSync(assetDir, LAYOUTS.shard);
-  if (!layout.ok) throw new Error(`素材目录的布局对不上:${layout.found}`);
+  if (!layout.ok) throw new Error(`Asset catalog layout mismatch: ${layout.found}`);
 
   registerTsResolve();
   const [assetService, media] = await Promise.all([

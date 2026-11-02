@@ -24,7 +24,7 @@ function fakeBakery(name, log) {
   };
 }
 
-test('MI-yield-queue:让路租约在期 / 正在让路时,queue lane 照常借到预渲染间、在跑的队列任务做完;background lane 照旧让路', async () => {
+test('MI-yield-queue: while the yield lease is valid / yielding is in progress, the queue lane still borrows the prerender room and its running queue tasks finish; the background lane still yields', async () => {
   const pipeline = new FramePipeline({ root: '.', origin: () => 'http://127.0.0.1:1' });
   const log = [];
   pipeline.lanes.set('queue', { bakery: fakeBakery('queue', log) });
@@ -40,11 +40,11 @@ test('MI-yield-queue:让路租约在期 / 正在让路时,queue lane 照常借�
       return [first.name, second.name];
     });
     await pipeline.yieldBackground('page-play', 5000);
-    assert.ok(pipeline.backgroundLeaseUntil > Date.now(), '让路租约在期');
+    assert.ok(pipeline.backgroundLeaseUntil > Date.now(), 'The yield lease is valid');
     resumeWork();
-    assert.deepEqual(await running, ['queue', 'queue'], '让路期间在跑的队列任务做完为止,不因让路被取消');
-    assert.ok(!log.includes('queue.close'), '让路不关 queue lane 的预渲染间');
-    assert.ok(log.includes('background.close'), '后台那一趟的预渲染间照旧关掉');
+    assert.deepEqual(await running, ['queue', 'queue'], 'Queue tasks running during the yield run to completion and are not cancelled because of the yield');
+    assert.ok(!log.includes('queue.close'), 'Yielding does not close the queue lane\'s prerender room');
+    assert.ok(log.includes('background.close'), 'The prerender room of the background run is still closed');
 
     // 让路期间新排进来的队列任务(认领在手的)也照常做
     const later = await pipeline.runQueueTask(async (lease) => (await lease(project)).name);
@@ -58,7 +58,7 @@ test('MI-yield-queue:让路租约在期 / 正在让路时,queue lane 照常借�
   } finally { await pipeline.close(); }
 });
 
-test('MI-no-isIdle:执行器只有 plan / render / forget,不再有 isIdle', () => {
+test('MI-no-isIdle: the executor has only plan / render / forget, no more isIdle', () => {
   const pipeline = new FramePipeline({ root: '.', origin: () => 'http://127.0.0.1:1' });
   try {
     const executor = createPrerenderExecutor({ pipeline, projects: { get: async () => null } });

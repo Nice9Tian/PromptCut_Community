@@ -87,7 +87,7 @@ async function startServer() {
     await sleep(500);
   }
   proc.kill();
-  throw new Error(`dev server 240 秒没起来:\n${log.join('')}`);
+  throw new Error(`dev server did not start within 240 seconds:\n${log.join('')}`);
 }
 
 async function stopServer() {
@@ -252,13 +252,13 @@ let page = null;
 let errors = [];
 try {
   server = await startServer();
-  step('goto editor (缺省模式,一个 preview 参数都不带)');
+  step('goto editor (default mode, no preview parameter at all)');
   ({ page, errors } = await openEditor(browser, EDITOR_URL, { dual: true }));
-  step('两个舞台都登记好了');
+  step('Both stages are registered');
   await page.evaluate(INSTALL_RECORDERS);
 
   /* ========================================================= 1. 露出舞台 */
-  if (wants('露出')) {
+  if (wants('reveal')) {
     // 建一个项目,让 ProbeGate 真的有东西要测
     await page.evaluate(BUILD, { fps: 30, duration: 12, cards: [{ id: 'probe-css' }, { id: 'odometer' }] });
     // 遮罩:测的时候在,测完摘掉
@@ -272,22 +272,22 @@ try {
     const frontWhich = diag.preview?.frontId === 'B' ? 'stage-frame-back' : 'stage-frame';
     const frontEl = (scan.frames ?? []).find((f) => f.which === frontWhich);
     const backEl = (scan.frames ?? []).find((f) => f.which !== frontWhich);
-    out.cases['露出'] = { sawGate, gateAfter, scan, iframeTargets: targets.length, frontId: diag.preview?.frontId ?? null };
+    out.cases['reveal'] = { sawGate, gateAfter, scan, iframeTargets: targets.length, frontId: diag.preview?.frontId ?? null };
 
-    check(sawGate, '打开项目时 ProbeGate 遮罩出现过');
-    check(gateAfter === false, '测完之后遮罩摘掉了');
-    check(frontEl && frontEl.opacity === '1', '可见舞台露出来了(front 的 opacity 是 1)', frontEl);
+    check(sawGate, 'The ProbeGate overlay appeared when the project was opened');
+    check(gateAfter === false, 'The overlay was removed after measurement finished');
+    check(frontEl && frontEl.opacity === '1', 'The visible stage is revealed (front\'s opacity is 1)', frontEl);
     check(backEl && backEl.opacity === '0' && backEl.pointerEvents === 'none',
-      '后台舞台仍然是 opacity: 0 + pointer-events: none', backEl);
+      'The background stage is still opacity: 0 + pointer-events: none', backEl);
     check(backEl && backEl.display !== 'none' && backEl.visibility !== 'hidden',
-      '后台舞台不用 display / visibility 藏(K5 (4))', backEl);
-    check(targets.length === 2, 'CDP 里有两个 type: iframe 的 target(各自一个进程)', targets.length);
-    check((scan.imgs ?? []).length === 0, '主文档的预览区里没有整帧 <img>', scan.imgs);
-    check((scan.videos ?? []).length === 0, '主文档的预览区里没有素材 <video>(素材层在舞台里)', scan.videos);
+      'The background stage is not hidden with display / visibility (K5 (4))', backEl);
+    check(targets.length === 2, 'CDP has two targets of type: iframe (one process each)', targets.length);
+    check((scan.imgs ?? []).length === 0, 'No full-frame <img> in the preview area of the main document', scan.imgs);
+    check((scan.videos ?? []).length === 0, 'No media <video> in the preview area of the main document (the media layer is in the stage)', scan.videos);
   }
 
   /* ========================================================= 2. 暂停拖动 */
-  if (wants('拖动')) {
+  if (wants('drag')) {
     await page.evaluate(BUILD, { fps: 30, duration: 30, cards: [{ id: 'probe-css' }, { id: 'odometer' }] });
     await waitProbeIdle(page);
     await sleep(400);
@@ -327,20 +327,20 @@ try {
     }
     const genAfter = (await frontDiag(page)).stage?.remountGen ?? null;
     const beat = 1000 / 30;
-    out.cases['拖动'] = { trips: stats(trips), overBeat: trips.filter((x) => x > beat).length, awaitingSeen, awaitingStuck, genBefore, genAfter };
+    out.cases['drag'] = { trips: stats(trips), overBeat: trips.filter((x) => x > beat).length, awaitingSeen, awaitingStuck, genBefore, genAfter };
     // 原先这里要求「每一次 setTime 往返都不超过三拍（100 ms）」。那个数量的是机器有多快，语义里没有这条时间承诺，
     // 按 verification.md「耗时只记录，不当闸门」（2026-10-07 用户改定）改为只记录（往返次数与超过一拍的次数都在 out.cases['拖动'] 里）。
     // 它想证的「不等 HTTP」更该用「这段里没有发出网络请求」来断言，记进报告的待办，这次没有现编新断言。
     // 2026-10-23 探针总审第三遍扫描（阈值是表达式那一类，前两遍的正则都漏了）。
-    check(trips.length > 0, '暂停拖动:每一次 setTime 都回来了(往返用时只记录,不当闸门)', out.cases['拖动']);
-    check(awaitingStuck === 0, '.pc-awaiting 500 ms 内必被摘掉', { awaitingSeen, awaitingStuck });
+    check(trips.length > 0, 'Paused drag: every setTime came back (round-trip time is only recorded, not used as a gate)', out.cases['drag']);
+    check(awaitingStuck === 0, '.pc-awaiting is always removed within 500 ms', { awaitingSeen, awaitingStuck });
   }
 
   /* ========================================================= 3. 播放 */
-  if (wants('播放')) {
+  if (wants('Play')) {
     const cadence = {};
     for (const fps of [24, 30, 60]) {
-      step(`播放 ${fps} fps`);
+      step(`Playback at ${fps} fps`);
       await page.evaluate(BUILD, { fps, duration: seconds + 6, cards: [{ id: 'probe-css' }] });
       await waitProbeIdle(page);
       await page.evaluate(async () => { const { actions } = await import('/src/store/project.ts'); actions.seek(0); });
@@ -357,17 +357,17 @@ try {
       const g = stats(gaps);
       cadence[fps] = { gap: g, secDiffWrong, frames: rec.frames.length, longTasks: rec.longTasks.length };
       check(g && Math.abs(g.mean - 1000 / fps) <= 1,
-        `播放 ${fps} fps:frame 到达间隔均值 = 1000/fps ± 1 ms`, { want: 1000 / fps, got: g?.mean });
-      check(secDiffWrong === 0, `播放 ${fps} fps:连续 sec 差恒为 1/fps(不跳帧)`, secDiffWrong);
+        `Playback at ${fps} fps: mean frame arrival interval = 1000/fps ± 1 ms`, { want: 1000 / fps, got: g?.mean });
+      check(secDiffWrong === 0, `Playback at ${fps} fps: consecutive sec differences are always 1/fps (no skipped frames)`, secDiffWrong);
     }
-    out.cases['播放'] = cadence;
+    out.cases['Play'] = cadence;
 
     /*
      * 「零卡顿」那一条:**这次要同时跑着后台舞台探针和预渲染进程**(R5 只量了没跑预渲染的情形)。
      * 后台探针靠换一份新项目触发(ProbeGate 之后 probeRunner 会继续在 back 上测),
      * 预渲染进程由 vite-plugin-prerender 自己拉起来 —— 这里只确认它在。
      */
-    step('零卡顿:播放 + 后台探针 + 预渲染进程');
+    step('Zero jank: playback + background probe + prerender process');
     const prerenderUp = await page.evaluate(async () => {
       try { const r = await fetch('/api/prerender/info', { cache: 'no-store' }); const d = await r.json(); return !!d?.ready; }
       catch { return false; }
@@ -383,15 +383,15 @@ try {
     await sleep(400);
     const busy = await page.evaluate(READ_RECORDERS);
     const probeState = await page.evaluate(async () => (await import('/src/editor/probeRunner.ts')).probeProgress());
-    out.cases['零卡顿'] = {
+    out.cases['zero-jank'] = {
       prerenderUp, probeRunningDuringPlayback: probeState.running,
       longTasks: busy.longTasks, longTaskCount: busy.longTasks.length, frames: busy.frames.length,
     };
-    check(busy.longTasks.length === 0, '播放中主文档的长任务(> 50 ms)为 0', busy.longTasks.slice(0, 5));
+    check(busy.longTasks.length === 0, 'The main document has 0 long tasks (> 50 ms) during playback', busy.longTasks.slice(0, 5));
   }
 
   /* ========================================================= 4. 点选 */
-  if (wants('点选')) {
+  if (wants('pick')) {
     const built = await page.evaluate(BUILD, { fps: 30, duration: 12, cards: [{ id: 'odometer' }] });
     await waitProbeIdle(page);
     await sleep(400);
@@ -410,40 +410,40 @@ try {
       const hit = await s.hitTest(x, y);
       return { x, y, hitClipId: hit?.clipId ?? null };
     }, odo);
-    out.cases['点选'] = { odo, ...pt };
-    check(pt && pt.hitClipId === odo, '实体框中心的 hitTest 命中的就是它', pt);
+    out.cases['pick'] = { odo, ...pt };
+    check(pt && pt.hitClipId === odo, 'hitTest at the center of the entity box hits exactly it', pt);
   }
 
   const benign = (m) => /Failed to load resource/.test(m);
   out.errors = errors.filter((m) => !benign(m)).slice(0, 20);
   out.resourceErrors = errors.filter(benign).length;
-  check(out.errors.length === 0, '页面没有 JS 报错', out.errors.slice(0, 5));
+  check(out.errors.length === 0, 'The page has no JS errors', out.errors.slice(0, 5));
 
   /* ========================================================= 5. 回滚 */
-  if (wants('回滚')) {
-    step('回滚:?preview=legacy 下舞台该藏回去');
+  if (wants('rollback')) {
+    step('Rollback: the stage should hide again under ?preview=legacy');
     const { page: lp } = await openEditor(browser, LEGACY_URL, { dual: false });
     await sleep(1500);
     const lscan = await lp.evaluate(SCAN_MAIN_DOC);
-    out.cases['回滚'] = { scan: lscan };
+    out.cases['rollback'] = { scan: lscan };
     const lfront = (lscan.frames ?? [])[0];
-    check((lscan.frames ?? []).length === 1, 'legacy 下只有一个舞台 iframe', (lscan.frames ?? []).length);
-    check(lfront && lfront.opacity === '0', 'legacy 下舞台仍然是 opacity: 0(整帧 <img> 在上面)', lfront);
+    check((lscan.frames ?? []).length === 1, 'In legacy mode there is only one stage iframe', (lscan.frames ?? []).length);
+    check(lfront && lfront.opacity === '0', 'In legacy mode the stage is still opacity: 0 (the full-frame <img> is on top)', lfront);
     /*
      * D5 / R7-6:回滚要把舞台里那个同名的 `LEGACY` 一起翻过去(`setProject` 立刻按跳转
      * 重算这一帧)。以前 `stageSrc` 从不传 `preview`,舞台侧那一半永远不生效。
      */
     check(!!lfront && /[?&]preview=legacy(&|$)/.test(lfront.src || ''),
-      'legacy 下 ?preview=legacy 传进了舞台 iframe(舞台里的同名开关也翻过去)', lfront?.src);
+      'In legacy mode, ?preview=legacy is passed into the stage iframe (the same-named switch inside the stage is flipped too)', lfront?.src);
     const lstage = lp.frames().find((fr) => fr.url().includes('stage=1'));
     const lstageUrl = lstage ? lstage.url() : null;
-    out.cases['回滚'].stageUrl = lstageUrl;
+    out.cases['rollback'].stageUrl = lstageUrl;
     check(!!lstageUrl && lstageUrl.includes('preview=legacy') && !lstageUrl.includes('preview=stage'),
-      'legacy 下舞台页自己的 URL 是 preview=legacy(不是 stage)', lstageUrl);
+      'In legacy mode, the stage page\'s own URL is preview=legacy (not stage)', lstageUrl);
     await lp.close().catch(() => {});
   }
 } catch (err) {
-  fails.push('探针自己抛了:' + (err?.stack || String(err)));
+  fails.push('The probe itself threw:' + (err?.stack || String(err)));
   exitCode = 1;
 } finally {
   out.fails = fails;
@@ -456,6 +456,6 @@ try {
   try { await browser.close(); } catch { /* 已经关了 */ }
   await stopServer();
   if (!keep) { try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch { /* 删不掉就留着 */ } }
-  else console.log('临时数据目录留着:' + dataDir);
+  else console.log('Temporary data directory kept:' + dataDir);
 }
 process.exit(fails.length ? 1 : exitCode);

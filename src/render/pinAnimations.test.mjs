@@ -38,7 +38,7 @@ function fakeAnim(wrap, endTime = 1000) {
 const host = (list) => ({ getAnimations: () => list });
 const fakeDoc = (list) => ({ getAnimations: () => list });
 
-test("sync:头一次出现的时刻当锚点,之后 currentTime = now − 锚点,并且 pause", () => {
+test("sync: the moment of first appearance is used as the anchor, after that currentTime = now − anchor, and it is paused", () => {
   const a = fakeAnim(fakeWrapper("c1"));
   const p = createAnimationPinner(fakeDoc([a]));
   p.sync(500);
@@ -48,7 +48,7 @@ test("sync:头一次出现的时刻当锚点,之后 currentTime = now − 锚点
   assert.equal(a.currentTime, 200);
 });
 
-test("sync:越过 endTime 就 finish(),不再往下钉", () => {
+test("sync: once endTime is passed it calls finish() and stops pinning", () => {
   const a = fakeAnim(fakeWrapper("c1"), 100);
   const p = createAnimationPinner(fakeDoc([a]));
   p.sync(0);
@@ -57,7 +57,7 @@ test("sync:越过 endTime 就 finish(),不再往下钉", () => {
   assert.equal(a.currentTime, 0);
 });
 
-test("sync(skip):skip 里包裹层子树的动画这一帧不钉,别的照钉", () => {
+test("sync(skip): animations in the wrapper-layer subtree listed in skip are not pinned this frame, the others are pinned as usual", () => {
   const w1 = fakeWrapper("c1");
   const w2 = fakeWrapper("c2");
   const a1 = fakeAnim(w1);
@@ -65,14 +65,14 @@ test("sync(skip):skip 里包裹层子树的动画这一帧不钉,别的照钉", 
   const p = createAnimationPinner(fakeDoc([a1, a2]));
   p.sync(0);
   p.sync(300, new Set([w1]));
-  assert.equal(a1.currentTime, 0, "被跳过的那条停在上一次的值");
+  assert.equal(a1.currentTime, 0, "the skipped one stays at its previous value");
   assert.equal(a2.currentTime, 300);
   // 从 skip 里拿掉之后接着钉,锚点没丢(还是 0),所以是 400 不是 0
   p.sync(400);
   assert.equal(a1.currentTime, 400);
 });
 
-test("sync(skip):不属于任何片段的动画(target 为 null)照钉", () => {
+test("sync(skip): animations that belong to no clip (target is null) are pinned as usual", () => {
   const a = fakeAnim(null);
   const p = createAnimationPinner(fakeDoc([a]));
   p.sync(0);
@@ -80,7 +80,7 @@ test("sync(skip):不属于任何片段的动画(target 为 null)照钉", () => {
   assert.equal(a.currentTime, 120);
 });
 
-test("syncIn:只钉子树,时间基是全局舞台毫秒,锚点与全局 sync 共用 —— 追完交回 sync 连续", () => {
+test("syncIn: pins only the subtree, the time base is global stage milliseconds, the anchor is shared with global sync: after catch-up it hands back to sync seamlessly", () => {
   const w1 = fakeWrapper("c1");
   const w2 = fakeWrapper("c2");
   const a1 = fakeAnim(w1, Infinity);
@@ -91,14 +91,14 @@ test("syncIn:只钉子树,时间基是全局舞台毫秒,锚点与全局 sync �
   // c1 自己按子树追帧(全局时钟不动),全局这一拍跳过它
   for (let ms = 100; ms <= 500; ms += 100) p.syncIn(host([a1]), ms);
   assert.equal(a1.currentTime, 500);
-  assert.equal(a2.currentTime, 0, "syncIn 不碰别的片段");
+  assert.equal(a2.currentTime, 0, "syncIn does not touch other clips");
   // 追上之后交回全局:锚点本来就在全局基上,600 直接接得上
   p.sync(600);
   assert.equal(a1.currentTime, 600);
   assert.equal(a2.currentTime, 600);
 });
 
-test("resetIn:只丢这个子树的锚点,别的卡的锚点不动", () => {
+test("resetIn: drops only the anchors of this subtree, anchors of other cards stay untouched", () => {
   const w1 = fakeWrapper("c1");
   const w2 = fakeWrapper("c2");
   const a1 = fakeAnim(w1, Infinity);
@@ -107,11 +107,11 @@ test("resetIn:只丢这个子树的锚点,别的卡的锚点不动", () => {
   p.sync(1000); // 两条锚点都是 1000
   p.resetIn(host([a1]));
   p.sync(1500);
-  assert.equal(a1.currentTime, 0, "锚点重记成 1500");
-  assert.equal(a2.currentTime, 500, "锚点还是 1000");
+  assert.equal(a1.currentTime, 0, "anchor re-recorded as 1500");
+  assert.equal(a2.currentTime, 500, "anchor is still 1000");
 });
 
-test("resetIn / syncIn 对 null 是空跑", () => {
+test("resetIn / syncIn are no-ops on null", () => {
   const p = createAnimationPinner(fakeDoc([]));
   p.resetIn(null);
   p.syncIn(undefined, 10);
@@ -133,12 +133,12 @@ function fakeAnimWithHandler(endTime, log, name) {
   return a;
 }
 
-test("拨到结尾:结束回调在这一次 sync 里当场调,不等浏览器出帧;this 是这条动画", () => {
+test("seek to the end: the finish callback is invoked on the spot within this sync, without waiting for the browser to produce a frame; this is the animation itself", () => {
   const log = [];
   const a = fakeAnimWithHandler(100, log, "a");
   const p = createAnimationPinner(fakeDoc([a]));
   p.sync(0);
-  assert.deepEqual(log, [], "没到结尾不调");
+  assert.deepEqual(log, [], "not called if the end is not reached");
   p.sync(150);
   assert.equal(a.playState, "finished");
   assert.deepEqual(log, [["a", true, "finish"]]);
@@ -147,7 +147,7 @@ test("拨到结尾:结束回调在这一次 sync 里当场调,不等浏览器出
   assert.equal(log.length, 1);
 });
 
-test("拨到结尾:全部钉完才交付 —— 回调里看到的别的动画已经是这一帧的值", () => {
+test("seek to the end: delivery happens only after everything is pinned: other animations seen inside the callback already have this frame's values", () => {
   const seen = [];
   const a = fakeAnim(fakeWrapper("a"), 100);
   const b = fakeAnim(fakeWrapper("b"), Infinity);
@@ -159,7 +159,7 @@ test("拨到结尾:全部钉完才交付 —— 回调里看到的别的动画�
   assert.deepEqual(seen, [150]);
 });
 
-test("浏览器补发的那一次结束事件落空,回调一共只跑一遍;吞完以后 onfinish 换回原样", () => {
+test("the finish event that the browser re-fires is swallowed, the callback runs only once in total; after swallowing, onfinish is restored to its original", () => {
   const log = [];
   const a = fakeAnimWithHandler(100, log, "a");
   const original = a.onfinish;
@@ -167,16 +167,16 @@ test("浏览器补发的那一次结束事件落空,回调一共只跑一遍;吞
   p.sync(0);
   p.sync(150);
   assert.equal(log.length, 1);
-  assert.notEqual(a.onfinish, original, "补发的那一次到之前,挂着的是占位");
+  assert.notEqual(a.onfinish, original, "before the re-fired event arrives, a placeholder is attached");
   a.browserFinishEvent();
-  assert.equal(log.length, 1, "补发的不再调回调");
+  assert.equal(log.length, 1, "the re-fired event no longer calls the callback");
   assert.equal(a.onfinish, original);
   // 换回原样以后,浏览器自己发的结束事件(不是舞台拨出来的)照常送到
   a.browserFinishEvent();
   assert.equal(log.length, 2);
 });
 
-test("同一条动画重播后又被拨到结尾:每次结束各交付一次,欠浏览器的两次都吞掉", () => {
+test("the same animation is replayed and then seeked to the end again: each finish is delivered once, and both events owed by the browser are swallowed", () => {
   const log = [];
   const a = fakeAnimWithHandler(100, log, "a");
   const original = a.onfinish;
@@ -193,7 +193,7 @@ test("同一条动画重播后又被拨到结尾:每次结束各交付一次,欠
   assert.equal(a.onfinish, original);
 });
 
-test("回调里自己换掉了 onfinish:按新挂的算,不把旧的换回去", () => {
+test("onfinish replaced inside the callback itself: counted by the newly attached one, the old one is not restored", () => {
   const log = [];
   const a = fakeAnim(fakeWrapper("a"), 100);
   const next = () => { log.push("next"); };
@@ -212,11 +212,11 @@ test("回调里自己换掉了 onfinish:按新挂的算,不把旧的换回去", 
   assert.equal(b.onfinish, null);
 });
 
-test("没挂 onfinish 的动画照旧只 finish();一条回调抛错不连累别的", () => {
+test("animations without onfinish still just call finish(); one callback throwing does not affect the others", () => {
   const log = [];
   const plain = fakeAnim(fakeWrapper("plain"), 100);
   const bad = fakeAnim(fakeWrapper("bad"), 100);
-  bad.onfinish = () => { throw new Error("回调里抛的"); };
+  bad.onfinish = () => { throw new Error("thrown inside the callback"); };
   const good = fakeAnimWithHandler(100, log, "good");
   const p = createAnimationPinner(fakeDoc([plain, bad, good]));
   p.sync(0);
@@ -227,7 +227,7 @@ test("没挂 onfinish 的动画照旧只 finish();一条回调抛错不连累别
   assert.deepEqual(log, [["good", true, "finish"]]);
 });
 
-test("syncIn 拨到结尾同样当场交付;被 skip 跳过的不拨、不交付", () => {
+test("syncIn also delivers on the spot when seeking to the end; those skipped by skip are neither seeked nor delivered", () => {
   const log = [];
   const w = fakeWrapper("c1");
   const a = fakeAnimWithHandler(100, log, "a");
@@ -240,7 +240,7 @@ test("syncIn 拨到结尾同样当场交付;被 skip 跳过的不拨、不交付
   assert.deepEqual(log, [["a", true, "finish"]]);
 });
 
-test("endedInLastSync:最近一趟拨到结尾了几条;下一趟没有就归零", () => {
+test("endedInLastSync: how many animations reached the end in the most recent pass; resets to zero if the next pass has none", () => {
   const a = fakeAnim(fakeWrapper("a"), 100);
   const b = fakeAnim(fakeWrapper("b"), 100);
   const c = fakeAnim(fakeWrapper("c"), Infinity);

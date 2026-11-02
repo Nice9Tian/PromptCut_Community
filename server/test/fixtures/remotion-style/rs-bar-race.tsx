@@ -30,17 +30,17 @@ function BarRace({ params, t = 0 }: CardProps<Params>) {
 
 export const barRace: CardDef<Params> = {
   id: "rs-bar-race",
-  name: "随机柱状起伏",
-  description: "一排高度随机的柱子从中间往两边长出来，长好后轻轻起伏",
+  name: "Random bar rise and fall",
+  description: "A row of bars with random heights grows outward from the middle to both sides, then gently rises and falls",
   source: "user",
-  useWhen: "框架示例：要一组带种子的随机柱子时用。",
-  tags: ["柱状", "随机", "示例"],
+  useWhen: "Framework example: use when you need a group of seeded random bars.",
+  tags: ["bars", "random", "example"],
   frameMode: "direct",
   defaults: { count: 14, seed: 7, accent: "#ffffff" },
   controls: [
-    { key: "count", label: "柱子个数", type: "number", min: 1, max: 24, step: 1 },
-    { key: "seed", label: "随机种子", type: "number", min: 0, max: 9999, step: 1 },
-    { key: "accent", label: "强调色", type: "color" },
+    { key: "count", label: "Bar count", type: "number", min: 1, max: 24, step: 1 },
+    { key: "seed", label: "Random seed", type: "number", min: 0, max: 9999, step: 1 },
+    { key: "accent", label: "Accent color", type: "color" },
   ],
   Component: BarRace,
   // 柱子个数可调，最后一根长好的时刻跟着变：落定时刻用 staggerDuration 按个数算（每根 0.7 秒长高再加 0.3 秒起伏淡入）

@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 const MCP = fileURLToPath(new URL('../mcp-server.mjs', import.meta.url));
 
-test('端口没人回话:在超时之内回一条 isError,说清是哪个端口没回应', async () => {
+test('Nobody answers on the port: within the timeout it returns an isError reply that says which port did not respond', async () => {
   const hung = http.createServer(() => { /* 收下请求,永远不回 */ });
   await new Promise((r) => hung.listen(0, '127.0.0.1', r));
   const port = hung.address().port;
@@ -27,13 +27,13 @@ test('端口没人回话:在超时之内回一条 isError,说清是哪个端口�
         const line = buf.split('\n').find((l) => l.includes('"id":7'));
         if (line) resolve(JSON.parse(line));
       });
-      setTimeout(() => reject(new Error('10 秒没收到回复:工具调用被挂住了')), 10000);
+      setTimeout(() => reject(new Error('No reply received within 10 s: the tool call is hung')), 10000);
     });
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'get_project', arguments: {} } }) + '\n');
     const res = await reply;
     assert.equal(res.result.isError, true);
-    assert.match(res.result.content[0].text, new RegExp(`${port}.*没有回应`));
-    assert.ok(Date.now() - started < 8000, '应当在超时附近就回来');
+    assert.match(res.result.content[0].text, new RegExp(`${port}.*did not respond`));
+    assert.ok(Date.now() - started < 8000, 'Should return around the timeout');
   } finally {
     child.kill();
     hung.close();

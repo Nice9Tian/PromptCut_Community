@@ -28,7 +28,7 @@ const ts = createRequire(import.meta.url)('typescript');
 const ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
 // 落地页由网盘连接器的扩展提供（cloud/ 下）；社区版没有它，中间件把请求放给下一层，这正是对的。
 // 所以「落地页发出来」那三条只在有 cloud/ 时跑，「前缀过滤照常挡住别的地址」两边都跑
-const NO_CLOUD = fs.existsSync(path.join(ROOT, 'cloud')) ? false : '当前工作区无 cloud/ 目录（社区版没有网盘连接器）';
+const NO_CLOUD = fs.existsSync(path.join(ROOT, 'cloud')) ? false : 'No cloud/ directory in the current workspace (the community edition has no cloud drive connector)';
 const OUT = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-oauth-cb-'));
 after(() => fs.rmSync(OUT, { recursive: true, force: true }));
 
@@ -73,34 +73,34 @@ async function serve() {
   return { base: `http://127.0.0.1:${server.address().port}`, fellThrough };
 }
 
-test('落地页由中间件自己发,没有落到 SPA 兜底', { skip: NO_CLOUD }, async () => {
+test('the landing page is served by the middleware itself and does not fall through to the SPA fallback', { skip: NO_CLOUD }, async () => {
   const { base, fellThrough } = await serve();
   const res = await fetch(`${base}${OAUTH_CALLBACK_PATH}?code=TESTCODE&state=S1`);
   assert.equal(res.status, 200);
   const body = await res.text();
 
   // 核正文,不是只核状态码 —— vite 的 index.html 也是 200 / text/html
-  assert.match(body, /promptcut-oauth/, '要带来源标记,开它的页面才分得清是谁发的');
-  assert.ok(!/<div id="root"|@react-refresh|type="module"/.test(body), '不该是编辑器那张 index.html');
-  assert.deepEqual(fellThrough, [], '不许落到 SPA 兜底');
+  assert.match(body, /promptcut-oauth/, 'it must carry an origin marker so that the page that opened it can tell who sent it');
+  assert.ok(!/<div id="root"|@react-refresh|type="module"/.test(body), 'it should not be the editor\'s index.html');
+  assert.deepEqual(fellThrough, [], 'must not fall through to the SPA fallback');
 });
 
-test('只发给同源开启方,授权码不进正文', { skip: NO_CLOUD }, async () => {
+test('sent only to the same-origin opener; the authorization code does not go into the body', { skip: NO_CLOUD }, async () => {
   const { base } = await serve();
   const body = await (await fetch(`${base}${OAUTH_CALLBACK_PATH}?code=TESTCODE&state=S1`)).text();
-  assert.match(body, /postMessage\(msg,\s*location\.origin\)/, '必须限定同源,不能用 "*"');
-  assert.ok(!body.includes('TESTCODE'), '授权码只从 location.search 里读,不写进正文');
+  assert.match(body, /postMessage\(msg,\s*location\.origin\)/, 'must be restricted to the same origin, cannot use "*"');
+  assert.ok(!body.includes('TESTCODE'), 'the authorization code is read only from location.search and never written into the body');
 });
 
-test('不缓存:授权码在地址栏里', { skip: NO_CLOUD }, async () => {
+test('not cached: the authorization code is in the address bar', { skip: NO_CLOUD }, async () => {
   const { base } = await serve();
   const res = await fetch(`${base}${OAUTH_CALLBACK_PATH}?code=X`);
   assert.match(String(res.headers.get('cache-control') || ''), /no-store/);
 });
 
-test('前缀过滤照常挡住别的地址', async () => {
+test('prefix filtering still blocks other addresses', async () => {
   const { base, fellThrough } = await serve();
   const res = await fetch(`${base}/some/other/page`);
   assert.equal(res.status, 404);
-  assert.deepEqual(fellThrough, ['/some/other/page'], '不相干的地址仍要放给下一个中间件');
+  assert.deepEqual(fellThrough, ['/some/other/page'], 'unrelated addresses must still be passed on to the next middleware');
 });

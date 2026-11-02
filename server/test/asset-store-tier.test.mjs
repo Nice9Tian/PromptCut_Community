@@ -33,18 +33,18 @@ async function putAll(store, { bytes, hash }, infoOf) {
   const count = Math.max(1, Math.ceil(bytes.length / CHUNK));
   for (let n = 0; n < count; n++) {
     const r = await store.putChunk(hash, n, { size: bytes.length, ...infoOf(n) }, [bytes.subarray(n * CHUNK, Math.min(bytes.length, (n + 1) * CHUNK))]);
-    assert.equal(r.status, 'ok', `第 ${n} 片`);
+    assert.equal(r.status, 'ok', `chunk ${n}`);
   }
 }
 const tierOf = async (store, hash, where = 'stored') => (await store.inventory())[where].find(e => e.hash === hash)?.tier;
 
-test('normalizeTier：只有 small 算小档', () => {
+test('normalizeTier: only small counts as the small tier', () => {
   for (const v of ['small', 'SMALL', ' Small ']) assert.equal(normalizeTier(v), 'small', JSON.stringify(v));
   for (const v of [undefined, null, '', 'original', 'smal', 'small,original', 'thumb', 1, {}]) assert.equal(normalizeTier(v), 'original', JSON.stringify(v));
 });
 
 for (const [kind, make] of Object.entries(kinds)) {
-  test(`${kind}：档位登记、只往 original 退、随全件入库、inventory 与 usage 同数`, async () => {
+  test(`${kind}: tier registration, falls back only to original, stored with the whole file, inventory and usage report the same count`, async () => {
     const { store } = make();
     const a = blob('a'), b = blob('b'), c = blob('c'), d = blob('d');
     await putAll(store, a, () => ({ ext: 'mp4', tier: 'small' }));
@@ -66,7 +66,7 @@ for (const [kind, make] of Object.entries(kinds)) {
     assert.equal(await tierOf(store, a.hash), 'small');
   });
 
-  test(`${kind}：remove 连档位一起删；同一个哈希再按原尺寸入库，不带着旧的小档标记`, async () => {
+  test(`${kind}: remove deletes the tier too; storing the same hash again at original size does not carry over the old small-tier marker`, async () => {
     const { store } = make();
     const a = blob('ra');
     await putAll(store, a, () => ({ ext: 'mp4', tier: 'small' }));
@@ -76,7 +76,7 @@ for (const [kind, make] of Object.entries(kinds)) {
     assert.deepEqual((await store.inventory()).stored, []);
     await putAll(store, a, () => ({ ext: 'mp4' }));
     await store.complete(a.hash);
-    assert.equal(await tierOf(store, a.hash), 'original', '没有旧标记顶着');
+    assert.equal(await tierOf(store, a.hash), 'original', 'no stale marker overriding it');
     // 暂存也一起删
     const s = blob('rs');
     await store.putChunk(s.hash, 0, { size: s.bytes.length, ext: 'mp4', tier: 'small' }, [s.bytes.subarray(0, CHUNK)]);
@@ -86,11 +86,11 @@ for (const [kind, make] of Object.entries(kinds)) {
   });
 }
 
-test('fs：小档标记丢了就当原尺寸；全件被别处删掉留下的旧标记，同一哈希按原尺寸再入库时清掉；没人报档位时 meta.json 与原来一样、不建 .tiers/', async () => {
+test('fs: a lost small-tier marker is treated as original size; a stale marker left after the whole file was deleted elsewhere is cleared when the same hash is stored again at original size; when nobody reports a tier, meta.json is the same as before and .tiers/ is not created', async () => {
   const { store, dir } = kinds.fs();
   const a = blob('fa');
   await store.putChunk(a.hash, 0, { size: a.bytes.length, ext: 'mp4' }, [a.bytes.subarray(0, CHUNK)]);
-  assert.deepEqual(JSON.parse(await fsp.readFile(path.join(dir, '.chunks', a.hash, 'meta.json'), 'utf8')), { size: a.bytes.length, ext: 'mp4' }, '原尺寸不写 tier 字段');
+  assert.deepEqual(JSON.parse(await fsp.readFile(path.join(dir, '.chunks', a.hash, 'meta.json'), 'utf8')), { size: a.bytes.length, ext: 'mp4' }, 'original size does not write the tier field');
   await putAll(store, a, () => ({ ext: 'mp4' }));
   await store.complete(a.hash);
   await assert.rejects(fsp.stat(path.join(dir, '.tiers')), { code: 'ENOENT' });
@@ -101,7 +101,7 @@ test('fs：小档标记丢了就当原尺寸；全件被别处删掉留下的旧
   await store.complete(s.hash);
   assert.equal(await tierOf(store, s.hash), 'small');
   await fsp.rm(path.join(dir, '.tiers', s.hash));
-  assert.equal(await tierOf(store, s.hash), 'original', '标记没了就按原尺寸数');
+  assert.equal(await tierOf(store, s.hash), 'original', 'without the marker it is counted as original size');
   // `.tiers/` 不被当成全件或分片目录数进去
   assert.equal((await store.usage()).blobs, 2);
   assert.equal((await store.list()).length, 2);
@@ -112,9 +112,9 @@ test('fs：小档标记丢了就当原尺寸；全件被别处删掉留下的旧
   await store.complete(o.hash);
   await fsp.rm(path.join(dir, `${o.hash}.mp4`));
   await fsp.stat(path.join(dir, '.tiers', o.hash));
-  assert.equal(await tierOf(store, o.hash), undefined, '全件没了，旧标记不让它出现在清单里');
+  assert.equal(await tierOf(store, o.hash), undefined, 'the whole file is gone, so the stale marker must not make it appear in the manifest');
   await putAll(store, o, () => ({ ext: 'mp4', tier: 'original' }));
   await store.complete(o.hash);
-  assert.equal(await tierOf(store, o.hash), 'original', '收尾时清掉了旧标记');
+  assert.equal(await tierOf(store, o.hash), 'original', 'the stale marker was cleared on finalize');
   await assert.rejects(fsp.stat(path.join(dir, '.tiers', o.hash)), { code: 'ENOENT' });
 });

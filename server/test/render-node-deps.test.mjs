@@ -54,22 +54,22 @@ function walk(entries) {
     if (seen.has(file)) continue;
     seen.add(file);
     const rel = path.relative(repoRoot, file).replace(/\\/g, '/');
-    if (!fs.existsSync(file)) { violations.push(`${rel}: 文件不存在`); continue; }
+    if (!fs.existsSync(file)) { violations.push(`${rel}: file does not exist`); continue; }
     for (const spec of specifiersOf(fs.readFileSync(file, 'utf8'))) {
       if (spec.startsWith('node:')) continue;
       if (spec.startsWith('./') || spec.startsWith('../')) {
         const target = path.resolve(path.dirname(file), spec);
-        if (!target.startsWith(repoRoot + path.sep)) { violations.push(`${rel}: '${spec}' 指到仓库外`); continue; }
+        if (!target.startsWith(repoRoot + path.sep)) { violations.push(`${rel}: '${spec}' points outside the repository`); continue; }
         queue.push(target);
         continue;
       }
-      violations.push(`${rel}: '${spec}' 不是 node: 内置模块也不是相对路径`);
+      violations.push(`${rel}: '${spec}' is neither a node: built-in module nor a relative path`);
     }
   }
   return { files: [...seen].map(f => path.relative(repoRoot, f).replace(/\\/g, '/')).sort(), violations };
 }
 
-test('D0 说明符解析认得全部写法', () => {
+test('D0 specifier parsing recognizes all forms', () => {
   const source = [
     "import fs from 'node:fs';",
     "import { a,\n  b } from './a.mjs';",
@@ -85,22 +85,22 @@ test('D0 说明符解析认得全部写法', () => {
     ['../b.mjs', './a.mjs', './c.mjs', './d.mjs', './e.mjs', './f.mjs', './side.mjs', 'node:fs', 'pngjs'].sort());
 });
 
-test('D1 server/render-node/ 的整棵依赖树只有 node: 内置模块和仓库内相对路径', () => {
+test('D1 the whole dependency tree of server/render-node/ has only node: built-in modules and relative paths within the repository', () => {
   const entries = listEntries(path.join(serverDir, 'render-node'));
-  assert.ok(entries.length > 0, 'render-node 下没有文件');
+  assert.ok(entries.length > 0, 'No files under render-node');
   const { files, violations } = walk(entries);
-  assert.deepEqual(violations, [], `依赖树:\n${files.join('\n')}`);
+  assert.deepEqual(violations, [], `Dependency tree:\n${files.join('\n')}`);
   // 回归点:不再经 snapshot-store.mjs(它引 frame-mov.mjs → pngjs)
-  assert.ok(!files.includes('server/snapshot-store.mjs'), 'render-node 又引到了 snapshot-store.mjs');
+  assert.ok(!files.includes('server/snapshot-store.mjs'), 'render-node pulled in snapshot-store.mjs again');
   assert.ok(files.includes('server/snapshot-tier.mjs'));
 });
 
-test('D2 server/docservice/ 与 server/render-queue/ 的整棵依赖树同样干净', () => {
+test('D2 the whole dependency tree of server/docservice/ and server/render-queue/ is equally clean', () => {
   const entries = [
     ...listEntries(path.join(serverDir, 'docservice')),
     ...listEntries(path.join(serverDir, 'render-queue')),
   ];
   assert.ok(entries.length > 0);
   const { files, violations } = walk(entries);
-  assert.deepEqual(violations, [], `依赖树:\n${files.join('\n')}`);
+  assert.deepEqual(violations, [], `Dependency tree:\n${files.join('\n')}`);
 });

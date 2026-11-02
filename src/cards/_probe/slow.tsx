@@ -60,16 +60,16 @@ function ProbeSlowCard({ params, t }: CardProps<{ burnMs: number; label: string;
 
 export const probeSlowCard: CardDef<{ burnMs: number; label: string; padNodes?: number }> = {
   id: "probe-slow",
-  name: "探针卡 · 可调成本",
-  description: "K6 的判例:每次渲染烧掉 burnMs 毫秒(用 __pcRealNow 忙等),用来人为把一张卡的每拍成本拉高",
+  name: "Probe card · tunable cost",
+  description: "K6 precedent: each render burns burnMs milliseconds (busy-wait with __pcRealNow), used to artificially raise the per-tick cost of a card",
   source: "native",
   // direct:按 t 直接求值,没有动画历史 —— K6 要的是「一张**轻**卡被降级」,
   // 走推帧那条路的话它会先被 K2 的追帧上界判重,根本进不了轻管线
   frameMode: "direct",
   defaults: { burnMs: 0, label: "slow" },
   controls: [
-    { key: "burnMs", type: "number", label: "每帧烧掉(ms)" },
-    { key: "label", type: "text", label: "文字" },
+    { key: "burnMs", type: "number", label: "Burn per frame (ms)" },
+    { key: "label", type: "text", label: "Text" },
   ],
   Component: ProbeSlowCard,
 };
@@ -94,8 +94,8 @@ function ProbeSlowSteppedCard(props: CardProps<{ burnMs: number; label: string; 
 export const probeSlowSteppedCard: CardDef<{ burnMs: number; label: string; padNodes?: number }> = {
   ...probeSlowCard,
   id: "probe-slow-stepped",
-  name: "探针卡 · 可调成本(推帧)",
-  description: "probe-slow 的推帧版:舞台里每次渲染烧掉 burnMs 毫秒(预渲染间里不烧);渲染节点能为它产快照",
+  name: "Probe card · tunable cost (frame-push)",
+  description: "Frame-push version of probe-slow: each render in the stage burns burnMs milliseconds (not burned in the prerender pass); the render node can produce snapshots for it",
   frameMode: "stateful",
   Component: ProbeSlowSteppedCard,
 };

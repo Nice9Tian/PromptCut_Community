@@ -45,13 +45,13 @@ function listen(handler) {
 
 const refusedWith = async (p, code) => {
   await assert.rejects(p, (err) => {
-    assert.ok(err instanceof EgressError, `要是 EgressError,实际 ${err?.constructor?.name}: ${err?.message}`);
+    assert.ok(err instanceof EgressError, `Expected EgressError, got ${err?.constructor?.name}: ${err?.message}`);
     assert.equal(err.code, code);
     return true;
   });
 };
 
-test('CA-EGRESS-01 地址黑名单', () => {
+test('CA-EGRESS-01 address blocklist', () => {
   const gate = createEgressGate({ localAddresses: () => ['203.0.113.77', '8.8.4.4', '2606:4700::99'] });
   const blocked = [
     '127.0.0.1', '127.255.255.254', '0.0.0.0', '10.0.0.1', '10.255.255.255', '172.16.0.1', '172.31.255.255', '192.168.1.1',
@@ -61,16 +61,16 @@ test('CA-EGRESS-01 地址黑名单', () => {
     // 本机网卡地址(这里给的是公网段的假地址:就算网卡上是公网地址,也不许连回自己)
     '8.8.4.4', '2606:4700::99',
   ];
-  for (const ip of blocked) assert.equal(gate.addressRefusal(ip), 'blocked-address', `${ip} 应当被拒`);
+  for (const ip of blocked) assert.equal(gate.addressRefusal(ip), 'blocked-address', `${ip} should be rejected`);
   for (const ip of ['8.8.8.8', '1.1.1.1', '93.184.216.34', '172.15.255.255', '172.32.0.1', '100.63.255.255', '100.128.0.1', '2606:4700:4700::1111']) {
-    assert.equal(gate.addressRefusal(ip), null, `${ip} 应当放行`);
+    assert.equal(gate.addressRefusal(ip), null, `${ip} should be allowed`);
   }
   assert.equal(embeddedV4('::ffff:7f00:1'), '127.0.0.1');
   assert.equal(embeddedV4('::ffff:192.168.0.1'), '192.168.0.1');
   assert.equal(embeddedV4('2606:4700::1'), null);
 });
 
-test('CA-EGRESS-02 地址的各种写法、协议、口令、端口', async () => {
+test('CA-EGRESS-02 the various address notations, protocols, embedded credentials, ports', async () => {
   const gate = createEgressGate({ resolve: async () => [{ address: '93.184.216.34', family: 4 }], localAddresses: () => [] });
   for (const u of [
     'http://2130706433/', 'http://0x7f000001/', 'http://0177.0.0.1/', 'http://127.1/', 'http://0x7f.1/', 'http://[::1]/', 'http://[::ffff:127.0.0.1]/',
@@ -87,7 +87,7 @@ test('CA-EGRESS-02 地址的各种写法、协议、口令、端口', async () =
   assert.equal(ok.target.hostname, 'example.com');
 });
 
-test('CA-EGRESS-03 主机名解析:混合记录整个拒,解析不了的拒', async () => {
+test('CA-EGRESS-03 hostname resolution: mixed records are rejected as a whole, unresolvable ones are rejected', async () => {
   const mixed = createEgressGate({ resolve: async () => [{ address: '93.184.216.34', family: 4 }, { address: '10.0.0.5', family: 4 }], localAddresses: () => [] });
   await refusedWith(mixed.admitUrl('http://mixed.example/'), 'blocked-address');
   const v6 = createEgressGate({ resolve: async () => [{ address: '93.184.216.34', family: 4 }, { address: '::1', family: 6 }], localAddresses: () => [] });
@@ -98,7 +98,7 @@ test('CA-EGRESS-03 主机名解析:混合记录整个拒,解析不了的拒', as
   await refusedWith(junk.admitUrl('http://junk.example/'), 'unresolved');
 });
 
-test('CA-EGRESS-04 按解析结果连接,不二次解析', async (t) => {
+test('CA-EGRESS-04 connect by the resolved result, no second resolution', async (t) => {
   let hits = 0;
   const good = await listen((req, res) => { hits += 1; res.end(`ok ${req.headers.host}`); });
   t.after(() => good.close());
@@ -115,7 +115,7 @@ test('CA-EGRESS-04 按解析结果连接,不二次解析', async (t) => {
   const r = await gate.request(`http://rebind.example:${good.port}/a`);
   assert.equal(r.status, 200);
   assert.equal(r.body.toString(), `ok rebind.example:${good.port}`);
-  assert.equal(calls, 1, '一跳里只解析一次');
+  assert.equal(calls, 1, 'Only one resolution per hop');
   assert.equal(hits, 1);
   // 第二次请求重新解析,这回是内网地址:拒,且没有连接发出去
   await refusedWith(gate.request(`http://rebind.example:${good.port}/b`), 'port');
@@ -123,7 +123,7 @@ test('CA-EGRESS-04 按解析结果连接,不二次解析', async (t) => {
   assert.equal(internalHits, 0);
 });
 
-test('CA-EGRESS-05 重定向每一跳重查', async (t) => {
+test('CA-EGRESS-05 every redirect hop is re-checked', async (t) => {
   let secretHits = 0;
   const secret = await listen((_req, res) => { secretHits += 1; res.end(FAKE); });
   t.after(() => secret.close());
@@ -146,7 +146,7 @@ test('CA-EGRESS-05 重定向每一跳重查', async (t) => {
   await refusedWith(gate.request(`${base}/?to=${encodeURIComponent('http://[::1]/')}`), 'blocked-address');
   await refusedWith(gate.request(`${base}/?to=${encodeURIComponent('http://10.0.0.1/')}`), 'blocked-address');
   await refusedWith(gate.request(`${base}/?to=${encodeURIComponent('file:///etc/passwd')}`), 'protocol');
-  assert.equal(secretHits, 0, '被拒的那一跳根本没有连过去');
+  assert.equal(secretHits, 0, 'The rejected hop was never connected to at all');
   await refusedWith(gate.request(`${base}/loop`), 'redirects');
   // 同源的跳带着鉴权头,跨源的不带
   seen.length = 0;
@@ -160,7 +160,7 @@ test('CA-EGRESS-05 重定向每一跳重查', async (t) => {
   assert.deepEqual(seen.find((s) => s.other), { other: true, auth: null });
 });
 
-test('CA-EGRESS-06 响应体上限与时限', async (t) => {
+test('CA-EGRESS-06 response body limit and time limit', async (t) => {
   const srv = await listen((req, res) => {
     if (req.url === '/declared') { res.writeHead(200, { 'content-length': '5000' }); return res.end(Buffer.alloc(5000, 1)); }
     if (req.url === '/stream') { res.writeHead(200); const iv = setInterval(() => res.write(Buffer.alloc(1024, 2)), 2); res.on('close', () => clearInterval(iv)); return; }
@@ -182,7 +182,7 @@ test('CA-EGRESS-06 响应体上限与时限', async (t) => {
   assert.equal(r.bytes, 5);
 });
 
-test('CA-EGRESS-07 测试例外只认点了名的「IP:端口」', async (t) => {
+test('CA-EGRESS-07 the test exception only recognizes the named "IP:port"', async (t) => {
   const a = await listen((_req, res) => res.end('a'));
   const b = await listen((_req, res) => res.end(FAKE));
   t.after(() => a.close());
@@ -195,7 +195,7 @@ test('CA-EGRESS-07 测试例外只认点了名的「IP:端口」', async (t) => 
   const logs = [];
   const gate = createEgressGate({ testAllow: [`127.0.0.1:${a.port}`], log: (event, fields) => logs.push({ event, ...fields }) });
   assert.equal(gate.testAllowActive, true);
-  assert.ok(logs.some((l) => l.event === 'agent.egress.test-allow'), '开了例外要在日志里留一行');
+  assert.ok(logs.some((l) => l.event === 'agent.egress.test-allow'), 'Enabling the exception must leave a line in the log');
   assert.equal((await gate.request(`http://127.0.0.1:${a.port}/`)).body.toString(), 'a');
   await refusedWith(gate.request(`http://127.0.0.1:${b.port}/`), 'port');
   await refusedWith(gate.request('http://127.0.0.1/'), 'blocked-address');
@@ -203,7 +203,7 @@ test('CA-EGRESS-07 测试例外只认点了名的「IP:端口」', async (t) => 
   assert.deepEqual(parseTestAllow(undefined), []);
 });
 
-test('CA-EGRESS-08 给子进程的正向代理过同一道闸', async (t) => {
+test('CA-EGRESS-08 the forward proxy given to the subprocess goes through the same gate', async (t) => {
   const pub = await listen((req, res) => res.end(`pub ${req.url}`));
   const secret = await listen((_req, res) => res.end(FAKE));
   t.after(() => pub.close());
@@ -260,7 +260,7 @@ const OWNER_A = 'a'.repeat(32);
 const OWNER_B = 'b'.repeat(32);
 const bad = (fn, code) => assert.throws(fn, (err) => { assert.ok(err instanceof WorkspaceError, String(err)); if (code) assert.equal(err.code, code); return true; });
 
-test('CA-WORK-01 路径字面检查', () => {
+test('CA-WORK-01 literal path check', () => {
   for (const p of [
     '', '/etc/passwd', '\\Windows\\win.ini', 'C:\\Windows\\win.ini', 'C:/Windows/win.ini', 'c:secret.txt', '\\\\server\\share\\x', '//server/share/x',
     '\\\\?\\C:\\x', '\\\\.\\pipe\\x', '../x', 'a/../../x', 'a\\..\\..\\x', '..', 'a/..', 'x\0y', 'nul', 'NUL.txt', 'con', 'a/COM1', 'a/lpt9.log',
@@ -274,7 +274,7 @@ test('CA-WORK-01 路径字面检查', () => {
   assert.equal(isInside(path.resolve('/a/b'), path.resolve('/a')), false);
 });
 
-test('CA-WORK-02 两个对话、两个项目的工作目录互不可见', (t) => {
+test('CA-WORK-02 the working directories of two chats and two projects are invisible to each other', (t) => {
   const ws = createWorkspaces({ dataDir: tmpRoot(t) });
   const p1c1 = ws.open({ projectId: 'proj-1', ownerKey: OWNER_A, conversationId: 'c1' });
   const p1c2 = ws.open({ projectId: 'proj-1', ownerKey: OWNER_A, conversationId: 'c2' });
@@ -301,7 +301,7 @@ test('CA-WORK-02 两个对话、两个项目的工作目录互不可见', (t) =>
   assert.ok(isInside(ws.root, colon.dir()));
 });
 
-test('CA-WORK-03 链接指到工作目录外面:经它读写都被拒', (t) => {
+test('CA-WORK-03 a link pointing outside the working directory: reads and writes through it are rejected', (t) => {
   const root = tmpRoot(t);
   const outside = path.join(root, 'outside');
   fs.mkdirSync(outside);
@@ -312,7 +312,7 @@ test('CA-WORK-03 链接指到工作目录外面:经它读写都被拒', (t) => {
   try {
     fs.symlinkSync(outside, link, 'junction');
   } catch (err) {
-    t.skip(`这台机器建不了链接:${err?.code ?? err}`);
+    t.skip(`This machine cannot create links: ${err?.code ?? err}`);
     return;
   }
   bad(() => w.read('escape/secret.txt'), 'outside');
@@ -328,7 +328,7 @@ test('CA-WORK-03 链接指到工作目录外面:经它读写都被拒', (t) => {
   assert.equal(w.usage().bytes, 0);
 });
 
-test('CA-WORK-04 总量上限', (t) => {
+test('CA-WORK-04 total size limit', (t) => {
   const ws = createWorkspaces({ dataDir: tmpRoot(t), limits: { maxFileBytes: 100, maxConversationBytes: 250, maxProjectBytes: 400, maxFiles: 6 } });
   const a = ws.open({ projectId: 'proj-1', ownerKey: OWNER_A, conversationId: 'c1' });
   const b = ws.open({ projectId: 'proj-1', ownerKey: OWNER_A, conversationId: 'c2' });
@@ -355,7 +355,7 @@ test('CA-WORK-04 总量上限', (t) => {
   bad(() => other.write('n9.txt', 'x'), 'quota');
 });
 
-test('CA-WORK-05 子进程:工作目录与环境变量收紧', async (t) => {
+test('CA-WORK-05 subprocess: working directory and environment variables locked down', async (t) => {
   const ws = createWorkspaces({ dataDir: tmpRoot(t) });
   const w = ws.open({ projectId: 'proj-1', ownerKey: OWNER_A, conversationId: 'c1' });
   const before = { ...process.env };
@@ -365,7 +365,7 @@ test('CA-WORK-05 子进程:工作目录与环境变量收紧', async (t) => {
     OPENAI_API_KEY: FAKE, ANTHROPIC_API_KEY: FAKE, AWS_SECRET_ACCESS_KEY: FAKE, HTTPS_PROXY: 'http://127.0.0.1:1', SOME_RANDOM_VAR: FAKE,
   });
   const env = childEnv(w.dir(), { MY_TOOL_OPTION: 'yes', PROMPTCUT_SNEAK: FAKE });
-  assert.ok(!JSON.stringify(env).includes(FAKE), '白名单之外的变量一个都不带');
+  assert.ok(!JSON.stringify(env).includes(FAKE), 'No variable outside the allowlist is carried');
   assert.equal(env.MY_TOOL_OPTION, 'yes');
   assert.equal(env.PROMPTCUT_SNEAK, undefined);
   assert.ok(isInside(w.dir(), env.TEMP) && isInside(w.dir(), env.TMPDIR));
@@ -377,12 +377,12 @@ test('CA-WORK-05 子进程:工作目录与环境变量收紧', async (t) => {
   assert.equal(code, 0);
   const seen = JSON.parse(out);
   assert.equal(fs.realpathSync.native(seen.cwd), fs.realpathSync.native(w.dir()));
-  assert.ok(!out.includes(FAKE), '子进程看不到服务进程里的任何假凭证');
+  assert.ok(!out.includes(FAKE), 'The subprocess cannot see any fake credentials in the service process');
   assert.ok(!Object.keys(seen.env).some((k) => /^PROMPTCUT_/i.test(k)));
   assert.equal(seen.env.HTTPS_PROXY, undefined);
 });
 
-test('CA-WORK-06 对话删除、项目删除后目录没了', (t) => {
+test('CA-WORK-06 after a chat is deleted or a project is deleted, the directory is gone', (t) => {
   const ws = createWorkspaces({ dataDir: tmpRoot(t) });
   const a = ws.open({ projectId: 'proj-1', ownerKey: OWNER_A, conversationId: 'c1' });
   const b = ws.open({ projectId: 'proj-1', ownerKey: OWNER_A, conversationId: 'c2' });

@@ -228,7 +228,7 @@ async function main(argv) {
   const i = listen.lastIndexOf(':');
   const host = listen.slice(0, i).replace(/^\[|\]$/g, '') || '127.0.0.1';
   const port = Number(listen.slice(i + 1));
-  if (!Number.isInteger(port) || port < 0 || port > 65535) { process.stderr.write('--listen 形如 127.0.0.1:5798\n'); process.exit(2); }
+  if (!Number.isInteger(port) || port < 0 || port > 65535) { process.stderr.write('--listen looks like 127.0.0.1:5798\n'); process.exit(2); }
   const allowRaw = arg('--allow', null);
   const allow = allowRaw ? allowRaw.split(',').map((s) => s.trim()).filter(Boolean) : null;
   const logFile = arg('--log', null);

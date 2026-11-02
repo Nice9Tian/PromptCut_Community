@@ -194,7 +194,7 @@ test('ORGR-09 cloud group wording: when connected to the cloud it says "Stored i
 test('ORGR-10 cleanup: for projects no longer in the list, entries with no organization info are removed and their chats are removed with them; entries with organization info are kept; if the list was not fetched, nothing is cleaned', () => {
   const org = {
     ...emptyOrg('cloud'),
-    groups: [{ id: 'g', name: '组' }],
+    groups: [{ id: 'g', name: 'Group' }],
     projects: [
       { id: 'live', groupId: null },
       { id: 'gone-plain', groupId: null },

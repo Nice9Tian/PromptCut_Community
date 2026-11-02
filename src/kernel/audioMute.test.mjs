@@ -37,7 +37,7 @@ test("track mute affects preview and export, unmute restores audio", () => {
   assert.equal(buildAudioPlan(p, ".", () => true).length, 1);
 });
 
-test("素材库里的 /@media/ 声音按传入的 sourceOf 找文件,不再被跳过", () => {
+test("Sounds under /@media/ in the media library are looked up by the passed-in sourceOf and are no longer skipped", () => {
   const p = fixture();
   p.media[1].url = "/@media/%E9%85%8D%E4%B9%90.m4a";
   // 默认规则只认 /@export/<id>/media/,这条以前直接被丢掉,成片没声音

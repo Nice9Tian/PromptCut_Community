@@ -49,12 +49,12 @@ export async function readSse(url, headers, until = (e) => e.type === 'end', { s
 export function project(id, name) {
   return {
     version: 1, id, name, width: 1920, height: 1080, fps: 30, duration: 12, themeId: 'midnight', media: [],
-    tracks: [{ id: 't1', name: '序列 1', clips: [{ id: 'c1', cardId: 'title', start: 0, end: 4, params: {}, label: `${name} 的卡` }] }],
+    tracks: [{ id: 't1', name: 'Track 1', clips: [{ id: 'c1', cardId: 'title', start: 0, end: 4, params: {}, label: `${name}'s card` }] }],
     transitions: [],
   };
 }
 
-export const script = (steps) => `按脚本做。\n\`\`\`mock-script\n${JSON.stringify(steps)}\n\`\`\``;
+export const script = (steps) => `Follow the script.\n\`\`\`mock-script\n${JSON.stringify(steps)}\n\`\`\``;
 export const credentials = { protocolsFor: (_identity, n) => ['promptcut.v1', `promptcut.role.agent.${n}`] };
 export const modelConfig = () => ({ vendor: 'mock', model: 'mock-1' });
 
@@ -91,7 +91,7 @@ export async function startDoc(t) {
       const opId = `seed-${++seq}`;
       c.send({ type: 'project.op', projectId: p.id, opId, session: 'seed', ops: [{ op: 'set', path: '', value: p }], reqId: opId });
       const r = await c.next((m) => m.reqId === opId, 5000);
-      assert.equal(r.type, 'project.op.ok', `项目 ${p.id} 写进文档服务`);
+      assert.equal(r.type, 'project.op.ok', `Project ${p.id} written into the document service`);
       c.close();
     },
     async stateOf(projectId) {
@@ -134,7 +134,7 @@ export async function startKit(t, { limits, extra = {}, dataDir: dataDirIn = nul
       const off = svc.subscribe(watcher, conversationId, 0, (ev) => seen.push(ev));
       off?.();
       return seen.some((e) => e.type === 'end');
-    }, ms, `对话 ${conversationId} 结束`);
+    }, ms, `Chat ${conversationId} ended`);
     return seen;
   }
   return { doc, vite, service, another, dataDir, logs, finished };

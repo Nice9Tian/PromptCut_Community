@@ -106,7 +106,7 @@ const STAMP = Date.now().toString(36);
  * 它的挂载帧(`mountFrameOf`,实测 29)在另两张卡中间切出一个锚帧。项目 id 固定,两趟算出同一组键(帧库是空的)。
  */
 const PROJECT = {
-  id: 'queue-mode-probe', name: '队列模式探针', width: 1920, height: 1080, fps: FPS, duration: 3,
+  id: 'queue-mode-probe', name: 'Queue mode probe', width: 1920, height: 1080, fps: FPS, duration: 3,
   themeId: 'dark', camera3dFov: 50, media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
   tracks: [
     { id: 'tr-1', name: 'tr-1', hidden: false, clips: [{ id: 'clip-stateful', kind: 'card', cardId: 'r6-stateful', start: 0, end: 3, params: {} }] },
@@ -130,7 +130,7 @@ async function until(label, fn, timeoutMs = 120000, everyMs = 500) {
     let value;
     try { value = await fn(); } catch { value = null; }
     if (value) return value;
-    if (Date.now() > deadline) { fails.push(`超时:${label}`); return null; }
+    if (Date.now() > deadline) { fails.push(`Timeout: ${label}`); return null; }
     await delay(everyMs);
   }
 }
@@ -185,8 +185,8 @@ async function startEditor(run, children, { label, port, exportDir, docUrl, queu
   editor.stderr.on('data', sink);
   const EDITOR = `http://127.0.0.1:${port}`;
   const inst = { label, port, exportDir, library: path.join(exportDir, 'frame-library'), EDITOR, base: null, diagnostics: async () => ({}) };
-  await until(`[${label}] 编辑器进程起来`, async () => (await fetch(EDITOR + '/api/prerender/info').then(r => r.ok, () => false)) || null, 120000);
-  const base = await until(`[${label}] 预渲染进程就绪`, async () => {
+  await until(`[${label}] editor process up`, async () => (await fetch(EDITOR + '/api/prerender/info').then(r => r.ok, () => false)) || null, 120000);
+  const base = await until(`[${label}] prerender process ready`, async () => {
     const info = await json(EDITOR + '/api/prerender/info');
     return info.body?.ready && info.body.url ? info.body.url : null;
   }, 180000);
@@ -198,7 +198,7 @@ async function startEditor(run, children, { label, port, exportDir, docUrl, queu
 
 /** 队列模式:等本机节点报到(诊断里 `queue.active`)。回 true / false */
 async function waitActive(run, inst) {
-  const active = await until(`[${inst.label}] 本机节点报到(诊断里 queue.active)`, async () => (await inst.diagnostics()).queue?.active === true || null, 180000, 1000);
+  const active = await until(`[${inst.label}] local node checked in (queue.active in diagnostics)`, async () => (await inst.diagnostics()).queue?.active === true || null, 180000, 1000);
   const d = await inst.diagnostics();
   const start = d.queue ? { mode: d.queue.mode, url: d.queue.url, nodeId: d.queue.nodeId, envFingerprint: d.queue.envFingerprint } : null;
   if (inst.label === 'queue') run.queueStart = start;
@@ -210,14 +210,14 @@ async function waitActive(run, inst) {
 async function preloadOn(run, inst, mode) {
   const SESSION = `qmp-${inst.label}-${STAMP}`;
   const pushed = await postJson(inst.EDITOR + '/api/data/project', { session: SESSION, localRev: 1, project: PROJECT });
-  check(pushed.ok, `[${inst.label}] 项目推进镜像`, pushed.body);
-  await until(`[${inst.label}] 预渲染进程手里有这一版项目`, async () => (await json(`${inst.base}/api/data/project?session=${SESSION}&localRev=1`)).ok || null, 30000);
+  check(pushed.ok, `[${inst.label}] project pushed to the mirror`, pushed.body);
+  await until(`[${inst.label}] prerender process holds this version of the project`, async () => (await json(`${inst.base}/api/data/project?session=${SESSION}&localRev=1`)).ok || null, 30000);
   const preload = await postJson(`${inst.base}/api/frames/preload`, { session: SESSION, localRev: 1 });
-  check(preload.ok, `[${inst.label}] preload 开跑`, preload.body);
+  check(preload.ok, `[${inst.label}] preload started`, preload.body);
   const key = preload.body?.key;
   // M6c X5 的证据:preload 还没到 ready 时,本机节点已经认领了几次(每次轮询时读诊断里的认领数)
   let claimedWhileNotReady = 0;
-  const ready = await until(`[${inst.label}] 后台那一趟跑完`, async () => {
+  const ready = await until(`[${inst.label}] background run finished`, async () => {
     // 页面每 2 秒重发一次 preload 保活,这里照做(同一版直接返回)
     const status = await postJson(`${inst.base}/api/frames/preload`, { session: SESSION, localRev: 1 });
     if (mode === 'queue' && status.body?.status !== 'ready') {
@@ -226,13 +226,13 @@ async function preloadOn(run, inst, mode) {
     }
     return status.body?.status === 'ready' ? status.body : status.body?.status === 'error' ? status.body : null;
   }, TIMEOUT_MS, 2000);
-  check(ready?.status === 'ready', `[${inst.label}] 后台那一趟以 ready 结束`, ready);
+  check(ready?.status === 'ready', `[${inst.label}] the background run ended with ready`, ready);
   return { session: SESSION, key, ready, claimedWhileNotReady };
 }
 
 /** 队列模式:plan 切分完、所有细任务落定(按这一个节点的诊断看)。回 `{ plan, derived, states, q }` 或 null */
 async function settledOn(inst) {
-  return until(`[${inst.label}] plan 切分完、所有细任务落定`, async () => {
+  return until(`[${inst.label}] plan split done, all fine-grained tasks settled`, async () => {
     const q = (await inst.diagnostics()).queue;
     const plan = q?.published?.[0]?.planId;
     const derived = plan ? q.plans?.[plan] : null;
@@ -257,7 +257,7 @@ async function runOnce(mode, { hold = false } = {}) {
   let kept = false;
   try {
     const ports = [port, port + 1, port + 2, ...(withPeer ? [PEER_PORT, PEER_PORT + 1, PEER_PORT + 2] : []), ...(DOC_URL ? [] : [DOC_PORT])];
-    for (const p of ports) check(await portFree(p), `[${mode}] 端口 ${p} 空着`);
+    for (const p of ports) check(await portFree(p), `[${mode}] port ${p} is free`);
     if (fails.length) return run;
     await fs.mkdir(path.join(exportDir, 'data'), { recursive: true });
     let docUrl = DOC_URL;
@@ -272,7 +272,7 @@ async function runOnce(mode, { hold = false } = {}) {
       doc.stdout.resume(); doc.stderr.resume();
       children.push(doc);
       docUrl = `ws://127.0.0.1:${DOC_PORT}`;
-      await until(`[${mode}] 文档服务起来`, async () => (await json(`http://127.0.0.1:${DOC_PORT}/healthz`)).body?.ok === true || null, 30000);
+      await until(`[${mode}] document service up`, async () => (await json(`http://127.0.0.1:${DOC_PORT}/healthz`)).body?.ok === true || null, 30000);
     }
     // 素材服务登记(C5):编辑器输出里 `[asset-announce] asset-announce.announced {json}` 那一行
     run.announcedAsset = null;
@@ -313,7 +313,7 @@ async function runOnce(mode, { hold = false } = {}) {
       }
     } else {
       const d = await diagnostics();
-      check(d.queue === undefined, '[normal] 开关关着时诊断里没有 queue 键', Object.keys(d));
+      check(d.queue === undefined, '[normal] no queue key in diagnostics while the switch is off', Object.keys(d));
     }
 
     const started = Date.now();
@@ -321,7 +321,7 @@ async function runOnce(mode, { hold = false } = {}) {
     const loads = await Promise.all([main, ...(peer ? [peer] : [])].map(inst => preloadOn(run, inst, mode)));
     run.entryKey = loads[0]?.key;
     if (peer) run.peer.entryKey = loads[1]?.key;
-    if (peer) check(loads[0]?.key && loads[0].key === loads[1]?.key, '[peer] 两台算出同一个 entry.key', { main: loads[0]?.key, peer: loads[1]?.key });
+    if (peer) check(loads[0]?.key && loads[0].key === loads[1]?.key, '[peer] both machines compute the same entry.key', { main: loads[0]?.key, peer: loads[1]?.key });
     const claimedWhileNotReady = loads[0]?.claimedWhileNotReady ?? 0;
     run.preloadMs = Date.now() - started;
     if (mode === 'queue') {
@@ -347,20 +347,20 @@ async function runOnce(mode, { hold = false } = {}) {
         run.failedTasks = settled.derived.filter((id, i) => settled.states[i] === 'failed').map(id => ({ id, error: q.tasks[id]?.error ?? null }));
         run.queueStats = q.stats;
         run.queueEvents = q.events.filter(e => /failed|lost|discarded|mismatch|skip|offline|error/.test(e.event)).slice(-20);
-        check(run.failedTasks.length === 0, '[queue] 没有细任务失败', run.failedTasks);
+        check(run.failedTasks.length === 0, '[queue] no fine-grained task failed', run.failedTasks);
         let peerQ = null;
         if (peer) {
           const peerSettled = await settledOn(peer);
           peerQ = peerSettled?.q ?? null;
-          check(peerSettled?.plan === settled.plan, '[peer] 两台发布的是同一个 plan', { main: settled.plan, peer: peerSettled?.plan });
-          check(JSON.stringify([...(peerSettled?.derived ?? [])].sort()) === JSON.stringify([...settled.derived].sort()), '[peer] 两台看到的细任务相同',
+          check(peerSettled?.plan === settled.plan, '[peer] both machines publish the same plan', { main: settled.plan, peer: peerSettled?.plan });
+          check(JSON.stringify([...(peerSettled?.derived ?? [])].sort()) === JSON.stringify([...settled.derived].sort()), '[peer] both machines see the same fine-grained tasks',
             { main: settled.derived.length, peer: peerSettled?.derived?.length ?? null });
           run.peer.queueStats = peerQ?.stats ?? null;
           run.peer.queueEvents = (peerQ?.events ?? []).filter(e => /failed|lost|discarded|mismatch|skip|offline|error/.test(e.event)).slice(-20);
         }
         // 单机时本机节点应当包办(有 --peer 时两台合起来);连远端控制面(别的机器也在取活)时不一定
         const byNodes = q.stats.completed + q.stats.dedup + (peerQ ? peerQ.stats.completed + peerQ.stats.dedup : 0);
-        if (!DOC_URL) check(byNodes >= run.done, '[queue] 细任务都由节点完成(completed + dedup)', { main: q.stats, peer: peerQ?.stats ?? null });
+        if (!DOC_URL) check(byNodes >= run.done, '[queue] all fine-grained tasks are completed by nodes (completed + dedup)', { main: q.stats, peer: peerQ?.stats ?? null });
         // M6c X1:轨道流任务
         const streamIds = settled.derived.filter(id => id.startsWith('stream:'));
         run.streamTasks = streamIds.length;
@@ -372,29 +372,29 @@ async function runOnce(mode, { hold = false } = {}) {
         run.streamBy = Object.fromEntries(streamIds.map(id => [id, local(q).has(id) ? 'main' : peerQ && local(peerQ).has(id) ? 'peer'
           : dedup(q).has(id) ? 'main-dedup' : peerQ && dedup(peerQ).has(id) ? 'peer-dedup' : 'other']));
         if (STREAMS) {
-          check(run.streamTasks > 0, '[streams] 切出了流任务', run.streamTasks);
-          check(run.streamDone === run.streamTasks, '[streams] 流任务全部经队列完成(done)', { tasks: run.streamTasks, done: run.streamDone });
+          check(run.streamTasks > 0, '[streams] stream tasks were split out', run.streamTasks);
+          check(run.streamDone === run.streamTasks, '[streams] all stream tasks completed through the queue (done)', { tasks: run.streamTasks, done: run.streamDone });
           for (const [who, counts] of doneCounts) {
             const bad = Object.entries(counts).filter(([, n]) => n !== 1);
-            check(bad.length === 0, `[streams] ${who} 每个流任务恰好收到一次 task.done`, bad);
+            check(bad.length === 0, `[streams] on ${who}, each stream task received task.done exactly once`, bad);
           }
           const rendered = Object.values(run.streamBy).filter(v => v === 'main' || v === 'peer').length;
-          check(rendered === run.streamTasks, '[streams] 流任务都由节点执行器产出(不是去重)', run.streamBy);
+          check(rendered === run.streamTasks, '[streams] stream tasks are all produced by node executors (not deduplicated)', run.streamBy);
         } else {
-          check(run.streamTasks === 0, '[streams] 关着(PROMPTCUT_STREAMS=0)时不发布流任务', run.streamTasks);
+          check(run.streamTasks === 0, '[streams] no stream tasks are published while off (PROMPTCUT_STREAMS=0)', run.streamTasks);
         }
       }
       run.queueMs = Date.now() - started;
       await delay(3000);   // task.done 的 applyResult 在后台串行跑,留一点时间
       if (peer && STREAMS && run.streamTasks > 0) {
         // 另一节点取用的段与产出方逐段一致:等两边的流库都齐,再逐段比 sha256
-        const compare = await until('[streams] 两边的流库都齐', async () => {
+        const compare = await until('[streams] stream stores on both sides are complete', async () => {
           const c = await compareStreams(main.library, peer.library);
           return c.missing.length === 0 && c.segments > 0 ? c : null;
         }, 120000, 2000);
         run.streamCompare = compare ?? await compareStreams(main.library, peer.library);
-        check(!!compare, '[streams] 两边都有全部分段', { missing: run.streamCompare.missing.slice(0, 10) });
-        check(run.streamCompare.mismatched.length === 0, '[streams] 另一节点取用的段与产出方 sha256 逐段一致', run.streamCompare.mismatched.slice(0, 10));
+        check(!!compare, '[streams] both sides have all segments', { missing: run.streamCompare.missing.slice(0, 10) });
+        check(run.streamCompare.mismatched.length === 0, '[streams] segments fetched by the other node match the producer\'s sha256, segment by segment', run.streamCompare.mismatched.slice(0, 10));
       }
     }
     const d = await diagnostics();
@@ -510,7 +510,7 @@ function keyIndex(run) {
 const runs = {};
 try {
   if (ONLY !== 'queue') runs.normal = await runOnce('normal');
-  if (ONLY !== 'normal' && !fails.some(f => f.includes('端口'))) runs.queue = await runOnce('queue', { hold: HOLD_MS > 0 });
+  if (ONLY !== 'normal' && !fails.some(f => f.includes('port'))) runs.queue = await runOnce('queue', { hold: HOLD_MS > 0 });
   out.tasks = runs.queue?.tasks ?? 0;
   out.done = runs.queue?.done ?? 0;
   out.streamTasks = runs.queue?.streamTasks ?? null;
@@ -544,19 +544,19 @@ try {
     out.identicalIgnoringStyleOrder = out.differentFrames.every(d => d.styleOrderOnly);
     out.compared = { normalFiles: a.size, queueFiles: b.size, htmlFiles: [...a.keys()].filter(k => k.endsWith('.html')).length };
     out.identical = out.differentFrames.length === 0;
-    check(out.compared.htmlFiles > 0, '普通模式的帧库里有快照', out.compared);
-    check(out.tasks > 0, '队列模式切出了细任务', out.tasks);
-    check(out.done === out.tasks, '队列模式的细任务全部 done', { tasks: out.tasks, done: out.done });
+    check(out.compared.htmlFiles > 0, 'Normal mode\'s frame store has snapshots', out.compared);
+    check(out.tasks > 0, 'Queue mode split out fine-grained tasks', out.tasks);
+    check(out.done === out.tasks, 'All fine-grained tasks in queue mode are done', { tasks: out.tasks, done: out.done });
     const summary = {};
     for (const d of out.differentFrames) {
       const k = `${d.clipId ?? '?'}/${d.tier}/${d.reason}${d.styleOrderOnly ? '(style-order)' : ''}/${d.anchor ? 'anchor' : 'non-anchor'}`;
       summary[k] = (summary[k] ?? 0) + 1;
     }
     out.differenceSummary = summary;
-  } else if (!ONLY) check(false, '两趟都要有帧库才能比较', Object.keys(runs));
+  } else if (!ONLY) check(false, 'Both runs need a frame store to compare', Object.keys(runs));
   if (runs.queue?.release) await holdOpen(runs.queue);
 } catch (error) {
-  fails.push(`探针自己出错:${error?.stack || error}`);
+  fails.push(`Probe itself failed: ${error?.stack || error}`);
 } finally {
   if (runs.queue?.release) await runs.queue.release().catch(() => {});
   out.runs = Object.fromEntries(Object.entries(runs).map(([k, r]) => [k, { ...r, log: undefined, peerLog: undefined, library: undefined, release: undefined, diagnostics: undefined }]));

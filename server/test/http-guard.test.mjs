@@ -20,7 +20,7 @@ import { apiPath, originOk, jsonContentType, isLoopbackAddress, clientAddressOf,
 const connectMatches = (url, route) =>
   url.split("?")[0].toLowerCase().substr(0, route.length) === route.toLowerCase();
 
-test("connect 能匹配上的,守卫也必须认出来", () => {
+test("whatever connect can match, the guard must also recognize", () => {
   const sneaky = [
     "/api/ai/config",
     "/aPi/ai/config",     // ← 真实事故里用的就是这一条
@@ -33,15 +33,15 @@ test("connect 能匹配上的,守卫也必须认出来", () => {
   for (const url of sneaky) {
     // 先确认前提:connect 确实会把它交给 /api 的处理函数。前提不成立的话,
     // 这条用例证明不了任何事 —— 所以把它也断言出来。
-    assert.ok(connectMatches(url, "/api"), `前提不成立:connect 不该匹配 ${url}`);
+    assert.ok(connectMatches(url, "/api"), `precondition does not hold: connect should not match ${url}`);
     assert.ok(
       apiPath(url).startsWith("/api/"),
-      `守卫漏掉了 ${url} —— connect 会把它交给 /api 的处理函数,守卫却认为不归自己管`,
+      `the guard missed ${url}: connect would hand it to the /api handler, but the guard thinks it is not its business`,
     );
   }
 });
 
-test("开头的重复斜杠:connect 本来就路由不过去,守卫多挡一道也无妨", () => {
+test("leading duplicate slashes: connect cannot route them anyway, so an extra block by the guard does no harm", () => {
   // `//api/...` 在 connect 那里 substr(0,4) 是 "//ap",匹配不上 —— 它不是绕过向量。
   // 但守卫把重复斜杠折掉之后会认出它并按 API 处理(实测回 403 而不是放行),
   // 属于「宁可多挡」。这里把这个事实钉住,免得以后有人以为折斜杠是必需的判据。
@@ -49,25 +49,25 @@ test("开头的重复斜杠:connect 本来就路由不过去,守卫多挡一道�
   assert.equal(apiPath("//api/ai/config"), "/api/ai/config");
 });
 
-test("确实不是 API 的路径不能被误判成 API", () => {
+test("paths that really are not API paths must not be misjudged as API", () => {
   for (const url of ["/", "/index.html", "/src/main.tsx", "/apiary/x", "/notapi/x", "/@vite/client"]) {
-    assert.equal(apiPath(url).startsWith("/api/"), false, `${url} 不该被当成 API`);
+    assert.equal(apiPath(url).startsWith("/api/"), false, `${url} should not be treated as API`);
   }
 });
 
-test("查询串不参与判断", () => {
+test("the query string does not take part in the decision", () => {
   assert.equal(apiPath("/api/ai/config?a=/evil/"), "/api/ai/config");
   assert.equal(apiPath("/API/x?B=C"), "/api/x");
 });
 
-test("百分号编码不解码 —— 和 connect 保持一致", () => {
+test("percent-encoding is not decoded: consistent with connect", () => {
   // connect 也不解码,/%61pi/... 在它那儿同样匹配不上(实测回 404)。
   // 两边都不认,才不会出现「一边认一边不认」的缝。这里钉住这个一致性。
   assert.equal(connectMatches("/%61pi/ai/config", "/api"), false);
   assert.equal(apiPath("/%61pi/ai/config").startsWith("/api/"), false);
 });
 
-test("originOk:同源放行、跨源拒、没有 Origin 当自己人", () => {
+test("originOk: same-origin allowed, cross-origin rejected, a missing Origin counts as our own", () => {
   const req = (headers) => ({ headers });
   assert.equal(originOk(req({ host: "127.0.0.1:5190", origin: "http://127.0.0.1:5190" })), true);
   assert.equal(originOk(req({ host: "127.0.0.1:5190", origin: "https://127.0.0.1:5190" })), true);
@@ -78,7 +78,7 @@ test("originOk:同源放行、跨源拒、没有 Origin 当自己人", () => {
   assert.equal(originOk(req({ host: "127.0.0.1:5190" })), true);
 });
 
-test("jsonContentType:只认 application/json,带 charset 也算", () => {
+test("jsonContentType: only application/json is recognized, with a charset also counts", () => {
   const req = (ct) => ({ headers: ct === undefined ? {} : { "content-type": ct } });
   assert.equal(jsonContentType(req("application/json")), true);
   assert.equal(jsonContentType(req("application/json; charset=utf-8")), true);
@@ -90,7 +90,7 @@ test("jsonContentType:只认 application/json,带 charset 也算", () => {
   assert.equal(jsonContentType(req(undefined)), false);
 });
 
-test("isAssetServicePath:只认素材服务那几种路径,判的是归一化之后的形式", async () => {
+test("isAssetServicePath: recognizes only the asset service path kinds and judges the normalized form", async () => {
   const { isAssetServicePath } = await import("../http-guard.mjs");
   const h = "0f".repeat(32);
   for (const ok of [`/api/asset/media/${h}`, `/api/asset/media/${h}/chunks`, `/api/asset/media/${h}/complete`,
@@ -103,12 +103,12 @@ test("isAssetServicePath:只认素材服务那几种路径,判的是归一化之
   }
 });
 
-test("回环地址:127.0.0.0/8、::1、::ffff:127.x;局域网地址不算", () => {
+test("loopback addresses: 127.0.0.0/8, ::1, ::ffff:127.x; LAN addresses do not count", () => {
   for (const a of ["127.0.0.1", "127.5.6.7", "::1", "::ffff:127.0.0.1"]) assert.equal(isLoopbackAddress(a), true, a);
   for (const a of ["192.168.1.50", "10.0.0.2", "::ffff:192.168.1.50", "fe80::1", "", undefined]) assert.equal(isLoopbackAddress(a), false, String(a));
 });
 
-test("本机判据:没有 socket 算本机;对端是局域网就不是本机,伪造舞台代理头也没用", () => {
+test("local criterion: no socket counts as local; a LAN peer is not local, and forging the stage proxy header does not help", () => {
   assert.equal(fromLocalClient({ headers: {} }), true);
   assert.equal(fromLocalClient({ socket: { remoteAddress: "127.0.0.1" }, headers: {} }), true);
   assert.equal(fromLocalClient({ socket: { remoteAddress: "192.168.1.50" }, headers: {} }), false);
@@ -116,7 +116,7 @@ test("本机判据:没有 socket 算本机;对端是局域网就不是本机,伪
   assert.equal(fromLocalClient({ socket: { remoteAddress: "192.168.1.50" }, headers: { [STAGE_CLIENT_HEADER]: "127.0.0.1" } }), false);
 });
 
-test("经舞台端口代理进来的请求:对端是回环,按代理写的真实对端判", () => {
+test("requests coming in through the stage port proxy: the peer is loopback, so judge by the real peer written by the proxy", () => {
   const viaProxy = (client) => ({ socket: { remoteAddress: "127.0.0.1" }, headers: { [STAGE_CLIENT_HEADER]: client } });
   assert.equal(clientAddressOf(viaProxy("192.168.1.50")), "192.168.1.50");
   assert.equal(fromLocalClient(viaProxy("192.168.1.50")), false);

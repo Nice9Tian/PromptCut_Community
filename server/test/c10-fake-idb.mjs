@@ -173,7 +173,7 @@ const toRange = (q) => {
   if (q === undefined || q === null) return null;
   if (q instanceof FakeIDBKeyRange) return q;
   if (q && typeof q === 'object' && 'lower' in q && 'upper' in q && typeof q.includes === 'function') return q;
-  if (!validKey(q)) throw domError('DataError', `不是合法的键：${String(q)}`);
+  if (!validKey(q)) throw domError('DataError', `Not a valid key: ${String(q)}`);
   return FakeIDBKeyRange.only(q);
 };
 
@@ -287,11 +287,11 @@ class FakeIDBRequest extends Target {
     this.onerror = null;
   }
   get result() {
-    if (this.readyState !== 'done') throw domError('InvalidStateError', '请求还没完成');
+    if (this.readyState !== 'done') throw domError('InvalidStateError', 'The request has not completed yet');
     return this._result;
   }
   get error() {
-    if (this.readyState !== 'done') throw domError('InvalidStateError', '请求还没完成');
+    if (this.readyState !== 'done') throw domError('InvalidStateError', 'The request has not completed yet');
     return this._error;
   }
 }
@@ -356,30 +356,30 @@ class FakeIDBTransaction extends Target {
   }
 
   objectStore(name) {
-    if (this._state === 'finished') throw domError('InvalidStateError', '事务已结束');
-    if (!this._names.includes(name)) throw domError('NotFoundError', `事务里没有表 ${name}`);
+    if (this._state === 'finished') throw domError('InvalidStateError', 'The transaction has finished');
+    if (!this._names.includes(name)) throw domError('NotFoundError', `No object store ${name} in the transaction`);
     return new FakeIDBObjectStore(this, name);
   }
 
   abort() {
-    if (this._state === 'finished') throw domError('InvalidStateError', '事务已结束');
-    this._abort(domError('AbortError', '调用了 abort()'), true);
+    if (this._state === 'finished') throw domError('InvalidStateError', 'The transaction has finished');
+    this._abort(domError('AbortError', 'abort() was called'), true);
   }
 
   commit() { this._active = false; this._pump(); }
 
   _data(name) {
     const s = this.db._data.stores.get(name);
-    if (!s) throw domError('NotFoundError', `没有表 ${name}`);
+    if (!s) throw domError('NotFoundError', `No object store ${name}`);
     return s;
   }
 
   _assertWritable() {
-    if (this.mode === 'readonly') throw domError('ReadOnlyError', '只读事务不能写');
+    if (this.mode === 'readonly') throw domError('ReadOnlyError', 'A read-only transaction cannot write');
   }
 
   _assertActive() {
-    if (this._state === 'finished' || !this._active) throw domError('TransactionInactiveError', '事务不活跃（请求只能在建事务的那一拍或上一个请求的回调里发）');
+    if (this._state === 'finished' || !this._active) throw domError('TransactionInactiveError', 'The transaction is not active (requests can only be issued in the tick where the transaction was created or in the callback of the previous request)');
   }
 
   /** 排一个请求；`run()` 回结果或抛 DOMException */
@@ -441,7 +441,7 @@ class FakeIDBTransaction extends Target {
     const wrote = this._log.ops.some((o) => o.op === 'put' || o.op === 'add' || o.op === 'update');
     if (wrote && (factory.forceQuota || (factory.quotaMode === 'abort' && factory.usage() > factory.quotaBytes))) {
       this._state = 'active';
-      this._abort(domError('QuotaExceededError', '超出配额（提交时）'), false, { silentError: true });
+      this._abort(domError('QuotaExceededError', 'Quota exceeded (at commit)'), false, { silentError: true });
       return;
     }
     this._state = 'finished';
@@ -467,7 +467,7 @@ class FakeIDBTransaction extends Target {
     // 还没跑的请求一律以 AbortError 失败（不再冒泡）
     for (const { req } of this._queue.splice(0)) {
       req.readyState = 'done';
-      req._error = domError('AbortError', '事务已中止');
+      req._error = domError('AbortError', 'The transaction was aborted');
       req._fire(new FakeEvent('error', req));
     }
     void silentError;
@@ -559,7 +559,7 @@ class FakeIDBCursor {
   }
 
   advance(n) {
-    if (!(n > 0)) throw new TypeError('advance 要正整数');
+    if (!(n > 0)) throw new TypeError('advance requires a positive integer');
     this._tx._assertActive();
     this._again(() => this._land(this._step(undefined, n)));
   }
@@ -606,15 +606,15 @@ class FakeIDBObjectStore {
     let v = cloneValue(value);
     let k;
     if (store.keyPath !== null && store.keyPath !== undefined) {
-      if (key !== undefined) throw domError('DataError', '行内键的表不能再给键');
+      if (key !== undefined) throw domError('DataError', 'An object store with in-line keys cannot also be given a key');
       k = extractKey(v, store.keyPath);
       if (k === undefined && store.autoIncrement) k = null;
     } else {
       k = key;
-      if (k === undefined && !store.autoIncrement) throw domError('DataError', '行外键的表要给键');
+      if (k === undefined && !store.autoIncrement) throw domError('DataError', 'An object store with out-of-line keys requires a key');
     }
-    if (k !== null && k !== undefined && !validKey(k)) throw domError('DataError', `不是合法的键：${String(k)}`);
-    if (expectKey !== undefined && cmp(k, expectKey) !== 0) throw domError('DataError', 'update 不能改主键');
+    if (k !== null && k !== undefined && !validKey(k)) throw domError('DataError', `Not a valid key: ${String(k)}`);
+    if (expectKey !== undefined && cmp(k, expectKey) !== 0) throw domError('DataError', 'update cannot change the primary key');
     const bytes = sizeOf(v) + (k === null || k === undefined ? 8 : sizeOf(k));
     return tx._request(this, () => {
       let kk = k;
@@ -625,7 +625,7 @@ class FakeIDBObjectStore {
         store.next = Math.floor(kk) + 1;
       }
       const sk = serial(kk);
-      if (op === 'add' && store.records.has(sk)) throw domError('ConstraintError', `键已存在：${String(kk)}`);
+      if (op === 'add' && store.records.has(sk)) throw domError('ConstraintError', `Key already exists: ${String(kk)}`);
       for (const [iname, idx] of store.indexes) {
         if (!idx.unique) continue;
         const ik = extractKey(v, idx.keyPath);
@@ -633,7 +633,7 @@ class FakeIDBObjectStore {
         for (const [osk, rec] of store.records) {
           if (osk === sk) continue;
           const ok = extractKey(rec.value, idx.keyPath);
-          if (validKey(ok) && cmp(ok, ik) === 0) throw domError('ConstraintError', `索引 ${iname} 唯一约束`);
+          if (validKey(ok) && cmp(ok, ik) === 0) throw domError('ConstraintError', `Unique constraint on index ${iname}`);
         }
       }
       const factory = tx.db._factory;
@@ -641,7 +641,7 @@ class FakeIDBObjectStore {
       const prevRec = store.records.get(sk);
       const after = factory.usage() - (prevRec ? prevRec.bytes : 0) + bytes;
       if (factory.quotaMode === 'request' && (factory.forceQuota || after > factory.quotaBytes)) {
-        throw domError('QuotaExceededError', '超出配额');
+        throw domError('QuotaExceededError', 'Quota exceeded');
       }
       tx._remember(this.name, sk);
       store.records.set(sk, { key: kk, value: v, bytes });
@@ -740,9 +740,9 @@ class FakeIDBObjectStore {
 
   createIndex(name, keyPath, { unique = false, multiEntry = false } = {}) {
     const tx = this.transaction;
-    if (tx.mode !== 'versionchange') throw domError('InvalidStateError', '只能在升级事务里建索引');
+    if (tx.mode !== 'versionchange') throw domError('InvalidStateError', 'Indexes can only be created in an upgrade transaction');
     const store = tx._data(this.name);
-    if (store.indexes.has(name)) throw domError('ConstraintError', `索引 ${name} 已存在`);
+    if (store.indexes.has(name)) throw domError('ConstraintError', `Index ${name} already exists`);
     store.indexes.set(name, { keyPath, unique, multiEntry });
     return this.index(name);
   }
@@ -755,7 +755,7 @@ class FakeIDBObjectStore {
 
   index(name) {
     const idx = this.transaction._data(this.name).indexes.get(name);
-    if (!idx) throw domError('NotFoundError', `没有索引 ${name}`);
+    if (!idx) throw domError('NotFoundError', `No index ${name}`);
     return new FakeIDBIndex(this, name, idx);
   }
 }
@@ -824,8 +824,8 @@ class FakeIDBDatabase extends Target {
 
   createObjectStore(name, { keyPath = null, autoIncrement = false } = {}) {
     const tx = this._upgradeTx;
-    if (!tx || tx._state === 'finished') throw domError('InvalidStateError', '只能在升级事务里建表');
-    if (this._data.stores.has(name)) throw domError('ConstraintError', `表 ${name} 已存在`);
+    if (!tx || tx._state === 'finished') throw domError('InvalidStateError', 'Object stores can only be created in an upgrade transaction');
+    if (this._data.stores.has(name)) throw domError('ConstraintError', `Object store ${name} already exists`);
     if (autoIncrement && (keyPath === '' || Array.isArray(keyPath))) throw domError('InvalidAccessError');
     this._data.stores.set(name, { keyPath, autoIncrement, next: 1, records: new Map(), indexes: new Map() });
     tx._names = [...this._data.stores.keys()];
@@ -835,20 +835,20 @@ class FakeIDBDatabase extends Target {
 
   deleteObjectStore(name) {
     const tx = this._upgradeTx;
-    if (!tx || tx._state === 'finished') throw domError('InvalidStateError', '只能在升级事务里删表');
-    if (!this._data.stores.has(name)) throw domError('NotFoundError', `没有表 ${name}`);
+    if (!tx || tx._state === 'finished') throw domError('InvalidStateError', 'Object stores can only be deleted in an upgrade transaction');
+    if (!this._data.stores.has(name)) throw domError('NotFoundError', `No object store ${name}`);
     this._data.stores.delete(name);
     tx._names = [...this._data.stores.keys()];
     tx.objectStoreNames = new StringList(tx._names);
   }
 
   transaction(names, mode = 'readonly', _opts) {
-    if (this._closed) throw domError('InvalidStateError', '连接已关闭');
-    if (this._upgradeTx && this._upgradeTx._state !== 'finished') throw domError('InvalidStateError', '升级事务还在跑');
+    if (this._closed) throw domError('InvalidStateError', 'Connection closed');
+    if (this._upgradeTx && this._upgradeTx._state !== 'finished') throw domError('InvalidStateError', 'The upgrade transaction is still running');
     const list = typeof names === 'string' ? [names] : [...names];
-    if (!list.length) throw domError('InvalidAccessError', '事务至少要一张表');
-    for (const n of list) if (!this._data.stores.has(n)) throw domError('NotFoundError', `没有表 ${n}`);
-    if (mode !== 'readonly' && mode !== 'readwrite') throw new TypeError(`事务模式不对：${mode}`);
+    if (!list.length) throw domError('InvalidAccessError', 'A transaction needs at least one object store');
+    for (const n of list) if (!this._data.stores.has(n)) throw domError('NotFoundError', `No object store ${n}`);
+    if (mode !== 'readonly' && mode !== 'readwrite') throw new TypeError(`Invalid transaction mode: ${mode}`);
     return new FakeIDBTransaction(this, [...new Set(list)], mode);
   }
 
@@ -887,7 +887,7 @@ export class FakeIDBFactory {
   cmp(a, b) { return cmp(a, b); }
 
   open(name, version) {
-    if (version !== undefined && !(Number.isInteger(version) && version >= 1)) throw new TypeError('版本号要是正整数');
+    if (version !== undefined && !(Number.isInteger(version) && version >= 1)) throw new TypeError('The version must be a positive integer');
     const req = new FakeIDBOpenDBRequest();
     this.opened.push(name);
     setImmediate(() => {
@@ -901,7 +901,7 @@ export class FakeIDBFactory {
       if (want < data.version) {
         if (fresh) this._dbs.delete(name);
         req.readyState = 'done';
-        req._error = domError('VersionError', `请求的版本 ${want} 低于现有的 ${data.version}`);
+        req._error = domError('VersionError', `Requested version ${want} is lower than the existing ${data.version}`);
         req._fire(new FakeEvent('error', req));
         return;
       }
@@ -922,7 +922,7 @@ export class FakeIDBFactory {
           if (fresh) this._dbs.delete(name);
           req.transaction = null;
           req._result = undefined;
-          req._error = domError('AbortError', '升级事务中止');
+          req._error = domError('AbortError', 'The upgrade transaction was aborted');
           req._fire(new FakeEvent('error', req));
         };
         tx.addEventListener('complete', () => {

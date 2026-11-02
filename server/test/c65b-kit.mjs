@@ -79,7 +79,7 @@ async function probe(files, names, tried = []) {
       continue;
     }
     for (const n of names) if (typeof mod[n] === 'function') return { mod, fn: mod[n], name: n, file: f };
-    tried.push(`${f}: 没有 ${names.join(' / ')}（导出：${Object.keys(mod).join(', ')}）`);
+    tried.push(`${f}: no ${names.join(' / ')} (exports: ${Object.keys(mod).join(', ')})`);
   }
   return null;
 }
@@ -153,7 +153,7 @@ export async function seed(env, project, projectId = PID) {
   const c = await env.connect({ user: 'seeder' });
   await openProject(c, projectId);
   const r = await submit(c, { projectId, ops: [{ op: 'set', path: '', value: project }], session: 'seed' });
-  assert.ok(isOk(r), `种子写入应成功：${JSON.stringify(r)}`);
+  assert.ok(isOk(r), `seed write should succeed: ${JSON.stringify(r)}`);
   c.close();
   return r.rev;
 }
@@ -183,7 +183,7 @@ export function agentProject() {
   return {
     version: 1,
     id: 'p-c65b-project',
-    name: '起点',
+    name: 'Starting point',
     width: 1920,
     height: 1080,
     fps: 30,
@@ -193,10 +193,10 @@ export function agentProject() {
     tracks: [
       {
         id: 't1',
-        name: '序列 1',
-        clips: [1, 2, 3, 4].map((i) => ({ id: `c${i}`, cardId: 'title', start: (i - 1) * 3, end: i * 3, params: {}, label: `片段${i}` })),
+        name: 'Track 1',
+        clips: [1, 2, 3, 4].map((i) => ({ id: `c${i}`, cardId: 'title', start: (i - 1) * 3, end: i * 3, params: {}, label: `Clip ${i}` })),
       },
-      { id: 't2', name: '序列 2', clips: [] },
+      { id: 't2', name: 'Track 2', clips: [] },
     ],
   };
 }
@@ -232,7 +232,7 @@ export async function startAgent(env, { projectId = PID, conversation = 7, user 
     tried,
   );
   const side = hit ? null : await probe(['server/agent/agent-side.mjs'], ['createAgentSide'], tried);
-  assert.ok(hit || side, `B1：找不到 Agent 服务端的项目副本工厂。试过：\n  ${tried.join('\n  ')}`);
+  assert.ok(hit || side, `B1: cannot find the project replica factory of the Agent server. Tried:\n  ${tried.join('\n  ')}`);
   const pageCalls = [];
   const loadModule = (spec) => {
     const file = path.isAbsolute(spec) && !spec.startsWith('/src') && !spec.startsWith('/server') ? spec : path.join(ROOT, spec.replace(/^\/+/, ''));
@@ -327,7 +327,7 @@ export const revOf = (norm) => norm?.value?.rev ?? norm?.value?.projectRev;
 
 export async function loadTools() {
   const mod = await import(pathToFileURL(path.join(ROOT, 'server/mcp-tools.mjs')).href);
-  assert.ok(Array.isArray(mod.tools), 'mcp-tools.mjs 要导出 tools 数组');
+  assert.ok(Array.isArray(mod.tools), 'mcp-tools.mjs must export a tools array');
   return mod.tools;
 }
 
@@ -353,7 +353,7 @@ export async function eventPairOf(w, tool, { nth = 0, ms = 5000 } = {}) {
     if (!complete) return false;
     pair = { create, complete };
     return true;
-  }, ms, `观察者收到工具 ${tool} 的第 ${nth + 1} 对事件（创建 + 完成）；已收到：${JSON.stringify(w.events()).slice(0, 600)}`);
+  }, ms, `observer received event pair #${nth + 1} for tool ${tool} (create + complete); received so far: ${JSON.stringify(w.events()).slice(0, 600)}`);
   return pair;
 }
 
@@ -384,7 +384,7 @@ export async function undoAgentStep(ds, info) {
   for (const n of names) if (typeof ds[n] === 'function') return ds[n](info);
   const mod = await import(srcHref('store/docsync.ts'));
   for (const n of names) if (typeof mod[n] === 'function') return mod[n](ds, info);
-  assert.fail(`B4：DocSync 上没有「撤销这一步」的方法（试过 ${names.join(' / ')}），docsync.ts 也没导出同名函数`);
+  assert.fail(`B4: DocSync has no "undo this step" method (tried ${names.join(' / ')}), and docsync.ts exports no function of that name either`);
 }
 
 // ================================================================== 快捷键（B5）
@@ -397,7 +397,7 @@ export async function loadShortcut() {
     ['undoRedoKey', 'undoRedoAction', 'shortcutAction', 'matchUndoRedo'],
     tried,
   );
-  assert.ok(hit, `B5：找不到撤销 / 重做快捷键的纯函数。试过：\n  ${tried.join('\n  ')}`);
+  assert.ok(hit, `B5: cannot find the pure function for the undo / redo keyboard shortcuts. Tried:\n  ${tried.join('\n  ')}`);
   return (ev) => {
     const r = hit.fn(ev);
     return r && typeof r === 'object' ? r.action ?? null : r ?? null;
@@ -435,7 +435,7 @@ export async function loadProcWhenConfirmed() {
   const core = await import(srcHref('store/core.ts'));
   return async () => {
     const hooks = core.getProjectSync?.();
-    assert.ok(hooks && typeof hooks.whenSettled === 'function', 'B7：proc.ts 没有「等确认后序列化」的导出，core.ts 的同步挂钩也没有 whenSettled()');
+    assert.ok(hooks && typeof hooks.whenSettled === 'function', 'B7: proc.ts has no "serialize after confirmation" export, and the sync hooks in core.ts have no whenSettled() either');
     const r = await hooks.whenSettled();
     return { text: proc.serializeProc(), rev: r?.rev };
   };
@@ -451,6 +451,6 @@ export async function loadUndoNotice() {
     ['undoNotice', 'describeUndo', 'undoFeedback'],
     tried,
   );
-  assert.ok(hit, `B8：找不到撤销提示条的文案函数。试过：\n  ${tried.join('\n  ')}`);
+  assert.ok(hit, `B8: cannot find the text function for the undo notice. Tried:\n  ${tried.join('\n  ')}`);
   return hit.fn;
 }

@@ -22,8 +22,8 @@ function project() {
   return {
     version: 1, id: "p", name: "p", width: 1920, height: 1080, fps: 30, duration: 30, themeId: "midnight", media: [],
     tracks: [{ id: "t1", name: "Track 1", clips: [
-      { id: "c1", cardId: "title", start: 0, end: 2, opacity: 0.4, label: "一", params: { text: "一" } },
-      { id: "c2", cardId: "title", start: 3, end: 5, opacity: 1, label: "二", params: { text: "二" } },
+      { id: "c1", cardId: "title", start: 0, end: 2, opacity: 0.4, label: "One", params: { text: "One" } },
+      { id: "c2", cardId: "title", start: 3, end: 5, opacity: 1, label: "Two", params: { text: "Two" } },
     ] }],
   };
 }
@@ -40,7 +40,7 @@ const edit = (p, id, patch) => ({ ...p, tracks: p.tracks.map((t) => ({ ...t, cli
 const clip = (p, id) => p.tracks[0].clips.find((c) => c.id === id);
 const meta = { batch: "u1", baseRev: 0, at: 1 };
 
-test("UC-01 撤销按修改项细分:没被别人改过的直接撤,被改过的进窗口;合并照撤回后的值写", () => {
+test("UC-01 Undo is broken down per changed item: items nobody else changed are undone directly, and changed ones go into the dialog; the merge writes the value after the undo", () => {
   const svc = new MemDocService({ project: project(), rev: 1 });
   const A = page(svc, "A"), B = page(svc, "B");
   svc.drain();
@@ -49,17 +49,17 @@ test("UC-01 撤销按修改项细分:没被别人改过的直接撤,被改过的
   B.ds.commit(edit(B.ds.project, "c1", { opacity: 0.6 }));
   svc.drain();
   const res = A.ds.undo();
-  assert.equal(res.done, false, "DocSync 按实体挡:c1 整样没撤");
-  assert.ok(res.conflict, "给了窗口要的材料");
+  assert.equal(res.done, false, "DocSync blocks per entity: c1 was not undone at all");
+  assert.ok(res.conflict, "Provided the material the dialog needs");
   const plan = undoConflictPlan(A.ds.project, res.conflict, meta);
   assert.equal(plan.directCount, 1);
-  assert.equal(clip(plan.direct, "c1").end, 2, "长度没人再改:直接撤");
-  assert.equal(clip(plan.direct, "c1").opacity, 0.6, "透明度别人改过:不动,进窗口");
+  assert.equal(clip(plan.direct, "c1").end, 2, "Nobody changed the length again: undone directly");
+  assert.equal(clip(plan.direct, "c1").opacity, 0.6, "Opacity was changed by someone else: left alone, goes into the dialog");
   assert.deepEqual(plan.things.map((t) => [t.key, t.source, t.props.map((p) => p.prop)]), [["undo:clip:c1", "undo", ["opacity"]]]);
   A.ds.commitAside(plan.direct);
   svc.drain();
   assert.equal(clip(B.ds.project, "c1").end, 2);
-  assert.equal(A.ds.canUndo(), false, "直接撤的那一部分是这次撤销的一部分,不另进撤销栈");
+  assert.equal(A.ds.canUndo(), false, "The directly undone part is part of this undo and does not enter the undo stack separately");
   const rows = mergeRows(A.ds.project, plan.things);
   assert.equal(rows[0].props[0].text, "Opacity 0.8 → 0.4 (The cloud is now 0.6)");
   assert.equal(rows[0].conflict, true);
@@ -68,7 +68,7 @@ test("UC-01 撤销按修改项细分:没被别人改过的直接撤,被改过的
   assert.equal(clip(merged.project, "c1").opacity, 0.4);
 });
 
-test("UC-02 没有冲突:直接撤,不给窗口材料", () => {
+test("UC-02 No conflict: undo directly, give the dialog no material", () => {
   const svc = new MemDocService({ project: project(), rev: 1 });
   const A = page(svc, "A"), B = page(svc, "B");
   svc.drain();
@@ -82,11 +82,11 @@ test("UC-02 没有冲突:直接撤,不给窗口材料", () => {
   assert.equal(clip(B.ds.project, "c1").opacity, 0.4);
 });
 
-test("UC-03 AI 栏「撤销这一步」遇到冲突:同样给材料、同样细分", () => {
+test("UC-03 When \"Undo this step\" in the AI panel hits a conflict: provide the same material and break it down the same way", () => {
   const svc = new MemDocService({ project: project(), rev: 1 });
   const A = page(svc, "A"), Agent = page(svc, "agent");
   svc.drain();
-  Agent.ds.commit(edit(Agent.ds.project, "c2", { label: "Agent 改的", opacity: 0.5 }));
+  Agent.ds.commit(edit(Agent.ds.project, "c2", { label: "Edited by Agent", opacity: 0.5 }));
   svc.drain();
   const opId = svc.log[svc.log.length - 1].opId;
   A.ds.commit(edit(A.ds.project, "c2", { opacity: 0.9 }));
@@ -94,11 +94,11 @@ test("UC-03 AI 栏「撤销这一步」遇到冲突:同样给材料、同样细�
   const res = A.ds.revertRemote({ opId });
   assert.ok(res.conflict);
   const plan = undoConflictPlan(A.ds.project, res.conflict, meta);
-  assert.equal(clip(plan.direct, "c2").label, "二", "名称没人再改:直接撤");
-  assert.deepEqual(plan.things.map((t) => t.props.map((p) => p.prop)), [["opacity"]], "透明度我这个页面后来改过:进窗口");
+  assert.equal(clip(plan.direct, "c2").label, "Two", "Nobody changed the name again: undone directly");
+  assert.deepEqual(plan.things.map((t) => t.props.map((p) => p.prop)), [["opacity"]], "Opacity was changed later on this page of mine: goes into the dialog");
 });
 
-test("UC-04 改密退出触发的撤回到达页面:只是一次远端修改,不产生撤销提示、不给窗口材料;气泡的字", () => {
+test("UC-04 A rollback triggered by sign-out after a password change reaches the page: it is just a remote edit, producing no undo notice and giving the dialog no material; the bubble text", () => {
   const svc = new MemDocService({ project: project(), rev: 1 });
   const A = page(svc, "A");
   svc.drain();
@@ -109,6 +109,6 @@ test("UC-04 改密退出触发的撤回到达页面:只是一次远端修改,不
   assert.equal(clip(A.ds.project, "c1").opacity, 0.1);
   const kinds = A.notices.slice(before).map((n) => n.kind);
   assert.deepEqual(kinds, ["remote"]);
-  assert.equal(rolledBackText("小王"), "小王 undid content");
+  assert.equal(rolledBackText("Xiao Wang"), "小王 undid content");
   assert.equal(rolledBackText(null), "A member undid content");
 });

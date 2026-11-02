@@ -16,15 +16,15 @@ import { skipIf, findSmallSize, sizeOf, repoUrl, ORIGINALS_FILE } from './c10a-k
 
 const found = await findSmallSize();
 if (found?.error) {
-  test('C10A-PS-00 尺寸函数载得进 node', () => { assert.fail(`${found.file} 导出了尺寸函数却载不进来：${found.error?.stack ?? found.error}`); });
+  test('C10A-PS-00 the sizing function can be loaded in node', () => { assert.fail(`${found.file} exports the sizing function but it cannot be loaded: ${found.error?.stack ?? found.error}`); });
 }
-const skip = skipIf(!found?.fn, '预渲染小尺寸的尺寸函数（K4）');
+const skip = skipIf(!found?.fn, 'sizing function for the prerender small size (K4)');
 const it = (name, fn) => test(name, { skip }, fn);
 
 const size = (w, h) => sizeOf(found.fn(w, h));
 const sha = (b) => createHash('sha256').update(b).digest('hex');
 
-it('C10A-PS-01 尺寸规则：契约里的例子与常见画幅', () => {
+it('C10A-PS-01 sizing rule: the examples in the contract and common aspect ratios', () => {
   const cases = [
     [[1920, 1080], [800, 450]],
     [[1080, 1920], [337, 600]], // 契约原文：9:16 为 337×600
@@ -39,24 +39,24 @@ it('C10A-PS-01 尺寸规则：契约里的例子与常见画幅', () => {
   for (const [[w, h], want] of cases) assert.deepEqual(size(w, h), { width: want[0], height: want[1] }, `${w}×${h}`);
 });
 
-it('C10A-PS-02 尺寸规则：不放大（本来就在 800×600 以内的原样）', () => {
+it('C10A-PS-02 sizing rule: no upscaling (anything already within 800×600 stays as is)', () => {
   for (const [w, h] of [[640, 360], [450, 600], [800, 450], [320, 240], [1, 1], [600, 600], [337, 600]]) {
     assert.deepEqual(size(w, h), { width: w, height: h }, `${w}×${h}`);
   }
 });
 
-it('C10A-PS-03 尺寸规则的性质：整数、在框内、不放大、画幅误差不到 1 像素、缩了就有一边顶到框', () => {
+it('C10A-PS-03 properties of the sizing rule: integers, inside the box, no upscaling, aspect ratio error under 1 pixel, and a downscaled result touches the box on at least one side', () => {
   const rnd = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
   for (let i = 0; i < 500; i++) {
     const w = rnd(16, 8192);
     const h = rnd(16, 8192);
     const s = size(w, h);
     assert.ok(Number.isInteger(s.width) && Number.isInteger(s.height) && s.width >= 1 && s.height >= 1, `${w}×${h} → ${JSON.stringify(s)}`);
-    assert.ok(s.width <= 800 && s.height <= 600, `${w}×${h} → ${s.width}×${s.height} 超出 800×600`);
-    assert.ok(s.width <= w && s.height <= h, `${w}×${h} → ${s.width}×${s.height} 放大了`);
+    assert.ok(s.width <= 800 && s.height <= 600, `${w}×${h} → ${s.width}×${s.height} exceeds 800×600`);
+    assert.ok(s.width <= w && s.height <= h, `${w}×${h} → ${s.width}×${s.height} was upscaled`);
     const k = Math.min(800 / w, 600 / h, 1);
-    assert.ok(Math.abs(s.width - w * k) < 1 && Math.abs(s.height - h * k) < 1, `${w}×${h} → ${s.width}×${s.height}，应约 ${(w * k).toFixed(2)}×${(h * k).toFixed(2)}`);
-    if (k < 1) assert.ok(s.width === 800 || s.height === 600 || Math.abs(s.width - 800) < 1 || Math.abs(s.height - 600) < 1, `${w}×${h} → ${s.width}×${s.height}：缩了却没有一边顶到框`);
+    assert.ok(Math.abs(s.width - w * k) < 1 && Math.abs(s.height - h * k) < 1, `${w}×${h} → ${s.width}×${s.height}, expected about ${(w * k).toFixed(2)}×${(h * k).toFixed(2)}`);
+    if (k < 1) assert.ok(s.width === 800 || s.height === 600 || Math.abs(s.width - 800) < 1 || Math.abs(s.height - 600) < 1, `${w}×${h} → ${s.width}×${s.height}: downscaled but no side touches the box`);
   }
 });
 
@@ -86,7 +86,7 @@ function fakeClient({ failPx = false, present = null } = {}) {
     async put(ns, bytes, opts = {}) {
       const hash = sha(bytes);
       puts.push({ ns, hash, ext: opts.ext ?? null });
-      if (failPx && ns === 'px') throw Object.assign(new Error('px 推送失败（测试注入）'), { status: 503 });
+      if (failPx && ns === 'px') throw Object.assign(new Error('px push failed (test injection)'), { status: 503 });
       return { hash, uploaded: true };
     },
     async has(ns, hash) { return present ? present(ns, hash) : true; },
@@ -94,30 +94,30 @@ function fakeClient({ failPx = false, present = null } = {}) {
   };
 }
 
-it('C10A-PS-04 清单带小尺寸哈希表：推送时两档都推，原尺寸进 snap、小位图以 WebP 进 px', async () => {
+it('C10A-PS-04 a manifest carrying a small-size hash table: both tiers are pushed, the original size goes to snap, and the small bitmaps go to px as WebP', async () => {
   const { pushResult } = await import(repoUrl('server/artifact-transfer.mjs'));
   const { result, readBlob } = snapshotResult();
   const client = fakeClient();
   await pushResult(client, result, readBlob);
   const snap = client.puts.filter((p) => p.ns === 'snap').map((p) => p.hash).sort();
   const px = client.puts.filter((p) => p.ns === 'px');
-  assert.deepEqual(snap, result.frames.map(([, h]) => h).sort(), '原尺寸三帧进 snap');
-  assert.deepEqual(px.map((p) => p.hash).sort(), result.small.map(([, h]) => h).sort(), '小位图三张进 px');
-  assert.ok(px.every((p) => p.ext === 'webp'), `小位图的扩展名是 webp：${JSON.stringify(px)}`);
+  assert.deepEqual(snap, result.frames.map(([, h]) => h).sort(), 'the three original-size frames go to snap');
+  assert.deepEqual(px.map((p) => p.hash).sort(), result.small.map(([, h]) => h).sort(), 'the three small bitmaps go to px');
+  assert.ok(px.every((p) => p.ext === 'webp'), `the extension of the small bitmaps is webp: ${JSON.stringify(px)}`);
 });
 
-it('C10A-PS-05 完成条件：小尺寸有一块推失败，这一段就不算完成（pushResult 抛错）', async () => {
+it('C10A-PS-05 completion condition: if any one small-size chunk fails to push, this segment does not count as complete (pushResult throws)', async () => {
   const { pushResult } = await import(repoUrl('server/artifact-transfer.mjs'));
   const { result, readBlob } = snapshotResult();
-  await assert.rejects(pushResult(fakeClient({ failPx: true }), result, readBlob), '原尺寸都推上去了也不算完成');
+  await assert.rejects(pushResult(fakeClient({ failPx: true }), result, readBlob), 'it is not complete even if all the original-size ones were pushed');
 });
 
-it('C10A-PS-06 去重看两档：清单列了小尺寸而素材服务上缺一块，blocksPresent 回 false', async () => {
+it('C10A-PS-06 dedup checks both tiers: the manifest lists small sizes but the asset service is missing a chunk, so blocksPresent returns false', async () => {
   const { blocksPresent } = await import(repoUrl('server/artifact-transfer.mjs'));
   const { result } = snapshotResult();
   const missing = result.small[1][1];
-  assert.equal(await blocksPresent(fakeClient({ present: () => true }), result), true, '两档都在');
-  assert.equal(await blocksPresent(fakeClient({ present: (ns, h) => h !== missing }), result), false, '缺一张小位图');
+  assert.equal(await blocksPresent(fakeClient({ present: () => true }), result), true, 'both tiers present');
+  assert.equal(await blocksPresent(fakeClient({ present: (ns, h) => h !== missing }), result), false, 'one small bitmap is missing');
 });
 
 // ------------------------------------------------------------------ 就绪分开记
@@ -127,9 +127,9 @@ it('C10A-PS-06 去重看两档：清单列了小尺寸而素材服务上缺一�
  * （`server/ready-index.mjs`，桌面页面的 SSE）根本不收小尺寸；在线页面按 `small` 表算小尺寸就绪，导出前核对
  * （`src/export/originals.ts`）只认 `frames`。所以「小尺寸就绪不能当原尺寸就绪」在这两处核对，不在就绪索引里加一档。
  */
-it('C10A-PS-07 两档分开就绪：清单里小尺寸盖满整段、原尺寸只有一半，导出前核对仍算缺原尺寸，缺的帧取不到原尺寸', async () => {
+it('C10A-PS-07 the two tiers become ready separately: the manifest has small sizes covering the whole segment but only half of the original sizes, the pre-export check still counts the original size as missing, and the missing frames cannot get an original size', async () => {
   const ready = await import(repoUrl('server/ready-index.mjs'));
-  assert.equal(ready.READY_KINDS.some((k) => /small/i.test(k)), false, `就绪索引不收小尺寸：${JSON.stringify(ready.READY_KINDS)}`);
+  assert.equal(ready.READY_KINDS.some((k) => /small/i.test(k)), false, `the ready index does not include small sizes: ${JSON.stringify(ready.READY_KINDS)}`);
   await import(repoUrl('src/testing/registerTs.mjs'));
   const { loadOriginalsIndex } = await import(repoUrl(ORIGINALS_FILE));
   const hex = (c) => c.repeat(64);
@@ -146,9 +146,9 @@ it('C10A-PS-07 两档分开就绪：清单里小尺寸盖满整段、原尺寸�
     authHeaders: async () => ({}),
   };
   const idx = await loadOriginalsIndex('p1', deps);
-  assert.deepEqual(idx.missing, ['c1'], '小尺寸盖满也不算原尺寸就绪');
-  assert.equal(idx.hashAt('c1', 100 + 10), hex('a'), '有原尺寸的帧取原尺寸');
-  assert.equal(idx.hashAt('c1', 100 + 40), null, '只有小尺寸的帧：原尺寸算缺，不拿小尺寸顶');
+  assert.deepEqual(idx.missing, ['c1'], 'small sizes covering everything still do not make the original size ready');
+  assert.equal(idx.hashAt('c1', 100 + 10), hex('a'), 'a frame that has an original size uses the original size');
+  assert.equal(idx.hashAt('c1', 100 + 40), null, 'a frame with only a small size: the original size counts as missing, and the small size does not stand in for it');
   content['R1:0-59'] = { ...content['R1:0-59'], frames: Array.from({ length: 60 }, (_, f) => [f, hex('a'), 10]) };
-  assert.deepEqual((await loadOriginalsIndex('p1', deps)).missing, [], '原尺寸补齐之后才就绪');
+  assert.deepEqual((await loadOriginalsIndex('p1', deps)).missing, [], 'ready only after the original sizes are filled in');
 });

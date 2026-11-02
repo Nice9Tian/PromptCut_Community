@@ -46,7 +46,7 @@ const getCard = id => DEFS[id];
 const SOURCE_VERSIONS = { lottie: 'builtin:lottie-v1', 'punch-pill': 'builtin:pill-v1', 'focus-card': 'builtin:focus-v1', 'my-card': 'user:mine-v1', particles: 'builtin:particles-v1' };
 
 const EMPHASIS = { kind: 'outline', color: '#ffffff', size: 6 };
-const FILTERS = [{ id: 'f-warm', name: '暖色', ops: [{ op: 'sepia', amount: 0.4 }] }];
+const FILTERS = [{ id: 'f-warm', name: 'Warm color', ops: [{ op: 'sepia', amount: 0.4 }] }];
 const FRAME = { x: 200, y: 200, w: 400, h: 240 };
 
 /** 三条序列各一个片段,同一时刻起止:不挂、挂强调、挂滤镜 */
@@ -124,54 +124,54 @@ const WRAPPED = ['clip-emph', 'clip-filt'];
 /** 三个片段的任务逐项相同;回不挂的那个片段的样子 */
 function assertSame(tasks) {
   const bare = shapeOf(tasks, 'clip-bare');
-  assert.ok(bare.length > 0, '不挂的片段要有任务');
-  for (const clipId of WRAPPED) assert.deepEqual(shapeOf(tasks, clipId), bare, `${clipId} 的任务要和不挂的片段逐项相同`);
+  assert.ok(bare.length > 0, 'A clip with nothing attached must have tasks');
+  for (const clipId of WRAPPED) assert.deepEqual(shapeOf(tasks, clipId), bare, `The tasks of ${clipId} must match those of the clip with nothing attached, item by item`);
   return bare;
 }
 
-test('WC-01 Lottie 素材卡(2026-10-14 放开):和普通独立卡一样给浏览器节点,挂了强调、滤镜也看里面那张卡', () => {
+test('WC-01 Lottie media card (opened up, 2026-10-14): gets a browser node like an ordinary standalone card, and with emphasis or a filter attached it still looks at the card inside', () => {
   const { cardPlan, tasks } = splitOf({ cardId: 'lottie', params: { src: 'a.json' } });
-  for (const control of cardPlan) assert.equal(control.tier, 'none', `${control.clipId} 是 none 档`);
-  assert.ok(browserTasks(tasks, 'clip-bare').length > 0, '不挂的给浏览器');
-  for (const clipId of WRAPPED) assert.ok(browserTasks(tasks, clipId).length > 0, `${clipId} 也给浏览器`);
+  for (const control of cardPlan) assert.equal(control.tier, 'none', `${control.clipId} is in the none tier`);
+  assert.ok(browserTasks(tasks, 'clip-bare').length > 0, 'The one with nothing attached goes to the browser');
+  for (const clipId of WRAPPED) assert.ok(browserTasks(tasks, clipId).length > 0, `${clipId} also goes to the browser`);
   const bare = assertSame(tasks);
   for (const item of bare.filter(item => item.kind === 'stream' && item.forBrowser)) assert.equal(item.cardId, 'lottie');
 });
 
-test('WC-02 改过源码的内置卡:挂了也要这张卡的代码身份,不给浏览器节点', () => {
+test('WC-02 Built-in card with modified source: even when attached it needs this card\'s code identity and gets no browser node', () => {
   const cardSources = { 'punch-pill': 'override:abc', 'focus-card': 'override:def' };
-  const { cardPlan, tasks } = splitOf({ cardId: 'punch-pill', params: { text: '甲' } }, { cardSources });
-  for (const control of cardPlan) assert.equal(control.tier, 'none', `${control.clipId} 是 none 档`);
+  const { cardPlan, tasks } = splitOf({ cardId: 'punch-pill', params: { text: 'A' } }, { cardSources });
+  for (const control of cardPlan) assert.equal(control.tier, 'none', `${control.clipId} is in the none tier`);
   const bare = assertSame(tasks);
   // 切分方单卡流带全部代码身份;没有这份代码的节点不认领
   for (const item of bare.filter(item => item.kind === 'stream')) assert.deepEqual(item.cardSources, cardSources);
-  for (const clipId of ['clip-bare', ...WRAPPED]) assert.equal(browserTasks(tasks, clipId).length, 0, `${clipId} 不给浏览器`);
+  for (const clipId of ['clip-bare', ...WRAPPED]) assert.equal(browserTasks(tasks, clipId).length, 0, `${clipId} does not go to the browser`);
 });
 
-test('WC-03 用户卡:挂了也算用户卡、要定制卡的代码', () => {
+test('WC-03 User card: even when attached it still counts as a user card and needs the custom card\'s code', () => {
   const cardSources = { 'my-card': 'user:mine-v1' };
-  const { tasks } = splitOf({ cardId: 'my-card', params: { text: '甲' } }, { cardSources });
+  const { tasks } = splitOf({ cardId: 'my-card', params: { text: 'A' } }, { cardSources });
   const bare = assertSame(tasks);
   const streams = bare.filter(item => item.kind === 'stream');
   assert.ok(streams.length > 0);
   for (const item of streams) {
     assert.deepEqual(item.cardSources, cardSources);
   }
-  for (const clipId of ['clip-bare', ...WRAPPED]) assert.equal(browserTasks(tasks, clipId).length, 0, `${clipId} 不给浏览器`);
+  for (const clipId of ['clip-bare', ...WRAPPED]) assert.equal(browserTasks(tasks, clipId).length, 0, `${clipId} does not go to the browser`);
 });
 
-test('WC-04 普通内置卡:挂了也给浏览器节点,input.cardId 是这张卡', () => {
-  const { tasks } = splitOf({ cardId: 'punch-pill', params: { text: '甲' } });
+test('WC-04 Ordinary built-in card: even when attached it gets a browser node, and input.cardId is this card', () => {
+  const { tasks } = splitOf({ cardId: 'punch-pill', params: { text: 'A' } });
   const bare = assertSame(tasks);
   for (const item of bare.filter(item => item.kind === 'stream' && item.forBrowser)) {
     assert.equal(item.cardId, 'punch-pill');
     assert.deepEqual(item.cardSources, {});
     assert.equal(item.userCards, false);
   }
-  for (const clipId of ['clip-bare', ...WRAPPED]) assert.ok(browserTasks(tasks, clipId).some(task => task.kind === 'stream'), `${clipId} 的流给浏览器`);
+  for (const clipId of ['clip-bare', ...WRAPPED]) assert.ok(browserTasks(tasks, clipId).some(task => task.kind === 'stream'), `The stream of ${clipId} goes to the browser`);
 });
 
-test('WC-05 强调和滤镜都挂(套两层):照样认得出里面那张', () => {
+test('WC-05 Emphasis and filter both attached (two layers of wrapping): the inner card is still recognized', () => {
   const both = { filter: { id: 'f-warm', params: {} }, emphasis: EMPHASIS };
   for (const [cardId, cardSources] of [['lottie', {}], ['punch-pill', { 'punch-pill': 'override:abc' }], ['my-card', { 'my-card': 'user:mine-v1' }], ['punch-pill', {}]]) {
     const project = projectOf({ cardId, params: {} });
@@ -189,11 +189,11 @@ test('WC-05 强调和滤镜都挂(套两层):照样认得出里面那张', () =>
       envFingerprint: OWN, codeVersion: 'cv-1', cardSourceVersions: cardSources, weightOf, isUserCard: isUserCardOf(SOURCE_VERSIONS),
       browser: { nodeId: 'n-br', envFingerprint: BR },
     });
-    assert.deepEqual(shapeOf(tasks, 'clip-filt'), shapeOf(tasks, 'clip-bare'), `${cardId}:套两层的任务和不挂的逐项相同`);
+    assert.deepEqual(shapeOf(tasks, 'clip-filt'), shapeOf(tasks, 'clip-bare'), `${cardId}: the tasks with two layers of wrapping match those with nothing attached, item by item`);
   }
 });
 
-test('WC-06 不套一层的片段:cardId 与 main 的写法相同,切出的任务逐字段相同', () => {
+test('WC-06 Clip without a wrapping layer: cardId is written the same way as in main, and the split-out tasks are identical field by field', () => {
   const cards = ['lottie', 'punch-pill', 'focus-card', 'my-card', 'particles'];
   const project = {
     id: 'p', width: 1920, height: 1080, fps: 30, duration: 8, themeId: 'dark', style: {}, media: [], filters: FILTERS, audioFx: [], pixelMaps: [], cardNodes: [],
@@ -232,7 +232,7 @@ const HAND_GRAPH = { nodes: [
   { id: 'lost', adapter: 'emphasis', inputs: { source: { nodeId: 'gone' } } },
 ] };
 
-test('WC-07 innerCardIds / withInnerCards 的取法', () => {
+test('WC-07 How innerCardIds / withInnerCards are derived', () => {
   const inner = innerCardIds(HAND_GRAPH);
   assert.deepEqual(inner('a'), { cardIds: ['punch-pill'], unsure: false, canvasHeavy: false });
   assert.deepEqual(inner('wrap-wrap-a'), { cardIds: ['punch-pill'], unsure: false, canvasHeavy: false });
@@ -266,7 +266,7 @@ test('WC-07 innerCardIds / withInnerCards 的取法', () => {
   assert.equal(isUserCardControl({ cardId: null, cardIds: [], cardIdsUnsure: true }, { 'punch-pill': 'builtin:1' }), false);
 });
 
-test('WC-08 里面不止一张卡、拿不准的控件:不给浏览器节点,代码身份往多里要', () => {
+test('WC-08 Controls with more than one card inside, or uncertain ones: no browser node, and the code identity errs on the side of asking for more', () => {
   const base = { snapshotKey: 'sk', contentKey: 'ck', tier: 'shared', start: 1, end: 3, count: 60,
     sampling: { firstFrame: 30, phase: { numerator: 0, denominator: 1 } }, compositing: 'independent', capabilities: { compositing: 'independent' } };
   const cardSources = { 'punch-pill': 'override:abc', 'focus-card': 'override:def', 'my-card': 'user:mine-v1' };
@@ -299,19 +299,19 @@ test('WC-08 里面不止一张卡、拿不准的控件:不给浏览器节点,代
     assert.equal(task.requires.userCards, true);
   }
   const unsureClean = run({ ...base, clipId: 'c5', cardId: null, cardIds: [], cardIdsUnsure: true }, {});
-  assert.ok(unsureClean.length > 0 && unsureClean.every(task => task.requires.envFingerprint === OWN), '拿不准的即使没有定制卡也不给浏览器');
+  assert.ok(unsureClean.length > 0 && unsureClean.every(task => task.requires.envFingerprint === OWN), 'Uncertain ones do not go to the browser even if there is no custom card');
 });
 
-test('WC-09 画布卡:挂了强调、滤镜也不给浏览器节点、重度为「重」', () => {
+test('WC-09 Canvas card: even with emphasis or a filter attached it gets no browser node, and its heaviness is "heavy"', () => {
   const { cardPlan, tasks } = splitOf({ cardId: 'particles', params: {} });
-  for (const control of cardPlan) assert.equal(control.tier, 'none', `${control.clipId} 是 none 档`);
+  for (const control of cardPlan) assert.equal(control.tier, 'none', `${control.clipId} is in the none tier`);
   assert.equal(cardPlan.find(control => control.clipId === 'clip-bare').capabilities.canvasHeavy, true);
   const bare = assertSame(tasks);
   for (const item of bare.filter(item => item.kind === 'stream')) assert.equal(item.weight, 'heavy');
-  for (const clipId of ['clip-bare', ...WRAPPED]) assert.equal(browserTasks(tasks, clipId).length, 0, `${clipId} 不给浏览器`);
+  for (const clipId of ['clip-bare', ...WRAPPED]) assert.equal(browserTasks(tasks, clipId).length, 0, `${clipId} does not go to the browser`);
 });
 
-test('WC-10 innerCardIds 的 canvasHeavy:里面有画布卡才为真;控件自己标了的不另加 innerCanvasHeavy', () => {
+test('WC-10 canvasHeavy of innerCardIds: true only when there is a canvas card inside; innerCanvasHeavy is not added when the control marked it itself', () => {
   const graph = { nodes: [
     { id: 'p', cardId: 'particles', inputs: {}, capabilities: { compositing: 'independent', canvasHeavy: true } },
     { id: 'wrap-p', adapter: 'emphasis', inputs: { source: { nodeId: 'p' } }, capabilities: { compositing: 'independent' } },

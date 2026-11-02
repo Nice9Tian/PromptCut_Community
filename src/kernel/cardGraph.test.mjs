@@ -5,13 +5,13 @@ import { normalizeCardDefinition, selectedCardStyle, validateCardGraph, projectC
 /** 素材效果卡 = 注册表里写了 `card` / `audio` 的普通 CardDef。测试里直接写成对象,
  * 用一个 getCard 桩喂给 projectCardGraph —— 仓库里没有「注册」函数,真卡是文件。 */
 const invert = {
-  id: 'invert', name: '反色', description: '把输入整幅反色', source: 'user',
+  id: 'invert', name: 'Invert colors', description: 'Inverts the whole input image', source: 'user',
   kind: 'filter', frameMode: 'direct', defaults: { amount: .5 }, controls: [],
   card: (sources, t, params) => ({ type: 'glsl', fragment: 'void main(){outColor=texture(u_input0,v_uv);}',
     inputs: [sources.source.at()], uniforms: { amount: params.amount } }),
 };
 const tone = {
-  id: 'tone', name: '增益', description: '按增益缩放输入采样', source: 'user',
+  id: 'tone', name: 'Gain', description: 'Scales the input samples by the gain', source: 'user',
   kind: 'audio', frameMode: 'direct', defaults: { gain: 1 }, controls: [],
   audio: async (sources, range, params) => (await sources.source.block(range.start, range.count)).map(v => v * params.gain),
 };

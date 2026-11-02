@@ -77,7 +77,7 @@ function sharedHooks({ shared = () => true, respond = (body) => ({ queued: body.
   return { bodies, notified, deps, hooks };
 }
 
-test("UT-1 上传目标就绪之前导入的素材先记下,就绪后补交给上传队列(图片、音频、视频都交)", async () => {
+test("UT-1 Media imported before the upload target is ready is recorded first and handed to the upload queue once it is ready (images, audio and video are all handed over)", async () => {
   actions.newProject("Cloud project");
   const target = slowUploadTarget();
   const { bodies, hooks } = sharedHooks();
@@ -87,10 +87,10 @@ test("UT-1 上传目标就绪之前导入的素材先记下,就绪后补交给�
     importOne({ kind: "audio", name: "voice.mp3", hash: H("2") });
     importOne({ kind: "video", name: "clip.mp4", hash: H("3"), small: H("4") });
     await flush();
-    assert.equal(bodies.length, 0, "上传目标还没就绪:先不交(交了编辑器进程也会当本机目标丢掉)");
+    assert.equal(bodies.length, 0, "The upload target is not ready yet: do not hand over for now (if handed over, the editor process would treat it as a local target and drop it)");
     target.release();
     await waitFor(() => bodies.length > 0);
-    assert.equal(bodies.length, 1, "就绪后一次补交");
+    assert.equal(bodies.length, 1, "Handed over once when ready");
     assert.deepEqual(bodies[0], { items: [
       { name: "still.png", original: H("1") },
       { name: "voice.mp3", original: H("2") },
@@ -103,7 +103,7 @@ test("UT-1 上传目标就绪之前导入的素材先记下,就绪后补交给�
   } finally { stop(); target.stop(); }
 });
 
-test("UT-2 上传目标已经就绪时导入的:当场按哈希交一次", async () => {
+test("UT-2 Media imported when the upload target is already ready: handed over once by hash immediately", async () => {
   actions.newProject("Cloud project");
   const target = slowUploadTarget();
   target.release();
@@ -117,8 +117,8 @@ test("UT-2 上传目标已经就绪时导入的:当场按哈希交一次", async
   } finally { stop(); target.stop(); }
 });
 
-test("UT-3 不是共享项目:什么都不做;就绪之前离开共享项目:记下的丢掉", async () => {
-  actions.newProject("本机项目");
+test("UT-3 Not a shared project: do nothing; leaving a shared project before it is ready: the recorded items are dropped", async () => {
+  actions.newProject("Local project");
   {
     const { bodies, hooks } = sharedHooks({ shared: () => false });
     const stop = startTierBackfill(hooks);
@@ -127,7 +127,7 @@ test("UT-3 不是共享项目:什么都不做;就绪之前离开共享项目:记
     target.release();
     await waitFor(() => T.uploadTargetReadyForTest() !== null);
     await flush();
-    assert.equal(bodies.length, 0, "本机项目的素材不交");
+    assert.equal(bodies.length, 0, "Media of a local project is not handed over");
     stop(); target.stop();
   }
   T.resetAssetTiersForTest();
@@ -144,12 +144,12 @@ test("UT-3 不是共享项目:什么都不做;就绪之前离开共享项目:记
     next.release();
     await waitFor(() => T.uploadTargetReadyForTest() !== null);
     await flush();
-    assert.equal(bodies.length, 0, "离开前记下的丢掉");
+    assert.equal(bodies.length, 0, "Items recorded before leaving are dropped");
     stop(); next.stop(); target.release();
   }
 });
 
-test("UT-4 本机就是主机:不记;补交失败的留着,下一次就绪(续签)再交", async () => {
+test("UT-4 This machine is the host: nothing is recorded; items whose hand-over failed are kept and handed over again the next time it is ready (ticket renewal)", async () => {
   actions.newProject("Cloud project");
   {
     // 本机就是主机:挑不到远程素材服务,startUploadTarget(link, null)
@@ -158,7 +158,7 @@ test("UT-4 本机就是主机:不记;补交失败的留着,下一次就绪(续�
     const { bodies, hooks } = sharedHooks();
     const stop = startTierBackfill(hooks);
     importOne({ kind: "image", name: "host.png", hash: H("8") });
-    assert.equal(T.deferredImportsForTest().length, 0, "本机就是主机:导入就是写进这个项目的素材服务,不用记");
+    assert.equal(T.deferredImportsForTest().length, 0, "This machine is the host: importing writes straight into this project's asset service, so there is nothing to record");
     assert.equal(bodies.length, 0);
     stop(); stopLocal();
   }
@@ -172,7 +172,7 @@ test("UT-4 本机就是主机:不记;补交失败的留着,下一次就绪(续�
     target.release();
     await waitFor(() => bodies.length === 1);
     await flush();
-    assert.deepEqual(T.deferredImportsForTest(), [H("9")], "补交没成(编辑器进程没回):留着");
+    assert.deepEqual(T.deferredImportsForTest(), [H("9")], "The hand-over did not succeed (the editor process did not reply): keep it");
     fail = false;
     target.renew();
     await waitFor(() => bodies.length === 2);
@@ -183,7 +183,7 @@ test("UT-4 本机就是主机:不记;补交失败的留着,下一次就绪(续�
   }
 });
 
-test("UT-5 补交时本机内容库里没有的:列给用户", async () => {
+test("UT-5 Items missing from the local content store at hand-over time: listed to the user", async () => {
   actions.newProject("Cloud project");
   const target = slowUploadTarget();
   const { notified, hooks } = sharedHooks({ respond: () => ({ queued: [], missing: [H("a")] }) });

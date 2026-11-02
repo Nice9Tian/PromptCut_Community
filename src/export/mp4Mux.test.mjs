@@ -16,12 +16,12 @@ import { Mp4Muxer, MemorySink } from './mp4Mux.ts';
 let ffmpeg = null;
 try { ffmpeg = await (await import('../../server/bakery/ffmpeg.mjs')).findFfmpeg(); } catch { ffmpeg = null; }
 const ffprobe = ffmpeg ? ffmpeg.replace(/ffmpeg(\.exe)?$/i, (m) => (m.toLowerCase().endsWith('.exe') ? 'ffprobe.exe' : 'ffprobe')) : null;
-const skip = ffmpeg ? false : '这台机器找不到 ffmpeg';
+const skip = ffmpeg ? false : 'ffmpeg not found on this machine';
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-mp4mux-'));
 
 function run(cmd, args) {
   const r = spawnSync(cmd, args, { encoding: 'buffer', windowsHide: true, maxBuffer: 256 * 1024 * 1024 });
-  if (r.status !== 0) throw new Error(`${path.basename(cmd)} 退出码 ${r.status}:${String(r.stderr).slice(-600)}`);
+  if (r.status !== 0) throw new Error(`${path.basename(cmd)} exit code ${r.status}: ${String(r.stderr).slice(-600)}`);
   return r.stdout;
 }
 function probe(file) {
@@ -92,7 +92,7 @@ function makeAac({ sampleRate, channels, seconds }) {
   const frames = [];
   let asc = null;
   for (let i = 0; i + 7 <= buf.length;) {
-    assert.equal(buf[i], 0xff, 'ADTS 同步字');
+    assert.equal(buf[i], 0xff, 'ADTS sync word');
     const protectionAbsent = buf[i + 1] & 1;
     const profile = (buf[i + 2] >> 6) & 3;
     const freqIdx = (buf[i + 2] >> 2) & 0xf;
@@ -127,7 +127,7 @@ function mux({ video, audio, fps, w, h }) {
   return { m, sink };
 }
 
-test('MX1 只有视频轨:ffprobe 读得出 h264,帧数、时长、尺寸正确', { skip }, async () => {
+test('MX1 Video track only: ffprobe can read h264, and the frame count, duration and dimensions are correct', { skip }, async () => {
   const fps = 30, frames = 90, w = 320, h = 240;
   const video = makeH264({ w, h, fps, frames, gop: 30 });
   assert.equal(video.samples.length, frames);
@@ -143,14 +143,14 @@ test('MX1 只有视频轨:ffprobe 读得出 h264,帧数、时长、尺寸正确'
   assert.equal(v.width, w);
   assert.equal(v.height, h);
   assert.equal(v.avg_frame_rate, '30/1');
-  assert.ok(Math.abs(Number(v.duration) - 3) < 1e-3, `时长 ${v.duration}`);
+  assert.ok(Math.abs(Number(v.duration) - 3) < 1e-3, `Duration ${v.duration}`);
   assert.ok(Math.abs(Number(info.format.duration) - 3) < 1e-3);
   assert.equal(info.streams.length, 1);
   // 解码一遍,确认数据本身没坏(ffmpeg 解到 null 不报错)
   run(ffmpeg, ['-v', 'error', '-i', file, '-f', 'null', '-']);
 });
 
-test('MX2 视频 + AAC 音频:两条轨都读得出,帧数、时长、编码正确', { skip }, async () => {
+test('MX2 Video + AAC audio: both tracks readable, with correct frame count, duration and codec', { skip }, async () => {
   const fps = 25, frames = 50, w = 640, h = 360;
   const video = makeH264({ w, h, fps, frames, gop: 25 });
   const aac = makeAac({ sampleRate: 48000, channels: 2, seconds: 2 });
@@ -163,16 +163,16 @@ test('MX2 视频 + AAC 音频:两条轨都读得出,帧数、时长、编码正�
   const a = info.streams.find((s) => s.codec_type === 'audio');
   assert.equal(v.codec_name, 'h264');
   assert.equal(Number(v.nb_read_frames), frames);
-  assert.ok(Math.abs(Number(v.duration) - 2) < 1e-3, `视频时长 ${v.duration}`);
+  assert.ok(Math.abs(Number(v.duration) - 2) < 1e-3, `Video duration ${v.duration}`);
   assert.equal(a.codec_name, 'aac');
   assert.equal(Number(a.sample_rate), 48000);
   assert.equal(a.channels, 2);
   assert.equal(Number(a.nb_read_frames), aac.frames.length);
-  assert.ok(Math.abs(Number(a.duration) - (aac.frames.length * 1024) / 48000) < 1e-3, `音频时长 ${a.duration}`);
+  assert.ok(Math.abs(Number(a.duration) - (aac.frames.length * 1024) / 48000) < 1e-3, `Audio duration ${a.duration}`);
   run(ffmpeg, ['-v', 'error', '-i', file, '-f', 'null', '-']);
 });
 
-test('MX3 60 fps、竖屏尺寸、关键帧:stss 只列关键帧,ffprobe 数得出关键帧', { skip }, async () => {
+test('MX3 60 fps, portrait dimensions, keyframes: stss lists only keyframes, and ffprobe can count the keyframes', { skip }, async () => {
   const fps = 60, frames = 120, w = 360, h = 640;
   const video = makeH264({ w, h, fps, frames, gop: 60 });
   const { m, sink } = mux({ video, fps, w, h });
@@ -188,7 +188,7 @@ test('MX3 60 fps、竖屏尺寸、关键帧:stss 只列关键帧,ffprobe 数得�
   assert.equal(Number(keys), 2);
 });
 
-test('MX4 落点按位置写:先写 mdat 再回头补长度;MemorySink 拼得对', async () => {
+test('MX4 Writes land by position: write mdat first, then go back and fill in the length; MemorySink assembles correctly', async () => {
   const sink = new MemorySink();
   const m = new Mp4Muxer({ sink, video: { codec: 'avc1.42E028', width: 16, height: 16, fps: 30, avcC: Uint8Array.of(1, 0x42, 0, 0x28, 0xff, 0xe0, 0) } });
   m.addVideoChunk(Uint8Array.of(0, 0, 0, 1, 0x65), { timestampUs: 0, key: true });
@@ -198,10 +198,10 @@ test('MX4 落点按位置写:先写 mdat 再回头补长度;MemorySink 拼得对
   const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
   const ftypSize = dv.getUint32(0);
   assert.equal(String.fromCharCode(...b.subarray(4, 8)), 'ftyp');
-  assert.equal(dv.getUint32(ftypSize), 1, 'mdat 用 64 位长度');
+  assert.equal(dv.getUint32(ftypSize), 1, 'mdat uses a 64-bit length');
   assert.equal(String.fromCharCode(...b.subarray(ftypSize + 4, ftypSize + 8)), 'mdat');
   const mdatSize = Number(dv.getBigUint64(ftypSize + 8));
-  assert.equal(mdatSize, 16 + 10, 'mdat 长度 = 头 16 + 两个样本 10');
+  assert.equal(mdatSize, 16 + 10, 'mdat length = header 16 + two samples 10');
   assert.equal(String.fromCharCode(...b.subarray(ftypSize + mdatSize + 4, ftypSize + mdatSize + 8)), 'moov');
   assert.throws(() => new Mp4Muxer({ sink, video: { codec: 'vp09.00.10.08', width: 16, height: 16, fps: 30, avcC: new Uint8Array() } }), /Only H\.264 can be muxed/);
 });

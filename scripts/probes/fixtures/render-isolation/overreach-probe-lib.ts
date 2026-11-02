@@ -72,9 +72,9 @@ function frameLoad(url: string): Promise<string> {
     frame.style.display = "none";
     const stop = AbortSignal.timeout(2500);
     const finish = (how: string) => { try { frame.remove(); } catch { /* 已摘 */ } resolve(how); };
-    frame.onload = () => { let seen = "(读不到)"; try { seen = String(frame.contentDocument?.body?.innerText ?? "").slice(0, 200); } catch { /* 别的源 */ } finish(`load ${seen}`); };
+    frame.onload = () => { let seen = "(unreadable)"; try { seen = String(frame.contentDocument?.body?.innerText ?? "").slice(0, 200); } catch { /* 别的源 */ } finish(`load ${seen}`); };
     frame.onerror = () => finish("error");
-    stop.addEventListener("abort", () => finish("超时"));
+    stop.addEventListener("abort", () => finish("timeout"));
     frame.src = url;
     document.body.appendChild(frame);
   });
@@ -83,11 +83,11 @@ function frameLoad(url: string): Promise<string> {
 function wsOpen(url: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const Ctor = nativeWebSocket();
-    if (!Ctor) return reject(new Error("拿不到 WebSocket"));
+    if (!Ctor) return reject(new Error("WebSocket unavailable"));
     let ws: WebSocket;
     try { ws = new Ctor(url, ["promptcut.v1"]); } catch (e) { return reject(e); }
     const stop = AbortSignal.timeout(4000);
-    stop.addEventListener("abort", () => { try { ws.close(); } catch { /* 已关 */ } reject(new Error("超时")); });
+    stop.addEventListener("abort", () => { try { ws.close(); } catch { /* 已关 */ } reject(new Error("timeout")); });
     ws.onopen = () => { try { ws.close(); } catch { /* 已关 */ } resolve("open"); };
     ws.onerror = () => reject(new Error("error"));
     ws.onclose = (ev) => reject(new Error(`closed ${ev.code}`));
@@ -157,8 +157,8 @@ export async function runOverreach(ctx: Ctx): Promise<Report> {
   section(async () => {
   await t("window.isTop", () => String(window.parent === window && window.top === window));
   await t("window.opener", () => String(window.opener));
-  await t("window.parent.document", () => (window.parent === window ? "(自己就是顶层)" : String(window.parent.document.title)));
-  await t("window.parent.cookie", () => (window.parent === window ? "(自己就是顶层)" : String(window.parent.document.cookie)));
+  await t("window.parent.document", () => (window.parent === window ? "(this is the top level)" : String(window.parent.document.title)));
+  await t("window.parent.cookie", () => (window.parent === window ? "(this is the top level)" : String(window.parent.document.cookie)));
   await t("window.frames", () => String(window.frames.length));
   await t("window.referrer", () => document.referrer);
   await t("window.broadcast", () => new Promise((resolve) => {
@@ -198,7 +198,7 @@ export async function runOverreach(ctx: Ctx): Promise<Report> {
   });
   section(async () => {
   // P1/P3撤销出口护栏：不执行真实云metadata请求，不能再把不出网作为权限保证。
-  await t("metadata.not-applicable", () => "不适用：卡片出口护栏本三个版本不做；未请求元数据地址");
+  await t("metadata.not-applicable", () => "Not applicable: the card egress guard is not implemented in these three versions; the metadata address was not requested");
 
   });
 
@@ -230,10 +230,10 @@ export async function runOverreach(ctx: Ctx): Promise<Report> {
     const c = ctx.collector;
     await t('collector.resource.image', async () => {const image=new Image();image.src=`${c}/collect.png?tag=${ctx.tag}`;await image.decode();return image.naturalWidth===4?'loaded':'invalid';});
     await t('collector.resource.font', async () => {const font=new FontFace('HostedPublicProbe',`url(${c}/public-font.ttf)`);document.fonts.add(await font.load());return font.status;});
-    const stylesheet = async (url: string) => {const link=document.createElement('link');link.rel='stylesheet';link.href=url;const ready=new Promise<void>((resolve,reject)=>{link.onload=()=>resolve();link.onerror=()=>reject(new Error('样式载入失败'));});document.head.append(link);await ready;};
+    const stylesheet = async (url: string) => {const link=document.createElement('link');link.rel='stylesheet';link.href=url;const ready=new Promise<void>((resolve,reject)=>{link.onload=()=>resolve();link.onerror=()=>reject(new Error('Stylesheet failed to load'));});document.head.append(link);await ready;};
     await t('collector.resource.style', async () => {await stylesheet(`${c}/public-style.css`);return getComputedStyle(document.documentElement).getPropertyValue('--pc-public-style').trim();});
     await t('collector.resource.import', async () => {await stylesheet(`${c}/public-import.css`);return getComputedStyle(document.documentElement).getPropertyValue('--pc-public-import').trim();});
-    await t('collector.resource.script', async () => {const script=document.createElement('script');script.src=`${c}/public-script.js`;const ready=new Promise<void>((resolve,reject)=>{script.onload=()=>resolve();script.onerror=()=>reject(new Error('脚本载入失败'));});document.head.append(script);await ready;return String((globalThis as any).__pcPublicExternalScript);});
+    await t('collector.resource.script', async () => {const script=document.createElement('script');script.src=`${c}/public-script.js`;const ready=new Promise<void>((resolve,reject)=>{script.onload=()=>resolve();script.onerror=()=>reject(new Error('Script failed to load'));});document.head.append(script);await ready;return String((globalThis as any).__pcPublicExternalScript);});
     await Promise.all([
       t("collector.fetch", () => fetchText(`${c}/collect?via=fetch&tag=${ctx.tag}`, { mode: "no-cors" })),
       t("collector.post", () => fetchText(`${c}/collect?via=post&tag=${ctx.tag}`, { method: "POST", mode: "no-cors", body: "overreach-probe" })),
@@ -252,7 +252,7 @@ export async function runOverreach(ctx: Ctx): Promise<Report> {
         link.href = `${c}/collect?via=prefetch&tag=${ctx.tag}`;
         link.onload = () => resolve("load");
         link.onerror = () => resolve("error");
-        AbortSignal.timeout(1500).addEventListener("abort", () => resolve("超时"));
+        AbortSignal.timeout(1500).addEventListener("abort", () => resolve("timeout"));
         document.head.appendChild(link);
       })),
       t("collector.webrtc", () => new Promise((resolve, reject) => {

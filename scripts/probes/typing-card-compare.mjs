@@ -96,7 +96,7 @@ async function buildTimeline() {
   let at = 0;
   TIMELINE_CASES.forEach((c, i) => {
     const from = c.at ?? at;
-    if (from < at - 1e-9) throw new Error(`Timeline 用例 ${c.name} 的起点 ${from} 压到上一个用例了`);
+    if (from < at - 1e-9) throw new Error(`Timeline case ${c.name}: start ${from} overlaps the previous case`);
     const start = Math.round(from * FPS) / FPS, end = Math.round((from + c.dur) * FPS) / FPS;
     const common = { id: c.id ?? `tl-${i}`, start, end };
     if (c.part) {
@@ -133,10 +133,10 @@ async function runTimelineExport(label, tree, port, timeline, work) {
       child.stderr.pipe(log, { end: false });
       child.on('exit', (c) => { log.end(); resolve(c ?? 1); });
     });
-    console.log(`[${label}] 退出码 ${code}`);
+    console.log(`[${label}] exit code ${code}`);
     return code;
   } catch (e) {
-    console.log(`[${label}] 失败:${e.message}`);
+    console.log(`[${label}] failed: ${e.message}`);
     return 1;
   } finally {
     server?.stop();
@@ -160,7 +160,7 @@ function buildProject() {
     at = end + 0.2;
   });
   const duration = Math.ceil(at * FPS) / FPS;
-  return { project: { version: 1, id: 'typing-compare', name: 'typing compare', width: W, height: H, fps: FPS, duration, themeId: 'midnight', media: [], tracks: [{ id: 't-1', name: '序列 1', clips }] }, windows, frames: Math.round(duration * FPS) };
+  return { project: { version: 1, id: 'typing-compare', name: 'typing compare', width: W, height: H, fps: FPS, duration, themeId: 'midnight', media: [], tracks: [{ id: 't-1', name: 'Track 1', clips }] }, windows, frames: Math.round(duration * FPS) };
 }
 
 function runExport(label, tree, port, projectFile, work) {
@@ -171,7 +171,7 @@ function runExport(label, tree, port, projectFile, work) {
       { cwd: tree, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     child.stdout.pipe(log, { end: false });
     child.stderr.pipe(log, { end: false });
-    child.on('exit', (code) => { log.end(); console.log(`[${label}] 退出码 ${code}`); resolve(code ?? 1); });
+    child.on('exit', (code) => { log.end(); console.log(`[${label}] exit code ${code}`); resolve(code ?? 1); });
   });
 }
 
@@ -282,19 +282,19 @@ async function analyticTextDiff(w) {
 }
 
 async function main() {
-  if (!fs.existsSync(path.join(BEFORE, 'scripts', 'export-e2e.mjs'))) throw new Error(`--main 不是一棵代码树:${BEFORE}`);
+  if (!fs.existsSync(path.join(BEFORE, 'scripts', 'export-e2e.mjs'))) throw new Error(`--main is not a code tree: ${BEFORE}`);
   fs.mkdirSync(OUT, { recursive: true });
   const suites = [];
   {
     const built = buildProject();
     const projectFile = path.join(OUT, 'project.json');
     fs.writeFileSync(projectFile, JSON.stringify(built.project));
-    suites.push({ label: 'Project 格式', prefix: '', ...built, run: (tag, tree, port, work) => runExport(tag, tree, port, projectFile, work) });
+    suites.push({ label: 'Project format', prefix: '', ...built, run: (tag, tree, port, work) => runExport(tag, tree, port, projectFile, work) });
   }
   {
     const built = await buildTimeline();
     fs.writeFileSync(path.join(OUT, 'timeline.json'), JSON.stringify(built.project));
-    suites.push({ label: 'Timeline 格式', prefix: 'tl-', ...built, run: (tag, tree, port, work) => runTimelineExport(tag, tree, port, built.project, work) });
+    suites.push({ label: 'Timeline format', prefix: 'tl-', ...built, run: (tag, tree, port, work) => runTimelineExport(tag, tree, port, built.project, work) });
   }
   const summary = { ok: true, suites: [], cases: [] };
   for (const suite of suites) {
@@ -309,7 +309,7 @@ async function main() {
 }
 
 async function compareSuite({ label, prefix, windows, frames, run }) {
-  console.log(`—— ${label}:${frames} 帧,${windows.length} 个用例;改前 ${BEFORE};改后 ${AFTER}`);
+  console.log(`-- ${label}: ${frames} frames, ${windows.length} cases; before ${BEFORE}; after ${AFTER}`);
   const works = { before: [], after: [] };
   for (let p = 1; p <= PASSES; p++) {
     for (const side of ['before', 'after']) works[side].push(path.join(OUT, `${prefix}${side}-pass${p}`));
@@ -321,17 +321,17 @@ async function compareSuite({ label, prefix, windows, frames, run }) {
         run(`${prefix}before#${p + 1}`, BEFORE, PORT, works.before[p]),
         run(`${prefix}after#${p + 1}`, AFTER, PORT + 3, works.after[p]),
       ]);
-      if (codes.some((c) => c !== 0)) throw new Error(`${label} 第 ${p + 1} 趟导出失败:退出码 ${codes.join('/')}`);
+      if (codes.some((c) => c !== 0)) throw new Error(`${label} export run ${p + 1} failed: exit code ${codes.join('/')}`);
     }
   }
   const last = PASSES - 1;
   const nb = frameFiles(works.before[last]).length, na = frameFiles(works.after[last]).length;
-  console.log(`帧数:改前 ${nb} 改后 ${na}(应为 ${frames})`);
+  console.log(`Frame count: before ${nb}, after ${na} (should be ${frames})`);
   const result = { frames, frameCountBefore: nb, frameCountAfter: na, noise: {}, cases: [] };
   if (PASSES > 1) {
     result.noise.beforeSelf = compareDirs(works.before[0], works.before[last], 0, frames).diffFrames;
     result.noise.afterSelf = compareDirs(works.after[0], works.after[last], 0, frames).diffFrames;
-    console.log(`两趟自己和自己:改前差 ${result.noise.beforeSelf} 帧,改后差 ${result.noise.afterSelf} 帧(含冷启动那一趟)`);
+    console.log(`Two runs compared with themselves: before differs by ${result.noise.beforeSelf} frames, after differs by ${result.noise.afterSelf} frames (including the cold-start run)`);
   }
   // 留白段(用例之间的 0.2 秒与片尾)也算:两边都应当是空画面
   const gaps = [];
@@ -364,11 +364,11 @@ async function compareSuite({ label, prefix, windows, frames, run }) {
       if (!row.analyticMatchesPixels) ok = false;
     }
     result.cases.push(row);
-    console.log(`${w.expect === 'same' ? (c.diffFrames ? 'FAIL' : 'PASS') : 'INFO'} ${w.name} [${w.expect}] 帧 ${w.startFrame}-${w.endFrame - 1}:${c.frames} 帧,差异 ${c.diffFrames} 帧${c.first !== null ? `,首个差异帧 ${c.first},最大通道差 ${c.maxChannel}` : ''}${row.analyticMatchesPixels !== undefined ? `;按文字模型推的差异帧 ${row.analyticTextDiffFrames} 个,${row.analyticMatchesPixels ? '与像素差异的帧集合完全一致' : '与像素差异的帧集合不一致'}` : ''}`);
+    console.log(`${w.expect === 'same' ? (c.diffFrames ? 'FAIL' : 'PASS') : 'INFO'} ${w.name} [${w.expect}] frames ${w.startFrame}-${w.endFrame - 1}: ${c.frames} frames, ${c.diffFrames} frames differ${c.first !== null ? `, first differing frame ${c.first}, max channel difference ${c.maxChannel}` : ''}${row.analyticMatchesPixels !== undefined ? `; ${row.analyticTextDiffFrames} differing frames inferred from the text model, ${row.analyticMatchesPixels ? 'exactly matches the set of pixel-differing frames' : 'does not match the set of pixel-differing frames'}` : ''}`);
   }
   const gap = gaps.map(([a, b]) => compareDirs(works.before[last], works.after[last], a, b));
   result.gapDiffFrames = gap.reduce((s, g) => s + g.diffFrames, 0);
-  console.log(`${result.gapDiffFrames ? 'FAIL' : 'PASS'} 用例之间的留白帧 ${gaps.reduce((s, [a, b]) => s + b - a, 0)} 帧,差异 ${result.gapDiffFrames} 帧`);
+  console.log(`${result.gapDiffFrames ? 'FAIL' : 'PASS'} gap frames between cases: ${gaps.reduce((s, [a, b]) => s + b - a, 0)} frames, ${result.gapDiffFrames} frames differ`);
   if (result.gapDiffFrames) ok = false;
   result.ok = ok;
   return result;

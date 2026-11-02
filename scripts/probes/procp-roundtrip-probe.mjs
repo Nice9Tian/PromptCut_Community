@@ -45,7 +45,7 @@ const HASH = /^[0-9a-f]{64}$/;
 const ffmpeg = await findFfmpeg();
 function run(cmd, a) {
   const r = spawnSync(cmd, a, { encoding: 'buffer', windowsHide: true, maxBuffer: 1024 * 1024 * 1024 });
-  if (r.status !== 0) throw new Error(`${path.basename(cmd)} 退出码 ${r.status}:${String(r.stderr).slice(-600)}`);
+  if (r.status !== 0) throw new Error(`${path.basename(cmd)} exit code ${r.status}: ${String(r.stderr).slice(-600)}`);
   return r.stdout;
 }
 
@@ -147,7 +147,7 @@ try {
   run(ffmpeg, ['-y', '-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=44100', '-t', '1.5', '-c:a', 'libmp3lame', '-b:a', '128k', '-metadata', `comment=old-${RUN}`, voiceOld]);
 
   // ── 实例 A:建项目、打包 ──
-  log(`起实例 A(${PORT_A})`);
+  log(`Start instance A (${PORT_A})`);
   const srvA = await startDevServer({ port: PORT_A, env: envOf(A), logFile: path.join(OUT, 'vite-A.log'), log });
   servers.push(srvA);
   browser = await puppeteer.launch({ headless: true, protocolTimeout: 900000, args: [...PROBE_CHROME_ARGS, '--no-first-run', '--hide-scrollbars', '--force-device-scale-factor=1', '--autoplay-policy=no-user-gesture-required'] });
@@ -169,14 +169,14 @@ try {
     for (let i = 0; i < 150 && getState().project.media.some((m) => m.pending || !m.url); i++) await new Promise((r) => setTimeout(r, 200));
     // 经入库接口进来的音频(0.7.7 之后生成的配音就是这样:带哈希)
     const up = await uploadMediaFile(b64ToFile(o.voiceNew, o.voiceNewName, 'audio/mpeg'));
-    if (!up) throw new Error('入库接口没收下新配音');
+    if (!up) throw new Error('The ingest endpoint did not accept the new voiceover');
     const mNew = actions.addMedia({ kind: 'audio', name: o.voiceNewName, url: up.url, hash: up.hash, ext: up.ext, size: up.bytes, path: up.path, duration: 1.5 });
     // 老形态:只有 path,没有哈希
     const mOld = actions.addMedia({ kind: 'audio', name: o.voiceOldName, url: o.voiceOldName, path: o.voiceOldPath, duration: 1.5 });
-    const track = actions.addTrack('配音');
+    const track = actions.addTrack('Voiceover');
     const c1 = actions.addMediaClip(mOld.id, 0, { trackId: track.id, duration: 1.5 });
     const c2 = actions.addMediaClip(mNew.id, 1.5, { trackId: track.id, duration: 1.5 });
-    if (!c1 || !c2) throw new Error('配音放不上时间轴');
+    if (!c1 || !c2) throw new Error('The voiceover cannot be placed on the timeline');
     // 存盘 → 再打开:老素材走真的打开路径(restoreMediaUrls),地址还原成 /api/media/file?path=…
     const text = serializeProc();
     const saved = JSON.parse(text);
@@ -192,9 +192,9 @@ try {
   });
   out.setup = setup;
   const oldAtOpen = setup.reopened.find((m) => m.id === setup.ids.old);
-  check(setup.savedOld.hash === null && setup.savedOld.path === voiceOld, 'A:存盘里的老配音只有 path、没有哈希', setup.savedOld);
-  check(oldAtOpen && oldAtOpen.url.startsWith('/api/media/file?path='), 'A:再打开后老配音的地址是 /api/media/file?path=…', oldAtOpen);
-  check(setup.reopened.length === 3, 'A:素材表三条', setup.reopened);
+  check(setup.savedOld.hash === null && setup.savedOld.path === voiceOld, 'A: the old voiceover in the saved file has only a path, no hash', setup.savedOld);
+  check(oldAtOpen && oldAtOpen.url.startsWith('/api/media/file?path='), 'A: after reopening, the old voiceover\'s URL is /api/media/file?path=…', oldAtOpen);
+  check(setup.reopened.length === 3, 'A: the media list has three entries', setup.reopened);
 
   // 打包前那一刻老配音有没有哈希(打开项目后后台补入库可能已经先补上了,两种都算正常;打包那一步的补入库由单测钉)
   out.oldHashBeforePack = await pageA.evaluate(async (id) => {
@@ -207,19 +207,19 @@ try {
   await fs.writeFile(packFile, packBytes);
   const inspA = await inspectPack(pageA);
   out.pack = { bytes: packBytes.length, names: inspA.names, media: inspA.media };
-  check(inspA.names[0] === 'project.proc', '包:第一个条目是 project.proc', inspA.names);
-  check(inspA.names.filter((n) => n.startsWith('media/')).length === 3, '包:三份素材都在包里', inspA.names);
-  check(inspA.media.length === 3 && inspA.media.every((m) => HASH.test(String(m.hash))), '包内 project.proc:三条素材都带哈希', inspA.media);
-  for (const m of inspA.media) check(inspA.names.some((n) => n.startsWith(`media/${m.hash}`)), `包:${m.name} 的字节在包里`, inspA.names);
+  check(inspA.names[0] === 'project.proc', 'Package: the first entry is project.proc', inspA.names);
+  check(inspA.names.filter((n) => n.startsWith('media/')).length === 3, 'Package: all three media files are in the package', inspA.names);
+  check(inspA.media.length === 3 && inspA.media.every((m) => HASH.test(String(m.hash))), 'project.proc in the package: all three media entries have a hash', inspA.media);
+  for (const m of inspA.media) check(inspA.names.some((n) => n.startsWith(`media/${m.hash}`)), `Package: the bytes of ${m.name} are in the package`, inspA.names);
   const alertsA = dialogsA.filter((d) => d.type === 'alert');
-  check(alertsA.length === 0, 'A:打包没有弹「缺素材」提示', alertsA);
-  check(!dialogsA.some((d) => d.type === 'pageerror'), 'A:页面没有报错', dialogsA.filter((d) => d.type === 'pageerror'));
+  check(alertsA.length === 0, 'A: packaging did not pop up a "missing media" notice', alertsA);
+  check(!dialogsA.some((d) => d.type === 'pageerror'), 'A: no page errors', dialogsA.filter((d) => d.type === 'pageerror'));
   out.dialogsA = dialogsA;
 
   // ── 实例 B:空数据目录,打开包、查素材、导出 ──
   const emptyB = (await fs.readdir(B.exportDir)).length === 0 && (await fs.readdir(B.dataDir)).length === 0;
-  check(emptyB, 'B:开跑前数据目录与导出目录是空的');
-  log(`起实例 B(${PORT_B})`);
+  check(emptyB, 'B: the data directory and the export directory are empty before the run');
+  log(`Start instance B (${PORT_B})`);
   const srvB = await startDevServer({ port: PORT_B, env: envOf(B), logFile: path.join(OUT, 'vite-B.log'), log });
   servers.push(srvB);
   const dialogsB = [];
@@ -241,14 +241,14 @@ try {
     return { fetched };
   }, packBytes.toString('base64'));
   out.opened = opened;
-  check(opened.fetched.length === 3, 'B:素材表三条', opened.fetched);
-  check(!opened.fetched.some((m) => String(m.name).startsWith('(缺失)')), 'B:素材表没有「(缺失)」', opened.fetched);
+  check(opened.fetched.length === 3, 'B: the media list has three entries', opened.fetched);
+  check(!opened.fetched.some((m) => String(m.name).startsWith('(missing)')), 'B: the media list has no "(missing)"', opened.fetched);
   for (const m of opened.fetched) {
-    check(HASH.test(String(m.hash)) && m.url === `/@media/${m.hash}`, `B:${m.name} 按哈希还原`, m);
-    check(m.status === 200 && m.bytes > 0, `B:${m.name} 的 /@media/<hash> 取得到`, m);
+    check(HASH.test(String(m.hash)) && m.url === `/@media/${m.hash}`, `B: ${m.name} is restored by hash`, m);
+    check(m.status === 200 && m.bytes > 0, `B: /@media/<hash> of ${m.name} can be fetched`, m);
   }
 
-  log('B:导出');
+  log('B: export');
   const exp = await pageB.evaluate(async () => {
     const io = await import('/src/editor/io/index.ts');
     const r = await io.exportVideo();
@@ -261,12 +261,12 @@ try {
   const segOld = audioStats(kept, 0.2, 1.1);
   const segNew = audioStats(kept, 1.7, 1.1);
   out.export = { file: kept, streams, segOld, segNew };
-  check(streams.some((s) => s.codec_type === 'audio'), 'B 导出:有音轨', streams);
-  check(segOld.rmsDb > -40, 'B 导出:老配音那一段(0.2～1.3 s)不是静音', segOld);
-  check(segNew.rmsDb > -40, 'B 导出:新配音那一段(1.7～2.8 s)不是静音', segNew);
-  check(Math.abs(segOld.hz - 440) <= 30, 'B 导出:老配音那一段是 440 Hz(确实是老配音)', segOld);
-  check(Math.abs(segNew.hz - 880) <= 50, 'B 导出:新配音那一段是 880 Hz(确实是新配音)', segNew);
-  check(!dialogsB.some((d) => d.type === 'pageerror'), 'B:页面没有报错', dialogsB.filter((d) => d.type === 'pageerror'));
+  check(streams.some((s) => s.codec_type === 'audio'), 'B export: has an audio track', streams);
+  check(segOld.rmsDb > -40, 'B export: the old voiceover section (0.2-1.3 s) is not silent', segOld);
+  check(segNew.rmsDb > -40, 'B export: the new voiceover section (1.7-2.8 s) is not silent', segNew);
+  check(Math.abs(segOld.hz - 440) <= 30, 'B export: the old voiceover section is 440 Hz (it really is the old voiceover)', segOld);
+  check(Math.abs(segNew.hz - 880) <= 50, 'B export: the new voiceover section is 880 Hz (it really is the new voiceover)', segNew);
+  check(!dialogsB.some((d) => d.type === 'pageerror'), 'B: no page errors', dialogsB.filter((d) => d.type === 'pageerror'));
 
   // ── 可选:用户发来的老包 ──
   if (USER_PROCP) {
@@ -285,23 +285,23 @@ try {
     }, servedName);
     const unhashed = u.filter((m) => !HASH.test(String(m.hash)));
     out.userProcp = { file: USER_PROCP, media: u.length, hashed: u.length - unhashed.length, unhashed: unhashed.map((m) => ({ name: m.name, url: m.url })) };
-    check(u.length > 0, '用户老包:照常打开,素材表不空', u);
+    check(u.length > 0, 'User\'s old package: opens as usual, the media list is not empty', u);
     await packViaTopBar(pageU, { transfer: false, timeoutMs: 600000 });
     const inspU = await inspectPack(pageU);
     const alerts = dialogsU.filter((d) => d.type === 'alert');
     out.userProcp.repack = { bytes: inspU.size, names: inspU.names, alerts: alerts.map((a) => a.message) };
     out.userProcp.pageErrors = dialogsU.filter((d) => d.type === 'pageerror');
-    check(!out.userProcp.pageErrors.length, '用户老包:页面没有报错', out.userProcp.pageErrors);
+    check(!out.userProcp.pageErrors.length, 'User\'s old package: no errors on the page', out.userProcp.pageErrors);
     if (unhashed.length) {
-      check(alerts.length === 1, '用户老包:再打包时弹一次提示框', alerts);
+      check(alerts.length === 1, 'User\'s old package: a notice dialog pops up once on repackaging', alerts);
       const msg = alerts[0]?.message || '';
-      const shown = unhashed.filter((m) => msg.includes(String(m.name).replace(/^\(缺失\) /, '')));
-      check(shown.length === Math.min(unhashed.length, 12), '用户老包:提示框列出了本机找不到文件的素材名字', { msg, unhashed: unhashed.map((m) => m.name) });
+      const shown = unhashed.filter((m) => msg.includes(String(m.name).replace(/^\(missing\) /, '')));
+      check(shown.length === Math.min(unhashed.length, 12), 'User\'s old package: the dialog lists the names of media whose files cannot be found on this machine', { msg, unhashed: unhashed.map((m) => m.name) });
     }
-    check(inspU.names.filter((n) => n.startsWith('media/')).length === u.length - unhashed.length, '用户老包:带哈希的素材照样进包', inspU.names);
+    check(inspU.names.filter((n) => n.startsWith('media/')).length === u.length - unhashed.length, 'User\'s old package: media with a hash still goes into the package', inspU.names);
   }
 } catch (e) {
-  fails.push('探针异常:' + (e?.stack || e));
+  fails.push('Probe exception:' + (e?.stack || e));
 } finally {
   await browser?.close().catch(() => {});
   for (const s of servers) s.stop();

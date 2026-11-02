@@ -38,7 +38,7 @@ const CDP = Number(arg('--cdp', ''));
 const OUT = path.resolve(arg('--out', path.join(ROOT, 'docs/archive/agent-reports/AGENT-claude-editor-vibe-button-shots')));
 const EDITOR = arg('--editor', 'http://127.0.0.1:5210');
 if (!Number.isInteger(CDP) || CDP <= 0) {
-  console.error('要 --cdp <端口>:桌面壳 WebView2 的调试端口。找法见本文件头。');
+  console.error('Requires --cdp <port>: the debugging port of the desktop shell\'s WebView2. See the top of this file for how to find it.');
   process.exit(2);
 }
 await fs.mkdir(OUT, { recursive: true });
@@ -66,7 +66,7 @@ async function until(what, fn, ms = 30_000, every = 300, pass) {
     let v = null;
     try { v = await fn(pass); } catch { v = null; }
     if (v) return v;
-    if (Date.now() - t0 > ms) { fails.push(`等不到:${what}`); return null; }
+    if (Date.now() - t0 > ms) { fails.push(`Timed out waiting for: ${what}`); return null; }
     await sleep(every);
   }
 }
@@ -122,7 +122,7 @@ const browser = await puppeteer.connect({ browserURL: `http://127.0.0.1:${CDP}`,
 const pages = await browser.pages();
 const page = pages.find((p) => p.url().startsWith(EDITOR));
 if (!page) {
-  console.error(`桌面壳里没有 ${EDITOR} 那一页。现在开着的是:`, pages.map((p) => p.url()));
+  console.error(`The desktop shell has no ${EDITOR} page. Currently open:`, pages.map((p) => p.url()));
   await browser.disconnect();
   process.exit(2);
 }
@@ -136,29 +136,29 @@ try {
   /* ---------------- 1. 传统开始页:多了一颗「氛围式」 ---------------- */
   // 从头来:地址清成干净的 /,刷新
   await page.goto(`${EDITOR}/`, { waitUntil: 'domcontentloaded' });
-  await until('传统开始页', () => page.$('[data-pc="start-go-vibe"]'));
+  await until('Classic start page', () => page.$('[data-pc="start-go-vibe"]'));
   let s = await snapshot(page);
-  check(s.classic && !s.vibe, '开始页该是传统那一页', s);
+  check(s.classic && !s.vibe, 'The start page should be the classic one', s);
   step('classic', { ...s, shot: await shot(page, 'classic-start') });
 
   /* ---------------- 2. 点「氛围式」进那一屏 ---------------- */
   await clickPc(page, 'start-go-vibe');
-  await until('氛围式那一屏', () => page.$('[data-pc="start-desktop"]'));
+  await until('The Vibe mode screen', () => page.$('[data-pc="start-desktop"]'));
   s = await snapshot(page);
-  check(s.vibe, '该进氛围式那一屏', s);
-  check(s.url.includes('ui=vibe'), '地址该记成 ?ui=vibe(刷新后还在这一屏)', s.url);
-  check(!s.account, '桌面版顶栏不该有账号那一块', s);
-  check(!!s.agentBtn, '顶栏该有 Agent 那一颗', s);
+  check(s.vibe, 'Should enter the Vibe mode screen', s);
+  check(s.url.includes('ui=vibe'), 'The URL should record ?ui=vibe (stays on this screen after refresh)', s.url);
+  check(!s.account, 'The desktop app top bar should not have the account section', s);
+  check(!!s.agentBtn, 'The top bar should have the Agent button', s);
   step('vibe', { ...s, shot: await shot(page, 'vibe-home') });
 
   // 刷新一次:地址记住了,还该落在这一屏
   await page.reload({ waitUntil: 'domcontentloaded' });
-  const back = await until('刷新后还在氛围式', () => page.$('[data-pc="start-desktop"]'));
-  check(!!back, '刷新后该还在氛围式那一屏');
+  const back = await until('Still in Vibe mode after refresh', () => page.$('[data-pc="start-desktop"]'));
+  check(!!back, 'Should still be on the Vibe mode screen after refresh');
   step('reload', { vibe: !!back });
 
   /* ---------------- 3. 说一句话:建本机项目、进聊天页 ---------------- */
-  const SAY = `做一支 15 秒的产品短片，开头一句话点题 ${Date.now().toString(36).slice(-4)}`;
+  const SAY = `Make a 15-second product video, opening with one line that states the topic ${Date.now().toString(36).slice(-4)}`;
   const projectsBefore = (await snapshot(page)).projects.length;
   await page.click('[data-pc="start-prompt-input"]');
   await page.type('[data-pc="start-prompt-input"]', SAY);
@@ -166,21 +166,21 @@ try {
   await page.evaluate(() => {
     [...document.querySelectorAll('.ps-prompt-foot .ps-chip')].find((x) => x.textContent.trim() === '9:16')?.click();
   });
-  const picked = await until('9:16 按下', () => page.evaluate(() =>
+  const picked = await until('9:16 pressed', () => page.evaluate(() =>
     [...document.querySelectorAll('.ps-prompt-foot .ps-chip')].find((x) => x.textContent.trim() === '9:16')?.getAttribute('aria-pressed') === 'true' || null), 5_000);
-  check(!!picked, '9:16 该被选上');
+  check(!!picked, '9:16 should be selected');
   await clickPc(page, 'start-prompt-send');
-  const entered = await until('进聊天页', () => page.$('[data-pc="start-chat"]'), 60_000);
-  check(!!entered, '说一句话之后该进这个新项目的聊天页');
+  const entered = await until('Enter the chat page', () => page.$('[data-pc="start-chat"]'), 60_000);
+  check(!!entered, 'After saying one line, it should enter this new project\'s chat page');
   // 开始页那句话要等 Agent 就绪才发得出去(`ChatView` 的 pending),所以等它真出现在对话里
-  const said = await until('那句话进对话', () => page.evaluate((want) =>
+  const said = await until('That line appears in the chat', () => page.evaluate((want) =>
     [...document.querySelectorAll('[data-pc="start-chat-msg"][data-from="me"]')].some((el) => el.textContent.includes(want)) || null, SAY), 90_000);
-  check(!!said, '刚说的那句话该在对话里');
+  check(!!said, 'The line just said should be in the chat');
   s = await snapshot(page);
-  check((s.where ?? '').includes('做一支'), '项目名该取自这句话', s.where);
-  check(s.projects.length === projectsBefore + 1, '侧栏该多出一个项目', { projectsBefore, now: s.projects });
+  check((s.where ?? '').includes('Make a'), 'The project name should come from this line', s.where);
+  check(s.projects.length === projectsBefore + 1, 'The sidebar should gain one project', { projectsBefore, now: s.projects });
   // 这一次建出来的项目叫什么(名字取自那句话,长了会截断加省略号)。下面核对自动保存时按它找,别认成上一轮留下的
-  const madeName = (s.where ?? '').replace(/^项目「/, '').replace(/」$/, '');
+  const madeName = (s.where ?? '').replace(/^Project "/, '').replace(/"$/, '');
   step('say', { ...s, dialogs: [...dialogs], shot: await shot(page, 'chat-after-say') });
 
   /* ---------------- 4. 本机 Agent 此刻说得出话吗 ---------------- */
@@ -190,9 +190,9 @@ try {
     why: document.querySelector('[data-pc="start-chat-note"]')?.textContent?.trim() ?? null,
     agentBtn: document.querySelector('[data-pc="start-agent-setup"]')?.textContent?.trim() ?? null,
   }));
-  check(agentState.canSend, '这台机器上有 Agent,这时该能发(发不了的话下面那句写了原因)', agentState);
+  check(agentState.canSend, 'This machine has an Agent, so sending should work now (if it cannot send, the next line states the reason)', agentState);
   // 等它开口:真回复、或者真错误 —— 两种都算接上了,但要如实记是哪一种
-  const replied = await until('本机 Agent 的回应', async () => {
+  const replied = await until('Reply from the local Agent', async () => {
     const r = await page.evaluate(() => ({
       agent: [...document.querySelectorAll('[data-pc="start-chat-msg"][data-from="agent"]')].length,
       say: document.querySelector('[data-pc="start-chat-msg"][data-from="agent"]')?.textContent?.trim().slice(0, 200) ?? null,
@@ -201,12 +201,12 @@ try {
     }));
     return r.agent > 0 || r.err ? r : null;
   }, 120_000);
-  check(!!replied, '本机 Agent 该有回应');
+  check(!!replied, 'The local Agent should reply');
   step('agent', { ...agentState, ...(replied ?? {}), shot: await shot(page, 'agent-reply') });
 
   /* ---------------- 4b. 自动保存:Agent 改了就落盘,不用用户按「保存项目」 ---------------- */
   // `workflow/project.md`「草稿自动保存在本机」。等 store 的 dirty 落回去,再从服务端读一遍草稿核对
-  const saved = await until('自动保存落盘', async (want) => {
+  const saved = await until('Autosave written to disk', async (want) => {
     const r = await page.evaluate(async () => {
       const res = await fetch('/api/projects', { cache: 'no-store' });
       const body = await res.json();
@@ -215,7 +215,7 @@ try {
     const hit = r.list.find((d) => d.name === want);
     return hit ? { hit } : null;
   }, 60_000, 1000, madeName);
-  check(!!saved, '这个项目该已经自己落盘了(不用用户按「保存项目」)');
+  check(!!saved, 'This project should already be written to disk on its own (without the user pressing "Save project")');
   step('autosave', { madeName, ...(saved ?? {}) });
 
   /* ---------------- 4c. 再开一条对话(= AI 栏的第二个 Agent 分页) ---------------- */
@@ -224,47 +224,47 @@ try {
   const agentsBefore = (await snapshot(page)).agents.length;
   if (await page.$('[data-pc="start-side-new-chat"]')) {
     await clickPc(page, 'start-side-new-chat');
-    await until('第二条对话', async () => {
+    await until('Second chat', async () => {
       const n = await page.$$eval('[data-pc="start-side-agent"]', (a) => a.length).catch(() => 0);
       return n > agentsBefore ? n : null;
     }, 15_000);
   }
   s = await snapshot(page);
-  check(s.agents.length === agentsBefore + 1, '该多出一条对话', { agentsBefore, now: s.agents });
+  check(s.agents.length === agentsBefore + 1, 'One more chat should appear', { agentsBefore, now: s.agents });
   step('chats', { agentsBefore, agents: s.agents, shot: await shot(page, 'two-chats') });
 
   /* ---------------- 5. 回首页:新项目列在侧栏和那一排里 ---------------- */
   await clickPc(page, 'start-home');
-  await until('回到开始页', async () => (await page.$('[data-pc="start-prompt"]')) && !(await page.$('[data-pc="start-chat"]')));
+  await until('back to the start page', async () => (await page.$('[data-pc="start-prompt"]')) && !(await page.$('[data-pc="start-chat"]')));
   s = await snapshot(page);
-  check(s.projects.length >= 1, '侧栏该列出刚建的本机项目', s.projects);
-  check(s.tiles.length >= 1, '那一排该有刚建的项目', s.tiles);
+  check(s.projects.length >= 1, 'The sidebar should list the just-created local project', s.projects);
+  check(s.tiles.length >= 1, 'That row should include the just-created project', s.tiles);
   step('home', { ...s, shot: await shot(page, 'home-with-project') });
 
   /* ---------------- 6. 右侧拓展栏 + 详细编辑 ---------------- */
   if (!(await page.$('[data-pc="start-chat"]'))) {
     // 回到聊天页:点侧栏里第一条对话
     await clickPc(page, 'start-side-agent');
-    await until('聊天页', () => page.$('[data-pc="start-chat"]'));
+    await until('Chat page', () => page.$('[data-pc="start-chat"]'));
   }
   // 进会话之后拓展栏自己就展开了(issue #6):已经开着就别再点,点了反而关上
   await page.evaluate(() => { if (!document.querySelector('[data-pc="start-ext"]')) document.querySelector('[data-pc="start-chat-ext-toggle"]')?.click(); });
-  const extOn = await until('右侧拓展栏', () => page.$('[data-pc="start-ext"]'));
-  check(!!extOn, '拓展栏该打得开');
+  const extOn = await until('Right side panel', () => page.$('[data-pc="start-ext"]'));
+  check(!!extOn, 'The side panel should open');
   step('ext', { ...(await snapshot(page)), shot: await shot(page, 'ext-panel') });
 
   await clickPc(page, 'start-ext-detail');
-  const detail = await until('详细编辑', () => page.$('[data-pc="start-detail"]'));
-  check(!!detail, '详细编辑该打得开(里面是真舞台真时间轴)');
+  const detail = await until('Detail editing', () => page.$('[data-pc="start-detail"]'));
+  check(!!detail, 'Detail editing should open (it contains the real stage and the real timeline)');
   // 挂的得是编辑界面那条**真**时间轴,不是自己画的一条只读轨道
-  const realTl = await until('真时间轴', () => page.$('[data-pc="start-detail-tl"] [data-pc="timeline"]'), 20_000);
-  check(!!realTl, '详细编辑里该挂编辑界面那条真时间轴(`src/editor/timeline/`)');
+  const realTl = await until('Real timeline', () => page.$('[data-pc="start-detail-tl"] [data-pc="timeline"]'), 20_000);
+  check(!!realTl, 'Detail editing should mount the editor\'s real timeline (`src/editor/timeline/`)');
   // 舞台那一格的宽高比就是项目的宽高(`VibeStage` 用 store 的 width/height):验开始页上点的 9:16 真落下去了
   const ratio = await page.evaluate(() => {
     const el = document.querySelector('.ps-stage');
     return el ? getComputedStyle(el).aspectRatio : null;
   });
-  check(ratio === '1080 / 1920' || ratio === '1080/1920', '项目该按开始页上点的 9:16 建', ratio);
+  check(ratio === '1080 / 1920' || ratio === '1080/1920', 'The project should be created with the 9:16 clicked on the start page', ratio);
   step('detail', { ratio, realTimeline: !!realTl, ...(await snapshot(page)), shot: await shot(page, 'detail-edit') });
 
   /* ---------------- 6b. 时间轴真的可调:拖一段,它的起点真的变了 ---------------- */
@@ -277,14 +277,14 @@ try {
   });
   // `__pcStore` 是时间轴模块挂的(`src/editor/timeline/index.tsx`);挂得上就说明那条真时间轴真的载进来了
   const hasStore = await until('__pcStore', () => page.evaluate(() => !!window.__pcStore), 20_000);
-  check(!!hasStore, '真时间轴的调试口子该在(它是时间轴模块挂的)');
+  check(!!hasStore, 'The real timeline\'s debug hook should exist (it is attached by the timeline module)');
   // 先等 Agent 自己往里放东西;它这一轮慢的话就自己放一段,这一步验的是「拖得动」,不该卡在等模型
   let seeded = false;
   let beforeDrag = await soft(pickClip, 30_000);
   if (!beforeDrag && hasStore) {
     seeded = true;
     await page.evaluate(() => { window.__pcStore.actions.addCardClip('av-pulse', 1, { duration: 2 }); });
-    beforeDrag = await until('自己放的那一段', pickClip, 10_000);
+    beforeDrag = await until('The clip it placed itself', pickClip, 10_000);
   }
   let dragged = null;
   const diag = {};
@@ -302,34 +302,34 @@ try {
     diag.leftDuring = await page.$eval(`[data-clip-id="${beforeDrag.id}"]`, (el) => el.style.left);
     await page.mouse.move(box.x + 120, box.y + 4, { steps: 6 });
     await page.mouse.up();
-    dragged = await until('起点真的变了', async () => {
+    dragged = await until('The start really changed', async () => {
       const now = await pickClip();
       return now && Math.abs(now.start - beforeDrag.start) > 1e-6 ? now : null;
     }, 10_000);
   }
-  check(!!dragged, '拖一段之后它的起点该变(时间轴可调)', { beforeDrag, dragged });
+  check(!!dragged, 'After dragging a clip its start should change (the timeline is adjustable)', { beforeDrag, dragged });
   step('drag', { seeded, beforeDrag, afterDrag: dragged, ...diag, shot: await shot(page, 'timeline-dragged') });
 
   /* ---------------- 6c. 右键菜单里有这一页独有的「引用到输入框」 ---------------- */
   let menuItems = [];
   if (beforeDrag) {
     await page.click(`[data-clip-id="${beforeDrag.id}"]`, { button: 'right' });
-    await until('右键菜单', () => page.$('[data-pc="tl-ctxmenu"]'), 10_000);
+    await until('Context menu', () => page.$('[data-pc="tl-ctxmenu"]'), 10_000);
     menuItems = await page.$$eval('[data-pc="tl-ctxmenu"] .pc-tl-ctxmenu-item', (a) => a.map((el) => el.textContent.trim()));
     await page.keyboard.press('Escape');
   }
-  check(menuItems.includes('引用到输入框'), '右键菜单该有这一页独有的「引用到输入框」', menuItems);
-  check(menuItems.some((m) => m === '删除' || m.startsWith('在播放头处分割')), '右键菜单该是真时间轴那一套(有删除、分割)', menuItems);
+  check(menuItems.includes('Quote into input box'), 'The context menu should have "Quote into input box", which only this page has', menuItems);
+  check(menuItems.some((m) => m === 'Delete' || m.startsWith('Split at playhead')), 'The context menu should be the real timeline\'s set (has delete, split)', menuItems);
   step('ctxmenu', { items: menuItems });
 
   /* ---------------- 7. 「进入传统式」→ 编辑界面 ---------------- */
   await clickPc(page, 'start-enter-traditional');
-  const inEditor = await until('编辑界面', () => page.$('[data-pc="mode-switch"]'), 90_000);
-  check(!!inEditor, '该进编辑界面');
+  const inEditor = await until('Editor', () => page.$('[data-pc="mode-switch"]'), 90_000);
+  check(!!inEditor, 'Should enter the editor');
   s = await snapshot(page);
-  const vibeSlot = (s.modes ?? []).find((m) => m.label === '氛围式');
-  check(!!vibeSlot, '顶栏该有「氛围式」那一格', s.modes);
-  check(vibeSlot && !vibeSlot.off, '桌面版这一格不该再置灰', vibeSlot);
+  const vibeSlot = (s.modes ?? []).find((m) => m.label === 'Vibe mode');
+  check(!!vibeSlot, 'The top bar should have the "Vibe mode" slot', s.modes);
+  check(vibeSlot && !vibeSlot.off, 'In the desktop app this slot should no longer be grayed out', vibeSlot);
   step('editor', { ...s, shot: await shot(page, 'editor-modeswitch') });
 
   /* ---------------- 8. 顶栏那一格「氛围式」:回氛围式那一屏 ---------------- */
@@ -343,24 +343,24 @@ try {
     window.confirm = (m) => { window.__pcConfirms.push(String(m)); return true; };
   });
   await clickPc(page, 'mode-vibe');
-  const backVibe = await until('回到氛围式', () => page.$('[data-pc="start-desktop"]'), 60_000);
+  const backVibe = await until('Back to Vibe mode', () => page.$('[data-pc="start-desktop"]'), 60_000);
   const confirms = await page.evaluate(() => window.__pcConfirms ?? []);
-  check(confirms.length === 0, '自动保存过了,切氛围式不该再问「有未保存的改动」', confirms);
-  check(!!backVibe, '点「氛围式」该离开编辑界面、回到氛围式那一屏');
+  check(confirms.length === 0, 'Autosave has already happened, so switching to Vibe mode should no longer ask "There are unsaved changes"', confirms);
+  check(!!backVibe, 'Clicking "Vibe mode" should leave the editor and return to the Vibe mode screen');
   s = await snapshot(page);
-  check(s.url.includes('ui=vibe'), '回去之后地址仍记着 ?ui=vibe', s.url);
+  check(s.url.includes('ui=vibe'), 'After returning, the URL still records ?ui=vibe', s.url);
   step('back', { confirms, ...s, shot: await shot(page, 'back-to-vibe') });
 
   /* ---------------- 9. 「拓展与存储」回传统开始页 ---------------- */
   await clickPc(page, 'start-go-classic');
-  const classicAgain = await until('传统开始页', () => page.$('[data-pc="start-go-vibe"]'));
-  check(!!classicAgain, '「拓展与存储」该回到传统开始页');
+  const classicAgain = await until('Classic start page', () => page.$('[data-pc="start-go-vibe"]'));
+  check(!!classicAgain, '"Extensions and storage" should return to the classic start page');
   s = await snapshot(page);
-  check(!s.url.includes('ui=vibe'), '回传统页之后地址上的 ?ui=vibe 该去掉', s.url);
+  check(!s.url.includes('ui=vibe'), 'After returning to the classic page, ?ui=vibe should be removed from the URL', s.url);
   step('classic-again', { ...s, shot: await shot(page, 'classic-again') });
   step('dialogs', dialogs);
 } catch (e) {
-  fails.push(`抛了:${e instanceof Error ? e.message : String(e)}`);
+  fails.push(`Threw: ${e instanceof Error ? e.message : String(e)}`);
   try { await shot(page, 'threw'); } catch { /* 截不到就算了 */ }
 } finally {
   // 只断开,不关浏览器 —— 这是用户的桌面应用窗口,关掉就把应用关了

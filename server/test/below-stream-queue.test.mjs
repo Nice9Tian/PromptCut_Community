@@ -38,14 +38,14 @@ mock.module(new URL('../bakery/index.mjs', import.meta.url).href, {
   exports: {
     openBakery: async () => fakeBakery(),
     findFfmpeg: async () => 'ffmpeg-fake',
-    streamPngVideo: () => { throw new Error('单测不编码 MOV'); },
-    bakeFrames: async () => { throw new Error('这个测试不渲快照'); },
+    streamPngVideo: () => { throw new Error('Unit tests do not encode MOV'); },
+    bakeFrames: async () => { throw new Error('This test does not render snapshots'); },
   },
 });
 
 mock.module(new URL('../bakery/bake.mjs', import.meta.url).href, {
   exports: {
-    bakeFrames: async () => { throw new Error('这个测试不渲快照'); },
+    bakeFrames: async () => { throw new Error('This test does not render snapshots'); },
     dirtyStreamLease: (bakery) => { if (bakery?.streamLease) bakery.streamLease.dirty = true; },
     bakeStream: async (bakery, opts) => {
       const { streamSignature, fromFrame, toFrame, signal } = opts;
@@ -55,7 +55,7 @@ mock.module(new URL('../bakery/bake.mjs', import.meta.url).href, {
       const continues = !!lease && !lease.dirty && lease.page === bakery.page && lease.streamSignature === streamSignature && fromFrame === lease.lastFrame + 1;
       let captured = 0;
       for (let frame = fromFrame; frame <= toFrame; frame += stride) {
-        if (signal?.aborted) throw Object.assign(new Error('已取消'), { cancelled: true });
+        if (signal?.aborted) throw Object.assign(new Error('Cancelled'), { cancelled: true });
         await opts.onFrame?.(frame, Buffer.from(`png:${streamSignature}:${frame}`));
         captured++;
       }
@@ -197,12 +197,12 @@ async function withBelow(on, fn) {
 
 /* ================================================================== 用例 */
 
-test('BLQ-off 关着(旧节点的样子):计划里没有这种流,切不出这种任务,层表里没有这种行', { timeout: 30_000 }, async (t) => {
+test('BLQ-off off (the way an old node behaves): the plan has no such stream, no such task can be split out, and the layer table has no such row', { timeout: 30_000 }, async (t) => {
   t.after(cleanup);
   await withBelow(false, async () => {
     const A = await streamPipeline();
     const ctx = await executorFor(A).plan(planView(), { signal: signalNone() });
-    assert.deepEqual(ctx.streams.map((s) => `${s.kind}:${s.topClipId}`).sort(), ['card:clip-a', 'card:clip-top'], '只有独立卡的单卡流,毛玻璃不进');
+    assert.deepEqual(ctx.streams.map((s) => `${s.kind}:${s.topClipId}`).sort(), ['card:clip-a', 'card:clip-top'], 'Only single-card streams of independent cards; frosted glass is not included');
     assert.ok(ctx.streams.every((s) => !('belowClipIds' in s)));
     const tasks = streamTasksOf(ctx);
     assert.ok(tasks.length > 0);
@@ -213,7 +213,7 @@ test('BLQ-off 关着(旧节点的样子):计划里没有这种流,切不出这�
   });
 });
 
-test('BLQ-on 打开以后:计划多出毛玻璃的那一条;切出的任务带 belowDependent;执行器对得回这一版的流,按「只藏上面的层」的隔离工程产', { timeout: 60_000 }, async (t) => {
+test('BLQ-on once turned on: the plan gains the frosted glass stream; the split-out task carries belowDependent; the executor can match the task back to this version\'s stream, and produces it with the "hide only the layers above" isolated project', { timeout: 60_000 }, async (t) => {
   t.after(cleanup);
   await withBelow(true, async () => {
     const A = await streamPipeline();
@@ -223,7 +223,7 @@ test('BLQ-on 打开以后:计划多出毛玻璃的那一条;切出的任务带 b
     const q = ctx.streams.find((s) => s.kind === 'below');
     assert.equal(q.plane, 'stage');
     assert.deepEqual(q.clipIds, ['clip-g']);
-    assert.deepEqual(q.belowClipIds, ['clip-a'], '下面那张卡算进键;上面那张不算');
+    assert.deepEqual(q.belowClipIds, ['clip-a'], 'The card below counts into the key; the card above does not');
     assert.equal(q.streamKey, resultKeyOf(q.contentKey, OWN));
     assert.deepEqual([q.originFrame, q.firstSegment, q.lastSegment], [30, 0, 5]);
     const tasks = streamTasksOf(ctx).filter((x) => x.input.contentKey === q.contentKey);
@@ -236,16 +236,16 @@ test('BLQ-on 打开以后:计划多出毛玻璃的那一条;切出的任务带 b
     const markBakes = streamBakes.length, markResets = resets.length;
     await executor.render(view(task), { signal: signalNone(), progress: () => {} });
     const bakes = streamBakes.slice(markBakes);
-    assert.ok(bakes.length > 0 && bakes.every((b) => b.streamSignature === q.streamKey), '产的就是这条流');
+    assert.ok(bakes.length > 0 && bakes.every((b) => b.streamSignature === q.streamKey), 'What was produced is exactly this stream');
     // 这种流推过去的每一拍都要画一张(下层的动画不画就不往前走):头一段接不上租约,从回放的起点(第 0 帧)起每一帧都交给取帧钩子,
     // 第 30 帧之前的画完就丢、不进编码器;后面几段接着租约,从各自的第一帧起
-    assert.deepEqual(bakes.map((b) => b.fromFrame), [0, 45, 60, 75, 90, 105], '分段 0～5(第 30 帧起每 15 帧一段),满密度;头一段从回放的起点画起');
+    assert.deepEqual(bakes.map((b) => b.fromFrame), [0, 45, 60, 75, 90, 105], 'Segments 0 to 5 (one segment per 15 frames from frame 30), full density; the first segment is drawn from the start of the replay');
     assert.ok(bakes.every((b) => b.stride === 1));
-    assert.deepEqual(bakes[0].clip, { x: 0, y: 0, w: 320, h: 180 }, '按舞台坐标截(上界是整个画面)');
-    assert.equal(bakes[0].mountFrame, 0, '下层那张卡是 motion 式,从它的挂载帧推过来');
+    assert.deepEqual(bakes[0].clip, { x: 0, y: 0, w: 320, h: 180 }, 'Captured in stage coordinates (the upper bound is the whole frame)');
+    assert.equal(bakes[0].mountFrame, 0, 'The lower card is motion-style and is advanced from its mount frame');
     // 灌进预渲染间的隔离工程:目标卡和下面的层出画,上面的层藏起来
     const iso = resets.slice(markResets)[0];
-    assert.ok(iso, '重灌过一次工程');
+    assert.ok(iso, 'The project was reloaded once');
     assert.deepEqual(iso.tracks.filter((tr) => !tr.hidden).map((tr) => tr.clips.map((c) => c.id)), [['clip-g'], ['clip-a']]);
     assert.deepEqual(iso.tracks.filter((tr) => tr.hidden).map((tr) => [tr.clips.map((c) => c.id), tr.sourceOnly]), [[['clip-top'], true]]);
     // 清单里记着这是哪一种流
@@ -253,9 +253,9 @@ test('BLQ-on 打开以后:计划多出毛玻璃的那一条;切出的任务带 b
     assert.equal(manifest.kind, 'below');
     assert.equal(manifest.plane, 'stage');
     assert.deepEqual(manifest.clipIds, ['clip-g']);
-    assert.equal(manifest.originFrame, 30, '清单记着这条流的第一帧');
+    assert.equal(manifest.originFrame, 30, 'The manifest records the first frame of this stream');
     assert.deepEqual(Object.keys(manifest.segments).map(Number).sort((x, y) => x - y), [0, 1, 2, 3, 4, 5]);
-    for (let n = 0; n <= 5; n++) assert.equal(manifest.segments[n]?.stride, 1, `分段 ${n} 产了`);
+    for (let n = 0; n <= 5; n++) assert.equal(manifest.segments[n]?.stride, 1, `Segment ${n} was produced`);
     // 层表那一行
     const entry = [...A.entries.values()][0];
     const rows = (A.layerMapStreamOptions(entry).streams ?? []).filter((s) => s.kind === 'below');
@@ -279,10 +279,10 @@ test('BLQ-on 打开以后:计划多出毛玻璃的那一条;切出的任务带 b
     const mut = (fn) => { const copy = view(task); fn(copy); return copy; };
     const cardTask = streamTasksOf(ctx).find((x) => x.input.clipId === 'clip-a');
     const cases = [
-      ['分段越界', mut((x) => { x.range = { unit: 'segment', from: 2, to: 9 }; })],
-      ['结果键是别的指纹的', mut((x) => { x.resultKey = resultKeyOf(x.input.contentKey, 'aaaaaaaaaaaaaaaa'); })],
-      ['任务不要下层、这一版的流是依赖下层的', mut((x) => { x.requires.belowDependent = false; })],
-      ['任务要下层、这一版的流是单卡流', (() => { const copy = view(cardTask); copy.requires.belowDependent = true; return copy; })()],
+      ['Segment out of range', mut((x) => { x.range = { unit: 'segment', from: 2, to: 9 }; })],
+      ['The result key belongs to a different fingerprint', mut((x) => { x.resultKey = resultKeyOf(x.input.contentKey, 'aaaaaaaaaaaaaaaa'); })],
+      ['The task does not require the lower layer, but this version\'s stream is below-dependent', mut((x) => { x.requires.belowDependent = false; })],
+      ['The task requires the lower layer, but this version\'s stream is a single-card stream', (() => { const copy = view(cardTask); copy.requires.belowDependent = true; return copy; })()],
     ];
     const mark = streamBakes.length;
     for (const [what, bad] of cases) {
@@ -290,7 +290,7 @@ test('BLQ-on 打开以后:计划多出毛玻璃的那一条;切出的任务带 b
       assert.equal(err?.code, 'plan-mismatch', `${what}:${err?.code} ${err?.message}`);
       assert.equal(err?.retryable, false);
     }
-    assert.equal(streamBakes.length, mark, '对不上的不截图');
+    assert.equal(streamBakes.length, mark, 'No screenshots for ones that do not match');
     // 单卡流的任务照旧产得出来(这种流没有影响到它)
     await executor.render(view(cardTask), { signal: signalNone(), progress: () => {} });
     assert.ok(streamBakes.length > mark);
@@ -298,7 +298,7 @@ test('BLQ-on 打开以后:计划多出毛玻璃的那一条;切出的任务带 b
   });
 });
 
-test('BLQ-foreign 别的节点(开着)切出来的这种任务,到了关着的节点:对不上这一版的流,不可重试,不截图', { timeout: 60_000 }, async (t) => {
+test('BLQ-foreign a task of this kind split out by another node (with the feature on) arrives at a node with it off: it does not match this version\'s stream, is not retryable, and takes no screenshots', { timeout: 60_000 }, async (t) => {
   t.after(cleanup);
   const task = await withBelow(true, async () => {
     const B = await streamPipeline();
@@ -313,7 +313,7 @@ test('BLQ-foreign 别的节点(开着)切出来的这种任务,到了关着的�
     const err = await executor.render(view(task), { signal: signalNone(), progress: () => {} }).then(() => null, (e) => e);
     assert.equal(err?.code, 'plan-mismatch');
     assert.equal(err?.retryable, false);
-    assert.match(err.message, /依赖下层的流/);
+    assert.match(err.message, /below-dependent stream/);
     assert.equal(streamBakes.length, mark);
   });
 });

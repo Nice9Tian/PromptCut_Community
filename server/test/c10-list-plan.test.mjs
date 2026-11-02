@@ -24,27 +24,27 @@ const FP_A = 'aaaaaaaaaaaaaaaa';
 const FP_B = 'bbbbbbbbbbbbbbbb';
 const CV = 'c0de5a';
 
-test('C10-LP1 清单计划的形状与入站校验', () => {
+test('C10-LP1 shape of the manifest plan and inbound validation', () => {
   const a = clipsPlanTaskOf({ projectId: 'p1', projectRev: 3, clips: ['c2', 'c1', 'c1'] });
   const b = clipsPlanTaskOf({ projectId: 'p1', projectRev: 3, clips: ['c1', 'c2'] });
-  assert.equal(a.id, b.id, '同一份清单同一个键');
+  assert.equal(a.id, b.id, 'The same manifest gets the same key');
   assert.match(a.id, /^plan:p1@3#clips:[0-9a-z]+$/);
   assert.equal(a.resultKey, a.id.slice('plan:'.length));
   assert.deepEqual(a.input.clips, ['c1', 'c2']);
   assert.equal(a.priority, 'normal');
   assert.equal(priorityBand(a.priority), 'normal');
-  assert.deepEqual(a.requires, {}, '不带 envFingerprint、preferNode');
+  assert.deepEqual(a.requires, {}, 'Does not carry envFingerprint or preferNode');
   assert.deepEqual(clipsPlanTaskOf({ projectId: 'p1', projectRev: 3, clips: ['x'], codeVersion: CV }).requires, { codeVersion: CV });
   assert.ok(isClipsPlan(a) && isListPlan(a) && !isBackfillPlan(a));
   const bf = backfillPlanTaskOf({ projectId: 'p1', projectRev: 3, clips: ['c1', 'c2'] });
   assert.ok(isListPlan(bf) && !isClipsPlan(bf));
-  assert.notEqual(bf.id, a.id, '预渲染重试计划与清单计划各用各的键');
+  assert.notEqual(bf.id, a.id, 'The prerender retry plan and the manifest plan each use their own key');
   assert.ok(!isListPlan(planTaskOf({ projectId: 'p1', projectRev: 3 })));
 
   const parse = (task) => parseInbound({ type: 'task.publish', tasks: [task] });
   assert.equal(parse(a).ok, true);
-  assert.equal(parse({ ...a, priority: 0 }).ok, true, '整数也是 normal 档');
-  assert.equal(parse({ ...a, priority: 'backfill' }).ok, false, '预渲染重试用 #backfill: 的键');
+  assert.equal(parse({ ...a, priority: 0 }).ok, true, 'An integer is also the normal tier');
+  assert.equal(parse({ ...a, priority: 'backfill' }).ok, false, 'Prerender retry uses a #backfill: key');
   assert.equal(parse({ ...a, input: {} }).ok, false);
   assert.equal(parse({ ...a, input: { clips: [] } }).ok, false);
   assert.equal(parse({ ...a, resultKey: 'p1@3#clips:BAD!', id: 'plan:p1@3#clips:BAD!' }).ok, false);
@@ -71,17 +71,17 @@ function scene() {
   return { q, take, publish, claim, advance: (ms) => { now += ms; } };
 }
 
-test('C10-LP2 队列:带清单的 plan host 能认领;桌面 plan host 认领 0 次;browser 一律不认领', () => {
+test('C10-LP2 queue: a plan host with a manifest can claim; a desktop plan host claims 0 times; browser never claims', () => {
   const s = scene();
   const clips = clipsPlanTaskOf({ projectId: 'p1', projectRev: 1, clips: ['c1'], codeVersion: CV });
   assert.equal(s.publish(clips).created, true);
-  assert.equal(s.claim('br', clips.id).reason, 'plan-profile', 'browser 不认领 plan');
+  assert.equal(s.claim('br', clips.id).reason, 'plan-profile', 'browser does not claim the plan');
   const got = s.claim('host', clips.id);
-  assert.equal(got.type, 'task.claimed', `host 认领清单计划:${JSON.stringify(got)}`);
+  assert.equal(got.type, 'task.claimed', `host claims the manifest plan:${JSON.stringify(got)}`);
 
   const bf = backfillPlanTaskOf({ projectId: 'p1', projectRev: 1, clips: ['c2'] });
   s.publish(bf);
-  assert.equal(s.claim('host', bf.id).type, 'task.claimed', 'host 认领预渲染重试计划');
+  assert.equal(s.claim('host', bf.id).type, 'task.claimed', 'host claims the prerender retry plan');
 
   // 桌面 plan(不带清单,有 preferNode):X4 照旧,窗口内外 host 都是 plan-profile
   const desk = planTaskOf({ projectId: 'p2', projectRev: 1, codeVersion: CV, envFingerprint: FP_A, preferNode: 'PC' });
@@ -93,11 +93,11 @@ test('C10-LP2 队列:带清单的 plan host 能认领;桌面 plan host 认领 0 
     if (r.type === 'task.claimed') hostClaims++;
     else assert.equal(r.reason, 'plan-profile');
   }
-  assert.equal(hostClaims, 0, '桌面 plan:host 认领 0 次');
-  assert.equal(s.claim('pc', desk.id).type, 'task.claimed', '桌面 plan 照旧给 pc');
+  assert.equal(hostClaims, 0, 'Desktop plan: host claims 0 times');
+  assert.equal(s.claim('pc', desk.id).type, 'task.claimed', 'The desktop plan still goes to pc');
 });
 
-test('C10-LP3 节点侧规则 6:host 见到带清单的 plan 放行,见到桌面 plan 跳过', () => {
+test('C10-LP3 node-side rule 6: host lets a plan with a manifest through and skips a desktop plan', () => {
   const host = { profile: 'host', envFingerprint: FP_B, codeVersions: [CV], capabilities: { userCards: true } };
   const view = (t) => ({ ...t, source: { ...t.source, userId: 'u1' } });
   assert.deepEqual(checkClaimable(view(clipsPlanTaskOf({ projectId: 'p', projectRev: 1, clips: ['a'] })), host), { ok: true });
@@ -127,7 +127,7 @@ function context() {
   };
 }
 
-test('C10-LP4 独立主机认领清单计划:用自己的指纹切分、只切清单里的片段、不切流、normal 档;锁住的卡按锁的指纹出任务', async () => {
+test('C10-LP4 a standalone host claims the manifest plan: splits with its own fingerprint, splits only the clips in the manifest, does not split streams, normal tier; locked cards produce tasks by the lock\'s fingerprint', async () => {
   let now = 5_000;
   const lb = createLoopback();
   const q = createRenderQueue({ now: () => now, send: lb.queueSend, epoch: 'e1' });
@@ -174,20 +174,20 @@ test('C10-LP4 独立主机认领清单计划:用自己的指纹切分、只切�
     node.tick();
     now += 250;
   }
-  assert.deepEqual(plans, [plan.id], 'host 认领了清单计划');
+  assert.deepEqual(plans, [plan.id], 'host claimed the manifest plan');
   const derived = out.filter((m) => m.type === 'task.publish').flatMap((m) => m.tasks);
   const byClip = (id) => derived.filter((t) => t.input.clipId === id);
-  assert.ok(derived.length > 0, '切出了细任务');
-  assert.ok(derived.every((t) => t.kind === 'snapshot'), '不切流');
-  assert.ok(derived.every((t) => t.input.clipId !== 'c-other'), '只切清单里的片段(本机判重、不在清单里的不切)');
-  assert.ok(derived.every((t) => priorityBand(t.priority) === 'normal'), '细任务 normal 档');
+  assert.ok(derived.length > 0, 'Fine-grained tasks were split out');
+  assert.ok(derived.every((t) => t.kind === 'snapshot'), 'Streams are not split');
+  assert.ok(derived.every((t) => t.input.clipId !== 'c-other'), 'Only the clips in the manifest are split (classified as heavy locally; clips not in the manifest are not split)');
+  assert.ok(derived.every((t) => priorityBand(t.priority) === 'normal'), 'Fine-grained tasks are in the normal tier');
   assert.ok(derived.every((t) => t.source.derivedFrom === plan.id));
   const free = byClip('c-free');
-  assert.ok(free.length > 0 && free.every((t) => t.requires.envFingerprint === FP_B && t.resultKey === resultKeyOf('ck-free'.padEnd(64, '0'), FP_B)), '没锁的卡用主机自己的指纹');
+  assert.ok(free.length > 0 && free.every((t) => t.requires.envFingerprint === FP_B && t.resultKey === resultKeyOf('ck-free'.padEnd(64, '0'), FP_B)), 'Unlocked cards use the host\'s own fingerprint');
   const locked = byClip('c-locked').filter((t) => t.requires.envFingerprint === FP_A);
-  assert.ok(locked.length > 0, `锁住的卡改按锁的指纹出任务:${JSON.stringify(byClip('c-locked').map((t) => t.requires.envFingerprint))}`);
+  assert.ok(locked.length > 0, `Locked cards produce tasks by the lock's fingerprint instead:${JSON.stringify(byClip('c-locked').map((t) => t.requires.envFingerprint))}`);
   assert.ok(locked.every((t) => t.resultKey === resultKeyOf(lockedCk, FP_A)));
   lb.flush();
-  assert.equal(q.describe().tasks.find((t) => t.id === plan.id)?.state, 'done', 'plan 完成');
+  assert.equal(q.describe().tasks.find((t) => t.id === plan.id)?.state, 'done', 'The plan is done');
   node.stop();
 });

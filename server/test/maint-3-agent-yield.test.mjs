@@ -27,15 +27,15 @@ const bakeLog = [];
 let beforeFrame = null;
 mock.module(new URL('../bakery/index.mjs', import.meta.url).href, {
   exports: {
-    openBakery: async () => { throw new Error('单测不开 Chrome'); },
+    openBakery: async () => { throw new Error('Unit test does not open Chrome'); },
     findFfmpeg: async () => 'ffmpeg',
-    streamPngVideo: () => { throw new Error('单测不编码'); },
+    streamPngVideo: () => { throw new Error('Unit test does not encode'); },
     bakeFrames: async (bakery, opts = {}) => {
       const rec = { bakery: bakery?.name ?? null, targetFrames: [...(opts.targetFrames ?? [])], snapshotFrames: [...(opts.snapshotFrames ?? [])], events: [] };
       bakeLog.push(rec);
       for (const frame of rec.targetFrames) {
         // 同真的:取消只在两帧之间生效
-        if (opts.signal?.aborted) throw Object.assign(new Error('已取消'), { cancelled: true });
+        if (opts.signal?.aborted) throw Object.assign(new Error('Cancelled'), { cancelled: true });
         await beforeFrame?.(frame, rec);
         if (rec.snapshotFrames.includes(frame)) {
           await opts.onSnapshot?.(frame, '<div data-pc-scene=""></div>', [{ id: 'clip-a', frame, html: `<p>a ${frame}</p>` }]);
@@ -56,7 +56,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check, ms = 3000) {
   const t0 = Date.now();
   while (!check()) {
-    if (Date.now() - t0 > ms) throw new Error('等不到条件成立');
+    if (Date.now() - t0 > ms) throw new Error('Timed out waiting for the condition');
     await sleep(1);
   }
 }
@@ -118,7 +118,7 @@ async function runFill(root, { singlePass, range, yieldAt = null }) {
   } finally { beforeFrame = null; await pipeline.close().catch(() => {}); }
 }
 
-test('MNT3-Y-1 一趟顺推时给 Agent 让路:交完当前 4 帧块停下,从下一个没做的批接着顺推;帧与不让路时逐字相同', async () => {
+test('MNT3-Y-1 yield to the Agent during a forward pass: stop after finishing the current 4-frame block and resume the pass from the next batch not yet done; the frames are identical to the no-yield case', async () => {
   const range = { from: 0, to: 23 };
   const plain = await withTmp(root => runFill(root, { singlePass: true, range }));
   const yielded = await withTmp(root => runFill(root, { singlePass: true, range, yieldAt: 5 }));
@@ -137,17 +137,17 @@ test('MNT3-Y-1 一趟顺推时给 Agent 让路:交完当前 4 帧块停下,从�
   assert.deepEqual(plain.disk.frames, [[0, 23]]);
 });
 
-test('MNT3-Y-2 逐批跑时在两批之间让路;盘上的快照与不让路时相同', async () => {
+test('MNT3-Y-2 when running batch by batch, yield between two batches; the snapshots on disk are identical to the no-yield case', async () => {
   const range = { from: 0, to: 15 };
   const plain = await withTmp(root => runFill(root, { singlePass: false, range }));
   const yielded = await withTmp(root => runFill(root, { singlePass: false, range, yieldAt: 5 }));
   assert.deepEqual(yielded.bakes.map(b => b.targetFrames[0]), [0, 4, 8, 12]);
-  assert.deepEqual(yielded.log, ['Y after shot 7'], '第 4 批(4～7)做完、第 8 批开工之前让路');
+  assert.deepEqual(yielded.log, ['Y after shot 7'], 'Yield after batch 4 (4-7) is done and before batch 8 starts');
   assert.deepEqual(yielded.batches, plain.batches);
   assert.deepEqual(yielded.disk, plain.disk);
 });
 
-test('MNT3-Y-3 管线整合:专用实例做快照细任务时来了 Agent 任务 —— 它在下一个批边界开工,队列任务最后照样完成、帧相同', async () => {
+test('MNT3-Y-3 pipeline integration: when an Agent task arrives while the dedicated instance is working on a fine-grained snapshot task, it starts at the next batch boundary, and the queue task still finishes in the end with the same frames', async () => {
   const baseline = await withTmp(root => runFill(root, { singlePass: true, range: { from: 0, to: 23 } }));
   await withTmp(async root => {
     bakeLog.length = 0;
@@ -172,29 +172,29 @@ test('MNT3-Y-3 管线整合:专用实例做快照细任务时来了 Agent 任务
       const beats = [];
       const b = pipeline.renderCardSnapshotRange(entry, control, { from: 0, to: 23 }, { heartbeat: () => beats.push(Date.now()) });
       await b;
-      assert.ok(agentTask, 'Agent 任务在专用实例推帧时到了');
+      assert.ok(agentTask, 'The Agent task arrived while the dedicated instance was pushing frames');
       assert.equal(await agentTask, 'X');
       // Agent 任务在第 3 帧交完(第 0～3 帧这一块)之后开工,没有等整段 24 帧
       assert.deepEqual(log.filter(e => e.startsWith('X')), ['X@agent after shot 3']);
       const agentBakes = bakeLog.filter(r => r.bakery === 'agent');
-      assert.deepEqual(agentBakes.map(r => r.targetFrames[0]), [0, 4], '让路前一趟、让路后从第 4 帧起一趟');
-      assert.equal(bakeLog.filter(r => r.bakery === 'queue').length, 0, '快照细任务整段都在专用实例上做');
+      assert.deepEqual(agentBakes.map(r => r.targetFrames[0]), [0, 4], 'One pass before yielding, and one pass from frame 4 after yielding');
+      assert.equal(bakeLog.filter(r => r.bakery === 'queue').length, 0, 'The whole fine-grained snapshot task runs on the dedicated instance');
       // 盘上的帧与不让路时相同
       assert.deepEqual(await diskOf(pipeline, control), baseline.disk);
       const y = pipeline.diagnostics().scheduler.yields;
       assert.equal(y.count, 1);
       assert.equal(y.tasks, 1);
       assert.equal(y.last.reason, 'batch');
-      assert.ok(beats.length >= 2, `让路前后各调一次心跳(${beats.length})`);
+      assert.ok(beats.length >= 2, `Heartbeat called once before and once after yielding (${beats.length})`);
       const recent = pipeline.diagnostics().scheduler.recent;
-      assert.ok(recent.some(r => r.kind === 'queue' && r.worker === 'agent'), '调度记录里快照细任务在专用实例上开工');
+      assert.ok(recent.some(r => r.kind === 'queue' && r.worker === 'agent'), 'The scheduling record shows the fine-grained snapshot task starting on the dedicated instance');
       openHold();
       await a;
     } finally { beforeFrame = null; openHold?.(); await pipeline.close().catch(() => {}); }
   });
 });
 
-test('MNT3-Y-4 drainAgentInbox:连着来的一次做完;做的时候定时调心跳,前后各一次', async (t) => {
+test('MNT3-Y-4 drainAgentInbox: tasks arriving back to back are finished in one go; heartbeats are called periodically while working, once before and once after', async (t) => {
   t.mock.timers.enable({ apis: ['setInterval'] });
   const svc = new FramePipeline({ root: os.tmpdir(), origin: () => 'http://127.0.0.1:1', interactive: true, mode: 'full' });
   svc.agentGraceMs = 0;   // 宽限期另见 Y-7
@@ -209,11 +209,11 @@ test('MNT3-Y-4 drainAgentInbox:连着来的一次做完;做的时候定时调心
   // 做第一个的时候又来一个:同一次让路里接着做
   unit.inbox.push({ body: async () => { order.push('x2'); return 2; }, resolve: v => order.push(`ok${v}`), reject: () => {} });
   t.mock.timers.tick(AGENT_YIELD_BEAT_MS * 3);
-  assert.equal(beats.length, 1 + 3, '开头一次 + 每 20 s 一次');
+  assert.equal(beats.length, 1 + 3, 'Once at the start + once every 20 s');
   release();
   assert.equal(await draining, 2);
   assert.deepEqual(order, ['x1', 'ok1', 'x2', 'ok2']);
-  assert.equal(beats.length, 1 + 3 + 1, '结束再一次');
+  assert.equal(beats.length, 1 + 3 + 1, 'Once more at the end');
   assert.equal(svc.agentYieldStats.count, 1);
   assert.equal(svc.agentYieldStats.tasks, 2);
   await svc.close().catch(() => {});
@@ -315,16 +315,16 @@ async function leaseRun({ beat }) {
   return { view, leaseLost: leaseLost() };
 }
 
-test('MNT3-Y-5 让路 200 s(超过 STALL_MS):执行器的心跳让队列任务不被判停滞、一次完成;不带心跳照旧按 stalled 收回', async () => {
+test('MNT3-Y-5 yielding for 200 s (exceeding STALL_MS): the heartbeat of the executor keeps the queue task from being judged stalled and it completes in one attempt; without a heartbeat it is still reclaimed as stalled', async () => {
   const withBeat = await leaseRun({ beat: true });
-  assert.deepEqual(withBeat.leaseLost, [], '让路期间租约没丢');
+  assert.deepEqual(withBeat.leaseLost, [], 'The lease was not lost while yielding');
   assert.equal(withBeat.view.state, 'done');
-  assert.equal(withBeat.view.attempts, 0, '一次完成');
+  assert.equal(withBeat.view.attempts, 0, 'Completed in one attempt');
   const noBeat = await leaseRun({ beat: false });
-  assert.deepEqual(noBeat.leaseLost.slice(0, 1), ['stalled'], '对照:没有心跳时 120 s 没进展就被收回');
+  assert.deepEqual(noBeat.leaseLost.slice(0, 1), ['stalled'], 'For comparison: without a heartbeat it is reclaimed after 120 s without progress');
 });
 
-test('MNT3-Y-6 整场景那一路:renderLocalSnapshots 每 4 帧问一次 shouldStop,停下回停下的帧,已攒的批照常收尾', async () => {
+test('MNT3-Y-6 the whole-scene path: renderLocalSnapshots asks shouldStop every 4 frames, returns the frame it stopped at when stopping, and the batch accumulated so far is closed out as usual', async () => {
   await withTmp(async root => {
     bakeLog.length = 0;
     const svc = new FramePipeline({ root, origin: () => 'http://127.0.0.1:1', interactive: false });
@@ -337,17 +337,17 @@ test('MNT3-Y-6 整场景那一路:renderLocalSnapshots 每 4 帧问一次 should
     let ask = 0;
     const frames = Array.from({ length: 12 }, (_, i) => i);
     const stopped = await svc.renderLocalSnapshots(entry, frames, fakeBakery('b'), null, { shouldStop: () => ++ask >= 2 });
-    assert.equal(stopped, 7, '第二次问(第 7 帧交完)时停下');
+    assert.equal(stopped, 7, 'Stops at the second ask (after frame 7 is delivered)');
     assert.deepEqual(bakeLog[0].events.filter(e => e.startsWith('snap')).map(e => Number(e.slice(5))), [0, 1, 2, 3, 4, 5, 6, 7]);
-    assert.deepEqual(closed, ['close'], '停下时已攒的批照常收尾');
+    assert.deepEqual(closed, ['close'], 'The batch accumulated so far is closed out as usual when stopping');
     assert.deepEqual(published, [[[0, 7]]]);
     const whole = await svc.renderLocalSnapshots(entry, frames.filter(n => n > 7), fakeBakery('b'), null, { shouldStop: () => false });
-    assert.equal(whole, undefined, '没停回 undefined');
+    assert.equal(whole, undefined, 'Returns undefined if it did not stop');
     await svc.close().catch(() => {});
   });
 });
 
-test('MNT3-Y-7 前后脚的 Agent 任务:第二个在宽限期内到,同一次让路里做完,中间不切回队列任务', async () => {
+test('MNT3-Y-7 Agent tasks arriving one right after the other: the second arrives within the grace period and is finished in the same yield, without switching back to the queue task in between', async () => {
   await withTmp(async root => {
     bakeLog.length = 0;
     const { pipeline, entry, control } = await setup(root, { interactive: true });
@@ -376,9 +376,9 @@ test('MNT3-Y-7 前后脚的 Agent 任务:第二个在宽限期内到,同一次�
       await pipeline.renderCardSnapshotRange(entry, control, { from: 0, to: 23 }, {});
       assert.equal(await first, 1);
       assert.equal(await second, 2);
-      assert.deepEqual(log.filter(e => e.startsWith('X')), ['X1 after shot 3', 'X2 after shot 3'], '两个之间队列任务没有再推帧');
+      assert.deepEqual(log.filter(e => e.startsWith('X')), ['X1 after shot 3', 'X2 after shot 3'], 'The queue task pushed no more frames between the two');
       const y = pipeline.diagnostics().scheduler.yields;
-      assert.equal(y.count, 1, '只让了一次路');
+      assert.equal(y.count, 1, 'Yielded only once');
       assert.equal(y.tasks, 2);
       assert.deepEqual(bakeLog.filter(r => r.bakery === 'agent').map(r => r.targetFrames[0]), [0, 4]);
       openHold();

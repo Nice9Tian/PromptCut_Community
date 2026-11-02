@@ -33,7 +33,7 @@ beforeEach(() => {
   bridge.resetStageBridge();
 });
 
-test("单飞:两个活不会同时在跑", async () => {
+test("Single-flight: two jobs never run at the same time", async () => {
   bridge.setStageClient("back", fakeClient());
   let live = 0;
   let maxLive = 0;
@@ -42,7 +42,7 @@ test("单飞:两个活不会同时在跑", async () => {
   assert.equal(maxLive, 1);
 });
 
-test("优先级:补跑 > 页面侧测量 > 探针;同档按先来后到", async () => {
+test("Priority: catch-up run > page-side measurement > probe; within the same tier, first come, first served", async () => {
   bridge.setStageClient("back", fakeClient());
   const order = [];
   // 先占住队列,让后面三个都排上再开跑
@@ -60,7 +60,7 @@ test("优先级:补跑 > 页面侧测量 > 探针;同档按先来后到", async 
   assert.deepEqual(order, ["head", "catchup", "measure", "probe1", "probe2"]);
 });
 
-test("更急的活进来:正在跑的那个收到 abort 通知,但自己决定什么时候收摊", async () => {
+test("A more urgent job comes in: the running one receives an abort notice but decides for itself when to wrap up", async () => {
   bridge.setStageClient("back", fakeClient());
   let sawAbort = false;
   let finished = false;
@@ -72,13 +72,13 @@ test("更急的活进来:正在跑的那个收到 abort 通知,但自己决定�
   });
   await tick();
   const quick = runBackJob("catchup", async () => "quick");
-  assert.equal(await slow, "done", "abort 只是通知,活照常按自己的结果落定");
+  assert.equal(await slow, "done", "abort is only a notice; the job still settles with its own result as usual");
   assert.equal(sawAbort, true);
   assert.equal(finished, true);
   assert.equal(await quick, "quick");
 });
 
-test("开工前发 setRole,页面侧测量映射到 job: 'catchup';队列空了交还成 'probe'", async () => {
+test("Send setRole before starting; page-side measurement maps to job: 'catchup'; when the queue is empty it is handed back as 'probe'", async () => {
   const c = fakeClient();
   bridge.setStageClient("back", c);
   await runBackJob("measure", async ({ job }) => { assert.equal(job, "catchup"); });
@@ -86,10 +86,10 @@ test("开工前发 setRole,页面侧测量映射到 job: 'catchup';队列空了�
   // 同一个工作项不重发:setRole('back') 每次都会清空快照 / 抑制集合
   c.roles.length = 0;
   await runBackJob("probe", async () => {});
-  assert.deepEqual(c.roles, [], "队列交还时已经是 probe,不该再发一遍");
+  assert.deepEqual(c.roles, [], "When the queue hands back, the role is already probe and must not be sent again");
 });
 
-test("back 换了客户端(K5 互换 / iframe 重载)后,同一个工作项要对新客户端重发一次", async () => {
+test("After back changes client (K5 swap / iframe reload), the same work item must be resent once to the new client", async () => {
   const a = fakeClient();
   bridge.setStageClient("back", a);
   await runBackJob("probe", async () => {});
@@ -99,18 +99,18 @@ test("back 换了客户端(K5 互换 / iframe 重载)后,同一个工作项要�
   const b = fakeClient();
   bridge.setStageClient("back", b);
   await runBackJob("probe", async () => {});
-  assert.deepEqual(b.roles, ["back:probe"], "工作项没变但换了人 —— 不重发的话新 back 会留在 front 角色上");
+  assert.deepEqual(b.roles, ["back:probe"], "The work item is unchanged but the occupant changed: without a resend the new back would stay in the front role");
 });
 
-test("legacy 的单舞台(只有 front)不发 setRole —— 发了会把可见舞台的画面清掉", async () => {
+test("A legacy single stage (front only) does not send setRole, because sending it would clear the visible stage's picture", async () => {
   const c = fakeClient();
   bridge.setStageClient("front", c);
   const got = await runBackJob("measure", async ({ stage }) => stage);
-  assert.equal(got, c, "backStage() 退回可见舞台");
+  assert.equal(got, c, "backStage() falls back to the visible stage");
   assert.deepEqual(c.roles, []);
 });
 
-test("舞台还没就绪时排的活,等到就绪才跑", async () => {
+test("A job queued while the stage is not ready yet runs only when it is ready", async () => {
   let ran = false;
   const p = runBackJob("measure", async () => { ran = true; return 1; });
   await tick();
@@ -119,7 +119,7 @@ test("舞台还没就绪时排的活,等到就绪才跑", async () => {
   assert.equal(await p, 1);
 });
 
-test("run 抛出来的错原样传给调用方,队列照常往下走", async () => {
+test("An error thrown by run is passed to the caller as is, and the queue carries on as usual", async () => {
   bridge.setStageClient("back", fakeClient());
   await assert.rejects(runBackJob("probe", async () => { throw new Error("boom"); }), /boom/);
   assert.equal(await runBackJob("probe", async () => "ok"), "ok");
@@ -127,7 +127,7 @@ test("run 抛出来的错原样传给调用方,队列照常往下走", async () 
   assert.equal(currentBackJob(), null);
 });
 
-test("currentBackJob 报的是正在跑的那个活的 RPC 工作项", async () => {
+test("currentBackJob reports the RPC work item of the job that is running", async () => {
   bridge.setStageClient("back", fakeClient());
   const seen = [];
   await runBackJob("catchup", async () => { seen.push(currentBackJob()); });
@@ -136,7 +136,7 @@ test("currentBackJob 报的是正在跑的那个活的 RPC 工作项", async () 
   assert.deepEqual(seen, ["catchup", "probe", "catchup"]);
 });
 
-test("renderAbortAction:五种 reason 各一条规矩", () => {
+test("renderAbortAction: one rule for each of the five reasons", () => {
   assert.equal(renderAbortAction("superseded", "probe"), "drop");
   assert.equal(renderAbortAction("superseded", "catchup"), "drop");
   assert.equal(renderAbortAction("timeout", "probe"), "ignore");
@@ -145,7 +145,7 @@ test("renderAbortAction:五种 reason 各一条规矩", () => {
   assert.equal(renderAbortAction("detached", "probe"), "rebind");
 });
 
-test("renderAbortAction:'project' 按工作项分岔 —— catchup 期间丢弃,否则重发", () => {
+test("renderAbortAction: 'project' branches by work item: discarded during catchup, otherwise resent", () => {
   // 探针被 setProject 掐掉:按当前目标重发
   assert.equal(renderAbortAction("project", "probe"), "resend");
   assert.equal(renderAbortAction("project", null), "resend");

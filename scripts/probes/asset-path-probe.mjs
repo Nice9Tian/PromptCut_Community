@@ -52,14 +52,14 @@ const KEEP = args.includes('--keep');
 const REMOTE_PORT = PORT + 5;
 const clashes = (p) => (p >= 5190 && p <= 5192) || (p >= 5580 && p <= 5599);
 if (!(PORT >= 1024 && PORT % 10 <= 4) || [PORT, PORT + 1, PORT + 2, REMOTE_PORT].some(clashes)) {
-  throw new Error(`--port ${PORT} 不行:占 PORT～PORT+2 与 PORT+5,要落在同一个 10 口段里(PORT 的个位 ≤ 4),且不碰 5190～5192、5580～5599`);
+  throw new Error(`--port ${PORT} is not allowed: it uses PORT~PORT+2 and PORT+5, which must fall within the same block of 10 ports (PORT's last digit ≤ 4), and must not touch 5190~5192 or 5580~5599`);
 }
 const EDITOR = `http://127.0.0.1:${PORT}`;
 const EXPORT_DIR = path.join(os.tmpdir(), `pc-asset-path-probe-${Date.now().toString(36)}`);
 const DATA_DIR = path.join(EXPORT_DIR, 'data');
 const MEDIA_DIR = path.join(EXPORT_DIR, 'media');
 const SRC_DIR = path.join(EXPORT_DIR, 'remote-src'); // 远程素材服务的字节(编辑器不知道这个目录)
-const GONE = path.join(EXPORT_DIR, '不存在的素材目录');
+const GONE = path.join(EXPORT_DIR, 'nonexistent-asset-dir');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(MEDIA_DIR, { recursive: true });
 fs.mkdirSync(SRC_DIR, { recursive: true });
@@ -128,7 +128,7 @@ async function until(label, fn, timeoutMs = 120000, everyMs = 300) {
     let value;
     try { value = await fn(); } catch { value = null; }
     if (value) return value;
-    if (Date.now() > deadline) { fails.push(`超时:${label}`); return null; }
+    if (Date.now() > deadline) { fails.push(`Timeout: ${label}`); return null; }
     await delay(everyMs);
   }
 }
@@ -151,7 +151,7 @@ async function startEditor() {
   const keep = (c) => { editorLog.push(c.toString()); if (editorLog.length > 400) editorLog.shift(); };
   editor.stdout.on('data', keep);
   editor.stderr.on('data', keep);
-  return until('编辑器进程起来', async () => (await fetch(EDITOR + '/api/prerender/info').then((r) => r.ok, () => false)) || null, 120000);
+  return until('editor process is up', async () => (await fetch(EDITOR + '/api/prerender/info').then((r) => r.ok, () => false)) || null, 120000);
 }
 function stopEditor() {
   if (!editor || editor.exitCode !== null || !editor.pid) return;
@@ -234,11 +234,11 @@ function loudnessDirect(ffmpeg, file) {
 let browser = null;
 try {
   const ffmpeg = findFfmpeg();
-  if (!ffmpeg) throw new Error('找不到 ffmpeg(把它放进 PATH 或设 PROMPTCUT_FFMPEG)');
+  if (!ffmpeg) throw new Error('ffmpeg not found (put it on PATH or set PROMPTCUT_FFMPEG)');
   const gen = (name, lavfi) => {
     const file = path.join(SRC_DIR, name);
     const r = spawnSync(ffmpeg, ['-hide_banner', '-v', 'error', '-y', ...lavfi, file], { windowsHide: true });
-    if (r.status !== 0) throw new Error(`生成 ${name} 失败:${String(r.stderr).slice(0, 200)}`);
+    if (r.status !== 0) throw new Error(`Failed to generate ${name}: ${String(r.stderr).slice(0, 200)}`);
     const hash = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
     remoteFiles.set(hash, file);
     return { file, hash };
@@ -251,8 +251,8 @@ try {
   out.hashes = { sine: sine.hash, noise: noise.hash };
 
   await new Promise((resolve, reject) => { remote.once('error', reject); remote.listen(REMOTE_PORT, '127.0.0.1', resolve); });
-  if (!(await startEditor())) throw new Error('编辑器进程没起来');
-  check(fs.readdirSync(MEDIA_DIR).length === 0, '开始时编辑器的素材目录是空的', fs.readdirSync(MEDIA_DIR));
+  if (!(await startEditor())) throw new Error('The editor process did not start');
+  check(fs.readdirSync(MEDIA_DIR).length === 0, 'The editor\'s asset directory is empty at the start', fs.readdirSync(MEDIA_DIR));
 
   browser = await puppeteer.launch({ headless: true, pipe: true, args: [...PROBE_CHROME_ARGS, '--window-position=-32000,-32000', '--no-first-run'] });
   const page = await browser.newPage();
@@ -271,25 +271,25 @@ try {
     return { sine: a.id, noise: b.id, ghost: c.id, clipId: clip?.id ?? null, hashes: m.getState().project.media.map((x) => x.hash ?? null) };
   }, { sine: sine.hash, noise: noise.hash, ghost: ghostHash, gone: GONE });
   out.placed = placed;
-  check(!!placed.clipId && placed.hashes.includes(sine.hash), '素材记录进了项目(带哈希)、正弦波放上了时间轴', placed);
+  check(!!placed.clipId && placed.hashes.includes(sine.hash), 'The asset was recorded in the project (with hash) and the sine wave was placed on the timeline', placed);
 
   /* ---- P1 连上远程素材服务 ---- */
   const base = `http://127.0.0.1:${REMOTE_PORT}/api/asset`;
   const set = await fetch(EDITOR + '/api/media/remote', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ base }) }).then((r) => r.json()).catch(() => null);
   const status = await fetch(EDITOR + '/api/media/remote').then((r) => r.json()).catch(() => null);
-  check(set?.ok && status?.base === base, 'P1 编辑器连上了这台远程素材服务', status);
+  check(set?.ok && status?.base === base, 'P1 The editor connected to this remote asset service', status);
 
   /* ---- P2 measure_audio ---- */
   const direct = loudnessDirect(ffmpeg, noise.file);
   out.loudDirect = pick(direct);
-  const loud = await until('measure_audio 测噪声素材', async () => {
+  const loud = await until('measure_audio measures the noise asset', async () => {
     const r = await mcpCall('measure_audio', { mediaId: placed.noise });
-    return r && typeof r.integrated === 'number' ? r : (r && !/找不到素材|编辑台没有打开/.test(String(r.error || '')) ? r : null);
+    return r && typeof r.integrated === 'number' ? r : (r && !/asset not found|editor is not open/.test(String(r.error || '')) ? r : null);
   }, 90000, 1000);
   out.loud = loud && { ...pick(loud), error: loud.error };
-  check(loud && JSON.stringify(pick(loud)) === JSON.stringify(pick(direct)), 'P2 measure_audio 的数值与直接读本地文件(改前的读法)逐项相同', { now: pick(loud), direct: pick(direct) });
+  check(loud && JSON.stringify(pick(loud)) === JSON.stringify(pick(direct)), 'P2 measure_audio values match reading the local file directly (the pre-change way), item by item', { now: pick(loud), direct: pick(direct) });
   const noiseHits = hitsOf(noise.hash);
-  check(noiseHits >= 1, `P2 远程素材服务被请求过噪声素材(${noiseHits} 次 GET):字节经素材服务的接口来`, remoteLog.filter((e) => e.hash === noise.hash).slice(0, 8));
+  check(noiseHits >= 1, `P2 The remote asset service was asked for the noise asset (${noiseHits} GETs): the bytes came through the asset service's API`, remoteLog.filter((e) => e.hash === noise.hash).slice(0, 8));
 
   /* ---- P3 measure_audio_js ---- */
   const conv = `approbe${Date.now().toString(36)}`;
@@ -298,11 +298,11 @@ try {
   const js = await mcpCall('measure_audio_js', { mediaId: placed.sine, code: RMS_PEAK_FNV }, conv);
   out.js = js;
   check(js?.ok === true && js.value?.channels?.length === 2 && js.value.channels.every((ch) => near(ch.rmsDb, RMS, 0.05) && near(ch.peakDb, PEAK, 0.1)),
-    'P3 measure_audio_js:两个声道的 RMS / 峰值与理论值一致', js);
-  check(js?.value?.fnv === fnvOf(pcmDirect) && js?.value?.frames === pcmDirect[0].length, 'P3 沙箱拿到的 PCM 与直接解码本地文件的逐字节相同(FNV 指纹、帧数)', { now: js?.value?.fnv, direct: fnvOf(pcmDirect), frames: js?.value?.frames, directFrames: pcmDirect[0].length });
-  check(hitsOf(sine.hash) >= 1, `P3 远程素材服务被请求过正弦波素材(${hitsOf(sine.hash)} 次 GET)`);
+    'P3 measure_audio_js: RMS / peak of both channels match the theoretical values', js);
+  check(js?.value?.fnv === fnvOf(pcmDirect) && js?.value?.frames === pcmDirect[0].length, 'P3 The PCM the sandbox gets is byte-for-byte identical to decoding the local file directly (FNV fingerprint, frame count)', { now: js?.value?.fnv, direct: fnvOf(pcmDirect), frames: js?.value?.frames, directFrames: pcmDirect[0].length });
+  check(hitsOf(sine.hash) >= 1, `P3 The remote asset service was asked for the sine wave asset (${hitsOf(sine.hash)} GETs)`);
   const clipJs = await mcpCall('measure_audio_js', { clipId: placed.clipId, mono: true, sampleRate: 48000, code: RMS_PEAK_FNV }, conv);
-  check(clipJs?.ok === true && near(clipJs.value?.channels?.[0]?.rmsDb, RMS, 0.05), 'P3 片段档(mono、48 kHz)照常', clipJs && { ok: clipJs.ok, error: clipJs.error, v: clipJs.value?.channels });
+  check(clipJs?.ok === true && near(clipJs.value?.channels?.[0]?.rmsDb, RMS, 0.05), 'P3 Clip tier (mono, 48 kHz) works as usual', clipJs && { ok: clipJs.ok, error: clipJs.error, v: clipJs.value?.channels });
 
   /* ---- P6～P11 三个感知工具(claude/asset-path-2):字节经素材服务来,结果与直接读本地文件相同 ---- */
   const cuts = gen('cuts.mp4', ['-f', 'lavfi', '-i', 'color=c=red:s=160x90:r=25:d=1', '-f', 'lavfi', '-i', 'color=c=blue:s=160x90:r=25:d=1',
@@ -322,47 +322,47 @@ try {
   const scdetDirect = [...String(spawnSync(ffmpeg, ['-hide_banner', '-i', cuts.file, '-vf', 'scdet=threshold=10', '-f', 'null', '-'], { encoding: 'utf8', windowsHide: true }).stderr)
     .matchAll(/lavfi\.scd\.time:\s*([0-9.]+)/g)].map((x) => Number(x[1]));
   const started = await mcpCall('detect_shots', { mediaId: vids.cuts });
-  const shots = await until('list_shots 出结果', async () => {
+  const shots = await until('list_shots returns a result', async () => {
     const r = await mcpCall('list_shots', { mediaId: vids.cuts });
     return r && (r.running === false || r.error) ? r : null;
   }, 120000, 1000);
   out.shots = shots && { engine: shots.engine, transitions: shots.transitions?.map((t) => t.time), error: shots.error, started };
   check(shots?.running === false && JSON.stringify(shots.transitions.map((t) => t.time)) === JSON.stringify(scdetDirect) && scdetDirect.length === 2,
-    'P6 detect_shots:转场时刻与直接对本地文件跑 scdet 的相同(两次硬切)', { now: shots?.transitions?.map((t) => t.time), direct: scdetDirect, error: shots?.error });
-  check(hitsOf(cuts.hash) >= 1, `P6 远程素材服务被请求过这段视频(${hitsOf(cuts.hash)} 次 GET)`);
+    'P6 detect_shots: transition times match running scdet directly on the local file (two hard cuts)', { now: shots?.transitions?.map((t) => t.time), direct: scdetDirect, error: shots?.error });
+  check(hitsOf(cuts.hash) >= 1, `P6 The remote asset service was asked for this video (${hitsOf(cuts.hash)} GETs)`);
 
   if (!PY) {
-    fails.push('P7～P11 要一个带 numpy 的 Python(PATH 上的 python,或 PROMPTCUT_TEST_PYTHON),这台机器上没找到');
+    fails.push('P7-P11 need a Python with numpy (python on PATH, or PROMPTCUT_TEST_PYTHON), none was found on this machine');
   } else {
     // P7 track_points(模板匹配档):追出来的与直接对本地文件跑 promptcut_track 的逐项相同
     const POINTS = [[0, 28, 58]];
     const direct = trackResult(await runAsync(PY, ['-m', 'promptcut_track', 'track', '--video', move.file, '--points', JSON.stringify(POINTS)], pyEnv(PYLIBS)));
     const moveHits0 = hitsOf(move.hash);
     const tStart = await mcpCall('track_points', { mediaId: vids.move, points: POINTS });
-    const track = await until('get_track 出结果', async () => {
+    const track = await until('get_track returns a result', async () => {
       const r = await mcpCall('get_track', { mediaId: vids.move, full: true });
       return r && (r.running === false || r.error) ? r : null;
     }, 120000, 1000);
     const trackNow = track && { engine: track.engine, width: track.width, height: track.height, frames: track.frames, points: track.points };
     check(track?.engine === 'template' && JSON.stringify(trackNow) === JSON.stringify(direct),
-      'P7 track_points(模板匹配档):经素材服务追出来的与直接读本地文件的逐项相同', { now: trackNow && { ...trackNow, points: trackNow.points?.map((p) => [p.xy[0], p.xy.at(-1)]) }, direct: direct && direct.points?.map((p) => [p.xy[0], p.xy.at(-1)]), error: track?.error, started: tStart });
+      'P7 track_points (template-matching tier): tracking through the asset service matches reading the local file directly, item by item', { now: trackNow && { ...trackNow, points: trackNow.points?.map((p) => [p.xy[0], p.xy.at(-1)]) }, direct: direct && direct.points?.map((p) => [p.xy[0], p.xy.at(-1)]), error: track?.error, started: tStart });
     // 页面登记素材后,本地素材服务可能已经按预取清单把整份从远程拉进本地内容库(P7 开始前),所以这里只看远程总共被请求过没有:
     // 编辑器的素材目录一开始是空的、素材记录的 path 指向不存在的目录,字节只可能经素材服务来
-    check(hitsOf(move.hash) >= 1, `P7 远程素材服务被请求过这段视频(共 ${hitsOf(move.hash)} 次 GET,其中 P7 期间 ${hitsOf(move.hash) - moveHits0} 次)`);
+    check(hitsOf(move.hash) >= 1, `P7 The remote asset service was asked for this video (${hitsOf(move.hash)} GETs in total, ${hitsOf(move.hash) - moveHits0} of them during P7)`);
 
     // P8 detect_subjects:这台机器没有主体检测的模型;地址要过得了 Python 的入口检查,停在「未就绪」而不是「找不到视频文件」
     const sStart = await mcpCall('detect_subjects', { mediaId: vids.move, times: [0.5, 1.2] });
-    const subj = await until('list_subjects 结束', async () => {
+    const subj = await until('list_subjects finishes', async () => {
       const r = await mcpCall('list_subjects', { mediaId: vids.move });
       return r && (r.running === false || r.error) ? r : null;
     }, 180000, 1000);
     out.subjects = { started: sStart, result: subj && (subj.error || { engine: subj.engine, samples: subj.samples?.length }) };
-    check(subj && !/找不到视频文件/.test(String(subj.error || '')) && (subj.running === false ? subj.samples?.length === 2 : /未就绪/.test(String(subj.error))),
-      'P8 detect_subjects:地址过了入口检查(装了模型就出两个样本;没装停在「未就绪」)', out.subjects);
+    check(subj && !/video file not found/.test(String(subj.error || '')) && (subj.running === false ? subj.samples?.length === 2 : /not ready/.test(String(subj.error))),
+      'P8 detect_subjects: the URL passed the entry check (with the model installed it yields two samples; without it, it stops at "not ready")', out.subjects);
 
     // P9 三个 Python 包都答 ACCEPTS_URL(Node 据此递地址)
     for (const pkg of ['promptcut_shots', 'promptcut_track', 'promptcut_subject']) {
-      check(await pythonAcceptsUrl({ python: PY, env: pyEnv(PYLIBS), pkg, spawnPython: spawnPy }), `P9 ${pkg} 答 ACCEPTS_URL`);
+      check(await pythonAcceptsUrl({ python: PY, env: pyEnv(PYLIBS), pkg, spawnPython: spawnPy }), `P9 ${pkg} answers ACCEPTS_URL`);
     }
 
     // P10 老包(拷一份仓库里的 promptcut_track,去掉 ACCEPTS_URL 与地址放行):拒绝地址;Node 改走临时文件,结果相同,临时文件用完删
@@ -370,12 +370,12 @@ try {
     makeOldTrackPackage(oldLibs);
     const url = `http://127.0.0.1:${REMOTE_PORT}/api/asset/media/${move.hash}`;
     const refused = await runAsync(PY, ['-m', 'promptcut_track', 'track', '--video', url, '--points', JSON.stringify(POINTS)], pyEnv(oldLibs));
-    check(/找不到视频文件/.test(refused.stdout), 'P10 老包确实拒绝地址', refused.stdout.slice(-300));
+    check(/video file not found/.test(refused.stdout), 'P10 The old package does reject URLs', refused.stdout.slice(-300));
     const input = await pythonInput({ src: url, ref: { name: 'move.mp4' }, python: PY, env: pyEnv(oldLibs), pkg: 'promptcut_track', spawnPython: spawnPy, tmpRoot: EXPORT_DIR });
-    check(input.via === 'temp' && fs.readFileSync(input.input).equals(fs.readFileSync(move.file)), 'P10 老包:Node 先把字节流到临时文件(与原文件逐字节相同)', { via: input.via });
+    check(input.via === 'temp' && fs.readFileSync(input.input).equals(fs.readFileSync(move.file)), 'P10 Old package: Node first streams the bytes to a temp file (byte-for-byte identical to the original file)', { via: input.via });
     const viaTemp = trackResult(await runAsync(PY, ['-m', 'promptcut_track', 'track', '--video', input.input, '--points', JSON.stringify(POINTS)], pyEnv(oldLibs)));
     input.cleanup();
-    check(JSON.stringify(viaTemp) === JSON.stringify(direct) && !fs.existsSync(input.input), 'P10 老包经临时文件追出来的与直接读文件相同,临时文件已删');
+    check(JSON.stringify(viaTemp) === JSON.stringify(direct) && !fs.existsSync(input.input), 'P10 Tracking via the temp file with the old package matches reading the file directly, and the temp file is deleted');
 
     // P11 主体检测取字节那一步:frames.probe_size + grab_frame 经地址与读本地文件,宽高与 BGR 像素逐字节相同
     const script = path.join(EXPORT_DIR, 'frames_check.py');
@@ -398,11 +398,11 @@ try {
     let pair = null;
     try { pair = JSON.parse(fc.stdout.trim().split(/\r?\n/).at(-1)); } catch { /* 下面报 */ }
     check(pair && JSON.stringify(pair[0]) === JSON.stringify(pair[1]) && JSON.stringify(pair[0].size) === '[160,120]',
-      'P11 主体检测抽帧:经素材服务地址与读本地文件解出的像素逐字节相同', pair ?? fc.stderr.slice(-400));
+      'P11 Subject detection frame extraction: pixels decoded via the asset service URL are byte-for-byte identical to those from reading the local file', pair ?? fc.stderr.slice(-400));
   }
 
   /* ---- P4 回到本机空间:只剩本地内容库,按哈希存 ---- */
-  await until('远程拉完、进了本地内容库', async () => {
+  await until('Remote fetch finished and the asset is in the local content store', async () => {
     const s = await fetch(EDITOR + '/api/media/remote').then((r) => r.json());
     return s.jobs.every((j) => j.done) ? s : null;
   }, 30000, 500);
@@ -410,22 +410,22 @@ try {
   const lib = fs.readdirSync(MEDIA_DIR);
   out.localLibrary = lib;
   check(lib.some((f) => f.startsWith(noise.hash + '.')) && !lib.includes(noise.hash) && !lib.includes('noise.wav'),
-    'P4 本地内容库里是 <hash>.<ext>:按目录拼 url 的最后一段(<hash>)或文件名都找不到', lib);
+    'P4 The local content store holds <hash>.<ext>: not found by the last URL segment (<hash>) joined to the directory, nor by file name', lib);
   const before = remoteLog.length;
   const loud2 = await mcpCall('measure_audio', { mediaId: placed.noise });
-  check(loud2 && JSON.stringify(pick(loud2)) === JSON.stringify(pick(direct)), 'P4 本机空间:measure_audio 照常、数值不变', loud2 && { ...pick(loud2), error: loud2.error });
+  check(loud2 && JSON.stringify(pick(loud2)) === JSON.stringify(pick(direct)), 'P4 Local space: measure_audio works as usual, values unchanged', loud2 && { ...pick(loud2), error: loud2.error });
   const js2 = await mcpCall('measure_audio_js', { mediaId: placed.sine, code: RMS_PEAK_FNV }, conv);
-  check(js2?.ok === true && js2.value?.fnv === fnvOf(pcmDirect), 'P4 本机空间:measure_audio_js 照常、PCM 不变', js2 && { ok: js2.ok, error: js2.error, fnv: js2.value?.fnv });
-  check(remoteLog.length === before, 'P4 远程素材服务一次也没被打到', remoteLog.slice(before, before + 5));
+  check(js2?.ok === true && js2.value?.fnv === fnvOf(pcmDirect), 'P4 Local space: measure_audio_js works as usual, PCM unchanged', js2 && { ok: js2.ok, error: js2.error, fnv: js2.value?.fnv });
+  check(remoteLog.length === before, 'P4 The remote asset service was never hit', remoteLog.slice(before, before + 5));
 
   /* ---- P5 哪儿都没有的素材 ---- */
   const g1 = await mcpCall('measure_audio', { mediaId: placed.ghost });
-  check(g1 && typeof g1.integrated !== 'number' && /素材文件不存在/.test(String(g1.error || '')), 'P5 measure_audio 对哪儿都没有的素材回「素材文件不存在」', g1);
+  check(g1 && typeof g1.integrated !== 'number' && /asset file does not exist/.test(String(g1.error || '')), 'P5 measure_audio on an asset that exists nowhere returns "asset file does not exist"', g1);
   const g2 = await mcpCall('measure_audio_js', { mediaId: placed.ghost, code: 'return 1' }, conv);
-  check(g2?.ok === false && g2.kind === 'no-media', 'P5 measure_audio_js 回 kind no-media', g2);
+  check(g2?.ok === false && g2.kind === 'no-media', 'P5 measure_audio_js returns kind no-media', g2);
   const alive = await fetch(EDITOR + '/api/prerender/info').then((r) => r.ok, () => false);
-  check(alive, '编辑器照常应答');
-  check(pageErrors.length === 0, '页面没有未捕获的异常', pageErrors.slice(0, 5));
+  check(alive, 'The editor still responds as usual');
+  check(pageErrors.length === 0, 'Page has no uncaught exceptions', pageErrors.slice(0, 5));
   out.remoteRequests = remoteLog.length;
 } catch (error) {
   fails.push('exception: ' + (error?.stack || error));
@@ -444,5 +444,5 @@ console.log(JSON.stringify(out, null, 1).slice(0, 6000));
 for (const p of passes) console.log('PASS', p);
 for (const f of fails) console.log('FAIL', f);
 if (fails.length) console.log(editorLog.join('').slice(-3000));
-console.log(fails.length ? `探针未过:${fails.length} 项失败,${passes.length} 项通过` : `探针通过:${passes.length} 项`);
+console.log(fails.length ? `Probe failed: ${fails.length} failed, ${passes.length} passed` : `Probe passed: ${passes.length} checks`);
 process.exit(fails.length ? 1 : 0);

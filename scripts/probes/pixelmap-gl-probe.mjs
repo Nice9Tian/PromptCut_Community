@@ -36,7 +36,7 @@ fs.mkdirSync(OUT, { recursive: true });
 
 const ff = (args, label) => {
   const r = spawnSync('ffmpeg', ['-y', '-v', 'error', ...args], { windowsHide: true, encoding: 'utf8' });
-  if (r.status !== 0) throw new Error(`ffmpeg ${label} 失败:${r.stderr || r.error?.message}`);
+  if (r.status !== 0) throw new Error(`ffmpeg ${label} failed: ${r.stderr || r.error?.message}`);
 };
 const srcPng = path.join(OUT, 'src-testsrc2.png');
 const tgtPng = path.join(OUT, 'src-target.png');
@@ -66,10 +66,10 @@ const writePng = (file, w, h, data) => {
 
 const GREEN = 'smoothstep(0.35,0.8,g-r)*(1-smoothstep(0.15,0.45,b))';
 const CASES = [
-  { name: '抠色到透明', def: { name: '抠绿', where: GREEN, to: 'transparent' } },
-  { name: '抠色到纯色', def: { name: '抠绿填蓝', where: GREEN, to: '#0033ff' } },
-  { name: '按位置渐变选区', def: { name: '斜向', where: 'smoothstep(0.15,0.85,x)*smoothstep(0.1,0.9,y)', to: '#101820' } },
-  { name: '按时间闪烁', def: { name: '闪', where: '0.5+0.5*sin(t*2*PI)', to: '#ffcc00' }, t: 0.37 },
+  { name: 'Key out color to transparent', def: { name: 'Key out green', where: GREEN, to: 'transparent' } },
+  { name: 'Key out color to solid color', def: { name: 'Key out green, fill blue', where: GREEN, to: '#0033ff' } },
+  { name: 'Gradient selection by position', def: { name: 'Diagonal', where: 'smoothstep(0.15,0.85,x)*smoothstep(0.1,0.9,y)', to: '#101820' } },
+  { name: 'Flicker by time', def: { name: 'Flash', where: '0.5+0.5*sin(t*2*PI)', to: '#ffcc00' }, t: 0.37 },
   /*
    * 这一条会有几个像素对不上,是已知且不可避免的:colorSequence 取色是「对 from 做 RGB 最近邻」,
    * from = [#000000, #808080, #ffffff] 时,r+g+b 恰好等于 192 的像素到前两个 from 色**精确等距**。
@@ -77,10 +77,10 @@ const CASES = [
    * 而 mapRgba 在 float64 上让 Math.hypot 的末位舍入替它决定,于是有时取了后一个。
    * 换句话说这几个像素上**着色器才是对的**。逐像素取色是离散映射,并列点上必然有这种跳变。
    */
-  { name: '颜色序列-continuous', tiedNearest: true, def: { name: '连续', where: '1', mode: 'continuous', to: '#fff', colorSequence: { from: ['#000000', '#808080', '#ffffff'], to: ['#001133', '#ffcc88', '#ffffff'] } } },
-  { name: '颜色序列-discrete', def: { name: '离散', where: '1', mode: 'discrete', to: '#fff', colorSequence: { from: ['#000000', '#555555', '#aaaaaa', '#ffffff'], to: ['#ff0000', '#00ff00', '#0000ff', '#ffff00'] } } },
-  { name: '目标是另一段素材', def: { name: '换底', where: `1-(${GREEN})`, to: { kind: 'media', mediaId: 'B', stage: 'origin' } }, target: 'B' },
-  { name: '通道非线性表达式', def: { name: '暗部提亮', where: '1-smoothstep(0,0.35,luma)', to: { kind: 'expr', r: 'r^0.6', g: 'g^0.6', b: 'b^0.6', a: 'a' } } },
+  { name: 'Color sequence-continuous', tiedNearest: true, def: { name: 'Continuous', where: '1', mode: 'continuous', to: '#fff', colorSequence: { from: ['#000000', '#808080', '#ffffff'], to: ['#001133', '#ffcc88', '#ffffff'] } } },
+  { name: 'Color sequence-discrete', def: { name: 'Discrete', where: '1', mode: 'discrete', to: '#fff', colorSequence: { from: ['#000000', '#555555', '#aaaaaa', '#ffffff'], to: ['#ff0000', '#00ff00', '#0000ff', '#ffff00'] } } },
+  { name: 'Target is another media item', def: { name: 'Swap background', where: `1-(${GREEN})`, to: { kind: 'media', mediaId: 'B', stage: 'origin' } }, target: 'B' },
+  { name: 'Channel nonlinear expression', def: { name: 'Brighten shadows', where: '1-smoothstep(0,0.35,luma)', to: { kind: 'expr', r: 'r^0.6', g: 'g^0.6', b: 'b^0.6', a: 'a' } } },
 ];
 
 /* ------------------------------------------------------------------ vite */
@@ -97,7 +97,7 @@ const waitHttp = async (url, ms) => {
   const end = Date.now() + ms;
   for (;;) {
     try { const r = await fetch(url); if (r.status < 500) return; } catch { /* 还没起来 */ }
-    if (Date.now() > end) throw new Error('vite 没起来:\n' + viteLog);
+    if (Date.now() > end) throw new Error('vite did not start:\n' + viteLog);
     await new Promise((r) => setTimeout(r, 300));
   }
 };
@@ -130,8 +130,8 @@ try {
   });
   const page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 720 });
-  page.on('pageerror', (e) => console.log('[页面错误]', e.message));
-  page.on('console', (m) => { if (m.type() === 'error') console.log('[页面 console]', m.text()); });
+  page.on('pageerror', (e) => console.log('[page error]', e.message));
+  page.on('console', (m) => { if (m.type() === 'error') console.log('[page console]', m.text()); });
   const HARNESS = `http://127.0.0.1:${PORT}/scripts/probes/pixelmap-gl-harness.html`;
   await page.goto(HARNESS, { waitUntil: 'load', timeout: 120000 });
   await page.waitForFunction('window.__pmReady === true', { timeout: 120000 });
@@ -150,7 +150,7 @@ try {
     for (let i = 0; ; i++) {
       try { return await page.evaluate(fn, ...args); } catch (e) {
         if (i >= 2 || !/Execution context was destroyed/.test(String(e))) throw e;
-        console.log('[probe] 页面重载了,重新灌源图再来一次');
+        console.log('[probe] the page reloaded, feeding the source images again and retrying');
         await page.waitForFunction('window.__pmReady === true', { timeout: 120000 });
         if (primed) await putSources();
       }
@@ -160,7 +160,7 @@ try {
   const info = await ev(() => window.__pm.info());
   console.log('WebGL:', JSON.stringify(info));
   const software = /swiftshader|software|llvmpipe|basic render/i.test(info?.renderer ?? '');
-  if (software) console.log('!! 拿到的是软件渲染,下面的性能数字不算数');
+  if (software) console.log('!! Got software rendering, the performance numbers below do not count');
 
   await putSources();
   primed = true;
@@ -184,7 +184,7 @@ try {
     }
 
     const cmp = compare(gpu, cpu);
-    const slug = c.name.replace(/[^\w一-龥-]/g, '');
+    const slug = c.name.replace(/[^\w-]/g, '');
     writePng(path.join(OUT, `${slug}-gpu.png`), W, H, gpu);
     writePng(path.join(OUT, `${slug}-cpu.png`), W, H, cpu);
     // 差值图:放大 32 倍看得见
@@ -195,28 +195,28 @@ try {
     }
     writePng(path.join(OUT, `${slug}-diff32x.png`), W, H, diff);
 
-    console.log(`${c.name.padEnd(12)} 类=${cls.kind} 最大差=${cmp.worst} >1级=${cmp.over1} >2级=${cmp.over2} 均差=${cmp.mean.toFixed(5)} 直方图0..5=${cmp.hist.join(',')}`);
+    console.log(`${c.name.padEnd(12)} class=${cls.kind} max diff=${cmp.worst} >1 level=${cmp.over1} >2 levels=${cmp.over2} mean diff=${cmp.mean.toFixed(5)} histogram 0..5=${cmp.hist.join(',')}`);
     results.push({ case: c.name, class: cls.kind, tiedNearest: !!c.tiedNearest, def, ...cmp });
   }
 
   /* ---------------------------------------------------------- 性能 */
-  const benchDef = { id: 'pm-bench', ...normalizePixelMapDef({ name: '抠绿', where: GREEN, to: 'transparent' }) };
+  const benchDef = { id: 'pm-bench', ...normalizePixelMapDef({ name: 'Key out green', where: GREEN, to: 'transparent' }) };
   const perf = await ev((d, u, w, h, n) => window.__pm.bench(d, u, w, h, n),
     benchDef, '/out/pixelmap-gl/clip-1080p.mp4', W, H, 24);
-  console.log('性能(1080p 视频,抠色到透明):预热 ' + perf.warmupMs.toFixed(2) + ' ms;主线程提交 p50 ' + perf.submitP50.toFixed(3) + ' ms / max ' + perf.submitMax.toFixed(3) + ' ms;' +
+  console.log('Performance (1080p video, key out color to transparent): warm-up ' + perf.warmupMs.toFixed(2) + ' ms; main-thread submit p50 ' + perf.submitP50.toFixed(3) + ' ms / max ' + perf.submitMax.toFixed(3) + ' ms;' +
     'GPU ' + (perf.gpuP50 == null ? 'n/a' : 'p50 ' + perf.gpuP50.toFixed(3) + ' ms / max ' + perf.gpuMax.toFixed(3) + ' ms') + '(' + perf.gpuHow + ')');
 
   const report = { at: new Date().toISOString(), webgl: info, software, size: [W, H], cases: results, perf };
   fs.writeFileSync(path.join(OUT, 'pixelmap-gl-probe.json'), JSON.stringify(report, null, 2));
-  console.log('\n数据写到', path.join(OUT, 'pixelmap-gl-probe.json'));
+  console.log('\nData written to', path.join(OUT, 'pixelmap-gl-probe.json'));
 
   // 标了 tiedNearest 的用例单独说:它超标的像素全在「到两个 from 色精确等距」的并列点上,
   // 那里着色器按 sequenceTarget 的本意取靠前那个,反而比 mapRgba 更守规矩。
   for (const r of results.filter((x) => x.tiedNearest && x.worst > 2)) {
-    console.log(`(已知)${r.case}:${r.over2 / 3} 个精确并列的像素取了不同的 from 下标,占 ${(r.over2 / 3 / (W * H) * 100).toFixed(5)}%;见用例上的注释`);
+    console.log(`(known) ${r.case}: ${r.over2 / 3} pixels with exact ties picked different from indices, making up ${(r.over2 / 3 / (W * H) * 100).toFixed(5)}%; see the comment on the case`);
   }
   const bad = results.filter((r) => r.worst > 2 && !r.tiedNearest);
-  if (bad.length) { console.log('!! 超过 2 级的用例:', bad.map((b) => `${b.case}=${b.worst}`).join(' ')); process.exitCode = 1; }
+  if (bad.length) { console.log('!! Cases over 2 levels:', bad.map((b) => `${b.case}=${b.worst}`).join(' ')); process.exitCode = 1; }
 } finally {
   if (browser) await browser.close().catch(() => {});
   /*

@@ -69,7 +69,7 @@ function resolveSpec(fromFile, spec) {
   return null;
 }
 
-test('server/vision/** 内部的 import 图无环', () => {
+test('The import graph inside server/vision/** has no cycles', () => {
   /** 文件 → 它 import 的同目录(或子目录)模块 */
   const graph = new Map();
   for (const file of walk(VISION)) {
@@ -81,7 +81,7 @@ test('server/vision/** 内部的 import 图无环', () => {
     }
     graph.set(rel(file), edges);
   }
-  assert.ok(graph.size >= 8, `server/vision 里应当有拆出来的那几个模块,现在只找到 ${graph.size} 个`);
+  assert.ok(graph.size >= 8, `server/vision should contain the modules that were split out, but only ${graph.size} were found`);
 
   const state = new Map(); // 未访问 / 1 在栈上 / 2 已完成
   const cycles = [];
@@ -98,21 +98,21 @@ test('server/vision/** 内部的 import 图无环', () => {
     state.set(node, 2);
   };
   for (const node of graph.keys()) visit(node, []);
-  assert.deepEqual(cycles, [], 'server/vision 内部不允许有运行时 import 环');
+  assert.deepEqual(cycles, [], 'No runtime import cycles are allowed inside server/vision');
 });
 
-test('插件外壳 server/vite-plugin-vision.ts 不许再长回去', () => {
+test('The plugin shell server/vite-plugin-vision.ts must not grow back', () => {
   const lines = fs.readFileSync(SHELL, 'utf8').split(/\r?\n/).length;
   assert.ok(
     lines < SHELL_MAX_LINES,
-    `外壳现在 ${lines} 行,超过了 ${SHELL_MAX_LINES} 行的红线。新逻辑该落在 server/vision/ 的某个模块里,不是外壳里。`,
+    `The shell is now ${lines} lines, over the ${SHELL_MAX_LINES}-line limit. New logic belongs in a module under server/vision/, not in the shell.`,
   );
 });
 
-test('外壳仍然导出 visionPlugin / bakeTarget / default(对外接口不能变)', async () => {
+test('The shell still exports visionPlugin / bakeTarget / default (the public interface must not change)', async () => {
   const text = fs.readFileSync(SHELL, 'utf8');
   // vite.config.ts / vite.prerender.config.ts 按名字 import visionPlugin;bakeTarget 是历史上就 export 出去的
-  assert.match(text, /export function visionPlugin\(\): Plugin \{/, '外壳要直接定义并导出 visionPlugin');
-  assert.match(text, /export \{ bakeTarget \} from "\.\/vision\/bake";/, 'bakeTarget 要继续从外壳导出');
-  assert.match(text, /export default visionPlugin;/, 'default export 不能丢');
+  assert.match(text, /export function visionPlugin\(\): Plugin \{/, 'The shell must define and export visionPlugin directly');
+  assert.match(text, /export \{ bakeTarget \} from "\.\/vision\/bake";/, 'bakeTarget must keep being exported from the shell');
+  assert.match(text, /export default visionPlugin;/, 'The default export must not be lost');
 });

@@ -29,22 +29,22 @@ const argv = process.argv.slice(2);
 const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : fallback);
 
 function usage(msg) {
-  process.stderr.write(`${msg}\n用法：node scripts/probes/ht7-probe.mjs --base https://<host>/hosted [--asset <url>] [--admin <url>] [--timeout-ms 15000]\n`);
+  process.stderr.write(`${msg}\nUsage: node scripts/probes/ht7-probe.mjs --base https://<host>/hosted [--asset <url>] [--admin <url>] [--timeout-ms 15000]\n`);
   process.stdout.write(`${JSON.stringify({ ok: false, error: 'usage', message: msg })}\n`);
   process.exit(2);
 }
 
 const rawBase = arg('--base', null);
-if (!rawBase) usage('缺 --base（本探针缺省不连任何地址）');
+if (!rawBase) usage('Missing --base (this probe connects to no address by default)');
 let base;
 try {
   base = new URL(rawBase);
 } catch {
-  usage(`--base 不是合法地址：${rawBase}`);
+  usage(`--base is not a valid address: ${rawBase}`);
 }
 if (base.protocol === 'ws:') base.protocol = 'http:';
 if (base.protocol === 'wss:') base.protocol = 'https:';
-if (base.protocol !== 'http:' && base.protocol !== 'https:') usage('--base 要是 http(s):// 或 ws(s)://');
+if (base.protocol !== 'http:' && base.protocol !== 'https:') usage('--base must be http(s):// or ws(s)://');
 const basePath = base.pathname.replace(/\/+$/, '');
 const asset = (arg('--asset', null) ?? `${base.origin}/media/api/asset`).replace(/\/+$/, '');
 const admin = (arg('--admin', null) ?? asset.replace(/\/api\/asset$/, '')).replace(/\/+$/, '');
@@ -99,7 +99,7 @@ check('asset-anonymous', await httpStatus(`${asset}/media/${randomBytes(32).toSt
 check('admin-no-token', await httpStatus(`${admin}/admin/inventory`), [401, 403]);
 check('admin-bad-token', await httpStatus(`${admin}/admin/inventory`, { Authorization: `Bearer ${randomToken()}` }), [401, 403]);
 
-const fails = checks.filter((c) => !c.ok).map((c) => `${c.name}：期望 ${c.expect.join(' / ')}，实际 ${c.status ?? '连不上'}`);
+const fails = checks.filter((c) => !c.ok).map((c) => `${c.name}: expected ${c.expect.join(' / ')}, got ${c.status ?? 'unreachable'}`);
 const ok = fails.length === 0;
 process.stdout.write(`${JSON.stringify({ ok, base: `${base.origin}${basePath}`, asset, admin, checks, fails })}\n`);
 // 不用 process.exit：Windows 上在套接字还没关完时强退会让 Node 以 0xC0000409 崩掉，退出码就不是我们给的了

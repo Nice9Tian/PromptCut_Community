@@ -60,7 +60,7 @@ async function until(label, fn, timeoutMs, everyMs = 150) {
     let v = null;
     try { v = await fn(); } catch { v = null; }
     if (v) return v;
-    if (Date.now() > end) { fails.push(`超时:${label}`); return null; }
+    if (Date.now() > end) { fails.push(`Timeout: ${label}`); return null; }
     await delay(everyMs);
   }
 }
@@ -162,10 +162,10 @@ function attachPageLogs(page) {
 
 try {
   if (!Number.isInteger(PORT) || PORT < 6410 || PORT > 6419) {
-    throw new Error(`--port 只允许 6410～6419，当前值：${arg('--port', 6410)}`);
+    throw new Error(`--port only allows 6410-6419, current value: ${arg('--port', 6410)}`);
   }
   if (!(await portFree(PORT))) {
-    throw new Error(`端口 ${PORT} 被占用（不结束外部进程，请换 6410～6419 内的空闲端口）`);
+    throw new Error(`Port ${PORT} is in use (external processes are not terminated, pick a free port within 6410-6419)`);
   }
 
   /* ---------------------------------------------------------------- 1. 构建与校验 version.json */
@@ -178,7 +178,7 @@ try {
       [viteBin(), 'build', '--mode', 'online', '--outDir', DIST, '--emptyOutDir', '--logLevel', 'error'],
       { cwd: ROOT, encoding: 'utf8', windowsHide: true },
     );
-    if (b.status !== 0) throw new Error(`在线构建失败：${String(b.stderr).slice(-600)}`);
+    if (b.status !== 0) throw new Error(`Online build failed: ${String(b.stderr).slice(-600)}`);
   }
   DIST = path.resolve(DIST);
   out.dist = DIST;
@@ -192,8 +192,8 @@ try {
   const jsFiles = fs.existsSync(assetsDir) ? fs.readdirSync(assetsDir).filter((f) => f.endsWith('.js')) : [];
   const inBundle = !!V && jsFiles.some((f) => fs.readFileSync(path.join(assetsDir, f), 'utf8').includes(V));
   out.buildVersion = { codeVersion: V || null, jsFilesCount: jsFiles.length, inBundle };
-  if (!check(V.length > 0 && inBundle, 'U0 在线构建产出 version.json，codeVersion 非空且原样出现在 assets/*.js 中', out.buildVersion)) {
-    throw new Error('version.json 校验未通过');
+  if (!check(V.length > 0 && inBundle, 'U0 the online build produces version.json, codeVersion is non-empty and appears verbatim in assets/*.js', out.buildVersion)) {
+    throw new Error('version.json validation did not pass');
   }
 
   /* ---------------------------------------------------------------- 2. 仿托管端 nginx 的静态服务 */
@@ -290,7 +290,7 @@ try {
   /* ---------------------------------------------------------------- U1: 启动时不取 version.json、无提示条 */
   await page.goto(`${out.site}/editor/`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   const rootRendered = await until(
-    'U1 #root 渲染出内容',
+    'U1 #root renders content',
     () => page.evaluate(() => (document.getElementById('root')?.children.length ?? 0) > 0),
     30_000,
     100,
@@ -306,7 +306,7 @@ try {
   };
   check(
     !!rootRendered && !u1HasNotice && reqCounts.versionJson === 0,
-    'U1 打开 /editor/ 渲染后等 2 秒：无 [data-pc="update-notice"]，version.json 请求数为 0',
+    'U1 after opening /editor/ and rendering, wait 2 seconds: no [data-pc="update-notice"], and the version.json request count is 0',
     out.steps.u1,
   );
 
@@ -314,7 +314,7 @@ try {
   const vBeforeU2 = reqCounts.versionJson;
   const visModeU2 = await cycleVisibility(page, ctx);
   const u2Fetched = await until(
-    'U2 切回前台后请求 version.json',
+    'U2 version.json is requested after switching back to the foreground',
     () => (reqCounts.versionJson >= vBeforeU2 + 1 ? reqCounts.versionJson : null),
     15_000,
     100,
@@ -324,7 +324,7 @@ try {
   out.steps.u2 = { visibility: visModeU2, before: vBeforeU2, after: reqCounts.versionJson, hasNotice: u2HasNotice };
   check(
     !!u2Fetched && reqCounts.versionJson === vBeforeU2 + 1 && !u2HasNotice,
-    'U2 版本不变时切后台再切回前台：version.json 请求数加 1，之后仍无提示条',
+    'U2 with an unchanged version, switching to the background and back to the foreground: the version.json request count goes up by 1, and there is still no notice bar afterwards',
     out.steps.u2,
   );
 
@@ -334,7 +334,7 @@ try {
   const vBeforeU3 = reqCounts.versionJson;
   await cycleVisibility(page, ctx);
   const u3Bar = await until(
-    'U3 出现 [data-pc="update-notice"]',
+    'U3 [data-pc="update-notice"] appears',
     () => page.evaluate(() => {
       const el = document.querySelector('[data-pc="update-notice"]');
       if (!el) return null;
@@ -353,9 +353,9 @@ try {
   check(
     reqCounts.versionJson > vBeforeU3
       && !!u3Bar
-      && u3Bar.text.includes('有新版本，刷新后使用。')
+      && u3Bar.text.includes('New version available, refresh to use it.')
       && u3Bar.hasRefreshBtn,
-    'U3 服务端换新版本后切后台再切回前台：请求 version.json 并出现提示条「有新版本，刷新后使用。」与刷新按钮',
+    'U3 after the server switches to a new version and the page goes to the background and back to the foreground: version.json is requested, and the notice bar "New version available, refresh to use it." with a refresh button appears',
     out.steps.u3,
   );
 
@@ -363,7 +363,7 @@ try {
   currentVersion = V;
   await cycleVisibility(page, ctx);
   const u3bGone = await until(
-    'U3b 服务端退回本页版本后提示条撤下',
+    'U3b the notice bar is dismissed after the server reverts to this page\'s version',
     () => page.evaluate(() => !document.querySelector('[data-pc="update-notice"]')),
     15_000,
     100,
@@ -371,13 +371,13 @@ try {
   currentVersion = nextVersion;
   await cycleVisibility(page, ctx);
   const u3bBack = await until(
-    'U3b 再换新版本后提示条重新出现',
+    'U3b the notice bar reappears after switching to a new version again',
     () => page.evaluate(() => !!document.querySelector('[data-pc="update-notice"]')),
     15_000,
     100,
   );
   out.steps.u3b = { gone: !!u3bGone, back: !!u3bBack, versionJsonRequests: reqCounts.versionJson };
-  check(!!u3bGone && !!u3bBack, 'U3b 服务端退回本页版本时提示条撤下，再换新版本又出现', out.steps.u3b);
+  check(!!u3bGone && !!u3bBack, 'U3b when the server reverts to this page\'s version the notice bar is dismissed, and it appears again after switching to a new version', out.steps.u3b);
 
   /* ---------------------------------------------------------------- U4: 点「刷新」重新载入页面 */
   await page.evaluate(() => { window.__updateProbeMark = 1; });
@@ -387,7 +387,7 @@ try {
     page.click('[data-pc="update-notice-refresh"]'),
   ]);
   await until(
-    'U4 刷新后 #root 重新渲染',
+    'U4 #root re-renders after refresh',
     () => page.evaluate(() => (document.getElementById('root')?.children.length ?? 0) > 0),
     30_000,
     100,
@@ -396,7 +396,7 @@ try {
   out.steps.u4 = { indexBefore: idxBeforeU4, indexAfter: reqCounts.indexHtml, markAfter: markAfterU4 ?? null };
   check(
     markAfterU4 === undefined && reqCounts.indexHtml > idxBeforeU4,
-    'U4 点击「刷新」：页面重新载入，window.__updateProbeMark 消失且 index.html 请求数增加',
+    'U4 clicking "Refresh": the page reloads, window.__updateProbeMark disappears and the index.html request count goes up',
     out.steps.u4,
   );
 
@@ -435,7 +435,7 @@ try {
   out.steps.u5 = u5Results;
   check(
     u5AllOk,
-    'U5 舞台页与导出/混音页（?stage=1、stage.html、?export=1、?audioMix=1）切后台再切回前台：不请求 version.json 且无提示条',
+    'U5 stage page and export/audio-mix pages (?stage=1, stage.html, ?export=1, ?audioMix=1) switched to the background and back to the foreground: version.json is not requested and there is no notice bar',
     u5Results,
   );
 
@@ -446,10 +446,10 @@ try {
     try {
       await phone.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 1 });
       await phone.goto(`${out.site}/editor/?layout=mobile`, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-      await until('U6 #root 渲染出内容', () => phone.evaluate(() => (document.getElementById('root')?.children.length ?? 0) > 0), 30_000, 100);
+      await until('U6 #root renders content', () => phone.evaluate(() => (document.getElementById('root')?.children.length ?? 0) > 0), 30_000, 100);
       await cycleVisibility(phone, phoneCtx);
       const bar = await until(
-        'U6 手机宽度出现提示条',
+        'U6 notice bar appears at mobile width',
         () => phone.evaluate(() => {
           const el = document.querySelector('[data-pc="update-notice"]');
           const text = el?.querySelector('.pc-update-notice-text');
@@ -463,14 +463,14 @@ try {
       out.steps.u6 = { bar, pageErrors: phone.pageErrors };
       // 一行：12.5px、行高 1.4 时约 18px，两行就是 35px 上下（文字是弹性盒的子项，getClientRects 只回一个框，只能看高度）
       check(!!bar && bar.textHeight < 26 && bar.left >= 16 && bar.right <= bar.vw - 16,
-        'U6 手机宽度（390）：提示条文字只占一行，左右各留出至少 16px', out.steps.u6);
+        'U6 mobile width (390): the notice bar text takes only one line, with at least 16px of space on each side', out.steps.u6);
     } finally {
       await phone.close().catch(() => {});
       await phoneCtx.close().catch(() => {});
     }
   }
 } catch (e) {
-  fails.push(`探针异常:${String(e?.stack ?? e).slice(0, 1200)}`);
+  fails.push(`Probe error: ${String(e?.stack ?? e).slice(0, 1200)}`);
 } finally {
   out.reqCounts = reqCounts;
   try { await browser?.close(); } catch { /* 已关 */ }

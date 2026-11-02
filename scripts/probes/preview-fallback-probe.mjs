@@ -70,7 +70,7 @@ async function until(label, fn, timeoutMs, everyMs = 1000, soft = false) {
     let value = null;
     try { value = await fn(); } catch { value = null; }
     if (value) return value;
-    if (Date.now() > deadline) { (soft ? notes : fails).push(`超时:${label}`); return null; }
+    if (Date.now() > deadline) { (soft ? notes : fails).push(`Timeout: ${label}`); return null; }
     await sleep(everyMs);
   }
 }
@@ -108,7 +108,7 @@ try {
     actions.seek(0);
     return c?.id;`, SECONDS);
   out.clipId = clipId;
-  check(!!clipId, '加上了粒子卡');
+  check(!!clipId, 'particle card added');
   /**
    * 把这几张卡钉成重卡(`pinnedHeavy`):父页的分派表当场生效(`mergePlanCosts`);`persist` 时再整条 PUT 到
    * 本 dev server 的成本存档(worktree 自己的 `out/card-costs.json`),预渲染进程据此把它们放进预渲染集合。
@@ -136,11 +136,11 @@ try {
     const keys = clipIdentityOf(getState().project).identityKeys;
     return ids.every((id) => pd.currentCosts().some((r) => r.identityKey === keys[id]));
   }, ids);
-  await until('粒子卡的 K1 记录', () => hasRecords([clipId]), 60000, 500, true);
+  await until('K1 record of the particle card', () => hasRecords([clipId]), 60000, 500, true);
   await pinHeavy([clipId], true);
   const prerender = await (await fetch(origin + '/api/prerender/info')).json();
   const segCount = Math.ceil(SECONDS * 30 / 15);
-  const ready = await until('粒子卡的轨道流满密度', async () => {
+  const ready = await until('Track stream of the particle card at full density', async () => {
     const k = await page.evaluate(async () => (await import('/src/render/dataMirror.ts')).mirrorKey());
     if (!k) return null;
     if (!PAGE_PRELOAD) await fetch(prerender.url + '/api/frames/preload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session: k.session, localRev: k.localRev, lane: 'background' }) }).catch(() => {});
@@ -165,7 +165,7 @@ try {
     actions.setClipFrame(b.id, { x: 1360, y: 760, w: 640, h: 360, anchor: [0.5, 0.5], scale: 0.6 });
     return [a.id, b.id];`, SECONDS);
   out.pills = pills;
-  if (pills.length) await until('药丸的 K1 记录', () => hasRecords(pills), 60000, 500, true);
+  if (pills.length) await until('K1 record of the pill', () => hasRecords(pills), 60000, 500, true);
   // 药丸只在父页钉(不 PUT):预渲染进程不产它们,播放时它们走到兜底顺序尽头
   const pinAll = async (extraIds = []) => { await pinHeavy([clipId, ...extraIds]); if (pills.length) await pinHeavy(pills); await sleep(300); };
   await pinAll();
@@ -227,8 +227,8 @@ try {
       backTaskMs: { p50: pct(backTask, 0.5), p90: pct(backTask, 0.9) }, frontId, shots };
     out.scenarios[name] = res;
     if (LABEL !== 'before') {
-      check(traces.length > 0, `${name}:舞台记下了逐拍分级`);
-      check(transparent.length === 0, `${name}:没有无提示透明的拍`, transparent.slice(0, 10));
+      check(traces.length > 0, `${name}: the stage recorded per-tick grading`);
+      check(transparent.length === 0, `${name}: no tick is transparent without a hint`, transparent.slice(0, 10));
     }
     return res;
   }
@@ -250,10 +250,10 @@ try {
   await pinAll();
   await store(`actions.seek(0);`);
   await sleep(1500);
-  await scenario('起播', async () => {
+  await scenario('playback start', async () => {
     await play();
     await sleep(350);
-    const a = await shot('起播');
+    const a = await shot('playback start');
     await sleep(1200);
     // 旋转 / 缩放的药丸此刻在兜底尽头(被抑制、没有流、没有快照):占位符
     const front = await frontFrame();
@@ -275,17 +275,17 @@ try {
     }).catch(() => null);
     out.hourglassScreen = ph.filter((x) => x.kind === 'badge' || x.kind === 'solid').map((x) => ({ clip: x.clip, kind: x.kind, glassScale: x.glassScale, viewScale, screenPxNoLayerScale: viewScale ? +(28 * x.glassScale * viewScale).toFixed(1) : null }));
     if (LABEL !== 'before' && viewScale && out.hourglassScreen.length) {
-      check(out.hourglassScreen.every((x) => Math.abs(x.screenPxNoLayerScale - 28) <= 3), '沙漏在屏幕上约 28 像素(按预览缩放补偿)', out.hourglassScreen);
+      check(out.hourglassScreen.every((x) => Math.abs(x.screenPxNoLayerScale - 28) <= 3), 'The hourglass is about 28 pixels on screen (compensated for the preview scale)', out.hourglassScreen);
     }
-    const b = await shot('占位符-旋转与缩放');
+    const b = await shot('placeholder-rotation-and-scaling');
     // 点中占位符命中它所在的卡;快照里没有占位节点
     if (front && ph.length) {
       const hit = await front.evaluate((x, y) => window.__pcStage.hitTest(x, y), ph[0].cx, ph[0].cy).catch((e) => ({ error: String(e) }));
       out.placeholderHit = { want: ph[0].clip, hit };
-      check(hit?.clipId === ph[0].clip, '点中占位符命中它所在的卡', out.placeholderHit);
+      check(hit?.clipId === ph[0].clip, 'Clicking a placeholder hits the card it belongs to', out.placeholderHit);
       const snap = await front.evaluate(() => { const s = window.__pcCreateSnapshot(); return { html: s.html.includes('data-pc-placeholder'), controls: s.controls.some((c) => c.html.includes('data-pc-placeholder')) }; }).catch((e) => ({ error: String(e) }));
       out.snapshotHasPlaceholder = snap;
-      check(snap && snap.html === false && snap.controls === false, '生成快照不带占位节点', snap);
+      check(snap && snap.html === false && snap.controls === false, 'Generate snapshots carries no placeholder nodes', snap);
     }
     if (LABEL !== 'before') {
       /*
@@ -300,7 +300,7 @@ try {
       out.pillsCovered = covered;
       for (const id of pills) {
         check(ph.some((p) => p.clip === id) || covered.snapshots.includes(id) || covered.planes.includes(id),
-          `药丸 ${id} 显示占位符,或已有预渲染结果垫着`, { ph, covered });
+          `Pill ${id} shows a placeholder, or already has a prerender output underneath`, { ph, covered });
       }
     }
     await sleep(1400);
@@ -313,10 +313,10 @@ try {
   await pinAll();
   await store(`actions.seek(args[0]);`, +(SECONDS * 0.6).toFixed(2));
   await sleep(1200);
-  await scenario('跳转', async () => {
+  await scenario('jump', async () => {
     await play();
     await sleep(300);
-    const a = await shot('跳转');
+    const a = await shot('jump');
     await sleep(1700);
     await pause();
     return [a];
@@ -338,11 +338,11 @@ try {
     for (const id of ids) idx.set(id, new Map([...src].map(([k, v]) => [k, { ...v }])));
     return ids.length;
   }, clipId, extra);
-  check(injected === 6, '给 6 张新粒子卡复制了流层', injected);
+  check(injected === 6, 'Cloned stream layers for 6 new particle cards', injected);
   // 新卡同一身份;一并钉成重卡
   await pinAll(extra);
   await sleep(500);
-  await scenario('超过6路流', async () => {
+  await scenario('more than 6 streams', async () => {
     await play();
     await sleep(1000);
     const front = await frontFrame();
@@ -351,23 +351,23 @@ try {
       const planesWithin = d.streamPlanes.filter((p) => !p.over).length;
       return { planes: d.streamPlanes.length, planesWithin, tracks: d.streams.tracks.length, snapshots: d.snapshots.length, suppressed: d.suppressed.length, over: d.streams.over?.length ?? 0 };
     }).catch(() => null) : null;
-    const a = await shot('超过6路流');
+    const a = await shot('more than 6 streams');
     await sleep(1000);
     await pause();
     return [a];
   });
-  if (LABEL !== 'before') check(out.overBudget && out.overBudget.planesWithin === out.overBudget.tracks && out.overBudget.tracks <= 32, '舞台解码器数与预算内流平面数一致且不超过硬上限(≤ 32)', out.overBudget);
+  if (LABEL !== 'before') check(out.overBudget && out.overBudget.planesWithin === out.overBudget.tracks && out.overBudget.tracks <= 32, 'The number of stage decoders matches the number of in-budget stream planes and does not exceed the hard limit (≤ 32)', out.overBudget);
   await sleep(1200);
 
   /* ---------------------------------------------------------------- 4. 编辑后 */
   await store(`for (const id of args[0]) actions.removeClip(id); actions.seek(2);`, extra);
   await pinAll();
   await sleep(1500);
-  await scenario('编辑后', async () => {
+  await scenario('after editing', async () => {
     if (pills.length) await store(`actions.setClipParams(args[0], { text: '改过 ${RUN}' }); actions.play();`, pills[0]);
     else await store(`actions.setClipParams(args[0], { seed: 5 }); actions.play();`, clipId);
     await sleep(400);
-    const a = await shot('编辑后');
+    const a = await shot('after editing');
     await sleep(1600);
     await pause();
     return [a];
@@ -379,7 +379,7 @@ try {
   const back = stageFrames().find((f) => f.url().includes(`id=${backId}`));
   out.backStage = back ? await back.evaluate(() => ({ slots: document.querySelectorAll('[data-pc-placeholder-slot],[data-pc-placeholder-plane]').length,
     style: !!document.querySelector('style[data-pc-placeholder]'), role: window.__pcStageDiag?.().role })).catch((e) => ({ error: String(e) })) : null;
-  if (LABEL !== 'before') check(out.backStage && out.backStage.slots === 0 && out.backStage.style === false, '后台舞台不挂占位节点、不注入占位样式', out.backStage);
+  if (LABEL !== 'before') check(out.backStage && out.backStage.slots === 0 && out.backStage.style === false, 'The background stage mounts no placeholder nodes and injects no placeholder styles', out.backStage);
 
   /* ---------------------------------------------------------------- 汇总 */
   const all = Object.values(out.scenarios);
@@ -399,16 +399,16 @@ try {
       const delta = +(s.taskMs.p90 - b.taskMs.p90).toFixed(3);
       out.vsBaseline[name] = { before: b.taskMs.p90, after: s.taskMs.p90, delta };
       // 耗时只记录(verification.md「耗时只记录,不当闸门」):原来 delta ≤ 1 ms 是通过条件
-      timings.record(`${name}:每拍主线程耗时 p90 相对基线的涨幅`, delta, { formerLimit: '≤ 1 ms' });
+      timings.record(`${name}: increase in p90 per-tick main-thread time relative to baseline`, delta, { formerLimit: '≤ 1 ms' });
     }
   }
   for (const [name, s] of Object.entries(out.scenarios)) {
-    timings.record(`${name}:每拍主线程耗时 p90(CDP TaskDuration)`, s.taskMs.p90);
-    timings.record(`${name}:舞台一拍干活时长 p90`, s.workMs.p90);
+    timings.record(`${name}: p90 per-tick main-thread time (CDP TaskDuration)`, s.taskMs.p90);
+    timings.record(`${name}: p90 stage work time per tick`, s.workMs.p90);
   }
   out.pageErrors = errors;
 } catch (error) {
-  fails.push(`异常:${error?.stack || error}`);
+  fails.push(`Exception: ${error?.stack || error}`);
 } finally {
   out.fails = fails;
   out.notes = notes;

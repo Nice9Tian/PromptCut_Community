@@ -79,7 +79,7 @@ test("card audio rejects a block that is not a whole number of channels and a th
   assert.equal(good.channels, 2);
   assert.equal(good.samples.length, 20);
   assert.equal(good.samples[0], 0.5);
-  assert.equal(good.url, undefined, "块留在内存里,只有预览的租约才编一份 blob: WAV");
+  assert.equal(good.url, undefined, "Blocks stay in memory; only a preview lease builds a blob: WAV");
 
   // 同一个键第二次直接命中缓存,不再求值
   const after = calls;
@@ -99,7 +99,7 @@ test("card audio cache key follows the card source version", async () => withAud
   assert.equal(calls, 1);
   version = "v2";
   await requestCardAudio({ project, nodeId: "n", start: 0, count: 4, sampleRate: 48000 });
-  assert.equal(calls, 2, "改了素材效果卡源码之后 project 对象不变,旧采样块不能一直用");
+  assert.equal(calls, 2, "After the media effect card source is edited the project object is unchanged, but the old sample block must not stay in use");
 }));
 
 test("card audio refuses to evaluate before the registry injects its hooks", async () => withAudio(async ({ requestCardAudio, getCardAudioEpoch, configureCardAudio, subscribeCardAudioEpoch }) => {
@@ -108,11 +108,11 @@ test("card audio refuses to evaluate before the registry injects its hooks", asy
   const stop = subscribeCardAudioEpoch(() => seen.push(getCardAudioEpoch()));
   const before = getCardAudioEpoch();
   configureCardAudio({ getCard: () => undefined, sourceVersionOf: () => "v" });
-  assert.equal(getCardAudioEpoch(), before + 1, "每调一次 configureCardAudio 版本号 +1");
+  assert.equal(getCardAudioEpoch(), before + 1, "The version number +1 on every configureCardAudio call");
   assert.deepEqual(seen, [before + 1]);
   stop();
   configureCardAudio({ getCard: () => undefined, sourceVersionOf: () => "v" });
-  assert.equal(seen.length, 1, "退订之后不再收到通知");
+  assert.equal(seen.length, 1, "No notifications are received after unsubscribing");
 }));
 
 test("preview selects generated-only and video-backed audio once and mutes their native video track", async () => withAudio(async ({ generatedCardAudioClipsAt, shouldMuteNativeAudio, isCardAudioNode }) => {
@@ -193,21 +193,21 @@ async function splitAt(project, d) {
 }
 const SR = 48000;
 
-test("变速素材段上的声画一体卡:预览照常出声;卡片时钟 = mediaOffset ÷ 倍率 + 片段内时间,读素材随倍率变速", async () => withAudio(async ({ configureCardAudio, cardAudioBlockRenderer, generatedCardAudioClipsAt }) => {
+test("Audio-visual card on a speed-changed media clip: preview still plays sound; card clock = mediaOffset ÷ speed + time within the clip, and the media is read at the changed speed", async () => withAudio(async ({ configureCardAudio, cardAudioBlockRenderer, generatedCardAudioClipsAt }) => {
   rampFetch();
   configureCardAudio({ getCard: (id) => (id === "av-probe" ? avProbe : undefined), sourceVersionOf: () => "v1" });
   for (const speed of [1, 2, 0.5]) {
     const p = avProject(speed);
-    assert.deepEqual(generatedCardAudioClipsAt(p, 1).map((x) => x.clip.id), ["c"], `${speed} 倍:预览的声音层里有这一段`);
+    assert.deepEqual(generatedCardAudioClipsAt(p, 1).map((x) => x.clip.id), ["c"], `${speed}x: the preview's sound layer contains this clip`);
     const block = await cardAudioBlockRenderer(p, "avn")(10, 4);
     for (let i = 0; i < 4; i++) {
-      assert.equal(block[2 * i], (1 / speed) * SR + 10 + i, `${speed} 倍:卡片时钟`);
-      assert.ok(Math.abs(block[2 * i + 1] - (SR + (10 + i) * speed)) < 1e-3, `${speed} 倍:读的素材 = mediaOffset + 片段内采样 × 倍率`);
+      assert.equal(block[2 * i], (1 / speed) * SR + 10 + i, `${speed}x: card clock`);
+      assert.ok(Math.abs(block[2 * i + 1] - (SR + (10 + i) * speed)) < 1e-3, `${speed}x: media read = mediaOffset + in-clip samples × speed`);
     }
   }
 }));
 
-test("变速素材段上的声画一体卡:切开后卡片时钟与读素材的位置都和切开前同一时刻接得上(2 倍、0.5 倍)", async () => withAudio(async ({ configureCardAudio, cardAudioBlockRenderer }) => {
+test("Audio-visual card on a speed-changed media clip: after a split, the card clock and the media read position both line up with the pre-split values at the same moment (2x, 0.5x)", async () => withAudio(async ({ configureCardAudio, cardAudioBlockRenderer }) => {
   rampFetch();
   configureCardAudio({ getCard: (id) => (id === "av-probe" ? avProbe : undefined), sourceVersionOf: () => "v1" });
   for (const speed of [2, 0.5, 1]) {
@@ -216,11 +216,11 @@ test("变速素材段上的声画一体卡:切开后卡片时钟与读素材的�
     const split = await splitAt(whole, 1.5);
     const rightNode = split.tracks[0].clips[1].nodeId;
     const after = await cardAudioBlockRenderer(split, rightNode)(0, 8);
-    for (let i = 0; i < 16; i++) assert.ok(Math.abs(after[i] - before[i]) < 1e-3, `${speed} 倍:第 ${i} 格 ${after[i]} ≠ 切开前 ${before[i]}`);
+    for (let i = 0; i < 16; i++) assert.ok(Math.abs(after[i] - before[i]) < 1e-3, `${speed}x: cell ${i} ${after[i]} ≠ pre-split ${before[i]}`);
   }
 }));
 
-test("变速素材段上的声画一体卡:已生成的声音切开、裁剪后照旧覆盖、不判过期,偏移按时间轴秒推进", async () => withAudio(async ({ configureCardAudio, persistentCardAudio, assertProjectCardAudio }) => {
+test("Audio-visual card on a speed-changed media clip: generated sound still covers after split and trim, is not judged stale, and the offset advances in timeline seconds", async () => withAudio(async ({ configureCardAudio, persistentCardAudio, assertProjectCardAudio }) => {
   configureCardAudio({ getCard: (id) => (id === "av-probe" ? avProbe : undefined), sourceVersionOf: () => "v1" });
   const { cardAudioIdentity, cardAudioSourceOffset } = await import("../kernel/cardAudioRendition.mjs");
   const hooks = { getCard: (id) => (id === "av-probe" ? avProbe : undefined), sourceVersionOf: () => "v1" };
@@ -230,7 +230,7 @@ test("变速素材段上的声画一体卡:已生成的声音切开、裁剪后�
     // 和 cardAudioGeneration.ts 记的一样:区间起点 = 生成时的源时钟,长度 = 片段的时间轴长度
     const cardAudio = { version: 1, cardId: "av-probe", mediaId: "wav", sampleRate: SR, frames: 4 * SR, channels: 2,
       sourceOffset: cardAudioSourceOffset(whole, clip), identity: cardAudioIdentity(whole, clip, hooks) };
-    assert.equal(cardAudio.sourceOffset, 1 / speed, "变速段的源时钟 = mediaOffset ÷ 倍率");
+    assert.equal(cardAudio.sourceOffset, 1 / speed, "Source clock of a speed-changed clip = mediaOffset ÷ speed");
     const withWav = (p) => ({ ...p, media: [...p.media, { id: "wav", kind: "audio", url: `/@media/${"c".repeat(64)}`, hash: "c".repeat(64) }],
       tracks: p.tracks.map((t) => ({ ...t, clips: t.clips.map((c) => ({ ...c, cardAudio })) })) });
     const generated = withWav(whole);
@@ -238,8 +238,8 @@ test("变速素材段上的声画一体卡:已生成的声音切开、裁剪后�
     assertProjectCardAudio(generated);
     const split = withWav(await splitAt(whole, 1.5));
     const [left, right] = split.tracks[0].clips;
-    assert.equal(persistentCardAudio(split, left).offset, 0, `${speed} 倍:前半段从头放`);
-    assert.ok(Math.abs(persistentCardAudio(split, right).offset - 1.5) < 1e-9, `${speed} 倍:后半段从第 1.5 秒放(以前 2 倍时判「未覆盖」、0.5 倍时错放到第 0.75 秒)`);
+    assert.equal(persistentCardAudio(split, left).offset, 0, `${speed}x: the first half plays from the start`);
+    assert.ok(Math.abs(persistentCardAudio(split, right).offset - 1.5) < 1e-9, `${speed}x: the second half plays from 1.5 s (it used to be judged "not covered" at 2x and wrongly played from 0.75 s at 0.5x)`);
     assertProjectCardAudio(split);
   }
 }));

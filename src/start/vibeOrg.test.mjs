@@ -13,9 +13,9 @@ import { addGroup, emptyOrg, mergeChats, mergeProjects, moveProject, parseOrg, v
 
 const EMPTY_ORG = emptyOrg('cloud');
 const cloud = [
-  { id: 'p1', name: '一', role: 'owned', realm: 'cloud' },
-  { id: 'p2', name: '二', role: 'owned', realm: 'cloud' },
-  { id: 'p3', name: '三', role: 'joined', realm: 'cloud' },
+  { id: 'p1', name: 'One', role: 'owned', realm: 'cloud' },
+  { id: 'p2', name: 'Two', role: 'owned', realm: 'cloud' },
+  { id: 'p3', name: 'three', role: 'joined', realm: 'cloud' },
 ];
 const C = 'cloud';
 
@@ -46,7 +46,7 @@ test('VORG-03 writing back organization data: entries missing from this manifest
   const next = withProjects(org, [{ id: 'b', realm: C, groupId: null, pinned: true }]);
   assert.deepEqual(next.projects.map((p) => p.id), ['b', 'a']);
   assert.equal(next.projects[0].pinned, true);
-  assert.notEqual(next, org, '换新对象,不原地改');
+  assert.notEqual(next, org, 'returns a new object, does not modify in place');
   assert.equal(org.projects[1].pinned, undefined);
 });
 

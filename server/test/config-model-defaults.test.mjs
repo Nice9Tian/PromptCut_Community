@@ -22,20 +22,20 @@ async function withConfig(contents, run) {
   }
 }
 
-test("新配置预设 Codex 5.6 Terra 和 Sol", async () => {
+test("A new config presets Codex 5.6 Terra and Sol", async () => {
   await withConfig(null, ({ readConfig }) => {
     assert.equal(readConfig().cliModels.codex, CODEX_MODELS);
   });
 });
 
-test("已有配置的空 Codex 清单自动补预设", async () => {
+test("An empty Codex list in an existing config is filled in with presets automatically", async () => {
   await withConfig({ version: 1, cliModels: { codex: "" } }, ({ readConfig }) => {
     const config = readConfig();
     assert.equal(config.cliModels.codex, CODEX_MODELS);
   });
 });
 
-test("已有自定义 Codex 清单保持不变", async () => {
+test("An existing custom Codex list stays unchanged", async () => {
   await withConfig({ version: 1, cliModels: { codex: "custom-codex" } }, ({ readConfig }) => {
     assert.equal(readConfig().cliModels.codex, "custom-codex");
   });

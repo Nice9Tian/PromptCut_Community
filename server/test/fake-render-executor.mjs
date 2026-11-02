@@ -30,7 +30,7 @@ export const T0 = 1_000_000;
 
 function abortError(signal) {
   const reason = signal?.reason;
-  const error = new Error(`aborted${reason instanceof Error ? `：${reason.message}` : ''}`);
+  const error = new Error(`aborted${reason instanceof Error ? `: ${reason.message}` : ''}`);
   error.name = 'AbortError';
   return error;
 }
@@ -100,7 +100,7 @@ export function createFakeExecutor({
   durationMs = 1_000,
   progressEveryMs = 250,
 } = {}) {
-  if (!clock || typeof clock.sleep !== 'function') throw new TypeError('createFakeExecutor：clock 须是 createTimerClock() 的实例');
+  if (!clock || typeof clock.sleep !== 'function') throw new TypeError('createFakeExecutor: clock must be an instance of createTimerClock()');
   const rules = [];
   const calls = [];
   const hung = [];

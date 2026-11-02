@@ -46,7 +46,7 @@ async function waitFor(fn, ms, what) {
     let v = null;
     try { v = await fn(); } catch { v = null; }
     if (v) return v;
-    if (Date.now() - t0 > ms) throw new Error(`等 ${what} 超时(${ms} ms)`);
+    if (Date.now() - t0 > ms) throw new Error(`Timed out waiting for ${what} (${ms} ms)`);
     await sleep(100);
   }
 }
@@ -62,10 +62,10 @@ function C({ params }: CardProps<Params>) {
   return <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 64, color: "#fff", background: "#243" }}>{"${MARK(v)}"} {params.text}</div>;
 }
 export const card: CardDef<Params> = {
-  id: "${id}", name: "改动层探针", description: "card-overlay-probe", source: "user",
+  id: "${id}", name: "Overlay layer probe", description: "card-overlay-probe", source: "user",
   frameMode: "direct",
   defaults: { text: "" },
-  controls: [{ key: "text", label: "文字", type: "text" }],
+  controls: [{ key: "text", label: "Text", type: "text" }],
   Component: C,
 };
 `;
@@ -152,9 +152,9 @@ try {
   say('spawn', { pid: child.pid });
   const origin = `http://127.0.0.1:${PORT}`;
   await waitFor(async () => {
-    if (child.exitCode !== null) throw new Error(`编辑器退出了:${log.join('').slice(-600)}`);
+    if (child.exitCode !== null) throw new Error(`Editor exited: ${log.join('').slice(-600)}`);
     return fetch(`${origin}/`, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok, () => false);
-  }, 180_000, '编辑器起来');
+  }, 180_000, 'editor started');
 
   browser = await puppeteer.launch({
     headless: true,
@@ -168,7 +168,7 @@ try {
   await page.goto(`${origin}/?editor`, { waitUntil: 'domcontentloaded' });
 
   // ---------- 3. 起来时:改动层里的 A、改过的 B 都在注册表里
-  const r0 = await waitFor(async () => { const r = await registry(page); return r.a.card && r.b.card ? r : null; }, 120_000, '注册表认出 A、B');
+  const r0 = await waitFor(async () => { const r = await registry(page); return r.a.card && r.b.card ? r : null; }, 120_000, 'Registry recognizes A and B');
   res.start = { a: markOf(r0.a.mark), b: markOf(r0.b.mark) };
   if (markOf(r0.a.mark) !== 'a1') fails.push('start-a-not-a1');
   if (markOf(r0.b.mark) !== 'b1x') fails.push('start-b-not-overlay');
@@ -188,7 +188,7 @@ try {
   const cb = await create(ID.b, cardSource(ID.b, 'b2'), true);
   res.overwrite = { status: cb.status, overwritten: cb.body?.overwritten ?? null };
   if (cb.status !== 200) fails.push(`overwrite-status-${cb.status}:${cb.body?.error ?? ''}`);
-  const r1 = await waitFor(async () => { const r = await registry(page); return markOf(r.b.mark) === 'b2' ? r : null; }, 15_000, '注册表里 B 变成 b2').catch(() => null);
+  const r1 = await waitFor(async () => { const r = await registry(page); return markOf(r.b.mark) === 'b2' ? r : null; }, 15_000, 'B becomes b2 in the registry').catch(() => null);
   res.overwriteHmrMs = r1 ? Date.now() - t1 : null;
   if (!r1) fails.push('overwrite-not-effective');
   if (fs.readFileSync(B_BASE, 'utf8') !== cardSource(ID.b, 'b1')) fails.push('b-base-changed');
@@ -202,7 +202,7 @@ try {
   const cc = await create(ID.c, cardSource(ID.c, 'c1'), false);
   res.create = { status: cc.status };
   if (cc.status !== 200) fails.push(`create-status-${cc.status}:${cc.body?.error ?? ''}`);
-  const r2 = await waitFor(async () => { const r = await registry(page); return r.c.card && markOf(r.c.mark) === 'c1' ? r : null; }, 15_000, '注册表认出 C').catch(() => null);
+  const r2 = await waitFor(async () => { const r = await registry(page); return r.c.card && markOf(r.c.mark) === 'c1' ? r : null; }, 15_000, 'Registry recognizes C').catch(() => null);
   res.createHmrMs = r2 ? Date.now() - t2 : null;
   if (!r2) fails.push('new-card-not-registered');
   res.overlayHasC = fs.existsSync(path.join(OVERLAY, USER, `${ID.c}.tsx`));
@@ -231,13 +231,13 @@ try {
     }
     return null;
   };
-  res.stageC = clipId ? await waitFor(() => stageHas(MARK('c1')), 60_000, '舞台画出 C').catch(() => null) : null;
+  res.stageC = clipId ? await waitFor(() => stageHas(MARK('c1')), 60_000, 'Stage renders C').catch(() => null) : null;
   if (!res.stageC) fails.push('stage-c-not-drawn');
   await page.screenshot({ path: path.join(OUT, `${RUN}-3-stage.png`) });
 
   // ---------- 6. 删掉改动层里的 A
   fs.rmSync(path.join(OVERLAY, USER, `${ID.a}.tsx`));
-  const r3 = await waitFor(async () => { const r = await registry(page); return !r.a.card ? r : null; }, 15_000, '注册表里 A 消失').catch(() => null);
+  const r3 = await waitFor(async () => { const r = await registry(page); return !r.a.card ? r : null; }, 15_000, 'A disappears from the registry').catch(() => null);
   if (!r3) fails.push('a-not-removed');
   res.fullReloads = navigations.length - navBase;
   if (res.fullReloads !== 0) fails.push('page-full-reload');

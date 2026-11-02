@@ -35,31 +35,31 @@ const control = (clipId, firstFrame, count, extra = {}) => ({
 const entryOf = (p = project()) => ({ key: 'entry-1', project: p, cardPlan: [control('clip-a', 0, 60), control('clip-b', 30, 120)] });
 const specsOf = (entry, budget = 6) => planStreams(entry, { budget, codeVersion: '1:test', envFingerprint: OWN });
 
-test('没有流时:层表不带 streams,与以前一字不差', () => {
+test('With no streams: the layer table has no streams, character for character identical to before', () => {
   const entry = entryOf();
   const before = layerMapOf(entry, { fingerprint: OWN, now: 1 });
   assert.equal('streams' in before, false);
-  assert.equal(before.v, LAYER_MAP_VERSION, '不升版本号');
-  assert.deepEqual(layerMapOf(entry, { fingerprint: OWN, now: 1, streams: [] }), before, '给了空的流表也不带');
+  assert.equal(before.v, LAYER_MAP_VERSION, 'The version number is not bumped');
+  assert.deepEqual(layerMapOf(entry, { fingerprint: OWN, now: 1, streams: [] }), before, 'Not carried even when given an empty stream table');
   assert.deepEqual(layerMapOf(entry, { fingerprint: OWN, now: 1, streams: null, streamCandidatesOf: () => [BROWSER] }), before);
 });
 
-test('单卡流:每条流一行,字段齐;layers 那一半不受影响', () => {
+test('Single-card streams: one row per stream, all fields present; the layers half is unaffected', () => {
   const entry = entryOf();
   const specs = specsOf(entry);
-  assert.equal(specs.length, 2, 'planStreams 出两条单卡流');
+  assert.equal(specs.length, 2, 'planStreams produces two single-card streams');
   const map = layerMapOf(entry, { fingerprint: OWN, now: 1, streams: specs });
   assert.deepEqual(map.layers, layerMapOf(entry, { fingerprint: OWN, now: 1 }).layers);
   assert.equal(map.v, LAYER_MAP_VERSION);
   assert.equal(map.streams.length, 2);
   for (const spec of specs) {
     const row = map.streams.find((r) => r.topClipId === spec.topClipId);
-    assert.ok(row, `有 ${spec.topClipId} 这一行`);
+    assert.ok(row, `There is a row for ${spec.topClipId}`);
     assert.deepEqual(row.clipIds, spec.clipIds);
     assert.equal(row.kind, 'card');
     assert.equal(row.plane, 'local');
     assert.equal(row.contentKey, spec.contentKey);
-    assert.deepEqual(row.candidates, [{ envFingerprint: OWN, resultKey: spec.streamKey }], '只有自己一个候选,结果键就是流键');
+    assert.deepEqual(row.candidates, [{ envFingerprint: OWN, resultKey: spec.streamKey }], 'The only candidate is its own, and the result key is the stream key');
     // 行里带这条流自己的第一帧,不写 firstSegment(恒为 0;改分段规则之前的页面认它,不写它旧页面就跳过这一行)
     assert.equal(row.originFrame, spec.originFrame);
     assert.equal('firstSegment' in row, false);
@@ -73,7 +73,7 @@ test('单卡流:每条流一行,字段齐;layers 那一半不受影响', () => {
   assert.equal(map.streams.find((r) => r.topClipId === 'clip-b').originFrame, 30);
 });
 
-test('组流:解码器预算压到 1 时两张卡并成一条,行里带全部成员,挂在最上面那张上', () => {
+test('Group stream: when the decoder budget is squeezed to 1, two cards merge into one stream, and the row carries all members and is attached to the topmost card', () => {
   const entry = entryOf();
   const specs = specsOf(entry, 1);
   assert.equal(specs.length, 1);
@@ -87,7 +87,7 @@ test('组流:解码器预算压到 1 时两张卡并成一条,行里带全部成
   assert.equal(row.inputSig, streamInputSig(entry.project, { clipIds: specs[0].clipIds, kind: 'group' }));
 });
 
-test('候选:切分实际出键的指纹在前(按发布顺序),再补上自己的;结果键 = 内容键 × 指纹', () => {
+test('Candidates: the fingerprints the splitter actually issued keys for come first (in publish order), then its own is added; result key = content key × fingerprint', () => {
   const entry = entryOf();
   const [spec] = specsOf(entry);
   const row = (candidatesOf) => layerStreamsOf(entry, { streams: [spec], fingerprint: OWN, candidatesOf })[0];
@@ -107,7 +107,7 @@ test('候选:切分实际出键的指纹在前(按发布顺序),再补上自己�
   assert.deepEqual(map.streams[0].candidates.map((c) => c.envFingerprint), [OWN, BROWSER]);
 });
 
-test('每份清单几段:缺省取队列常量,调用方可以给;形状不对的流跳过,不抛', () => {
+test('Segments per manifest: defaults to the queue constant and the caller can supply it; streams with the wrong shape are skipped without throwing', () => {
   const entry = entryOf();
   const [spec] = specsOf(entry);
   assert.equal(layerStreamsOf(entry, { streams: [spec], fingerprint: OWN, segmentsPerTask: 4 })[0].segmentsPerTask, 4);
@@ -124,7 +124,7 @@ test('每份清单几段:缺省取队列常量,调用方可以给;形状不对�
   assert.deepEqual(layerStreamsOf(entry, { streams: 'nope', fingerprint: OWN }), []);
 });
 
-test('同一条流挂在两个片段上(同卡同参数同入点):两行,键相同、topClipId 不同', () => {
+test('The same stream attached to two clips (same card, same parameters, same in point): two rows, same key, different topClipId', () => {
   const p = project();
   p.tracks.push({ id: 't-a2', clips: [{ ...p.tracks[0].clips[0], id: 'clip-a2' }] });
   const entry = { key: 'entry-1', project: p, cardPlan: [control('clip-a', 0, 60), control('clip-a2', 0, 60, { contentKey: 'ck-clip-a', snapshotKey: resultKeyOf('ck-clip-a', OWN) })] };
@@ -134,7 +134,7 @@ test('同一条流挂在两个片段上(同卡同参数同入点):两行,键相�
   assert.deepEqual(rows.map((r) => r.topClipId).sort(), ['clip-a', 'clip-a2']);
 });
 
-test('splitStreamCandidatesOf:只收流任务,按内容键记指纹(发布顺序);快照那一份照旧只收快照', () => {
+test('splitStreamCandidatesOf: collects only stream tasks and records fingerprints by content key (publish order); the snapshot one still collects only snapshots', () => {
   const stream = (ck, fp, from, extra = {}) => ({ id: `stream:${resultKeyOf(ck, fp)}:${from}-${from + 7}`, kind: 'stream', resultKey: resultKeyOf(ck, fp),
     range: { unit: 'segment', from, to: from + 7 }, input: { clipId: 'clip-a', cardId: null, entryKey: null, contentKey: ck, ...extra }, requires: { envFingerprint: fp, transcode: true } });
   const snap = (ck, fp) => ({ id: `snapshot:${ck}:0-59`, kind: 'snapshot', tier: 'shared', resultKey: resultKeyOf(ck, fp), range: { from: 0, to: 59 }, input: { contentKey: ck }, requires: { envFingerprint: fp } });
@@ -147,13 +147,13 @@ test('splitStreamCandidatesOf:只收流任务,按内容键记指纹(发布顺序
     { kind: 'stream', input: {}, requires: { envFingerprint: OWN } }, { kind: 'stream', input: { contentKey: 'sk-3' }, requires: {} }, null,
   ];
   assert.deepEqual([...splitStreamCandidatesOf(tasks)], [['sk-1', [OWN, BROWSER]], ['sk-2', [BROWSER]]]);
-  assert.deepEqual([...splitCandidatesOf(tasks)], [['ck-card', [OWN, BROWSER]]], '流任务不混进快照的候选');
+  assert.deepEqual([...splitCandidatesOf(tasks)], [['ck-card', [OWN, BROWSER]]], 'Stream tasks do not mix into the snapshot candidates');
   assert.deepEqual([...splitStreamCandidatesOf(null)], []);
   assert.equal(streamCandidateKey('sk-1'), `${STREAM_CANDIDATE_PREFIX}sk-1`);
   assert.equal(streamCandidateKey(''), null);
 });
 
-test('执行器 afterSplit:流的候选记在同一份记录里(键带 stream: 前缀);没有流任务时只记一次', async () => {
+test('Executor afterSplit: stream candidates are recorded in the same record (keys carry a stream: prefix); with no stream tasks it records only once', async () => {
   const { createPrerenderExecutor } = await import('../prerender-executor.mjs');
   const recorded = [];
   const pipeline = { recordSplitCandidates: (m) => recorded.push([...m.entries()]) };
@@ -162,7 +162,7 @@ test('执行器 afterSplit:流的候选记在同一份记录里(键带 stream: �
   const snap = { kind: 'snapshot', tier: 'shared', input: { contentKey: 'ck-card' }, requires: { envFingerprint: OWN } };
   const str = (fp) => ({ kind: 'stream', input: { contentKey: 'sk-1' }, requires: { envFingerprint: fp } });
   await exec.afterSplit(planTask, { tasks: [snap] });
-  assert.deepEqual(recorded, [[['ck-card', [OWN]]]], '没有流任务:和以前一样只记一次');
+  assert.deepEqual(recorded, [[['ck-card', [OWN]]]], 'No stream tasks: records only once, as before');
   recorded.length = 0;
   await exec.afterSplit(planTask, { tasks: [snap, str(OWN), str(BROWSER)] });
   assert.deepEqual(recorded, [[['ck-card', [OWN]]], [['stream:sk-1', [OWN, BROWSER]]]]);
@@ -170,16 +170,16 @@ test('执行器 afterSplit:流的候选记在同一份记录里(键带 stream: �
 
 /* ------------------------------------------------------------------ 清单计划给浏览器出的流进层表(集成那一环) */
 
-test('layerStreamsOf:标了 ownCandidate: false 的流只列切分实际出键的指纹,不补自己的;没人被派过就不列', () => {
+test('layerStreamsOf: a stream marked ownCandidate: false lists only the fingerprints the splitter actually issued keys for and does not add its own; it is not listed if no one was ever assigned it', () => {
   const entry = entryOf();
   const [spec] = specsOf(entry);
   const issued = { ...spec, ownCandidate: false };
   const [row] = layerStreamsOf(entry, { streams: [issued], fingerprint: OWN, candidatesOf: () => [BROWSER] });
-  assert.deepEqual(row.candidates, [{ envFingerprint: BROWSER, resultKey: resultKeyOf(spec.contentKey, BROWSER) }], '只有浏览器那一个候选');
+  assert.deepEqual(row.candidates, [{ envFingerprint: BROWSER, resultKey: resultKeyOf(spec.contentKey, BROWSER) }], 'Only the one browser candidate');
   assert.equal(row.contentKey, spec.contentKey);
   assert.equal(row.inputSig, streamInputSig(entry.project, { clipIds: spec.clipIds, kind: 'card' }));
-  assert.deepEqual(layerStreamsOf(entry, { streams: [issued], fingerprint: OWN, candidatesOf: () => [] }), [], '记录里没有:不列');
-  assert.deepEqual(layerStreamsOf(entry, { streams: [issued], fingerprint: OWN }), [], '没给 candidatesOf:不列');
+  assert.deepEqual(layerStreamsOf(entry, { streams: [issued], fingerprint: OWN, candidatesOf: () => [] }), [], 'Not in the record: not listed');
+  assert.deepEqual(layerStreamsOf(entry, { streams: [issued], fingerprint: OWN }), [], 'candidatesOf not given: not listed');
   // 切分连自己的指纹也出过键(以后桌面替清单计划产流):照记录列
   assert.deepEqual(layerStreamsOf(entry, { streams: [issued], fingerprint: OWN, candidatesOf: () => [BROWSER, OWN] })[0].candidates.map((c) => c.envFingerprint), [BROWSER, OWN]);
 });
@@ -210,7 +210,7 @@ async function withPipeline(streams, fn, { decoders = null } = {}) {
   };
   try {
     const pipeline = make();
-    if (streams === 'none') assert.equal(pipeline.streamProducer(), null, '没有生产者');
+    if (streams === 'none') assert.equal(pipeline.streamProducer(), null, 'no producer');
     else assert.equal(pipeline.streamProducer().enabled, streams === 'on');
     return await fn({ pipeline, maps, make });
   } finally {
@@ -251,37 +251,37 @@ function executorOn(pipeline, entry, { produced = [] } = {}) {
 }
 
 for (const mode of ['none', 'off']) {
-  test(`切分方自己不产流(${mode === 'none' ? '没有生产者' : '关着流开关'}):清单计划给浏览器出的单卡流照样进层表,候选是浏览器指纹`, async () => {
+  test(`The splitter itself produces no stream (${mode === 'none' ? 'no producer' : 'stream switch off'}): single-card streams that the manifest plan issues for the browser still go into the layer table, and the candidate is the browser fingerprint`, async () => {
     await withPipeline(mode, async ({ pipeline, maps, make }) => {
       const entry = pipelineEntry({ listed: ['clip-a', 'clip-b'] });
       // 切分之前(`addBackfill` 那一次写层表):没有人被派过流,层表不带 streams,与不认识流的时候逐字相同
       pipeline.publishLayerMap(entry);
       assert.equal(maps.length, 1);
       const plain = layerMapOf(entry, { picked: (id) => entry.prerenderSet.has(id), fingerprint: PIPE_FP, candidatesOf: () => null, now: maps[0].body.at });
-      assert.deepEqual(maps[0].body, plain, '没有流时层表与以前逐字相同');
+      assert.deepEqual(maps[0].body, plain, 'With no streams the layer table is identical to before, character for character');
       assert.equal('streams' in maps[0].body, false);
       assert.deepEqual(pipeline.layerMapStreamOptions(entry), {});
 
       const tasks = splitListPlan(pipeline, entry, ['clip-a', 'clip-b']);
       const streamTasks = tasks.filter((t) => t.kind === 'stream');
-      assert.equal(streamTasks.length, 2, '两张卡各一个浏览器流任务');
-      assert.ok(streamTasks.every((t) => t.requires.envFingerprint === BROWSER && t.requires.transcode === false), '只有浏览器那一份');
+      assert.equal(streamTasks.length, 2, 'One browser stream task for each of the two cards');
+      assert.ok(streamTasks.every((t) => t.requires.envFingerprint === BROWSER && t.requires.transcode === false), 'Only the browser\'s copy');
       await afterSplit(pipeline, entry, tasks);
-      assert.equal(maps.length, 2, '切分完成后写了一次层表');
+      assert.equal(maps.length, 2, 'The layer table was written once after the split completed');
       const map = maps[1].body;
       assert.equal(map.v, LAYER_MAP_VERSION);
       assert.deepEqual(map.layers.map((l) => l.clipId), ['clip-a', 'clip-b']);
       assert.equal(map.streams.length, 2);
       for (const task of streamTasks) {
         const row = map.streams.find((r) => r.topClipId === task.input.clipId);
-        assert.ok(row, `层表里有 ${task.input.clipId} 的流`);
+        assert.ok(row, `The layer table has the stream for ${task.input.clipId}`);
         assert.equal(row.kind, 'card');
         assert.equal(row.plane, 'local');
         assert.deepEqual(row.clipIds, [task.input.clipId]);
-        assert.equal(row.contentKey, task.input.contentKey, '内容键就是任务里的那一个');
-        assert.deepEqual(row.candidates, [{ envFingerprint: BROWSER, resultKey: task.resultKey }], '候选只有实际出键的浏览器指纹,结果键就是任务的结果键');
-        assert.equal(task.range.from, 0, '分段从 0 起数');
-        assert.equal(row.originFrame, task.input.stream.originFrame, '行里的第一帧就是任务里给浏览器的那一个');
+        assert.equal(row.contentKey, task.input.contentKey, 'The content key is the one in the task');
+        assert.deepEqual(row.candidates, [{ envFingerprint: BROWSER, resultKey: task.resultKey }], 'The only candidate is the browser fingerprint that actually issued the key, and the result key is the task\'s result key');
+        assert.equal(task.range.from, 0, 'Segments count from 0');
+        assert.equal(row.originFrame, task.input.stream.originFrame, 'The first frame in the row is the one the task gives the browser');
         assert.equal(row.lastSegment, task.range.to);
         assert.equal(row.segmentsPerTask, QUEUE_DEFAULTS.STREAM_SEGMENTS);
         assert.equal(row.inputSig, streamInputSig(entry.project, { clipIds: [task.input.clipId], kind: 'card' }));
@@ -296,22 +296,22 @@ for (const mode of ['none', 'off']) {
   });
 }
 
-test('切分方流开着:本机没判重的卡(清单计划补进来的)照样列,只有浏览器候选;本机判重的那张照旧(浏览器在前、自己在后)', async () => {
+test('Splitter streams on: cards this machine did not classify as heavy (added by the manifest plan) are still listed, with only the browser candidate; the card this machine classified as heavy stays as before (browser first, its own after)', async () => {
   await withPipeline('on', async ({ pipeline, maps }) => {
     const entry = pipelineEntry({ base: ['clip-b'], listed: ['clip-a'] });
     const before = pipeline.layerMapStreamOptions(entry);
-    assert.deepEqual(before.streams.map((s) => s.topClipId), ['clip-b'], '补这一环之前就有的:只列本机判重的卡');
+    assert.deepEqual(before.streams.map((s) => s.topClipId), ['clip-b'], 'What existed before this step was added: only cards this machine classified as heavy are listed');
     await afterSplit(pipeline, entry, splitListPlan(pipeline, entry, ['clip-a', 'clip-b']));
     const map = maps[maps.length - 1].body;
-    assert.deepEqual(map.streams.map((r) => r.topClipId), ['clip-b', 'clip-a'], '本机自己的流排在前面');
+    assert.deepEqual(map.streams.map((r) => r.topClipId), ['clip-b', 'clip-a'], 'This machine\'s own streams come first');
     const a = map.streams.find((r) => r.topClipId === 'clip-a'), b = map.streams.find((r) => r.topClipId === 'clip-b');
-    assert.deepEqual(a.candidates.map((c) => c.envFingerprint), [BROWSER], '本机没判重、不产它:不列自己的指纹');
-    assert.deepEqual(b.candidates.map((c) => c.envFingerprint), [BROWSER, PIPE_FP], '本机判重的:切分实际出键的在前,再补自己的');
+    assert.deepEqual(a.candidates.map((c) => c.envFingerprint), [BROWSER], 'Not classified as heavy on this machine and not produced by it: its own fingerprint is not listed');
+    assert.deepEqual(b.candidates.map((c) => c.envFingerprint), [BROWSER, PIPE_FP], 'Classified as heavy on this machine: the ones the splitter actually issued keys for come first, then its own is added');
     assert.equal(b.candidates[1].resultKey, before.streams[0].streamKey);
   });
 });
 
-test('清单计划连切分方自己的那一份一起出(任务书「甲三」):本机没判重的卡的流,候选是「切分方、浏览器」两个;关着时只有浏览器', async () => {
+test('The manifest plan also issues the splitter\'s own copy (task brief "A3"): for streams of cards this machine did not classify as heavy, the candidates are the two "splitter, browser"; when off, only the browser', async () => {
   const { listPlanOverrides } = await import('../render-node/local-node.mjs');
   /** 照 local-node 的真路径切:`listPlanOverrides` 按 `ownListStreams` 决定出不出切分方自己的那一份 */
   const splitWith = (pipeline, entry, clips, ownListStreams) => {
@@ -323,12 +323,12 @@ test('清单计划连切分方自己的那一份一起出(任务书「甲三」)
   await withPipeline('on', async ({ pipeline, maps, make }) => {
     // 渲染服务不判重:两张卡都是清单计划补进预渲染集合的
     const entry = pipelineEntry({ listed: ['clip-a', 'clip-b'] });
-    assert.deepEqual(pipeline.layerMapStreamOptions(entry), {}, '切分之前:本机一条流都不产,层表不带 streams');
+    assert.deepEqual(pipeline.layerMapStreamOptions(entry), {}, 'Before the split: this machine produces no streams at all, and the layer table has no streams');
     const tasks = splitWith(pipeline, entry, ['clip-a', 'clip-b'], true);
     const streamTasks = tasks.filter((t) => t.kind === 'stream');
     assert.deepEqual(streamTasks.map((t) => [t.input.clipId, t.requires.envFingerprint, t.requires.transcode, t.input.dual]).sort(), [
       ['clip-a', BROWSER, false, true], ['clip-a', PIPE_FP, true, true], ['clip-b', BROWSER, false, true], ['clip-b', PIPE_FP, true, true],
-    ].sort(), '每张卡两份:切分方自己的(要转码)、浏览器的');
+    ].sort(), 'Two copies per card: the splitter\'s own (needs transcoding) and the browser\'s');
     const produced = [];
     const exec = executorOn(pipeline, entry, { produced });
     await exec.afterSplit(clipsPlan({ clips: [...entry.prerenderSet] }), { tasks });
@@ -337,8 +337,8 @@ test('清单计划连切分方自己的那一份一起出(任务书「甲三」)
     const ownOf = (clipId) => streamTasks.find((t) => t.input.clipId === clipId && t.requires.envFingerprint === PIPE_FP);
     for (const row of map.streams) {
       // 两份成对,谁先认领谁得:切分完成时还不知道谁会赢,自己的先排在后面(之后才进来的页面取第一个候选)
-      assert.deepEqual(row.candidates.map((c) => c.envFingerprint), [BROWSER, PIPE_FP], '切分完成时:浏览器的在前,切分方自己的在后');
-      assert.equal(row.candidates[1].resultKey, ownOf(row.topClipId).resultKey, '结果键就是切分方那一份任务的结果键');
+      assert.deepEqual(row.candidates.map((c) => c.envFingerprint), [BROWSER, PIPE_FP], 'When the split completes: the browser\'s comes first, the splitter\'s own after');
+      assert.equal(row.candidates[1].resultKey, ownOf(row.topClipId).resultKey, 'The result key is the result key of the splitter\'s copy of the task');
       assert.equal(row.contentKey, ownOf(row.topClipId).input.contentKey);
       assert.equal(row.kind, 'card');
     }
@@ -346,9 +346,9 @@ test('清单计划连切分方自己的那一份一起出(任务书「甲三」)
     const before = maps.length;
     await exec.render(ownOf('clip-a'), { progress: () => {} });
     assert.equal(produced.length, 1);
-    assert.equal(maps.length, before + 1, '层表重写了一次');
+    assert.equal(maps.length, before + 1, 'The layer table was rewritten once');
     const after = maps[maps.length - 1].body;
-    assert.deepEqual(after.streams.find((r) => r.topClipId === 'clip-a').candidates.map((c) => c.envFingerprint), [PIPE_FP, BROWSER], '产出之后:自己的在前');
+    assert.deepEqual(after.streams.find((r) => r.topClipId === 'clip-a').candidates.map((c) => c.envFingerprint), [PIPE_FP, BROWSER], 'After production: its own comes first');
     assert.deepEqual(after.streams.find((r) => r.topClipId === 'clip-b').candidates.map((c) => c.envFingerprint), [BROWSER, PIPE_FP]);
     // 同一条流再做一段:顺序已经对了,不再重写
     await exec.render(ownOf('clip-a'), { progress: () => {} });
@@ -371,7 +371,7 @@ test('清单计划连切分方自己的那一份一起出(任务书「甲三」)
   });
 });
 
-test('切分方流开着、没有另列的流:层表与只按本机流计划写的逐字相同', async () => {
+test('Splitter streams on, no separately listed streams: the layer table is character for character the same as one written from this machine\'s stream plan only', async () => {
   await withPipeline('on', async ({ pipeline, maps }) => {
     const entry = pipelineEntry({ base: ['clip-a', 'clip-b'] });
     // 记录里只有快照的候选,和一条不属于这一版的流
@@ -379,31 +379,31 @@ test('切分方流开着、没有另列的流:层表与只按本机流计划写�
     pipeline.publishLayerMap(entry);
     const specs = planStreams(entry, { picked: (id) => entry.basePrerenderSet.has(id), budget: pipeline.streamProducer().budget, codeVersion: STREAM_CODE, envFingerprint: PIPE_FP });
     assert.equal(specs.length, 2);
-    assert.deepEqual(pipeline.layerMapStreamOptions(entry).streams, specs, '交给层表的就是本机的流计划,没有多出来的项');
+    assert.deepEqual(pipeline.layerMapStreamOptions(entry).streams, specs, 'What is handed to the layer table is this machine\'s stream plan, with no extra items');
     const expect = layerMapOf(entry, { picked: (id) => entry.prerenderSet.has(id), fingerprint: PIPE_FP, candidatesOf: (c) => pipeline.splitCandidatesFor(c?.contentKey), now: maps[0].body.at, streams: specs });
     assert.deepEqual(maps[0].body, expect);
     assert.deepEqual(maps[0].body.streams.map((r) => r.candidates.map((c) => c.envFingerprint)), [[PIPE_FP], [PIPE_FP]]);
   });
 });
 
-test('这一版所属的项目此刻不产流(托管方按项目的「生成轨道流」,entry.ownStreamsOff):不列本机自己这一版的流;派过的照候选记录列', async () => {
+test('The project this version belongs to does not produce streams right now (the host follows the project\'s "Generate track streams", entry.ownStreamsOff): this machine\'s own streams for this version are not listed; those already dispatched are still listed per the candidate record', async () => {
   await withPipeline('on', async ({ pipeline }) => {
     const entry = pipelineEntry({ base: ['clip-a', 'clip-b'] });
-    assert.deepEqual(pipeline.layerMapStreamOptions(entry).streams.map((s) => s.topClipId).sort(), ['clip-a', 'clip-b'], '照旧:本机判重的卡的流都列');
+    assert.deepEqual(pipeline.layerMapStreamOptions(entry).streams.map((s) => s.topClipId).sort(), ['clip-a', 'clip-b'], 'As before: the streams of all cards this machine classified as heavy are listed');
     entry.ownStreamsOff = true;
-    assert.deepEqual(pipeline.layerMapStreamOptions(entry), {}, '这一项关着、也没人被派过:层表不带 streams');
+    assert.deepEqual(pipeline.layerMapStreamOptions(entry), {}, 'This item is off and no one was ever assigned it: the layer table has no streams');
     // clip-a 的单卡流以前派过(开着的时候产的,或者给浏览器的):照记录列,候选只有记录里的指纹
     const [a] = planStreams({ ...entry, cardPlan: entry.cardPlan.filter((c) => c.clipId === 'clip-a') }, { budget: Infinity, codeVersion: STREAM_CODE, envFingerprint: PIPE_FP });
     pipeline.recordSplitCandidates(new Map([[streamCandidateKey(a.contentKey), [PIPE_FP]]]));
     const off = pipeline.layerMapStreamOptions(entry);
-    assert.deepEqual(off.streams.map((s) => [s.topClipId, s.ownCandidate]), [['clip-a', false]], '已经产出的保留在层表里;没派过的 clip-b 不列');
+    assert.deepEqual(off.streams.map((s) => [s.topClipId, s.ownCandidate]), [['clip-a', false]], 'Those already produced stay in the layer table; clip-b, which was never dispatched, is not listed');
     assert.deepEqual(layerStreamsOf(entry, { streams: off.streams, fingerprint: PIPE_FP, candidatesOf: off.streamCandidatesOf })[0].candidates.map((c) => c.envFingerprint), [PIPE_FP]);
     entry.ownStreamsOff = false;
-    assert.deepEqual(pipeline.layerMapStreamOptions(entry).streams.map((s) => s.topClipId).sort(), ['clip-a', 'clip-b'], '再打开:照旧');
+    assert.deepEqual(pipeline.layerMapStreamOptions(entry).streams.map((s) => s.topClipId).sort(), ['clip-a', 'clip-b'], 'Turned on again: as before');
   });
 });
 
-test('另列的流不与本机的流重叠(成员卡已在本机的组流里就不再另列);预渲染集合之外的卡不列', async () => {
+test('Separately listed streams do not overlap with this machine\'s streams (a member card already in this machine\'s group stream is not listed again); cards outside the prerender set are not listed', async () => {
   const recordSingles = (pipeline, entry) => {
     const singles = planStreams(entry, { budget: Infinity, codeVersion: STREAM_CODE, envFingerprint: PIPE_FP });
     assert.equal(singles.length, 2);
@@ -414,12 +414,12 @@ test('另列的流不与本机的流重叠(成员卡已在本机的组流里就�
     recordSingles(pipeline, entry);
     const { streams } = pipeline.layerMapStreamOptions(entry);
     assert.equal(streams.length, 1);
-    assert.equal(streams[0].kind, 'group', '解码器预算 1:本机并成一条组流,两张成员卡不再另列单卡流');
+    assert.equal(streams[0].kind, 'group', 'Decoder budget 1: this machine merges into one group stream, and the two member cards are no longer listed separately as single-card streams');
   }, { decoders: '1' });
   await withPipeline('none', async ({ pipeline }) => {
     const entry = pipelineEntry({ listed: ['clip-a'] });
     recordSingles(pipeline, entry);
-    assert.deepEqual(pipeline.layerMapStreamOptions(entry).streams.map((s) => s.topClipId), ['clip-a'], 'clip-b 不在预渲染集合里(层表里没有它的快照层):不列');
+    assert.deepEqual(pipeline.layerMapStreamOptions(entry).streams.map((s) => s.topClipId), ['clip-a'], 'clip-b is not in the prerender set (the layer table has no snapshot layer for it): not listed');
   });
 });
 
@@ -441,7 +441,7 @@ function belowEntry({ base = [], listed = ['clip-a', 'clip-b', 'clip-g'], edit =
   ], basePrerenderSet: new Set(base), prerenderSet: new Set([...base, ...listed]) };
 }
 
-test('清单计划里依赖下层的卡:切分方按自己的指纹出这种流、自己产;层表里写上这种行(带输入签名),候选只有切分方;流任务回来对得回这一版', async () => {
+test('Cards in the manifest plan that depend on lower layers: the splitter issues this kind of stream under its own fingerprint and produces it itself; this kind of row is written into the layer table (with an input signature), the only candidate is the splitter; when the stream task comes back it can be matched to this version', async () => {
   const { listPlanOverrides } = await import('../render-node/local-node.mjs');
   const splitWith = (pipeline, entry, clips, plan) => {
     const planTask = clipsPlan({ clips });
@@ -452,12 +452,12 @@ test('清单计划里依赖下层的卡:切分方按自己的指纹出这种流�
   const CLIPS = ['clip-a', 'clip-b', 'clip-g'];
   await withPipeline('on', async ({ pipeline, maps, make }) => {
     const entry = belowEntry();
-    assert.deepEqual(pipeline.layerMapStreamOptions(entry), {}, '切分之前:本机一条流都不产(这三张卡本机都没判重)');
+    assert.deepEqual(pipeline.layerMapStreamOptions(entry), {}, 'Before the split: this machine produces no streams at all (this machine classified none of these three cards as heavy)');
     const tasks = splitWith(pipeline, entry, CLIPS, { ownListStreams: true });
     const belowTasks = tasks.filter((t) => t.kind === 'stream' && t.requires.belowDependent === true);
     assert.deepEqual(belowTasks.map((t) => [t.input.clipId, t.requires.envFingerprint, t.requires.transcode, t.input.density ?? 'dense', 'dual' in t.input]),
-      [['clip-g', PIPE_FP, true, 'sparse', false], ['clip-g', PIPE_FP, true, 'dense', false]], '只有切分方自己的指纹;先稀疏后满密度;不和浏览器成对');
-    assert.ok(tasks.filter((t) => t.kind === 'stream' && t.requires.envFingerprint === BROWSER).every((t) => t.input.clipId !== 'clip-g'), '浏览器的指纹下没有这张卡的流');
+      [['clip-g', PIPE_FP, true, 'sparse', false], ['clip-g', PIPE_FP, true, 'dense', false]], 'Only the splitter\'s own fingerprint; sparse first, then full density; not paired with the browser');
+    assert.ok(tasks.filter((t) => t.kind === 'stream' && t.requires.envFingerprint === BROWSER).every((t) => t.input.clipId !== 'clip-g'), 'No stream for this card under the browser\'s fingerprint');
     const produced = [];
     const exec = executorOn(pipeline, entry, { produced });
     await exec.afterSplit(clipsPlan({ clips: CLIPS }), { tasks });
@@ -469,24 +469,24 @@ test('清单计划里依赖下层的卡:切分方按自己的指纹出这种流�
       candidates: [{ envFingerprint: PIPE_FP, resultKey: dense.resultKey }],
       originFrame: 15, lastSegment: dense.range.to, segmentsPerTask: QUEUE_DEFAULTS.STREAM_SEGMENTS,
       inputSig: streamInputSig(entry.project, { clipIds: ['clip-g'], kind: 'below' }),
-    }, '层表里这种行:舞台坐标、成员只有目标卡、候选只有切分方、带着页面算的同一个输入签名');
+    }, 'This kind of row in the layer table: stage coordinates, the only member is the target card, the only candidate is the splitter, and it carries the same input signature the page computed');
     assert.match(row.inputSig, /^s1-/);
-    assert.deepEqual(map.streams.filter((r) => r.kind === 'card').map((r) => r.topClipId).sort(), ['clip-a', 'clip-b'], '别的卡照旧各有一行单卡流');
+    assert.deepEqual(map.streams.filter((r) => r.kind === 'card').map((r) => r.topClipId).sort(), ['clip-a', 'clip-b'], 'Other cards still each have one single-card stream row');
     // 流任务回来:本机这一版的流里没有它(没判重),执行器按任务的片段现算一条来对,稀疏、满密度两种都对得回同一条
     for (const task of belowTasks) await exec.render(task, { progress: () => {} });
     assert.deepEqual(produced.map((x) => x.streamKey), [dense.resultKey, dense.resultKey]);
     // 任务说的种类和现算出来的对不上(有人把 belowDependent 抹了):不产
-    await assert.rejects(exec.render({ ...dense, requires: { ...dense.requires, belowDependent: false } }, { progress: () => {} }), /对不上这一版的流/);
+    await assert.rejects(exec.render({ ...dense, requires: { ...dense.requires, belowDependent: false } }, { progress: () => {} }), /does not match this version's stream/);
     // 重启后照样列(候选记录落盘)
     const again = make({ pushQueue: null });
     assert.deepEqual(again.layerMapStreamOptions(entry).streams.map((s) => [s.topClipId, s.kind]).sort(), [['clip-a', 'card'], ['clip-b', 'card'], ['clip-g', 'below']]);
     // 下层改了(下面那张卡换了参数):这种流的内容键换了,旧记录对不上,不再列;页面按旧行的签名也判得出过期
     const edited = belowEntry({ edit: (p) => { p.tracks.find((t) => t.id === 't-a').clips[0].params = { text: 'changed' }; return p; } });
-    assert.deepEqual(pipeline.layerMapStreamOptions(edited).streams.map((s) => s.topClipId).sort(), ['clip-a', 'clip-b'], '两张下层卡自己的单卡流照列(这里的替身键没换),毛玻璃的流不再列');
+    assert.deepEqual(pipeline.layerMapStreamOptions(edited).streams.map((s) => s.topClipId).sort(), ['clip-a', 'clip-b'], 'The two lower-layer cards\' own single-card streams are still listed (the stand-in key here did not change), and the frosted-glass stream is no longer listed');
     assert.notEqual(streamInputSig(edited.project, { clipIds: ['clip-g'], kind: 'below' }), row.inputSig);
     // 旧任务到了新版本:对不回(内容键换了),不产
     const execNew = executorOn(pipeline, edited, { produced });
-    await assert.rejects(execNew.render(dense, { progress: () => {} }), /对不上这一版的流/);
+    await assert.rejects(execNew.render(dense, { progress: () => {} }), /does not match this version's stream/);
     // 新的一版再切一次:层表里是新键、新签名的行
     const tasks2 = splitWith(pipeline, edited, CLIPS, { ownListStreams: true });
     await execNew.afterSplit(clipsPlan({ clips: CLIPS }), { tasks: tasks2 });

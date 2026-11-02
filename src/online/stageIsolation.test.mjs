@@ -206,7 +206,7 @@ test("OCS-S-12 session ID: 32 hex digits, different each time; the handoff reque
   assert.equal(calls[0].init.method, "POST");
   assert.equal(calls[0].init.credentials, "include");
   assert.deepEqual(calls[0].init.headers, { Authorization: `Bearer ${TICKET}` });
-  assert.ok(!calls[0].url.includes(TICKET), "票据不进地址");
+  assert.ok(!calls[0].url.includes(TICKET), "The ticket does not go into the URL");
   assert.equal(calls[0].init.body, undefined);
   for (const status of [200, 401, 403, 404, 500]) assert.equal(await grantMediaCookie(S1, SID, TICKET, fetchImpl(status)), false, String(status));
   assert.equal(await grantMediaCookie(S1, SID, TICKET, async () => { throw new TypeError("Failed to fetch"); }), false);

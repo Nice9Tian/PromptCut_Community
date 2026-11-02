@@ -83,7 +83,7 @@ async function stageOrigins() {
   if (sameOrigin) return [origin, origin];
   const r = await fetch(origin + '/api/stage/ports');
   const j = await r.json();
-  if (!j.ok || !Array.isArray(j.ports) || j.ports.length < 2) throw new Error(`舞台端口没起来:${JSON.stringify(j)}`);
+  if (!j.ok || !Array.isArray(j.ports) || j.ports.length < 2) throw new Error(`Stage ports did not come up: ${JSON.stringify(j)}`);
   const u = new URL(origin);
   return j.ports.slice(0, 2).map((p) => `${u.protocol}//${u.hostname}:${p}`);
 }
@@ -178,7 +178,7 @@ try {
     { id: 'tr-p', clips: [{ id: 'c-pixel', mediaId: 'mv', start: 0, end: 4, params: {}, pixelMap: { id: 'pm1' }, frame: { x: 0, y: 540, w: 960, h: 540, anchor: [0, 0] } }] },
   ], {
     pixelMaps: [{
-      id: 'pm1', name: '反色', source: { stage: 'origin' }, where: '1',
+      id: 'pm1', name: 'Invert colors', source: { stage: 'origin' }, where: '1',
       to: { kind: 'expr', r: '1 - r', g: '1 - g', b: '1 - b', a: 'a' }, mode: 'continuous',
     }],
   }));
@@ -222,15 +222,15 @@ try {
       slotWrappers: [...document.querySelectorAll('[data-pc-clip]')].map((e) => e.getAttribute('data-pc-clip')),
     };
   });
-  check(out.mediaLayer.videoReady >= 2 && out.mediaLayer.videoSize?.[0] > 0, 'live 素材层:<video> 解码就绪', out.mediaLayer);
-  check(out.mediaLayer.videoColours > 8, 'live 素材层:视频真的出画面(不是单色)', out.mediaLayer.videoColours);
-  check(out.mediaLayer.imgNatural?.[0] > 0 && out.mediaLayer.imgColours > 8, 'live 素材层:图片真的出画面', out.mediaLayer);
-  check(!out.mediaLayer.pixelError && out.mediaLayer.pixelColours > 8, '带像素映射的素材段也出画面(R1b 的 WebGL 路)', out.mediaLayer);
-  check(out.mediaLayer.pixelTrackVideos === 1, '带像素映射的素材段不被画两遍(VideoTrack 里没有它)', out.mediaLayer.pixelTrackVideos);
+  check(out.mediaLayer.videoReady >= 2 && out.mediaLayer.videoSize?.[0] > 0, 'live media layer: <video> decode ready', out.mediaLayer);
+  check(out.mediaLayer.videoColours > 8, 'live media layer: the video really shows a picture (not a single color)', out.mediaLayer.videoColours);
+  check(out.mediaLayer.imgNatural?.[0] > 0 && out.mediaLayer.imgColours > 8, 'live media layer: the image really shows a picture', out.mediaLayer);
+  check(!out.mediaLayer.pixelError && out.mediaLayer.pixelColours > 8, 'media clips with a pixel map also show a picture (R1b\'s WebGL path)', out.mediaLayer);
+  check(out.mediaLayer.pixelTrackVideos === 1, 'media clips with a pixel map are not drawn twice (VideoTrack does not contain them)', out.mediaLayer.pixelTrackVideos);
 
   out.rects = await page.evaluate(async () => (await window.__rpc.rectsWithBounds({ pixels: 'none' })).map((r) => r.clipId));
-  check(['c-video', 'c-image', 'c-pixel'].every((id) => out.rects.includes(id)), 'rects() 含素材段(D3 第 4 步)', out.rects);
-  check(new Set(out.rects).size === out.rects.length, 'rects() 里每个 clipId 只出现一次', out.rects);
+  check(['c-video', 'c-image', 'c-pixel'].every((id) => out.rects.includes(id)), 'rects() includes media clips (D3 step 4)', out.rects);
+  check(new Set(out.rects).size === out.rects.length, 'each clipId appears only once in rects()', out.rects);
 
   /* 素材效果卡接管的素材段:节点是 adapter:'card' 的,素材层不画它 */
   const graphProject = await page.evaluate(() => window.__mk([
@@ -245,7 +245,7 @@ try {
     videosOnPlainTrack: [...document.querySelectorAll('[data-pc-track="tr-v"] video[src]')].length,
   }));
   check(out.graphTakeover.videosOnGraphTrack === 0 && out.graphTakeover.videosOnPlainTrack >= 1,
-    '素材效果卡接管的素材段不被 VideoTrack 画(普通素材段照画)', out.graphTakeover);
+    'media clips taken over by a media effect card are not drawn by VideoTrack (ordinary media clips are drawn as usual)', out.graphTakeover);
 
   /* ================================================================
    * B. 平面与类(E7 第 4、5 条)+ 组件实例不变
@@ -262,7 +262,7 @@ try {
     injected: !!document.querySelector('style[data-pc-planes]'),
     css: document.querySelector('style[data-pc-planes]')?.textContent?.split('\n').length ?? 0,
   }));
-  check(out.planeStyle.injected && out.planeStyle.css === 4, 'E7 的四条样式规则已注入', out.planeStyle);
+  check(out.planeStyle.injected && out.planeStyle.css === 4, 'E7\'s four style rules have been injected', out.planeStyle);
 
   // 给组件根挂标记:React 一旦重挂载,这个 DOM 元素就换人了
   await fa.evaluate(() => {
@@ -320,15 +320,15 @@ try {
   out.snapshot = { cellsBefore, onSnap, swapSnap, offSnap };
 
   check(onSnap.marked === true && swapSnap.marked === true && offSnap.marked === true,
-    '快照挂上 / 换帧 / 摘掉:卡片组件的 DOM 根是同一个元素(没重挂载)', out.snapshot);
+    'snapshot attached / frame swapped / detached: the card component\'s DOM root is the same element (not remounted)', out.snapshot);
   check(onSnap.cells === cellsBefore && swapSnap.cells === cellsBefore && offSnap.cells === cellsBefore,
-    '三种情况下组件内部状态一格都没丢', out.snapshot);
-  check(onSnap.cls?.includes('pc-snapshot') && !offSnap.cls?.includes('pc-snapshot'), '`.pc-snapshot` 跟着快照来去', out.snapshot);
+    'in all three cases the component\'s internal state lost nothing', out.snapshot);
+  check(onSnap.cls?.includes('pc-snapshot') && !offSnap.cls?.includes('pc-snapshot'), '`.pc-snapshot` comes and goes with the snapshot', out.snapshot);
   check(onSnap.snap === 'a' && swapSnap.snap === 'b' && swapSnap.planes === 1,
-    '换帧是同一个平面的 innerHTML 原子替换,前后两张不共存', out.snapshot);
+    'frame swap is an atomic innerHTML replacement on the same plane; the before and after images never coexist', out.snapshot);
   check(onSnap.vis?.comp?.display === 'none' && onSnap.vis?.plane?.display !== 'none',
-    '`.pc-snapshot`:子树 display:none,快照平面放过', onSnap.vis);
-  check(offSnap.vis?.comp?.display !== 'none' && offSnap.vis?.hasPlane === false, '摘掉之后平面没了、组件露出来', offSnap.vis);
+    '`.pc-snapshot`: subtree is display:none, the snapshot plane is spared', onSnap.vis);
+  check(offSnap.vis?.comp?.display !== 'none' && offSnap.vis?.hasPlane === false, 'after detaching, the plane is gone and the component shows', offSnap.vis);
 
   /* ── 抑制:粒子卡 ───────────────────────────────────────────────── */
   await page.evaluate(async (html) => {
@@ -361,11 +361,11 @@ try {
     return r ? await window.__rpc.hitTest(r.rect.left + r.rect.width / 2, r.rect.top + r.rect.height / 2) : null;
   });
   out.suppressed = { sup1, sup2, hit };
-  check(sup1.cls?.includes('pc-suppressed'), '`.pc-suppressed` 挂上了', sup1.cls);
-  check(sup1.vis?.comp?.display === 'none' && sup1.vis?.plane?.display !== 'none', '`.pc-suppressed`:子树 display:none,平面放过', sup1.vis);
-  check(!!sup1.hash && sup1.hash === sup2.hash, '被抑制的粒子卡 <canvas> 像素在抑制期间不变(传给组件的 t 冻住了)', { a: sup1.hash, b: sup2.hash });
-  check(sup1.localFrame !== sup2.localFrame, '包裹层的 data-pc-local-frame 仍随 t 变(cardT 的其余用途照常用实时值)', { a: sup1.localFrame, b: sup2.localFrame });
-  check(hit?.clipId === 'c-par', '被抑制的卡 hitTest 仍能点中(贴着平面)', hit);
+  check(sup1.cls?.includes('pc-suppressed'), '`.pc-suppressed` is attached', sup1.cls);
+  check(sup1.vis?.comp?.display === 'none' && sup1.vis?.plane?.display !== 'none', '`.pc-suppressed`: subtree is display:none, the plane is spared', sup1.vis);
+  check(!!sup1.hash && sup1.hash === sup2.hash, 'a suppressed particle card\'s <canvas> pixels do not change during suppression (the t passed to the component is frozen)', { a: sup1.hash, b: sup2.hash });
+  check(sup1.localFrame !== sup2.localFrame, 'the wrapper layer\'s data-pc-local-frame still changes with t (the other uses of cardT still use the live value)', { a: sup1.localFrame, b: sup2.localFrame });
+  check(hit?.clipId === 'c-par', 'a suppressed card can still be hit by hitTest (it is attached to the plane)', hit);
 
   await page.evaluate(async () => { await window.__rpc.setSuppressed([]); await window.__rpc.setSnapshots({}, { reset: true }); });
 
@@ -379,11 +379,11 @@ try {
   await new Promise((r) => setTimeout(r, 700));
   const awaiting2 = await fa.evaluate(() => ({ cls: window.__classes('c-type'), vis: window.__vis('c-type'), marked: window.__marked('c-type') }));
   out.awaiting = { awaiting1, awaiting2 };
-  check(awaiting1.cls?.includes('pc-awaiting'), '`.pc-awaiting` 由 setTime({ awaiting }) 挂上', awaiting1);
+  check(awaiting1.cls?.includes('pc-awaiting'), '`.pc-awaiting` is attached by setTime({ awaiting })', awaiting1);
   check(awaiting1.vis?.comp?.visibility === 'hidden' && awaiting1.vis?.comp?.display !== 'none',
-    '`.pc-awaiting` 是 visibility:hidden,子树保留布局盒', awaiting1.vis);
-  check(!awaiting2.cls?.includes('pc-awaiting'), '`.pc-awaiting` 500 ms 后自动摘掉(真定时器兜底)', awaiting2);
-  check(awaiting2.vis?.comp?.visibility !== 'hidden' && awaiting2.marked === true, '兜底之后露出的是同一个活组件', awaiting2);
+    '`.pc-awaiting` is visibility:hidden, the subtree keeps its layout box', awaiting1.vis);
+  check(!awaiting2.cls?.includes('pc-awaiting'), '`.pc-awaiting` is removed automatically after 500 ms (real-timer fallback)', awaiting2);
+  check(awaiting2.vis?.comp?.visibility !== 'hidden' && awaiting2.marked === true, 'after the fallback, what shows is the same live component', awaiting2);
 
   /* ── 快照到达就把 `.pc-awaiting` 摘掉(另一条退出路) ─────────── */
   const awaitSnap = await page.evaluate(async (html) => {
@@ -394,7 +394,7 @@ try {
   void awaitSnap;
   out.awaitingBySnapshot = await fa.evaluate(() => ({ cls: window.__classes('c-type') }));
   check(!out.awaitingBySnapshot.cls?.includes('pc-awaiting') && out.awaitingBySnapshot.cls?.includes('pc-snapshot'),
-    '快照到达时 `.pc-awaiting` 立刻换成 `.pc-snapshot`', out.awaitingBySnapshot);
+    'when the snapshot arrives, `.pc-awaiting` is immediately replaced by `.pc-snapshot`', out.awaitingBySnapshot);
   await page.evaluate(async () => { await window.__rpc.setSnapshots({}, { reset: true }); });
 
   /* ── `.pc-settling` 的可见性(R5 才有驱动,这里直接验样式契约) ── */
@@ -408,8 +408,8 @@ try {
     return { on, off };
   });
   check(out.settling.on.visibility === 'hidden' && out.settling.on.display !== 'none',
-    '`.pc-settling` 是 visibility:hidden(子树保留布局盒,动画照跑、syncIn 钉得上)', out.settling);
-  check(out.settling.off.visibility !== 'hidden', '摘掉 `.pc-settling` 就恢复', out.settling);
+    '`.pc-settling` is visibility:hidden (the subtree keeps its layout box, animations keep running, syncIn can still pin it)', out.settling);
+  check(out.settling.off.visibility !== 'hidden', 'removing `.pc-settling` restores it', out.settling);
 
   /* ================================================================
    * C. E4b 两条
@@ -428,9 +428,9 @@ try {
     const el = document.querySelector('[data-pc-probe="typewriter"]');
     return { cells: el ? Number(el.getAttribute('data-pc-probe-cells')) : null, text: el?.textContent?.length ?? null };
   });
-  check(!out.typewriter.aborted && Math.abs(out.typewriter.caughtUpAtSec - 3) < 1e-6, 'E4b:打字机卡补跑到第 3 秒', out.typewriter);
+  check(!out.typewriter.aborted && Math.abs(out.typewriter.caughtUpAtSec - 3) < 1e-6, 'E4b: the typewriter card\'s catch-up run reaches second 3', out.typewriter);
   check(out.typewriterCells.cells === 30 && out.typewriterCells.text === 30,
-    'E4b:setInterval 每 100 ms 一格,补跑到第 3 秒恰好 30 格', out.typewriterCells);
+    'E4b: setInterval steps once every 100 ms, so the catch-up run to second 3 gives exactly 30 steps', out.typewriterCells);
 
   const countProject = await page.evaluate(() => window.__mk([
     { id: 'tr-a', clips: [{ id: 'c-count', cardId: 'probe-countdown', start: 0, end: 30, params: {} }] },
@@ -450,7 +450,7 @@ try {
   await new Promise((r) => setTimeout(r, 300));
   const rem10 = await readRemaining();
   out.countdown = { rem0, rem10, delta: rem0 !== null && rem10 !== null ? rem0 - rem10 : null };
-  check(out.countdown.delta === 10000, 'E4b:Date.now() 倒计时卡推 10 秒后恰好少 10 秒', out.countdown);
+  check(out.countdown.delta === 10000, 'E4b: after advancing 10 seconds, the Date.now() countdown card shows exactly 10 seconds less', out.countdown);
 
   await page.evaluate(async () => { await window.__rpcB.setRole('front'); });
 

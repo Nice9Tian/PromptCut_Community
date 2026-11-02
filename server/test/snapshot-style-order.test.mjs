@@ -131,13 +131,13 @@ function styleStrings(order) {
 
 /* ------------------------------------------------------------------ 用例 */
 
-test('X6-1 serializeDeclarations:同一组声明不论先后,拼出同一个串', () => {
+test('X6-1 serializeDeclarations: the same set of declarations yields the same string regardless of order', () => {
   const decls = [['width', '10px'], ['--b', '1'], ['-webkit-text-fill-color', 'red'], ['color', 'red'], ['--a', '2'], ['align-items', 'center'], ['-webkit-box-flex', '0']];
   const want = serializeDeclarations([...decls]);
-  for (let seed = 1; seed <= 50; seed++) assert.equal(serializeDeclarations(shuffled(decls, seed)), want, `种子 ${seed}`);
+  for (let seed = 1; seed <= 50; seed++) assert.equal(serializeDeclarations(shuffled(decls, seed)), want, `Seed ${seed}`);
 });
 
-test('X6-2 顺序是「标准属性、前缀属性、自定义属性」三组,组内按 UTF-16 码元序', () => {
+test('X6-2 the order is three groups: "standard properties, prefixed properties, custom properties", and within each group by UTF-16 code unit order', () => {
   const text = serializeDeclarations([
     ['--z', '1'], ['width', '1px'], ['-webkit-writing-mode', 'horizontal-tb'], ['--A', '2'], ['--a', '3'],
     ['align-items', 'center'], ['-webkit-mask-position-x', '0%'], ['mask-position', '0% 0%'], ['Z-upper', 'x'],
@@ -147,30 +147,30 @@ test('X6-2 顺序是「标准属性、前缀属性、自定义属性」三组,�
     + '--A:2;--a:3;--z:1;');
 });
 
-test('X6-3 标准段、前缀段的先后与 Chrome 自己的枚举一致(简写 mask-position 仍在 -webkit-mask-position-x/y 之前)', () => {
+test('X6-3 the order of the standard section and the prefixed section matches Chrome\'s own enumeration (the shorthand mask-position still comes before -webkit-mask-position-x/y)', () => {
   // Chrome 152 的枚举:标准属性按字母、前缀属性按字母、自定义属性(本分支报告 X6 一节的实测)
   const chromeOrder = [['align-items', 'center'], ['mask-position', '0% 0%'], ['writing-mode', 'horizontal-tb'],
     ['-webkit-mask-position-x', '0%'], ['-webkit-mask-position-y', '0%'], ['-webkit-writing-mode', 'horizontal-tb']];
   const old = chromeOrder.map(([p, v]) => `${p}:${v};`).join('');
-  assert.equal(serializeDeclarations(shuffled(chromeOrder, 7)), old, '没有自定义属性时,输出与按 Chrome 枚举顺序拼的旧串逐字节相同');
+  assert.equal(serializeDeclarations(shuffled(chromeOrder, 7)), old, 'With no custom properties, the output is byte-for-byte identical to the old string built in Chrome enumeration order');
 });
 
-test('X6-4 inlineDOMStyles:计算样式的枚举顺序不同(模拟两个进程),克隆体上的 style 串逐字节相同', () => {
+test('X6-4 inlineDOMStyles: when the enumeration order of computed styles differs (simulating two processes), the style strings on the clone are byte-for-byte identical', () => {
   const asIs = styleStrings(entries => entries);
   const reversed = styleStrings(entries => [...entries].reverse());
   const hashes = new Set([asIs, reversed].map(list => sha(list.join('\n'))));
   for (let seed = 1; seed <= 20; seed++) hashes.add(sha(styleStrings((entries, who) => shuffled(entries, seed * 31 + who.length)).join('\n')));
-  assert.equal(hashes.size, 1, '22 种枚举顺序应当只得出一种快照');
-  for (const text of asIs) assert.ok(text.endsWith(STOP_CLOCKS), '末尾仍是停钟那一条');
+  assert.equal(hashes.size, 1, '22 enumeration orders should produce only one snapshot');
+  for (const text of asIs) assert.ok(text.endsWith(STOP_CLOCKS), 'The end is still the stop-clocks entry');
   // 判据没变:自己新加的自定义属性照写,和父元素相同的(--accent、--pad)照省;三组的先后照 X6-2
   assert.equal(asIs[1], 'display:flex;mask-position:0% 0%;opacity:0.5;position:absolute;width:823.5px;'
     + '-webkit-mask-position-x:0%;-webkit-mask-position-y:0%;-webkit-text-fill-color:rgb(255, 0, 0);-webkit-writing-mode:horizontal-tb;'
     + '--a-first:2;--mid:calc(1px + 2px);--z-last:1;' + STOP_CLOCKS);
-  assert.doesNotMatch(asIs[2], /font-size/, '和父元素相同的继承属性照旧省掉');
-  assert.match(asIs[1], /opacity:0\.5;/, '自带内联样式的属性照旧强制内联');
+  assert.doesNotMatch(asIs[2], /font-size/, 'Inherited properties equal to the parent element are still omitted');
+  assert.match(asIs[1], /opacity:0\.5;/, 'Properties with their own inline style are still force-inlined');
 });
 
-test('X6-5 will-change 合并后按名字落位,只出现一次', () => {
+test('X6-5 after merging, will-change is placed by name and appears only once', () => {
   const decls = [['--x', '1'], ['opacity', '0.5'], ['will-change', 'transform, opacity'], ['color', 'red']];
   const text = serializeDeclarations(decls);
   assert.equal(text, 'color:red;opacity:0.5;will-change:transform, opacity;--x:1;');

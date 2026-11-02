@@ -20,7 +20,7 @@ import {
   LIST_PAD,
 } from "./listWindow.ts";
 
-test("前缀偏移:每条之间隔 gap,总高不含最后一个 gap", () => {
+test("Prefix offsets: a gap between every two items, and the total height excludes the last gap", () => {
   const off = prefixOffsets([100, 50, 30], 12);
   assert.deepEqual(off, [0, 112, 174, 216]);
   assert.equal(contentHeight(off, 12), 204);
@@ -29,7 +29,7 @@ test("前缀偏移:每条之间隔 gap,总高不含最后一个 gap", () => {
   assert.deepEqual(prefixOffsets([-5, 10], 0), [0, 0, 10]);
 });
 
-test("可见区:和区间有交集的条,边界落在 gap 里不算", () => {
+test("Visible range: items that intersect the interval; a boundary that falls inside a gap does not count", () => {
   const off = prefixOffsets([100, 100, 100, 100], 10); // 条:[0,100) [110,210) [220,320) [330,430)
   assert.deepEqual(rangeInView(off, 0, 100, 10), { first: 0, last: 1 });
   assert.deepEqual(rangeInView(off, 50, 150, 10), { first: 0, last: 2 });
@@ -42,7 +42,7 @@ test("可见区:和区间有交集的条,边界落在 gap 里不算", () => {
   assert.deepEqual(rangeInView(off, 1000, 1200, 10), { first: 4, last: 4 });
 });
 
-test("窗口:贴底时按滚到底算,不看传进来的 scrollTop", () => {
+test("Window: when pinned to the bottom, compute as scrolled to the bottom, ignoring the scrollTop passed in", () => {
   const heights = new Array(2000).fill(100);
   const off = prefixOffsets(heights, LIST_GAP);
   const r = windowRange(off, { scrollTop: 0, clientHeight: 600, stick: true }, { overscan: 300 });
@@ -52,7 +52,7 @@ test("窗口:贴底时按滚到底算,不看传进来的 scrollTop", () => {
   assert.ok(r.last - r.first >= 6, JSON.stringify(r));
 });
 
-test("窗口:中间位置,上下各扩余量;条数封顶", () => {
+test("Window: in the middle, extend a margin above and below; the item count is capped", () => {
   const heights = new Array(2000).fill(20);
   const off = prefixOffsets(heights, LIST_GAP);
   const mid = LIST_PAD + off[1000];
@@ -67,7 +67,7 @@ test("窗口:中间位置,上下各扩余量;条数封顶", () => {
   assert.ok(Math.abs(up - down) <= 1, JSON.stringify({ up, down, r, visible }));
 });
 
-test("窗口:可视区本身超过上限时不截可视区", () => {
+test("Window: when the viewport itself exceeds the limit, the viewport is not truncated", () => {
   const heights = new Array(500).fill(4);
   const off = prefixOffsets(heights, 0);
   const r = windowRange(off, { scrollTop: 0, clientHeight: 400, stick: false }, { overscan: 100, maxEntries: 10, gap: 0, pad: 0 });
@@ -75,13 +75,13 @@ test("窗口:可视区本身超过上限时不截可视区", () => {
   assert.equal(r.last, 100);
 });
 
-test("窗口:空列表、内容比可视区矮", () => {
+test("Window: empty list, content shorter than the viewport", () => {
   assert.deepEqual(windowRange([0], { scrollTop: 0, clientHeight: 600, stick: true }, { overscan: 300 }), { first: 0, last: 0 });
   const off = prefixOffsets([50, 50, 50]);
   assert.deepEqual(windowRange(off, { scrollTop: 0, clientHeight: 600, stick: true }, { overscan: 300 }), { first: 0, last: 3 });
 });
 
-test("渲染计划:占位高度 = 代表的几条 + 它们之间的 gap,整体总高与全渲染一致", () => {
+test("Render plan: placeholder height = the items it stands for + the gaps between them, and the overall total height matches full rendering", () => {
   const heights = [100, 40, 60, 80, 30, 70];
   const off = prefixOffsets(heights, 12);
   const segs = planSegments(off, 2, 4, [], 12);
@@ -97,7 +97,7 @@ test("渲染计划:占位高度 = 代表的几条 + 它们之间的 gap,整体�
   assert.equal(total, contentHeight(off, 12));
 });
 
-test("渲染计划:强制渲染的条(流式中的、有焦点的)夹在占位中间", () => {
+test("Render plan: force-rendered items (streaming ones, focused ones) sit between placeholders", () => {
   const heights = new Array(10).fill(10);
   const off = prefixOffsets(heights, 0);
   const segs = planSegments(off, 2, 4, [9, 0, 3], 0);
@@ -111,20 +111,20 @@ test("渲染计划:强制渲染的条(流式中的、有焦点的)夹在占位�
   assert.ok(planSegments(off, 0, 10, [], 0).every((s) => s.kind === "item"));
 });
 
-test("贴底判定:离底部不超过 40px 算在底部", () => {
+test("Pinned-to-bottom check: within 40px of the bottom counts as at the bottom", () => {
   assert.equal(isAtBottom(1000, 400, 600), true);
   assert.equal(isAtBottom(1000, 360, 600), true);
   assert.equal(isAtBottom(1000, 359, 600), false);
   assert.equal(isAtBottom(500, 0, 600), true);
 });
 
-test("最近动过的几条:去重、新的放最后、超过上限丢最早的", () => {
+test("Recently touched items: deduplicated, the newest goes last, the oldest is dropped when over the limit", () => {
   let l = [];
   for (const k of ["a", "b", "c", "a", "d"]) l = touchRecent(l, k, 3);
   assert.deepEqual(l, ["c", "a", "d"]);
 });
 
-test("高度记账:实测优先;估计值同类量满 freezeAfter 条时定成平均值,之后不再变", () => {
+test("Height bookkeeping: measured values take priority; once the estimates of the same kind reach freezeAfter items they are fixed to the average and no longer change", () => {
   const book = new HeightBook({ user: 60, assistant: 200 }, 3);
   assert.equal(book.get("x", "user"), 60);
   assert.equal(book.set("a", "user", 100), true);
@@ -153,7 +153,7 @@ test("高度记账:实测优先;估计值同类量满 freezeAfter 条时定成�
   assert.equal(book.set("z", "user", -1), false);
 });
 
-test("窗口化门槛:150 条以内全渲染(页内查找照旧可用),超过才窗口化", () => {
+test("Windowing gate: up to 150 items are rendered in full (in-page find keeps working), windowing starts only above that", () => {
   assert.equal(WINDOW_MIN_ENTRIES, 150);
   assert.equal(shouldWindow(0), false);
   assert.equal(shouldWindow(40), false);

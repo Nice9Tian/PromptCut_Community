@@ -9,7 +9,7 @@ import {
 
 const ev = (src, env = {}, vars) => compileExpr(src, vars).fn({ t: 0, d: 1, p: 0, ...env });
 
-test("表达式:优先级、结合性、函数、常量", () => {
+test("Expressions: precedence, associativity, functions, constants", () => {
   assert.equal(ev("1 + 2*3"), 7);
   assert.equal(ev("-2^2"), -4); // 一元负号比 ^ 松,和数学习惯一致
   assert.equal(ev("2^3^2"), 512); // ^ 右结合
@@ -25,48 +25,48 @@ test("表达式:优先级、结合性、函数、常量", () => {
   assert.equal(ev("1e-1 + .5"), 0.6);
 });
 
-test("表达式:只认白名单,碰不到 JS 运行时", () => {
+test("Expressions: only the allowlist is accepted, the JS runtime cannot be reached", () => {
   for (const bad of ["__proto__", "constructor", "toString()", "hasOwnProperty(1)", "process.exit()", "x", "alert(1)", "t[0]", "'a'", "t;1", "Math.PI", "eval(1)"]) {
     assert.throws(() => compileExpr(bad), FilterExprError, bad);
   }
-  assert.throws(() => compileExpr("sin(1, 2)"), /1 个参数/);
-  assert.throws(() => compileExpr("1 +"), /不完整/);
-  assert.throws(() => compileExpr("(1"), /缺少「\)」/);
-  assert.throws(() => compileExpr("1".repeat(301)), /太长/);
-  assert.throws(() => compileExpr("amount"), /params 里声明/);
+  assert.throws(() => compileExpr("sin(1, 2)"), /1 argument/);
+  assert.throws(() => compileExpr("1 +"), /incomplete/);
+  assert.throws(() => compileExpr("(1"), /missing "\)"/);
+  assert.throws(() => compileExpr("1".repeat(301)), /too long/);
+  assert.throws(() => compileExpr("amount"), /declared in params/);
   assert.equal(compileExpr("amount*2", ["t", "d", "p", "amount"]).fn({ amount: 3 }), 6);
   assert.deepEqual([...compileExpr("sin(t) + d").uses].sort(), ["d", "t"]);
 });
 
-test("定义校验:种类、范围、参数、试算", () => {
+test("Definition validation: kinds, ranges, parameters, trial evaluation", () => {
   const def = normalizeFilterDef({
-    name: " 呼吸 ", description: "亮度一呼一吸",
-    params: { amount: { default: 0.2, min: 0, max: 1, label: "幅度" } },
+    name: " Breathing ", description: "Brightness breathes in and out",
+    params: { amount: { default: 0.2, min: 0, max: 1, label: "Amplitude" } },
     ops: [{ kind: "brightness", value: "1 + amount*sin(t*2*PI)" }, { kind: "saturate", value: 1.2 }],
   });
-  assert.equal(def.name, "呼吸");
-  assert.equal(def.params.amount.label, "幅度");
+  assert.equal(def.name, "Breathing");
+  assert.equal(def.params.amount.label, "Amplitude");
   assert.equal(isAnimated(def), true);
-  assert.equal(isAnimated({ ops: [{ kind: "blur", value: "d/2" }] }), false, "只用 d 的不随时间变");
+  assert.equal(isAnimated({ ops: [{ kind: "blur", value: "d/2" }] }), false, "Using only d does not vary with time");
 
-  assert.throws(() => normalizeFilterDef({ name: "x", ops: [] }), /至少一步/);
-  assert.throws(() => normalizeFilterDef({ name: "x", ops: [{ kind: "vignette", value: 1 }] }), /不认识/);
-  assert.throws(() => normalizeFilterDef({ name: "x", ops: [{ kind: "constructor", value: 1 }] }), /不认识/);
+  assert.throws(() => normalizeFilterDef({ name: "x", ops: [] }), /at least one step/);
+  assert.throws(() => normalizeFilterDef({ name: "x", ops: [{ kind: "vignette", value: 1 }] }), /unrecognized/);
+  assert.throws(() => normalizeFilterDef({ name: "x", ops: [{ kind: "constructor", value: 1 }] }), /unrecognized/);
   assert.throws(() => normalizeFilterDef({ name: "x", ops: [{ kind: "saturate", value: 3 }] }), /0~2/);
   assert.throws(() => normalizeFilterDef({ name: "x", ops: [{ kind: "blur", value: "log(t)" }] }), /-Infinity/);
-  assert.throws(() => normalizeFilterDef({ name: "x", params: { t: 1 }, ops: [{ kind: "blur", value: 1 }] }), /重名/);
-  assert.throws(() => normalizeFilterDef({ name: "x", params: { k: { default: 5, max: 1 } }, ops: [{ kind: "blur", value: 1 }] }), /超出/);
+  assert.throws(() => normalizeFilterDef({ name: "x", params: { t: 1 }, ops: [{ kind: "blur", value: 1 }] }), /duplicate name/);
+  assert.throws(() => normalizeFilterDef({ name: "x", params: { k: { default: 5, max: 1 } }, ops: [{ kind: "blur", value: 1 }] }), /exceeds/);
   assert.throws(() => normalizeFilterDef({ ops: [{ kind: "blur", value: 1 }] }), /name/);
 
   assert.deepEqual(normalizeClipParams(def, { amount: 5 }), { amount: 1 });
-  assert.throws(() => normalizeClipParams(def, { nope: 1 }), /没有参数 nope/);
-  assert.throws(() => normalizeClipParams(def, { toString: 1 }), /没有参数/);
+  assert.throws(() => normalizeClipParams(def, { nope: 1 }), /no parameter nope/);
+  assert.throws(() => normalizeClipParams(def, { toString: 1 }), /has no parameter/);
 });
 
-test("求值:片段内时间、夹住范围、NaN 退回中性", () => {
+test("Evaluation: in-clip time, clamped range, NaN falls back to neutral", () => {
   // 定义校验会拒掉试算出 NaN 的表达式;这里绕过校验,钉住 resolveOps 自己的兜底(老数据、手改的工程)
   const def = {
-    name: "渐糊", params: { k: { default: 2 } },
+    name: "Gradual blur", params: { k: { default: 2 } },
     ops: [{ kind: "blur", value: "k*t" }, { kind: "brightness", value: "1 + p" }, { kind: "hue", value: "sqrt(t - 5)" }],
   };
   const at0 = resolveOps(def, undefined, 0, 10);
@@ -80,7 +80,7 @@ test("求值:片段内时间、夹住范围、NaN 退回中性", () => {
   assert.equal(clipFilterOpsAt(project, { ...clip, filter: { id: "gone" } }, 5), null);
 });
 
-test("CSS:中性步骤跳过,blur 跟着缩放", () => {
+test("CSS: neutral steps are skipped, blur scales along", () => {
   const ops = [
     { kind: "brightness", value: 1.2 }, { kind: "contrast", value: 1 }, { kind: "hue", value: 30 },
     { kind: "blur", value: 4 }, { kind: "grayscale", value: 0.5 },
@@ -113,9 +113,9 @@ function ffPixel(stages, rgb) {
   for (const s of stages) {
     if (s.filter === "lutrgb") {
       const m = /^val\*(-?[\d.]+)([+-][\d.]+)$/.exec(s.opts.r);
-      assert.ok(m, `lutrgb 表达式形状不对:${s.opts.r}`);
+      assert.ok(m, `lutrgb expression has the wrong shape: ${s.opts.r}`);
       assert.ok(Math.abs(Number(m[1]) - s.linear.slope) < 1e-9 && Math.abs(Number(m[2]) - (s.linear.icpt * 255 + 0.5)) < 1e-4);
-      assert.ok(!s.opts.r.includes(","), "表达式里有逗号 sendcmd 会拆坏");
+      assert.ok(!s.opts.r.includes(","), "sendcmd would break an expression that contains a comma");
       px = px.map((x) => c(s.linear.slope * x + s.linear.icpt));
     } else if (s.filter === "colorchannelmixer") {
       const o = s.opts;
@@ -126,7 +126,7 @@ function ffPixel(stages, rgb) {
   return px;
 }
 
-test("ffmpeg 翻译和 CSS 规范逐像素一致(含超出 0~1 被截断的情况)", () => {
+test("The ffmpeg translation matches the CSS spec pixel by pixel (including values beyond 0~1 being clamped)", () => {
   const cases = [
     [{ kind: "brightness", value: 1.6 }], [{ kind: "brightness", value: 0.4 }], [{ kind: "brightness", value: 0 }],
     [{ kind: "contrast", value: 2.5 }], [{ kind: "contrast", value: 0.3 }], [{ kind: "contrast", value: 0 }],
@@ -143,13 +143,13 @@ test("ffmpeg 翻译和 CSS 规范逐像素一致(含超出 0~1 被截断的情�
       for (let i = 0; i < 3; i++) assert.ok(Math.abs(want[i] - got[i]) < 1e-5, `${JSON.stringify(ops)} @ ${px}: ${want} vs ${got}`);
     }
     for (const s of stages) {
-      if (s.filter === "colorchannelmixer") for (const v of Object.values(s.opts)) assert.ok(v >= -2 && v <= 2, "colorchannelmixer 每项只能在 -2~2");
+      if (s.filter === "colorchannelmixer") for (const v of Object.values(s.opts)) assert.ok(v >= -2 && v <= 2, "Each colorchannelmixer value must be within -2~2");
     }
   }
 });
 
-test("ffmpeg:命名实例、模糊包一圈透明边、逐帧命令", () => {
-  const def = normalizeFilterDef({ name: "呼吸", ops: [{ kind: "brightness", value: "1 + 0.5*t" }, { kind: "blur", value: "2*t" }] });
+test("ffmpeg: named instances, blur wrapped in a transparent border, per-frame commands", () => {
+  const def = normalizeFilterDef({ name: "Breathing", ops: [{ kind: "brightness", value: "1 + 0.5*t" }, { kind: "blur", value: "2*t" }] });
   const chain = ffmpegChain(ffmpegStages(resolveOps(def, undefined, 0, 2)), "f3", 12);
   assert.match(
     chain,
@@ -169,44 +169,44 @@ test("ffmpeg:命名实例、模糊包一圈透明边、逐帧命令", () => {
 });
 
 // 工程文件里的坏表达式(别的版本存的、手改过的):预览每帧都在 render 里调 resolveOps,抛了就是白屏
-test("坏表达式按中性算、不抛;isAnimated 按 false", () => {
+test("Bad expressions are treated as neutral and do not throw; isAnimated counts as false", () => {
   const def = { ops: [{ kind: "brightness", value: "nope + 1" }, { kind: "blur", value: 3 }] };
   assert.deepEqual(resolveOps(def, undefined, 1, 2), [{ kind: "brightness", value: 1 }, { kind: "blur", value: 3 }]);
   assert.equal(isAnimated(def), false);
 });
 
-test("sendcmd 脚本:数值没变的帧不发命令", () => {
+test("sendcmd script: frames whose values did not change send no command", () => {
   const def = { ops: [{ kind: "brightness", value: "step(1, t)" }] };
   const frames = [0, 0.5, 1, 1.5, 2].map((t) => ({ ts: t, t }));
   const { script } = sendcmdScript(def, undefined, 2, frames, "d", 1, 30);
-  assert.equal(script.trim().split("\n").length, 2, "0 和 1 处各一次");
+  assert.equal(script.trim().split("\n").length, 2, "Once each at 0 and 1");
 });
 
 // ---------------------------------------------------------------- curves / matrix(查表与颜色矩阵)
 {
   const F = await import("./filters.mjs");
-  test("curves / matrix:补齐形状、原样判定、描述", () => {
-    const def = F.normalizeFilterDef({ name: "调色", ops: [{ kind: "curves", rgb: [0, 0.3, 1], b: [0.1, 0.9] }, { kind: "matrix", values: [1, 0, 0, 0, 1, 0, 0, 0, 1] }] });
+  test("curves / matrix: shape completion, identity check, description", () => {
+    const def = F.normalizeFilterDef({ name: "Color grading", ops: [{ kind: "curves", rgb: [0, 0.3, 1], b: [0.1, 0.9] }, { kind: "matrix", values: [1, 0, 0, 0, 1, 0, 0, 0, 1] }] });
     assert.deepEqual(def.ops[0], { kind: "curves", r: [0, 0.3, 1], g: [0, 0.3, 1], b: [0.1, 0.9] });
     assert.deepEqual(def.ops[1], { kind: "matrix", values: [1, 0, 0, 0, 1, 0, 0, 0, 1], offset: [0, 0, 0] });
     const ops = F.resolveOps(def, undefined, 0.5, 2);
     assert.equal(F.isNeutralOp(ops[0]), false);
     assert.equal(F.isNeutralOp(ops[1]), true);
     assert.equal(F.isAnimated(def), false);
-    assert.match(F.describeFilter(def), /曲线/);
+    assert.match(F.describeFilter(def), /Curve/);
   });
-  test("curves / matrix:不合规的当场拒", () => {
+  test("curves / matrix: invalid ones are rejected on the spot", () => {
     const bad = (ops, re) => assert.throws(() => F.normalizeFilterDef({ name: "x", ops }), re);
-    bad([{ kind: "curves" }], /至少给/);
+    bad([{ kind: "curves" }], /at least/);
     bad([{ kind: "curves", rgb: [0.5] }], /2~33/);
     bad([{ kind: "curves", rgb: [0, 1.2] }], /0~1/);
-    bad([{ kind: "curves", rgb: [0, 1], value: 1 }], /不用 value/);
-    bad([{ kind: "matrix", values: [1, 0, 0] }], /9 个数/);
+    bad([{ kind: "curves", rgb: [0, 1], value: 1 }], /does not use value/);
+    bad([{ kind: "matrix", values: [1, 0, 0] }], /9 numbers/);
     bad([{ kind: "matrix", values: [9, 0, 0, 0, 1, 0, 0, 0, 1] }], /-4~4/);
     bad([{ kind: "matrix", values: [1, 0, 0, 0, 1, 0, 0, 0, 1], offset: [2, 0, 0] }], /-1~1/);
-    bad(Array.from({ length: 5 }, () => ({ kind: "curves", rgb: [0, 0.5, 1] })), /最多 4 步/);
+    bad(Array.from({ length: 5 }, () => ({ kind: "curves", rgb: [0, 0.5, 1] })), /at most 4 steps/);
   });
-  test("curves:lutrgb 表达式就是那张分段线性表,而且不含逗号", () => {
+  test("curves: the lutrgb expression is exactly that piecewise linear table, and contains no commas", () => {
     for (const table of [[0, 0.3, 0.62, 0.86, 1], [0.03, 0.5, 0.92], [1, 0], Array.from({ length: 33 }, (_, k) => Math.round(Math.pow(k / 32, 1.6) * 1e6) / 1e6)]) {
       const expr = F.tableLutExpr(table);
       assert.equal(expr.includes(","), false);
@@ -215,12 +215,12 @@ test("sendcmd 脚本:数值没变的帧不发命令", () => {
       for (let v = 0; v <= 255; v++) {
         const x = (v / 255) * n, k = Math.min(n - 1, Math.floor(x));
         const want = (table[k] + (x - k) * (table[k + 1] - table[k])) * 255 + 0.5;
-        assert.ok(Math.abs(fn(v, Math.abs) - want) < 1e-3, `table ${table.length} 点, val=${v}`);
+        assert.ok(Math.abs(fn(v, Math.abs) - want) < 1e-3, `table ${table.length} points, val=${v}`);
       }
     }
     assert.equal(F.tableLutExpr([0, 1]), "0.5+1*val");
   });
-  test("curves / matrix:预览是 url(#id),同内容同 id;导出是固定步骤,sendcmd 不重发", () => {
+  test("curves / matrix: preview is url(#id), same content gives the same id; export is a fixed step, sendcmd does not resend", () => {
     const def = F.normalizeFilterDef({ name: "x", ops: [{ kind: "matrix", values: [1.1, 0.05, 0, 0, 1, 0.05, 0.02, 0, 0.9], offset: [-0.02, 0, 0.03] }, { kind: "curves", rgb: [0, 0.2, 1] }, { kind: "brightness", value: "1+0.1*sin(t)" }] });
     const ops = F.resolveOps(def, undefined, 1, 4);
     const css = F.cssFilter(ops);

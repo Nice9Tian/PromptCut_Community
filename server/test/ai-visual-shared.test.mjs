@@ -28,8 +28,8 @@ function runChild(source) {
     child.stderr.on('data', c => { err += c; });
     child.on('error', reject);
     child.on('close', code => {
-      if (code !== 0) return reject(new Error(`子进程退出 ${code}:${err}`));
-      try { resolve(JSON.parse(out.trim().split('\n').pop())); } catch (e) { reject(new Error(`子进程输出不是 JSON:${out}${err}`)); }
+      if (code !== 0) return reject(new Error(`Child process exited with code ${code}: ${err}`));
+      try { resolve(JSON.parse(out.trim().split('\n').pop())); } catch (e) { reject(new Error(`Child process output is not JSON: ${out}${err}`)); }
     });
   });
 }
@@ -39,7 +39,7 @@ const withDir = async body => {
   try { return await body(dir); } finally { await fs.rm(dir, { recursive: true, force: true }); }
 };
 
-test('一个进程写下的动图规格,另一个进程读得到(两个方向)', () => withDir(async dir => {
+test('The animated-image spec written by one process can be read by another (both directions)', () => withDir(async dir => {
   const key = '0123456789abcdef';
   const spec = { project: { fps: 30, duration: 2, tracks: [] }, clipId: 'c1', times: [0.5, 1.5] };
   // 子进程(当「写规格的 agent 进程」)写,本进程(当「用户点开时的 user 进程」)读
@@ -54,7 +54,7 @@ test('一个进程写下的动图规格,另一个进程读得到(两个方向)',
   assert.equal(seen.after.gif, `/api/ai/visual/gif/${key}.gif`);
 }));
 
-test('边改写边读:另一个进程每一次读到的都是完整的一份,改名后不留临时文件', () => withDir(async dir => {
+test('Reading while rewriting: the other process always reads a complete copy, and no temp file is left after the rename', () => withDir(async dir => {
   const name = 'spec-fedcba9876543210.json';
   const big = n => ({ n, pad: 'x'.repeat(2 * 1024 * 1024) });
   await writeJson(dir, name, big(0));
@@ -72,16 +72,16 @@ test('边改写边读:另一个进程每一次读到的都是完整的一份,改
     console.log(JSON.stringify({ reads, broken, last }));`);
   for (let n = 1; n <= ROUNDS; n++) await writeJson(dir, name, big(n));
   const result = await reader;
-  assert.equal(result.last, ROUNDS, '读者看到了最后一版');
+  assert.equal(result.last, ROUNDS, 'The reader saw the last version');
   assert.ok(result.reads > 1);
-  assert.equal(result.broken, 0, `读到了半截规格 ${result.broken} 次`);
+  assert.equal(result.broken, 0, `Read a half-written spec ${result.broken} times`);
   assert.deepEqual(await fs.readdir(dir), [name]);
 }));
 
-test('atomicWrite 的函数形式:写临时名失败时不留临时文件,目标文件不动', () => withDir(async dir => {
+test('Function form of atomicWrite: when writing the temp name fails, no temp file is left and the target file is untouched', () => withDir(async dir => {
   const file = path.join(dir, 'gif-k.gif');
   await atomicWrite(file, Buffer.from('old'));
-  await assert.rejects(atomicWrite(file, async temp => { await fs.writeFile(temp, 'half'); throw new Error('ffmpeg 挂了'); }), /ffmpeg 挂了/);
+  await assert.rejects(atomicWrite(file, async temp => { await fs.writeFile(temp, 'half'); throw new Error('ffmpeg crashed'); }), /ffmpeg crashed/);
   assert.equal(await fs.readFile(file, 'utf8'), 'old');
   assert.deepEqual(await fs.readdir(dir), ['gif-k.gif']);
   // 临时名保留扩展名(ffmpeg 按它选输出格式)

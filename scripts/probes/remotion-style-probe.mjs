@@ -43,7 +43,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const OUT = path.resolve(arg('--out', path.join(ROOT, 'out', 'remotion-style-probe')));
 const KEEP_TEMP = argv.includes('--keep-temp');
 fs.mkdirSync(OUT, { recursive: true });
-if ([5190, 5191, 5192].some((p) => p >= PORT && p <= PORT + 2)) throw new Error('这一段是用户常驻的开发服务器的端口，换一个');
+if ([5190, 5191, 5192].some((p) => p >= PORT && p <= PORT + 2)) throw new Error('This range holds the ports of the user\'s resident dev servers, use another one');
 
 const say = (step, fields = {}) => process.stderr.write(`${JSON.stringify({ step, t: Date.now(), ...fields })}\n`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -53,7 +53,7 @@ async function waitFor(fn, ms, what) {
     let v = null;
     try { v = await fn(); } catch { v = null; }
     if (v) return v;
-    if (Date.now() - t0 > ms) throw new Error(`等 ${what} 超时(${ms} ms)`);
+    if (Date.now() - t0 > ms) throw new Error(`Timed out waiting for ${what} (${ms} ms)`);
     await sleep(150);
   }
 }
@@ -142,9 +142,9 @@ try {
   const origin = `http://127.0.0.1:${PORT}`;
   const HARNESS = `${origin}/scripts/probes/remotion-style-harness.html`;
   await waitFor(async () => {
-    if (child.exitCode !== null) throw new Error(`编辑器退出了：${log.join('').slice(-600)}`);
+    if (child.exitCode !== null) throw new Error(`The editor exited: ${log.join('').slice(-600)}`);
     return fetch(HARNESS, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok, () => false);
-  }, 180_000, '编辑器起来');
+  }, 180_000, 'editor started');
 
   browser = await puppeteer.launch({
     headless: true,
@@ -182,7 +182,7 @@ try {
     const id = idOf(source);
     const r = await post('/api/cards/create', { id, source, projectId: `probe-${RUN}` });
     const line = lineOf(source, needle);
-    const pointed = (r.body?.errors ?? []).find((e) => e.startsWith(`[remotion 式] 第 ${line} 行：`)) ?? null;
+    const pointed = (r.body?.errors ?? []).find((e) => e.startsWith(`[Remotion-style] line ${line}:`)) ?? null;
     res.rejected.push({ file, status: r.status, line, error: pointed ? pointed.slice(0, 60) : null });
     if (r.status !== 400) fail(`create-${file}-status-${r.status}`);
     if (!pointed) fail(`create-${file}-no-line-${line}`, String(r.body?.error ?? '').slice(0, 300));
@@ -208,10 +208,10 @@ try {
     const replace = '  const jitter = Math.random();\n  const count = Math.max(';
     const r = await post('/api/cards/edit', { id: 'rs-bar-race', find, replace });
     const line = lineOf(before.replace(find, replace), 'Math.random()');
-    const pointed = (r.body?.errors ?? []).find((e) => e.startsWith(`[remotion 式] 第 ${line} 行：用了不带种子的随机`)) ?? null;
+    const pointed = (r.body?.errors ?? []).find((e) => e.startsWith(`[Remotion-style] line ${line}: used random without a seed`)) ?? null;
     res.edit = { status: r.status, line, error: pointed ? pointed.slice(0, 60) : null };
     if (r.status !== 400 || !pointed) fail('edit-add-violation-not-rejected', String(r.body?.error ?? '').slice(0, 300));
-    const ok = await post('/api/cards/edit', { id: 'rs-bar-race', find: 'name: "随机柱状起伏"', replace: 'name: "随机柱子"' });
+    const ok = await post('/api/cards/edit', { id: 'rs-bar-race', find: 'name: "Random bar fluctuation"', replace: 'name: "Random bars"' });
     res.editRename = ok.status;
     if (ok.status !== 200) fail(`edit-rename-status-${ok.status}`, String(ok.body?.error ?? '').slice(0, 300));
   }
@@ -221,7 +221,7 @@ try {
   {
     const page = await openHarness();
     const warnings = [];
-    page.on('console', (m) => { const text = m.text(); if (/\[cards\/user\]|已跳过|card id 重复/.test(text)) warnings.push(text.slice(0, 200)); });
+    page.on('console', (m) => { const text = m.text(); if (/\[cards\/user\]|skipped|duplicate card id/.test(text)) warnings.push(text.slice(0, 200)); });
     const reg = await page.evaluate(async () => {
       await import('/src/cards/index.ts');
       const R = await import('/src/kernel/registry.ts');

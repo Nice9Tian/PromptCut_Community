@@ -323,13 +323,13 @@ const STAGE_STORAGE_HTML = `<!doctype html>
     const report = PCHarden.installStageHardening({});
     out.storageDenied = report.storageDenied || [];
     out.hardenErrors = report.errors;
-    // 以下是「卡片代码」
+    // Below is the "card code"
     await attempt('local', () => { localStorage.setItem('pc-probe-leak', LEAK); return localStorage.getItem('pc-probe-leak'); });
     await attempt('session', () => { sessionStorage.setItem('pc-probe-leak', LEAK); return sessionStorage.getItem('pc-probe-leak'); });
     await attempt('playable', () => { localStorage.setItem(${JSON.stringify(PLAYABLE_OK_KEY)}, '1'); localStorage.setItem(${JSON.stringify(PLAYABLE_BAD_KEY)}, LEAK); return localStorage.getItem(${JSON.stringify(PLAYABLE_OK_KEY)}); });
     await attempt('idb', () => typeof indexedDB);
     await attempt('caches', () => typeof caches);
-    // 万一还在(加固没装上):真去写一份,好让读的那一步看得见
+    // In case it is still there (hardening not installed): really write one, so the read step can see it
     if (typeof indexedDB !== 'undefined') await attempt('idbWrite', () => new Promise((resolve, reject) => { const r = indexedDB.open('pc-probe-leak', 1); r.onupgradeneeded = () => r.result.createObjectStore('s'); r.onerror = () => reject(r.error); r.onsuccess = () => { const tx = r.result.transaction('s', 'readwrite'); tx.objectStore('s').put(LEAK, 'k'); tx.oncomplete = () => { r.result.close(); resolve('written'); }; }; }));
     if (typeof caches !== 'undefined') await attempt('cacheWrite', async () => { const c = await caches.open('pc-probe-leak'); await c.put('/pc-probe-leak', new Response(LEAK)); return 'written'; });
     await attempt('opfs', async () => { const root = await navigator.storage.getDirectory(); const fh = await root.getFileHandle('pc-probe-leak', { create: true }); const w = await fh.createWritable(); await w.write(LEAK); await w.close(); return 'written'; });
@@ -448,7 +448,7 @@ async function main() {
   for (const port of [PORT_ASSET, PORT_EDITOR, PORT_STAGE]) {
     const free = await checkPortFree(port);
     if (!free) {
-      console.error(`PORT_BUSY: 127.0.0.1:${port} 已被占用`);
+      console.error(`PORT_BUSY: 127.0.0.1:${port} is already in use`);
       process.exit(1);
     }
   }
@@ -544,7 +544,7 @@ async function main() {
       headers: { Authorization: `Bearer ${ticketA}` },
     });
     if (putRes.status !== 200 || completeRes.status !== 200) {
-      throw new Error(`上传测试素材失败: put=${putRes.status}, complete=${completeRes.status}`);
+      throw new Error(`Failed to upload the test asset: put=${putRes.status}, complete=${completeRes.status}`);
     }
 
     // 2. 打包真实的 src/online/stageIsolation.ts 并启动本地反代（6421 编辑器源、6422 舞台源）

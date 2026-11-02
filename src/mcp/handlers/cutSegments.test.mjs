@@ -21,31 +21,31 @@ const call = (tool, args) => api[TOOL_ROUTES[tool].method](args);
 function load() {
   actions.loadProject({
     version: 1, id: "p-agent", name: "t", width: 1280, height: 720, fps: 30, duration: 20, themeId: "midnight", media: [],
-    tracks: [{ id: "ta", name: "序列 1", clips: [] }],
+    tracks: [{ id: "ta", name: "Track 1", clips: [] }],
     cuts: [
-      { id: "A", name: "剪辑A" },
-      { id: "B", name: "剪辑B", tracks: [{ id: "tb", name: "序列 1", clips: [{ id: "b1", cardId: "x", start: 0, end: 6, params: {} }] }], duration: 6, transitions: [] },
+      { id: "A", name: "Cut A" },
+      { id: "B", name: "Cut B", tracks: [{ id: "tb", name: "Track 1", clips: [{ id: "b1", cardId: "x", start: 0, end: 6, params: {} }] }], duration: 6, transitions: [] },
     ],
     activeCutId: "A",
   });
 }
 
-test("add_cut_segment:按名字放剪辑段;放自己被拒;list_cuts 带引用关系", () => {
+test("add_cut_segment: places a cut segment by name; placing a cut in itself is rejected; list_cuts carries the reference relations", () => {
   load();
-  const r = call("add_cut_segment", { name: "剪辑B", start: 1 });
+  const r = call("add_cut_segment", { name: "Cut B", start: 1 });
   assert.equal(r.ok, true);
   assert.deepEqual([r.segment.cutId, r.segment.start, r.segment.end, r.segment.cutOffset], ["B", 1, 7, 0]);
-  assert.throws(() => call("add_cut_segment", { cutId: "A", start: 0 }), /放进它自己/);
+  assert.throws(() => call("add_cut_segment", { cutId: "A", start: 0 }), /into itself/);
   const list = call("list_cuts");
   assert.deepEqual(list.cuts.find((c) => c.id === "B").referencedBy.map((x) => x.cutId), ["A"]);
   assert.deepEqual(list.cuts.find((c) => c.id === "A").references, ["B"]);
 });
 
-test("A→B→A 被拒;set_cut_segment 改偏移并截短出点;get_clip 带 cutSegment", () => {
+test("A→B→A is rejected; set_cut_segment changes the offset and shortens the out point; get_clip carries cutSegment", () => {
   load();
   const seg = call("add_cut_segment", { cutId: "B", start: 0 }).segment;
   actions.switchCut("B");
-  assert.throws(() => call("add_cut_segment", { cutId: "A", start: 7 }), /循环引用/);
+  assert.throws(() => call("add_cut_segment", { cutId: "A", start: 7 }), /circular reference/);
   actions.switchCut("A");
   const r = call("set_cut_segment", { clipId: seg.clipId, cutOffset: 2 });
   assert.deepEqual([r.segment.cutOffset, r.segment.end], [2, 4]);
@@ -55,37 +55,37 @@ test("A→B→A 被拒;set_cut_segment 改偏移并截短出点;get_clip 带 cut
   assert.equal(env.cutSegment.cutDuration, 6);
 });
 
-test("remove_cut:被引用的剪辑不带 force 被拒并列出引用;带 force + reason 连同剪辑段一起删", () => {
+test("remove_cut: a referenced cut is rejected without force and the references are listed; with force + reason it is deleted together with its cut segments", () => {
   load();
   call("add_cut_segment", { cutId: "B", start: 0 });
-  assert.throws(() => call("remove_cut", { cutId: "B" }), /正被这些剪辑引用:「剪辑A」/);
+  assert.throws(() => call("remove_cut", { cutId: "B" }), /currently referenced by these cuts: "Cut A"/);
   assert.throws(() => call("remove_cut", { cutId: "B", force: true }), /reason/);
-  const r = call("remove_cut", { cutId: "B", force: true, reason: "用户要删" });
+  const r = call("remove_cut", { cutId: "B", force: true, reason: "User wants it deleted" });
   assert.equal(r.ok, true);
   assert.equal(r.removedSegments[0].cutId, "A");
   assert.equal(getState().project.tracks[0].clips.length, 0);
 });
 
-test("两个工具直连 EditorApi 自己的方法,不再借 addClip / updateClip;update_clip 不再改剪辑段的引用", () => {
+test("The two tools call EditorApi's own methods directly instead of borrowing addClip / updateClip; update_clip no longer changes a cut segment's reference", () => {
   assert.equal(TOOL_ROUTES.add_cut_segment.method, "addCutSegment");
   assert.equal(TOOL_ROUTES.set_cut_segment.method, "setCutSegment");
   load();
   const seg = call("add_cut_segment", { cutId: "B", start: 0 }).segment;
   assert.throws(() => call("add_clip", { start: 0, cutId: "B" }));
   call("update_clip", { clipId: seg.clipId, cutOffset: 2 });
-  assert.equal(call("get_clip", { clipId: seg.clipId }).cutSegment.cutOffset, 0, "update_clip 不认 cutOffset");
+  assert.equal(call("get_clip", { clipId: seg.clipId }).cutSegment.cutOffset, 0, "update_clip does not recognize cutOffset");
   assert.equal(call("set_cut_segment", { clipId: seg.clipId, cutOffset: 1 }).segment.cutOffset, 1);
 });
 
-test("剪辑段引用哪条剪辑不能改(2026-10-21 用户定):set_cut_segment 带 cutId / name 被拒,store 动作也换不了", () => {
+test("Which cut a cut segment references cannot be changed (user decision, 2026-10-21): set_cut_segment with cutId / name is rejected, and the store action cannot change it either", () => {
   load();
   const seg = call("add_cut_segment", { cutId: "B", start: 0 }).segment;
   const before = getState().project;
-  assert.throws(() => call("set_cut_segment", { clipId: seg.clipId, cutId: "B" }), /剪辑段引用的剪辑不能改，要换就删掉这段，用 add_cut_segment 放一段新的/);
-  assert.throws(() => call("set_cut_segment", { clipId: seg.clipId, name: "剪辑B", cutOffset: 1 }), /不能改/);
-  assert.equal(getState().project, before, "被拒时项目一个字都没写");
-  assert.throws(() => actions.setCutSegment(seg.clipId, { cutId: "B" }), /不能改/);
+  assert.throws(() => call("set_cut_segment", { clipId: seg.clipId, cutId: "B" }), /The cut referenced by a cut segment cannot be changed; to replace it, delete this segment and place a new one with add_cut_segment/);
+  assert.throws(() => call("set_cut_segment", { clipId: seg.clipId, name: "Cut B", cutOffset: 1 }), /cannot be changed/);
+  assert.equal(getState().project, before, "When rejected, nothing at all was written to the project");
+  assert.throws(() => actions.setCutSegment(seg.clipId, { cutId: "B" }), /cannot be changed/);
   assert.equal(call("get_clip", { clipId: seg.clipId }).cutSegment.cutId, "B");
   const schema = tools.find((t) => t.name === "set_cut_segment").inputSchema.properties;
-  assert.deepEqual(Object.keys(schema).sort(), ["clipId", "cutOffset"], "工具说明里不再有 cutId / name");
+  assert.deepEqual(Object.keys(schema).sort(), ["clipId", "cutOffset"], "The tool description no longer has cutId / name");
 });

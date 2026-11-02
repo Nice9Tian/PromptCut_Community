@@ -63,7 +63,7 @@ const base = `http://localhost:${server.address().port}`;
 /* ---------------------------------------------------------------- 把 Chrome 进程树限制在前 N 个核上 */
 
 function limitCores(rootPid, cores) {
-  if (process.platform !== 'win32' || !(cores > 0)) return { applied: false, reason: process.platform !== 'win32' ? '只在 Windows 上做' : '没要求' };
+  if (process.platform !== 'win32' || !(cores > 0)) return { applied: false, reason: process.platform !== 'win32' ? 'Only done on Windows' : 'Not requested' };
   const mask = (2 ** cores) - 1;
   // 进程树:根进程和它所有的子孙(Chrome 的显卡进程、渲染进程、工具进程都是根进程起的)
   const script = `
@@ -106,10 +106,10 @@ async function inPage({ width, height, frames, fps, software }) {
   // 结构核对:段数、每段样本数、段首关键帧
   const problems = [];
   const wantSegs = Math.ceil(frames / SEGMENT_FRAMES);
-  if (segs.length !== wantSegs) problems.push(`段数 ${segs.length},应为 ${wantSegs}`);
+  if (segs.length !== wantSegs) problems.push(`Segment count ${segs.length}, expected ${wantSegs}`);
   const packed = packedSize(width, height);
   const cfg = parseInit(init.bytes.buffer.slice(init.bytes.byteOffset, init.bytes.byteOffset + init.bytes.byteLength));
-  if (cfg.width !== packed.width || cfg.height !== packed.height) problems.push(`初始化段里的宽高 ${cfg.width}×${cfg.height},应为 ${packed.width}×${packed.height}`);
+  if (cfg.width !== packed.width || cfg.height !== packed.height) problems.push(`Width and height in the init segment ${cfg.width}×${cfg.height}, expected ${packed.width}×${packed.height}`);
 
   // 解回来,逐帧和原画比
   const out = new OffscreenCanvas(packed.width, packed.height); const og = out.getContext('2d', { willReadFrequently: true });
@@ -143,15 +143,15 @@ async function inPage({ width, height, frames, fps, software }) {
   for (const seg of segs) {
     const buf = seg.bytes.buffer.slice(seg.bytes.byteOffset, seg.bytes.byteOffset + seg.bytes.byteLength);
     const table = parseSegment(buf);
-    if (table.length !== seg.samples) problems.push(`第 ${seg.index} 段解封装出 ${table.length} 个样本,应为 ${seg.samples}`);
-    if (!table[0]?.isSync) problems.push(`第 ${seg.index} 段的第一个样本不是关键帧`);
+    if (table.length !== seg.samples) problems.push(`Segment ${seg.index} demuxed to ${table.length} samples, expected ${seg.samples}`);
+    if (!table[0]?.isSync) problems.push(`The first sample of segment ${seg.index} is not a keyframe`);
     table.forEach((s, i) => dec.decode(new EncodedVideoChunk({ type: s.isSync ? 'key' : 'delta', timestamp: chunkTimestamp(seg.index * SEGMENT_FRAMES + i, fps), data: new Uint8Array(buf, s.offset, s.size) })));
     await dec.flush();                                            // 一段一段解
   }
   dec.close();
   const decodeMs = performance.now() - t1;
-  if (decodeError) problems.push(`解码出错:${decodeError}`);
-  if (decoded !== frames) problems.push(`解回 ${decoded} 帧,应为 ${frames}`);
+  if (decodeError) problems.push(`Decode error: ${decodeError}`);
+  if (decoded !== frames) problems.push(`Decoded back ${decoded} frames, expected ${frames}`);
 
   const pct = (hist, total, q) => { let acc = 0; for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= total * q) return v; } return 255; };
   const colorTotal = stat.n * 3;
@@ -186,14 +186,14 @@ try {
   for (const [width, height] of SIZES) {
     let r;
     try { r = await page.evaluate(inPage, { width, height, frames: FRAMES, fps: FPS, software: SOFTWARE }); }
-    catch (err) { r = { size: `${width}x${height}`, problems: [`没压出来:${String(err?.message ?? err).split('\n')[0]}`] }; }
+    catch (err) { r = { size: `${width}x${height}`, problems: [`Encoding failed: ${String(err?.message ?? err).split('\n')[0]}`] }; }
     const fails = [...(r.problems ?? [])];
     if (r.decoded !== undefined) {
-      if (r.colorMean > 3) fails.push(`色半区平均误差 ${r.colorMean} > 3`);
-      if (r.colorP99 > 12) fails.push(`色半区 99% 分位误差 ${r.colorP99} > 12`);
-      if (r.alphaMean > 3) fails.push(`透明度平均误差 ${r.alphaMean} > 3`);
-      if (r.alphaP99 > 12) fails.push(`透明度 99% 分位误差 ${r.alphaP99} > 12`);
-      if (r.transparentColorMean !== null && r.transparentColorMean > 3) fails.push(`全透明处色半区平均 ${r.transparentColorMean} > 3(应为黑)`);
+      if (r.colorMean > 3) fails.push(`Color-half mean error ${r.colorMean} > 3`);
+      if (r.colorP99 > 12) fails.push(`Color-half 99th-percentile error ${r.colorP99} > 12`);
+      if (r.alphaMean > 3) fails.push(`Alpha mean error ${r.alphaMean} > 3`);
+      if (r.alphaP99 > 12) fails.push(`Alpha 99th-percentile error ${r.alphaP99} > 12`);
+      if (r.transparentColorMean !== null && r.transparentColorMean > 3) fails.push(`Color-half mean ${r.transparentColorMean} > 3 where fully transparent (should be black)`);
     }
     r.pass = fails.length === 0;
     report.results.push(r);
@@ -205,9 +205,9 @@ try {
 }
 
 const row = (r) => r.decoded === undefined ? `${r.size}  ${r.problems.join(';')}`
-  : `${r.size.padEnd(10)} 拼合 ${r.packed.padEnd(10)} ${r.mode.padEnd(9)} ${r.codec}  压 ${String(r.encodeFps).padStart(6)} 帧/秒 (${r.msPerFrame} 毫秒/帧)  ${String(r.kbps).padStart(6)} kbps  解回 ${r.decoded}/${r.frames}  色误差 均 ${r.colorMean} p99 ${r.colorP99} 最大 ${r.colorMax}  透明度误差 均 ${r.alphaMean} p99 ${r.alphaP99} 最大 ${r.alphaMax}  透明处色 ${r.transparentColorMean}  ${r.pass ? '过' : '不过'}`;
-console.log(`机器:${report.host.cpu},${report.host.logicalCores} 个逻辑核,${report.host.memGiB} GiB;${report.chrome}`);
-console.log(`条件:${SOFTWARE ? '只用处理器(关显卡、软件编码)' : '缺省(有显卡就用)'}${CORES ? `,限制在 ${CORES} 个核(进程 ${report.affinityAfterPage?.processes}),页面看到 ${report.page?.cores} 个核` : ''}${THROTTLE > 1 ? `,主线程放慢 ${THROTTLE} 倍` : ''};${FRAMES} 帧,${FPS} fps`);
+  : `${r.size.padEnd(10)} packed ${r.packed.padEnd(10)} ${r.mode.padEnd(9)} ${r.codec}  encode ${String(r.encodeFps).padStart(6)} fps (${r.msPerFrame} ms/frame)  ${String(r.kbps).padStart(6)} kbps  decoded ${r.decoded}/${r.frames}  color error mean ${r.colorMean} p99 ${r.colorP99} max ${r.colorMax}  alpha error mean ${r.alphaMean} p99 ${r.alphaP99} max ${r.alphaMax}  color at transparent ${r.transparentColorMean}  ${r.pass ? 'pass' : 'fail'}`;
+console.log(`Machine: ${report.host.cpu}, ${report.host.logicalCores} logical cores, ${report.host.memGiB} GiB; ${report.chrome}`);
+console.log(`Conditions: ${SOFTWARE ? 'CPU only (GPU off, software encoding)' : 'Default (use the GPU if present)'}${CORES ? `, limited to ${CORES} cores (processes ${report.affinityAfterPage?.processes}), page sees ${report.page?.cores} cores` : ''}${THROTTLE > 1 ? `, main thread slowed ${THROTTLE}x` : ''}; ${FRAMES} frames, ${FPS} fps`);
 for (const r of report.results) console.log(row(r));
 if (JSON_OUT) fs.writeFileSync(JSON_OUT, JSON.stringify(report, null, 2));
-if (report.failures.length) { console.log('不过:\n  ' + report.failures.join('\n  ')); process.exitCode = 1; } else console.log('全部通过');
+if (report.failures.length) { console.log('Failed:\n  ' + report.failures.join('\n  ')); process.exitCode = 1; } else console.log('All passed');

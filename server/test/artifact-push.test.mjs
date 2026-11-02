@@ -30,7 +30,7 @@ import path from 'node:path';
 import { createAssetHarness } from './fake-asset-service.mjs';
 
 const bakeryCalls = [];
-const refuse = (name) => (...args) => { bakeryCalls.push(name); void args; throw new Error(`单测不渲染（${name}）`); };
+const refuse = (name) => (...args) => { bakeryCalls.push(name); void args; throw new Error(`Unit test does not render (${name})`); };
 mock.module(new URL('../bakery/index.mjs', import.meta.url).href, {
   exports: {
     openBakery: async (...a) => refuse('openBakery')(...a),
@@ -57,16 +57,16 @@ try { pushMod = await import('../artifact-push.mjs'); } catch (err) { pushError 
 let clientMod = null, clientError = null;
 try { clientMod = await import('../asset-store/client.mjs'); } catch (err) { clientError = err; }
 function T() {
-  if (transferError) throw new Error(`载不进 server/artifact-transfer.mjs：${transferError.message}`);
+  if (transferError) throw new Error(`Cannot load server/artifact-transfer.mjs: ${transferError.message}`);
   return transfer;
 }
 function P() {
-  if (pushError) throw new Error(`载不进 server/artifact-push.mjs：${pushError.message}`);
-  assert.equal(typeof pushMod.createPushQueue, 'function', `artifact-push.mjs 要导出 createPushQueue；导出：${Object.keys(pushMod).join(', ')}`);
+  if (pushError) throw new Error(`Cannot load server/artifact-push.mjs: ${pushError.message}`);
+  assert.equal(typeof pushMod.createPushQueue, 'function', `artifact-push.mjs must export createPushQueue; exports: ${Object.keys(pushMod).join(', ')}`);
   return pushMod;
 }
 function newClient(base) {
-  if (clientError) throw new Error(`载不进 server/asset-store/client.mjs：${clientError.message}`);
+  if (clientError) throw new Error(`Cannot load server/asset-store/client.mjs: ${clientError.message}`);
   return clientMod.createAssetClient({ base });
 }
 
@@ -129,7 +129,7 @@ const unitOf = (task, canvasHeavy = false) => ({
 });
 /** 清单写入顺序里，每个键第一次出现的位置 */
 const putOrder = (content) => [...new Set(content.puts().map((c) => c.key))];
-const waitPuts = (content, n, ms = 15_000) => until(() => content.puts().length >= n, { timeoutMs: ms, what: () => `内容库只写了 ${content.puts().length} 份清单：${JSON.stringify(putOrder(content))}；队列：${queueDiag()}` });
+const waitPuts = (content, n, ms = 15_000) => until(() => content.puts().length >= n, { timeoutMs: ms, what: () => `The content store has only ${content.puts().length} manifests written: ${JSON.stringify(putOrder(content))}; queue: ${queueDiag()}` });
 
 /** 读队列文件；没有回 null。撞上队列正在改名替换它（Windows 上报 EPERM / EBUSY / EACCES）就稍等重读，不当成「没有」 */
 async function readQueueFile(dir) {
@@ -144,7 +144,7 @@ async function readQueueFile(dir) {
 
 /* ------------------------------------------------------------------ W1 */
 
-test('W1 配了推送队列的管线 commitSnapshots 写 130 帧（跨 3 段）：每段进队恰好一次；推完之后素材服务有全部块，内容库有 3 份清单', async (t) => {
+test('W1 A pipeline with a push queue configured: commitSnapshots writes 130 frames (across 3 segments): each segment is enqueued exactly once; after pushing, the asset service has all the chunks and the content store has 3 manifests', async (t) => {
   const { roots, svc } = await rig(t);
   const root = await roots.root();
   const A = roots.make(root);
@@ -170,48 +170,48 @@ test('W1 配了推送队列的管线 commitSnapshots 写 130 帧（跨 3 段）�
   if (enqueued.length) {
     const distinct = new Map(enqueued.map((e) => [`${e.unit.resultKey}:${e.unit.range.from}-${e.unit.range.to}`, e]));
     assert.deepEqual([...distinct.keys()].sort(), [`${rk}:0-59`, `${rk}:120-129`, `${rk}:60-119`].sort(),
-      `三段，键与 split.mjs 的切分一致（最后一段到 count - 1）：${JSON.stringify([...distinct.keys()])}`);
+      `Three segments, with keys consistent with the split in split.mjs (the last segment ends at count - 1): ${JSON.stringify([...distinct.keys()])}`);
     for (const e of distinct.values()) {
       assert.equal(e.unit.kind, 'snapshot');
       assert.equal(e.unit.tier, 'shared');
-      assert.equal(e.unit.resultKey, rk, '共享档 resultKey = snapshotKey');
+      assert.equal(e.unit.resultKey, rk, 'Shared tier resultKey = snapshotKey');
     }
   }
-  assert.equal(content.puts().length, 0, 'start() 之前不推');
+  assert.equal(content.puts().length, 0, 'Nothing is pushed before start()');
   // 钩子不 await enqueue（第 9 节第 1 条）：等它回的 Promise 兑现（看得到的话），再读队列文件
   await Promise.all(pending);
-  await until(async () => (await readQueueFile(root)) !== null, { timeoutMs: 3000, what: () => '进队之后没写 push-queue.json' });
+  await until(async () => (await readQueueFile(root)) !== null, { timeoutMs: 3000, what: () => 'push-queue.json was not written after enqueueing' });
   const persisted = await readQueueFile(root);
-  assert.ok(persisted, '进队就写 <dir>/push-queue.json');
-  assert.doesNotThrow(() => JSON.parse(persisted), 'push-queue.json 是合法 JSON');
+  assert.ok(persisted, 'Enqueueing writes <dir>/push-queue.json');
+  assert.doesNotThrow(() => JSON.parse(persisted), 'push-queue.json is valid JSON');
 
   queue.start();
   await waitPuts(content, 3);
   await new Promise((resolve) => setTimeout(resolve, 300)); // 看看有没有多推
   assert.deepEqual(putOrder(content).sort(), [`${rk}:0-59`, `${rk}:120-129`, `${rk}:60-119`].sort());
-  assert.equal(content.puts().length, 3, `每段恰好推一次：${JSON.stringify(content.puts().map((c) => c.key))}`);
+  assert.equal(content.puts().length, 3, `Each segment is pushed exactly once: ${JSON.stringify(content.puts().map((c) => c.key))}`);
   const perHash = new Map();
   for (const p of asset.puts) perHash.set(p.hash, (perHash.get(p.hash) ?? 0) + 1);
-  assert.equal(perHash.size, 130, '130 个块');
-  assert.ok([...perHash.values()].every((n) => n === 1), '每个块只推一次');
+  assert.equal(perHash.size, 130, '130 chunks');
+  assert.ok([...perHash.values()].every((n) => n === 1), 'Each chunk is pushed only once');
   for (const [from, to] of [[0, 59], [60, 119], [120, 129]]) {
     const task = snapshotTask({ contentKey, from, to, fp: FP });
     assert.equal(task.resultKey, rk);
     const expected = unpack(await T().collectSnapshotResult(A, task)).result;
     const got = await svc.content.get('snapshot-manifest', manifestKey(task));
-    assert.ok(got, `内容库有 ${manifestKey(task)}`);
-    assert.deepEqual(got.body, expected, `${from}-${to} 的清单就是 C6.2 的 SnapshotResult`);
+    assert.ok(got, `The content store has ${manifestKey(task)}`);
+    assert.deepEqual(got.body, expected, `The manifest for ${from}-${to} is the SnapshotResult of C6.2`);
     for (const [n, h, bytes] of expected.frames) {
       const st = await svc.srv.stores.snap.stat(h);
-      assert.ok(st && st.size === bytes, `第 ${n} 帧的块在 snap 里`);
+      assert.ok(st && st.size === bytes, `The chunk of frame ${n} is in snap`);
     }
   }
   const stats = queue.stats();
-  assert.ok(stats && typeof stats === 'object', 'stats() 回一个对象');
-  assert.equal(bakeryCalls.length, 0, '推送不触发渲染');
+  assert.ok(stats && typeof stats === 'object', 'stats() returns an object');
+  assert.equal(bakeryCalls.length, 0, 'Pushing does not trigger rendering');
 });
 
-test('W1 推送在后台跑：素材服务卡住时 commitSnapshots 照常很快返回，不挡预渲染', async (t) => {
+test('W1 Pushing runs in the background: when the asset service hangs, commitSnapshots still returns quickly and does not block prerendering', async (t) => {
   const { roots, svc } = await rig(t);
   const root = await roots.root();
   const A = roots.make(root);
@@ -226,7 +226,7 @@ test('W1 推送在后台跑：素材服务卡住时 commitSnapshots 照常很快
   queue.start();
   await A.snapshots().commitSnapshots({ tier: 'shared', key: control.snapshotKey, clipId: 'clip-w1b', capabilities: SHARED_CAPS,
     items: range(0, 59).map((n) => ({ localFrame: n, html: htmlOf(n, 'W1b') })) });
-  await until(() => asset.puts.length > 0, { timeoutMs: 5000, what: () => '队列没有开始推第一段' });
+  await until(() => asset.puts.length > 0, { timeoutMs: 5000, what: () => 'The queue did not start pushing the first segment' });
   // 推送卡在 gate 上、测试放行之前永远不会完成：commitSnapshots 只要在放行之前返回，就说明它不等推送。
   // 不用「< 2000 ms」这种墙钟阈值 —— 全量并行时 CPU 满载，写 60 帧本身偶尔就要两三秒。
   const t0 = Date.now();
@@ -234,17 +234,17 @@ test('W1 推送在后台跑：素材服务卡住时 commitSnapshots 照常很快
   const idx = await Promise.race([
     A.snapshots().commitSnapshots({ tier: 'shared', key: control.snapshotKey, clipId: 'clip-w1b', capabilities: SHARED_CAPS,
       items: range(60, 119).map((n) => ({ localFrame: n, html: htmlOf(n, 'W1b') })) }),
-    new Promise((resolve, reject) => { limit = setTimeout(() => reject(new Error(`推送卡住时 commitSnapshots ${Date.now() - t0} ms 还没返回：它在等推送`)), 20_000); }),
+    new Promise((resolve, reject) => { limit = setTimeout(() => reject(new Error(`With the push stuck, commitSnapshots had still not returned after ${Date.now() - t0} ms: it is waiting on the push`)), 20_000); }),
   ]).finally(() => clearTimeout(limit));
-  assert.equal(asset.puts.filter((p) => p.ok).length, 0, 'commitSnapshots 返回时推送仍卡着（一个块都没推成）');
-  assert.deepEqual(idx.frames, [[0, 119]], '写盘照常');
+  assert.equal(asset.puts.filter((p) => p.ok).length, 0, 'When commitSnapshots returned, the push was still stuck (not a single chunk got pushed)');
+  assert.deepEqual(idx.frames, [[0, 119]], 'Writing to disk is unaffected');
   release();
   await waitPuts(content, 2);
 });
 
 /* ------------------------------------------------------------------ W2 */
 
-test('W2 优先级：同时进队一段共享档、一段本地档、一段含超体积帧的，推送顺序是 normal → low → lowest', async (t) => {
+test('W2 Priority: when one shared-tier segment, one local-tier segment and one segment with an oversize frame are enqueued at the same time, the push order is normal → low → lowest', async (t) => {
   const { roots, svc } = await rig(t);
   const root = await roots.root();
   const A = roots.make(root);
@@ -256,7 +256,7 @@ test('W2 优先级：同时进队一段共享档、一段本地档、一段含�
   await seedSnapshots(A, shared, range(0, 59), { tag: 'S' });
   await seedSnapshots(A, local, range(0, 59), { tag: 'L' });
   const idx = await seedSnapshots(A, over, range(0, 59), { html: (n) => (n === 17 ? bigHtml(n) : htmlOf(n, 'O')) });
-  assert.deepEqual(idx.oversize, [[17, 17]], '夹具：第 17 帧超体积');
+  assert.deepEqual(idx.oversize, [[17, 17]], 'Fixture: frame 17 is oversize');
 
   const content = countingContent(svc.content);
   const { queue } = queueOf(t, { pipeline: A, client: svc.client, content, dir: root, concurrency: 1 });
@@ -270,18 +270,18 @@ test('W2 优先级：同时进队一段共享档、一段本地档、一段含�
   // 三份清单都对
   for (const task of [shared, local, over]) {
     const got = await svc.content.get('snapshot-manifest', manifestKey(task));
-    assert.deepEqual(got?.body, unpack(await T().collectSnapshotResult(A, task)).result, `${task.tier} ${manifestKey(task).slice(-6)} 的清单`);
+    assert.deepEqual(got?.body, unpack(await T().collectSnapshotResult(A, task)).result, `Manifest of ${task.tier} ${manifestKey(task).slice(-6)}`);
   }
   const overBody = (await svc.content.get('snapshot-manifest', manifestKey(over))).body;
-  assert.equal(overBody.frames.length, 60, '超体积的帧也在清单里');
+  assert.equal(overBody.frames.length, 60, 'Oversize frames are in the manifest too');
   assert.equal(overBody.dirKey, over.resultKey);
   const localBody = (await svc.content.get('snapshot-manifest', manifestKey(local))).body;
-  assert.deepEqual([localBody.tier, localBody.entryKey, localBody.dirKey], ['local', entryKey, dirKeyOf(local)], '本地档清单带 entryKey 与落盘键');
+  assert.deepEqual([localBody.tier, localBody.entryKey, localBody.dirKey], ['local', entryKey, dirKeyOf(local)], 'The local-tier manifest carries entryKey and the on-disk key');
 });
 
 /* ------------------------------------------------------------------ W3 */
 
-test('W3 data:image 占比过半的段按 low 推（钩子自己判；占比不到一半的仍是 normal；有超体积帧的是 lowest）', async (t) => {
+test('W3 A segment where data:image takes more than half is pushed at low (the hook decides this itself; below half it is still normal; one with an oversize frame is lowest)', async (t) => {
   const { roots, svc } = await rig(t);
   const root = await roots.root();
   const A = roots.make(root);
@@ -299,24 +299,24 @@ test('W3 data:image 占比过半的段按 low 推（钩子自己判；占比不�
   const htmlX = (n) => dataImageHtml(n, 0.8);
   const htmlY = (n) => dataImageHtml(n, 0.3);
   const share = (fn) => { let img = 0, all = 0; for (const n of range(0, 59)) { const h = fn(n); img += dataImageBytes(h); all += Buffer.byteLength(h, 'utf8'); } return img / all; };
-  assert.ok(share(htmlX) > 0.7, `夹具：X 的 data:image 占比 ${share(htmlX).toFixed(3)}`);
-  assert.ok(share(htmlY) < 0.4 && share(htmlY) > 0.2, `夹具：Y 的 data:image 占比 ${share(htmlY).toFixed(3)}`);
+  assert.ok(share(htmlX) > 0.7, `Fixture: the data:image share of X is ${share(htmlX).toFixed(3)}`);
+  assert.ok(share(htmlY) < 0.4 && share(htmlY) > 0.2, `Fixture: the data:image share of Y is ${share(htmlY).toFixed(3)}`);
   const commit = (c, html) => A.snapshots().commitSnapshots({ tier: 'shared', key: c.snapshotKey, clipId: c.clipId, capabilities: SHARED_CAPS,
     items: range(0, 59).map((n) => ({ localFrame: n, html: html(n) })) });
   // 进队顺序 X、Z、Y（先进先出的话就是这个顺序）
   await commit(X, htmlX);
   await commit(Z, (n) => (n === 30 ? bigHtml(n) : htmlOf(n, 'Z')));
   await commit(Y, htmlY);
-  t.diagnostic(`钩子进队：${JSON.stringify(enqueued.map((e) => [e.unit.resultKey?.slice(0, 6), e.priority]))}`);
+  t.diagnostic(`Hook enqueued: ${JSON.stringify(enqueued.map((e) => [e.unit.resultKey?.slice(0, 6), e.priority]))}`);
   queue.start();
   await waitPuts(content, 3);
   assert.deepEqual(putOrder(content), [`${Y.snapshotKey}:0-59`, `${X.snapshotKey}:0-59`, `${Z.snapshotKey}:0-59`],
-    'Y（normal）→ X（data:image 过半，low）→ Z（有超体积帧，lowest）');
+    'Y (normal) → X (data:image over half, low) → Z (has an oversize frame, lowest)');
 });
 
 /* ------------------------------------------------------------------ W4 */
 
-test('W4 推到一半 stop()，从同一个 dir 重建队列：未完成的段接着推，已完成的不重推（数 put 的上传次数）', async (t) => {
+test('W4 stop() halfway through pushing, then rebuild the queue from the same dir: unfinished segments continue pushing, finished ones are not pushed again (counting put uploads)', async (t) => {
   const { roots, svc } = await rig(t);
   const root = await roots.root();
   const A = roots.make(root);
@@ -337,30 +337,30 @@ test('W4 推到一半 stop()，从同一个 dir 重建队列：未完成的段�
       if (seg === first) return;
       if (second === null) second = seg;
       await blocked;
-      throw Object.assign(new Error('停机时中断'), { status: 503 });
+      throw Object.assign(new Error('Interrupted at shutdown'), { status: 503 });
     },
   });
   const content1 = countingContent(svc.content);
   const q1 = queueOf(t, { pipeline: A, client: asset1, content: content1, dir: root, concurrency: 1 });
   for (const task of tasks) await q1.queue.enqueue(unitOf(task), NORMAL); // 第 9 节第 1 条：写回队列文件后才兑现
   const before = await readQueueFile(root);
-  assert.ok(before && tasks.every((task) => before.includes(task.resultKey)), '四段都落进了 push-queue.json');
+  assert.ok(before && tasks.every((task) => before.includes(task.resultKey)), 'All four segments were written into push-queue.json');
   q1.queue.start();
-  await until(() => second !== null, { timeoutMs: 10_000, what: () => `第二段没开始推：first=${first}；队列：${queueDiag()}` });
-  assert.equal(content1.puts().length, 1, '第一段推完、写了清单');
+  await until(() => second !== null, { timeoutMs: 10_000, what: () => `The second segment did not start pushing: first=${first}; queue: ${queueDiag()}` });
+  assert.equal(content1.puts().length, 1, 'The first segment finished pushing and its manifest was written');
   await q1.queue.stop();
   releaseSecond();
   // stop() 不等在推的段（契约）：第二段放行后失败、再写一次队列文件。等它收尾、写完再读文件，
   // 否则读到的可能是正在替换的文件（Windows 上改名替换的瞬间读会失败），也可能和下面 q2 的 restore 撞上。
-  await until(() => q1.queue.stats().inflight === 0, { timeoutMs: 10_000, what: () => `第二段一直没收尾；队列：${queueDiag()}` });
+  await until(() => q1.queue.stats().inflight === 0, { timeoutMs: 10_000, what: () => `The second segment never finished; queue: ${queueDiag()}` });
   await q1.queue.stop(); // 已停的队列再 stop 一次只做一件事：等排着的写回全部完成
   await new Promise((resolve) => setTimeout(resolve, 100));
   const doneKey = manifestKey(tasks[first]);
-  assert.deepEqual(content1.puts().map((c) => c.key), [doneKey], '停下之后不再推别的段');
+  assert.deepEqual(content1.puts().map((c) => c.key), [doneKey], 'No other segments are pushed after stopping');
   const persisted = await readQueueFile(root);
-  assert.ok(persisted, '队列文件还在');
-  assert.ok(!persisted.includes(tasks[first].resultKey), '已完成的段不留在文件里');
-  for (const [i, task] of tasks.entries()) if (i !== first) assert.ok(persisted.includes(task.resultKey), `未完成的第 ${i} 段还在文件里`);
+  assert.ok(persisted, 'The queue file is still there');
+  assert.ok(!persisted.includes(tasks[first].resultKey), 'Finished segments are not left in the file');
+  for (const [i, task] of tasks.entries()) if (i !== first) assert.ok(persisted.includes(task.resultKey), `Unfinished segment ${i} is still in the file`);
 
   // 第二个队列：同一个 dir，重建之后接着推
   const asset2 = countingAsset(svc.client);
@@ -370,18 +370,18 @@ test('W4 推到一半 stop()，从同一个 dir 重建队列：未完成的段�
   await waitPuts(content2, 3);
   await new Promise((resolve) => setTimeout(resolve, 200));
   const rest = tasks.filter((_, i) => i !== first).map(manifestKey);
-  assert.deepEqual(putOrder(content2).sort(), [...rest].sort(), '其余三段接着推完');
-  assert.equal(content2.puts().length, 3, '每段一次');
-  assert.equal(asset2.puts.filter((p) => segOf.get(p.hash) === first).length, 0, '已完成的第一段一个块都不重推');
-  assert.equal(asset2.puts.filter((p) => segOf.get(p.hash) !== first).length, 180, '其余三段 180 个块');
-  for (const task of tasks) assert.ok(await svc.content.get('snapshot-manifest', manifestKey(task)), `${manifestKey(task).slice(-12)} 在内容库里`);
+  assert.deepEqual(putOrder(content2).sort(), [...rest].sort(), 'The remaining three segments continue and finish pushing');
+  assert.equal(content2.puts().length, 3, 'Once per segment');
+  assert.equal(asset2.puts.filter((p) => segOf.get(p.hash) === first).length, 0, 'Not a single chunk of the finished first segment is pushed again');
+  assert.equal(asset2.puts.filter((p) => segOf.get(p.hash) !== first).length, 180, '180 chunks for the remaining three segments');
+  for (const task of tasks) assert.ok(await svc.content.get('snapshot-manifest', manifestKey(task)), `${manifestKey(task).slice(-12)} is in the content store`);
   const after_ = await readQueueFile(root);
-  assert.ok(after_ === null || tasks.every((task) => !after_.includes(task.resultKey)), '全部完成后文件里不留已完成的段');
+  assert.ok(after_ === null || tasks.every((task) => !after_.includes(task.resultKey)), 'After everything completes, no finished segments are left in the file');
 });
 
 /* ------------------------------------------------------------------ W5 */
 
-test('W5 素材服务对某段返回 500：这一段按 5 s、30 s 退避重试（注入时钟），最后成功；别的段不受影响', async (t) => {
+test('W5 The asset service returns 500 for a segment: that segment is retried with backoff at 5 s and 30 s (injected clock) and finally succeeds; other segments are unaffected', async (t) => {
   const { roots, svc } = await rig(t);
   const root = await roots.root();
   const A = roots.make(root);
@@ -413,27 +413,27 @@ test('W5 素材服务对某段返回 500：这一段按 5 s、30 s 退避重试�
   queue.start();
   await waitPuts(content, 2);
   await new Promise((resolve) => setTimeout(resolve, 200));
-  assert.deepEqual(putOrder(content).sort(), [manifestKey(tasks[0]), manifestKey(tasks[2])].sort(), '别的段不受影响');
-  assert.equal(attempts, 1, '失败的段试了一次');
-  assert.equal(await svc.content.get('snapshot-manifest', manifestKey(tasks[1])), null, '失败的段不写清单');
+  assert.deepEqual(putOrder(content).sort(), [manifestKey(tasks[0]), manifestKey(tasks[2])].sort(), 'Other segments are unaffected');
+  assert.equal(attempts, 1, 'The failed segment was tried once');
+  assert.equal(await svc.content.get('snapshot-manifest', manifestKey(tasks[1])), null, 'The failed segment does not write a manifest');
 
   await clock.advance(4_999);
   await new Promise((resolve) => setTimeout(resolve, 200));
-  assert.equal(attempts, 1, '5 s 之前不重试');
+  assert.equal(attempts, 1, 'No retry before 5 s');
   await clock.advance(1);
-  await until(() => attempts === 2, { timeoutMs: 3000, what: () => `5 s 到了没有重试：attempts=${attempts}，登记过的计时 ${JSON.stringify(clock.delays)}` });
+  await until(() => attempts === 2, { timeoutMs: 3000, what: () => `No retry after 5 s elapsed: attempts=${attempts}, registered timers ${JSON.stringify(clock.delays)}` });
   await new Promise((resolve) => setTimeout(resolve, 200));
-  assert.equal(await svc.content.get('snapshot-manifest', manifestKey(tasks[1])), null, '第二次仍失败');
+  assert.equal(await svc.content.get('snapshot-manifest', manifestKey(tasks[1])), null, 'The second attempt still failed');
 
   await clock.advance(29_999);
   await new Promise((resolve) => setTimeout(resolve, 200));
-  assert.equal(attempts, 2, '再等 30 s 之前不重试');
+  assert.equal(attempts, 2, 'No retry before another 30 s of waiting');
   await clock.advance(1);
-  await until(() => attempts === 3, { timeoutMs: 3000, what: () => `30 s 到了没有重试：attempts=${attempts}，登记过的计时 ${JSON.stringify(clock.delays)}` });
+  await until(() => attempts === 3, { timeoutMs: 3000, what: () => `No retry after 30 s elapsed: attempts=${attempts}, registered timers ${JSON.stringify(clock.delays)}` });
   await waitPuts(content, 3);
   const got = await svc.content.get('snapshot-manifest', manifestKey(tasks[1]));
-  assert.deepEqual(got?.body, unpack(await T().collectSnapshotResult(A, tasks[1])).result, '第三次成功，清单写进内容库');
-  assert.equal(content.puts().length, 3, '成功的段不重推');
+  assert.deepEqual(got?.body, unpack(await T().collectSnapshotResult(A, tasks[1])).result, 'The third attempt succeeded and the manifest was written to the content store');
+  assert.equal(content.puts().length, 3, 'A segment that succeeded is not pushed again');
 });
 
 /* ------------------------------------------------------------------ W6 */
@@ -643,15 +643,15 @@ async function w6Scenario(A, rootA) {
   return out;
 }
 
-test('W6 没配推送队列的管线：commitSnapshots 与 storeSegment 的行为和写盘内容，与 C6.2 之后的 main 完全一样', async (t) => {
+test('W6 A pipeline without a push queue: the behavior and on-disk content of commitSnapshots and storeSegment are exactly the same as main after C6.2', async (t) => {
   const roots = makeRoots(FramePipeline, 'pc-c64-w6-');
   t.after(() => roots.cleanup());
   const rootA = await roots.root();
   const A = roots.make(rootA, { interactive: true });
-  assert.ok(!A.pushQueue, '缺省没配推送队列');
+  assert.ok(!A.pushQueue, 'No push queue is configured by default');
   const got = await w6Scenario(A, rootA);
   if (process.env.PC_W6_DUMP) console.log(JSON.stringify(got));
-  assert.deepEqual(got, GOLDEN, '返回值、就绪索引与写盘内容逐项一致');
-  assert.equal(await readQueueFile(rootA), null, '没配推送队列：不写 push-queue.json');
+  assert.deepEqual(got, GOLDEN, 'Return value, ready index and on-disk content match item by item');
+  assert.equal(await readQueueFile(rootA), null, 'No push queue configured: push-queue.json is not written');
   assert.equal(bakeryCalls.length, 0);
 });

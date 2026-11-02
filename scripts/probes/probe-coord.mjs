@@ -88,7 +88,7 @@ export function createMailbox({
   now = () => new Date(),
   log = () => {},
 } = {}) {
-  if (typeof token !== 'string' || token.length < 16) throw new TypeError('信箱令牌至少 16 个字符');
+  if (typeof token !== 'string' || token.length < 16) throw new TypeError('Mailbox token must be at least 16 characters');
   const expected = Buffer.from(token, 'utf8');
   const state = new Map(queues.map((q) => [q, { last: 0, messages: [], waiters: new Set() }]));
 
@@ -273,13 +273,13 @@ export function coordClient(base, token = process.env.PROBE_MAIL_TOKEN) {
       const res = await fetch(`${root}/kv/${encodeURIComponent(key)}`, {
         method: 'PUT', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify(value), signal: AbortSignal.timeout(15_000),
       });
-      if (!res.ok) throw new Error(`协调口 PUT ${key} 回 ${res.status}`);
+      if (!res.ok) throw new Error(`Coordination endpoint PUT ${key} returned ${res.status}`);
     },
     /** 取一次（最多等 waitMs）；没有回 null */
     async get(key, waitMs = 0) {
       const res = await fetch(`${root}/kv/${encodeURIComponent(key)}?wait=${Math.max(0, waitMs)}`, { headers: auth, signal: AbortSignal.timeout(waitMs + 10_000) });
       if (res.status === 404) return null;
-      if (!res.ok) throw new Error(`协调口 GET ${key} 回 ${res.status}`);
+      if (!res.ok) throw new Error(`Coordination endpoint GET ${key} returned ${res.status}`);
       return (await res.json()).value ?? null;
     },
     /** 等到这个键出现，或者到 deadline（毫秒时间戳）；协调口暂时连不上就隔 500 ms 再试 */
@@ -312,7 +312,7 @@ export function mailClient(base, token) {
         body: JSON.stringify({ from, kind, ref, body }), signal: AbortSignal.timeout(15_000),
       });
       const j = await res.json().catch(() => null);
-      if (!res.ok || !j?.ok) throw Object.assign(new Error(`信箱 POST ${queue} 回 ${res.status}${j?.error ? `：${j.error}` : ''}`), { status: res.status });
+      if (!res.ok || !j?.ok) throw Object.assign(new Error(`Mailbox POST ${queue} returned ${res.status}${j?.error ? `: ${j.error}` : ''}`), { status: res.status });
       return j;
     },
     /** 取 after 之后的消息，最多挂 waitS 秒 */
@@ -321,7 +321,7 @@ export function mailClient(base, token) {
         headers, signal: AbortSignal.timeout((waitS + 15) * 1000),
       });
       const j = await res.json().catch(() => null);
-      if (!res.ok || !j?.ok) throw Object.assign(new Error(`信箱 GET ${queue} 回 ${res.status}${j?.error ? `：${j.error}` : ''}`), { status: res.status });
+      if (!res.ok || !j?.ok) throw Object.assign(new Error(`Mailbox GET ${queue} returned ${res.status}${j?.error ? `: ${j.error}` : ''}`), { status: res.status });
       return j;
     },
   };
@@ -333,7 +333,7 @@ async function cli(argv) {
   const token = process.env.PROBE_MAIL_TOKEN;
   const out = (o) => process.stdout.write(`${JSON.stringify(o)}\n`);
   if (cmd === 'serve') {
-    if (!token) { console.error('缺环境变量 PROBE_MAIL_TOKEN'); return 2; }
+    if (!token) { console.error('Missing environment variable PROBE_MAIL_TOKEN'); return 2; }
     const c = await startCoordServer({
       port: Number(arg('--port', '8799')), host: arg('--host', '127.0.0.1'),
       mail: { token, file: arg('--mail-file', null), log: (event, fields) => out({ t: new Date().toISOString(), event, ...fields }) },
@@ -341,15 +341,15 @@ async function cli(argv) {
     out({ t: new Date().toISOString(), event: 'coord.listen', port: c.port, mail: c.mailbox.summary() });
     return new Promise(() => {});
   }
-  if (!token) { console.error('缺环境变量 PROBE_MAIL_TOKEN'); return 2; }
+  if (!token) { console.error('Missing environment variable PROBE_MAIL_TOKEN'); return 2; }
   const base = arg('--base', null);
   const queue = arg('--queue', null);
-  if (!base || !queue) { console.error('要给 --base 与 --queue'); return 2; }
+  if (!base || !queue) { console.error('--base and --queue are required'); return 2; }
   const mc = mailClient(base, token);
   if (cmd === 'send') {
     const bodyFile = arg('--body-file', null);
     const body = bodyFile ? fs.readFileSync(bodyFile, 'utf8') : arg('--body', null);
-    if (body === null) { console.error('要给 --body 或 --body-file'); return 2; }
+    if (body === null) { console.error('--body or --body-file is required'); return 2; }
     const ref = arg('--ref', null);
     const r = await mc.send(queue, { from: arg('--from', 'local'), kind: arg('--kind', 'instruction'), ref: ref === null ? null : Number(ref), body });
     out({ ok: true, queue, seq: r.seq, t: r.t });
@@ -380,7 +380,7 @@ async function cli(argv) {
     }
     return 3;
   }
-  console.error('用法见文件头：serve / send / wait');
+  console.error('See the file header for usage: serve / send / wait');
   return 2;
 }
 

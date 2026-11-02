@@ -26,7 +26,7 @@ const base = () => ({
   tracks: [{ id: "ta", name: "Track 1", clips: [{ id: "ca", cardId: "title", start: 0, end: 4, params: { size: 1 } }] }],
   cuts: [
     { id: "cut1", name: "Cut 1" },
-    { id: "cut2", name: "剪辑2", duration: 6, transitions: [], tracks: [{ id: "tb", name: "序列 B", clips: [{ id: "cb", cardId: "title", start: 0, end: 6, params: { size: 3, color: "#fff" } }] }] },
+    { id: "cut2", name: "Cut 2", duration: 6, transitions: [], tracks: [{ id: "tb", name: "Track B", clips: [{ id: "cb", cardId: "title", start: 0, end: 6, params: { size: 3, color: "#fff" } }] }] },
   ],
   activeCutId: "cut1",
 });
@@ -128,7 +128,7 @@ test("a real conflict is still handled by the undo rules: if someone else later 
   const r = A.ds.revertRemote({ opId: editOp });
   assert.equal(r.done, false);
   assert.deepEqual(r.skipped.map((s) => s.entity), ["/tracks/@tb/clips/@cb"], "the entity does not depend on where it lived at the time");
-  assert.equal(sizeIn(svc.project, "cut2", "cb"), 8, "保留了现在的样子");
+  assert.equal(sizeIn(svc.project, "cut2", "cb"), 8, "the current state is kept");
   assert.ok(A.notices.some((n) => n.kind === "revert-remote" && n.result.skipped.length === 1), "there is a notice (undo notice bar)");
 });
 

@@ -17,40 +17,40 @@ const { CAPABILITIES, EFFORT_LABEL, sanitizeEffort } = await import('./modelOpti
 /** codex 上游在 400 里逐字列出来的那一串 */
 const CODEX_UPSTREAM = ['none', 'low', 'medium', 'high', 'xhigh', 'max'];
 
-test('codex 的档位是上游那一串的子集,一个多余的都不能有', () => {
+test('The codex tiers are a subset of the upstream list, with not a single extra one', () => {
   const offered = CAPABILITIES.codex.efforts.filter(Boolean);
   const extra = offered.filter((e) => !CODEX_UPSTREAM.includes(e));
-  assert.deepEqual(extra, [], `这些档位上游不认,选中就是 400:${extra.join(', ')}`);
+  assert.deepEqual(extra, [], `Upstream does not recognize these tiers, and selecting one gives a 400: ${extra.join(', ')}`);
 });
 
-test('codex:minimal 一定不在清单里(它就是那次 400 的元凶)', () => {
+test('codex: minimal must not be in the manifest (it was the culprit behind that 400)', () => {
   assert.ok(!CAPABILITIES.codex.efforts.includes('minimal'));
 });
 
-test('codex:上游认的 none 和 max 要给出来 —— 少给等于白丢档位', () => {
+test('codex: none and max, which upstream recognizes, must be provided: leaving them out wastes tiers', () => {
   for (const e of ['none', 'max']) {
-    assert.ok(CAPABILITIES.codex.efforts.includes(e), `${e} 上游支持,清单里却没有`);
+    assert.ok(CAPABILITIES.codex.efforts.includes(e), `${e} is supported upstream but is not in the manifest`);
   }
 });
 
-test('每一档都要有中文标签,否则下拉框里是空白项', () => {
+test('Every tier must have a Chinese label, otherwise the dropdown shows a blank item', () => {
   for (const [provider, cap] of Object.entries(CAPABILITIES)) {
     for (const e of cap.efforts) {
-      assert.ok(EFFORT_LABEL[e] !== undefined, `${provider} 的档位 ${JSON.stringify(e)} 没有标签`);
+      assert.ok(EFFORT_LABEL[e] !== undefined, `Tier ${JSON.stringify(e)} of ${provider} has no label`);
     }
   }
 });
 
-test('每家的清单都带空串 —— 用户要能选回「默认」', () => {
+test('Every provider\'s manifest includes the empty string: the user must be able to select "Default" again', () => {
   for (const [provider, cap] of Object.entries(CAPABILITIES)) {
     if (cap.efforts.length === 0) continue; // 一档都不支持的驱动(界面上整个灰掉)
-    assert.ok(cap.efforts.includes(''), `${provider} 的清单里没有「默认」`);
+    assert.ok(cap.efforts.includes(''), `The manifest of ${provider} has no "Default"`);
   }
 });
 
-test('minimal 没有任何驱动再提供它', () => {
+test('No driver offers minimal any more', () => {
   for (const [provider, cap] of Object.entries(CAPABILITIES)) {
-    assert.ok(!cap.efforts.includes('minimal'), `${provider} 又把 minimal 加回来了`);
+    assert.ok(!cap.efforts.includes('minimal'), `${provider} added minimal back again`);
   }
 });
 
@@ -58,7 +58,7 @@ test('minimal 没有任何驱动再提供它', () => {
  * api 那一档单独说一句:它走 OpenAI 兼容口径的 `reasoning_effort`,
  * 上游只认 low / medium / high(见 openlux 文档),CLI 的扩展档位一个都不能给。
  */
-test('api:只给 OpenAI 兼容口径认的三档', () => {
+test('api: only the three tiers recognized by the OpenAI-compatible interface', () => {
   assert.deepEqual(CAPABILITIES.api.efforts.filter(Boolean).sort(), ['high', 'low', 'medium']);
 });
 
@@ -69,7 +69,7 @@ test('api:只给 OpenAI 兼容口径认的三档', () => {
  * 「默认」显示了 —— 但发请求那条路读的是 localStorage 原值,于是界面写着「默认」、
  * 请求里照旧带着 minimal,还是那条 400。只测 CAPABILITIES 是同义反复,抓不到这个。
  */
-test("sanitizeEffort:清单里没有的档位一律降级成默认 —— 老用户 localStorage 里的旧值就是这么漏出去的", () => {
+test("sanitizeEffort: any tier not in the manifest is downgraded to the default: this is how old values in old users' localStorage leaked out", () => {
   // 0ae554b 之前 codex 的清单里有 minimal,现在没有了
   assert.equal(sanitizeEffort("codex", "gpt-5.6-terra", "minimal", null), "");
   // 清单里有的原样保留
@@ -79,7 +79,7 @@ test("sanitizeEffort:清单里没有的档位一律降级成默认 —— 老用
   assert.equal(sanitizeEffort("codex", "gpt-5.6-terra", "", null), "");
 });
 
-test("sanitizeEffort:agy 按模型分组各有各的清单", () => {
+test("sanitizeEffort: agy is grouped by model, and each group has its own manifest", () => {
   const config = { cliModels: { agy: "gemini-3.8-flash-high|gemini-3.8-flash-low|gemini-3.1-pro-high" } };
   // gemini-3.1-pro 这一组没有 medium
   assert.equal(sanitizeEffort("agy", "gemini-3.1-pro", "medium", config), "");
@@ -87,14 +87,14 @@ test("sanitizeEffort:agy 按模型分组各有各的清单", () => {
   assert.equal(sanitizeEffort("agy", "gemini-3.8-flash", "low", config), "low");
 });
 
-test("sanitizeEffort:乱七八糟的值也收得住", () => {
-  assert.equal(sanitizeEffort("claude", "opus", "不存在的档", null), "");
+test("sanitizeEffort: it can also handle garbage values", () => {
+  assert.equal(sanitizeEffort("claude", "opus", "Nonexistent tier", null), "");
   assert.equal(sanitizeEffort("claude", "opus", undefined, null), "");
   // api 直连没有 xhigh 这一档。原来这里左右写的是同一个调用,恒等成立 —— 等于没测
   assert.equal(sanitizeEffort("api", "", "xhigh", null), "");
 });
 
-test('每家清单的第一档必须是「默认」空串 —— 下拉框的兜底值全靠它', () => {
+test('The first tier of every provider\'s manifest must be the empty string for "Default": the dropdown\'s fallback value depends entirely on it', () => {
   /*
    * ModelBar 的档位下拉框在认不出存着的值时兜底成 ""(见那边的注释:宁可少一档,
    * 也不发一个必然被拒的值)。而受控 select 的 value 在 options 里找不到时
@@ -105,6 +105,6 @@ test('每家清单的第一档必须是「默认」空串 —— 下拉框的兜
    * 空白下拉框就立刻从不可达变成可达,而且没有一条测试会红。
    */
   for (const [provider, cap] of Object.entries(CAPABILITIES)) {
-    assert.equal(cap.efforts[0], "", `${provider} 的第一档不是空串,ModelBar 的兜底会显示空白`);
+    assert.equal(cap.efforts[0], "", `The first tier of ${provider} is not the empty string, so the ModelBar fallback would show blank`);
   }
 });

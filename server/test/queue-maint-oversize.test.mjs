@@ -67,25 +67,25 @@ const split = (ctx) => splitPlan({
 });
 const fpsOf = (tasks, clipId) => [...new Set(tasks.filter((t) => t.input.clipId === clipId).map((t) => t.requires.envFingerprint))].sort();
 
-test('QM-E-01 本机快照库记过超限帧的卡标 snapshotOversize、切分不给浏览器；没有记录的卡照旧给', async () => {
+test('QM-E-01 a card for which the local snapshot store has recorded an oversize frame is marked snapshotOversize, and splitting does not hand it to the browser; a card with no record is handed over as before', async () => {
   const { store, cleanup } = await tempStore();
   try {
     const a = control('a'), b = control('b');
     const idx = await commit(store, a.snapshotKey, [[0, SMALL], [1, BIG]]);
-    assert.deepEqual(idx.oversize, [[1, 1]], '夹具：a 的第 1 帧超限，记进 index.json 的 oversize');
+    assert.deepEqual(idx.oversize, [[1, 1]], 'fixture: frame 1 of a is oversize, recorded into oversize in index.json');
     await commit(store, b.snapshotKey, [[0, SMALL], [1, SMALL]]);
     const { exec } = executorOver(store, [a, b]);
     const ctx = await exec.plan(PLAN);
     assert.equal(ctx.cardPlan.find((c) => c.clipId === 'a').snapshotOversize, true);
     assert.equal('snapshotOversize' in ctx.cardPlan.find((c) => c.clipId === 'b'), false);
     const tasks = split(ctx);
-    assert.deepEqual(fpsOf(tasks, 'a'), [P], 'a 只出切分方那一份');
-    assert.deepEqual(fpsOf(tasks, 'b'), [B, P].sort(), 'b 照旧两份');
+    assert.deepEqual(fpsOf(tasks, 'a'), [P], 'a yields only the copy for the splitter');
+    assert.deepEqual(fpsOf(tasks, 'b'), [B, P].sort(), 'b still has two copies');
     assert.ok(tasks.filter((t) => t.input.clipId === 'a').every((t) => !('dual' in t.input) && !('bake' in t.input)));
   } finally { await cleanup(); }
 });
 
-test('QM-E-02 超限记录在锁定方指纹的键下（卡锁在别的环境上、本机拉过它的结果）同样标', async () => {
+test('QM-E-02 an oversize record under the key of the lock holder fingerprint (the card is locked on another environment, and this machine has pulled its result) is marked all the same', async () => {
   const { store, cleanup } = await tempStore();
   try {
     const a = control('a');
@@ -102,7 +102,7 @@ test('QM-E-02 超限记录在锁定方指纹的键下（卡锁在别的环境上
   } finally { await cleanup(); }
 });
 
-test('QM-E-03 标在整张卡上：120 帧两段、只有第 90 帧超限，两段都不给浏览器', async () => {
+test('QM-E-03 marked on the whole card: 120 frames in two segments, only frame 90 is oversize, and neither segment is given to the browser', async () => {
   const { store, cleanup } = await tempStore();
   try {
     const a = control('a', { count: 120 });
@@ -113,7 +113,7 @@ test('QM-E-03 标在整张卡上：120 帧两段、只有第 90 帧超限，两�
   } finally { await cleanup(); }
 });
 
-test('QM-E-04 不标的情形：本地档、画布卡、读不到快照库 —— cardPlan 原样（同一个数组）', async () => {
+test('QM-E-04 cases that are not marked: local tier, canvas card, snapshot store unreadable; cardPlan is returned as is (the same array)', async () => {
   const { store, cleanup } = await tempStore();
   try {
     const local = control('l', { tier: 'local' }), canvas = control('c', { canvasHeavy: true });
@@ -123,8 +123,8 @@ test('QM-E-04 不标的情形：本地档、画布卡、读不到快照库 —�
     const r = await markSnapshotOversize({ snapshots: () => store }, ctx);
     assert.equal(r.cardPlan, ctx.cardPlan);
     assert.deepEqual(r.marked, []);
-    for (const pipeline of [{}, { snapshots: () => null }, { snapshots: () => { throw new Error('库坏了'); } },
-      { snapshots: () => ({ snapshotIndex: async () => { throw new Error('读不到'); } }) }]) {
+    for (const pipeline of [{}, { snapshots: () => null }, { snapshots: () => { throw new Error('the store is broken'); } },
+      { snapshots: () => ({ snapshotIndex: async () => { throw new Error('cannot be read'); } }) }]) {
       const c2 = { cardPlan: [control('a')] };
       const out = await markSnapshotOversize(pipeline, c2);
       assert.equal(out.cardPlan, c2.cardPlan);
@@ -137,33 +137,33 @@ test('QM-E-04 不标的情形：本地档、画布卡、读不到快照库 —�
   } finally { await cleanup(); }
 });
 
-test('QM-E-05 每次切分现读、不改缓存：同一版先切（没记录，给浏览器），本机渲出超限帧后再切就标上；缓存里的 control 不变', async () => {
+test('QM-E-05 every split reads live and leaves the cache untouched: split the same version first (no record, given to the browser), and after this machine renders an oversize frame, splitting again marks it; the control in the cache is unchanged', async () => {
   const { store, cleanup } = await tempStore();
   try {
     const a = control('a');
     const { exec, plans } = executorOver(store, [a]);
     const first = await exec.plan(PLAN);
-    assert.deepEqual(fpsOf(split(first), 'a'), [B, P].sort(), '还没记录：照旧给浏览器');
+    assert.deepEqual(fpsOf(split(first), 'a'), [B, P].sort(), 'no record yet: still given to the browser');
     await commit(store, a.snapshotKey, [[7, BIG]]);
     const second = await exec.plan(PLAN);
-    assert.equal(plans(), 1, '同一版项目的上下文走缓存（没重算计划）');
-    assert.equal(second.cardPlan[0].snapshotOversize, true, '超限记录是现读的');
+    assert.equal(plans(), 1, 'the context of the same project version comes from the cache (the plan was not recomputed)');
+    assert.equal(second.cardPlan[0].snapshotOversize, true, 'the oversize record is read live');
     assert.deepEqual(fpsOf(split(second), 'a'), [P]);
-    assert.equal('snapshotOversize' in a, false, '缓存里的 control 没被改');
+    assert.equal('snapshotOversize' in a, false, 'the control in the cache was not modified');
     assert.equal('snapshotOversize' in first.cardPlan[0], false);
   } finally { await cleanup(); }
 });
 
-test('QM-E-06 跨机器：记录只在本机快照库里 —— 没渲过、没拉过的切分方不标（浏览器照旧拿到一份）；拉回结果之后就标', async () => {
+test('QM-E-06 across machines: the record exists only in the local snapshot store; a splitter that has neither rendered nor pulled it does not mark (the browser still gets a copy); once the result is pulled back, it marks', async () => {
   const m1 = await tempStore(), m2 = await tempStore();
   try {
     const a = control('a');
     await commit(m1.store, a.snapshotKey, [[0, SMALL], [1, BIG]]);
     const on1 = await executorOver(m1.store, [a]).exec.plan(PLAN);
     const on2 = await executorOver(m2.store, [a]).exec.plan(PLAN);
-    assert.equal(on1.cardPlan[0].snapshotOversize, true, '渲过它的机器标');
-    assert.equal('snapshotOversize' in on2.cardPlan[0], false, '另一台拿不到这条记录：不标');
-    assert.deepEqual(fpsOf(split(on2), 'a'), [B, P].sort(), '于是浏览器照旧拿到一份（它做出的超限帧同样被丢）');
+    assert.equal(on1.cardPlan[0].snapshotOversize, true, 'the machine that rendered it marks it');
+    assert.equal('snapshotOversize' in on2.cardPlan[0], false, 'the other one cannot get this record: not marked');
+    assert.deepEqual(fpsOf(split(on2), 'a'), [B, P].sort(), 'so the browser still gets a copy (the oversize frames it produces are dropped just the same)');
     // 第二台从素材服务拉回这张卡的结果：applyResult 落盘走同一个写入口（commitSnapshots），超限在那台照样判出来记下
     await commit(m2.store, a.snapshotKey, [[0, SMALL], [1, BIG]]);
     const again = await executorOver(m2.store, [a]).exec.plan(PLAN);

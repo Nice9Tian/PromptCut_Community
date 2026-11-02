@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 
 const { stageEventRole, STAGE_EVENT_TYPES, isStageEvent, isRpcRequest, isRpcReply } = await import("./stageRpc.ts");
 
-test("七种事件各只认一个角色发来的(E0:不过滤就会在互换那一拍重复 tick)", () => {
+test("Each of the seven events only accepts one sender role (E0: without filtering, tick would repeat at the swap beat)", () => {
   // 播放器舞台的事
   assert.equal(stageEventRole("frame"), "front");
   assert.equal(stageEventRole("ended"), "front");
@@ -24,7 +24,7 @@ test("七种事件各只认一个角色发来的(E0:不过滤就会在互换那�
   assert.equal(stageEventRole("bake-frame"), "back");
 });
 
-test("事件白名单就是这十种(E0 的七种 + M7 的 bake-frame + 在线执行用户卡与素材效果卡的 card-states、sound-state),一个不多一个不少", () => {
+test("The event whitelist is exactly these ten (the seven of E0 + bake-frame of M7 + card-states and sound-state for online execution of user cards and media effect cards), none more, none fewer", () => {
   assert.deepEqual(
     [...STAGE_EVENT_TYPES].sort(),
     ["bake-frame", "card-states", "demote", "ended", "frame", "mediaReady", "probe", "probe-frame", "settled", "sound-state"],
@@ -34,7 +34,7 @@ test("事件白名单就是这十种(E0 的七种 + M7 的 bake-frame + 在线�
   for (const type of STAGE_EVENT_TYPES) assert.ok(stageEventRole(type) === "front" || stageEventRole(type) === "back");
 });
 
-test("isStageEvent 只认白名单里的 type,RPC 的两种消息不混进事件流", () => {
+test("isStageEvent only accepts types in the whitelist; the two RPC message kinds do not leak into the event stream", () => {
   assert.equal(isStageEvent({ type: "frame", sec: 1 }), true);
   assert.equal(isStageEvent({ type: "pc-stage-ready" }), false);
   assert.equal(isStageEvent({ type: "pc-rpc-reply", id: 1, ok: true }), false);
@@ -46,7 +46,7 @@ test("isStageEvent 只认白名单里的 type,RPC 的两种消息不混进事件
   assert.equal(isRpcReply({ type: "pc-rpc", id: 3 }), false);
 });
 
-test("stageId 是实例名不是角色:缺省给 A,不给 front", async () => {
+test("stageId is an instance name, not a role: defaults to A, not front", async () => {
   const { detectHostCapabilities } = await import("./stageRpc.ts");
   const g = globalThis;
   const saved = { location: g.location, navigator: g.navigator, OffscreenCanvas: g.OffscreenCanvas, Worker: g.Worker };
@@ -96,7 +96,7 @@ async function withFakeWindow(fn) {
   }
 }
 
-test("目标窗口已经关了:请求当场按 detached 回绝,不发进窗口;render 照旧回 aborted", async () => {
+test("Target window already closed: the request is rejected on the spot as detached and not sent to the window; render still returns aborted", async () => {
   const { createStageRpc } = await import("./stageRpc.ts");
   await withFakeWindow(async (win) => {
     const target = fakeTarget();
@@ -104,13 +104,13 @@ test("目标窗口已经关了:请求当场按 detached 回绝,不发进窗口;r
     const c = createStageRpc(target, "http://stage");
     await assert.rejects(c.play(0), /detached/);
     assert.deepEqual(await c.render(1), { aborted: true, reason: "detached" });
-    assert.equal(target.sent.length, 0, "关掉的窗口一条都不该发");
+    assert.equal(target.sent.length, 0, "A closed window should receive nothing");
     assert.equal(c.disposed, true);
-    assert.equal(win.listeners.size, 0, "收摊时把 message 监听一起摘掉");
+    assert.equal(win.listeners.size, 0, "On teardown, the message listener is removed too");
   });
 });
 
-test("请求挂着时窗口关了:下一次巡检就按 detached 回绝,不再挂到下一次握手", async (t) => {
+test("Window closed while a request is pending: the next sweep rejects it as detached instead of leaving it pending until the next handshake", async (t) => {
   const { createStageRpc, CLOSED_POLL_MS } = await import("./stageRpc.ts");
   t.mock.timers.enable({ apis: ["setInterval"] });
   await withFakeWindow(async () => {
@@ -127,7 +127,7 @@ test("请求挂着时窗口关了:下一次巡检就按 detached 回绝,不再�
   });
 });
 
-test("窗口还开着的慢请求不被巡检误杀;回包到了照常 resolve", async (t) => {
+test("A slow request whose window is still open is not killed by the sweep by mistake; when the reply arrives it resolves as usual", async (t) => {
   const { createStageRpc, CLOSED_POLL_MS } = await import("./stageRpc.ts");
   t.mock.timers.enable({ apis: ["setInterval"] });
   await withFakeWindow(async (win) => {
@@ -147,7 +147,7 @@ test("窗口还开着的慢请求不被巡检误杀;回包到了照常 resolve",
   });
 });
 
-test("活着的舞台丢了 setSnapshots 回包:有界失败,下一次仍能投递", async (t) => {
+test("A live stage lost the setSnapshots reply: bounded failure, the next delivery still works", async (t) => {
   const { createStageRpc, STAGE_UPDATE_TIMEOUT_MS } = await import("./stageRpc.ts");
   t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
   await withFakeWindow(async (win) => {
@@ -163,7 +163,7 @@ test("活着的舞台丢了 setSnapshots 回包:有界失败,下一次仍能投�
   });
 });
 
-test("带 probe 的 setTime 不按时长判:重卡的 K1 测量很慢也不被误杀", async (t) => {
+test("setTime with a probe is not judged by duration: a slow K1 measurement on a heavy card is not killed by mistake", async (t) => {
   const { createStageRpc, STAGE_UPDATE_TIMEOUT_MS, isShortStageUpdate } = await import("./stageRpc.ts");
   assert.equal(isShortStageUpdate("setTime", [1]), true);
   assert.equal(isShortStageUpdate("setTime", [1, { probe: true }]), false);

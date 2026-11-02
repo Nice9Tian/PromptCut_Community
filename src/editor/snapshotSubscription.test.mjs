@@ -18,7 +18,7 @@ mock.module(srcUrl("editor/planDispatch.ts"), { exports: { currentPlan: () => ({
 
 const feed = await import(srcUrl("editor/snapshotFeed.ts"));
 
-test("编辑不重连、不清表;服务端 reset 才清;换 session 才重连", () => {
+test("Editing does not reconnect or clear the table; only a server reset clears it; only a session change reconnects", () => {
   const subs = [];
   feed.setSnapshotSource({
     subscribeReady: (session, rev, cb) => { const sub = { session, rev, cb, closed: false }; subs.push(sub); return () => { sub.closed = true; }; },
@@ -27,18 +27,18 @@ test("编辑不重连、不清表;服务端 reset 才清;换 session 才重连",
   feed.syncSnapshotSubscription(() => {});
   assert.equal(subs.length, 1);
   subs[0].cb({ type: "layer", clipId: "h", kind: "html", key: "K", ranges: [[0, 299]] });
-  assert.ok(feed.currentReadyIndex().get("h"), "层到了");
+  assert.ok(feed.currentReadyIndex().get("h"), "The layer has arrived");
 
   // 用户编辑:localRev + 1,宿主照常再调一次
   key = { session: "s", localRev: 2 };
   feed.syncSnapshotSubscription(() => {});
-  assert.equal(subs.length, 1, "同一个 session 不重连");
+  assert.equal(subs.length, 1, "The same session does not reconnect");
   assert.equal(subs[0].closed, false);
-  assert.ok(feed.currentReadyIndex().get("h"), "客户端不抢先清表:旧层留着顶上,直到服务端 reset");
+  assert.ok(feed.currentReadyIndex().get("h"), "The client does not clear the table ahead of the server: the old layer stays in use until the server resets");
 
   // 服务端换了 entry:reset + 全量 layer
   subs[0].cb({ type: "reset", localRev: 2 });
-  assert.equal(feed.currentReadyIndex().size, 0, "reset 清表");
+  assert.equal(feed.currentReadyIndex().size, 0, "reset clears the table");
   subs[0].cb({ type: "layer", clipId: "h", kind: "html", key: "K2", ranges: [[0, 10]] });
   assert.equal(feed.currentReadyIndex().get("h").get("html").key, "K2");
 

@@ -79,7 +79,7 @@ function parseArgs(argv) {
     else if (a === '--help' || a === '-h') opts.help = true;
     else rest.push(a);
   }
-  if (rest.length) throw new Error('看不懂的参数:' + rest.join(' '));
+  if (rest.length) throw new Error('Unrecognized arguments:' + rest.join(' '));
   if (!opts.mode) opts.mode = opts.origin ? 'run' : 'compare';
   return opts;
 }
@@ -100,7 +100,7 @@ export async function runExport({ tree, origin, project, out, fps, workers, fram
   await fsp.rm(path.join(out, 'frames'), { recursive: true, force: true });
   await fsp.mkdir(out, { recursive: true });
   console.log(`[run] cwd=${tree}`);
-  console.log(`[run] node ${args[0]} --url "<${origin}/?export=1&timeline=data:…(${url.length} 字符)>" ${args.slice(3).join(' ')}`);
+  console.log(`[run] node ${args[0]} --url "<${origin}/?export=1&timeline=data:…(${url.length} characters)>" ${args.slice(3).join(' ')}`);
   const t0 = process.hrtime.bigint();
   const code = await new Promise((resolve, reject) => {
     const p = spawn(process.execPath, args, { cwd: tree, stdio: ['ignore', 'inherit', 'inherit'], windowsHide: true });
@@ -110,8 +110,8 @@ export async function runExport({ tree, origin, project, out, fps, workers, fram
   const secs = Number(process.hrtime.bigint() - t0) / 1e9;
   const dir = path.join(out, 'frames');
   const n = fs.existsSync(dir) ? (await fsp.readdir(dir)).filter((f) => f.endsWith('.png')).length : 0;
-  console.log(`[run] 退出码 ${code},${n} 帧,${secs.toFixed(1)} s → ${dir}`);
-  if (code !== 0) throw new Error(`export-frames 退出码 ${code}`);
+  console.log(`[run] exit code ${code}, ${n} frames, ${secs.toFixed(1)} s → ${dir}`);
+  if (code !== 0) throw new Error(`export-frames exit code ${code}`);
   return { framesDir: dir, count: n, seconds: secs };
 }
 
@@ -119,7 +119,7 @@ const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
 /** 给的是 <out> 还是 <out>/frames 都认 */
 function framesDirOf(dir) {
-  if (!fs.existsSync(dir)) throw new Error('目录不存在:' + dir);
+  if (!fs.existsSync(dir)) throw new Error('Directory does not exist:' + dir);
   const hasPng = fs.readdirSync(dir).some((f) => /\.(png|jpe?g|webp)$/i.test(f));
   if (!hasPng && fs.existsSync(path.join(dir, 'frames'))) return path.join(dir, 'frames');
   return dir;
@@ -127,7 +127,7 @@ function framesDirOf(dir) {
 
 async function listFrames(dir) {
   const names = (await fsp.readdir(dir)).filter((f) => /\.(png|jpe?g|webp)$/i.test(f)).sort();
-  if (!names.length) throw new Error('目录里没有帧:' + dir);
+  if (!names.length) throw new Error('No frames in the directory:' + dir);
   return names;
 }
 
@@ -136,9 +136,9 @@ async function pixelDiff(fileA, fileB) {
   const { PNG } = await import('pngjs');
   let a, b;
   try { a = PNG.sync.read(await fsp.readFile(fileA)); b = PNG.sync.read(await fsp.readFile(fileB)); }
-  catch (e) { return { error: 'PNG 读不出来:' + e.message }; }
+  catch (e) { return { error: 'Cannot read PNG:' + e.message }; }
   if (a.width !== b.width || a.height !== b.height) {
-    return { error: `尺寸不同 ${a.width}x${a.height} vs ${b.width}x${b.height}` };
+    return { error: `Different sizes ${a.width}x${a.height} vs ${b.width}x${b.height}` };
   }
   let diffPixels = 0, maxChannel = 0, first = null;
   for (let i = 0; i < a.data.length; i += 4) {
@@ -158,12 +158,12 @@ export async function compare(baselineDir, candidateDir, { maxDiffFrames = 5 } =
   candidateDir = framesDirOf(candidateDir);
   const A = await listFrames(baselineDir);
   const B = await listFrames(candidateDir);
-  console.log(`基线   ${baselineDir}  ${A.length} 帧`);
-  console.log(`候选   ${candidateDir}  ${B.length} 帧`);
+  console.log(`Baseline  ${baselineDir}  ${A.length} frames`);
+  console.log(`Candidate ${candidateDir}  ${B.length} frames`);
   const onlyA = A.filter((f) => !B.includes(f));
   const onlyB = B.filter((f) => !A.includes(f));
-  if (onlyA.length) console.log(`只在基线里的帧(${onlyA.length}):${onlyA.slice(0, 10).join(', ')}`);
-  if (onlyB.length) console.log(`只在候选里的帧(${onlyB.length}):${onlyB.slice(0, 10).join(', ')}`);
+  if (onlyA.length) console.log(`Frames only in the baseline (${onlyA.length}): ${onlyA.slice(0, 10).join(', ')}`);
+  if (onlyB.length) console.log(`Frames only in the candidate (${onlyB.length}): ${onlyB.slice(0, 10).join(', ')}`);
   const shared = A.filter((f) => B.includes(f));
   const diffs = [];
   let identical = 0;
@@ -173,21 +173,21 @@ export async function compare(baselineDir, candidateDir, { maxDiffFrames = 5 } =
     if (ba.length === bb.length && ba.equals(bb)) { identical++; continue; }
     diffs.push({ name, shaA: sha256(ba), shaB: sha256(bb), bytesA: ba.length, bytesB: bb.length });
   }
-  console.log(`\n逐字节:相同 ${identical}/${shared.length}${diffs.length ? `,不同 ${diffs.length}` : ''}`);
+  console.log(`\nByte by byte: identical ${identical}/${shared.length}${diffs.length ? `, different ${diffs.length}` : ''}`);
   if (diffs.length) {
-    console.log(`第一处不同:${diffs[0].name}`);
+    console.log(`First difference: ${diffs[0].name}`);
     for (const d of diffs.slice(0, maxDiffFrames)) {
       const px = await pixelDiff(path.join(baselineDir, d.name), path.join(candidateDir, d.name));
       const head = `  ${d.name}  ${d.bytesA}B/${d.bytesB}B  sha ${d.shaA.slice(0, 12)}…/${d.shaB.slice(0, 12)}…`;
-      if (px.error) console.log(head + '  像素差:' + px.error);
-      else console.log(head + `  像素差 ${px.diffPixels}/${px.total}` +
-        `(${(px.diffPixels / px.total * 100).toFixed(4)}%)最大通道差 ${px.maxChannel}` +
-        (px.first ? ` 首处 (${px.first.x},${px.first.y})` : ''));
+      if (px.error) console.log(head + '  Pixel difference:' + px.error);
+      else console.log(head + `  Pixel difference ${px.diffPixels}/${px.total}` +
+        ` (${(px.diffPixels / px.total * 100).toFixed(4)}%) max channel difference ${px.maxChannel}` +
+        (px.first ? ` first at (${px.first.x},${px.first.y})` : ''));
     }
-    if (diffs.length > maxDiffFrames) console.log(`  …另有 ${diffs.length - maxDiffFrames} 帧不同:${diffs.slice(maxDiffFrames, maxDiffFrames + 20).map((d) => d.name).join(', ')}`);
+    if (diffs.length > maxDiffFrames) console.log(`  …and ${diffs.length - maxDiffFrames} more frames differ: ${diffs.slice(maxDiffFrames, maxDiffFrames + 20).map((d) => d.name).join(', ')}`);
   }
   const ok = diffs.length === 0 && !onlyA.length && !onlyB.length && A.length === B.length;
-  console.log(ok ? '\n✅ 全长导出逐字节相同' : '\n❌ 不通过');
+  console.log(ok ? '\n✅ Full-length export is byte-identical' : '\n❌ Failed');
   return { ok, total: shared.length, identical, diffs };
 }
 
@@ -201,12 +201,12 @@ if (isMain) {
   try {
     let candidateDir = opts.candidate;
     if (opts.mode === 'run') {
-      if (!opts.origin || !opts.project || !opts.out) throw new Error('run 需要 --origin --project --out');
+      if (!opts.origin || !opts.project || !opts.out) throw new Error('run requires --origin --project --out');
       const r = await runExport(opts);
       candidateDir = r.framesDir;
     }
     if (opts.baseline) {
-      if (!candidateDir) throw new Error('compare 需要 --candidate(或先 run)');
+      if (!candidateDir) throw new Error('compare requires --candidate (or run first)');
       const r = await compare(opts.baseline, candidateDir, { maxDiffFrames: opts.maxDiffFrames });
       process.exit(r.ok ? 0 : 1);
     }

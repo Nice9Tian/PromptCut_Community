@@ -16,7 +16,7 @@ import {
 const PROJECT = { width: 1920, height: 1080 };
 const BOX = { width: 800, height: 600 };
 
-test("适应窗口:长边先顶到,四周留一点空", () => {
+test("Fit to window: the long side touches first, leaving a little margin all around", () => {
   // 宽高比 16:9 的画面放进 800x600,先顶到宽:(800-16)/1920
   assert.equal(fitScale(PROJECT, BOX), (800 - 16) / 1920);
   // 窄窗口里先顶到高
@@ -24,10 +24,10 @@ test("适应窗口:长边先顶到,四周留一点空", () => {
   const v = fitView(PROJECT, BOX);
   assert.equal(v.tx, 0);
   assert.equal(v.ty, 0);
-  assert.equal(v.auto, true, "适应窗口之后要跟着窗口走");
+  assert.equal(v.auto, true, "After fit to window, the view must follow the window");
 });
 
-test("不平移时画面正好在正中 —— 和以前没有平移功能时逐像素一致", () => {
+test("With no panning the picture is exactly centered, pixel-identical to before the panning feature existed", () => {
   const v = { scale: 0.25, tx: 0, ty: 0, auto: true };
   const o = frameOrigin(v, PROJECT, BOX);
   assert.equal(o.x, (800 - 1920 * 0.25) / 2);
@@ -37,7 +37,7 @@ test("不平移时画面正好在正中 —— 和以前没有平移功能时逐
   assert.equal(o.y + (1080 * 0.25) / 2, 300);
 });
 
-test("窗口坐标 ↔ 画面坐标能来回换算", () => {
+test("Window coordinates and picture coordinates convert back and forth", () => {
   const v = { scale: 0.3, tx: 37, ty: -19, auto: false };
   for (const pt of [{ x: 0, y: 0 }, { x: 400, y: 300 }, { x: 799, y: 42 }]) {
     const p = toStagePoint(v, PROJECT, BOX, pt);
@@ -48,7 +48,7 @@ test("窗口坐标 ↔ 画面坐标能来回换算", () => {
   }
 });
 
-test("光标锚点:缩放之后光标底下还是同一个画面像素", () => {
+test("Cursor anchor: after zooming, the picture pixel under the cursor is still the same one", () => {
   const start = fitView(PROJECT, BOX);
   for (const cursor of [{ x: 400, y: 300 }, { x: 60, y: 80 }, { x: 780, y: 560 }]) {
     const before = toStagePoint(start, PROJECT, BOX, cursor);
@@ -57,23 +57,23 @@ test("光标锚点:缩放之后光标底下还是同一个画面像素", () => {
       const p = toStagePoint(after, PROJECT, BOX, cursor);
       assert.ok(
         Math.abs(p.x - before.x) < 0.01 && Math.abs(p.y - before.y) < 0.01,
-        `光标 ${JSON.stringify(cursor)} 缩放 ${f} 倍后跑了:${JSON.stringify(before)} → ${JSON.stringify(p)}`,
+        `Cursor ${JSON.stringify(cursor)} drifted after zooming by ${f}x: ${JSON.stringify(before)} → ${JSON.stringify(p)}`,
       );
     }
   }
 });
 
-test("连着缩放再缩回去,能回到原来的视角", () => {
+test("Zooming in repeatedly and then zooming back out returns to the original view", () => {
   const cursor = { x: 250, y: 180 };
   const start = fitView(PROJECT, BOX);
   let v = start;
   for (let i = 0; i < 5; i++) v = zoomAt(v, PROJECT, BOX, cursor, v.scale * 1.2);
   for (let i = 0; i < 5; i++) v = zoomAt(v, PROJECT, BOX, cursor, v.scale / 1.2);
-  assert.ok(Math.abs(v.scale - start.scale) < 1e-9, `倍率没回来:${v.scale} vs ${start.scale}`);
-  assert.ok(Math.abs(v.tx) < 0.01 && Math.abs(v.ty) < 0.01, `偏移没回来:${v.tx}, ${v.ty}`);
+  assert.ok(Math.abs(v.scale - start.scale) < 1e-9, `Scale did not return: ${v.scale} vs ${start.scale}`);
+  assert.ok(Math.abs(v.tx) < 0.01 && Math.abs(v.ty) < 0.01, `Offset did not return: ${v.tx}, ${v.ty}`);
 });
 
-test("缩放有上下限,而且到了限位不会把画面挪走", () => {
+test("Zoom has lower and upper limits, and hitting a limit does not shift the picture", () => {
   const cursor = { x: 100, y: 100 };
   let v = fitView(PROJECT, BOX);
   for (let i = 0; i < 60; i++) v = zoomAt(v, PROJECT, BOX, cursor, v.scale * 1.2);
@@ -84,14 +84,14 @@ test("缩放有上下限,而且到了限位不会把画面挪走", () => {
   assert.equal(clampScale(0), MIN_SCALE);
 });
 
-test("已经到限位了再滚,视角一动不动(不该悄悄漂移)", () => {
+test("Scrolling again at the limit leaves the view completely still (it must not drift silently)", () => {
   const cursor = { x: 700, y: 500 };
   let v = zoomAt(fitView(PROJECT, BOX), PROJECT, BOX, cursor, MAX_SCALE);
   const again = zoomAt(v, PROJECT, BOX, cursor, MAX_SCALE * 2);
-  assert.deepEqual(again, v, "顶到上限之后继续放大,偏移量也不能变");
+  assert.deepEqual(again, v, "After hitting the upper limit, zooming in further must not change the offset either");
 });
 
-test("滚了但什么都没变的时候,不该把「自动适应」也顺手关掉", () => {
+test("When scrolling changes nothing, it must not also turn off \"auto fit\" as a side effect", () => {
   /*
    * 窗口小到适应比例本身就顶在下限:这时候再往下滚,什么都没发生 ——
    * 那就不该因此退出自动适应。「我滚了一下,结果画面没变,但窗口一改大小
@@ -99,51 +99,51 @@ test("滚了但什么都没变的时候,不该把「自动适应」也顺手关�
    */
   const tiny = { width: 30, height: 30 };
   const fit = fitView(PROJECT, tiny);
-  assert.equal(fit.scale, MIN_SCALE, "这个窗口小到适应比例已经顶在下限");
+  assert.equal(fit.scale, MIN_SCALE, "This window is so small that the fit scale is already at the lower limit");
   const after = zoomAt(fit, PROJECT, tiny, { x: 15, y: 15 }, fit.scale / 1.2);
-  assert.equal(after.auto, true, "没变化就不该退出自动适应");
+  assert.equal(after.auto, true, "No change must not exit auto fit");
   assert.deepEqual(after, fit);
 });
 
-test("拖动:至少留一块在视野里,拖不出去", () => {
+test("Dragging: at least one piece stays in view, it cannot be dragged out", () => {
   const v = { scale: 0.4, tx: 0, ty: 0, auto: false };
   const far = panBy(v, PROJECT, BOX, 100000, 100000);
   const fw = 1920 * 0.4;
   // 画面左边缘不该越过窗口右边缘再往里 48px
   const o = frameOrigin(far, PROJECT, BOX);
-  assert.ok(o.x <= BOX.width - 48 + 1e-6, `拖过头了,左边缘在 ${o.x}`);
+  assert.ok(o.x <= BOX.width - 48 + 1e-6, `Dragged too far, left edge is at ${o.x}`);
   assert.ok(o.x + fw >= 48 - 1e-6);
   // 反方向同理
   const back = panBy(v, PROJECT, BOX, -100000, -100000);
   const o2 = frameOrigin(back, PROJECT, BOX);
-  assert.ok(o2.x + fw >= 48 - 1e-6, `反向拖过头了,右边缘在 ${o2.x + fw}`);
+  assert.ok(o2.x + fw >= 48 - 1e-6, `Dragged too far in the opposite direction, right edge is at ${o2.x + fw}`);
 });
 
-test("拖动是累加的,而且小幅拖动不受限位干扰", () => {
+test("Dragging accumulates, and small drags are not disturbed by the limit", () => {
   let v = { scale: 0.4, tx: 0, ty: 0, auto: true };
   v = panBy(v, PROJECT, BOX, 10, -5);
   assert.deepEqual([v.tx, v.ty], [10, -5]);
   v = panBy(v, PROJECT, BOX, 3, 2);
   assert.deepEqual([v.tx, v.ty], [13, -3]);
-  assert.equal(v.auto, false, "手动拖过就不该再自动适应了 —— 否则一改窗口大小就白拖了");
+  assert.equal(v.auto, false, "After a manual drag it must no longer auto fit: otherwise any window resize would undo the drag");
 });
 
-test("缩放和拖动都会关掉「自动适应」", () => {
+test("Zooming and dragging both turn off \"auto fit\"", () => {
   const fit = fitView(PROJECT, BOX);
   assert.equal(fit.auto, true);
   assert.equal(zoomAt(fit, PROJECT, BOX, { x: 1, y: 1 }, 0.5).auto, false);
   assert.equal(panBy(fit, PROJECT, BOX, 1, 0).auto, false);
 });
 
-test("滚轮:往上放大、往下缩小,而且一上一下能回到 1", () => {
-  assert.ok(wheelZoomFactor(-120) > 1, "往上滚该放大");
-  assert.ok(wheelZoomFactor(120) < 1, "往下滚该缩小");
-  assert.ok(Math.abs(wheelZoomFactor(-120) * wheelZoomFactor(120) - 1) < 1e-12, "一上一下要正好抵消");
+test("Wheel: up zooms in, down zooms out, and one up plus one down returns to 1", () => {
+  assert.ok(wheelZoomFactor(-120) > 1, "Scrolling up should zoom in");
+  assert.ok(wheelZoomFactor(120) < 1, "Scrolling down should zoom out");
+  assert.ok(Math.abs(wheelZoomFactor(-120) * wheelZoomFactor(120) - 1) < 1e-12, "One up and one down must cancel out exactly");
   assert.ok(Math.abs(wheelZoomFactor(-120) - 1.2) < 1e-12);
   assert.equal(wheelZoomFactor(0), 1);
 });
 
-test("滚轮:按行给的设备要换算成像素,否则快慢差十几倍", () => {
+test("Wheel: devices that report in lines must be converted to pixels, otherwise the speed differs by a factor of ten or more", () => {
   // deltaMode 1 = 按行,一行算 16 像素
   assert.ok(Math.abs(wheelZoomFactor(-7.5, 1) - wheelZoomFactor(-120, 0)) < 1e-12);
   // 触控板一次甩出很大的值也不能一步缩到底
@@ -151,15 +151,15 @@ test("滚轮:按行给的设备要换算成像素,否则快慢差十几倍", () 
   assert.ok(wheelZoomFactor(100000) >= Math.pow(1.2, -4) - 1e-12);
 });
 
-test("画面比窗口小的时候也能拖 —— 但拖不到看不见", () => {
+test("The picture can be dragged even when it is smaller than the window, but not out of sight", () => {
   const v = { scale: 0.1, tx: 0, ty: 0, auto: false };  // 192x108,远小于 800x600
   const moved = panBy(v, PROJECT, BOX, 1000, 0);
   const o = frameOrigin(moved, PROJECT, BOX);
-  assert.ok(o.x < BOX.width, "还得看得见");
+  assert.ok(o.x < BOX.width, "It must still be visible");
   assert.ok(o.x + 1920 * 0.1 >= 48 - 1e-6);
 });
 
-test("clampPan 不改缩放,也不改 auto", () => {
+test("clampPan changes neither the zoom nor auto", () => {
   const v = { scale: 0.4, tx: 99999, ty: 0, auto: true };
   const c = clampPan(v, PROJECT, BOX);
   assert.equal(c.scale, 0.4);

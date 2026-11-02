@@ -90,7 +90,7 @@ async function resume(hash, buf, ext) {
   for (let n = 0; n < asset.chunkCount(buf.length); n++) {
     if (have.has(n)) continue;
     const r = await put(hash, n, sliceOf(buf, n), asset.chunkHeaders(buf.length, `x.${ext}`));
-    assert.equal(r.status, 200, `补传第 ${n} 片`);
+    assert.equal(r.status, 200, `re-upload chunk ${n}`);
     sent.push(n);
   }
   const done = await complete(hash);
@@ -110,7 +110,7 @@ function putAndDrop(hash, n, size, part) {
   });
 }
 
-test('契约常数:8 MiB 一片,小于 8 MiB 是 1 片,最后一片可以短', () => {
+test('contract constants: 8 MiB per chunk, anything under 8 MiB is 1 chunk, the last chunk may be short', () => {
   assert.equal(CHUNK, 8 * 1024 * 1024);
   assert.equal(asset.chunkCount(1), 1);
   assert.equal(asset.chunkCount(CHUNK), 1);
@@ -119,7 +119,7 @@ test('契约常数:8 MiB 一片,小于 8 MiB 是 1 片,最后一片可以短', (
   assert.equal(asset.chunkLength(CHUNK * 2 + 5, 2), 5);
 });
 
-test('断线续传:chunks 报出已收的分片,只补缺的那一片;complete 校验通过后才为真', async () => {
+test('resume after disconnect: chunks reports the received chunks and only the missing chunk is re-uploaded; complete becomes true only after validation passes', async () => {
   const size = CHUNK * 2 + 4321; // 3 片
   const buf = bytesOf(size, 1);
   const hash = sha256(buf);
@@ -133,7 +133,7 @@ test('断线续传:chunks 报出已收的分片,只补缺的那一片;complete �
   await putAndDrop(hash, 1, size, sliceOf(buf, 1).subarray(0, 1024 * 1024));
 
   const mid = await chunks(hash);
-  assert.deepEqual(mid, { size, chunkSize: CHUNK, received: [0, 2], complete: false }, '断掉的那一片不算收到');
+  assert.deepEqual(mid, { size, chunkSize: CHUNK, received: [0, 2], complete: false }, 'the chunk that was cut off does not count as received');
 
   // 没到齐不能收尾
   const early = await complete(hash);
@@ -143,7 +143,7 @@ test('断线续传:chunks 报出已收的分片,只补缺的那一片;complete �
 
   // 恢复:只补第 1 片
   const { sent, done, status } = await resume(hash, buf, 'mp4');
-  assert.deepEqual(sent, [1], '只补缺的分片');
+  assert.deepEqual(sent, [1], 're-upload only the missing chunks');
   assert.equal(done.status, 200);
   const body = await done.json();
   assert.equal(body.complete, true);
@@ -161,7 +161,7 @@ test('断线续传:chunks 报出已收的分片,只补缺的那一片;complete �
   assert.equal((await complete(hash)).status, 200);
 });
 
-test('全件 sha256 不符回 409,已收分片全部丢弃,取回仍是 404', async () => {
+test('whole-file sha256 mismatch returns 409, all received chunks are discarded, and retrieval is still 404', async () => {
   const buf = bytesOf(3000, 2);
   const claimed = sha256(Buffer.from('not the same bytes'));
   assert.equal((await put(claimed, 0, buf, asset.chunkHeaders(buf.length, 'a.png'))).status, 200);
@@ -175,27 +175,27 @@ test('全件 sha256 不符回 409,已收分片全部丢弃,取回仍是 404', as
 
   assert.deepEqual(await chunks(claimed), { size: null, chunkSize: CHUNK, received: [], complete: false });
   assert.equal((await fetch(`${base}/media/${claimed}`)).status, 404);
-  assert.equal((await complete(claimed)).status, 404, '丢弃之后这个哈希就是没见过的');
+  assert.equal((await complete(claimed)).status, 404, 'after the discard this hash is one never seen before');
 });
 
-test('分片校验:越界、长度不对、缺 size、size 前后不一、分片号格式都回 4xx;同一片重传幂等', async () => {
+test('chunk validation: out of range, wrong length, missing size, inconsistent size between requests, and chunk number format all return 4xx; re-sending the same chunk is idempotent', async () => {
   const size = CHUNK + 10; // 2 片:8 MiB + 10
   const buf = bytesOf(size, 3);
   const hash = sha256(buf);
   const h = asset.chunkHeaders(size, 'b.mp4');
 
-  assert.equal((await put(hash, 2, Buffer.alloc(10), h)).status, 416, '越界');
-  assert.equal((await put(hash, 0, Buffer.alloc(10), h)).status, 400, '非最后一片只能是整 8 MiB');
-  assert.equal((await put(hash, 1, Buffer.alloc(11), h)).status, 400, '最后一片长度也得对');
-  assert.equal((await put(hash, 1, Buffer.alloc(10))).status, 400, '缺 X-Media-Size');
-  assert.equal((await put(hash, '01', Buffer.alloc(10), h)).status, 400, '分片号不带前导零');
-  assert.equal((await put(hash, 'x', Buffer.alloc(10), h)).status, 404, '不是分片号的尾巴不归素材服务');
-  assert.deepEqual((await chunks(hash)).received, [], '被拒的分片都不算收到');
+  assert.equal((await put(hash, 2, Buffer.alloc(10), h)).status, 416, 'out of range');
+  assert.equal((await put(hash, 0, Buffer.alloc(10), h)).status, 400, 'a non-last chunk must be exactly 8 MiB');
+  assert.equal((await put(hash, 1, Buffer.alloc(11), h)).status, 400, 'the last chunk must also have the right length');
+  assert.equal((await put(hash, 1, Buffer.alloc(10))).status, 400, 'missing X-Media-Size');
+  assert.equal((await put(hash, '01', Buffer.alloc(10), h)).status, 400, 'chunk number has no leading zero');
+  assert.equal((await put(hash, 'x', Buffer.alloc(10), h)).status, 404, 'a tail that is not a chunk number is not handled by the asset service');
+  assert.deepEqual((await chunks(hash)).received, [], 'rejected chunks do not count as received');
 
   assert.equal((await put(hash, 1, sliceOf(buf, 1), h)).status, 200);
-  assert.equal((await put(hash, 1, sliceOf(buf, 1), h)).status, 200, '重传同一片');
+  assert.equal((await put(hash, 1, sliceOf(buf, 1), h)).status, 200, 're-send the same chunk');
   // 第 0 片在 size+1 下长度照样是整 8 MiB,过了长度这一关,撞上的是 size 不一致
-  assert.equal((await put(hash, 0, sliceOf(buf, 0), { 'X-Media-Size': String(size + 1) })).status, 409, 'size 和已登记的不一致');
+  assert.equal((await put(hash, 0, sliceOf(buf, 0), { 'X-Media-Size': String(size + 1) })).status, 409, 'size does not match the registered one');
   assert.deepEqual((await chunks(hash)).received, [1]);
 
   assert.equal((await put(hash, 0, sliceOf(buf, 0), h)).status, 200);
@@ -204,7 +204,7 @@ test('分片校验:越界、长度不对、缺 size、size 前后不一、分片
   assert.equal((await chunks(hash)).complete, true);
 });
 
-test('按哈希取回:Content-Type 按扩展名,Range 回 206,越界 416;/@media/<hash> 等价', async () => {
+test('retrieve by hash: Content-Type follows the extension, Range returns 206, out of range returns 416; /@media/<hash> is equivalent', async () => {
   const buf = bytesOf(5000, 4);
   const hash = sha256(buf);
   await put(hash, 0, buf, { 'X-Media-Size': String(buf.length), 'X-Media-Type': 'video/webm' });
@@ -213,7 +213,7 @@ test('按哈希取回:Content-Type 按扩展名,Range 回 206,越界 416;/@media
   for (const url of [`${base}/media/${hash}`, `${origin}/@media/${hash}`]) {
     const whole = await fetch(url);
     assert.equal(whole.status, 200);
-    assert.equal(whole.headers.get('content-type'), 'video/webm', 'X-Media-Type 反查到 webm');
+    assert.equal(whole.headers.get('content-type'), 'video/webm', 'X-Media-Type reverse-maps to webm');
     assert.equal(whole.headers.get('accept-ranges'), 'bytes');
     assert.equal(sha256(Buffer.from(await whole.arrayBuffer())), hash);
 
@@ -242,7 +242,7 @@ test('按哈希取回:Content-Type 按扩展名,Range 回 206,越界 416;/@media
   }
 });
 
-test('老的整件导入(/api/media/upload)照常可用,进来的素材在对账接口里就是 complete', async () => {
+test('the old whole-file import (/api/media/upload) still works, and the imported media is complete in the reconcile endpoint', async () => {
   const buf = bytesOf(2048, 5);
   const r = await fetch(`${origin}/api/media/upload/whole.mp4`, { method: 'POST', body: buf, headers: { 'Content-Type': 'video/mp4' } });
   assert.equal(r.status, 200);
@@ -252,7 +252,7 @@ test('老的整件导入(/api/media/upload)照常可用,进来的素材在对账
   assert.equal((await fetch(`${base}/media/${stored.hash}`)).headers.get('content-type'), 'video/mp4');
 });
 
-test('跨源:另一个源(模拟局域网设备)的预检和实际请求都拿到 CORS 头', async () => {
+test('cross-origin: both the preflight and the actual request from another origin (simulating a LAN device) get CORS headers', async () => {
   const buf = bytesOf(1234, 6);
   const hash = sha256(buf);
   const LAN = 'http://192.168.1.50:8080';
@@ -300,7 +300,7 @@ test('跨源:另一个源(模拟局域网设备)的预检和实际请求都拿�
   await other.arrayBuffer();
 });
 
-test('客户端:素材记录 → 素材服务上的 HTTP 地址;基址按 PROMPTCUT_EDITOR_URL → 本进程监听地址', async () => {
+test('client: media record → HTTP URL on the asset service; the base URL follows PROMPTCUT_EDITOR_URL → this process\'s listening address', async () => {
   const h = 'a'.repeat(64);
   const o = 'http://127.0.0.1:9';
   assert.equal(client.mediaHttpUrl({ hash: h.toUpperCase(), url: '/@media/whatever' }, o), `${o}/@media/${h}`);
@@ -310,7 +310,7 @@ test('客户端:素材记录 → 素材服务上的 HTTP 地址;基址按 PROMPT
   assert.equal(client.mediaHttpUrl({ path: 'C:\\Windows\\win.ini' }, o), `${o}/@media/win.ini`);
   assert.equal(client.mediaHttpUrl({ url: 'a%2F..%2F..%2Fx' }, o), `${o}/@media/x`);
   assert.equal(client.mediaHttpUrl({ url: 'blob:http://x/1' }, o), null);
-  assert.equal(client.mediaHttpUrl({ hash: h }, null), null, '素材服务不可达');
+  assert.equal(client.mediaHttpUrl({ hash: h }, null), null, 'asset service unreachable');
 
   // 单进程形态:媒体插件记下本进程的监听地址
   const s = http.createServer();
@@ -324,7 +324,7 @@ test('客户端:素材记录 → 素材服务上的 HTTP 地址;基址按 PROMPT
   finally { delete process.env.PROMPTCUT_EDITOR_URL; }
 });
 
-test('预渲染进程的转发:/@media 和 /api/asset 原样转给素材服务,Range 透传,字节不变', async () => {
+test('prerender process forwarding: /@media and /api/asset are forwarded to the asset service as is, Range is passed through, bytes unchanged', async () => {
   let fn;
   client.assetProxyPlugin(origin).configureServer({ middlewares: { use(f) { fn = f; } } });
   const proxy = await listen((req, res) => fn(req, res, () => { res.statusCode = 404; res.end('not media'); }));
@@ -345,7 +345,7 @@ test('预渲染进程的转发:/@media 和 /api/asset 原样转给素材服务,R
   const whole = await fetch(`${proxy}/@media/${hash}`);
   assert.equal(sha256(Buffer.from(await whole.arrayBuffer())), hash);
 
-  assert.equal((await fetch(`${proxy}/src/main.tsx`)).status, 404, '别的路径不转发');
+  assert.equal((await fetch(`${proxy}/src/main.tsx`)).status, 404, 'other paths are not forwarded');
 });
 
 /** ffmpeg 在哪(和 server/vision/ffmpeg-frames.ts 同一套候选),找不到就跳过 ffmpeg 那一条 */
@@ -359,7 +359,7 @@ function findFfmpeg() {
 }
 const ffmpeg = findFfmpeg();
 
-test('ffmpeg 经素材服务的 HTTP 地址抽帧(素材层的读法),和直接读文件的像素一致', { skip: !ffmpeg && '这台机器上没有 ffmpeg' }, async () => {
+test('ffmpeg extracts frames through the asset service\'s HTTP URL (the way the media layer reads), with pixels identical to reading the file directly', { skip: !ffmpeg && 'ffmpeg is not available on this machine' }, async () => {
   const { extractArgs } = await import(pathToFileURL(path.join(ROOT, 'server', 'vision-compose.mjs')).href);
   const src = path.join(OUT, 'src.mp4');
   const made = spawnSync(ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=320x180:r=30:d=2', '-pix_fmt', 'yuv420p', src], { windowsHide: true });
@@ -384,10 +384,10 @@ test('ffmpeg 经素材服务的 HTTP 地址抽帧(素材层的读法),和直接�
   assert.equal(a.code, 0, a.err);
   const b = await run(extractArgs({ ...opts, file: src, out: outFile }));
   assert.equal(b.code, 0, b.err);
-  assert.equal(sha256(fs.readFileSync(outHttp)), sha256(fs.readFileSync(outFile)), '经 HTTP 抽出的帧和直接读文件的逐字节相同');
+  assert.equal(sha256(fs.readFileSync(outHttp)), sha256(fs.readFileSync(outFile)), 'the frame extracted over HTTP is byte-for-byte identical to the one read from the file directly');
 });
 
-test('预检中间件:只答素材服务路由的 OPTIONS(媒体插件把它插到 vite 自带 cors 前面),别的放过', async () => {
+test('preflight middleware: answers only OPTIONS for asset service routes (the media plugin inserts it before Vite\'s built-in cors) and lets everything else pass', async () => {
   const fn = asset.assetPreflightMiddleware();
   const run = (method, url) => new Promise((resolve) => {
     const res = { statusCode: 200, headers: {}, setHeader(k, v) { this.headers[k.toLowerCase()] = v; }, end() { resolve({ status: this.statusCode, headers: this.headers }); } };
@@ -402,7 +402,7 @@ test('预检中间件:只答素材服务路由的 OPTIONS(媒体插件把它插�
   assert.equal(await run('GET', `/api/asset/media/${h}`), 'next');
 });
 
-test('预留的合并分发(C10 契约第 11 节):POST merge/<projectId>/<共享键> 回 501,只占位、不碰数据层', async () => {
+test('reserved merge dispatch (C10 contract section 11): POST merge/<projectId>/<shared key> returns 501, only a placeholder that does not touch the store', async () => {
   const before = fs.readdirSync(media.mediaDir(projectRoot)).sort();
   const r = await fetch(`${base}/merge/proj-1/${'ab'.repeat(32)}`, { method: 'POST', body: '{"any":"thing"}', headers: { 'Content-Type': 'application/json', Origin: 'http://192.168.1.50:8080' } });
   assert.equal(r.status, 501);
@@ -415,5 +415,5 @@ test('预留的合并分发(C10 契约第 11 节):POST merge/<projectId>/<共享
   assert.equal(g.status, 405);
   assert.equal(g.headers.get('allow'), 'POST');
   assert.notEqual((await fetch(`${base}/merge/proj-1`, { method: 'POST' })).status, 501);
-  assert.deepEqual(fs.readdirSync(media.mediaDir(projectRoot)).sort(), before, '没有写进内容库');
+  assert.deepEqual(fs.readdirSync(media.mediaDir(projectRoot)).sort(), before, 'nothing was written to the content store');
 });

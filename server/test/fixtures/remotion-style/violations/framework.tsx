@@ -5,9 +5,9 @@ function C({ params, t = 0 }: CardProps<Params>) {
   return <div style={{ position: "absolute", inset: 0, opacity: Math.min(1, t / 0.4) }}>{params.text}</div>;
 }
 export const card: CardDef<Params> = {
-  id: "rs-bad-framework", name: "没引用框架", description: "remotion 式的规矩的违规样例", source: "user",
+  id: "rs-bad-framework", name: "Framework not referenced", description: "Violation example of the remotion-style rules", source: "user",
   frameMode: "direct",
   defaults: { text: "" },
-  controls: [{ key: "text", label: "文字", type: "text" }],
+  controls: [{ key: "text", label: "Text", type: "text" }],
   Component: C,
 };

@@ -49,10 +49,10 @@ export const ffmpegBin = () => (run('ffmpeg', ['-version']).status === 0 ? 'ffmp
 
 /** 缺什么就说缺什么;齐了回 null */
 export function realDepsMissing() {
-  if (!findPython()) return '没有找到内置 Python(PROMPTCUT_PYTHON 或主工作区 desktop/src-tauri/runtime/python)';
-  if (!fs.existsSync(path.join(PATHS.pylibs, 'faster_whisper'))) return 'out/p2-stt/pylibs 里没有 faster_whisper(先跑 node cloud/scripts/probes/cloud-tools-p2-stt-probe.mjs --setup)';
-  if (!fs.existsSync(path.join(PATHS.models, MODEL_DIR))) return 'out/p2-stt/models 里没有 faster-whisper small 的权重(先跑 --setup)';
-  if (!ffmpegBin()) return 'PATH 上没有 ffmpeg';
+  if (!findPython()) return 'Built-in Python not found (PROMPTCUT_PYTHON or the main checkout\'s desktop/src-tauri/runtime/python)';
+  if (!fs.existsSync(path.join(PATHS.pylibs, 'faster_whisper'))) return 'faster_whisper is missing from out/p2-stt/pylibs (run node cloud/scripts/probes/cloud-tools-p2-stt-probe.mjs --setup first)';
+  if (!fs.existsSync(path.join(PATHS.models, MODEL_DIR))) return 'The faster-whisper small weights are missing from out/p2-stt/models (run --setup first)';
+  if (!ffmpegBin()) return 'ffmpeg is not on PATH';
   return null;
 }
 
@@ -68,7 +68,7 @@ export function copyDeps({ root = ROOT, mainRoot = mainRootOf(root) } = {}) {
   for (const [candidates, to] of todo) {
     if (fs.existsSync(to)) continue;
     const from = candidates.find((c) => fs.existsSync(c));
-    if (!from) throw new Error(`找不到可复制的来源,找过:${candidates.join('、')}`);
+    if (!from) throw new Error(`No copyable source found, searched: ${candidates.join(', ')}`);
     fs.mkdirSync(path.dirname(to), { recursive: true });
     fs.cpSync(from, to, { recursive: true, filter: (src) => !src.includes('__pycache__') });
   }
@@ -81,14 +81,14 @@ export function ensureMedia() {
   const need = (file) => !fs.existsSync(file) || fs.statSync(file).size === 0;
   const ff = (args) => {
     const r = run('ffmpeg', ['-v', 'error', '-y', ...args]);
-    if (r.status !== 0) throw new Error(`ffmpeg 失败:${r.stderr}`);
+    if (r.status !== 0) throw new Error(`ffmpeg failed: ${r.stderr}`);
   };
   const english = m('en-speech.wav');
   if (need(english)) {
-    if (process.platform !== 'win32') throw new Error('en-speech.wav 要用 Windows 自带合成语音生成;其它系统请自己放一份念「quick brown fox」的 wav 到 out/p2-stt/media/');
+    if (process.platform !== 'win32') throw new Error('en-speech.wav must be generated with Windows built-in speech synthesis; on other systems, put a wav that reads "quick brown fox" into out/p2-stt/media/ yourself');
     const script = `Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.SelectVoice('Microsoft Zira Desktop'); $s.SetOutputToWaveFile('${english.replace(/'/g, "''")}'); $s.Speak('Hello. This is a short test of cloud speech recognition. The quick brown fox jumps over the lazy dog.'); $s.Dispose()`;
     const r = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', script]);
-    if (r.status !== 0 || need(english)) throw new Error(`合成语音失败:${r.stderr}`);
+    if (r.status !== 0 || need(english)) throw new Error(`Speech synthesis failed: ${r.stderr}`);
   }
   const chinese = m('zh-speech.wav');
   if (need(chinese)) fs.copyFileSync(path.join(ROOT, 'src', 'audio', 'assets', 'missing-material.wav'), chinese);

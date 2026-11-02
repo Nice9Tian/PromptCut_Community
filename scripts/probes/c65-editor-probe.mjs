@@ -82,12 +82,12 @@ const check = (name, ok, extra = {}) => {
   return ok;
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-async function waitFor(fn, ms = 10_000, what = '条件') {
+async function waitFor(fn, ms = 10_000, what = 'condition') {
   const t0 = Date.now();
   for (;;) {
     const v = await fn();
     if (v) return v;
-    if (Date.now() - t0 > ms) throw new Error(`等 ${what} 超时`);
+    if (Date.now() - t0 > ms) throw new Error(`Timed out waiting for ${what}`);
     await sleep(100);
   }
 }
@@ -157,10 +157,10 @@ async function openEditor(query = '') {
     page[m] = async (...a) => { await page.bringToFront(); return orig(...a); };
   }
   await page.goto(`${origin}/?editor${query}`, { waitUntil: 'domcontentloaded' });
-  await waitFor(() => page.evaluate(() => !!window.__pcSyncTest && window.__pcSyncTest.view().status === 'online'), 30_000, '页面同步接上');
+  await waitFor(() => page.evaluate(() => !!window.__pcSyncTest && window.__pcSyncTest.view().status === 'online'), 30_000, 'page sync connected');
   // 打开项目时的卡片测量遮罩挡着整个编辑器(点、打字都落不下去),慢机器上能挂几十秒:等它退下、时间轴排出来
   const ready = await waitEditorReady(page, Number(arg('--open-ready-timeout', '300')) * 1000);
-  if (!ready.ready) throw new Error(`编辑器打开后没等到可操作(测量遮罩/时间轴):${JSON.stringify(ready)}`);
+  if (!ready.ready) throw new Error(`The editor did not become operable after opening (measurement overlay/timeline): ${JSON.stringify(ready)}`);
   say('editor.ready', { url: page.url(), waitedMs: ready.waitedMs, clips: ready.clips, visible: ready.visible });
   await sleep(800);
   await closeAiSetup(page);
@@ -169,7 +169,7 @@ async function openEditor(query = '') {
 
 async function closeAiSetup(page) {
   await page.evaluate(() => {
-    for (const b of document.querySelectorAll('.ais-dialog .ais-btn')) if (b.textContent?.trim() === '关闭') b.click();
+    for (const b of document.querySelectorAll('.ais-dialog .ais-btn')) if (b.textContent?.trim() === 'Close') b.click();
   });
   await sleep(200);
 }
@@ -204,8 +204,8 @@ function docState(projectId, base = origin) {
       else if (m.type === 'project.state.part') parts[m.index] = m.data;
       else if (m.type === 'project.state.end') done(JSON.parse(parts.join('')), m.rev);
     });
-    ws.addEventListener('error', () => reject(new Error('连不上文档服务')));
-    setTimeout(() => reject(new Error('project.open 超时')), 8000);
+    ws.addEventListener('error', () => reject(new Error('Cannot connect to the document service')));
+    setTimeout(() => reject(new Error('project.open timed out')), 8000);
   });
 }
 
@@ -236,7 +236,7 @@ async function pressUndo(page, redo = false) {
 }
 const settle = async (...pages) => {
   for (const p of pages) {
-    await waitFor(() => P(p, () => window.__pcSyncTest.view().status === 'online'), 15_000, '回到 online').catch(async (e) => {
+    await waitFor(() => P(p, () => window.__pcSyncTest.view().status === 'online'), 15_000, 'back to online').catch(async (e) => {
       throw new Error(`${e.message}:${JSON.stringify(await P(p, () => ({ status: window.__pcSyncTest.view().status, url: location.search })))}`);
     });
   }
@@ -252,7 +252,7 @@ async function clickText(page, text, scope = 'body') {
     el.click();
     return true;
   }, text, scope);
-  if (!ok) throw new Error(`找不到按钮「${text}」`);
+  if (!ok) throw new Error(`Button "${text}" not found`);
   await sleep(250);
 }
 async function typeInto(page, selector, text) {
@@ -271,7 +271,7 @@ async function openProjectMenu(page) {
     await sleep(300);
     if (await P(page, () => !!document.querySelector('.pc-proj-menu'))) return;
   }
-  throw new Error('项目菜单没打开');
+  throw new Error('The project menu did not open');
 }
 
 /* ======================================================================== local */
@@ -311,17 +311,17 @@ async function phaseLocal() {
   const [c1, c2, c3, c4, c5, c6, c7, c8] = ids;
 
   // ---------- 撤销:部分没撤(A 一步改片段 1、2;B 随后改片段 2;A 撤销)
-  await setTwo(A, c1, c2, 'A改');
+  await setTwo(A, c1, c2, 'A edited');
   await settle(A, B);
   const beforeC1 = (await docState(docId)).project.tracks.flatMap((t) => t.clips).find((c) => c.id === c1);
-  await setParam(B, c2, { text: 'B改' });
+  await setParam(B, c2, { text: 'B edited' });
   await settle(A, B);
   await pressUndo(A);
   await sleep(500);
   const notice = await P(A, () => document.querySelector('[data-pc=undo-notice]')?.innerText ?? null);
   const a1 = await clipOf(A, c1);
   const a2 = await clipOf(A, c2);
-  check('undo-partial-notice', !!notice && notice.includes('撤销了，但这几处被后续的新修改覆盖，未做退回：') && a2.params.text === 'B改' && a1.params.text !== 'A改', { notice, c1: a1.params.text, c2: a2.params.text, c1WasBefore: beforeC1?.params?.text });
+  check('undo-partial-notice', !!notice && notice.includes('Undone, but these places were overwritten by later changes and were not reverted:') && a2.params.text === 'B edited' && a1.params.text !== 'A edited', { notice, c1: a1.params.text, c2: a2.params.text, c1WasBefore: beforeC1?.params?.text });
   await shot(A, 'undo-partial-notice');
   // 点实体名跳过去并选中
   await P(A, () => document.querySelector('[data-pc=undo-notice] .pc-undo-entity')?.click());
@@ -339,7 +339,7 @@ async function phaseLocal() {
   await pressUndo(A);
   await sleep(500);
   const none = await P(A, () => document.querySelector('[data-pc=undo-notice]')?.innerText ?? null);
-  check('undo-none-notice', !!none && none.includes('没撤成。这几处后来都被改过了，保留了现在的样子：') && none.includes('查看被修改处的现状'), { notice: none, c3: (await clipOf(A, c3)).params.text });
+  check('undo-none-notice', !!none && none.includes('Could not undo. These places were all changed afterwards, so their current state was kept:') && none.includes('View the current state of the changed places'), { notice: none, c3: (await clipOf(A, c3)).params.text });
   await shot(A, 'undo-none-notice');
   await P(A, () => document.querySelector('[data-pc=undo-notice] .pc-undo-bar-close')?.click());
 
@@ -350,7 +350,7 @@ async function phaseLocal() {
     undoDisabled: document.querySelector('[data-pc=undo-btn] button')?.disabled,
     redoDisabled: document.querySelector('[data-pc=redo-btn] button')?.disabled,
   }));
-  check('undo-buttons', btn.undoTitle === '撤销 (Ctrl+Z) —— 只撤你自己在这个页面做的' && btn.redoTitle === '重做 (Ctrl+Shift+Z / Ctrl+Y) —— 恢复刚撤销的操作（有新操作后即失效）', btn);
+  check('undo-buttons', btn.undoTitle === 'Undo (Ctrl+Z): only undoes what you did yourself on this page' && btn.redoTitle === 'Redo (Ctrl+Shift+Z / Ctrl+Y): restores the operation you just undid (invalidated once a new operation is made)', btn);
   const fresh = await openEditor(`&join=${encodeURIComponent(docId)}`);
   const freshBtn = await P(fresh, () => ({ undo: document.querySelector('[data-pc=undo-btn] button')?.disabled, redo: document.querySelector('[data-pc=redo-btn] button')?.disabled }));
   check('undo-buttons-disabled-when-empty', freshBtn.undo === true && freshBtn.redo === true, freshBtn);
@@ -371,7 +371,7 @@ async function phaseLocal() {
 
   // ---------- 别人的改动:时间轴描边 1.5 s
   await A.bringToFront();
-  await setParam(B, c4, { text: 'B 改了这里' });
+  await setParam(B, c4, { text: 'B edited here' });
   await sleep(300);
   const flashed = await P(A, (id) => !!document.querySelector(`[data-clip-id="${id}"][data-remote-flash]`), c4);
   await A.screenshot({ path: path.join(outDir, 'remote-flash.png') });
@@ -384,8 +384,8 @@ async function phaseLocal() {
   await settle(A, B);
   await setParam(B, c6, { text: 'B6' });
   await settle(A, B);
-  const toast = await waitFor(() => P(A, () => [...document.querySelectorAll('.pc-toast')].map((t) => t.innerText).find((t) => t.includes('覆盖')) ?? null), 5000, '覆盖气泡').catch(() => null);
-  check('overwritten-toast', !!toast && toast.startsWith('你的近期修改已被 你在另一个页面 覆盖。'), { toast });
+  const toast = await waitFor(() => P(A, () => [...document.querySelectorAll('.pc-toast')].map((t) => t.innerText).find((t) => t.includes('overwritten')) ?? null), 5000, 'overwritten bubble').catch(() => null);
+  check('overwritten-toast', !!toast && toast.startsWith('Your recent changes were overwritten by you on another page.'), { toast });
   await shot(A, 'overwritten-toast');
 
   // ---------- 离线:A 断网期间改 3 次,B 期间也改;A 回来 → 第一条被拒 → 冲突合并窗口
@@ -393,13 +393,13 @@ async function phaseLocal() {
   // 「不要了」= 全勾 → 删除选中;「加进去」= 全勾 → 合并;关窗(下次再说)后顶栏是「冲突合并」按钮(原「同步已暂停」)
   const offline = async (value) => {
     await P(A, () => window.__pcSyncTest.drop(4000));
-    await waitFor(() => P(A, () => window.__pcSyncTest.view().status === 'offline'), 5000, 'A 离线');
+    await waitFor(() => P(A, () => window.__pcSyncTest.view().status === 'offline'), 5000, 'A offline');
     for (let i = 0; i < 3; i++) await setParam(A, c5, { text: `${value}${i}` });
     await setParam(B, c7, { text: `B7-${value}` });
     await setParam(B, c5, { text: `B5-${value}` });
     await sleep(300);
     const chip = await P(A, () => document.querySelector('[data-pc=sync-offline]')?.innerText ?? null);
-    await waitFor(() => P(A, () => !!document.querySelector('[data-pc=conflict-merge]')), 15_000, 'A 的冲突合并窗口');
+    await waitFor(() => P(A, () => !!document.querySelector('[data-pc=conflict-merge]')), 15_000, 'A\'s conflict merge window');
     await sleep(300);
     const dlg = await P(A, () => document.querySelector('[data-pc=conflict-merge]')?.innerText ?? null);
     const row = await P(A, (id) => document.querySelector(`[data-pc=merge-thing][data-key="offline:clip:${id}"]`)?.innerText ?? null, c5);
@@ -408,16 +408,16 @@ async function phaseLocal() {
   const mergeAll = async (button) => {
     await P(A, () => { for (const i of document.querySelectorAll('[data-pc=merge-thing-check]')) if (!i.checked) i.click(); });
     await P(A, (b) => document.querySelector(`[data-pc="${b}"]`)?.click(), button);
-    await waitFor(() => P(A, () => document.querySelector('[data-pc=merge-close]')?.textContent?.trim() === '完成'), 5000, '列表清空');
+    await waitFor(() => P(A, () => document.querySelector('[data-pc=merge-close]')?.textContent?.trim() === 'done'), 5000, 'list cleared');
     await P(A, () => document.querySelector('[data-pc=merge-close]')?.click());
   };
-  const off1 = await offline('离线');
-  check('conflict-merge-window', !!off1.dlg && off1.dlg.includes('冲突合并') && !!off1.row && off1.row.includes('「离线2」') && off1.row.includes('云端现在是 「B5-离线」') && off1.chip === '离线', off1);
+  const off1 = await offline('offline');
+  check('conflict-merge-window', !!off1.dlg && off1.dlg.includes('Conflict merge') && !!off1.row && off1.row.includes('"offline2"') && off1.row.includes('The cloud is now "B5-offline"') && off1.chip === 'offline', off1);
   await shot(A, 'conflict-merge-window');
   await P(A, () => document.querySelector('[data-pc=merge-close]')?.click());
   await sleep(300);
   const navChip = await P(A, () => document.querySelector('[data-pc=conflict-merge-open]')?.innerText ?? null);
-  check('merge-button-after-close', !!navChip && navChip.includes('冲突合并'), { navChip });
+  check('merge-button-after-close', !!navChip && navChip.includes('Conflict merge'), { navChip });
   await shot(A, 'conflict-merge-button');
   await P(A, () => document.querySelector('[data-pc=conflict-merge-open]')?.click());
   await sleep(300);
@@ -425,32 +425,32 @@ async function phaseLocal() {
   await mergeAll('merge-delete');
   await settle(A, B);
   const afterDiscard = [await pageDigest(A), await pageDigest(B), await docState(docId)];
-  check('offline-discard', afterDiscard[0].sha256 === afterDiscard[2].sha256 && afterDiscard[1].sha256 === afterDiscard[2].sha256 && (await clipOf(A, c5)).params.text === 'B5-离线', { c5: (await clipOf(A, c5)).params.text });
+  check('offline-discard', afterDiscard[0].sha256 === afterDiscard[2].sha256 && afterDiscard[1].sha256 === afterDiscard[2].sha256 && (await clipOf(A, c5)).params.text === 'B5-offline', { c5: (await clipOf(A, c5)).params.text });
 
-  const off2 = await offline('重放');
+  const off2 = await offline('replay');
   check('conflict-merge-window-2', !!off2.dlg);
   await mergeAll('merge-apply');
   await settle(A, B);
   const afterReplay = [await pageDigest(A), await pageDigest(B), await docState(docId)];
-  check('offline-replay', afterReplay[0].sha256 === afterReplay[2].sha256 && afterReplay[1].sha256 === afterReplay[2].sha256 && (await clipOf(A, c5)).params.text === '重放2' && (await clipOf(A, c7)).params.text === 'B7-重放', { c5: (await clipOf(A, c5)).params.text, c7: (await clipOf(A, c7)).params.text });
+  check('offline-replay', afterReplay[0].sha256 === afterReplay[2].sha256 && afterReplay[1].sha256 === afterReplay[2].sha256 && (await clipOf(A, c5)).params.text === 'replay2' && (await clipOf(A, c7)).params.text === 'B7-replay', { c5: (await clipOf(A, c5)).params.text, c7: (await clipOf(A, c7)).params.text });
 
   // ---------- 本地备份列表(丢弃前的那批 + 被覆盖的那一版);恢复 = 一次新写入
   await openProjectMenu(A);
-  await clickText(A, '本地备份…', '.pc-proj-menu');
-  await waitFor(() => P(A, () => document.querySelectorAll('[data-pc=backup-row]').length > 0), 5000, '备份列表');
+  await clickText(A, 'Local backups…', '.pc-proj-menu');
+  await waitFor(() => P(A, () => document.querySelectorAll('[data-pc=backup-row]').length > 0), 5000, 'backup list');
   const rows = await P(A, () => [...document.querySelectorAll('[data-pc=backup-row]')].map((r) => r.innerText.replace(/\s+/g, ' ')));
-  check('backups-list', rows.some((r) => r.includes('离线时丢弃')) && rows.some((r) => r.includes('覆盖')), { rows: rows.slice(0, 6) });
+  check('backups-list', rows.some((r) => r.includes('Discarded while offline')) && rows.some((r) => r.includes('overwritten')), { rows: rows.slice(0, 6) });
   await shot(A, 'backups-dialog');
   // 恢复被覆盖的那一版(片段 6 回到 A6)
   const revBefore = (await docState(docId)).rev;
   await P(A, (c6) => {
-    const row = [...document.querySelectorAll('[data-pc=backup-row]')].find((r) => r.dataset.entity?.endsWith(`/@${c6}`) && r.innerText.includes('被 你在另一个页面 覆盖'));
+    const row = [...document.querySelectorAll('[data-pc=backup-row]')].find((r) => r.dataset.entity?.endsWith(`/@${c6}`) && r.innerText.includes('overwritten by you on another page'));
     row?.querySelector('button')?.click();
   }, c6);
   await settle(A, B);
   const d6 = await docState(docId);
   check('backup-restore-is-new-write', d6.project.tracks.flatMap((t) => t.clips).find((c) => c.id === c6)?.params.text === 'A6' && d6.rev > revBefore && (await clipOf(B, c6)).params.text === 'A6', { revBefore, revAfter: d6.rev });
-  await clickText(A, '关闭', '[data-pc=backups-dialog]');
+  await clickText(A, 'Close', '[data-pc=backups-dialog]');
 
   // ---------- AI 栏「撤销这一步」:Agent 的提交(一条回环连接模拟) + 注入带 opId 的完成事件
   const agentOp = (ops) => new Promise((resolve, reject) => {
@@ -468,7 +468,7 @@ async function phaseLocal() {
   });
   const path8 = (await docState(docId)).project.tracks.map((t, ti) => ({ t, ti })).find(({ t }) => t.clips.some((c) => c.id === c8));
   const before8 = (await clipOf(A, c8)).params.text ?? null;
-  const { opId: agentOpId, rev: agentRev } = await agentOp([{ op: 'set', path: `/tracks/@${path8.t.id}/clips/@${c8}/params/text`, value: 'Agent 改的' }]);
+  const { opId: agentOpId, rev: agentRev } = await agentOp([{ op: 'set', path: `/tracks/@${path8.t.id}/clips/@${c8}/params/text`, value: 'Edited by Agent' }]);
   await settle(A, B);
   await P(A, (opId, rev) => window.__pcSyncTest.inject({ type: 'events.event', phase: 'complete', eventId: 'ev-probe-1', callId: 'call-probe-1', opId, rev, status: 'ok' }), agentOpId, agentRev);
   const reverted = await P(A, async () => {
@@ -485,7 +485,7 @@ async function phaseLocal() {
   // 进了用户自己的撤销栈:Ctrl+Z 把 Agent 的改动恢复回来
   await pressUndo(A);
   await settle(A, B);
-  check('agent-undo-in-user-stack', (await clipOf(B, c8)).params.text === 'Agent 改的');
+  check('agent-undo-in-user-stack', (await clipOf(B, c8)).params.text === 'Edited by Agent');
 
   await B.close();
   return { A, docId };
@@ -506,51 +506,51 @@ async function phaseShared() {
 
   // ---------- 新建共享项目:先看限定进入的名单表,再以自由进入建成
   await openProjectMenu(A);
-  await clickText(A, '新建共享项目', '.pc-proj-menu');
+  await clickText(A, 'New shared project', '.pc-proj-menu');
   await typeInto(A, '#pc-ns-name', name);
   await typeInto(A, '#pc-ns-creator', 'alice');
   await typeInto(A, '#pc-ns-cpw', 'alice-pw');
-  await clickText(A, '限定进入', '[data-pc=new-shared-dialog]');
+  await clickText(A, 'Restricted entry', '[data-pc=new-shared-dialog]');
   await A.type('[data-pc=list-editor] .pc-sync-list-row:last-child input:nth-child(1)', 'render-host');
   await A.type('[data-pc=list-editor] .pc-sync-list-row:last-child input:nth-child(2)', 'rh-pw');
-  await clickText(A, '添加', '[data-pc=list-editor]');
+  await clickText(A, 'Add', '[data-pc=list-editor]');
   await P(A, () => document.querySelector('[data-pc=new-shared-dialog]')?.scrollTo(0, 9999));
   await shot(A, 'new-shared-restricted');
-  await clickText(A, '局域网模式', '[data-pc=new-shared-dialog]');
+  await clickText(A, 'LAN mode', '[data-pc=new-shared-dialog]');
   await sleep(200);
   const lanHint = await P(A, () => document.querySelector('[data-pc=lan-restart-hint]')?.innerText ?? null);
   check('lan-needs-restart-hint', !!lanHint && lanHint.includes('PROMPTCUT_LAN_HOST=1'), { lanHint });
   await shot(A, 'new-shared-lan-restart');
-  await clickText(A, '互联网模式', '[data-pc=new-shared-dialog]');
-  await clickText(A, '自由进入', '[data-pc=new-shared-dialog]');
+  await clickText(A, 'Internet mode', '[data-pc=new-shared-dialog]');
+  await clickText(A, 'Open entry', '[data-pc=new-shared-dialog]');
   await typeInto(A, '#pc-ns-ppw', 'team-pw');
   await P(A, () => document.querySelector('[data-pc=new-shared-dialog]')?.scrollTo(0, 0));
   await shot(A, 'new-shared-dialog');
-  await clickText(A, '创建', '[data-pc=new-shared-dialog] .pc-dialog-foot');
-  const created = await waitFor(() => P(A, () => document.querySelector('[data-pc=new-shared-dialog] .pc-sync-status-line')?.innerText.includes('创建成功') ? document.querySelector('[data-pc=new-shared-dialog] .pc-sync-status-line').innerText : null), 20_000, '创建成功').catch(() => null);
+  await clickText(A, 'Create', '[data-pc=new-shared-dialog] .pc-dialog-foot');
+  const created = await waitFor(() => P(A, () => document.querySelector('[data-pc=new-shared-dialog] .pc-sync-status-line')?.innerText.includes('Created successfully') ? document.querySelector('[data-pc=new-shared-dialog] .pc-sync-status-line').innerText : null), 20_000, 'Created successfully').catch(() => null);
   const aView = await P(A, () => { const v = window.__pcSyncTest.view(); return { kind: v.kind, shared: v.shared, status: v.status }; });
-  check('new-shared-hosted', created === '创建成功，已进入项目。' && aView.kind === 'shared', { created, aView });
+  check('new-shared-hosted', created === 'Created successfully. You are now in the project.' && aView.kind === 'shared', { created, aView });
   await shot(A, 'new-shared-done');
-  await clickText(A, '返回', '[data-pc=new-shared-dialog]');
+  await clickText(A, 'Back', '[data-pc=new-shared-dialog]');
   const sharedId = aView.shared?.projectId;
 
   // ---------- 打开共享项目(B):查找 → 验证 → 进入
   await openProjectMenu(B);
-  await clickText(B, '打开共享项目', '.pc-proj-menu');
+  await clickText(B, 'Open shared project', '.pc-proj-menu');
   await B.type('#pc-os-name', name);
-  await clickText(B, '托管地址', '[data-pc=open-shared-dialog]');
+  await clickText(B, 'Host address', '[data-pc=open-shared-dialog]');
   await shot(B, 'open-shared-find');
-  await clickText(B, '查找', '[data-pc=open-shared-dialog] .pc-dialog-foot');
-  await waitFor(() => P(B, () => !!document.querySelector('#pc-os-user')), 15_000, '进入验证步');
+  await clickText(B, 'Find', '[data-pc=open-shared-dialog] .pc-dialog-foot');
+  await waitFor(() => P(B, () => !!document.querySelector('#pc-os-user')), 15_000, 'reached verification step');
   await shot(B, 'open-shared-verify');
   await typeInto(B, '#pc-os-pw', 'wrong-pw');
   await typeInto(B, '#pc-os-user', 'bob');
-  await clickText(B, '进入', '[data-pc=open-shared-dialog] .pc-dialog-foot');
-  const wrong = await waitFor(() => P(B, () => document.querySelector('[data-pc=open-shared-dialog] .pc-sync-status-line')?.innerText ?? null), 15_000, '密码错提示').catch(() => null);
-  check('open-shared-wrong-password', wrong === '用户名或密码不对。忘了的话找创建者问一下。', { wrong });
+  await clickText(B, 'Enter', '[data-pc=open-shared-dialog] .pc-dialog-foot');
+  const wrong = await waitFor(() => P(B, () => document.querySelector('[data-pc=open-shared-dialog] .pc-sync-status-line')?.innerText ?? null), 15_000, 'wrong-password notice').catch(() => null);
+  check('open-shared-wrong-password', wrong === 'Incorrect username or password. If you forgot it, ask the creator.', { wrong });
   await typeInto(B, '#pc-os-pw', 'team-pw');
-  await clickText(B, '进入', '[data-pc=open-shared-dialog] .pc-dialog-foot');
-  await waitFor(() => P(B, () => window.__pcSyncTest.view().kind === 'shared'), 15_000, 'B 进入共享项目').catch(async (e) => {
+  await clickText(B, 'Enter', '[data-pc=open-shared-dialog] .pc-dialog-foot');
+  await waitFor(() => P(B, () => window.__pcSyncTest.view().kind === 'shared'), 15_000, 'B enters the shared project').catch(async (e) => {
     throw new Error(`${e.message}:${JSON.stringify(await P(B, () => ({ line: document.querySelector('[data-pc=open-shared-dialog] .pc-sync-status-line')?.innerText, pw: document.querySelector('#pc-os-pw')?.value, user: document.querySelector('#pc-os-user')?.value })))}`);
   });
   await settle(A, B);
@@ -578,28 +578,28 @@ async function phaseShared() {
   });
   await sleep(200);
   const pop = await P(A, () => document.querySelector('[data-pc=members-pop]')?.innerText ?? '');
-  check('members-list', pop.includes('alice (自己)') && pop.includes('[创建者]') && pop.includes('[编辑中]') && pop.includes('[Agent ×1]') && pop.includes('bob (MacBook)') && pop.includes('bob · Agent · 第 2 个对话') && pop.includes('项目管理（仅创建者可见）'), { pop });
+  check('members-list', pop.includes('alice (you)') && pop.includes('[Creator]') && pop.includes('[Editing]') && pop.includes('[Agent ×1]') && pop.includes('bob (MacBook)') && pop.includes('bob · Agent · chat 2') && pop.includes('Project management (visible to the creator only)'), { pop });
   await shot(A, 'members-list');
   const btnText = await P(A, () => document.querySelector('[data-pc=members-button]')?.innerText ?? '');
-  check('members-button-badge', /成员[:：] ?\d+ 人/.test(btnText), { btnText });
+  check('members-button-badge', /Members: ?\d+/.test(btnText), { btnText });
 
   // ---------- 创建者操作:改项目密码(验证 → 改),成员收到气泡
-  await clickText(A, '改项目密码', '[data-pc=members-pop]');
-  await waitFor(() => P(A, () => !!document.querySelector('[data-pc=creator-verify]')), 5000, '验证弹窗');
+  await clickText(A, 'Change project password', '[data-pc=members-pop]');
+  await waitFor(() => P(A, () => !!document.querySelector('[data-pc=creator-verify]')), 5000, 'verification dialog');
   await typeInto(A, '#pc-cv-pw', 'wrong');
-  await clickText(A, '验证', '[data-pc=creator-verify] .pc-dialog-foot');
-  const verr = await waitFor(() => P(A, () => document.querySelector('[data-pc=creator-verify] .pc-sync-err')?.innerText ?? null), 8000, '密码错误').catch(() => null);
-  check('creator-verify-wrong', verr === '密码错误。', { verr });
+  await clickText(A, 'Verify', '[data-pc=creator-verify] .pc-dialog-foot');
+  const verr = await waitFor(() => P(A, () => document.querySelector('[data-pc=creator-verify] .pc-sync-err')?.innerText ?? null), 8000, 'wrong password').catch(() => null);
+  check('creator-verify-wrong', verr === 'Incorrect password.', { verr });
   await typeInto(A, '#pc-cv-pw', 'alice-pw');
   await shot(A, 'creator-verify');
-  await clickText(A, '验证', '[data-pc=creator-verify] .pc-dialog-foot');
-  await waitFor(() => P(A, () => !!document.querySelector('[data-pc=project-password]')), 8000, '改密码弹窗');
+  await clickText(A, 'Verify', '[data-pc=creator-verify] .pc-dialog-foot');
+  await waitFor(() => P(A, () => !!document.querySelector('[data-pc=project-password]')), 8000, 'change-password dialog');
   await typeInto(A, '#pc-pw-a', 'team-pw-2');
   await typeInto(A, '#pc-pw-b', 'team-pw-2');
   await shot(A, 'creator-change-password');
-  await clickText(A, '确认修改', '[data-pc=project-password]');
-  const pwToast = await waitFor(() => P(B, () => [...document.querySelectorAll('.pc-toast')].map((t) => t.innerText).find((t) => t.includes('项目密码已被修改')) ?? null), 8000, '密码被改气泡').catch(() => null);
-  check('member-password-changed-toast', pwToast?.startsWith('项目密码已被修改。你当前的连接不受影响，但下次进入需要新密码。'), { pwToast });
+  await clickText(A, 'Confirm change', '[data-pc=project-password]');
+  const pwToast = await waitFor(() => P(B, () => [...document.querySelectorAll('.pc-toast')].map((t) => t.innerText).find((t) => t.includes('The project password has been changed')) ?? null), 8000, 'password-changed bubble').catch(() => null);
+  check('member-password-changed-toast', pwToast?.startsWith('The project password has been changed. Your current connection is not affected, but the new password is required the next time you enter.'), { pwToast });
   await shot(B, 'member-password-changed-toast');
 
   // ---------- 踢人(踢 MacBook 上的 bob):验证 → 确认
@@ -609,42 +609,42 @@ async function phaseShared() {
     const row = [...document.querySelectorAll('.pc-members-row-main')].find((r) => r.innerText.includes('bob (MacBook)'));
     row?.querySelector('.pc-members-kick')?.click();
   });
-  await waitFor(() => P(A, () => !!document.querySelector('[data-pc=creator-verify]')), 5000, '验证弹窗');
+  await waitFor(() => P(A, () => !!document.querySelector('[data-pc=creator-verify]')), 5000, 'verification dialog');
   await typeInto(A, '#pc-cv-pw', 'alice-pw');
-  await clickText(A, '验证', '[data-pc=creator-verify] .pc-dialog-foot');
-  await waitFor(() => P(A, () => !!document.querySelector('[data-pc=kick-dialog]')), 8000, '踢人确认');
+  await clickText(A, 'Verify', '[data-pc=creator-verify] .pc-dialog-foot');
+  await waitFor(() => P(A, () => !!document.querySelector('[data-pc=kick-dialog]')), 8000, 'kick confirmation');
   const kickText = await P(A, () => document.querySelector('[data-pc=kick-dialog]')?.innerText ?? '');
-  check('kick-confirm-text', kickText.includes('确定要把 bob (MacBook) 踢出项目吗？'), { kickText });
+  check('kick-confirm-text', kickText.includes('Are you sure you want to kick bob (MacBook) out of the project?'), { kickText });
   await shot(A, 'creator-kick-confirm');
-  await clickText(A, '踢出', '[data-pc=kick-dialog] .pc-dialog-foot');
-  const kickToast = await waitFor(() => P(A, () => [...document.querySelectorAll('.pc-toast')].map((t) => t.innerText).find((t) => t.includes('已踢出')) ?? null), 8000, '踢人气泡').catch(() => null);
-  check('kick-free-mode-hint', kickToast?.startsWith('已踢出。自由进入模式下，想彻底挡住，要改项目密码。'), { kickToast });
+  await clickText(A, 'Kick', '[data-pc=kick-dialog] .pc-dialog-foot');
+  const kickToast = await waitFor(() => P(A, () => [...document.querySelectorAll('.pc-toast')].map((t) => t.innerText).find((t) => t.includes('Kicked')) ?? null), 8000, 'kick bubble').catch(() => null);
+  check('kick-free-mode-hint', kickToast?.startsWith('Kicked. In open entry mode, to block them completely, you need to change the project password.'), { kickToast });
 
   // ---------- 已禁入的设备
   await A.click('[data-pc=members-button]');
   await sleep(300);
-  await clickText(A, '已禁入的设备', '[data-pc=members-pop]');
+  await clickText(A, 'Banned devices', '[data-pc=members-pop]');
   await typeInto(A, '#pc-cv-pw', 'alice-pw');
-  await clickText(A, '验证', '[data-pc=creator-verify] .pc-dialog-foot');
-  await waitFor(() => P(A, () => !!document.querySelector('[data-pc=bans-dialog]')), 8000, '禁入列表');
+  await clickText(A, 'Verify', '[data-pc=creator-verify] .pc-dialog-foot');
+  await waitFor(() => P(A, () => !!document.querySelector('[data-pc=bans-dialog]')), 8000, 'ban list');
   const bans = await P(A, () => document.querySelector('[data-pc=bans-dialog]')?.innerText ?? '');
-  check('bans-list', bans.includes('pc-macbook-probe-0001') && bans.includes('撤销'), { bans });
+  check('bans-list', bans.includes('pc-macbook-probe-0001') && bans.includes('Revoke'), { bans });
   await shot(A, 'creator-bans');
-  await clickText(A, '返回', '[data-pc=bans-dialog]');
+  await clickText(A, 'Back', '[data-pc=bans-dialog]');
 
   // ---------- 删项目对话框(手打项目名)
   await A.click('[data-pc=members-button]');
   await sleep(300);
-  await clickText(A, '删除项目', '[data-pc=members-pop]');
+  await clickText(A, 'Delete project', '[data-pc=members-pop]');
   await typeInto(A, '#pc-cv-pw', 'alice-pw');
-  await clickText(A, '验证', '[data-pc=creator-verify] .pc-dialog-foot');
-  await waitFor(() => P(A, () => !!document.querySelector('[data-pc=delete-dialog]')), 8000, '删项目弹窗');
-  const delDisabled = await P(A, () => [...document.querySelectorAll('[data-pc=delete-dialog] button')].find((b) => b.textContent.includes('永久删除项目'))?.disabled);
+  await clickText(A, 'Verify', '[data-pc=creator-verify] .pc-dialog-foot');
+  await waitFor(() => P(A, () => !!document.querySelector('[data-pc=delete-dialog]')), 8000, 'delete-project dialog');
+  const delDisabled = await P(A, () => [...document.querySelectorAll('[data-pc=delete-dialog] button')].find((b) => b.textContent.includes('Permanently delete project'))?.disabled);
   await A.type('[data-pc=delete-dialog] input', name);
-  const delEnabled = await P(A, () => !([...document.querySelectorAll('[data-pc=delete-dialog] button')].find((b) => b.textContent.includes('永久删除项目'))?.disabled));
+  const delEnabled = await P(A, () => !([...document.querySelectorAll('[data-pc=delete-dialog] button')].find((b) => b.textContent.includes('Permanently delete project'))?.disabled));
   check('delete-needs-typed-name', delDisabled === true && delEnabled === true);
   await shot(A, 'creator-delete');
-  await clickText(A, '取消', '[data-pc=delete-dialog] .pc-dialog-foot');
+  await clickText(A, 'Cancel', '[data-pc=delete-dialog] .pc-dialog-foot');
 
   // ---------- 踢 B:B 看到阻断弹窗
   await A.click('[data-pc=members-button]');
@@ -653,25 +653,25 @@ async function phaseShared() {
     const row = [...document.querySelectorAll('.pc-members-row-main')].find((r) => r.innerText.startsWith('bob') && !r.innerText.includes('MacBook'));
     row?.querySelector('.pc-members-kick')?.click();
   });
-  await waitFor(() => P(A, () => !!document.querySelector('[data-pc=creator-verify]')), 5000, '验证弹窗');
+  await waitFor(() => P(A, () => !!document.querySelector('[data-pc=creator-verify]')), 5000, 'verification dialog');
   await typeInto(A, '#pc-cv-pw', 'alice-pw');
-  await clickText(A, '验证', '[data-pc=creator-verify] .pc-dialog-foot');
-  await waitFor(() => P(A, () => !!document.querySelector('[data-pc=kick-dialog]')), 8000, '踢人确认');
-  await clickText(A, '踢出', '[data-pc=kick-dialog] .pc-dialog-foot');
-  const blocked = await waitFor(() => P(B, () => document.querySelector('[data-pc=blocked-dialog]')?.innerText ?? null), 8000, 'B 的阻断弹窗').catch(() => null);
-  check('kicked-blocking-dialog', blocked?.includes('你已被创建者踢出该项目，无法继续编辑。想回来，找创建者撤销。') && blocked.includes('开始页'), { blocked });
+  await clickText(A, 'Verify', '[data-pc=creator-verify] .pc-dialog-foot');
+  await waitFor(() => P(A, () => !!document.querySelector('[data-pc=kick-dialog]')), 8000, 'kick confirmation');
+  await clickText(A, 'Kick', '[data-pc=kick-dialog] .pc-dialog-foot');
+  const blocked = await waitFor(() => P(B, () => document.querySelector('[data-pc=blocked-dialog]')?.innerText ?? null), 8000, 'B\'s blocking dialog').catch(() => null);
+  check('kicked-blocking-dialog', blocked?.includes('You have been kicked out of this project by the creator and can no longer edit. To come back, ask the creator to revoke it.') && blocked.includes('start page'), { blocked });
   await shot(B, 'blocked-kicked');
 
   // 收尾:真的删掉(验证删除流程与自己回开始页)
   await A.click('[data-pc=members-button]');
   await sleep(300);
-  await clickText(A, '删除项目', '[data-pc=members-pop]');
+  await clickText(A, 'Delete project', '[data-pc=members-pop]');
   await typeInto(A, '#pc-cv-pw', 'alice-pw');
-  await clickText(A, '验证', '[data-pc=creator-verify] .pc-dialog-foot');
-  await waitFor(() => P(A, () => !!document.querySelector('[data-pc=delete-dialog]')), 8000, '删项目弹窗');
+  await clickText(A, 'Verify', '[data-pc=creator-verify] .pc-dialog-foot');
+  await waitFor(() => P(A, () => !!document.querySelector('[data-pc=delete-dialog]')), 8000, 'delete-project dialog');
   await A.type('[data-pc=delete-dialog] input', name);
-  await clickText(A, '永久删除项目', '[data-pc=delete-dialog] .pc-dialog-foot');
-  const gone = await waitFor(async () => (await fetch(`${hosted}/shared/lookup?name=${encodeURIComponent(name)}`)).status === 404, 8000, '项目删掉').catch(() => false);
+  await clickText(A, 'Permanently delete project', '[data-pc=delete-dialog] .pc-dialog-foot');
+  const gone = await waitFor(async () => (await fetch(`${hosted}/shared/lookup?name=${encodeURIComponent(name)}`)).status === 404, 8000, 'project deleted').catch(() => false);
   const aAfter = await P(A, () => window.__pcSyncTest.view().kind);
   check('delete-project', gone && aAfter === 'local', { aAfter });
   for (const ws of extra) ws.close();
@@ -691,27 +691,27 @@ async function phaseLan() {
   await createSharedProject({ where: 'hosted', hostedUrl: hosted, name, mode: 'free', creator: { username: 'zed', password: 'zed-pw' }, password: 'x-pw', kdf: { alg: 'pbkdf2-sha256', iter: 100000 } });
   // 局域网模式新建(本机当主机)
   await openProjectMenu(C);
-  await clickText(C, '新建共享项目', '.pc-proj-menu');
+  await clickText(C, 'New shared project', '.pc-proj-menu');
   await typeInto(C, '#pc-ns-name', name);
   await typeInto(C, '#pc-ns-creator', 'carol');
   await typeInto(C, '#pc-ns-cpw', 'carol-pw');
-  await clickText(C, '局域网模式', '[data-pc=new-shared-dialog]');
+  await clickText(C, 'LAN mode', '[data-pc=new-shared-dialog]');
   await typeInto(C, '#pc-ns-ppw', 'lan-pw');
   await shot(C, 'new-shared-lan');
-  await clickText(C, '创建', '[data-pc=new-shared-dialog] .pc-dialog-foot');
-  const created = await waitFor(() => P(C, () => { const t = document.querySelector('[data-pc=new-shared-dialog] .pc-sync-status-line')?.innerText; return t?.includes('创建成功') ? t : null; }), 20_000, '局域网建成').catch(() => null);
-  check('new-shared-lan', created === '创建成功。让成员在同一个网段下查项目名就能进。记住本机要保持开着。', { created });
-  await clickText(C, '返回', '[data-pc=new-shared-dialog]');
+  await clickText(C, 'Create', '[data-pc=new-shared-dialog] .pc-dialog-foot');
+  const created = await waitFor(() => P(C, () => { const t = document.querySelector('[data-pc=new-shared-dialog] .pc-sync-status-line')?.innerText; return t?.includes('Created successfully') ? t : null; }), 20_000, 'LAN project created').catch(() => null);
+  check('new-shared-lan', created === 'Created successfully. Members on the same network segment can join by looking up the project name. Remember to keep this machine on.', { created });
+  await clickText(C, 'Back', '[data-pc=new-shared-dialog]');
   await sleep(1500);
   // 另一个页面查找:局域网(本机主机经组播应答)+ 托管端各一个 → 并列
   const D = await openEditor();
   await setHosted(D);
   await openProjectMenu(D);
-  await clickText(D, '打开共享项目', '.pc-proj-menu');
+  await clickText(D, 'Open shared project', '.pc-proj-menu');
   await D.type('#pc-os-name', name);
-  await clickText(D, '查找', '[data-pc=open-shared-dialog] .pc-dialog-foot');
-  const cands = await waitFor(() => P(D, () => { const el = document.querySelector('[data-pc=shared-candidates]'); return el ? el.innerText : null; }), 15_000, '并列候选').catch(() => null);
-  check('open-shared-two-candidates', !!cands && cands.includes('[互联网模式] 托管在阿里云') && cands.includes('[局域网模式] 主机：'), { cands, title: await P(D, () => document.querySelector('[data-pc=open-shared-dialog] .pc-dialog-body')?.innerText.split('\n')[0]) });
+  await clickText(D, 'Find', '[data-pc=open-shared-dialog] .pc-dialog-foot');
+  const cands = await waitFor(() => P(D, () => { const el = document.querySelector('[data-pc=shared-candidates]'); return el ? el.innerText : null; }), 15_000, 'side-by-side candidates').catch(() => null);
+  check('open-shared-two-candidates', !!cands && cands.includes('[Internet mode] Hosted on Alibaba Cloud') && cands.includes('[LAN mode] Host:'), { cands, title: await P(D, () => document.querySelector('[data-pc=open-shared-dialog] .pc-dialog-body')?.innerText.split('\n')[0]) });
   await shot(D, 'open-shared-choose');
   await C.close();
   await D.close();
@@ -750,9 +750,9 @@ async function spawnEditor(port, { lan }) {
   origin = `http://127.0.0.1:${port}`;
   say('editor.spawn', { pid: editorProc.pid, origin, lan: !!lan });
   await waitFor(async () => {
-    if (editorProc.exitCode !== null) throw new Error(`编辑器进程退出了(${editorProc.exitCode}):${editorLog.join('').slice(-600)}`);
+    if (editorProc.exitCode !== null) throw new Error(`The editor process exited (${editorProc.exitCode}): ${editorLog.join('').slice(-600)}`);
     return fetch(`${origin}/`, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok, () => false);
-  }, 180_000, '编辑器起来');
+  }, 180_000, 'editor started');
 }
 async function stopEditor() {
   if (!editorProc || editorProc.exitCode !== null || !editorProc.pid) return;
@@ -773,7 +773,7 @@ async function hostRead(base, projectId, cred, tag) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsBaseOf(base), protocols);
     const parts = [];
-    const timer = setTimeout(() => { reject(new Error('主机 project.open 超时')); ws.close(); }, 10_000);
+    const timer = setTimeout(() => { reject(new Error('host project.open timed out')); ws.close(); }, 10_000);
     const done = (project, rev) => {
       clearTimeout(timer);
       resolve({ rev, sha256: createHash('sha256').update(JSON.stringify(project)).digest('hex') });
@@ -786,7 +786,7 @@ async function hostRead(base, projectId, cred, tag) {
       else if (m.type === 'project.state.part') parts[m.index] = m.data;
       else if (m.type === 'project.state.end') done(JSON.parse(parts.join('')), m.rev);
     });
-    ws.addEventListener('error', () => { clearTimeout(timer); reject(new Error(`连不上主机 ${wsBaseOf(base)}`)); });
+    ws.addEventListener('error', () => { clearTimeout(timer); reject(new Error(`Cannot connect to host ${wsBaseOf(base)}`)); });
   });
 }
 
@@ -811,7 +811,7 @@ function watchFor(page, value, ms, shotName) {
       const c = S.getState().project.tracks.flatMap((t) => t.clips).find((x) => x.params?.text === value);
       if (!c) return null;
       return { clipId: c.id, flash: !!document.querySelector(`[data-clip-id="${c.id}"][data-remote-flash]`) };
-    }, value), ms, `页面出现 ${value}`);
+    }, value), ms, `page shows ${value}`);
     const at = Date.now();
     const file = await shot(page, shotName);
     return { at, ...hit, shot: file };
@@ -825,8 +825,8 @@ async function openSharedMenu(page, item) {
 
 async function runCreator(res, fails) {
   const mode = arg('--mode', null);
-  if (mode !== 'lan' && mode !== 'hosted') throw new Error('--mode 要 lan 或 hosted');
-  if (mode === 'hosted' && !argv.includes('--hosted')) throw new Error('托管模式要 --hosted <托管组合地址>');
+  if (mode !== 'lan' && mode !== 'hosted') throw new Error('--mode must be lan or hosted');
+  if (mode === 'hosted' && !argv.includes('--hosted')) throw new Error('Hosted mode requires --hosted <hosted bundle address>');
   res.mode = mode;
   const runId = res.runId;
   const timeoutMs = Number(arg('--timeout', '900')) * 1000;
@@ -840,7 +840,7 @@ async function runCreator(res, fails) {
     coordUrl = server.url;
     say('coord.listen', { port: server.port, host: arg('--coord-host', '127.0.0.1') });
   }
-  if (!coordUrl) throw new Error('要 --coord-port <n>(本进程起协调口)或 --coord <url>');
+  if (!coordUrl) throw new Error('Requires --coord-port <n> (this process starts a coordinator port) or --coord <url>');
   res.coord = coordUrl;
   const coord = coordClient(coordUrl);
 
@@ -849,7 +849,7 @@ async function runCreator(res, fails) {
   const A = await openEditor();
   const device = await P(A, () => window.__pcSyncTest.view().device);
   res.device = device;
-  if (mode === 'lan' && !(device?.lanHost && device?.localEditor)) throw new Error(`局域网模式要编辑器以 PROMPTCUT_LAN_HOST=1 启动、页面从回环打开:${JSON.stringify(device)}`);
+  if (mode === 'lan' && !(device?.lanHost && device?.localEditor)) throw new Error(`LAN mode requires the editor to be started with PROMPTCUT_LAN_HOST=1 and the page to be opened from loopback: ${JSON.stringify(device)}`);
   if (mode === 'hosted') await P(A, (u) => localStorage.setItem('pc.shared.hostedUrl', u), hosted);
 
   // ---------- D11 界面「新建共享项目」(自由进入)
@@ -857,24 +857,24 @@ async function runCreator(res, fails) {
   const creatorPw = `cpw-${randomBytes(6).toString('hex')}`;
   const projectPw = `ppw-${randomBytes(6).toString('hex')}`;
   res.name = name;
-  await openSharedMenu(A, '新建共享项目');
+  await openSharedMenu(A, 'New shared project');
   await typeInto(A, '#pc-ns-name', name);
   await typeInto(A, '#pc-ns-creator', 'alice');
   await typeInto(A, '#pc-ns-cpw', creatorPw);
-  await clickText(A, mode === 'lan' ? '局域网模式' : '互联网模式', '[data-pc=new-shared-dialog]');
-  await clickText(A, '自由进入', '[data-pc=new-shared-dialog]');
+  await clickText(A, mode === 'lan' ? 'LAN mode' : 'Internet mode', '[data-pc=new-shared-dialog]');
+  await clickText(A, 'Open entry', '[data-pc=new-shared-dialog]');
   await typeInto(A, '#pc-ns-ppw', projectPw);
-  await clickText(A, '创建', '[data-pc=new-shared-dialog] .pc-dialog-foot');
+  await clickText(A, 'Create', '[data-pc=new-shared-dialog] .pc-dialog-foot');
   const created = await waitFor(() => P(A, () => {
     const t = document.querySelector('[data-pc=new-shared-dialog] .pc-sync-status-line')?.innerText;
-    return t && !t.includes('正在创建') ? t : null;
-  }), 30_000, '创建结果');
+    return t && !t.includes('Creating') ? t : null;
+  }), 30_000, 'Creation result');
   const shared = await P(A, () => window.__pcSyncTest.view().shared);
   say('creator.created', { created, shared });
-  if (!created.includes('创建成功') || !shared) throw new Error(`没建成:${created}`);
+  if (!created.includes('Created successfully') || !shared) throw new Error(`Creation failed: ${created}`);
   res.projectId = shared.projectId;
   res.where = shared.where;
-  await clickText(A, '返回', '[data-pc=new-shared-dialog]');
+  await clickText(A, 'Back', '[data-pc=new-shared-dialog]');
   await settle(A);
 
   const cred = { as: 'creator', username: 'alice', password: creatorPw };
@@ -894,7 +894,7 @@ async function runCreator(res, fails) {
 
   // ---------- 成员进入
   const entered = await coord.take('u2-entered', Date.now() + timeoutMs);
-  if (!entered) throw new Error('等成员进入超时');
+  if (!entered) throw new Error('Timed out waiting for the member to join');
   say('creator.member-entered', entered);
   res.member = { entered };
   if (!entered.ok) fails.push('member-enter');
@@ -905,7 +905,7 @@ async function runCreator(res, fails) {
   await coord.put('u2-go', { memberToken, creatorToken });
   const report = await coord.take('u2-member-edit', Date.now() + 120_000);
   const tReport = Date.now();
-  if (!report) throw new Error('等成员「已提交」超时');
+  if (!report) throw new Error('Timed out waiting for member "submitted"');
   const seen = await seenMember;
   res.memberEditSeenMs = Math.max(0, seen.at - tReport);
   res.memberEditSinceGoMs = seen.at - tGo;
@@ -924,7 +924,7 @@ async function runCreator(res, fails) {
   say('creator.edit-committed', res.creatorEdit);
 
   const memberResult = await coord.take('u2-member-result', Date.now() + 120_000);
-  if (!memberResult) throw new Error('等成员结果超时');
+  if (!memberResult) throw new Error('Timed out waiting for the member\'s result');
   res.member.result = memberResult;
   res.creatorEditSeenMs = memberResult.creatorEditSeenMs ?? null;
   if (!memberResult.ok) fails.push(`member:${(memberResult.fails ?? []).join('|')}`);
@@ -954,7 +954,7 @@ async function runCreator(res, fails) {
 
 async function runMember(res, fails) {
   const coordUrl = arg('--coord', null);
-  if (!coordUrl) throw new Error('member 要 --coord <url>');
+  if (!coordUrl) throw new Error('member requires --coord <url>');
   res.coord = coordUrl;
   const coord = coordClient(coordUrl);
   const timeoutMs = Number(arg('--timeout', '900')) * 1000;
@@ -967,8 +967,8 @@ async function runMember(res, fails) {
     say('member.editor', { origin, device: res.device });
 
     const join = await coord.take('u2-join', Date.now() + timeoutMs);
-    if (!join) throw new Error('等创建者的进入信息超时');
-    say('member.join', { ...join, projectPassword: '(有)' });
+    if (!join) throw new Error('Timed out waiting for the creator\'s join info');
+    say('member.join', { ...join, projectPassword: '(present)' });
     res.mode = join.mode;
     res.name = join.name;
     // 查找时页面会同时查托管端:局域网模式缺省给一个连不上的回环地址,不碰真正的托管端
@@ -977,28 +977,28 @@ async function runMember(res, fails) {
     await P(B, (u) => localStorage.setItem('pc.shared.hostedUrl', u), hostedUrl);
 
     // ---------- D11 界面「打开共享项目」:查找 →(并列时挑对应模式)→ 验证 → 进入
-    await openSharedMenu(B, '打开共享项目');
+    await openSharedMenu(B, 'Open shared project');
     await B.type('#pc-os-name', join.name);
-    await clickText(B, '查找', '[data-pc=open-shared-dialog] .pc-dialog-foot');
+    await clickText(B, 'Find', '[data-pc=open-shared-dialog] .pc-dialog-foot');
     const found = await waitFor(() => P(B, () => {
       if (document.querySelector('#pc-os-user')) return 'verify';
       if (document.querySelector('[data-pc=shared-candidates]')) return 'choose';
       const line = document.querySelector('[data-pc=open-shared-dialog] .pc-sync-status-line')?.innerText;
-      return line && !line.includes('正在') ? `msg:${line}` : null;
-    }), 20_000, '查找结果');
+      return line && !line.includes('In progress') ? `msg:${line}` : null;
+    }), 20_000, 'Lookup result');
     say('member.found', { found });
-    if (found.startsWith('msg:')) throw new Error(`查找失败:${found.slice(4)}`);
+    if (found.startsWith('msg:')) throw new Error(`Lookup failed: ${found.slice(4)}`);
     if (found === 'choose') {
-      const want = join.mode === 'lan' ? '[局域网模式]' : '[互联网模式]';
+      const want = join.mode === 'lan' ? '[LAN mode]' : '[Internet mode]';
       await clickText(B, want, '[data-pc=shared-candidates]');
-      await waitFor(() => P(B, () => !!document.querySelector('#pc-os-user')), 5000, '验证步');
+      await waitFor(() => P(B, () => !!document.querySelector('#pc-os-user')), 5000, 'Verification step');
     }
     const label = await P(B, () => document.querySelector('[data-pc=open-shared-dialog] .pc-dialog-body')?.innerText.split('\n')[0] ?? null);
     await typeInto(B, '#pc-os-pw', join.projectPassword);
     await typeInto(B, '#pc-os-user', join.username);
     const tEnter = Date.now();
-    await clickText(B, '进入', '[data-pc=open-shared-dialog] .pc-dialog-foot');
-    await waitFor(() => P(B, () => window.__pcSyncTest.view().kind === 'shared'), 20_000, '进入共享项目').catch(async (e) => {
+    await clickText(B, 'Enter', '[data-pc=open-shared-dialog] .pc-dialog-foot');
+    await waitFor(() => P(B, () => window.__pcSyncTest.view().kind === 'shared'), 20_000, 'Joined shared project').catch(async (e) => {
       throw new Error(`${e.message}:${await P(B, () => document.querySelector('[data-pc=open-shared-dialog] .pc-sync-status-line')?.innerText ?? '')}`);
     });
     res.enterMs = Date.now() - tEnter;
@@ -1022,7 +1022,7 @@ async function runMember(res, fails) {
 
     // ---------- 改一处:第一个片段的 text 参数;文档服务确认后报「已提交」
     const go = await coord.take('u2-go', Date.now() + 120_000);
-    if (!go) throw new Error('等创建者的「改」信号超时');
+    if (!go) throw new Error('Timed out waiting for the creator\'s "edit" signal');
     const seenCreator = watchFor(B, go.creatorToken, 180_000, 'member-2-saw-creator-edit');
     const [clipId] = await clipIds(B);
     const commitMs = await editAndSave(B, clipId, { text: go.memberToken });
@@ -1033,7 +1033,7 @@ async function runMember(res, fails) {
     // ---------- 等创建者那一处在本页出现
     const report = await coord.take('u2-creator-edit', Date.now() + 120_000);
     const tReport = Date.now();
-    if (!report) throw new Error('等创建者「已提交」超时');
+    if (!report) throw new Error('Timed out waiting for creator "submitted"');
     const seen = await seenCreator;
     res.creatorEditSeenMs = Math.max(0, seen.at - tReport);
     res.creatorEdit = { clipId: report.clipId, value: report.value, creatorCommitMs: report.commitMs, seenClipId: seen.clipId, flash: seen.flash };
@@ -1061,7 +1061,7 @@ async function runCross() {
   try {
     if (ROLE === 'creator') await runCreator(res, fails);
     else if (ROLE === 'member') await runMember(res, fails);
-    else throw new Error('--role 要 creator 或 member');
+    else throw new Error('--role must be creator or member');
   } catch (e) {
     const lines = String(e?.stack ?? e).split(/\r?\n/);
     fails.push(`error:${lines[0].slice(0, 300)}`);

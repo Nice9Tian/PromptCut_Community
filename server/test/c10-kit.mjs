@@ -135,10 +135,10 @@ export function pickMethod(obj, names) {
 /** skip 原因：什么文件、什么名字（任务书「写明原因」） */
 export function missingWhat(files, names) {
   const present = files.filter(exists);
-  const fileText = present.length ? `文件 ${present.join('、')} 在，但` : `文件 ${files.join('、')} 都不存在，`;
-  return `${fileText}没有导出 ${names.join(' / ')} 中的任何一个`;
+  const fileText = present.length ? `File ${present.join(', ')} exists, but` : `Files ${files.join(', ')} do not exist,`;
+  return `${fileText} none of ${names.join(' / ')} is exported`;
 }
-export const skipReason = (what) => `接口缺失：${what}（C10 实现未集成，集成后自动转为真跑）`;
+export const skipReason = (what) => `Interface missing: ${what} (C10 implementation not integrated; becomes a real run automatically once integrated)`;
 
 /** 非测试的 `src/` 源文件（`.ts`、`.tsx`、`.mjs`、`.js`），缓存一次 */
 let srcFilesCache = null;
@@ -168,7 +168,7 @@ export function within(promise, ms, what) {
   let timer;
   return Promise.race([
     Promise.resolve(promise).finally(() => clearTimeout(timer)),
-    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${what}：${ms} ms 内没有落定（挂住了？事务的 error / abort 有没有接）`)), ms); }),
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${what}: did not settle within ${ms} ms (hung? are the transaction's error / abort handlers wired up?)`)), ms); }),
   ]);
 }
 
@@ -214,12 +214,12 @@ export function l2Gate() {
 /** 打开 L2，并把方法按候选名接成统一的形状（K2） */
 export async function openL2(gate, { indexedDB, deviceMemory, estimate, now = () => Date.now() }) {
   const mod = await importRepo(gate.file);
-  const store = await within(mod[gate.name]({ indexedDB, deviceMemory, estimate, now }), 5000, `L2 ${gate.name}() 打开`);
-  if (!store || typeof store !== 'object') throw new Error(`假设 K2：${gate.name}() 没回对象`);
+  const store = await within(mod[gate.name]({ indexedDB, deviceMemory, estimate, now }), 5000, `L2 ${gate.name}() open`);
+  if (!store || typeof store !== 'object') throw new Error(`Assumption K2: ${gate.name}() did not return an object`);
   const m = {};
   for (const [k, names] of Object.entries(L2_METHODS)) m[k] = pickMethod(store, names);
   for (const k of ['putBlock', 'getBlock', 'putCost', 'getCost', 'putRange', 'subscribe']) {
-    if (!m[k]) throw new Error(`假设 K2：L2 对象上找不到 ${k}（候选 ${L2_METHODS[k].join(' / ')}）；有的方法：${Object.keys(store).join(', ')}`);
+    if (!m[k]) throw new Error(`Assumption K2: ${k} not found on the L2 object (candidates ${L2_METHODS[k].join(' / ')}); available methods: ${Object.keys(store).join(', ')}`);
   }
   const call = (k, ...args) => within(store[m[k]](...args), 5000, `L2 ${m[k]}()`);
   return {
@@ -316,10 +316,10 @@ export function beatFitOf() {
 }
 /** 统一回 `{ swap, placeholder, deadMs? }` */
 export function normalizeFit(r) {
-  if (!r || typeof r !== 'object') throw new Error(`假设 K3：换帧取舍函数没回对象：${JSON.stringify(r)}`);
+  if (!r || typeof r !== 'object') throw new Error(`Assumption K3: the frame-swap selection function did not return an object: ${JSON.stringify(r)}`);
   const swap = r.swap ?? r.swapped ?? r.fit;
   const placeholder = r.placeholder ?? r.placeholders ?? r.over;
-  if (!Array.isArray(swap) || !Array.isArray(placeholder)) throw new Error(`假设 K3：回包要有 swap / placeholder 两个数组：${JSON.stringify(r)}`);
+  if (!Array.isArray(swap) || !Array.isArray(placeholder)) throw new Error(`Assumption K3: the response must have two arrays, swap / placeholder: ${JSON.stringify(r)}`);
   return { swap: [...swap], placeholder: [...placeholder], deadMs: r.deadMs };
 }
 
@@ -370,7 +370,7 @@ export function normalizeLayout(r) {
     if (r.dual === true || r.layout === 'dual' || r.mode === 'dual') return 'dual';
     if (r.dual === false || r.layout === 'single' || r.mode === 'single') return 'single';
   }
-  throw new Error(`假设 K5：认不出舞台取舍的回包：${JSON.stringify(r)}`);
+  throw new Error(`Assumption K5: cannot recognize the stage selection response: ${JSON.stringify(r)}`);
 }
 
 /* ================================================================== K6 发布 plan */
@@ -438,17 +438,17 @@ export const TABLE_A = [
   // 离线常驻提示按改动存没存下来分两句(〔裁:2026-10-22 主会话〕,原「当前离线，有未提交的修改。关闭页面将丢失这些操作。」作废)
   "Currently offline. Your changes are saved on this machine and will be merged back into the project once you're back online.",
   'Currently offline. Your changes exist only on this page and will be lost when you close it.',
-  '在线浏览器模式暂不支持',
-  '，请在电脑上的 PromptCut 里使用。',
+  'Online browser mode does not yet support',
+  ', please use PromptCut on your computer.',
 ];
-export const C10_UI_MARKERS = ['，请在电脑上的 PromptCut 里使用。', "Currently offline. Your changes are saved on this machine and will be merged back into the project once you're back online."];
+export const C10_UI_MARKERS = [', please use PromptCut on your computer.', "Currently offline. Your changes are saved on this machine and will be merged back into the project once you're back online."];
 /** 第 9 节：并入图标，不另报错 */
-export const DROPPED_TEXTS = ['该模式暂不支持素材输入的音频素材效果卡', '该模式暂不支持自定义卡',
+export const DROPPED_TEXTS = ['This mode does not yet support audio media effect cards that take media input', 'This mode does not yet support custom cards',
   // 2026-10-21 用户定:「无论哪种都不存在『本地PC辅助渲染』这个情况」—— 舞台图标与时间轴徽标一并撤掉
-  '需要本地 PC 渲染辅助'];
+  'Local PC render helper required'];
 export function uiGate() {
   const hits = C10_UI_MARKERS.flatMap(srcFilesContaining);
-  return hits.length ? { ok: true, files: hits } : { ok: false, reason: skipReason(`src/ 的非测试源文件里没有表 A 的「${C10_UI_MARKERS.join('」或「')}」`) };
+  return hits.length ? { ok: true, files: hits } : { ok: false, reason: skipReason(`The non-test source files in src/ do not contain "${C10_UI_MARKERS.join('" or "')}" from Table A`) };
 }
 
 /* ================================================================== K9 棘轮 */
@@ -456,7 +456,7 @@ export function uiGate() {
 export const RATCHET_FILE = 'server/test/c10a-online-api-paths.json';
 export const RATCHET_BASELINE = 'server/test/c10-api-ratchet-baseline.json';
 export function ratchetGate() {
-  return exists(RATCHET_FILE) ? { ok: true } : { ok: false, reason: skipReason(`${RATCHET_FILE} 不存在（C10a 的棘轮清单还在 claude/c10a-integ，没进 main）`) };
+  return exists(RATCHET_FILE) ? { ok: true } : { ok: false, reason: skipReason(`${RATCHET_FILE} does not exist (the ratchet manifest of C10a is still on claude/c10a-integ and has not reached main)`) };
 }
 
 /* ================================================================== K10 备份 */
@@ -480,7 +480,7 @@ export function backupGate() {
 
 export function mergeGate() {
   const src = exists('server/asset-service.ts') ? fs.readFileSync(repoPath('server/asset-service.ts'), 'utf8') : '';
-  return /\bmerge\b/.test(src) ? { ok: true } : { ok: false, reason: skipReason('server/asset-service.ts 里没有出现 merge 路由') };
+  return /\bmerge\b/.test(src) ? { ok: true } : { ok: false, reason: skipReason('No merge route appears in server/asset-service.ts') };
 }
 export const MERGE_PATH = (projectId, key) => `/api/asset/merge/${projectId}/${key}`;
 

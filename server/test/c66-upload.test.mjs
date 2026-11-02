@@ -70,37 +70,37 @@ async function drainWithin(q, ms) {
 
 // ------------------------------------------------------------------ T3
 
-test('C66-T3-01 所有素材小尺寸先传、再按进队先后传素材原尺寸；上一档 complete 之后才写下一档', async () => {
+test('C66-T3-01 all small-size assets upload first, then original-size assets in queue order; the next tier is written only after the previous tier is complete', async () => {
   const createQueue = await loadUploadQueue();
   const srv = await harness.serve({ chunkSize: CHUNK, isTrusted: () => true });
   const rec = recordingFetch();
   const { A, B, C, items } = materials();
   const q = createQueue({ file: queueFile(), base: srv.base, fetch: rec.fetch, chunkSize: CHUNK });
   for (const it of items) await q.enqueue(it);
-  assert.equal(await drainWithin(q, 20_000), true, 'drain 要在 20 s 内跑完');
+  assert.equal(await drainWithin(q, 20_000), true, 'drain must finish within 20 s');
   await q.close();
 
   const runs = writeRuns(rec.log);
   const order = [A.small, B.small, A.original, B.original, C.original];
   assert.deepEqual(runs.map((r) => r.hash), order.map((f) => f.hash),
-    `写请求要按「A 小、B 小、A 原、B 原、C 原」成段出现、不交错；实际段序：${runs.map((r) => r.hash.slice(0, 6)).join(' → ')}`);
+    `write requests must appear in runs in the order "A small, B small, A original, B original, C original", not interleaved; actual run order: ${runs.map((r) => r.hash.slice(0, 6)).join(' → ')}`);
   runs.forEach((r, i) => {
-    assert.equal(r.completed, true, `第 ${i + 1} 段（${r.hash.slice(0, 6)}）以 complete 收尾`);
-    assert.deepEqual([...new Set(r.puts)].sort((a, b) => a - b), [...Array(chunkCount(order[i])).keys()], `第 ${i + 1} 段传齐所有分片`);
+    assert.equal(r.completed, true, `run ${i + 1} (${r.hash.slice(0, 6)}) ends with complete`);
+    assert.deepEqual([...new Set(r.puts)].sort((a, b) => a - b), [...Array(chunkCount(order[i])).keys()], `run ${i + 1} uploads all chunks`);
   });
   // 每一段里 complete 是最后一个写请求
   const writes = rec.log.filter((e) => e.ns === 'media' && (e.action === 'put' || e.action === 'complete'));
   for (const f of order) {
     const idx = writes.map((e, i) => (e.hash === f.hash ? i : -1)).filter((i) => i >= 0);
-    assert.equal(writes[idx[idx.length - 1]].action, 'complete', `${f.hash.slice(0, 6)} 的最后一个写请求是 complete`);
+    assert.equal(writes[idx[idx.length - 1]].action, 'complete', `the last write request of ${f.hash.slice(0, 6)} is complete`);
   }
-  for (const f of order) assert.equal((await chunksOf(srv.base, f.hash)).complete, true, `${f.hash.slice(0, 6)} 在素材服务上 complete`);
+  for (const f of order) assert.equal((await chunksOf(srv.base, f.hash)).complete, true, `${f.hash.slice(0, 6)} is complete on the asset service`);
   await srv.close();
 });
 
 // ------------------------------------------------------------------ T2
 
-test('C66-T2-01 上传中断网、重启后续传：同一个 upload-queue.json 建新队列，只补缺的分片；素材小尺寸、素材原尺寸的 chunks 分别报 complete', async () => {
+test('C66-T2-01 network lost during upload, resume after restart: a new queue built from the same upload-queue.json uploads only the missing chunks; chunks of the small-size asset and the original-size asset each report complete', async () => {
   const createQueue = await loadUploadQueue();
   const srv = await harness.serve({ chunkSize: CHUNK, isTrusted: () => true });
   const { A, B, C, items } = materials();
@@ -111,7 +111,7 @@ test('C66-T2-01 上传中断网、重启后续传：同一个 upload-queue.json 
   const rec1 = recordingFetch((info, _log, state) => {
     if (info.action === 'put' && info.hash === A.original.hash && ++aOrigPuts > 3) {
       state.offline = true;
-      throw new TypeError('fetch failed (测试断网)');
+      throw new TypeError('fetch failed (test network outage)');
     }
     return undefined;
   });
@@ -120,34 +120,34 @@ test('C66-T2-01 上传中断网、重启后续传：同一个 upload-queue.json 
   await drainWithin(q1, 3000);
   await q1.close();
 
-  assert.ok(fs.existsSync(qf), 'upload-queue.json 要落盘');
-  assert.equal((await chunksOf(srv.base, A.small.hash)).complete, true, '断网前 A 的素材小尺寸已经传完');
+  assert.ok(fs.existsSync(qf), 'upload-queue.json must be written to disk');
+  assert.equal((await chunksOf(srv.base, A.small.hash)).complete, true, 'A\'s small-size asset had already finished uploading before the network was cut');
   const mid = await chunksOf(srv.base, A.original.hash);
-  assert.equal(mid.complete, false, '断网时 A 素材原尺寸没传完');
+  assert.equal(mid.complete, false, 'A\'s original-size asset had not finished uploading when the network was cut');
   const received = new Set(mid.received);
-  assert.ok(received.size >= 1 && received.size < chunkCount(A.original), `A 素材原尺寸收了一部分分片：${[...received]}`);
-  assert.equal((await chunksOf(srv.base, B.small.hash)).complete, true, '断网前 B 的素材小尺寸也已经传完（所有素材小尺寸先于任何素材原尺寸）');
+  assert.ok(received.size >= 1 && received.size < chunkCount(A.original), `A's original-size asset received only some of its chunks: ${[...received]}`);
+  assert.equal((await chunksOf(srv.base, B.small.hash)).complete, true, 'B\'s small-size asset had also finished uploading before the network was cut (all small-size assets come before any original-size asset)');
   for (const f of [B.original, C.original]) {
-    assert.equal((await chunksOf(srv.base, f.hash)).received.length, 0, `A 素材原尺寸没完之前 B、C 的素材原尺寸一片都没传（${f.hash.slice(0, 6)}）`);
+    assert.equal((await chunksOf(srv.base, f.hash)).received.length, 0, `before A's original-size asset was done, not a single chunk of B's and C's original-size assets was uploaded (${f.hash.slice(0, 6)})`);
   }
 
   // 第二个实例：同一个队列文件，不再 enqueue，网络正常
   const rec2 = recordingFetch();
   const q2 = createQueue({ file: qf, base: srv.base, fetch: rec2.fetch, chunkSize: CHUNK });
-  assert.equal(await drainWithin(q2, 20_000), true, '续传要在 20 s 内跑完');
+  assert.equal(await drainWithin(q2, 20_000), true, 'resume must finish within 20 s');
   await q2.close();
 
   const puts = (f) => rec2.log.filter((e) => e.action === 'put' && e.hash === f.hash).map((e) => e.n);
-  assert.deepEqual(puts(A.small), [], '已 complete 的 A 素材小尺寸不重传');
-  assert.deepEqual(puts(B.small), [], '已 complete 的 B 素材小尺寸不重传');
+  assert.deepEqual(puts(A.small), [], 'A\'s small-size asset that is already complete is not re-uploaded');
+  assert.deepEqual(puts(B.small), [], 'B\'s small-size asset that is already complete is not re-uploaded');
   const missing = [...Array(chunkCount(A.original)).keys()].filter((n) => !received.has(n));
-  assert.deepEqual([...puts(A.original)].sort((a, b) => a - b), missing, 'A 素材原尺寸只补缺的分片，每片一次');
+  assert.deepEqual([...puts(A.original)].sort((a, b) => a - b), missing, 'A\'s original-size asset uploads only the missing chunks, each once');
   const runs = writeRuns(rec2.log).map((r) => r.hash);
-  assert.deepEqual(runs, [A.original.hash, B.original.hash, C.original.hash], '续传按「A 原、B 原、C 原」（两份素材小尺寸重启前已传完）');
+  assert.deepEqual(runs, [A.original.hash, B.original.hash, C.original.hash], 'resume follows "A original, B original, C original" (both small-size assets finished uploading before the restart)');
 
-  for (const [name, f] of Object.entries({ 'A 素材小尺寸': A.small, 'A 素材原尺寸': A.original, 'B 素材小尺寸': B.small, 'B 素材原尺寸': B.original, 'C 素材原尺寸': C.original })) {
+  for (const [name, f] of Object.entries({ 'A\'s small-size asset': A.small, 'A\'s original-size asset': A.original, 'B\'s small-size asset': B.small, 'B\'s original-size asset': B.original, 'C\'s original-size asset': C.original })) {
     const st = await chunksOf(srv.base, f.hash);
-    assert.equal(st.complete, true, `${name} 的 GET media/<hash>/chunks 报 complete: true`);
+    assert.equal(st.complete, true, `GET media/<hash>/chunks for ${name} reports complete: true`);
   }
 
   // 两档都 complete 才出队：再起一个实例，什么都不写
@@ -155,11 +155,11 @@ test('C66-T2-01 上传中断网、重启后续传：同一个 upload-queue.json 
   const q3 = createQueue({ file: qf, base: srv.base, fetch: rec3.fetch, chunkSize: CHUNK });
   assert.equal(await drainWithin(q3, 5000), true);
   await q3.close();
-  assert.deepEqual(rec3.log.filter((e) => e.action === 'put' || e.action === 'complete'), [], '队列已空：再起实例不发任何写请求');
+  assert.deepEqual(rec3.log.filter((e) => e.action === 'put' || e.action === 'complete'), [], 'the queue is empty: starting another instance sends no write requests');
   await srv.close();
 });
 
-test('C66-T2-02 素材服务上已 complete 的档不重传（问过 chunks 就跳过）', async () => {
+test('C66-T2-02 a tier that is already complete on the asset service is not re-uploaded (skipped once chunks has been queried)', async () => {
   const createQueue = await loadUploadQueue();
   const srv = await harness.serve({ chunkSize: CHUNK, isTrusted: () => true });
   const { A, items } = materials();
@@ -176,16 +176,16 @@ test('C66-T2-02 素材服务上已 complete 的档不重传（问过 chunks 就�
   await q.enqueue(items[0]);
   assert.equal(await drainWithin(q, 20_000), true);
   await q.close();
-  assert.deepEqual(rec.log.filter((e) => e.action === 'put' && e.hash === A.small.hash), [], '已 complete 的素材小尺寸一片都不传');
+  assert.deepEqual(rec.log.filter((e) => e.action === 'put' && e.hash === A.small.hash), [], 'an already complete small-size asset uploads not a single chunk');
   assert.equal((await chunksOf(srv.base, A.original.hash)).complete, true);
   await srv.close();
 });
 
-test('C66-T2-03 同步状态不进项目：MediaTiers 只有 small / original，MediaAsset 没有上传、同步、可播性一类字段', () => {
+test('C66-T2-03 sync state does not enter the project: MediaTiers has only small / original, and MediaAsset has no upload, sync or playability fields', () => {
   const src = fs.readFileSync(path.join(ROOT, 'src', 'kernel', 'project.ts'), 'utf8');
   const fieldsOf = (name) => {
     const m = new RegExp(`export interface ${name}\\s*\\{`).exec(src);
-    assert.ok(m, `project.ts 里要有 interface ${name}`);
+    assert.ok(m, `project.ts must have interface ${name}`);
     // 取到配对的右花括号
     let depth = 0, i = m.index + m[0].length - 1, end = -1;
     for (; i < src.length; i++) {
@@ -203,7 +203,7 @@ test('C66-T2-03 同步状态不进项目：MediaTiers 只有 small / original，
     }
     return names;
   };
-  assert.deepEqual(fieldsOf('MediaTiers').sort(), ['original', 'small'], 'MediaTiers 只有两档的哈希');
+  assert.deepEqual(fieldsOf('MediaTiers').sort(), ['original', 'small'], 'MediaTiers has only the hashes of the two tiers');
   const bad = fieldsOf('MediaAsset').filter((n) => /upload|sync|complete|received|chunk|playab|progress|queue|transfer/i.test(n));
-  assert.deepEqual(bad, [], `MediaAsset 不该有同步状态 / 可播性字段：${bad.join(', ')}`);
+  assert.deepEqual(bad, [], `MediaAsset must not have sync state / playability fields: ${bad.join(', ')}`);
 });

@@ -157,9 +157,9 @@ test('peakConcurrency / groupStreams merge only z-adjacent streams, and only whi
     { clipId: 'c', order: 4, from: 0, to: 99 },
   ];
   const streams = ['a', 'b', 'c'].map((id) => ({ clipIds: [id], order: layers.find(l => l.clipId === id).order, from: 0, to: 99 }));
-  assert.equal(groupStreams(streams, layers, 6).length, 3, '没超预算不合并');
+  assert.equal(groupStreams(streams, layers, 6).length, 3, 'no merge when within budget');
   const merged = groupStreams(streams, layers, 2);
-  assert.deepEqual(merged.map(s => s.clipIds), [['a', 'b'], ['c']], 'b 和 c 之间隔着素材层,只能合 a+b');
+  assert.deepEqual(merged.map(s => s.clipIds), [['a', 'b'], ['c']], 'b and c are separated by a media layer, so only a+b can merge');
   // 已经合不动(隔着别的层)就停,不死循环
   assert.equal(groupStreams(streams, layers, 1).length, 2);
 });
@@ -188,7 +188,7 @@ test('planStreams: one stream per eligible card, segments counted from the strea
   const b = specs.find(s => s.clipIds[0] === 'b');
   assert.deepEqual([b.originFrame, b.firstSegment, b.lastSegment], [0, 0, 7]);
   assert.deepEqual(a.offset, { x: 640, y: 360 });
-  assert.equal(a.mountFrame, 14, '挂载帧含 LEAD');
+  assert.equal(a.mountFrame, 14, 'mount frame includes LEAD');
   // 预渲染集合之外的卡不产流(pinned 渲染 9)
   assert.equal(planStreams(entry, { picked: id => id === 'b', envFingerprint: ENV_FP }).length, 1);
   // 超预算:合成一条组流,舞台坐标,最上面那张在最后
@@ -196,14 +196,14 @@ test('planStreams: one stream per eligible card, segments counted from the strea
   assert.equal(grouped.length, 1);
   assert.equal(grouped[0].kind, 'group');
   assert.equal(grouped[0].plane, 'stage');
-  assert.deepEqual(grouped[0].clipIds, ['b', 'a'], '画家顺序:t2 在下面,t1 在最上面');
+  assert.deepEqual(grouped[0].clipIds, ['b', 'a'], 'painter\'s order: t2 is at the bottom, t1 is on top');
   assert.equal(grouped[0].topClipId, 'a');
   assert.deepEqual(grouped[0].bound, { x: 0, y: 0, w: 1920, h: 1080 });
   // 组流的第一帧是成员里最早的那个第一帧(b 的第 0 帧),最后一帧是成员里最晚的(b 的第 119 帧)
   assert.deepEqual([grouped[0].originFrame, grouped[0].firstSegment, grouped[0].lastSegment], [0, 0, 7]);
 });
 
-test('planStreams: 片段不从 15 的倍数帧开始、时长不是 15 的倍数 —— 分段照样从它自己的第一帧起,末段不满', () => {
+test('planStreams: when a clip does not start on a frame that is a multiple of 15 and its duration is not a multiple of 15, segments still start from the clip\'s own first frame and the last segment is partial', () => {
   // 第 100 帧开始(100 / 30 秒),共 50 帧:第 100～149 帧。第 0 段 100～114、第 1 段 115～129、第 2 段 130～144、第 3 段 145～149(5 帧)
   const start = 100 / 30, end = 150 / 30;
   const p = project([
@@ -225,25 +225,25 @@ test('stream keys: placement-free for single-card streams, with time placement; 
   const p = project([{ id: 't1', clips: [{ id: 'a', cardId: 'x', start: 0, end: 2 }] }]);
   const key = (ctl, budget = 6) => planStreams({ key: 'E', project: p, cardPlan: [ctl] }, { budget, envFingerprint: ENV_FP })[0]?.streamKey;
   const base = control('a', 0, 2);
-  assert.equal(key(base), key({ ...base, key: 'K-moved-elsewhere' }), '单卡流不看带外观的缓存键(挪位置不作废流)');
-  assert.notEqual(key(base), key({ ...base, snapshotKey: 'S-other-params' }), '内容变了就换流键');
-  assert.notEqual(key(base), key({ ...base, sampling: { ...base.sampling, firstFrame: 1 } }), '入点挪了一帧就换流键(片段在时间轴上的位置仍在键里;「挪动以后流不失效」记了待办,这次不做)');
+  assert.equal(key(base), key({ ...base, key: 'K-moved-elsewhere' }), 'a single-card stream ignores the appearance-bearing cache key (moving the card does not invalidate the stream)');
+  assert.notEqual(key(base), key({ ...base, snapshotKey: 'S-other-params' }), 'the stream key changes when the content changes');
+  assert.notEqual(key(base), key({ ...base, sampling: { ...base.sampling, firstFrame: 1 } }), 'the stream key changes when the in point moves by one frame (the clip\'s position on the timeline is still part of the key; "streams stay valid after a move" is logged as a to-do and not done this time)');
   const a = cardStreamIdentity({ kind: 'card', fps: 30, stage: { width: 1920, height: 1080 }, members: [{ key: 'S', sampling: base.sampling, count: 60 }], codeVersion: '1' });
-  assert.notEqual(a, cardStreamIdentity({ kind: 'card', fps: 30, stage: { width: 1920, height: 1080 }, members: [{ key: 'S', sampling: base.sampling, count: 60 }], codeVersion: '2' }), '生产代码换了旧流作废');
-  assert.notEqual(a, cardStreamIdentity({ kind: 'card', fps: 25, stage: { width: 1920, height: 1080 }, members: [{ key: 'S', sampling: base.sampling, count: 60 }], codeVersion: '1' }), 'fps 进键');
+  assert.notEqual(a, cardStreamIdentity({ kind: 'card', fps: 30, stage: { width: 1920, height: 1080 }, members: [{ key: 'S', sampling: base.sampling, count: 60 }], codeVersion: '2' }), 'old streams are invalidated when the production code changes');
+  assert.notEqual(a, cardStreamIdentity({ kind: 'card', fps: 25, stage: { width: 1920, height: 1080 }, members: [{ key: 'S', sampling: base.sampling, count: 60 }], codeVersion: '1' }), 'fps goes into the key');
 });
 
-test('不回放:全部成员都是 remotion 式(direct)的流不要从挂载帧回放;有一张 motion 式、或写法没带的流照旧回放;replay 不进任何键', () => {
+test('no replay: a stream whose members are all remotion-style (direct) must not replay from the mount frame; a stream with one motion-style card, or with no style declared, replays as before; replay does not go into any key', () => {
   const DIRECT = { compositing: 'independent', frameMode: 'direct' };
   const direct = (clipId, start, end, extra = {}) => control(clipId, start, end, 30, { frameMode: 'direct', capabilities: DIRECT, ...extra });
   const stateful = (clipId, start, end, extra = {}) => control(clipId, start, end, 30, { frameMode: 'stateful', ...extra });
   assert.equal(streamNeedsReplay([direct('a', 0, 1)]), false);
   assert.equal(streamNeedsReplay([stateful('a', 0, 1)]), true);
-  assert.equal(streamNeedsReplay([direct('a', 0, 1), stateful('b', 0, 1)]), true, '组里有一张 motion 式的就要');
+  assert.equal(streamNeedsReplay([direct('a', 0, 1), stateful('b', 0, 1)]), true, 'replay needed when the group has a motion-style card');
   assert.equal(streamNeedsReplay([direct('a', 0, 1), direct('b', 0, 1)]), false);
-  assert.equal(streamNeedsReplay([control('a', 0, 1)]), true, '顶层没有 frameMode、capabilities 里是 stateful:要');
-  assert.equal(streamNeedsReplay([{ ...control('a', 0, 1), capabilities: { compositing: 'independent' } }]), true, '写法没带:保守,要');
-  assert.equal(streamNeedsReplay([direct('a', 0, 1, { capabilities: { ...DIRECT, need_prerendering: true } })]), true, '声明了 need_prerendering:要');
+  assert.equal(streamNeedsReplay([control('a', 0, 1)]), true, 'no top-level frameMode, stateful in capabilities: replay needed');
+  assert.equal(streamNeedsReplay([{ ...control('a', 0, 1), capabilities: { compositing: 'independent' } }]), true, 'style not declared: be conservative, replay needed');
+  assert.equal(streamNeedsReplay([direct('a', 0, 1, { capabilities: { ...DIRECT, need_prerendering: true } })]), true, 'need_prerendering declared: replay needed');
   assert.equal(streamNeedsReplay([direct('a', 0, 1, { needPrerendering: true })]), true);
   assert.equal(streamNeedsReplay([]), true);
   // capabilities 里才有写法(旧形状的输入)也认
@@ -262,12 +262,12 @@ test('不回放:全部成员都是 remotion 式(direct)的流不要从挂载帧�
   assert.equal(by('c').replay, false);
   // 组流:a+c 都是 direct、紧挨着(t1、t3 中间隔着 t2 的 b → 不能合并)。预算压到 1 时只能合相邻的;看合出来的组
   const grouped = planStreams({ key: 'E', project: p, cardPlan: plan }, { budget: 1, envFingerprint: ENV_FP });
-  for (const g of grouped) assert.equal(g.replay, g.members.some(m => m.frameMode !== 'direct'), `组 ${g.clipIds}:成员里有 motion 式的才要回放`);
+  for (const g of grouped) assert.equal(g.replay, g.members.some(m => m.frameMode !== 'direct'), `group ${g.clipIds}: replay needed only when a member is motion-style`);
   assert.ok(grouped.some(g => g.kind === 'group'));
   // 键不变:同一份计划把写法改成 stateful 以外的任何值,流键相同(replay 不进键)
   const flipped = plan.map(c => ({ ...c, frameMode: c.frameMode === 'direct' ? 'stateful' : 'direct' }));
   const keysOf = list => planStreams({ key: 'E', project: p, cardPlan: list }, { envFingerprint: ENV_FP }).map(s => `${s.clipIds}:${s.streamKey}`).sort();
-  assert.deepEqual(keysOf(plan), keysOf(flipped), '写法不进流键(键里的内容身份已经带着卡的声明)');
+  assert.deepEqual(keysOf(plan), keysOf(flipped), 'style does not go into the stream key (the content identity in the key already carries the card\'s declaration)');
 });
 
 test('isolatedStreamProject: only the stream cards paint, other clips stay as hidden sources, time is not shifted; local plane strips the wrapper appearance', () => {
@@ -284,10 +284,10 @@ test('isolatedStreamProject: only the stream cards paint, other clips stay as hi
   assert.equal(visible.length, 1);
   assert.deepEqual(visible[0].clips.map(c => c.id), ['a']);
   const a = visible[0].clips[0];
-  assert.equal(a.start, 0.5, '时间不平移');
+  assert.equal(a.start, 0.5, 'Time is not shifted');
   assert.deepEqual(a.frame, { x: spec.offset.x, y: spec.offset.y, w: 640, h: 360, anchor: [0, 0] });
-  for (const k of ['motion', 'opacity', 'fadeIn', 'fadeOut', 'emphasis']) assert.equal(a[k], undefined, `${k} 不在单卡流里`);
-  assert.ok(iso.tracks.some(t => t.hidden && t.sourceOnly && t.clips.some(c => c.id === 'sib')), '同一条序列上的兄弟片段留作隐藏的源');
+  for (const k of ['motion', 'opacity', 'fadeIn', 'fadeOut', 'emphasis']) assert.equal(a[k], undefined, `${k} is not in the single-card stream`);
+  assert.ok(iso.tracks.some(t => t.hidden && t.sourceOnly && t.clips.some(c => c.id === 'sib')), 'sibling clips on the same track are kept as hidden sources');
   assert.ok(iso.tracks.some(t => t.hidden && t.sourceOnly && t.id === 't2'));
   assert.deepEqual(iso._cardRender, { mode: 'final', frames: {}, missing: {} });
   // 组流保留外观
@@ -322,7 +322,7 @@ test('readySegmentRanges / publicManifest', () => {
     segments: { 0: { file: '0-a.m4s', init: 'i1', stride: 1, samples: 15, sig: 'x', bytes: 1 }, 1: { file: '1-b.m4s', init: 'i1', stride: 15, samples: 15, sig: 'y', bytes: 1 }, 5: { file: '5-c.m4s', init: 'i1', stride: 1, samples: 15, sig: 'z', bytes: 1 } } };
   assert.deepEqual(readySegmentRanges(manifest), [[0, 1], [5, 5]]);
   const pub = publicManifest(manifest);
-  assert.equal(pub.segments[1].sig, undefined, '签名不外露');
+  assert.equal(pub.segments[1].sig, undefined, 'signature is not exposed');
   assert.deepEqual(pub.inits.i1, { codec: 'avc1.64001f', width: 2, height: 20, rect: { x: 0, y: 0, w: 2, h: 2 } });
   assert.equal(pub.segmentFrames, 15);
   // 清单里记的第一帧原样交给页面;改分段规则之前落盘的清单没有这一项,回 null
@@ -439,26 +439,26 @@ test('StreamProducer.rescan stages stream keys on the ready index (F5); republis
     assert.deepEqual(seen.at(-1), { type: 'layer', clipId: 'y', kind: 'stream', key, ranges: [[2, 2]], groupClipIds: ['x', 'y'], originFrame: 40 });
     assert.deepEqual(producer.claimLayers(), [{ clipId: 'y', kind: 'stream', key, originFrame: 40 }]);
     assert.deepEqual(producer.claimLayers('E'), [{ clipId: 'y', kind: 'stream', key, originFrame: 40 }]);
-    assert.deepEqual(producer.claimLayers('OTHER'), [], '别的版本不认领这条流');
+    assert.deepEqual(producer.claimLayers('OTHER'), [], 'other versions do not claim this stream');
     // 别的版本的流不进这个会话
     const before = seen.length;
     producer.streams.get(key).entryKey = 'OTHER';
     producer.republish();
-    assert.equal(seen.length, before, '流属于别的版本:不发');
+    assert.equal(seen.length, before, 'stream belongs to another version: not sent');
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
 test('switches: streams default on, decoder budget 6, pool 1 (max 2) unless pinned', () => {
   assert.equal(streamsEnabled({}), true);
   assert.equal(streamsEnabled({ PROMPTCUT_STREAMS: '0' }), false);
-  assert.equal(streamDecoderBudget({}), 32, '条数的硬上限;预算的口径是数像素(src/render/streamBudget.mjs)');
+  assert.equal(streamDecoderBudget({}), 32, 'hard limit on the count; the budget is measured in pixels (src/render/streamBudget.mjs)');
   assert.equal(streamDecoderBudget({ PROMPTCUT_STREAM_DECODERS: '2' }), 2);
   assert.deepEqual(streamPoolLimit({}), { fixed: null });
   assert.deepEqual(streamPoolLimit({ PROMPTCUT_STREAM_POOL: '2' }), { fixed: 2 });
   assert.deepEqual(streamPoolLimit({ PROMPTCUT_STREAM_POOL: '5' }), { fixed: null });
   const producer = new StreamProducer({ root: os.tmpdir(), ready: createReadyHub() }, { env: {} });
   assert.equal(producer.pool, 1);
-  assert.equal(producer.routeAttached, false, '分段读口没接上之前不产流');
+  assert.equal(producer.routeAttached, false, 'no stream is produced before the segment read route is attached');
   assert.equal(new StreamProducer({ root: os.tmpdir(), ready: createReadyHub() }, { env: { PROMPTCUT_STREAMS: '0' } }).enabled, false);
 });
 
@@ -500,7 +500,7 @@ test('streamFeasibility: falls back to the sparse tier (one frame per segment) b
   // 30 fps、一个 worker:15 帧的预算是 500 ms;每帧出图 68.9 ms(两个编码器并存)
   const f = streamFeasibility({ n: 4, firstMs: 480, frameMs: 68.9, fps: 30, workers: 1, stride: 1 });
   assert.equal(f.feasible, false);
-  assert.equal(f.stride, 15, '只有一档稀疏:每个分段一张');
+  assert.equal(f.stride, 15, 'only one sparse tier: one frame per segment');
   assert.equal(streamFeasibility({ n: 4, frameMs: 20, fps: 30 }).feasible, true);
   assert.equal(streamFeasibility({ n: 1, firstMs: 100000, frameMs: 30, fps: 30 }).stride, null);
 });
@@ -527,7 +527,7 @@ test('planStreamSegments: continue the lease first, then the nearest unready seg
   assert.equal(plan({ playheadFrame: 0, rate: 0, reserved: new Set([7]) }).segment, null);
 });
 
-test('planStreamSegments: 播放头的帧号按这条流自己的第一帧换成分段号;还没到这条流时从它的第 0 段起', () => {
+test('planStreamSegments: the playhead\'s frame number is converted to a segment number relative to this stream\'s own first frame; before the playhead reaches this stream, it starts from the stream\'s segment 0', () => {
   const plan = (o) => planStreamSegments({ fps: 30, firstSegment: 0, lastSegment: 9, ready: () => false, rate: 0, ...o });
   // 流从第 100 帧开始:播放头在第 100～114 帧是第 0 段,第 115 帧起是第 1 段
   assert.equal(plan({ playheadFrame: 100, originFrame: 100 }).segment, 0);

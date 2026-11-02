@@ -23,7 +23,7 @@ type Params = { ctx: any };
 let started: Promise<void> | null = null;
 
 function OverreachProbe({ params }: { params: Params }) {
-  const [state, setState] = useState("待命");
+  const [state, setState] = useState("Standby");
   useEffect(() => {
     const ctx = params?.ctx;
     if (!ctx?.tag) return;
@@ -31,21 +31,21 @@ function OverreachProbe({ params }: { params: Params }) {
     // 这一帧等清单跑完再出（卡片的常规办法，同 Lottie 卡等素材载入）：不然页面渲完就关，结果来不及打出来
     const ready = beginFrameWork("overreach-probe");
     started ??= runOverreach(ctx).then((report) => { emitReport(report); }, (e) => { console.log(`OVERREACH-ERROR ${ctx.tag} ${String(e?.message ?? e).slice(0, 200)}`); });
-    void started.then(() => { ready.ready(); setState("已报告"); });
+    void started.then(() => { ready.ready(); setState("Reported"); });
     return () => ready.dispose();
   }, []);
   return (
     <div className="absolute inset-0 grid place-items-center text-white">
-      <div className="rounded-xl bg-slate-700 px-10 py-6 text-4xl font-bold">越权探测卡 · {state}</div>
+      <div className="rounded-xl bg-slate-700 px-10 py-6 text-4xl font-bold">Overreach probe card · {state}</div>
     </div>
   );
 }
 
 export const overreachProbe: CardDef<Params> = {
   id: "overreach-probe",
-  name: "越权探测卡",
-  description: "隔离验收用的测试夹具：按固定清单尝试读取本不该读到的东西，只读、只报告",
-  tags: ["探针"],
+  name: "Overreach probe card",
+  description: "Test fixture for the isolation acceptance check: tries to read, per a fixed manifest, things it should not be able to read; read-only, report-only",
+  tags: ["probe"],
   frameMode: "stateful",
   defaults: { ctx: null },
   controls: [],

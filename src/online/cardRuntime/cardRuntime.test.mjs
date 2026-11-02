@@ -218,7 +218,7 @@ export const second = { id: "a2", name: "第二张", defaults: {}, controls: [],
   assert.deepEqual(resultEvents, [[`${U}a.tsx`]]);
   const React = require("react");
   const { renderToStaticMarkup } = require("react-dom/server");
-  const html = renderToStaticMarkup(React.createElement(loader.cards()[0].Component, { params: { text: "在线" } }));
+  const html = renderToStaticMarkup(React.createElement(loader.cards()[0].Component, { params: { text: "online" } }));
   assert.equal(html, `<div class="a-look">〔在线〕<b>42</b></div>`, "The page's own React renders it; relative imports, cycles and the page's built-in modules are all wired up");
   assert.equal(L.isCardDef({ id: "x", name: "n", defaults: {}, controls: [] }), false, "Without Component / card / audio it does not count");
   assert.equal(L.isCardDef({ id: "x", name: "n", defaults: {}, controls: [], card: () => ({}) }), true);
@@ -271,7 +271,7 @@ test("OCE-T-07 generation change: unchanged is not re-executed; changed is re-ex
   await loader.setBundles(await both());
   assert.deepEqual(globalThis.__oceRuns, ["a:1", "b:1"], "The same generation is not re-executed");
   assert.equal(loader.cards()[0], defA, "The definition object is also the original one");
-  assert.equal(cardEvents, 1, "没变不通知");
+  assert.equal(cardEvents, 1, "No notification when nothing changed");
   files.set(`${U}a-dep.ts`, `export const v = 2;`);
   await loader.setBundles(await both());
   assert.deepEqual(globalThis.__oceRuns, ["a:1", "b:1", "a:2"], "Only the card whose closure changed is re-executed, and it gets the new dependency");
@@ -306,10 +306,10 @@ test("OCE-T-07 generation change: unchanged is not re-executed; changed is re-ex
 test("OCE-T-08 run states: spread onto cards; order on the editor page side; panel description", () => {
   const results = new Map([
     [`${U}a.tsx`, { ok: true, entry: `${U}a.tsx`, generation: "g", cardIds: ["a", "a2"] }],
-    [`${U}b.tsx`, { ok: false, entry: `${U}b.tsx`, generation: "g", state: { state: "load-error", detail: "炸了" } }],
+    [`${U}b.tsx`, { ok: false, entry: `${U}b.tsx`, generation: "g", state: { state: "load-error", detail: "boom" } }],
   ]);
   const states = L.runStatesOf(results, (entry) => (entry === `${U}b.tsx` ? ["b"] : []));
-  assert.deepEqual([...states], [["a", { state: "ready" }], ["a2", { state: "ready" }], ["b", { state: "load-error", detail: "炸了" }]]);
+  assert.deepEqual([...states], [["a", { state: "ready" }], ["a2", { state: "ready" }], ["b", { state: "load-error", detail: "boom" }]]);
   const cards = [{ id: "a", name: "a", source: `${U}a.tsx` }, { id: "b", name: "b", source: `${U}b.tsx` }, { id: "c", name: "c", source: `${U}c.tsx` }, { id: "d", name: "d", source: `${U}d.tsx` }];
   const bundles = [{ ok: true, entry: `${U}a.tsx`, bundle: { generation: "gen-a-1" } }, { ok: false, entry: `${U}b.tsx`, state: { state: "missing-module", detail: "lodash" } }, { ok: true, entry: `${U}c.tsx`, bundle: { generation: "gen-c-1" } }];
   const st = (extra) => Object.fromEntries([...ERS.editorRunStates({ cards, available: true, bundles, ...extra })].map(([id, s]) => [id, s.state]));
@@ -330,7 +330,7 @@ test("OCE-T-08 run states: spread onto cards; order on the editor page side; pan
   assert.equal(msg(undefined), null);
   assert.equal(msg({ state: "unsupported-syntax", detail: "namespace (line 3)", file: `${U}x.tsx` }), "The online browser cannot run this card: it uses syntax the online page does not support (namespace (line 3), x.tsx). The picture is provided by a render node.");
   assert.equal(msg({ state: "missing-module", detail: "lodash" }), "The online browser cannot run this card: it references a module that is not available on the online page: lodash. The picture is provided by a render node.");
-  assert.equal(msg({ state: "load-error", detail: "炸了" }), "The online browser cannot run this card: error while loading (炸了).");
+  assert.equal(msg({ state: "load-error", detail: "boom" }), "The online browser cannot run this card: error while loading (炸了).");
   assert.equal(msg({ state: "gpu" }), "This device's graphics capability is not enough, so the picture of media effect cards is provided by a render node.");
   assert.equal(msg({ state: "media" }), "This device cannot decode this media clip, so the picture of media effect cards is provided by a render node.");
   assert.equal(msg({ state: "runtime-error" }), "This card failed to run in the online browser, so a render node provides the picture this time.");
@@ -389,7 +389,7 @@ test("OCE-T-10 code identity: the page algorithm and the desktop cardCodeIdentit
       synced: (rel) => { const body = isSynced(rel) ? text(rel) : null; return body == null ? null : { body, hash: sourceHash(body) }; },
       builtin: (rel) => (isSynced(rel) ? null : text(rel)),
     }, { sha256 });
-    assert.deepEqual(got, { version: want.version, files: want.files }, `卡 ${id}`);
+    assert.deepEqual(got, { version: want.version, files: want.files }, `Card ${id}`);
     compared++;
     if (want.files.length > 1) multi++;
   }
@@ -449,16 +449,16 @@ test("OCE-T-11 transpile cache: keyed by runtime version, key and hash; a differ
 test("OCE-T-12 registry: cards loaded at runtime and their run state", () => {
   R.resetCards();
   R.resetRuntimeCardsForTest();
-  const def = (id, extra = {}) => ({ id, name: `名-${id}`, defaults: {}, controls: [], Component: () => null, ...extra });
+  const def = (id, extra = {}) => ({ id, name: `Name-${id}`, defaults: {}, controls: [], Component: () => null, ...extra });
   R.registerCards([def("built")]);
   const gen0 = R.cardsRegistryGen(), rgen0 = R.runtimeCardsGen();
   let notified = 0;
   const off = R.onRuntimeCardsChanged(() => { notified++; });
   const a = def("rt-a"), clash = def("built", { name: "Pretends to be a built-in card" });
   assert.equal(R.setRuntimeCards([a, clash]), true);
-  assert.equal(R.getCard("rt-a").name, "名-rt-a");
+  assert.equal(R.getCard("rt-a").name, "name-rt-a");
   assert.equal(typeof R.getCard("rt-a").need_prerendering, "boolean", "Like registering a built-in card, capabilities are overlaid from the review table (entries missing from the table get defaults)");
-  assert.equal(R.getCard("built").name, "名-built", "Id clash with a build-time card: the build-time one wins");
+  assert.equal(R.getCard("built").name, "name-built", "Id clash with a build-time card: the build-time one wins");
   assert.equal(R.isRuntimeCard("rt-a"), true);
   assert.equal(R.isRuntimeCard("built"), false);
   assert.deepEqual(R.allCards().map((c) => c.id), ["built"], "allCards does not include runtime-loaded cards");
@@ -500,7 +500,7 @@ test("OCE-T-13 preconditions for execution: off by default; the master switch is
   assert.equal(G.cardExecAvailable(), true);
   assert.equal(G.cardExecGate().reason, null);
   G.setCardExecGate({ isolated: true });
-  assert.equal(n, 1, "没变不通知");
+  assert.equal(n, 1, "No notification when nothing changed");
   G.setCardExecGate({ site: false });
   assert.equal(G.cardExecAvailable(), false, "Site disabled: no execution however good the isolation is");
   assert.equal(G.cardExecBlockedDetail(), "This site does not have online running of user cards and media effect cards enabled");

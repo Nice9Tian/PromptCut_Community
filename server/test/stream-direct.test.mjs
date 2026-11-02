@@ -106,7 +106,7 @@ function fakeBakery({ outside = false } = {}) {
 
 /* ------------------------------------------------------------ bakeStream 的 capture */
 
-test('bakeStream 的 capture:回什么 onFrame 就收到什么;不调 shoot 就不截图;primed 说下一次截图会不会先丢一张', async () => {
+test('bakeStream\'s capture: whatever it returns is what onFrame receives; no screenshot is taken unless shoot is called; primed says whether the next screenshot first discards one', async () => {
   const bakery = fakeBakery();
   const seen = [], primed = [];
   const opts = { streamSignature: 'S', fromFrame: 0, toFrame: 5, stride: 1, fps: 30, mountFrame: 0, clip: { x: 0, y: 0, w: 64, h: 32 } };
@@ -121,14 +121,14 @@ test('bakeStream 的 capture:回什么 onFrame 就收到什么;不调 shoot 就�
   assert.equal(stats.captured, 6);
   // 截图只发生在调了 shoot 的两帧:第 0 帧(前面没截过,先丢一张)和第 4 帧(第 3 帧没截,也先丢一张)
   assert.deepEqual([...new Set(bakery.log.shots)], [0, 4]);
-  assert.equal(bakery.log.shots.length, 4, '两帧各截两张(先丢一张)');
-  assert.deepEqual(primed, [true, false, true, true, true, false], '紧挨着的上一帧截过图才不用先丢一张');
+  assert.equal(bakery.log.shots.length, 4, 'Each of the two frames takes two screenshots (the first one is discarded)');
+  assert.deepEqual(primed, [true, false, true, true, true, false], 'The initial discard is skipped only when the immediately preceding frame took a screenshot');
   // 不给 capture:和原来一样,每帧截图
   const plain = fakeBakery();
   const kinds = [];
   await bakeStream(plain, { ...opts, onFrame: async (_f, shot) => { kinds.push(Buffer.isBuffer(shot)); } });
   assert.deepEqual(kinds, [true, true, true, true, true, true]);
-  assert.equal(plain.log.shots.length, 7, '第一帧先丢一张,之后每帧一张');
+  assert.equal(plain.log.shots.length, 7, 'Discard one on the first frame first, then one per frame afterwards');
   assert.equal(plain.log.grabs.length, 0);
 });
 
@@ -153,7 +153,7 @@ async function produce({ mode, caps = CANVAS_CAPS, outside = false, stride = 1, 
     assert.equal(await producer.runSegment(bakery, task), true);
     await task.job;
     const seg = state.manifest.segments[segment];
-    assert.ok(seg, `分段 ${segment} 落盘了(${producer.log.map(l => l.message).join(' | ')})`);
+    assert.ok(seg, `Segment ${segment} was written to disk (${producer.log.map(l => l.message).join(' | ')})`);
     bytes.push(await fs.readFile(path.join(producer.store.dir(spec.streamKey), seg.file)));
   }
   const status = producer.status().streams[0];
@@ -162,17 +162,17 @@ async function produce({ mode, caps = CANVAS_CAPS, outside = false, stride = 1, 
   return { bytes, bakery, state, status, producer, spec };
 }
 
-test('登记为画布卡的单卡流走直取:每个分段第一帧先取画布再截图,余下的帧不截图;产出和每帧截图逐字节相同', { skip: !ffmpegOk }, async () => {
+test('A single-card stream registered as a canvas card uses direct grab: the first frame of each segment grabs the canvas before taking a screenshot, and the remaining frames take no screenshot; the output is byte-identical to per-frame screenshots', { skip: !ffmpegOk }, async () => {
   const off = await produce({ mode: 'off' });
-  assert.equal(off.bakery.log.grabs.length, 0, '关掉以后不问画布');
+  assert.equal(off.bakery.log.grabs.length, 0, 'With it turned off, the canvas is not asked');
   assert.equal(off.status.direct, null);
   const on = await produce({ mode: 'always' });
-  assert.deepEqual(on.bakery.log.grabs.map(g => g.frame), Array.from({ length: 30 }, (_, i) => i), '每一帧都取了画布');
-  assert.deepEqual([...new Set(on.bakery.log.shots)], [0, 15], '只有两个分段的第一帧截图(实测用)');
-  assert.deepEqual(on.bakery.log.grabs[0].rect, { x: on.spec.bound.x + on.spec.offset.x, y: on.spec.bound.y + on.spec.offset.y, w: on.spec.bound.w, h: on.spec.bound.h }, '问的是截图那个矩形');
+  assert.deepEqual(on.bakery.log.grabs.map(g => g.frame), Array.from({ length: 30 }, (_, i) => i), 'The canvas was grabbed on every frame');
+  assert.deepEqual([...new Set(on.bakery.log.shots)], [0, 15], 'Only the first frame of each of the two segments takes a screenshot (used for the runtime comparison)');
+  assert.deepEqual(on.bakery.log.grabs[0].rect, { x: on.spec.bound.x + on.spec.offset.x, y: on.spec.bound.y + on.spec.offset.y, w: on.spec.bound.w, h: on.spec.bound.h }, 'It asks for the screenshot\'s rectangle');
   assert.equal(on.bakery.log.grabs[0].clipId, 'c');
   assert.equal(on.bytes.length, 2);
-  for (const n of [0, 1]) assert.equal(Buffer.compare(on.bytes[n], off.bytes[n]), 0, `分段 ${n}:直取和截图产出逐字节相同`);
+  for (const n of [0, 1]) assert.equal(Buffer.compare(on.bytes[n], off.bytes[n]), 0, `Segment ${n}: direct grab and screenshot output are byte-identical`);
   assert.deepEqual([on.status.direct.failed, on.status.direct.segments, on.status.direct.frames, on.status.direct.checks], [null, 2, 30, 2]);
   assert.deepEqual([on.status.direct.last.pass, on.status.direct.last.color, on.status.direct.last.alpha, on.status.direct.last.bad], [true, 0, 0, 0]);
   // 分段签名和清单里的东西不因为走了直取而不同(编码器名、矩形都一样)
@@ -180,7 +180,7 @@ test('登记为画布卡的单卡流走直取:每个分段第一帧先取画布�
   assert.deepEqual(Object.keys(on.state.manifest.inits), Object.keys(off.state.manifest.inits));
 });
 
-test('缺省(always 档)与 auto 档也能产出同样的分段:走哪条路只看快慢,不改画面', { skip: !ffmpegOk }, async () => {
+test('Default (always tier) and auto tier also produce the same segments: which path is taken only affects speed, never the picture', { skip: !ffmpegOk }, async () => {
   const off = await produce({ mode: 'off', segments: [0] });
   const def = await produce({ mode: undefined, segments: [0] });
   assert.equal(def.producer.direct, 'always');
@@ -194,34 +194,34 @@ test('缺省(always 档)与 auto 档也能产出同样的分段:走哪条路只�
   assert.equal(auto.status.direct.checks, 1);
 });
 
-test('画布外面还有别的元素的卡:实测比出差别,这条流退回截图、有诊断;产出和每帧截图逐字节相同', { skip: !ffmpegOk }, async () => {
+test('A card with other elements outside the canvas: the runtime comparison finds a difference, this stream falls back to screenshots with a diagnostic; the output is byte-identical to per-frame screenshots', { skip: !ffmpegOk }, async () => {
   const off = await produce({ mode: 'off', outside: true });
   const on = await produce({ mode: 'always', outside: true });
-  assert.deepEqual(on.bakery.log.grabs.map(g => g.frame), [0], '只在第一个分段的第一帧问过画布,之后不再问');
+  assert.deepEqual(on.bakery.log.grabs.map(g => g.frame), [0], 'The canvas was asked only on the first frame of the first segment, never again after that');
   assert.equal(on.status.direct.failed, 'differs');
   assert.deepEqual([on.status.direct.segments, on.status.direct.frames], [0, 0]);
   assert.ok(on.status.direct.last.bad > on.status.direct.last.badLimit);
-  assert.ok(on.producer.log.some(l => /画布直取没过\(differs/.test(l.message)), '诊断里记了一条');
-  for (const n of [0, 1]) assert.equal(Buffer.compare(on.bytes[n], off.bytes[n]), 0, `分段 ${n}:退回截图以后和原来的产出相同`);
+  assert.ok(on.producer.log.some(l => /canvas direct capture did not pass\(differs/.test(l.message)), 'One entry was recorded in the diagnostics');
+  for (const n of [0, 1]) assert.equal(Buffer.compare(on.bytes[n], off.bytes[n]), 0, `Segment ${n}: after falling back to screenshots, the output is the same as before`);
 });
 
-test('没登记成画布卡的卡不问画布;稀疏那一趟直取量出的实体框和截图量的相同', { skip: !ffmpegOk }, async () => {
+test('A card not registered as a canvas card does not ask the canvas; the content box measured by direct grab in the sparse pass equals the one measured by screenshot', { skip: !ffmpegOk }, async () => {
   const dom = await produce({ mode: 'always', caps: DOM_CAPS, segments: [0] });
   assert.equal(dom.bakery.log.grabs.length, 0);
   assert.equal(dom.status.direct, null);
   const all = [0, 1, 2, 3];
   const off = await produce({ mode: 'off', stride: SPARSE_STRIDE, segments: all });
   const on = await produce({ mode: 'always', stride: SPARSE_STRIDE, segments: all });
-  assert.equal(on.bakery.log.grabs.length, all.length * (SEGMENT_FRAMES / SPARSE_STRIDE), '稀疏的分段只取分段的第一帧');
+  assert.equal(on.bakery.log.grabs.length, all.length * (SEGMENT_FRAMES / SPARSE_STRIDE), 'Sparse segments grab only the first frame of each segment');
   assert.equal(SPARSE_STRIDE, SEGMENT_FRAMES);
-  assert.ok(on.state.measured, '量到了实体框');
+  assert.ok(on.state.measured, 'The content box was measured');
   assert.deepEqual(on.state.measured, off.state.measured);
-  assert.deepEqual(on.state.manifest.tight, off.state.manifest.tight, '收紧出同一个矩形');
-  assert.ok(on.state.manifest.tight && on.state.manifest.tight.w < on.spec.bound.w, '确实收紧了');
-  for (const n of all) assert.equal(Buffer.compare(on.bytes[n], off.bytes[n]), 0, `稀疏分段 ${n} 逐字节相同`);
+  assert.deepEqual(on.state.manifest.tight, off.state.manifest.tight, 'Tightening yields the same rectangle');
+  assert.ok(on.state.manifest.tight && on.state.manifest.tight.w < on.spec.bound.w, 'It was indeed tightened');
+  for (const n of all) assert.equal(Buffer.compare(on.bytes[n], off.bytes[n]), 0, `Sparse segment ${n} is byte-identical`);
 });
 
-test('directOf:只有单卡流、成员登记为画布卡才走;组流、实测没过的、正在歇的分段不走;缺省 always 不歇', () => {
+test('directOf: only single-card streams whose member is registered as a canvas card take the direct path; group streams, those that failed the runtime comparison, and segments on cooldown do not; the default always tier never goes on cooldown', () => {
   const pipeline = { root: os.tmpdir(), ready: createReadyHub() };
   const producer = new StreamProducer(pipeline, { env: {} });
   assert.equal(producer.direct, 'always');
@@ -229,8 +229,8 @@ test('directOf:只有单卡流、成员登记为画布卡才走;组流、实测�
   assert.ok(producer.directOf(card));
   assert.equal(producer.directOf({ spec: { kind: 'card', members: [{ capabilities: DOM_CAPS }] } }), null);
   assert.equal(producer.directOf({ spec: { kind: 'group', members: [{ capabilities: CANVAS_CAPS }, { capabilities: CANVAS_CAPS }] } }), null);
-  assert.equal(producer.directOf({ spec: { kind: 'below', members: [{ capabilities: CANVAS_CAPS }] } }), null, '别的种类的流不走');
-  assert.equal(producer.directOf({ spec: { kind: 'card' } }), null, '拉来的流没有成员信息');
+  assert.equal(producer.directOf({ spec: { kind: 'below', members: [{ capabilities: CANVAS_CAPS }] } }), null, 'Other kinds of streams do not take it');
+  assert.equal(producer.directOf({ spec: { kind: 'card' } }), null, 'A stream pulled in from elsewhere has no member information');
   // 缺省 always 档:不因 cooldown 歇
   card.direct.cooldown = 2;
   assert.ok(producer.directOf(card));
@@ -260,13 +260,13 @@ test('directOf:只有单卡流、成员登记为画布卡才走;组流、实测�
 
 /* ------------------------------------------------------------ 键(契约第 9.3 节) */
 
-test('STREAM_CODE_VERSION 是 4(2:画布直取与成员键;3:分段从流自己的第一帧起数;4:稀疏版每段只截第一帧、清单带位置矩形);单卡流的成员键用 streamMemberKey,不再跟着快照的内容键变', () => {
+test('STREAM_CODE_VERSION is 4 (2: canvas direct grab and member key; 3: segments count from the stream\'s own first frame; 4: the sparse version captures only the first frame per segment, and the manifest carries the position rectangle); a single-card stream\'s member key uses streamMemberKey and no longer follows the snapshot\'s content key', () => {
   assert.equal(STREAM_CODE_VERSION, 4);
   const project = projectOf([{ id: 'a', cardId: 'x', start: 0, end: 2 }]);
   const key = (ctl, budget = 6) => planStreams({ key: 'E', project, cardPlan: [ctl] }, { budget, envFingerprint: ENV_FP })[0]?.streamKey;
   const base = control('a', 0, 2, DOM_CAPS, { contentKey: 'C-with-snapshot-code', streamMemberKey: 'M-content-only' });
-  assert.equal(key(base), key({ ...base, contentKey: 'C-snapshot-code-changed', snapshotKey: 'S-changed' }), '生成快照的代码变了(快照的内容键变了),流键不变');
-  assert.notEqual(key(base), key({ ...base, streamMemberKey: 'M-other-params' }), '内容变了流键才变');
+  assert.equal(key(base), key({ ...base, contentKey: 'C-snapshot-code-changed', snapshotKey: 'S-changed' }), 'The snapshot-generating code changed (the snapshot\'s content key changed), the stream key is unchanged');
+  assert.notEqual(key(base), key({ ...base, streamMemberKey: 'M-other-params' }), 'The stream key changes only when the content changes');
   // 没有 streamMemberKey 的旧形状输入:照旧退回内容键
   const legacy = control('a', 0, 2, DOM_CAPS, { contentKey: 'C1' });
   assert.notEqual(key(legacy), key({ ...legacy, contentKey: 'C2' }));
@@ -275,14 +275,14 @@ test('STREAM_CODE_VERSION 是 4(2:画布直取与成员键;3:分段从流自己�
   assert.notEqual(spec('1:C'), spec('2:C'));
 });
 
-test('CardFrameCache.plan:streamMemberKey 是同一份内容身份去掉生成快照的代码指纹;和 contentKey 不同', () => {
+test('CardFrameCache.plan: streamMemberKey is the same content identity without the snapshot-generating code fingerprint; it differs from contentKey', () => {
   const project = { fps: 30, width: 320, height: 180, style: {}, themeId: 'dark' };
   const node = { id: 'card', adapter: 'chrome', cardId: 'demo', params: { n: 1 }, capabilities: { compositing: 'independent', need_prerendering: true, frameMode: 'stateful' }, inputs: {} };
   const graph = { definitions: [], nodes: [node], outputs: [{ nodeId: 'card', clipId: 'clip', start: 0, end: 1, opacity: 1, frame: { x: 0 } }] };
   const cache = new CardFrameCache({ root: os.tmpdir(), project, envFingerprint: ENV_FP });
   const [ctl] = cache.plan(graph);
   assert.match(ctl.streamMemberKey, /^[a-f0-9]{64}$/);
-  assert.notEqual(ctl.streamMemberKey, ctl.contentKey, '内容键带着生成快照的代码指纹,成员键不带');
+  assert.notEqual(ctl.streamMemberKey, ctl.contentKey, 'The content key carries the snapshot-generating code fingerprint, the member key does not');
   const identity = (code) => cardSnapshotIdentity(node, { definition: undefined, style: {}, environment: {}, sourceVersions: {}, inputKeys: {},
     fps: 30, sampling: cardSampling(0, 30), duration: 1, stage: { width: 320, height: 180, camera3dFov: undefined }, frame: { x: 0 }, themeId: 'dark', fontFingerprint: '', snapshotCode: code });
   assert.equal(ctl.streamMemberKey, identity(''));
@@ -292,7 +292,7 @@ test('CardFrameCache.plan:streamMemberKey 是同一份内容身份去掉生成�
   assert.notEqual(other.streamMemberKey, ctl.streamMemberKey);
 });
 
-test('取像素的两个新文件进截图代码的指纹(流的 codeVersion),不进生成快照的代码指纹', async () => {
+test('The two new pixel-grabbing files go into the screenshot code\'s fingerprint (the stream\'s codeVersion), not into the snapshot-generating code fingerprint', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-frame-code-'));
   try {
     const files = ['server/bakery/capture-canvas.mjs', 'src/render/gl/canvasGrab.ts'];
@@ -301,8 +301,8 @@ test('取像素的两个新文件进截图代码的指纹(流的 codeVersion),�
     for (const file of files) {
       fsSync.writeFileSync(path.join(root, file), 'b');
       invalidateFrameCode(root);
-      assert.notEqual(captureCode(root), capture0, `${file} 改了,流的代码指纹跟着变`);
-      assert.equal(snapshotCode(root), snapshot0, `${file} 改了,生成快照的代码指纹不变`);
+      assert.notEqual(captureCode(root), capture0, `${file} changed, the stream's code fingerprint changes with it`);
+      assert.equal(snapshotCode(root), snapshot0, `${file} changed, the snapshot-generating code fingerprint stays the same`);
       fsSync.writeFileSync(path.join(root, file), 'a');
       invalidateFrameCode(root);
       assert.equal(captureCode(root), capture0);

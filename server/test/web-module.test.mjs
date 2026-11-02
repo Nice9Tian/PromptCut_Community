@@ -21,24 +21,24 @@ import * as session from '../web/session.mjs';
 // 这一组是整个模块的地基:图上的坐标要能唯一还原回页面坐标。等比(单个 scale)
 // 是前提 —— 一旦两个轴的比例不同,模型报的坐标就没法反算。
 
-test('长边缩到 800,短边等比', () => {
+test('The long side is scaled to 800, the short side proportionally', () => {
   assert.equal(scaleOf({ width: 1280, height: 800 }), 800 / 1280);
   // 竖着的视口:长边是高,按高算
   assert.equal(scaleOf({ width: 600, height: 1200 }), 800 / 1200);
 });
 
-test('视口比 800 还小时原样给,不放大', () => {
+test('When the viewport is smaller than 800, it is given as is, without upscaling', () => {
   // 放大只会让图更大更贵,一个像素的信息都不会多
   assert.equal(scaleOf({ width: 640, height: 480 }), 1);
   assert.equal(scaleOf({ width: 800, height: 600 }), 1);
 });
 
-test('两个轴共用一个 scale —— 宽高比不变', () => {
+test('Both axes share one scale: the aspect ratio is unchanged', () => {
   const vp = { width: 1280, height: 800 };
   const s = scaleOf(vp);
   const img = { w: vp.width * s, h: vp.height * s };
   assert.ok(Math.abs(img.w / img.h - vp.width / vp.height) < 1e-9,
-    '图和视口的宽高比必须一致,否则模型报的坐标反算回去两个轴会偏得不一样');
+    'The image and the viewport must have the same aspect ratio, otherwise the coordinates reported by the model, mapped back, would be off by different amounts on the two axes');
 });
 
 // ── 截图不许动视口 ────────────────────────────────────────────────────
@@ -47,7 +47,7 @@ test('两个轴共用一个 scale —— 宽高比不变', () => {
 // clip.scale 之后视口一动不动。视口一旦被动过,elementFromPoint 的坐标系就跟着变,
 // 命中检测会集体偏,所以这件事必须锁死。
 
-test('captureView 全程不调 setViewport,缩放靠 clip.scale', async () => {
+test('captureView never calls setViewport; scaling relies on clip.scale', async () => {
   const calls = [];
   const page = {
     viewport: () => ({ width: 1280, height: 800 }),
@@ -58,16 +58,16 @@ test('captureView 全程不调 setViewport,缩放靠 clip.scale', async () => {
   };
   const out = await captureView(page);
   assert.equal(calls.filter((c) => !c.screenshot).length, 0,
-    'setViewport 一次都不该调 —— 有头窗口下那是真实 resize,跳转中会挂');
+    'setViewport should never be called: in a headed window it is a real resize and hangs during navigation');
   const shot = calls.find((c) => c.screenshot).screenshot;
-  assert.equal(shot.clip.scale, 800 / 1280, '缩放必须交给 clip.scale');
+  assert.equal(shot.clip.scale, 800 / 1280, 'Scaling must be handed to clip.scale');
   assert.equal(shot.clip.width, 1280);
   assert.equal(shot.clip.height, 800);
   assert.equal(out.image.width, 800);
-  assert.equal(out.image.height, 500, '1280x800 长边缩到 800,短边等比是 500');
+  assert.equal(out.image.height, 500, '1280x800: the long side is scaled to 800, and the short side proportionally is 500');
 });
 
-test('captureView 等页面 readyState,但等不到也照样截', async () => {
+test('captureView waits for the page readyState, but still captures if it never arrives', async () => {
   let waited = false;
   const page = {
     viewport: () => ({ width: 1280, height: 800 }),
@@ -76,11 +76,11 @@ test('captureView 等页面 readyState,但等不到也照样截', async () => {
     screenshot: async () => 'ZmFrZQ==',
   };
   const out = await captureView(page);
-  assert.ok(waited, '要先等一下加载状态');
-  assert.ok(out.__image.base64, '等超时了也得给出图 —— 半张图也比一句超时有用');
+  assert.ok(waited, 'It must wait for the load state first');
+  assert.ok(out.__image.base64, 'Even if the wait times out, an image must still be given: half an image is more useful than a timeout message');
 });
 
-test('__image 的形状必须是 harness 认的那个', async () => {
+test('The shape of __image must be the one the harness recognizes', async () => {
   const page = {
     viewport: () => ({ width: 1280, height: 800 }),
     waitForFunction: async () => {},
@@ -98,18 +98,18 @@ test('__image 的形状必须是 harness 认的那个', async () => {
 // 命中检测拒绝的时候,回给模型的那句话就是它下一步的全部依据。测它的意思不是
 // 测措辞,是测**每种拒绝都给出了可执行的下一步**。
 
-test('还没截屏就报坐标:告诉它先 web_view', () => {
+test('Coordinates reported before any screenshot: tell it to run web_view first', () => {
   const msg = explain({ ok: false, reason: 'no_snapshot' });
   assert.match(msg, /web_view/);
 });
 
-test('点在空白处:说清那里是什么,并给两条出路', () => {
-  const msg = explain({ ok: false, reason: 'empty', saw: '这是一段正文' });
-  assert.match(msg, /这是一段正文/);
-  assert.match(msg, /u/, '要提示可以用 u 直接指定');
+test('Clicking on blank space: say what is there, and give two options', () => {
+  const msg = explain({ ok: false, reason: 'empty', saw: 'This is a paragraph of body text' });
+  assert.match(msg, /This is a paragraph of body text/);
+  assert.match(msg, /u/, 'It must hint that u can be used to specify the target directly');
 });
 
-test('多个候选:每条都带可直接调用的 u', () => {
+test('Multiple candidates: each one carries a directly callable u', () => {
   const msg = explain({
     ok: false, reason: 'ambiguous',
     cands: [
@@ -119,33 +119,33 @@ test('多个候选:每条都带可直接调用的 u', () => {
   });
   assert.match(msg, /u="e7"/);
   assert.match(msg, /u="e6"/);
-  assert.match(msg, /web_click/, '要明说用 web_click 指定,别让它猜下一步');
+  assert.match(msg, /web_click/, 'It must say explicitly to specify with web_click, so it does not have to guess the next step');
 });
 
-test('被上层盖住的候选要标出来', () => {
+test('Candidates covered by a layer above must be flagged', () => {
   const msg = explain({
     ok: false, reason: 'ambiguous',
-    cands: [{ u: 'e3', n: '下载', t: 'a', b: [0, 0, 10, 10], d: 0, stacked: true }],
+    cands: [{ u: 'e3', n: 'Download', t: 'a', b: [0, 0, 10, 10], d: 0, stacked: true }],
   });
-  assert.match(msg, /盖住/, '压在弹窗底下的元素直接点会被拦截,必须提醒');
+  assert.match(msg, /covered/, 'Clicking directly on an element underneath a popup gets intercepted, so a warning is required');
 });
 
-test('expect 对不上:把 expect 原样回显,好让模型知道自己找的是什么', () => {
+test('expect does not match: echo expect back verbatim so the model knows what it was looking for', () => {
   const msg = explain({
-    ok: false, reason: 'expect_mismatch', expect: '登录',
-    cands: [{ u: 'e1', n: '注册', t: 'a', b: [0, 0, 10, 10], d: 4 }],
+    ok: false, reason: 'expect_mismatch', expect: 'Log in',
+    cands: [{ u: 'e1', n: 'Sign up', t: 'a', b: [0, 0, 10, 10], d: 4 }],
   });
-  assert.match(msg, /登录/);
-  assert.match(msg, /注册/);
+  assert.match(msg, /login|logged in/);
+  assert.match(msg, /Sign up/);
 });
 
-test('命中成功时不产生话术', () => {
+test('No message is produced when the hit succeeds', () => {
   assert.equal(explain({ ok: true, pick: { u: 'e1' } }), null);
 });
 
 // ── 动作层的参数校验 ──────────────────────────────────────────────────
 
-test('web_click 既没给 u 也没给坐标:当场拒绝,不去碰页面', async () => {
+test('web_click given neither u nor coordinates: rejected on the spot, without touching the page', async () => {
   // page 传 null:一旦实现里先去动页面再校验,这里会 TypeError 而不是拿到干净的错误
   const r = await session.click(null, {});
   assert.equal(r.ok, false);
@@ -153,19 +153,19 @@ test('web_click 既没给 u 也没给坐标:当场拒绝,不去碰页面', async
   assert.match(r.error, /x,y/);
 });
 
-test('web_click 只给了 x 没给 y 也算没给坐标', async () => {
+test('web_click given only x and no y also counts as no coordinates', async () => {
   const r = await session.click(null, { x: 100 });
   assert.equal(r.ok, false);
 });
 
-test('web_type 找不到编号时,明说编号会随截图失效', async () => {
+test('When web_type cannot find the number, it says explicitly that numbers expire with the screenshot', async () => {
   const page = { $: async () => null };
   const r = await session.type(page, { u: 'e99', text: 'x' });
   assert.equal(r.ok, false);
-  assert.match(r.error, /web_view/, '要告诉它重新截屏,不然它会拿着同一个死编号反复试');
+  assert.match(r.error, /web_view/, 'It must tell the model to take a new screenshot, otherwise it will keep retrying with the same dead number');
 });
 
-test('web_click 拿到不存在的编号时同样说清原因', async () => {
+test('When web_click gets a number that does not exist, it likewise explains the reason', async () => {
   const page = { $: async () => null };
   const r = await session.click(page, { u: 'e99' });
   assert.equal(r.ok, false);
@@ -175,7 +175,7 @@ test('web_click 拿到不存在的编号时同样说清原因', async () => {
 
 // ── 串行队列 ──────────────────────────────────────────────────────────
 
-test('enqueue 严格串行:后一个必须等前一个结束', async () => {
+test('enqueue is strictly serial: the next one must wait for the previous one to finish', async () => {
   const order = [];
   const slow = session.enqueue(async () => {
     order.push('slow-start');
@@ -187,34 +187,34 @@ test('enqueue 严格串行:后一个必须等前一个结束', async () => {
   assert.deepEqual(order, ['slow-start', 'slow-end', 'fast']);
 });
 
-test('前一个抛错不会卡死队列', async () => {
-  await session.enqueue(async () => { throw new Error('炸了'); }).catch(() => {});
+test('An error thrown by the previous one does not jam the queue', async () => {
+  await session.enqueue(async () => { throw new Error('boom'); }).catch(() => {});
   const r = await session.enqueue(async () => 'still alive');
   assert.equal(r, 'still alive');
 });
 
 // ── 交接 ──────────────────────────────────────────────────────────────
 
-test('web_handoff 把窗口挪出来,并明确要求 agent 停下来', async () => {
+test('web_handoff moves the window into view and explicitly requires the agent to stop', async () => {
   const calls = [];
   const inst = {
     cdp: { send: async (m, p) => { calls.push({ m, s: p?.bounds?.windowState, left: p?.bounds?.left }); } },
     page: { bringToFront: async () => calls.push({ m: 'front' }) },
     windowId: 1,
   };
-  const r = await session.handoff(inst, { reason: 'B 站扫码登录' });
+  const r = await session.handoff(inst, { reason: 'Bilibili QR code login' });
   assert.equal(r.ok, true);
   assert.equal(r.visible, true);
-  assert.match(r.message, /B 站扫码登录/);
-  assert.match(r.message, /不要继续调工具/, 'agent 必须停下来等人,不能自己往下点');
+  assert.match(r.message, /Bilibili QR code login/);
+  assert.match(r.message, /not continue calling tools/, 'The agent must stop and wait for a person, and must not keep clicking on its own');
 
   // 实测 Windows 上直接挪回屏幕内窗口仍是隐藏的:必须先 minimized 再 normal(见 showWindow 注释)
-  assert.equal(calls[0].s, 'minimized', '第一步必须是 minimized,否则窗口位置对了也看不见');
-  assert.ok(calls.some((c) => c.s === 'normal'), '要还原成 normal');
+  assert.equal(calls[0].s, 'minimized', 'The first step must be minimized, otherwise the window cannot be seen even if its position is right');
+  assert.ok(calls.some((c) => c.s === 'normal'), 'It must be restored to normal');
   const placed = calls.find((c) => typeof c.left === 'number');
-  assert.ok(placed && placed.left >= 0, '要有一次把位置摆到屏幕内');
+  assert.ok(placed && placed.left >= 0, 'The position must be placed on screen at least once');
   assert.ok(calls.some((c) => c.m === 'Emulation.clearDeviceMetricsOverride'),
-    '交给人时要解除视口仿真,不然窗口拉大画面不跟着长');
+    'When handing over to a person, viewport emulation must be removed, otherwise the displayed content does not grow when the window is enlarged');
   noStateWithPosition(calls);
 });
 
@@ -235,11 +235,11 @@ function noStateWithPosition(calls) {
   for (const c of calls) {
     if (c.m !== 'Browser.setWindowBounds') continue;
     assert.ok(!(c.s && typeof c.left === 'number'),
-      `setWindowBounds 同时给了 windowState=${c.s} 和 left=${c.left} —— 位置会被 CDP 丢掉`);
+      `setWindowBounds was given both windowState=${c.s} and left=${c.left}: the position will be dropped by CDP`);
   }
 }
 
-test('web_handoff hide:true 把窗口藏回屏幕外', async () => {
+test('web_handoff hide:true hides the window back off-screen', async () => {
   const calls = [];
   const inst = {
     cdp: { send: async (m, p) => { calls.push({ m, s: p?.bounds?.windowState, left: p?.bounds?.left }); } },
@@ -249,7 +249,7 @@ test('web_handoff hide:true 把窗口藏回屏幕外', async () => {
   const r = await session.handoff(inst, { hide: true });
   assert.equal(r.visible, false);
   const placed = calls.find((c) => typeof c.left === 'number');
-  assert.ok(placed && placed.left < 0, '藏回去必须是负坐标');
+  assert.ok(placed && placed.left < 0, 'Hiding it again must use negative coordinates');
   // 用户在接管期间可能把窗口最大化过,那时 hide 是一次真的状态变更 —— 同样不能和位置一起发
   noStateWithPosition(calls);
 });
@@ -260,7 +260,7 @@ test('web_handoff hide:true 把窗口藏回屏幕外', async () => {
 // 之后所有 web_* 全部报「被另一个实例占着」,直到手动去杀那个 Chrome。已复现并修掉。
 // 这里锁住的是「怎么分辨孤儿和别人正在用的」这条判据 —— 判错了就是替别人把浏览器关了。
 
-test('closeBrowser 对 shared 实例只断开,不替别人关浏览器', async () => {
+test('closeBrowser only disconnects a shared instance and does not close the browser on behalf of others', async () => {
   const acts = [];
   const fake = {
     connected: true,
@@ -283,10 +283,10 @@ test('closeBrowser 对 shared 实例只断开,不替别人关浏览器', async (
     },
   });
   await mod.closeBrowser();
-  assert.deepEqual(acts, ['close'], '自己起的就该真关掉');
+  assert.deepEqual(acts, ['close'], 'One it launched itself should really be closed');
 });
 
-test('接管的实例带 userDataDir,好让 close 顺手清掉过期的端点文件', async () => {
+test('A taken-over instance carries userDataDir so that close can also clean up the stale endpoint file', async () => {
   // 实测:Chrome 干净退出后 DevToolsActivePort 并不会自己消失(Windows 上如此)。
   // 留着不出错(下次连不上会退回 launch),但每次会话开头白花一个连接往返。
   const mod = await import('../web/browser.mjs?udd-test=1');
@@ -306,7 +306,7 @@ test('接管的实例带 userDataDir,好让 close 顺手清掉过期的端点文
     },
   });
   // dataDir 为 null 时不该造 profile 目录,userDataDir 也就是 undefined
-  assert.equal(inst.userDataDir, undefined, 'dataDir 传 null 就不落盘,登录态不该留下来');
+  assert.equal(inst.userDataDir, undefined, 'Passing null for dataDir means nothing is written to disk, so the login state must not remain');
   assert.equal(inst.shared, false);
   await mod.closeBrowser();
 });
@@ -318,7 +318,7 @@ test('接管的实例带 userDataDir,好让 close 顺手清掉过期的端点文
 
 function fakeShellPuppeteer(acts, pagesList) {
   return {
-    launch: async () => { acts.push('launch'); throw new Error('壳模式不该 launch'); },
+    launch: async () => { acts.push('launch'); throw new Error('Shell mode must not launch'); },
     connect: async (opts) => {
       acts.push(['connect', opts.browserURL]);
       return {
@@ -339,7 +339,7 @@ const fakePage = (url, agent = false) => ({
   createCDPSession: async () => ({ send: async (m) => { return m === 'Browser.getWindowForTarget' ? { windowId: 1 } : {}; } }),
 });
 
-test('壳模式:按 PROMPTCUT_AGENT_CDP 连调试端口,按注入标记认出 agent 那块(地址早不是初始的了),不 launch', async () => {
+test('Shell mode: connect to the debugging port via PROMPTCUT_AGENT_CDP, recognize the agent\'s pane by the injected marker (its address is no longer the initial one), and do not launch', async () => {
   process.env.PROMPTCUT_AGENT_CDP = '9333';
   process.env.PROMPTCUT_AGENT_URL = 'about:blank#promptcut-agent';
   try {
@@ -352,20 +352,20 @@ test('壳模式:按 PROMPTCUT_AGENT_CDP 连调试端口,按注入标记认出 ag
     });
     assert.deepEqual(acts, [['connect', 'http://127.0.0.1:9333']]);
     assert.equal(inst.shell, true);
-    assert.equal(inst.shared, true, '浏览器是壳的,关的时候只能断开自己');
-    assert.equal(inst.page.url(), 'https://www.bilibili.com/', '认的是带标记的 agent 那块,不是编辑台主页面');
+    assert.equal(inst.shared, true, 'The browser belongs to the shell, so on close it can only disconnect itself');
+    assert.equal(inst.page.url(), 'https://www.bilibili.com/', 'It recognizes the marked agent pane, not the editor\'s main page');
     // 显示 / 隐藏只回标记
     assert.deepEqual(await mod.showWindow(inst), { shell: true });
     assert.deepEqual(await mod.hideWindow(inst), { shell: true });
     await mod.closeBrowser();
-    assert.ok(acts.includes('disconnect') && !acts.includes('close'), '壳的浏览器不能被 Node 关掉');
+    assert.ok(acts.includes('disconnect') && !acts.includes('close'), 'The shell\'s browser must not be closed by Node');
   } finally {
     delete process.env.PROMPTCUT_AGENT_CDP;
     delete process.env.PROMPTCUT_AGENT_URL;
   }
 });
 
-test('壳模式:端口连不上就退回 Chrome 那条路', async () => {
+test('Shell mode: if the port cannot be reached, fall back to the Chrome path', async () => {
   process.env.PROMPTCUT_AGENT_CDP = '9333';
   try {
     const acts = [];
@@ -388,12 +388,12 @@ test('壳模式:端口连不上就退回 Chrome 那条路', async () => {
   }
 });
 
-test('handoff 在壳模式下带 shell 标记,措辞不再说「窗口」', async () => {
+test('In shell mode handoff carries the shell flag, and the wording no longer says "window"', async () => {
   const inst = { shell: true, cdp: { send: async () => {} }, page: { setViewport: async () => {} } };
-  const r = await session.handoff(inst, { reason: '登录' });
+  const r = await session.handoff(inst, { reason: 'Log in' });
   assert.equal(r.shell, true);
   assert.equal(r.visible, true);
-  assert.match(r.message, /主窗口里/);
+  assert.match(r.message, /in the main window/);
   const h = await session.handoff(inst, { hide: true });
   assert.equal(h.shell, true);
   assert.equal(h.visible, false);
@@ -406,7 +406,7 @@ test('handoff 在壳模式下带 shell 标记,措辞不再说「窗口」', asyn
 // 命中检测按错的尺寸反算(**点击静默落到错误位置**,比错位更坏)。
 // 现在两边都走 liveViewport,这几条锁住它。
 
-test('有仿真时直接用仿真尺寸,不去问页面', async () => {
+test('With emulation active, use the emulated size directly instead of asking the page', async () => {
   let asked = false;
   const page = {
     viewport: () => ({ width: 1280, height: 800 }),
@@ -414,10 +414,10 @@ test('有仿真时直接用仿真尺寸,不去问页面', async () => {
   };
   const vp = await liveViewport(page);
   assert.deepEqual(vp, { width: 1280, height: 800 });
-  assert.equal(asked, false, '有现成的就别多一次 evaluate 往返');
+  assert.equal(asked, false, 'If one is already available, skip the extra evaluate round trip');
 });
 
-test('仿真解除(viewport 为 null)时按页面实测尺寸算', async () => {
+test('When emulation is removed (viewport is null), use the size measured from the page', async () => {
   const page = {
     viewport: () => null,
     evaluate: async () => ({ width: 960, height: 620 }),
@@ -425,12 +425,12 @@ test('仿真解除(viewport 为 null)时按页面实测尺寸算', async () => {
   assert.deepEqual(await liveViewport(page), { width: 960, height: 620 });
 });
 
-test('量不出来才退回常量,不抛出去', async () => {
-  const page = { viewport: () => null, evaluate: async () => { throw new Error('页面崩了'); } };
+test('Fall back to the constant only when measuring fails, and do not throw', async () => {
+  const page = { viewport: () => null, evaluate: async () => { throw new Error('The page crashed'); } };
   assert.deepEqual(await liveViewport(page), { width: 1280, height: 800 });
 });
 
-test('截图和命中检测必须得出同一个 scale —— 否则点击整体偏', async () => {
+test('The screenshot and hit detection must derive the same scale: otherwise clicks are all offset', async () => {
   // 这是这组测试的重点:两边**共用一个尺寸来源**。各自回退常量时，
   // 960 宽的面板上截图按 1280 算，模型报的坐标反算回去会横向偏 33%。
   const panel = { width: 960, height: 620 };
@@ -438,10 +438,10 @@ test('截图和命中检测必须得出同一个 scale —— 否则点击整体
   const fromView = scaleOf(await liveViewport(page));
   const fromHit = scaleOf(await liveViewport(page));
   assert.equal(fromView, fromHit);
-  assert.equal(fromView, 800 / 960, '长边是宽 960,所以 scale 应当按 960 算');
+  assert.equal(fromView, 800 / 960, 'The long side is the width, 960, so the scale should be computed from 960');
 });
 
-test('captureView 的 clip 跟着实测尺寸走,不会 clip 出界', async () => {
+test('The clip of captureView follows the measured size, so it never goes out of bounds', async () => {
   // clip 比真实视口大时 puppeteer 会打开 captureBeyondViewport,那会把设备指标
   // 仿真套回去 —— 正是用户操作面板时画面错位的直接原因
   let clip;
@@ -454,7 +454,7 @@ test('captureView 的 clip 跟着实测尺寸走,不会 clip 出界', async () =
     screenshot: async (o) => { clip = o.clip; return 'ZmFrZQ=='; },
   };
   const out = await captureView(page);
-  assert.equal(clip.width, 960, 'clip 宽必须是实测的 960,不是常量 1280');
+  assert.equal(clip.width, 960, 'The clip width must be the measured 960, not the constant 1280');
   assert.equal(clip.height, 620);
   assert.equal(out.image.width, 800);
   assert.equal(out.image.height, Math.round(620 * (800 / 960)));

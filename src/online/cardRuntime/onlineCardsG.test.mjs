@@ -76,7 +76,7 @@ test("OCE-G-02 In which document a media effect card can run: by default it cann
     const gen = R.cardsRegistryGen();
     assert.equal(R.setLocalCardExec({ graph: true }), true);
     assert.ok(R.cardsRegistryGen() > gen, "A change must make places that memoize by generation recompute");
-    assert.equal(R.setLocalCardExec({ graph: true }), false, "没变不通知");
+    assert.equal(R.setLocalCardExec({ graph: true }), false, "No notification when nothing changed");
     assert.equal(local("g-synced"), false, "Stage that can run media effect cards: the media effect card can run");
     // 2026-10-21 起不按档另挡:舞台里载入成功、能跑素材效果卡的照常运行(停下追精确帧)
     assert.equal(local("u-synced"), false);
@@ -85,7 +85,7 @@ test("OCE-G-02 In which document a media effect card can run: by default it cann
     assert.equal(local("g-synced"), true);
     assert.equal(local("u-synced"), true);
     assert.equal(R.cardRunnableHere("u-synced"), false);
-    assert.equal(local("builtin"), false, "内置卡不受影响");
+    assert.equal(local("builtin"), false, "built-in cards are unaffected");
     R.setLocalCardExec({ graph: false });
     assert.equal(local("g-synced"), true);
     // 桌面运行环境:模式关着恒不算

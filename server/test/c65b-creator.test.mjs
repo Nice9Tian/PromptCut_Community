@@ -14,25 +14,25 @@ import { SET_CREATOR_PASSWORD, creatorPasswordFields } from './c65b-kit.mjs';
 const R = (i) => `198.51.100.${100 + i}`;
 const NEW_PW = 'creator-new-pw';
 
-test('C65B-A-01 带创建者证明改创建者密码（自由进入）：成功；旧密码以创建者身份进不来，新密码进得来；之后的创建者操作要用新密码', async (t) => {
+test('C65B-A-01 changing the creator password with a creator proof (open entry): succeeds; the old password can no longer join as creator, the new password can; later creator operations need the new password', async (t) => {
   const env = await hostFor(t);
   const proj = await createProject(env, { mode: 'free' });
   const creator = await join(env, proj, { username: 'alice', as: 'creator', remote: R(1) });
 
   const r = await adminOp(creator, proj, SET_CREATOR_PASSWORD, creatorPasswordFields(credential(NEW_PW)));
-  assert.equal(r.type, 'shared.admin.ok', `set-creator-password 应成功：${JSON.stringify(r)}`);
+  assert.equal(r.type, 'shared.admin.ok', `set-creator-password should succeed: ${JSON.stringify(r)}`);
 
-  assert.equal(await joinStatus(env, proj, { username: 'alice', as: 'creator', remote: R(2) }), 401, '旧的创建者密码进不来');
-  assert.equal(await joinStatus(env, proj, { username: 'alice', as: 'creator', password: NEW_PW, remote: R(3) }), 101, '新的创建者密码进得来');
-  assert.equal(await joinStatus(env, proj, { username: 'zoe', remote: R(4) }), 101, '项目密码不受影响');
+  assert.equal(await joinStatus(env, proj, { username: 'alice', as: 'creator', remote: R(2) }), 401, 'old creator password cannot join');
+  assert.equal(await joinStatus(env, proj, { username: 'alice', as: 'creator', password: NEW_PW, remote: R(3) }), 101, 'new creator password can join');
+  assert.equal(await joinStatus(env, proj, { username: 'zoe', remote: R(4) }), 101, 'project password is unaffected');
 
   const oldProof = await adminOp(creator, proj, 'set-password', { project: credential('p2') });
-  assert.deepEqual([oldProof.type, oldProof.reason], ['error', 'forbidden'], `按旧创建者密码算的证明不再认：${JSON.stringify(oldProof)}`);
+  assert.deepEqual([oldProof.type, oldProof.reason], ['error', 'forbidden'], `proof computed from the old creator password is no longer accepted: ${JSON.stringify(oldProof)}`);
   const newProof = await adminOp(creator, proj, 'set-password', { project: credential('p2') }, { password: NEW_PW });
-  assert.equal(newProof.type, 'shared.admin.ok', `按新创建者密码算的证明认：${JSON.stringify(newProof)}`);
+  assert.equal(newProof.type, 'shared.admin.ok', `proof computed from the new creator password is accepted: ${JSON.stringify(newProof)}`);
 });
 
-test('C65B-A-02 非创建者、不带证明、证明错 → forbidden，且不生效', async (t) => {
+test('C65B-A-02 non-creator, no proof, wrong proof → forbidden, and no effect', async (t) => {
   const env = await hostFor(t);
   const proj = await createProject(env, { mode: 'free' });
   const creator = await join(env, proj, { username: 'alice', as: 'creator', remote: R(10) });
@@ -40,26 +40,26 @@ test('C65B-A-02 非创建者、不带证明、证明错 → forbidden，且不�
   const fields = creatorPasswordFields(credential('hijack'));
 
   const byMember = await adminOp(member, proj, SET_CREATOR_PASSWORD, fields, { password: proj.password, username: 'zoe' });
-  assert.deepEqual([byMember.type, byMember.reason], ['error', 'forbidden'], `成员按自己的口令算证明：${JSON.stringify(byMember)}`);
+  assert.deepEqual([byMember.type, byMember.reason], ['error', 'forbidden'], `proof computed by a member from their own passphrase: ${JSON.stringify(byMember)}`);
   const memberNoProof = await adminOp(member, proj, SET_CREATOR_PASSWORD, fields, { noProof: true });
-  assert.deepEqual([memberNoProof.type, memberNoProof.reason], ['error', 'forbidden'], `成员不带证明：${JSON.stringify(memberNoProof)}`);
+  assert.deepEqual([memberNoProof.type, memberNoProof.reason], ['error', 'forbidden'], `member without proof: ${JSON.stringify(memberNoProof)}`);
   const noProof = await adminOp(creator, proj, SET_CREATOR_PASSWORD, fields, { noProof: true });
-  assert.deepEqual([noProof.type, noProof.reason], ['error', 'forbidden'], `创建者连接不带证明：${JSON.stringify(noProof)}`);
+  assert.deepEqual([noProof.type, noProof.reason], ['error', 'forbidden'], `creator connection without proof: ${JSON.stringify(noProof)}`);
   const badProof = await adminOp(creator, proj, SET_CREATOR_PASSWORD, fields, { badProof: true });
-  assert.deepEqual([badProof.type, badProof.reason], ['error', 'forbidden'], `证明错：${JSON.stringify(badProof)}`);
+  assert.deepEqual([badProof.type, badProof.reason], ['error', 'forbidden'], `wrong proof: ${JSON.stringify(badProof)}`);
 
   await sleep(100);
-  assert.equal(await joinStatus(env, proj, { username: 'alice', as: 'creator', remote: R(12) }), 101, '原创建者密码照旧能进');
-  assert.equal(await joinStatus(env, proj, { username: 'alice', as: 'creator', password: 'hijack', remote: R(13) }), 401, '被拒的改动没生效');
+  assert.equal(await joinStatus(env, proj, { username: 'alice', as: 'creator', remote: R(12) }), 101, 'original creator password still joins as before');
+  assert.equal(await joinStatus(env, proj, { username: 'alice', as: 'creator', password: 'hijack', remote: R(13) }), 401, 'rejected change did not take effect');
 });
 
-test('C65B-A-03 限定进入同样能改创建者密码；名单里的成员不受影响', async (t) => {
+test('C65B-A-03 restricted entry can also change the creator password; members on the list are unaffected', async (t) => {
   const env = await hostFor(t);
   const proj = await createProject(env, { mode: 'restricted' });
   const creator = await join(env, proj, { username: 'alice', as: 'creator', remote: R(20) });
   const r = await adminOp(creator, proj, SET_CREATOR_PASSWORD, creatorPasswordFields(credential(NEW_PW)));
   assert.equal(r.type, 'shared.admin.ok', JSON.stringify(r));
-  assert.equal(await joinStatus(env, proj, { username: 'alice', as: 'creator', remote: R(21) }), 401, '旧密码');
-  assert.equal(await joinStatus(env, proj, { username: 'alice', as: 'creator', password: NEW_PW, remote: R(22) }), 101, '新密码');
-  assert.equal(await joinStatus(env, proj, { username: 'bob', remote: R(23) }), 101, '名单成员照旧');
+  assert.equal(await joinStatus(env, proj, { username: 'alice', as: 'creator', remote: R(21) }), 401, 'old password');
+  assert.equal(await joinStatus(env, proj, { username: 'alice', as: 'creator', password: NEW_PW, remote: R(22) }), 101, 'new password');
+  assert.equal(await joinStatus(env, proj, { username: 'bob', remote: R(23) }), 101, 'listed members unchanged');
 });

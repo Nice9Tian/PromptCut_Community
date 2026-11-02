@@ -70,13 +70,13 @@ async function closedOrigin() {
 
 /* ------------------------------------------------------------------ PK-1 ～ PK-3:不要 ffmpeg */
 
-test('PK-1 请求体 → 素材标识:path 一概不取;没有标识 400、没有这份素材 404、素材服务不可达 502', async () => {
+test('PK-1 request body → asset identifier: path is never used; no identifier gives 400, no such asset gives 404, asset service unreachable gives 502', async () => {
   const h = 'ab'.repeat(32);
   assert.deepEqual(mediaRefOf({ mediaId: 'm1', media: { id: 'm1', name: 'a.mp4', kind: 'video', url: `/@media/${h}`, hash: h, path: 'C:\\Windows\\win.ini' } }),
     { id: 'm1', name: 'a.mp4', kind: 'video', url: `/@media/${h}`, hash: h });
-  assert.equal(mediaRefOf({ path: 'C:\\Windows\\win.ini', mediaId: 'm1' }), null, '只有 path 的老请求体不算素材标识');
-  assert.equal(mediaRefOf({ media: { id: 'm1', path: 'C:\\Windows\\win.ini' } }), null, 'media 里只有 path 也不算');
-  assert.equal(mediaRefOf({ media: { hash: h } , mediaId: 'm2' }).id, 'm2', 'id 缺省取 mediaId');
+  assert.equal(mediaRefOf({ path: 'C:\\Windows\\win.ini', mediaId: 'm1' }), null, 'An old request body with only path does not count as an asset identifier');
+  assert.equal(mediaRefOf({ media: { id: 'm1', path: 'C:\\Windows\\win.ini' } }), null, 'path alone inside media does not count either');
+  assert.equal(mediaRefOf({ media: { hash: h } , mediaId: 'm2' }).id, 'm2', 'id defaults to mediaId');
 
   const seen = [];
   const svc = await listen((req, res) => {
@@ -87,20 +87,20 @@ test('PK-1 请求体 → 素材标识:path 一概不取;没有标识 400、没�
   const resolver = createAssetSourceResolver({ origin: () => svc.origin, toUrl: (m, o) => (m.hash ? `${o}/@media/${m.hash}` : null) });
   const noRef = await resolveMediaSource({ path: path.join(ROOT, 'package.json') }, resolver);
   assert.equal(noRef.status, 400);
-  assert.match(noRef.error, /不再接受/);
-  const miss = await resolveMediaSource({ media: { name: '丢了.mp4', hash: 'missing' } }, resolver);
+  assert.match(noRef.error, /no longer accept/);
+  const miss = await resolveMediaSource({ media: { name: 'missing.mp4', hash: 'missing' } }, resolver);
   assert.equal(miss.status, 404);
-  assert.match(miss.error, /素材服务上没有这份素材:丢了\.mp4/);
+  assert.match(miss.error, /no such asset on the asset service: missing\.mp4/);
   const ok = await resolveMediaSource({ media: { hash: 'fine' }, path: 'D:\\secret.mp4' }, resolver);
   assert.deepEqual([ok.ok, ok.src], [true, `${svc.origin}/@media/fine`]);
-  assert.deepEqual(seen, ['/@media/missing', '/@media/fine'], '没有标识的那次一个请求都没发');
+  assert.deepEqual(seen, ['/@media/missing', '/@media/fine'], 'The call without an identifier sent no request at all');
   await closeServer(svc.server);
 
   const gone = await closedOrigin();
   const down = await resolveMediaSource({ media: { hash: 'x' } }, createAssetSourceResolver({ origin: () => gone, toUrl: (m, o) => `${o}/@media/${m.hash}` }));
   assert.equal(down.status, 502);
   assert.equal(down.kind, 'asset-service');
-  assert.ok(down.error.includes(`素材服务不可达(${gone})`), down.error);
+  assert.ok(down.error.includes(`asset service unreachable (${gone})`), down.error);
 });
 
 /**
@@ -109,25 +109,25 @@ test('PK-1 请求体 → 素材标识:path 一概不取;没有标识 400、没�
  */
 const fakePython = (answer, code = 0) => () => spawn(process.execPath, ['-e', `process.stdout.write(${JSON.stringify(answer)}); process.exit(${code})`], { windowsHide: true });
 
-test('PK-2 Python 包认不认地址:答 1 才算认;答 0、退出码非 0、解释器起不来、spawn 抛错都按不认;问的那行代码不带 cmd 元字符', async () => {
+test('PK-2 Whether the Python package accepts URLs: an answer of 1 counts as accepting; an answer of 0, a non-zero exit code, an interpreter that fails to start, or a spawn error all count as not accepting; the line of code used to ask contains no cmd metacharacters', async () => {
   for (const pkg of ['promptcut_shots', 'promptcut_track', 'promptcut_subject']) {
     const code = acceptsUrlCode(pkg);
-    assert.ok(!/[&|<>^"%]/.test(code), '.cmd 解释器会拒绝带元字符的参数');
+    assert.ok(!/[&|<>^"%]/.test(code), 'The .cmd interpreter rejects arguments that contain metacharacters');
     assert.ok(code.includes(`'${pkg}'`) && code.includes('ACCEPTS_URL'));
   }
   const ask = (spawnPython, python = 'python') => pythonAcceptsUrl({ python, env: process.env, pkg: 'promptcut_track', spawnPython });
   assert.equal(await ask(fakePython('1')), true);
   assert.equal(await ask(fakePython('0')), false);
-  assert.equal(await ask(fakePython('1', 3)), false, '退出码非 0 按不认');
-  assert.equal(await ask((python, args, env) => spawn(python, args, { env, windowsHide: true }), path.join(TMP, 'no-python.exe')), false, '解释器起不来按不认');
-  assert.equal(await ask(() => { throw new Error('refuse'); }), false, 'spawn 抛错按不认');
+  assert.equal(await ask(fakePython('1', 3)), false, 'A non-zero exit code counts as not accepting');
+  assert.equal(await ask((python, args, env) => spawn(python, args, { env, windowsHide: true }), path.join(TMP, 'no-python.exe')), false, 'An interpreter that fails to start counts as not accepting');
+  assert.equal(await ask(() => { throw new Error('refuse'); }), false, 'A spawn error counts as not accepting');
   // 问的时候递的参数:-c 加那一行代码
   let seenArgs = null;
   await ask((python, args) => { seenArgs = args; return fakePython('1')(); });
   assert.deepEqual(seenArgs, ['-c', acceptsUrlCode('promptcut_track')]);
 });
 
-test('PK-3 给 Python 的输入:认地址递地址;不认就流到临时文件(字节相同、用完删);404 与连不上抛 AssetSourceError,不留临时目录', async () => {
+test('PK-3 Input for Python: if it accepts URLs, pass the URL; otherwise stream to a temp file (same bytes, deleted after use); a 404 or a failed connection throws AssetSourceError and leaves no temp directory', async () => {
   const body = crypto.randomBytes(300_000);
   const svc = await listen((req, res) => {
     if (req.url === '/missing') { res.statusCode = 404; return res.end('no'); }
@@ -136,21 +136,21 @@ test('PK-3 给 Python 的输入:认地址递地址;不认就流到临时文件(�
   const root = fs.mkdtempSync(path.join(TMP, 'dl-'));
   const src = `${svc.origin}/ok`;
   const viaUrl = await pythonInput({ src, ref: {}, python: 'py', env: {}, pkg: 'promptcut_track', spawnPython: fakePython('1'), tmpRoot: root });
-  assert.deepEqual([viaUrl.via, viaUrl.input], ['url', src], '新包:原样递地址');
+  assert.deepEqual([viaUrl.via, viaUrl.input], ['url', src], 'New package: pass the URL as is');
   const viaTemp = await pythonInput({ src, ref: { name: '镜头.MP4' }, python: 'py', env: {}, pkg: 'promptcut_track', spawnPython: fakePython('0'), tmpRoot: root });
-  assert.equal(viaTemp.via, 'temp', '老包:先流到临时文件');
-  assert.equal(path.extname(viaTemp.input), '.mp4', '扩展名照素材名');
+  assert.equal(viaTemp.via, 'temp', 'Old package: stream to a temp file first');
+  assert.equal(path.extname(viaTemp.input), '.mp4', 'The extension follows the asset name');
   assert.deepEqual(fs.readFileSync(viaTemp.input), body);
   viaTemp.cleanup();
-  assert.deepEqual(fs.readdirSync(root), [], 'cleanup 连目录删');
+  assert.deepEqual(fs.readdirSync(root), [], 'cleanup deletes the directory too');
   await assert.rejects(downloadToTemp(`${svc.origin}/missing`, {}, { tmpRoot: root }), (e) => e instanceof AssetSourceError && /HTTP 404/.test(e.message));
-  assert.deepEqual(fs.readdirSync(root), [], '失败也不留临时目录');
+  assert.deepEqual(fs.readdirSync(root), [], 'No temp directory is left behind on failure either');
   await closeServer(svc.server);
   const gone = await closedOrigin();
-  await assert.rejects(pythonInput({ src: `${gone}/x`, ref: {}, python: 'py', env: {}, pkg: 'x', spawnPython: fakePython('0'), tmpRoot: root }), (e) => e instanceof AssetSourceError && /取字节失败/.test(e.message));
+  await assert.rejects(pythonInput({ src: `${gone}/x`, ref: {}, python: 'py', env: {}, pkg: 'x', spawnPython: fakePython('0'), tmpRoot: root }), (e) => e instanceof AssetSourceError && /failed to fetch bytes/.test(e.message));
   assert.deepEqual(fs.readdirSync(root), []);
   // 地址以外的输入原样递(解析器只拼 http 地址,这条只是兜底),也不去问 Python
-  const passthrough = await pythonInput({ src: 'C:\\x.mp4', ref: {}, python: 'none', env: {}, pkg: 'x', spawnPython: () => { throw new Error('不该问'); } });
+  const passthrough = await pythonInput({ src: 'C:\\x.mp4', ref: {}, python: 'none', env: {}, pkg: 'x', spawnPython: () => { throw new Error('Should not have asked'); } });
   assert.equal(passthrough.input, 'C:\\x.mp4');
 });
 
@@ -158,7 +158,7 @@ test('PK-3 给 Python 的输入:认地址递地址;不认就流到临时文件(�
 
 const FFMPEG = findFfmpeg();
 const FFPROBE = FFMPEG ? path.join(path.dirname(FFMPEG), 'ffprobe' + path.extname(FFMPEG)) : null;
-const skip = FFMPEG ? false : '没找到 ffmpeg';
+const skip = FFMPEG ? false : 'ffmpeg not found';
 // 镜头识别插件按名字 spawn ffprobe / ffmpeg(PATH 上找),把找到的那份放到 PATH 最前面
 if (FFMPEG && path.isAbsolute(FFMPEG)) process.env.PATH = path.dirname(FFMPEG) + path.delimiter + process.env.PATH;
 
@@ -202,7 +202,7 @@ async function mountPlugin(file, exportName, root) {
   const mod = await import(harness.compileTs(path.join(ROOT, 'server', file)));
   let fn;
   mod[exportName]().configureServer({ config: { root }, middlewares: { use(f) { fn = f; } } });
-  assert.ok(fn, `${file} 没有注册中间件`);
+  assert.ok(fn, `${file} has no registered middleware`);
   const s = await listen((req, res) => { void fn(req, res, () => { res.statusCode = 404; res.end('next'); }); });
   return s;
 }
@@ -217,7 +217,7 @@ async function waitJob(origin, prefix, jobId, timeoutMs = 90_000) {
     const data = await r.json();
     assert.equal(r.status, 200, JSON.stringify(data));
     if (data.job.status !== 'running') return data.job;
-    assert.ok(Date.now() - t0 < timeoutMs, '作业迟迟不结束');
+    assert.ok(Date.now() - t0 < timeoutMs, 'The job takes too long to finish');
     await sleep(150);
   }
 }
@@ -231,7 +231,7 @@ const hashes = {};
 /** 空的项目根:没有 desktop 运行时、没有 python/.venv,findPython 在没设 PROMPTCUT_PYTHON 时找不到解释器 */
 const BARE_ROOT = path.join(TMP, 'bare-root');
 /** 素材记录里的 path 指向一个不存在的目录:素材目录不可读,只有标识可用 */
-const GONE = path.join(TMP, '不存在的素材目录');
+const GONE = path.join(TMP, 'nonexistent-asset-dir');
 const refOf = (k) => ({ id: `m-${k}`, name: path.basename(files[k]), kind: 'video', url: `/@media/${hashes[k]}${path.extname(files[k])}`, hash: hashes[k] });
 
 if (FFMPEG) {
@@ -266,18 +266,18 @@ function scdetTimes(file) {
   return [...String(r.stderr).matchAll(/lavfi\.scd\.time:\s*([0-9.]+)/g)].map((m) => Number(m[1]));
 }
 
-test('PK-4 镜头识别(scdet 档):素材目录不可读、素材服务可达时照常出结果,与直接读文件的结果与缩略图相同', { skip }, async () => {
+test('PK-4 Shot detection (scdet tier): with the asset catalog unreadable but the asset service reachable, results are produced as usual, and the results and thumbnails match those from reading the file directly', { skip }, async () => {
   service.reset();
   const r = await post(shotsSrv.origin, '/api/shots/detect', { mediaId: 'm-cuts', media: refOf('cuts'), path: path.join(GONE, 'cuts.mp4') });
   assert.equal(r.status, 200, JSON.stringify(r.json));
   const job = await waitJob(shotsSrv.origin, '/api/shots', r.json.jobId);
   assert.equal(job.status, 'done', JSON.stringify(job));
-  assert.equal(job.engine, 'scdet', '空项目根没有 Python,走 scdet 兜底');
+  assert.equal(job.engine, 'scdet', 'The empty project root has no Python, so it falls back to scdet');
   assert.equal(job.mediaId, 'm-cuts');
 
   const expected = scdetTimes(files.cuts);
-  assert.equal(expected.length, 2, '造的素材应该有两次硬切:' + JSON.stringify(expected));
-  assert.deepEqual(job.transitions.map((t) => t.time), expected, '转场时刻与直接读文件的 scdet 相同');
+  assert.equal(expected.length, 2, 'The constructed asset should have two hard cuts:' + JSON.stringify(expected));
+  assert.deepEqual(job.transitions.map((t) => t.time), expected, 'Transition times match scdet reading the file directly');
   assert.deepEqual(job.shots.map((s) => [s.start, s.end]), [[0, expected[0]], [expected[0], expected[1]], [expected[1], job.duration]]);
   // 时长、帧率:与直接对文件跑同一组 ffprobe 参数相同
   const probe = JSON.parse(spawnSync(FFPROBE, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=r_frame_rate:format=duration', '-of', 'json', files.cuts], { encoding: 'utf8', windowsHide: true }).stdout);
@@ -291,18 +291,18 @@ test('PK-4 镜头识别(scdet 档):素材目录不可读、素材服务可达时
     const direct = path.join(TMP, `direct-${t.thumbs[0]}`);
     const g = spawnSync(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-ss', String(Math.max(0, t.end + 0.04)), '-i', files.cuts, '-frames:v', '1', '-vf', 'scale=160:-2', '-y', direct], { windowsHide: true });
     assert.equal(g.status, 0);
-    assert.deepEqual(fs.readFileSync(path.join(thumbDir, t.thumbs[0])), fs.readFileSync(direct), `缩略图 ${t.thumbs[0]}`);
+    assert.deepEqual(fs.readFileSync(path.join(thumbDir, t.thumbs[0])), fs.readFileSync(direct), `Thumbnail ${t.thumbs[0]}`);
     // 缩略图经插件自己的路由照常取得到
     const img = await fetch(`${shotsSrv.origin}/api/shots/thumb/${t.thumbs[0]}`);
     assert.equal(img.status, 200);
   }
   // 字节确实经素材服务的接口来:探测 1 字节 + ffprobe / ffmpeg 的若干次 GET
   const gets = service.mediaGets(hashes.cuts);
-  assert.ok(gets.length >= 4, '素材服务上应看到探测、ffprobe、scdet、缩略图的请求:' + JSON.stringify(gets));
-  assert.equal(gets[0].range, 'bytes=0-0', '第一下是探测');
+  assert.ok(gets.length >= 4, 'The asset service should see requests for probing, ffprobe, scdet and thumbnails:' + JSON.stringify(gets));
+  assert.equal(gets[0].range, 'bytes=0-0', 'The first request is the probe');
 });
 
-test('PK-5 三条接口:任意 path 不会被读;没有标识 400、没有这份素材 404、素材服务不可达 502', { skip }, async () => {
+test('PK-5 Three endpoints: an arbitrary path is never read; no identifier gives 400, no such asset gives 404, asset service unreachable gives 502', { skip }, async () => {
   const realFile = files.cuts; // 真实存在的视频:改前递 path 就会被读
   const endpoints = [
     [shotsSrv, '/api/shots/detect', {}],
@@ -312,16 +312,16 @@ test('PK-5 三条接口:任意 path 不会被读;没有标识 400、没有这份
   for (const [srv, url, extra] of endpoints) {
     service.reset();
     const onlyPath = await post(srv.origin, url, { mediaId: 'm-x', path: realFile, ...extra });
-    assert.equal(onlyPath.status, 400, `${url} 只给 path:` + JSON.stringify(onlyPath.json));
-    assert.equal(onlyPath.json.jobId, undefined, '不起作业');
+    assert.equal(onlyPath.status, 400, `${url} given only path:` + JSON.stringify(onlyPath.json));
+    assert.equal(onlyPath.json.jobId, undefined, 'No job is started');
     const refPath = await post(srv.origin, url, { mediaId: 'm-x', media: { id: 'm-x', name: 'x.mp4', path: realFile }, ...extra });
-    assert.equal(refPath.status, 400, `${url} media 里只有 path`);
-    assert.equal(service.requests.length, 0, `${url}:没有标识时一个请求都不发`);
+    assert.equal(refPath.status, 400, `${url} path only inside media`);
+    assert.equal(service.requests.length, 0, `${url}: no request at all is sent when there is no identifier`);
 
-    const missing = await post(srv.origin, url, { mediaId: 'm-x', media: { id: 'm-x', name: '丢了.mp4', hash: 'fe'.repeat(32) }, path: realFile, ...extra });
-    assert.equal(missing.status, 404, `${url} 素材服务上没有:` + JSON.stringify(missing.json));
-    assert.match(missing.json.error, /素材服务上没有这份素材:丢了\.mp4/);
-    assert.equal(missing.json.jobId, undefined, 'path 指着真实文件也不拿它顶替');
+    const missing = await post(srv.origin, url, { mediaId: 'm-x', media: { id: 'm-x', name: 'missing.mp4', hash: 'fe'.repeat(32) }, path: realFile, ...extra });
+    assert.equal(missing.status, 404, `${url} not on the asset service:` + JSON.stringify(missing.json));
+    assert.match(missing.json.error, /no such asset on the asset service: missing\.mp4/);
+    assert.equal(missing.json.jobId, undefined, 'Even when path points at a real file, it is not used as a substitute');
   }
   // 素材服务不可达
   const gone = await closedOrigin();
@@ -329,9 +329,9 @@ test('PK-5 三条接口:任意 path 不会被读;没有标识 400、没有这份
   try {
     for (const [srv, url, extra] of endpoints) {
       const down = await post(srv.origin, url, { mediaId: 'm-cuts', media: refOf('cuts'), path: realFile, ...extra });
-      assert.equal(down.status, 502, `${url} 不可达:` + JSON.stringify(down.json));
+      assert.equal(down.status, 502, `${url} unreachable:` + JSON.stringify(down.json));
       assert.equal(down.json.kind, 'asset-service');
-      assert.ok(down.json.error.includes(`素材服务不可达(${gone})`), down.json.error);
+      assert.ok(down.json.error.includes(`asset service unreachable (${gone})`), down.json.error);
     }
   } finally {
     process.env.PROMPTCUT_EDITOR_URL = service.origin;
@@ -340,7 +340,7 @@ test('PK-5 三条接口:任意 path 不会被读;没有标识 400、没有这份
 
 /* ------------------------------------------------------------------ MI:生成的素材经入库接口进内容库 */
 
-test('MI-1 入库:字节进内容库、哈希是内容的 sha256、同样内容第二次去重', { skip }, async () => {
+test('MI-1 Ingest: bytes go into the content store, the hash is the sha256 of the content, and identical content is deduplicated the second time', { skip }, async () => {
   const file = path.join(TMP, '配音 01.mp3');
   const bytes = crypto.randomBytes(50_000);
   fs.writeFileSync(file, bytes);
@@ -354,19 +354,19 @@ test('MI-1 入库:字节进内容库、哈希是内容的 sha256、同样内容�
   const b = await ingestFile({ file, name: 'again.mp3', origin: () => service.origin });
   assert.equal(b.hash, a.hash);
   assert.equal(b.deduped, true);
-  assert.ok(service.requests.some((q) => q.method === 'POST' && q.url.startsWith('/api/media/upload/')), '走的是入库接口');
+  assert.ok(service.requests.some((q) => q.method === 'POST' && q.url.startsWith('/api/media/upload/')), 'It goes through the ingest endpoint');
 });
 
-test('MI-2 入库失败分得清:取不到地址 / 连不上 / 拒绝 → AssetSourceError;文件不见了 → 普通错误', async () => {
+test('MI-2 Ingest failures can be told apart: cannot get the address / cannot connect / rejected → AssetSourceError; file missing → plain error', async () => {
   const file = path.join(TMP, 'mi2.wav');
   fs.writeFileSync(file, 'RIFF');
-  await assert.rejects(ingestFile({ file, origin: () => null }), (e) => e instanceof AssetSourceError && /取不到素材服务的地址/.test(e.message));
+  await assert.rejects(ingestFile({ file, origin: () => null }), (e) => e instanceof AssetSourceError && /cannot get the asset service address/.test(e.message));
   const gone = await closedOrigin();
-  await assert.rejects(ingestFile({ file, origin: () => gone }), (e) => e instanceof AssetSourceError && e.message.includes(`素材服务不可达(${gone})`));
+  await assert.rejects(ingestFile({ file, origin: () => gone }), (e) => e instanceof AssetSourceError && e.message.includes(`asset service unreachable (${gone})`));
   const bad = await listen((req, res) => { req.resume(); req.on('end', () => { res.statusCode = 500; res.end('disk full'); }); });
-  await assert.rejects(ingestFile({ file, origin: () => bad.origin }), (e) => e instanceof AssetSourceError && /拒绝了入库.*HTTP 500.*disk full/.test(e.message));
+  await assert.rejects(ingestFile({ file, origin: () => bad.origin }), (e) => e instanceof AssetSourceError && /rejected the ingest.*HTTP 500.*disk full/.test(e.message));
   await closeServer(bad.server);
-  await assert.rejects(ingestFile({ file: path.join(TMP, 'nope.wav'), origin: () => 'http://127.0.0.1:9' }), (e) => !(e instanceof AssetSourceError) && /要入库的文件不见了/.test(e.message));
+  await assert.rejects(ingestFile({ file: path.join(TMP, 'nope.wav'), origin: () => 'http://127.0.0.1:9' }), (e) => !(e instanceof AssetSourceError) && /file to ingest is missing/.test(e.message));
 });
 
 /** 配音插件:服务商的请求全部截下来回一段假的 mp3(hex 494433 = "ID3"),发往本机的照常 */
@@ -411,43 +411,43 @@ async function waitEmpty(dir, prefix) {
     if (!fs.readdirSync(dir).some((n) => n.startsWith(prefix))) return;
     await sleep(40);
   }
-  assert.deepEqual(fs.readdirSync(dir).filter((n) => n.startsWith(prefix)), [], '临时目录没删');
+  assert.deepEqual(fs.readdirSync(dir).filter((n) => n.startsWith(prefix)), [], 'Temp directory was not deleted');
 }
 
-test('MI-3 配音:合成结果经入库接口进内容库,回 /@media/<hash> 与入库回包;素材目录里没有绕过入库的文件', { skip }, async () => {
+test('MI-3 Voiceover: the synthesized result goes into the content store through the ingest endpoint and returns /@media/<hash> with the ingest response; the asset catalog has no file that bypassed ingest', { skip }, async () => {
   const srv = await voiceServer();
   await withPrivateTmp(async (tmp) => {
     await withFakeProvider(async (calls) => {
       service.reset();
       const r = await post(srv.origin, '/api/voice/generate', { text: '开场旁白：你好' });
       assert.equal(r.status, 200, JSON.stringify(r.json));
-      assert.equal(calls.length, 1, '服务商只请求一次');
+      assert.equal(calls.length, 1, 'The provider is called only once');
       const hash = sha256(Buffer.from('ID3', 'latin1'));
       assert.equal(r.json.hash, hash);
       assert.equal(r.json.url, `/@media/${hash}`);
-      assert.equal(r.json.media.hash, hash, '入库回包原样带给页面(页面按它登记,和导入素材同一个写法)');
-      assert.equal(r.json.path, undefined, '不回临时路径');
+      assert.equal(r.json.media.hash, hash, 'The ingest response is passed to the page as is (the page registers by it, the same way as importing media)');
+      assert.equal(r.json.path, undefined, 'No temp path is returned');
       assert.match(r.json.name, /^voice-\d{8}-\d{6}-开场旁白你好-[0-9a-f]{4}\.mp3$/);
-      assert.ok(service.requests.some((q) => q.method === 'POST' && q.url.startsWith('/api/media/upload/')), '走的是入库接口');
+      assert.ok(service.requests.some((q) => q.method === 'POST' && q.url.startsWith('/api/media/upload/')), 'It goes through the ingest endpoint');
       const got = await fetch(`${service.origin}/@media/${hash}`);
       assert.equal(Buffer.from(await got.arrayBuffer()).toString('latin1'), 'ID3');
     });
-    assert.deepEqual(listDir(voiceMediaDir()), [], '素材目录里不该出现绕过入库的配音文件');
+    assert.deepEqual(listDir(voiceMediaDir()), [], 'No voiceover file that bypassed ingest should appear in the asset catalog');
     await waitEmpty(tmp, 'pc-voice-');
   });
 });
 
-test('MI-4 配音时素材服务不可达:回 502 与 kind asset-service,素材目录与临时目录都不留东西', { skip }, async () => {
+test('MI-4 Asset service unreachable during voiceover: returns 502 and kind asset-service, and nothing is left in the asset catalog or the temp directory', { skip }, async () => {
   const srv = await voiceServer();
   const gone = await closedOrigin();
   process.env.PROMPTCUT_EDITOR_URL = gone;
   try {
     await withPrivateTmp(async (tmp) => {
       await withFakeProvider(async () => {
-        const r = await post(srv.origin, '/api/voice/generate', { text: '你好' });
+        const r = await post(srv.origin, '/api/voice/generate', { text: 'Hello' });
         assert.equal(r.status, 502, JSON.stringify(r.json));
         assert.equal(r.json.kind, 'asset-service');
-        assert.ok(r.json.error.includes(`素材服务不可达(${gone})`), r.json.error);
+        assert.ok(r.json.error.includes(`asset service unreachable (${gone})`), r.json.error);
       });
       await waitEmpty(tmp, 'pc-voice-');
     });
@@ -457,7 +457,7 @@ test('MI-4 配音时素材服务不可达:回 502 与 kind asset-service,素材�
   }
 });
 
-test('MI-7 配音的试听与音色设计的试听:落试听缓存目录、经 /api/voice/preview/ 回放,不写素材目录;文件名跑不出缓存目录', { skip }, async () => {
+test('MI-7 Voiceover preview and voice design preview: land in the preview cache directory, replay via /api/voice/preview/, do not write to the asset catalog; file names cannot escape the cache directory', { skip }, async () => {
   const srv = await voiceServer();
   const real = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
@@ -470,18 +470,18 @@ test('MI-7 配音的试听与音色设计的试听:落试听缓存目录、经 /
     return new Response(JSON.stringify(body), { status: 200 });
   };
   try {
-    const r = await post(srv.origin, '/api/voice/generate', { text: '试听', preview: true });
+    const r = await post(srv.origin, '/api/voice/generate', { text: 'Preview', preview: true });
     assert.equal(r.status, 200, JSON.stringify(r.json));
     assert.equal(r.json.url, '/api/voice/preview/voice-preview-minimax.mp3');
-    assert.equal(r.json.path, undefined, '不回磁盘路径');
+    assert.equal(r.json.path, undefined, 'No disk path is returned');
     const got = await real(srv.origin + r.json.url);
     assert.equal(got.status, 200);
-    assert.equal(Buffer.from(await got.arrayBuffer()).toString('latin1'), 'ID3', '页面照回来的地址播得到');
-    assert.ok(fs.existsSync(path.join(process.env.PROMPTCUT_DATA_DIR, 'cache', 'voice-preview', 'voice-preview-minimax.mp3')), '落在数据目录下的试听缓存');
+    assert.equal(Buffer.from(await got.arrayBuffer()).toString('latin1'), 'ID3', 'The page can play the URL exactly as returned');
+    assert.ok(fs.existsSync(path.join(process.env.PROMPTCUT_DATA_DIR, 'cache', 'voice-preview', 'voice-preview-minimax.mp3')), 'The preview cache lands under the data directory');
 
-    const d = await post(srv.origin, '/api/voice/design', { prompt: '年轻男声', previewText: '你好' });
+    const d = await post(srv.origin, '/api/voice/design', { prompt: 'Young male voice', previewText: 'Hello' });
     assert.equal(d.status, 200, JSON.stringify(d.json));
-    assert.equal(d.json.previewUrl, '/api/voice/preview/voice-design-ttv-voice_1.mp3', '服务商给的音色 id 拼进文件名前洗掉斜杠');
+    assert.equal(d.json.previewUrl, '/api/voice/preview/voice-design-ttv-voice_1.mp3', 'The voice id given by the provider has its slashes stripped before being joined into the file name');
     const dg = await real(srv.origin + d.json.previewUrl);
     assert.equal(Buffer.from(await dg.arrayBuffer()).toString('latin1'), 'ID3');
 
@@ -492,5 +492,5 @@ test('MI-7 配音的试听与音色设计的试听:落试听缓存目录、经 /
   } finally {
     globalThis.fetch = real;
   }
-  assert.deepEqual(listDir(voiceMediaDir()), [], '素材目录里没有试听文件');
+  assert.deepEqual(listDir(voiceMediaDir()), [], 'No preview file in the asset catalog');
 });

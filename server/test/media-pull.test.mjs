@@ -110,14 +110,14 @@ const setRemote = (body) => fetch(`${local}/api/media/remote`, { method: 'POST',
 
 beforeEach(() => { pull.resetPullStateForTest(); remoteHits.length = 0; });
 
-test('T5-pull-1:本地内容库没有、也没连远程素材服务 → 404(和原来一样)', async () => {
+test('T5-pull-1: not in the local content store and no remote asset service connected → 404 (same as before)', async () => {
   const { hash } = addRemote(1000, 1);
   const r = await fetch(`${local}/@media/${hash}`);
   assert.equal(r.status, 404);
-  assert.equal(remoteHits.length, 0, '没连远程就不去问');
+  assert.equal(remoteHits.length, 0, 'Without a remote connection, it does not ask');
 });
 
-test('T5-pull-2:连了远程 → 同一次请求拿到整件字节;拉完进本地内容库,第二次是本地命中', async () => {
+test('T5-pull-2: remote connected → the same request gets all the bytes of the file; after the pull it enters the local content store, and the second request is a local hit', async () => {
   const { hash, bytes } = addRemote(300_000, 2);
   assert.equal((await setRemote({ base: REMOTE_BASE, ticket: 'tkt-secret-1' })).status, 200);
   const r = await fetch(`${local}/@media/${hash}`);
@@ -128,20 +128,20 @@ test('T5-pull-2:连了远程 → 同一次请求拿到整件字节;拉完进本�
   // 拉取在后台收尾(校验、改名):等它进库
   await waitLocal(hash);
   const file = await localFile(hash);
-  assert.ok(file && file.endsWith(`${hash}.mp4`), `进了本地内容库,扩展名按远程的 Content-Type:${file}`);
+  assert.ok(file && file.endsWith(`${hash}.mp4`), `It entered the local content store, with the extension taken from the remote Content-Type: ${file}`);
   assert.equal(fs.readFileSync(file).length, bytes.length);
   assert.equal(remoteHits.filter((h) => h.url.endsWith(hash)).length, 1);
-  assert.equal(remoteHits[0].auth, 'Bearer tkt-secret-1', '票据只进 Authorization 头');
+  assert.equal(remoteHits[0].auth, 'Bearer tkt-secret-1', 'The ticket goes only into the Authorization header');
   const again = await fetch(`${local}/@media/${hash}`, { headers: { Range: 'bytes=0-9' } });
   assert.equal(again.status, 206);
   assert.deepEqual(Buffer.from(await again.arrayBuffer()), bytes.subarray(0, 10));
-  assert.equal(remoteHits.filter((h) => h.url.endsWith(hash)).length, 1, '第二次不再去远程');
-  assert.ok(!JSON.stringify(pull.pullLog()).includes('tkt-secret-1'), '票据不进日志');
+  assert.equal(remoteHits.filter((h) => h.url.endsWith(hash)).length, 1, 'The second request no longer goes to the remote');
+  assert.ok(!JSON.stringify(pull.pullLog()).includes('tkt-secret-1'), 'The ticket does not go into the log');
   const tmpLeft = fs.readdirSync(media.mediaDir(projectRoot)).filter((n) => n.startsWith('.pull-'));
-  assert.deepEqual(tmpLeft, [], '临时文件收干净');
+  assert.deepEqual(tmpLeft, [], 'Temporary files are cleaned up');
 });
 
-test('T5-pull-3:边落盘边按 Range 服务 —— 远程还在慢慢传,已落盘那一段的 Range 请求先答', async () => {
+test('T5-pull-3: serve by Range while writing to disk; while the remote is still transferring slowly, a Range request for the part already on disk is answered first', async () => {
   const size = 2_000_000;
   const { hash, bytes } = addRemote(size, 3, { throttle: { chunk: 64 * 1024, ms: 40 } }); // 全件约 1.3 s
   await setRemote({ base: REMOTE_BASE });
@@ -154,17 +154,17 @@ test('T5-pull-3:边落盘边按 Range 服务 —— 远程还在慢慢传,已落
   assert.deepEqual(got, bytes.subarray(1000, 51000));
   // 墙钟判据改成相对整件的：原来是 ms < 800（全件约 1.3 s，即约六成）。机器忙时两者一起变慢，按比例判；
   // 再加上「这时整件还没进库」这条不看时间的证据。真退化成「等整件下完才答」时 ms ≥ fullMs，照样拦得住。
-  assert.equal(await localFile(hash), null, '这时整件还没进库');
+  assert.equal(await localFile(hash), null, 'At this point the whole file is not yet in the store');
   // 同一个哈希的第二个请求挂在同一个拉取任务上,不再开一条
   const r2 = await fetch(`${local}/@media/${hash}`, { headers: { Range: 'bytes=0-99' } });
   assert.deepEqual(Buffer.from(await r2.arrayBuffer()), bytes.subarray(0, 100));
-  assert.equal(remoteHits.filter((h) => h.url.endsWith(hash) && !h.range).length, 1, '同一哈希只拉一次');
+  assert.equal(remoteHits.filter((h) => h.url.endsWith(hash) && !h.range).length, 1, 'The same hash is pulled only once');
   const fullMs = (await waitLocal(hash)) ? Date.now() - t0 : Infinity;
-  assert.ok(ms < fullMs * 0.6, `前 50 KB 在整件下完之前很早就答了：Range 回包 ${ms} ms，整件进库 ${fullMs} ms`);
-  assert.ok(await localFile(hash), '拉完进库');
+  assert.ok(ms < fullMs * 0.6, `The first 50 KB was answered well before the whole file finished downloading: Range response ${ms} ms, whole file in the store ${fullMs} ms`);
+  assert.ok(await localFile(hash), 'After the pull it enters the store');
 });
 
-test('T5-pull-4:远程也没有(404)→ 404;远程还没 complete 的不算有', async () => {
+test('T5-pull-4: the remote does not have it either (404) → 404; one that is not yet complete on the remote does not count as present', async () => {
   const { hash } = addRemote(1000, 4, { complete: false });
   await setRemote({ base: REMOTE_BASE });
   const r = await fetch(`${local}/@media/${hash}`);
@@ -172,20 +172,20 @@ test('T5-pull-4:远程也没有(404)→ 404;远程还没 complete 的不算有',
   assert.equal(await localFile(hash), null);
 });
 
-test('T5-pull-5:远程给的字节 sha256 不符 → 不进本地内容库', async () => {
+test('T5-pull-5: sha256 of the bytes from the remote does not match → not added to the local content store', async () => {
   const bytes = bytesOf(200_000, 5);
   const hash = sha256(bytes);
   remoteFiles.set(hash, { bytes, wrong: bytesOf(200_000, 55), type: 'video/mp4', complete: true });
   await setRemote({ base: REMOTE_BASE });
   await fetch(`${local}/@media/${hash}`).then((r) => r.arrayBuffer()).catch(() => null);
   await new Promise((res) => setTimeout(res, 100));
-  assert.equal(await localFile(hash), null, '校验不过的不入库');
+  assert.equal(await localFile(hash), null, 'What fails verification is not stored');
   assert.ok(pull.pullLog().some((e) => e.event === 'pull.mismatch' && e.hash === hash));
   const tmpLeft = fs.readdirSync(media.mediaDir(projectRoot)).filter((n) => n.startsWith('.pull-'));
   assert.deepEqual(tmpLeft, []);
 });
 
-test('T5-pull-6:Range 起点远在已落盘位置之后(比如 moov 在尾部)→ 这一段直接从远程透传', async () => {
+test('T5-pull-6: when the Range start is far beyond the position already on disk (e.g. moov at the tail) → this part is passed straight through from the remote', async () => {
   const size = 12 * 1024 * 1024;
   const { hash, bytes } = addRemote(size, 6, { throttle: { chunk: 256 * 1024, ms: 50 } });
   await setRemote({ base: REMOTE_BASE });
@@ -194,11 +194,11 @@ test('T5-pull-6:Range 起点远在已落盘位置之后(比如 moov 在尾部)�
   const r = await fetch(`${local}/@media/${hash}`, { headers: { Range: `bytes=${size - 100}-` } });
   assert.equal(r.status, 206);
   assert.deepEqual(Buffer.from(await r.arrayBuffer()), bytes.subarray(size - 100));
-  assert.ok(remoteHits.some((h) => h.range === `bytes=${size - 100}-`), '尾部那一段带着 Range 去了远程');
+  assert.ok(remoteHits.some((h) => h.range === `bytes=${size - 100}-`), 'The tail part went to the remote with its Range');
   pull.setRemoteAssetService(null); // 中止慢速拉取
 });
 
-test('T5-prefetch-1:预取按给的顺序一次拉一个、本地已有的跳过;清掉远程就作废', async () => {
+test('T5-prefetch-1: prefetch pulls one at a time in the given order and skips what is already local; clearing the remote cancels it', async () => {
   const a = addRemote(50_000, 71), b = addRemote(50_000, 72), c = addRemote(50_000, 73), d = addRemote(50_000, 74);
   await setRemote({ base: REMOTE_BASE });
   // b 先按需拉进来:预取时跳过
@@ -208,18 +208,18 @@ test('T5-prefetch-1:预取按给的顺序一次拉一个、本地已有的跳过
   assert.deepEqual(await r.json(), { ok: true, queued: 4 });
   await waitLocal(d.hash);
   const starts = pull.pullLog().filter((e) => e.event === 'pull.start' && e.by === 'prefetch').map((e) => e.hash);
-  assert.deepEqual(starts, [c.hash, a.hash, d.hash], '按清单顺序、跳过本地已有的 b');
+  assert.deepEqual(starts, [c.hash, a.hash, d.hash], 'In manifest order, skipping b which is already local');
   for (const x of [a, c, d]) assert.ok(await localFile(x.hash));
 });
 
-test('T5-prefetch-2:没连远程素材服务时预取不做事', async () => {
+test('T5-prefetch-2: prefetch does nothing when no remote asset service is connected', async () => {
   const e = addRemote(10_000, 75);
   const r = await fetch(`${local}/api/media/prefetch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ hash: e.hash }] }) });
   assert.deepEqual(await r.json(), { ok: true, queued: 0 });
   assert.equal(remoteHits.length, 0);
 });
 
-test('T7-originals-1:导出前的素材原尺寸检查只问当前连接的素材服务(远程:chunks 的 complete;本机缓存不算数)', async () => {
+test('T7-originals-1: the pre-export check of asset original sizes asks only the currently connected asset service (remote: complete of chunks; the local cache does not count)', async () => {
   const ready = addRemote(10_000, 81);
   const notYet = addRemote(10_000, 82, { complete: false });
   // notYet 在本机缓存里已经有了(比如别的路径拷过来),但远程没 complete:照样算没到齐
@@ -232,7 +232,7 @@ test('T7-originals-1:导出前的素材原尺寸检查只问当前连接的素�
   assert.ok(remoteHits.some((h) => h.url.endsWith(`${ready.hash}/chunks`) && h.auth === 'Bearer tkt-2'));
 });
 
-test('T7-originals-2:没连远程时就是本地素材服务:看本地内容库', async () => {
+test('T7-originals-2: when no remote is connected it is the local asset service: look at the local content store', async () => {
   const have = bytesOf(5000, 83);
   const haveHash = sha256(have);
   fs.writeFileSync(path.join(media.mediaDir(projectRoot), `${haveHash}.mp4`), have);
@@ -241,7 +241,7 @@ test('T7-originals-2:没连远程时就是本地素材服务:看本地内容库'
   assert.deepEqual((await r.json()).missing, [missing]);
 });
 
-test('T5-remote-1:远程基址只收 http(s)、不收带用户名的;GET 看状态不回票据', async () => {
+test('T5-remote-1: the remote base address accepts only http(s) and none with a username; GET shows the status without returning the ticket', async () => {
   assert.equal((await setRemote({ base: 'file:///etc' })).status, 400);
   assert.equal((await setRemote({ base: 'http://u:p@127.0.0.1:1/api/asset' })).status, 400);
   await setRemote({ base: REMOTE_BASE + '/', ticket: 'tkt-3' });

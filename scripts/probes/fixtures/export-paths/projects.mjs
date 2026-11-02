@@ -25,7 +25,7 @@ const W = 1280, H = 720, FPS = 30, DURATION = 8;
 export const PROJECTS = {
   demo: {
     name: 'export-paths-demo',
-    note: '像素基线的演示项目(按 docs/archive/topics/export-baseline-compare.md 第 1 节重建)',
+    note: 'Demo project for the pixel baseline (rebuilt per section 1 of docs/archive/topics/export-baseline-compare.md)',
     width: W, height: H, fps: FPS, duration: DURATION,
     layers: [
       { media: true, start: 0, end: 8 },
@@ -40,7 +40,7 @@ export const PROJECTS = {
   },
   heavy: {
     name: 'export-paths-heavy',
-    note: '带重卡(WebGL、stateful)和画布卡(粒子)的项目',
+    note: 'Project with a heavy card (WebGL, stateful) and a canvas card (particles)',
     width: W, height: H, fps: FPS, duration: DURATION,
     layers: [
       { media: true, start: 0, end: 8 },

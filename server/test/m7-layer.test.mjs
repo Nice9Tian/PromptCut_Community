@@ -28,37 +28,37 @@ const v2Layer = (clipId = 'clip-m1') => ({ clipId, kind: 'html', key: 'wire-v2',
 /** 回的这一层的 (resultKey, envFingerprint, key) 必须同出一个候选（不混） */
 function assertWholeCandidate(ref, candidates) {
   const hit = candidates.find((c) => c.resultKey === ref.resultKey);
-  assert.ok(hit, `回的 resultKey 不是任何候选：${JSON.stringify(ref)}`);
-  assert.equal(ref.envFingerprint, hit.envFingerprint, '指纹与结果键要同出一个候选');
-  assert.equal(ref.key, hit.key, '线上键与结果键要同出一个候选');
+  assert.ok(hit, `The returned resultKey matches no candidate: ${JSON.stringify(ref)}`);
+  assert.equal(ref.envFingerprint, hit.envFingerprint, 'The fingerprint and result key must come from the same candidate');
+  assert.equal(ref.key, hit.key, 'The online key and result key must come from the same candidate');
 }
 
-test('D12 读旧 v2：当「一个候选」，给不给 alive 都照旧回那一层（回归）', async () => {
+test('D12 reading old v2: treated as "one candidate", the layer is returned as before whether or not alive is given (regression)', async () => {
   const { layerRefOf } = await snapshotSource();
   const t = table(2, [v2Layer()]);
   const plain = layerRefOf(t, 'clip-m1');
-  assert.ok(plain, 'v2 普通档照旧能用');
+  assert.ok(plain, 'v2 plain tier still works');
   assert.equal(plain.resultKey, rk(CK, OWN));
   for (const alive of [new Set(), new Set(['something-else']), new Set([rk(CK, OWN)])]) {
     const ref = layerRefOf(t, 'clip-m1', { alive });
-    assert.equal(ref?.resultKey, rk(CK, OWN), `v2 不看 alive：${JSON.stringify(ref)}`);
+    assert.equal(ref?.resultKey, rk(CK, OWN), `v2 ignores alive: ${JSON.stringify(ref)}`);
     assert.equal(ref.envFingerprint, OWN);
   }
 });
 
-test('D12 v3：认定浏览器那份活着，就整份用浏览器的（结果键、指纹、线上键）', gateOpts(layerV3Gate()), async () => {
+test('D12 v3: when the browser copy is determined to be alive, use the browser\'s as a whole (result key, fingerprint, online key)', gateOpts(layerV3Gate()), async () => {
   const { layerRefOf } = await snapshotSource();
   const cands = [candidate(OWN), candidate(BR)];
   const t = table(3, [v3Layer(cands)]);
   const ref = layerRefOf(t, 'clip-m1', { alive: new Set([rk(CK, BR)]) });
-  assert.ok(ref, 'v3 选得出');
+  assert.ok(ref, 'v3 can select one');
   assert.equal(ref.resultKey, rk(CK, BR));
   assert.equal(ref.envFingerprint, BR);
   assertWholeCandidate(ref, cands);
   assert.equal(ref.contentKey, CK);
 });
 
-test('D12 v3：认定切分方那份活着，就用切分方的；认不出时要么 null、要么整份一个候选，绝不混', gateOpts(layerV3Gate()), async () => {
+test('D12 v3: when the splitter\'s copy is determined to be alive, use the splitter\'s; when it cannot be determined, return either null or one whole candidate, never a mix', gateOpts(layerV3Gate()), async () => {
   const { layerRefOf } = await snapshotSource();
   const cands = [candidate(OWN), candidate(BR)];
   const t = table(3, [v3Layer(cands)]);
@@ -76,7 +76,7 @@ test('D12 v3：认定切分方那份活着，就用切分方的；认不出时�
   assertWholeCandidate(r2, cands);
 });
 
-test('D12 v3：只有一个候选时当 v2 用（不必等认定）；候选坏了的层不回', gateOpts(layerV3Gate()), async () => {
+test('D12 v3: with only one candidate it is treated as v2 (no need to wait for the determination); a layer whose candidate is broken is not returned', gateOpts(layerV3Gate()), async () => {
   const { layerRefOf } = await snapshotSource();
   const single = table(3, [v3Layer([candidate(OWN)])]);
   const ref = layerRefOf(single, 'clip-m1');
@@ -85,5 +85,5 @@ test('D12 v3：只有一个候选时当 v2 用（不必等认定）；候选坏�
   // 候选缺指纹：普通档不能用（与 v2 缺指纹同一口径）
   const broken = table(3, [v3Layer([{ resultKey: rk(CK, OWN), envFingerprint: null, key: 'w' }])]);
   const b = layerRefOf(broken, 'clip-m1', { alive: new Set([rk(CK, OWN)]) });
-  assert.ok(b === null || b === undefined, `缺指纹的候选不该回：${JSON.stringify(b)}`);
+  assert.ok(b === null || b === undefined, `A candidate missing its fingerprint should not be returned: ${JSON.stringify(b)}`);
 });

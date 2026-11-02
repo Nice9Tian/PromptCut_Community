@@ -66,18 +66,18 @@ const cardSource = fixture
   .replace('export const lookSolid', 'export const cutLookSolid')
   .replace('function LookSolid', 'function CutLookSolid')
   .replace('Component: LookSolid', 'Component: CutLookSolid');
-if (fs.existsSync(CARD_FILE)) throw new Error(`${CARD_FILE} 已经存在,不覆盖`);
+if (fs.existsSync(CARD_FILE)) throw new Error(`${CARD_FILE} already exists, not overwriting`);
 fs.writeFileSync(CARD_FILE, cardSource);
 
 /* ---------- 项目:剪辑1 红(激活)、剪辑2 蓝(停放,上次停在 1 秒) ---------- */
 const solid = (id, color) => ({ id, cardId: CARD_ID, start: 0, end: 4, params: { color } });
 const project = (id) => ({
-  version: 1, id, name: '看别的剪辑的画面', width: 640, height: 360, fps: 30, duration: 4, themeId: 'midnight',
+  version: 1, id, name: 'Look at the frames of another cut', width: 640, height: 360, fps: 30, duration: 4, themeId: 'midnight',
   media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [],
-  tracks: [{ id: 'tr-1', name: '序列 1', clips: [solid('red', '#ff0000')] }],
+  tracks: [{ id: 'tr-1', name: 'Track 1', clips: [solid('red', '#ff0000')] }],
   cuts: [
-    { id: 'cut-1', name: '剪辑1' },
-    { id: 'cut-2', name: '剪辑2', t: 1, duration: 4, transitions: [], tracks: [{ id: 'tr-2', name: '序列 1', clips: [solid('blue', '#0000ff')] }] },
+    { id: 'cut-1', name: 'Cut 1' },
+    { id: 'cut-2', name: 'Cut 2', t: 1, duration: 4, transitions: [], tracks: [{ id: 'tr-2', name: 'Track 1', clips: [solid('blue', '#0000ff')] }] },
   ],
   activeCutId: 'cut-1',
 });
@@ -94,7 +94,7 @@ async function until(label, fn, timeoutMs = 120000, everyMs = 300) {
     let v;
     try { v = await fn(); } catch { v = null; }
     if (v) return v;
-    if (Date.now() > deadline) { fails.push(`超时:${label}`); console.log(`FAIL 超时:${label}`); return null; }
+    if (Date.now() > deadline) { fails.push(`Timeout: ${label}`); console.log(`FAIL timeout: ${label}`); return null; }
     await delay(everyMs);
   }
 }
@@ -140,29 +140,29 @@ try {
   const keep = (c) => { editorLog.push(c.toString()); if (editorLog.length > 400) editorLog.shift(); };
   editor.stdout.on('data', keep);
   editor.stderr.on('data', keep);
-  await until('编辑器进程起来', async () => (await fetch(`${EDITOR}/api/prerender/info`).then((r) => r.ok, () => false)) || null, 180000);
-  const prerender = await until('预渲染进程就绪', async () => { const i = await json(`${EDITOR}/api/prerender/info`); return i.body?.ready && i.body.url ? i.body.url : null; }, 240000);
-  if (!prerender) throw new Error('预渲染进程没起来');
+  await until('editor process is up', async () => (await fetch(`${EDITOR}/api/prerender/info`).then((r) => r.ok, () => false)) || null, 180000);
+  const prerender = await until('prerender process ready', async () => { const i = await json(`${EDITOR}/api/prerender/info`); return i.body?.ready && i.body.url ? i.body.url : null; }, 240000);
+  if (!prerender) throw new Error('The prerender process did not start');
 
   /* ================= A 镜像那条路 ================= */
   const PA = project('cut-look-A');
   const pushed = await postJson(`${EDITOR}/api/data/project`, { session: 'cut-look-A', localRev: 1, project: PA });
   await postJson(`${EDITOR}/api/data/playhead`, { session: 'cut-look-A', t: 2, playing: false });
-  check('A0', pushed.ok && pushed.body?.ok, '项目推进数据镜像', pushed.body);
+  check('A0', pushed.ok && pushed.body?.ok, 'Push the project to the data mirror', pushed.body);
   const before = await json(`${EDITOR}/api/data/project`);
 
   const a1 = await callTool('see_frames', { source: 'timeline', cutId: 'cut-2' });
   const a1px = centerOf(a1.body?.result, 'A1-cut2.png');
-  check('A1', a1.body?.ok && isBlue(a1px) && a1.body.result?.cut?.id === 'cut-2' && a1.body.result.cut.name === '剪辑2',
-    '镜像那条路:激活剪辑1,see_frames 带剪辑2 的 cutId,出的是剪辑2(蓝);回包写明剪辑2', { px: a1px, cut: a1.body?.result?.cut, t: a1.body?.result?.t, error: a1.body?.error });
+  check('A1', a1.body?.ok && isBlue(a1px) && a1.body.result?.cut?.id === 'cut-2' && a1.body.result.cut.name === 'Cut 2',
+    'Mirror path: with Cut 1 active, see_frames with the cutId of Cut 2 returns Cut 2 (blue); the response names Cut 2', { px: a1px, cut: a1.body?.result?.cut, t: a1.body?.result?.t, error: a1.body?.error });
   const afterA = await json(`${EDITOR}/api/data/project`);
   check('A2', afterA.body?.localRev === before.body?.localRev && afterA.body?.project?.activeCutId === 'cut-1' && JSON.stringify(afterA.body?.project) === JSON.stringify(before.body?.project),
-    '镜像那条路:数据镜像的版本号与项目都没变,activeCutId 仍是剪辑1', { before: before.body?.localRev, after: afterA.body?.localRev, active: afterA.body?.project?.activeCutId });
+    'Mirror path: the version number of the data mirror and the project are both unchanged, and activeCutId is still Cut 1', { before: before.body?.localRev, after: afterA.body?.localRev, active: afterA.body?.project?.activeCutId });
   const a3 = await callTool('see_frames', { source: 'timeline', t: 1 });
   const a3px = centerOf(a3.body?.result, 'A3-cut1.png');
-  check('A3', a3.body?.ok && isRed(a3px) && a3.body.result?.cut?.id === 'cut-1', '镜像那条路:不带 cutId,出的是剪辑1(红)', { px: a3px, cut: a3.body?.result?.cut, error: a3.body?.error });
+  check('A3', a3.body?.ok && isRed(a3px) && a3.body.result?.cut?.id === 'cut-1', 'Mirror path: without a cutId, it returns Cut 1 (red)', { px: a3px, cut: a3.body?.result?.cut, error: a3.body?.error });
   const a4 = await callTool('see_frames', { source: 'timeline', cutId: 'cut-9' });
-  check('A4', a4.body?.ok === false && /找不到剪辑 "cut-9"/.test(a4.body?.error ?? '') && /剪辑2\(cut-2\)/.test(a4.body?.error ?? ''), 'cutId 不存在:明确报错并列出现有的剪辑', { error: a4.body?.error });
+  check('A4', a4.body?.ok === false && /Cut "cut-9" not found/.test(a4.body?.error ?? '') && /Cut 2\(cut-2\)/.test(a4.body?.error ?? ''), 'cutId does not exist: reports a clear error and lists the existing cuts', { error: a4.body?.error });
 
   /* ================= B 编辑器页面 + 项目副本那条路 ================= */
   browser = await puppeteer.launch({ headless: true, args: [...PROBE_CHROME_ARGS, '--no-first-run', '--force-device-scale-factor=1'] });
@@ -176,12 +176,12 @@ try {
   await delay(3000);
   const PB = project(`cut-look-B-${Date.now().toString(36)}`);
   await page.evaluate((p) => { window.__pcStore.actions.loadProject(p); window.__pcStore.actions.seek(0.5); }, PB);
-  const bound = await until('页面绑上项目副本', async () => {
+  const bound = await until('the page binds the project copy', async () => {
     const s = await json(`${EDITOR}/api/agent/status`);
     return s.body?.bound && s.body.projectId === PB.id && s.body.link?.replica?.hasBody === true ? s.body : null;
   }, 90_000, 500);
   out.bound = bound ? { mode: bound.mode, projectId: bound.projectId, rev: bound.link?.replica?.rev ?? null } : null;
-  check('B0', !!bound, '编辑台把项目写进本机文档服务并绑定了项目副本(Agent 服务端在副本上执行)', out.bound);
+  check('B0', !!bound, 'The editor wrote the project into the local document service and bound the project copy (the Agent server executes on the copy)', out.bound);
   await page.evaluate(() => { window.__probeProjectRef = window.__pcStore.getState().project; });
   // 副本的版本号与 Agent 一侧提交过几次(`agent-exec.mjs` 的 describe):看画面前后都不该变
   const revOf = async () => { const s = await json(`${EDITOR}/api/agent/status`); return { rev: s.body?.link?.replica?.rev ?? null, committed: s.body?.stats?.committed ?? null }; };
@@ -189,26 +189,26 @@ try {
 
   const b1 = await callTool('see_frames', { source: 'timeline', cutId: 'cut-2' });
   const b1px = centerOf(b1.body?.result, 'B1-cut2.png');
-  check('B1', b1.body?.ok && isBlue(b1px) && b1.body.result?.cut?.id === 'cut-2', '副本那条路:带剪辑2 的 cutId,出的是剪辑2(蓝)', { px: b1px, cut: b1.body?.result?.cut, rev: b1.body?.result?.rev, error: b1.body?.error });
+  check('B1', b1.body?.ok && isBlue(b1px) && b1.body.result?.cut?.id === 'cut-2', 'Copy path: with the cutId of Cut 2, it returns Cut 2 (blue)', { px: b1px, cut: b1.body?.result?.cut, rev: b1.body?.result?.rev, error: b1.body?.error });
   const pageState = await page.evaluate(() => {
     const s = window.__pcStore.getState();
     return { same: s.project === window.__probeProjectRef, active: s.project.activeCutId, t: s.t };
   });
   const rev1 = await revOf();
   check('B2', pageState.same && pageState.active === 'cut-1' && Math.abs(pageState.t - 0.5) < 1e-6 && Number.isInteger(rev0.rev) && rev1.rev === rev0.rev && rev1.committed === rev0.committed && b1.body?.result?.rev === rev0.rev,
-    '副本那条路:页面 store 里的项目是同一个对象、激活剪辑仍是剪辑1、播放头没动;文档服务版本号没变(没有写入)', { ...pageState, rev0, rev1 });
+    'Copy path: the project in the page store is the same object, the active cut is still Cut 1, the playhead did not move; the document service version number is unchanged (nothing was written)', { ...pageState, rev0, rev1 });
   const b3 = await callTool('see_frames', { source: 'timeline', t: 1 });
   const b3px = centerOf(b3.body?.result, 'B3-cut1.png');
-  check('B3', b3.body?.ok && isRed(b3px) && b3.body.result?.cut?.id === 'cut-1', '副本那条路:不带 cutId,出的是剪辑1(红)', { px: b3px, cut: b3.body?.result?.cut, error: b3.body?.error });
+  check('B3', b3.body?.ok && isRed(b3px) && b3.body.result?.cut?.id === 'cut-1', 'Copy path: without a cutId, it returns Cut 1 (red)', { px: b3px, cut: b3.body?.result?.cut, error: b3.body?.error });
 
   const { tools } = await import('../../server/mcp-tools.mjs');
   const names = new Set(tools.map((t) => t.name));
   check('B4', !names.has('switch_cut') && names.has('user_interface_switch_cut') && !!tools.find((t) => t.name === 'see_frames')?.inputSchema?.properties?.cutId,
-    '工具清单:没有旧名 switch_cut,有 user_interface_switch_cut;see_frames 收 cutId');
+    'Tool manifest: no old name switch_cut, has user_interface_switch_cut; see_frames accepts cutId');
   out.pageErrors = pageErrors.slice(0, 5);
 } catch (e) {
-  fails.push(`异常:${e?.stack ?? e}`);
-  console.log('FAIL 异常', e?.stack ?? e);
+  fails.push(`Exception: ${e?.stack ?? e}`);
+  console.log('FAIL exception', e?.stack ?? e);
   out.editorLogTail = editorLog.slice(-30).join('').slice(-3000);
 } finally {
   try { await browser?.close(); } catch { /* 已关 */ }

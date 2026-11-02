@@ -52,7 +52,7 @@ function taskIdsIn(m) {
 
 /* ------------------------------------------------------------ P1～P4 认领 */
 
-test('P1 两个节点对同一个 open 任务、同一 expectVersion 先后认领：先到的 claimed，后到的 taken，version 只加一次', () => {
+test('P1 Two nodes claim the same open task with the same expectVersion one after the other: the first to arrive gets claimed, the later one gets taken, and version is incremented only once', () => {
   const { h, id } = setup();
   const first = h.claim('a', id, 1);
   const c = first.one('a', 'task.claimed');
@@ -74,13 +74,13 @@ test('P1 两个节点对同一个 open 任务、同一 expectVersion 先后认�
   const second = h.claim('b', id, 1);
   const r = rejected(second, 'b', id);
   assert.deepEqual([r.reason, r.state, r.version], ['taken', 'claimed', 2]);
-  assert.deepEqual(second.conns(), ['b'], '被拒不广播');
+  assert.deepEqual(second.conns(), ['b'], 'A rejection is not broadcast');
 
   const t = h.task(id);
   assert.deepEqual([t.state, t.version, t.claim.nodeId, t.claim.token], ['claimed', 2, 'node-A', 2]);
 });
 
-test('P2 节点拿旧 expectVersion 认领（任务回收又重开过）：stale，回包带当前 version；用新版本再认领成功', () => {
+test('P2 A node claims with an old expectVersion (the task was reclaimed and reopened): stale, the reply carries the current version; claiming again with the new version succeeds', () => {
   const { h, id } = setup();
   claimOk(h, 'a', id, 1);
   h.at(T0 + LEASE + 1);
@@ -99,7 +99,7 @@ test('P2 节点拿旧 expectVersion 认领（任务回收又重开过）：stale
   assert.equal(h.task(id).claim.nodeId, 'node-B');
 });
 
-test('P3 认领不存在的任务：gone', () => {
+test('P3 Claiming a nonexistent task: gone', () => {
   const { h } = setup();
   const ghost = 'snapshot:nope:0-59';
   const out = h.claim('a', ghost, 1);
@@ -116,7 +116,7 @@ test('P3 认领不存在的任务：gone', () => {
   assert.equal(rejected(h2.claim('b', id, 3), 'b', id).reason, 'gone');
 });
 
-test('P4 纯浏览器节点认领同租户其他用户的任务：forbidden，不带 state / version，状态不变', () => {
+test('P4 A browser-only node claims a task of another user in the same tenant: forbidden, with no state / version, state unchanged', () => {
   const { h, id } = setup();
   h.node('br', 'node-BR', { profile: 'browser', userId: 'u2', tenantId: 't1' });
   h.node('bo', 'node-BO', { profile: 'browser', userId: 'u1', tenantId: 't1' });
@@ -126,10 +126,10 @@ test('P4 纯浏览器节点认领同租户其他用户的任务：forbidden，�
   const out = h.claim('br', id, 1);
   const r = rejected(out, 'br', id);
   assert.equal(r.reason, 'forbidden');
-  assert.equal('state' in r, false, 'forbidden 不带 state');
-  assert.equal('version' in r, false, 'forbidden 不带 version');
+  assert.equal('state' in r, false, 'forbidden carries no state');
+  assert.equal('version' in r, false, 'forbidden carries no version');
   assert.deepEqual(out.conns(), ['br']);
-  assert.deepEqual(h.describe(), before, '状态不变');
+  assert.deepEqual(h.describe(), before, 'state unchanged');
 
   // 不存在的任务先判 gone（契约 A.7.2 第 1 步在第 2 步之前）
   assert.equal(rejected(h.claim('br', 'snapshot:nope:0-1', 1), 'br', 'snapshot:nope:0-1').reason, 'gone');
@@ -149,7 +149,7 @@ test('P4 纯浏览器节点认领同租户其他用户的任务：forbidden，�
 
 /* ------------------------------------------------------------ P5～P7 身份与可见性 */
 
-test('P5 纯浏览器节点 watch：queue.snapshot 与增量只含本人任务，别人任务的 opened / taken / closed 都收不到', () => {
+test('P5 Browser-only node watch: queue.snapshot and incremental updates contain only the user\'s own tasks, and opened / taken / closed of other users\' tasks are never received', () => {
   const h = createQueueHarness(createRenderQueue);
   h.publisher('p1', 'pub-1', { userId: 'u1', tenantId: 't1' });
   h.publisher('p2', 'pub-2', { userId: 'u2', tenantId: 't1' });
@@ -162,11 +162,11 @@ test('P5 纯浏览器节点 watch：queue.snapshot 与增量只含本人任务�
   assert.deepEqual(br2.one('br2', 'queue.snapshot').tasks.map(t => t.id), [U2a.id]);
   assert.equal(br2.one('br2', 'queue.snapshot').tasks[0].source.userId, 'u2');
   const a = h.node('a', 'node-A', { profile: 'pc', userId: 'u9' });
-  assert.deepEqual(a.one('a', 'queue.snapshot').tasks.map(t => t.id).sort(), [U1a.id, U2a.id].sort(), 'pc 不按用户过滤');
+  assert.deepEqual(a.one('a', 'queue.snapshot').tasks.map(t => t.id).sort(), [U1a.id, U2a.id].sort(), 'pc does not filter by user');
   const br1 = h.node('br1', 'node-BR1', { profile: 'browser', userId: 'u1', watch: ['proj-1'] });
   assert.deepEqual(br1.one('br1', 'queue.snapshot').tasks.map(t => t.id), [U1a.id]);
   const x = h.node('x', 'node-X', { profile: 'host', userId: 'u9', watch: ['proj-2'] });
-  assert.deepEqual(x.one('x', 'queue.snapshot').tasks, [], '只含 watch 的项目');
+  assert.deepEqual(x.one('x', 'queue.snapshot').tasks, [], 'Contains only the watched projects');
 
   // 增量：opened
   const U1b = makeTaskInput({ resultKey: 'u1b' });
@@ -177,7 +177,7 @@ test('P5 纯浏览器节点 watch：queue.snapshot 与增量只含本人任务�
   assert.deepEqual(out.conns().filter(c => c !== 'p2').sort(), ['a', 'br2']);
   const U2c = makeTaskInput({ projectId: 'proj-2', resultKey: 'u2c' });
   out = h.publish('p2', [U2c]);
-  assert.deepEqual(out.conns().filter(c => c !== 'p2').sort(), ['a', 'br2', 'x'], 'br1 只 watch proj-1');
+  assert.deepEqual(out.conns().filter(c => c !== 'p2').sort(), ['a', 'br2', 'x'], 'br1 watches only proj-1');
 
   // 增量：taken
   out = h.claim('a', U1a.id, 1);
@@ -201,12 +201,12 @@ test('P5 纯浏览器节点 watch：queue.snapshot 与增量只含本人任务�
 
   // 通篇：br2 收到的每条消息涉及的任务都是 u2 的
   const u2Ids = new Set([U2a.id, U2b.id, U2c.id]);
-  for (const m of h.bus.of('br2')) for (const tid of taskIdsIn(m)) assert.ok(u2Ids.has(tid), `br2 收到了别人任务 ${tid} 的 ${m.type}`);
+  for (const m of h.bus.of('br2')) for (const tid of taskIdsIn(m)) assert.ok(u2Ids.has(tid), `br2 received ${m.type} of another user's task ${tid}`);
   const u1Ids = new Set([U1a.id, U1b.id]);
-  for (const m of h.bus.of('br1')) for (const tid of taskIdsIn(m)) assert.ok(u1Ids.has(tid), `br1 收到了别人任务 ${tid} 的 ${m.type}`);
+  for (const m of h.bus.of('br1')) for (const tid of taskIdsIn(m)) assert.ok(u1Ids.has(tid), `br1 received ${m.type} of another user's task ${tid}`);
 });
 
-test('P6 本机 PC / 独立主机认领同租户其他用户的任务：成功', () => {
+test('P6 A local PC / standalone host claims a task of another user in the same tenant: success', () => {
   const { h } = setup({ tasks: [makeTaskInput({ resultKey: 'k1' }), makeTaskInput({ resultKey: 'k2' })] });
   const [T1, T2] = [makeTaskInput({ resultKey: 'k1' }), makeTaskInput({ resultKey: 'k2' })];
   h.node('pc9', 'node-PC9', { profile: 'pc', userId: 'u9', tenantId: 't1' });
@@ -218,7 +218,7 @@ test('P6 本机 PC / 独立主机认领同租户其他用户的任务：成功',
   assert.equal(h.task(T2.id).claim.nodeId, 'node-H8');
 });
 
-test('P7 消息自报的 userId / tenantId 与 principal 不同：以 principal 为准', () => {
+test('P7 The userId / tenantId self-reported in the message differ from the principal: the principal takes precedence', () => {
   const { h } = setup({ tasks: [] });
   const T = makeTaskInput({ resultKey: 'rk7', derivedFrom: 'plan:proj-1@1', priority: 5,
     input: { clipId: 'c7', cardId: 'particles' }, requires: { codeVersion: 'c0de', memoryMB: 900 },
@@ -263,7 +263,7 @@ test('P7 消息自报的 userId / tenantId 与 principal 不同：以 principal 
 
 /* ------------------------------------------------------------ P8～P11 发布与订阅 */
 
-test('P8 同一 id 重复发布：不新建，订阅者合并，open 任务数不变', () => {
+test('P8 Repeated publish of the same id: no new task, subscribers are merged, the number of open tasks is unchanged', () => {
   const { h, id } = setup({ tasks: [] });
   h.publisher('q', 'pub-2', { userId: 'u2' });
   h.publisher('r', 'pub-3', { userId: 'u3' });
@@ -274,7 +274,7 @@ test('P8 同一 id 重复发布：不新建，订阅者合并，open 任务数�
 
   out = h.publish('p', [T_IN]);
   assert.deepEqual(out.one('p', 'task.published').results, [{ id: T_IN.id, state: 'open', version: 1, created: false }]);
-  assert.deepEqual(out.conns(), ['p'], '重复发布不广播');
+  assert.deepEqual(out.conns(), ['p'], 'A repeated publish is not broadcast');
   out = h.publish('q', [T_IN]);
   assert.deepEqual(out.one('q', 'task.published').results, [{ id: T_IN.id, state: 'open', version: 1, created: false }]);
   assert.deepEqual(out.conns(), ['q']);
@@ -298,7 +298,7 @@ test('P8 同一 id 重复发布：不新建，订阅者合并，open 任务数�
   void id;
 });
 
-test('P9 已 done、未过 DONE_TTL 的任务再次发布：立即回 task.done；过了 TTL 再发布是新的 open 任务', () => {
+test('P9 Republishing a task that is already done and within DONE_TTL: task.done is returned immediately; after the TTL, republishing creates a new open task', () => {
   const { h, id } = setup();
   h.publisher('q', 'pub-2', { userId: 'u2' });
   claimOk(h, 'a', id, 1);
@@ -312,13 +312,13 @@ test('P9 已 done、未过 DONE_TTL 的任务再次发布：立即回 task.done�
   const d = out.one('q', 'task.done');
   assert.deepEqual({ id: d.id, resultKey: d.resultKey, projectId: d.projectId, projectRev: d.projectRev, result: d.result },
     { id, resultKey: 'rk1', projectId: 'proj-1', projectRev: 1, result: { ranges: [[0, 59]] } });
-  assert.deepEqual(out.conns(), ['q'], '只回本连接，不广播、不再通知原订阅者');
+  assert.deepEqual(out.conns(), ['q'], 'Replies only to this connection, no broadcast, and the original subscribers are not notified again');
   const t = h.task(id);
-  assert.deepEqual([t.state, t.version, t.finishedAt, t.subscribers], ['done', 3, tf, ['pub-1']], 'done 行：不变');
+  assert.deepEqual([t.state, t.version, t.finishedAt, t.subscribers], ['done', 3, tf, ['pub-1']], 'done row: unchanged');
 
   h.at(tf + TTL).assertSilent();
   assert.equal(h.task(id).state, 'done');
-  h.at(tf + TTL + 1).assertSilent('TTL 删除不发消息');
+  h.at(tf + TTL + 1).assertSilent('TTL deletion sends no message');
   assert.equal(h.task(id), null);
 
   const again = h.publish('q', [T_IN]);
@@ -339,7 +339,7 @@ test('P9 已 done、未过 DONE_TTL 的任务再次发布：立即回 task.done�
   assert.deepEqual([h2.task(id2).state, h2.task(id2).version], ['open', 1]);
 });
 
-test('P10 每项目未完成任务达到 MAX_TASKS_PER_PROJECT：再发布回 limit；done / failed 不计数', () => {
+test('P10 Unfinished tasks per project reach MAX_TASKS_PER_PROJECT: publishing again returns limit; done / failed are not counted', () => {
   const MAX = QUEUE_DEFAULTS.MAX_TASKS_PER_PROJECT;
   assert.equal(MAX, 5000);
   const h = createQueueHarness(createRenderQueue);
@@ -389,7 +389,7 @@ test('P10 每项目未完成任务达到 MAX_TASKS_PER_PROJECT：再发布回 li
   assert.equal(live.length, MAX);
 });
 
-test('P11 unsubscribe 让 open 任务没有订阅者：删除并广播 task.closed；claimed 的留着做完、完成后不通知', () => {
+test('P11 unsubscribe leaves an open task without subscribers: it is deleted and task.closed is broadcast; a claimed task is kept until it finishes, and no notice is sent after completion', () => {
   const T1 = makeTaskInput({ resultKey: 'rk', range: [0, 59] });
   const T2 = makeTaskInput({ resultKey: 'rk', range: [60, 119] });
   const { h } = setup({ tasks: [T1, T2] });
@@ -407,7 +407,7 @@ test('P11 unsubscribe 让 open 任务没有订阅者：删除并广播 task.clos
   assert.deepEqual([t2.state, t2.subscribers], ['claimed', []]);
 
   out = h.complete('a', T2.id, 2, { ranges: [[60, 119]] });
-  assert.equal(out.ofType('task.done').length, 0, '没有订阅者，不发 task.done');
+  assert.equal(out.ofType('task.done').length, 0, 'No subscribers, so task.done is not sent');
   assert.equal(h.task(T2.id).state, 'done');
 
   // 再退一次：已经不是订阅者，ids 为空
@@ -423,18 +423,18 @@ test('P11 unsubscribe 让 open 任务没有订阅者：删除并广播 task.clos
   h.bus.clear();
   out = h.unsubscribe('p', { projectId: 'proj-1', projectRev: 1 });
   assert.deepEqual(out.one('p', 'task.unsubscribed').ids, [R1.id]);
-  assert.deepEqual(h.task(R1.id).subscribers, ['pub-2'], '还有 Q 订阅，不删');
+  assert.deepEqual(h.task(R1.id).subscribers, ['pub-2'], 'Q is still subscribed, so it is not deleted');
   assert.equal(out.ofType('task.closed').length, 0);
   out = h.unsubscribe('p', { projectId: 'proj-1' });
   assert.deepEqual(out.one('p', 'task.unsubscribed').ids, [R2.id]);
   assert.equal(h.task(R2.id), null);
   assert.equal(out.one('w', 'task.closed').id, R2.id);
-  assert.deepEqual(h.task(X.id).subscribers, ['pub-1'], '别的项目不动');
+  assert.deepEqual(h.task(X.id).subscribers, ['pub-1'], 'Other projects are untouched');
 });
 
 /* ------------------------------------------------------------ P12～P14 格式、epoch、常量 */
 
-test('P12 入站消息缺字段、id 形状不对、未知 type：回 bad-message，整条不生效，状态不变', () => {
+test('P12 Inbound message with a missing field, a malformed id or an unknown type: bad-message is returned, the whole message has no effect, state unchanged', () => {
   const { h, id } = setup({ tasks: [T_IN, makeTaskInput({ resultKey: 'rk2' })] });
   claimOk(h, 'a', makeTaskInput({ resultKey: 'rk2' }).id, 1);
   h.bus.clear();
@@ -446,66 +446,66 @@ test('P12 入站消息缺字段、id 形状不对、未知 type：回 bad-messag
 
   const cases = [
     // [连接, 消息, 说明]
-    ['a', null, '消息是 null'],
-    ['a', 'hello', '消息是字符串'],
-    ['a', 42, '消息是数字'],
-    ['a', { reqId: 'r1' }, '缺 type'],
-    ['a', { type: 'task.nope', reqId: 'r2' }, '未知 type'],
-    ['a', { type: 42, reqId: 'r3' }, 'type 不是字符串'],
-    ['a', { type: 'task.claim', id, reqId: 'r4' }, 'claim 缺 expectVersion'],
-    ['a', { type: 'task.claim', id, expectVersion: '1', reqId: 'r5' }, 'expectVersion 类型不对'],
-    ['a', { type: 'task.claim', expectVersion: 1, reqId: 'r6' }, 'claim 缺 id'],
-    ['a', { type: 'task.progress', id, token: '2', done: 1, reqId: 'r7' }, 'token 类型不对'],
-    ['a', { type: 'task.progress', token: 2, done: 1, reqId: 'r8' }, 'progress 缺 id'],
-    ['a', { type: 'task.complete', id, reqId: 'r9' }, 'complete 缺 token'],
-    ['a', { type: 'task.release', id, reqId: 'r10' }, 'release 缺 token'],
-    ['a', { type: 'task.fail', id, token: 'x', reqId: 'r11' }, 'fail 的 token 类型不对'],
-    ['a', { type: 'node.hello', profile: 'pc', reqId: 'r12' }, 'hello 缺 nodeId'],
-    ['a', { type: 'node.hello', nodeId: 'node-A', profile: 'phone', reqId: 'r13' }, 'profile 不认识'],
-    ['a', { type: 'queue.watch', projects: 42, reqId: 'r14' }, 'projects 类型不对'],
-    ['p', { type: 'publisher.hello', reqId: 'r15' }, 'publisher.hello 缺 publisherId'],
-    ['p', { type: 'task.publish', reqId: 'r16' }, 'publish 缺 tasks'],
-    ['p', { type: 'task.publish', tasks: [], reqId: 'r17' }, 'tasks 为空'],
-    ['p', { type: 'task.publish', tasks: 'x', reqId: 'r18' }, 'tasks 不是数组'],
-    ['p', { type: 'task.publish', tasks: [good, bad({ id: 'snapshot:bad:0-58' })], reqId: 'r19' }, 'id 与 taskIdOf 不符（整条不生效，good 也不建）'],
-    ['p', { type: 'task.publish', tasks: [bad({ id: 'snapshot-bad-0-59' })], reqId: 'r20' }, 'id 形状不对'],
-    ['p', { type: 'task.publish', tasks: [bad({ kind: 'video', id: 'video:bad:0-59' })], reqId: 'r21' }, 'kind 不认识'],
-    ['p', { type: 'task.publish', tasks: [bad({ resultKey: '', id: 'snapshot::0-59' })], reqId: 'r22' }, 'resultKey 为空'],
-    ['p', { type: 'task.publish', tasks: [(({ tier, ...rest }) => rest)(snapBad)], reqId: 'r23' }, 'snapshot 缺 tier'],
-    ['p', { type: 'task.publish', tasks: [bad({ tier: 'global' })], reqId: 'r24' }, 'tier 不认识'],
-    ['p', { type: 'task.publish', tasks: [bad({ range: null })], reqId: 'r25' }, 'snapshot 的 range 为 null'],
+    ['a', null, 'Message is null'],
+    ['a', 'hello', 'Message is a string'],
+    ['a', 42, 'Message is a number'],
+    ['a', { reqId: 'r1' }, 'Missing type'],
+    ['a', { type: 'task.nope', reqId: 'r2' }, 'Unknown type'],
+    ['a', { type: 42, reqId: 'r3' }, 'type is not a string'],
+    ['a', { type: 'task.claim', id, reqId: 'r4' }, 'claim is missing expectVersion'],
+    ['a', { type: 'task.claim', id, expectVersion: '1', reqId: 'r5' }, 'expectVersion has the wrong type'],
+    ['a', { type: 'task.claim', expectVersion: 1, reqId: 'r6' }, 'claim is missing id'],
+    ['a', { type: 'task.progress', id, token: '2', done: 1, reqId: 'r7' }, 'token has the wrong type'],
+    ['a', { type: 'task.progress', token: 2, done: 1, reqId: 'r8' }, 'progress is missing id'],
+    ['a', { type: 'task.complete', id, reqId: 'r9' }, 'complete is missing token'],
+    ['a', { type: 'task.release', id, reqId: 'r10' }, 'release is missing token'],
+    ['a', { type: 'task.fail', id, token: 'x', reqId: 'r11' }, 'token of fail has the wrong type'],
+    ['a', { type: 'node.hello', profile: 'pc', reqId: 'r12' }, 'hello is missing nodeId'],
+    ['a', { type: 'node.hello', nodeId: 'node-A', profile: 'phone', reqId: 'r13' }, 'profile is not recognized'],
+    ['a', { type: 'queue.watch', projects: 42, reqId: 'r14' }, 'projects has the wrong type'],
+    ['p', { type: 'publisher.hello', reqId: 'r15' }, 'publisher.hello is missing publisherId'],
+    ['p', { type: 'task.publish', reqId: 'r16' }, 'publish is missing tasks'],
+    ['p', { type: 'task.publish', tasks: [], reqId: 'r17' }, 'tasks is empty'],
+    ['p', { type: 'task.publish', tasks: 'x', reqId: 'r18' }, 'tasks is not an array'],
+    ['p', { type: 'task.publish', tasks: [good, bad({ id: 'snapshot:bad:0-58' })], reqId: 'r19' }, 'id does not match taskIdOf (the whole message has no effect, good is not created either)'],
+    ['p', { type: 'task.publish', tasks: [bad({ id: 'snapshot-bad-0-59' })], reqId: 'r20' }, 'id is malformed'],
+    ['p', { type: 'task.publish', tasks: [bad({ kind: 'video', id: 'video:bad:0-59' })], reqId: 'r21' }, 'kind is not recognized'],
+    ['p', { type: 'task.publish', tasks: [bad({ resultKey: '', id: 'snapshot::0-59' })], reqId: 'r22' }, 'resultKey is empty'],
+    ['p', { type: 'task.publish', tasks: [(({ tier, ...rest }) => rest)(snapBad)], reqId: 'r23' }, 'snapshot is missing tier'],
+    ['p', { type: 'task.publish', tasks: [bad({ tier: 'global' })], reqId: 'r24' }, 'tier is not recognized'],
+    ['p', { type: 'task.publish', tasks: [bad({ range: null })], reqId: 'r25' }, 'range of snapshot is null'],
     ['p', { type: 'task.publish', tasks: [bad({ range: { unit: 'localFrame', from: 9, to: 3 }, id: 'snapshot:bad:9-3' })], reqId: 'r26' }, 'from > to'],
     ['p', { type: 'task.publish', tasks: [bad({ range: { unit: 'localFrame', from: -1, to: 3 }, id: 'snapshot:bad:-1-3' })], reqId: 'r27' }, 'from < 0'],
-    ['p', { type: 'task.publish', tasks: [bad({ range: { unit: 'localFrame', from: 1.5, to: 3 }, id: 'snapshot:bad:1.5-3' })], reqId: 'r28' }, 'from 不是整数'],
-    ['p', { type: 'task.publish', tasks: [bad({ range: { unit: 'second', from: 0, to: 59 } })], reqId: 'r29' }, 'unit 不认识'],
-    ['p', { type: 'task.publish', tasks: [{ ...plan, source: { projectId: 'proj-1', projectRev: 1 } }], reqId: 'r30' }, 'plan 的 resultKey 与 source 不符'],
-    ['p', { type: 'task.publish', tasks: [(({ source, ...rest }) => rest)(snapBad)], reqId: 'r31' }, '缺 source'],
-    ['p', { type: 'task.publish', tasks: [bad({ source: { projectId: 'proj-1', projectRev: '1' } })], reqId: 'r32' }, 'projectRev 类型不对'],
-    ['p', { type: 'task.publish', tasks: [bad({ priority: 'high' })], reqId: 'r33' }, 'priority 类型不对'],
-    ['p', { type: 'task.publish', tasks: [bad({ weight: { class: 'giant' } })], reqId: 'r34' }, 'weight.class 不认识'],
-    ['p', { type: 'task.unsubscribe', reqId: 'r35' }, 'unsubscribe 既无 ids 也无 projectId'],
-    ['p', { type: 'task.unsubscribe', ids: 'x', reqId: 'r36' }, 'ids 不是数组'],
+    ['p', { type: 'task.publish', tasks: [bad({ range: { unit: 'localFrame', from: 1.5, to: 3 }, id: 'snapshot:bad:1.5-3' })], reqId: 'r28' }, 'from is not an integer'],
+    ['p', { type: 'task.publish', tasks: [bad({ range: { unit: 'second', from: 0, to: 59 } })], reqId: 'r29' }, 'unit is not recognized'],
+    ['p', { type: 'task.publish', tasks: [{ ...plan, source: { projectId: 'proj-1', projectRev: 1 } }], reqId: 'r30' }, 'resultKey of plan does not match source'],
+    ['p', { type: 'task.publish', tasks: [(({ source, ...rest }) => rest)(snapBad)], reqId: 'r31' }, 'Missing source'],
+    ['p', { type: 'task.publish', tasks: [bad({ source: { projectId: 'proj-1', projectRev: '1' } })], reqId: 'r32' }, 'projectRev has the wrong type'],
+    ['p', { type: 'task.publish', tasks: [bad({ priority: 'high' })], reqId: 'r33' }, 'priority has the wrong type'],
+    ['p', { type: 'task.publish', tasks: [bad({ weight: { class: 'giant' } })], reqId: 'r34' }, 'weight.class is not recognized'],
+    ['p', { type: 'task.unsubscribe', reqId: 'r35' }, 'unsubscribe has neither ids nor projectId'],
+    ['p', { type: 'task.unsubscribe', ids: 'x', reqId: 'r36' }, 'ids is not an array'],
     // 契约 A.10a 补充的格式规则
-    ['p', { type: 'task.publish', tasks: [{ ...plan, range: { unit: 'localFrame', from: 0, to: 1 } }], reqId: 'r37' }, 'plan 的 range 不是 null'],
-    ['a', { type: 'node.hello', nodeId: '', profile: 'pc', reqId: 'r38' }, 'nodeId 为空串'],
-    ['p', { type: 'publisher.hello', publisherId: '', reqId: 'r39' }, 'publisherId 为空串'],
-    ['p', { type: 'task.publish', tasks: [makeTaskInput({ projectId: '', resultKey: 'e' })], reqId: 'r40' }, 'projectId 为空串'],
-    ['a', { type: 'task.claim', id, expectVersion: 1, reqId: { x: 1 } }, 'reqId 不是字符串也不是数'],
-    ['a', { type: 'task.claim', id, expectVersion: 1, reqId: [1] }, 'reqId 是数组'],
+    ['p', { type: 'task.publish', tasks: [{ ...plan, range: { unit: 'localFrame', from: 0, to: 1 } }], reqId: 'r37' }, 'range of plan is not null'],
+    ['a', { type: 'node.hello', nodeId: '', profile: 'pc', reqId: 'r38' }, 'nodeId is an empty string'],
+    ['p', { type: 'publisher.hello', publisherId: '', reqId: 'r39' }, 'publisherId is an empty string'],
+    ['p', { type: 'task.publish', tasks: [makeTaskInput({ projectId: '', resultKey: 'e' })], reqId: 'r40' }, 'projectId is an empty string'],
+    ['a', { type: 'task.claim', id, expectVersion: 1, reqId: { x: 1 } }, 'reqId is neither a string nor a number'],
+    ['a', { type: 'task.claim', id, expectVersion: 1, reqId: [1] }, 'reqId is an array'],
   ];
 
   for (const [conn, msg, why] of cases) {
     const before = h.describe();
     const out = h.handle(conn, msg);
-    assert.deepEqual(out.conns(), [conn], `${why}：只回本连接`);
+    assert.deepEqual(out.conns(), [conn], `${why}: replies only to this connection`);
     const e = out.one(conn, 'error');
     assert.equal(e.reason, 'bad-message', why);
-    assert.equal(typeof e.detail, 'string', `${why}：detail 是字符串`);
+    assert.equal(typeof e.detail, 'string', `${why}: detail is a string`);
     const validReqId = msg && typeof msg === 'object' && (typeof msg.reqId === 'string' || typeof msg.reqId === 'number');
-    if (validReqId) assert.equal(e.reqId, msg.reqId, `${why}：带回 reqId`);
-    assert.deepEqual(h.describe(), before, `${why}：状态不变`);
+    if (validReqId) assert.equal(e.reqId, msg.reqId, `${why}: carries back reqId`);
+    assert.deepEqual(h.describe(), before, `${why}: state unchanged`);
   }
-  assert.equal(h.task(good.id), null, '整条不生效');
+  assert.equal(h.task(good.id), null, 'The whole message has no effect');
 
   // progress.done 可为 null 或不给（契约 A.10a），不是格式错误
   const heldId = makeTaskInput({ resultKey: 'rk2' }).id;
@@ -541,7 +541,7 @@ test('P12 入站消息缺字段、id 形状不对、未知 type：回 bad-messag
     assert.deepEqual([e.reason, e.reqId], ['bad-message', 'fmt']);
   }
   // 从没 connect 过的连接：忽略，什么都不发（契约 A.3）
-  h.handle('ghost', { type: 'task.claim', id, expectVersion: 1 }).assertSilent('未连接的 connId');
+  h.handle('ghost', { type: 'task.claim', id, expectVersion: 1 }).assertSilent('Unconnected connId');
 
   // 被新连接取代的旧连接：再发节点 / 发布方消息回 not-registered，它的 watch 一并取消（契约 A.10a）
   {
@@ -553,7 +553,7 @@ test('P12 入站消息缺字段、id 形状不对、未知 type：回 bad-messag
     const T = makeTaskInput({ resultKey: 'sup' });
     const pub = g.publish('p2', [T]);
     assert.equal(pub.one('p2', 'task.published').results[0].created, true);
-    assert.equal(pub.of('old').length, 0, '旧连接的 watch 已取消');
+    assert.equal(pub.of('old').length, 0, 'The watch of the old connection has been canceled');
     assert.equal(pub.one('new', 'task.opened').task.id, T.id);
     for (const [conn, msg] of [
       ['old', { type: 'task.claim', id: T.id, expectVersion: 1, reqId: 's1' }],
@@ -563,7 +563,7 @@ test('P12 入站消息缺字段、id 形状不对、未知 type：回 bad-messag
     ]) {
       const before = g.describe();
       const e = g.handle(conn, msg).one(conn, 'error');
-      assert.deepEqual([e.reason, e.reqId], ['not-registered', msg.reqId], `被取代的 ${conn} 发 ${msg.type}`);
+      assert.deepEqual([e.reason, e.reqId], ['not-registered', msg.reqId], `Superseded ${conn} sends ${msg.type}`);
       assert.deepEqual(g.describe(), before);
     }
     // 旧连接断开不影响新连接代表的身份
@@ -583,7 +583,7 @@ test('P12 入站消息缺字段、id 形状不对、未知 type：回 bad-messag
   assert.deepEqual(ok.one('p', 'task.published').results.map(r => r.created), [true, true, true]);
 });
 
-test('P13 所有出站消息都带当前 epoch；回包带回入站的 reqId', () => {
+test('P13 All outbound messages carry the current epoch; replies carry back the inbound reqId', () => {
   const h = createQueueHarness(createRenderQueue, { epoch: 'ep-fixed' });
   assert.equal(h.q.epoch, 'ep-fixed');
   assert.equal(h.describe().epoch, 'ep-fixed');
@@ -618,7 +618,7 @@ test('P13 所有出站消息都带当前 epoch；回包带回入站的 reqId', (
 
   for (const [conn, reqId, type, out] of replies) {
     const m = out.one(conn, type);
-    assert.equal(m.reqId, reqId, `${type} 带回 reqId`);
+    assert.equal(m.reqId, reqId, `${type} carries back reqId`);
   }
 
   const all = h.bus.all().entries;
@@ -626,9 +626,9 @@ test('P13 所有出站消息都带当前 epoch；回包带回入站的 reqId', (
   for (const type of ['node.welcome', 'publisher.welcome', 'queue.snapshot', 'task.published', 'task.unsubscribed', 'task.claimed',
     'task.claim-rejected', 'task.renewed', 'task.completed', 'task.released', 'task.fail-ack', 'task.lease-lost', 'task.opened',
     'task.taken', 'task.closed', 'task.done', 'task.failed', 'error']) {
-    assert.ok(seen.has(type), `场景应覆盖 ${type}`);
+    assert.ok(seen.has(type), `The scenario should cover ${type}`);
   }
-  for (const e of all) assert.equal(e.message.epoch, 'ep-fixed', `${e.message.type} 应带 epoch`);
+  for (const e of all) assert.equal(e.message.epoch, 'ep-fixed', `${e.message.type} should carry epoch`);
 
   // 缺省 epoch：随机字符串，所有消息都带它
   const h2 = createQueueHarness(createRenderQueue);
@@ -670,12 +670,12 @@ test('P13 所有出站消息都带当前 epoch；回包带回入站的 reqId', (
     q.handle('a', { type: 'queue.watch', projects: 'all' });
     assert.doesNotThrow(() => q.handle('boom', { type: 'task.publish', tasks: [T1] }));
     assert.equal(q.describe().tasks.find(t => t.id === T1.id)?.state, 'open');
-    assert.ok(got.some(([c, m]) => c === 'a' && m.type === 'task.opened' && m.task.id === T1.id), '别的连接照常收到');
+    assert.ok(got.some(([c, m]) => c === 'a' && m.type === 'task.opened' && m.task.id === T1.id), 'Other connections still receive it as usual');
     assert.ok(got.every(([, m]) => m.epoch === q.epoch));
   }
 });
 
-test('P14 options.constants 覆盖：覆盖值生效，其余保持基线', () => {
+test('P14 options.constants override: overridden values take effect, the rest keep the baseline', () => {
   // 常量表本身（契约 A.2）
   assert.deepEqual({ ...QUEUE_DEFAULTS }, {
     LEASE_MS: 30_000, RENEW_INTERVAL_MS: 10_000, SWEEP_INTERVAL_MS: 5_000,
@@ -717,7 +717,7 @@ test('P14 options.constants 覆盖：覆盖值生效，其余保持基线', () =
     h.at(T0 + 200).assertSilent();
     assert.equal(h.task(id).state, 'claimed');
     h.at(T0 + 201);
-    assert.equal(h.task(id), null, '节点宽限到期回 open，发布方宽限到期后没有订阅者的 open 任务删除');
+    assert.equal(h.task(id), null, 'Tasks return to open when the node\'s grace period expires; open tasks left without subscribers are deleted when the publisher\'s grace period expires');
     assert.equal(h.nodeInfo('node-A'), null);
     assert.equal(h.publisherInfo('pub-1'), null);
   }
@@ -771,7 +771,7 @@ test('P14 options.constants 覆盖：覆盖值生效，其余保持基线', () =
 
 /* ------------------------------------------------------------ P15 派生任务的继承（契约 A.4 末段〔裁〕） */
 
-test('P15 派生任务的继承：derivedFrom 指向本节点认领中的 plan 任务时，继承 plan 的 userId / tenantId 与订阅者；条件不满足不继承、不报错', () => {
+test('P15 Inheritance for derived tasks: when derivedFrom points to a plan task currently claimed by this node, the task inherits the plan\'s userId / tenantId and subscribers; if the condition is not met there is no inheritance and no error', () => {
   const h = createQueueHarness(createRenderQueue);
   h.publisher('pg', 'pub-page', { userId: 'u1', tenantId: 't1' });
   // 切分节点：同一条连接既是节点又是发布方，凭证是部署身份
@@ -793,7 +793,7 @@ test('P15 派生任务的继承：derivedFrom 指向本节点认领中的 plan �
   const dv = out.one('br1', 'task.opened').task;
   assert.deepEqual([dv.source.userId, dv.source.tenantId, dv.source.derivedFrom], ['u1', 't1', PL.id]);
   assert.deepEqual(dv.source.publisher, { id: 'pub-node' });
-  assert.equal(out.of('brS').length, 0, '切分节点身份的浏览器看不到');
+  assert.equal(out.of('brS').length, 0, 'A browser with the splitter node\'s identity sees nothing');
   assert.deepEqual(h.task(D.id).subscribers, ['pub-node', 'pub-page']);
 
   // 不继承 1：别的节点（不是 plan 的认领者）
@@ -852,7 +852,7 @@ test('P15 派生任务的继承：derivedFrom 指向本节点认领中的 plan �
   assert.deepEqual(h.task(E.id).subscribers, ['pub-n2']);
 });
 
-test('P16 继承条件满足时已存在的细任务：并入 plan 的订阅者（userId 不改）；done / failed 给新并入的订阅者各补发一条；已是订阅者的不重复发；条件不满足只加本发布方', () => {
+test('P16 Fine-grained tasks that already exist when the inheritance condition is met: the plan\'s subscribers are merged in (userId unchanged); for done / failed, each newly merged subscriber gets one backfilled message; existing subscribers are not sent it again; if the condition is not met only this publisher is added', () => {
   const h = createQueueHarness(createRenderQueue);
   // 早先建任务的发布方（另一个用户）、两个页面、切分节点 n、另一个节点 m
   h.publisher('old', 'pub-old', { userId: 'u-old', tenantId: 't1' });
@@ -907,7 +907,7 @@ test('P16 继承条件满足时已存在的细任务：并入 plan 的订阅者�
   assert.deepEqual(h.task(C.id).subscribers, ['pub-node', 'pub-old', 'pub-page', 'pub-page2']);
   for (const t of [D, F, D2, F2]) {
     const subs = h.task(t.id).subscribers;
-    for (const s of [...before.get(t.id).subscribers, 'pub-page', 'pub-page2']) assert.ok(subs.includes(s), `${t.id} 应含 ${s}，实际 ${subs}`);
+    for (const s of [...before.get(t.id).subscribers, 'pub-page', 'pub-page2']) assert.ok(subs.includes(s), `${t.id} should contain ${s}, actual ${subs}`);
   }
   // 状态、version、attempts 不变
   for (const t of ALL) {
@@ -957,10 +957,10 @@ test('P16 继承条件满足时已存在的细任务：并入 plan 的订阅者�
   h.complete('m', D3.id, 2, { ranges: [[0, 59]] });
   const viaM = h.publish('m', [derivedOf(O3), derivedOf(D3)]);
   assert.deepEqual(h.task(O3.id).subscribers, ['pub-m', 'pub-old']);
-  assert.deepEqual(h.task(D3.id).subscribers, ['pub-old'], 'done 行：不变（A.7.1）');
+  assert.deepEqual(h.task(D3.id).subscribers, ['pub-old'], 'done row: unchanged (A.7.1)');
   assert.equal(viaM.of('pg', ['task.done', 'task.failed']).length, 0);
   assert.equal(viaM.of('pg2', ['task.done', 'task.failed']).length, 0);
-  assert.deepEqual(viaM.of('m', 'task.done').map(m => m.id), [D3.id], 'A.7.1：done 回本连接');
+  assert.deepEqual(viaM.of('m', 'task.done').map(m => m.id), [D3.id], 'A.7.1: done goes back to this connection');
 
   // 条件不满足 2：derivedFrom 指向不存在的 plan
   const O4 = makeTaskInput({ resultKey: 'rk-open-4' });

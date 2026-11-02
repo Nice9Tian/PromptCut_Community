@@ -39,7 +39,7 @@ async function waitFor(fn, ms, what) {
     } catch (e) {
       last = e instanceof Error ? e.message : String(e);
     }
-    if (Date.now() > until) throw new Error(`等不到:${what}(最后一次 ${JSON.stringify(last)})`);
+    if (Date.now() > until) throw new Error(`Timed out waiting for: ${what} (last seen ${JSON.stringify(last)})`);
     await new Promise((r) => setTimeout(r, 200));
   }
 }
@@ -51,16 +51,16 @@ try {
   await pc.setUserAgent(DESKTOP_UA);
   await pc.setViewport({ width: 1400, height: 900 });
   await pc.goto(`${ORIGIN}/?editor`, { waitUntil: 'domcontentloaded' });
-  await waitFor(() => pc.evaluate(() => !!window.__pcStore), 60_000, '电脑页面的 store');
+  await waitFor(() => pc.evaluate(() => !!window.__pcStore), 60_000, 'PC page store');
   // 身份为电脑的页面照旧是桌面界面
   const pcMobile = await pc.evaluate(() => !!document.querySelector('[data-pc="mobile-ui"]'));
   out.checks.desktopStaysDesktop = !pcMobile;
-  if (pcMobile) fails.push('电脑声明的页面拿到了手机版界面');
+  if (pcMobile) fails.push('A page declared as desktop got the mobile UI');
 
-  await waitFor(() => pc.evaluate(() => window.__pcSyncTest?.view?.().status === 'online'), 120_000, '电脑页面接上本机文档服务');
+  await waitFor(() => pc.evaluate(() => window.__pcSyncTest?.view?.().status === 'online'), 120_000, 'PC page connected to the local document service');
   const projectId = await pc.evaluate(() => window.__pcStore.getState().project.id);
   out.projectId = projectId;
-  if (!projectId) fails.push('读不到电脑上那个项目的项目号');
+  if (!projectId) fails.push('Cannot read the project ID of the project on the computer');
 
   /* ---------------- 手机那一侧 ---------------- */
   const phone = await browser.newPage();
@@ -71,23 +71,23 @@ try {
   await phone.goto(`${ORIGIN}/?join=${encodeURIComponent(projectId)}`, { waitUntil: 'domcontentloaded' });
 
   // M1 手机版界面
-  await waitFor(() => phone.evaluate(() => !!document.querySelector('[data-pc="mobile-ui"]')), 60_000, '手机版界面挂上来');
+  await waitFor(() => phone.evaluate(() => !!document.querySelector('[data-pc="mobile-ui"]')), 60_000, 'mobile UI mounts');
   out.checks.M1_mobileLayout = true;
 
   // M2 接上本机文档服务,而且是同一个项目
-  await waitFor(() => phone.evaluate(() => window.__pcSyncTest?.view?.().status === 'online'), 120_000, '手机页面接上本机文档服务');
+  await waitFor(() => phone.evaluate(() => window.__pcSyncTest?.view?.().status === 'online'), 120_000, 'mobile page connects to the local document service');
   const phoneProjectId = await phone.evaluate(() => window.__pcStore.getState().project.id);
   out.checks.M2_sameProject = phoneProjectId === projectId;
-  if (phoneProjectId !== projectId) fails.push(`手机上的项目号 ${phoneProjectId} 和电脑上的 ${projectId} 不一样`);
+  if (phoneProjectId !== projectId) fails.push(`The project ID on the phone ${phoneProjectId} differs from the one on the computer ${projectId}`);
 
   // 电脑上加一张卡,手机上应当看得见
   const clipId = await pc.evaluate(() => window.__pcStore.actions.addCardClip('av-pulse', 0, { duration: 1 })?.id ?? null);
-  if (!clipId) fails.push('电脑上加卡失败');
+  if (!clipId) fails.push('Adding a card on the PC failed');
   else {
     const seen = await waitFor(
       () => phone.evaluate((id) => window.__pcStore.getState().project.tracks.some((t) => t.clips.some((c) => c.id === id)), clipId),
       60_000,
-      '手机上看见电脑加的那张卡',
+      'The phone sees the card added on the PC',
     ).then(() => true).catch((e) => { fails.push(e.message); return false; });
     out.checks.M2_syncSeen = seen;
     out.clipId = clipId;
@@ -95,7 +95,7 @@ try {
 
   // M3 没有账号就没有成员入口
   out.checks.M3_noMembersButton = await phone.evaluate(() => !document.querySelector('[data-pcm="members-btn"]'));
-  if (!out.checks.M3_noMembersButton) fails.push('手机上画出了成员入口(这个项目没有账号)');
+  if (!out.checks.M3_noMembersButton) fails.push('The phone rendered a members entry (this project has no accounts)');
 
   // M4 Agent 分页只写一句
   const agentTab = await phone.$('[data-pcm="nav-agent"], [data-pcm="tab-agent"]');
@@ -105,17 +105,17 @@ try {
     const byText = await phone.evaluateHandle(() => [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Agent') ?? null);
     const el = byText.asElement();
     if (el) await el.click();
-    else fails.push('找不到 Agent 分页的入口');
+    else fails.push('Cannot find the entry to the Agent tab');
   }
   // 分页本身标着走的是哪一份
   const mode = await waitFor(
     () => phone.evaluate(() => document.querySelector('[data-pcm="agent-page"]')?.getAttribute('data-pcm-agent') ?? ''),
     20_000,
-    'Agent 分页挂上来',
+    'Agent tab mounts',
   ).catch((e) => { fails.push(e.message); return ''; });
   out.checks.M4_localAgent = mode === 'local';
   out.agentMode = mode;
-  if (mode !== 'local') fails.push(`Agent 分页走的不是本机那一份(data-pcm-agent=${JSON.stringify(mode)})`);
+  if (mode !== 'local') fails.push(`The Agent tab is not using the local one (data-pcm-agent=${JSON.stringify(mode)})`);
 
   // 真正挂上来的是本机那个容器:它在 `__pcMobileAgent` 里标 local(云端那一份没有这个标)
   const containers = await phone.evaluate(() => {
@@ -124,13 +124,13 @@ try {
   }).catch(() => []);
   out.agentContainers = containers;
   out.checks.M4_localContainer = containers.length > 0 && containers.every((c) => c.local);
-  if (!out.checks.M4_localContainer) fails.push(`挂上来的对话页不是本机那一份:${JSON.stringify(containers)}`);
+  if (!out.checks.M4_localContainer) fails.push(`The mounted chat page is not the local one: ${JSON.stringify(containers)}`);
 
   // 输入区在(本机模式下照样能打字),而且旧的那句通知不在了
   out.checks.M4_hasComposer = await phone.evaluate(() => !!document.querySelector('.agent-page textarea'));
-  if (!out.checks.M4_hasComposer) fails.push('Agent 分页上没有输入框');
+  if (!out.checks.M4_hasComposer) fails.push('No input box on the Agent tab');
   out.checks.M4_noOldNotice = await phone.evaluate(() => !document.querySelector('[data-pcm="agent-local-notice"]'));
-  if (!out.checks.M4_noOldNotice) fails.push('Agent 分页上还留着「AI 栏请在电脑上使用」那句旧通知');
+  if (!out.checks.M4_noOldNotice) fails.push('The Agent tab still has the old notice "Please use the AI panel on a computer"');
 
   out.ok = fails.length === 0;
 } catch (e) {

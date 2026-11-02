@@ -34,7 +34,7 @@ function fail(msg) {
 
 /** 读一条 SSE 流,返回解析后的事件数组 */
 async function readSse(res) {
-  if (!res.body) fail("响应没有 body");
+  if (!res.body) fail("Response has no body");
   const events = [];
   const decoder = new TextDecoder("utf-8");
   let buf = "";
@@ -62,10 +62,10 @@ async function sampleMediaBytes() {
   const real = path.join(ROOT, "out", "tts.mp4");
   try {
     const b = await fs.readFile(real);
-    console.log(`素材:out/tts.mp4 (${b.length} 字节)`);
+    console.log(`Asset: out/tts.mp4 (${b.length} bytes)`);
     return b;
   } catch {
-    console.log("素材:占位字节(没找到 out/tts.mp4,假解释器模式)");
+    console.log("Asset: placeholder bytes (out/tts.mp4 not found, fake interpreter mode)");
     return Buffer.from("FAKE-MEDIA-BYTES");
   }
 }
@@ -78,26 +78,26 @@ async function waitForServer() {
     } catch { /* 还没起来 */ }
     await wait(1000);
   }
-  fail(`dev server 没起来(${BASE});请先按文件头的说明启动`);
+  fail(`dev server is not up (${BASE}); start it first as described at the top of the file`);
 }
 
 async function partA() {
-  console.log("\n===== A. HTTP 接口 =====");
+  console.log("\n===== A. HTTP API =====");
 
   // 1. status
   const statusRes = await waitForServer();
   if (statusRes.status === 503) {
     const body = await statusRes.json().catch(() => ({}));
-    fail(`/api/stt/status 返回 503:${body.error}(内置 Python 未就绪,可用 PROMPTCUT_PYTHON=server/test/fake-python.cmd 跑假解释器)`);
+    fail(`/api/stt/status returned 503: ${body.error} (built-in Python is not ready; you can run the fake interpreter with PROMPTCUT_PYTHON=server/test/fake-python.cmd)`);
   }
-  if (!statusRes.ok) fail(`/api/stt/status 返回 ${statusRes.status}: ${await statusRes.text()}`);
+  if (!statusRes.ok) fail(`/api/stt/status returned ${statusRes.status}: ${await statusRes.text()}`);
   const status = await statusRes.json();
   console.log("status:", JSON.stringify(status));
-  if (!status.engines) fail("status 缺 engines 字段");
+  if (!status.engines) fail("status is missing the engines field");
 
   // 2. install(SSE)—— 已经装好就跳过,免得真解释器下跑一次真 pip 安装
   if (status.engines["faster-whisper"]?.installed) {
-    console.log("install: 跳过(faster-whisper 已安装)");
+    console.log("install: skipped (faster-whisper already installed)");
   } else {
     const installRes = await fetch(`${BASE}/api/stt/install`, {
       method: "POST",
@@ -107,8 +107,8 @@ async function partA() {
     const installEvents = await readSse(installRes);
     const installLogs = installEvents.filter((e) => e.event === "log");
     const installDone = installEvents.some((e) => e.event === "done");
-    console.log(`install: ${installLogs.length} 条日志, done=${installDone}`);
-    if (!installDone) fail("install 没收到 done 事件");
+    console.log(`install: ${installLogs.length} log lines, done=${installDone}`);
+    if (!installDone) fail("install did not receive a done event");
   }
 
   // 3. upload + transcribe(SSE)
@@ -119,7 +119,7 @@ async function partA() {
     method: "POST",
     body: bytes,
   });
-  if (!upRes.ok) fail(`upload 返回 ${upRes.status}`);
+  if (!upRes.ok) fail(`upload returned ${upRes.status}`);
   const up = await upRes.json();
   console.log("upload:", JSON.stringify(up));
 
@@ -132,15 +132,15 @@ async function partA() {
   const progress = trEvents.filter((e) => e.event === "progress");
   const segEvents = trEvents.filter((e) => e.event === "segment");
   const done = trEvents.find((e) => e.event === "done");
-  console.log(`transcribe: ${progress.length} 条 progress, ${segEvents.length} 条 segment, done=${!!done}`);
-  if (!done) fail("transcribe 没收到 done 事件");
-  if (!Array.isArray(done.segments) || done.segments.length === 0) fail("done 事件里没有 segments");
+  console.log(`transcribe: ${progress.length} progress events, ${segEvents.length} segment events, done=${!!done}`);
+  if (!done) fail("transcribe did not receive a done event");
+  if (!Array.isArray(done.segments) || done.segments.length === 0) fail("The done event has no segments");
   console.log("segments:");
   for (const s of done.segments) console.log(`  [${s.start}-${s.end}] ${s.text}`);
 
   // 4. DELETE job
   const delRes = await fetch(`${BASE}/api/stt/job/${jobId}`, { method: "DELETE" });
-  if (!delRes.ok) fail(`DELETE job 返回 ${delRes.status}`);
+  if (!delRes.ok) fail(`DELETE job returned ${delRes.status}`);
   console.log("delete job:", JSON.stringify(await delRes.json()));
 
   return done.segments;
@@ -154,12 +154,12 @@ async function callMcp(tool, args) {
   });
   if (!res.ok) fail(`MCP ${tool} HTTP ${res.status}: ${await res.text()}`);
   const data = await res.json();
-  if (!data.ok) fail(`MCP ${tool} 出错: ${data.error}`);
+  if (!data.ok) fail(`MCP ${tool} error: ${data.error}`);
   return data.result;
 }
 
 async function partB(expectedSegments) {
-  console.log("\n===== B. MCP 工具 =====");
+  console.log("\n===== B. MCP tools =====");
 
   // 放一份素材到 public/,让页面能 fetch 到再包成 File
   const publicDir = path.join(ROOT, "public");
@@ -182,8 +182,8 @@ async function partB(expectedSegments) {
       } catch { /* 重试 */ }
       await wait(1000);
     }
-    if (!connected) fail("编辑台没连上 MCP 桥");
-    console.log("编辑台已连上 MCP 桥");
+    if (!connected) fail("The editor is not connected to the MCP bridge");
+    console.log("The editor is connected to the MCP bridge");
 
     // 导入素材,拿 mediaId
     const mediaId = await page.evaluate(async (name) => {
@@ -192,8 +192,8 @@ async function partB(expectedSegments) {
       const ids = await window.__pcIo.importVideoFiles([file]);
       return ids[0];
     }, mediaName);
-    if (!mediaId) fail("importVideoFiles 没返回 mediaId");
-    console.log("导入素材 mediaId =", mediaId);
+    if (!mediaId) fail("importVideoFiles did not return a mediaId");
+    console.log("Imported asset mediaId =", mediaId);
 
     // stt_status
     const st = await callMcp("stt_status", {});
@@ -202,7 +202,7 @@ async function partB(expectedSegments) {
     // transcribe_media —— 立即返回 jobId,结果靠 get_transcript 轮询
     const started = await callMcp("transcribe_media", { mediaId, engine: "faster-whisper", model: "small", language: "zh" });
     console.log("transcribe_media:", JSON.stringify(started));
-    if (!started.jobId) fail("transcribe_media 没返回 jobId");
+    if (!started.jobId) fail("transcribe_media did not return a jobId");
 
     let transcript = null;
     for (let i = 0; i < 30; i++) {
@@ -210,28 +210,28 @@ async function partB(expectedSegments) {
       if (transcript && Array.isArray(transcript.segments) && transcript.segments.length > 0) break;
       await wait(1000);
     }
-    if (!transcript || !transcript.segments?.length) fail("get_transcript 轮询超时,没拿到 segments");
+    if (!transcript || !transcript.segments?.length) fail("get_transcript polling timed out, no segments received");
 
     console.log(`get_transcript: engine=${transcript.engine} model=${transcript.model} language=${transcript.language} total=${transcript.total}`);
     for (const s of transcript.segments) console.log(`  [${s.start}-${s.end}] ${s.text}`);
 
     // 和 A 段结果比对
     if (transcript.segments.length !== expectedSegments.length) {
-      fail(`段数不一致:HTTP 拿到 ${expectedSegments.length},MCP 拿到 ${transcript.segments.length}`);
+      fail(`Segment count mismatch: HTTP got ${expectedSegments.length}, MCP got ${transcript.segments.length}`);
     }
     for (let i = 0; i < expectedSegments.length; i++) {
       if (transcript.segments[i].text !== expectedSegments[i].text) {
-        fail(`第 ${i} 段文本不一致:"${expectedSegments[i].text}" vs "${transcript.segments[i].text}"`);
+        fail(`Segment ${i} text mismatch: "${expectedSegments[i].text}" vs "${transcript.segments[i].text}"`);
       }
     }
-    console.log("A / B 两段结果一致");
+    console.log("A / B results match");
 
     // store 里也确认一遍
     const inStore = await page.evaluate((id) => {
       const el = document.querySelector("[data-pc-media]");
       return { hasMediaEl: !!el, mediaId: id };
     }, mediaId);
-    console.log("页面素材条目存在:", inStore.hasMediaEl);
+    console.log("Page asset entry exists:", inStore.hasMediaEl);
   } finally {
     await browser.close();
     // 清掉临时素材,别留在 public/ 里

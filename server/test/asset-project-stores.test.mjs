@@ -12,7 +12,7 @@ const bytes = Buffer.from('same bytes independently supplied by each project');
 const hash = crypto.createHash('sha256').update(bytes).digest('hex');
 async function put(store) { await store.putChunk(hash, 0, { size: bytes.length, ext: 'wav' }, Readable.from([bytes])); assert.equal((await store.complete(hash)).status, 'ok'); }
 
-for (const kind of ['memory', 'fs']) test(`项目${kind}库隔离 media/snap/px、独立同hash、只删除指定项目`, async t => {
+for (const kind of ['memory', 'fs']) test(`project ${kind} store isolates media/snap/px, keeps the same hash independent, and deletes only the specified project`, async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-project-stores-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const factory = createProjectAssetStores({ dir, kind });
@@ -31,14 +31,14 @@ for (const kind of ['memory', 'fs']) test(`项目${kind}库隔离 media/snap/px�
   assert.throws(() => factory.store('A', 'media'), /project-gone/);
   for (const ns of ['media', 'snap', 'px']) assert.equal((await b.stores[ns].stat(hash)).size, bytes.length);
 });
-test('projectId路径遍历和大小写分别编码、无库外路径，非法namespace拒绝', () => {
+test('projectId path traversal and case are each encoded, no paths outside the store, illegal namespace rejected', () => {
   const f = createProjectAssetStores({ dir: os.tmpdir(), kind: 'memory' });
   assert.equal(path.dirname(f.project('../../outside').root), path.join(os.tmpdir(), 'projects'));
   assert.notEqual(f.project('A').root, f.project('a').root);
   assert.throws(() => f.project(''), /invalid-project-id/);
   assert.throws(() => f.store('A', '..'), /invalid-namespace/);
 });
-test('授权每次问权威，不能自报另一个项目/账号或只给runGrant放行', async () => {
+test('authorization asks the authority every time; it cannot self-report another project/account or pass with only a runGrant', async () => {
   let calls = 0;
   const authority = { checkAccess: async ({ principal }) => { calls++; return { allowed: principal.authorizationId === 'doc-opaque' }; } };
   const principal = { projectId: 'A', accountId: 'u', authorizationId: 'doc-opaque' };
@@ -48,7 +48,7 @@ test('授权每次问权威，不能自报另一个项目/账号或只给runGran
   await assert.rejects(authorizeAsset({ authority, principal: { projectId: 'A', runGrantId: 'claimed' }, projectId: 'A', action: 'write' }), /forbidden/);
   await assert.rejects(authorizeAsset({ principal, projectId: 'A', action: 'read' }), /authority-unavailable/);
 });
-test('先订阅后核验、撤销同步拒新读并等待真实持续stream close', async () => {
+test('subscribe first, then verify; revocation synchronously rejects new reads and waits for the real ongoing stream close', async () => {
   let callback, subscribed = false, allowed = true;
   const authority = {
     checkAccess: async () => { assert.equal(subscribed, true); return { allowed }; },
@@ -66,7 +66,7 @@ test('先订阅后核验、撤销同步拒新读并等待真实持续stream clos
   await lease.release();
   assert.equal(subscribed, false);
 });
-test('check等待期间撤销不能穿透open', async () => {
+test('revocation while check is waiting must not slip through open', async () => {
   let callback, resolve;
   const authority = { subscribeRevocations: (_c, cb) => { callback = cb; return () => {}; }, checkAccess: () => new Promise(r => { resolve = r; }) };
   const pending = openProjectStream({ authority, principal: { projectId: 'A' }, projectId: 'A' });

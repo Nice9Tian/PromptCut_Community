@@ -43,7 +43,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function waitUntil(cond, what, { timeout = 10000, every = 50 } = {}) {
   const end = Date.now() + timeout;
   while (!cond()) {
-    if (Date.now() > end) throw new Error(`等了 ${timeout} ms 仍未${what}`);
+    if (Date.now() > end) throw new Error(`timed out after ${timeout} ms waiting for ${what}`);
     await sleep(every);
   }
 }
@@ -58,14 +58,14 @@ const lockOpenable = () => {
   try { fs.closeSync(fs.openSync(LOCK, "r+")); return true; } catch { return false; }
 };
 
-const waitGone = (child) => waitUntil(() => pidGone(child.pid), `等到进程 ${child.pid} 退出`);
+const waitGone = (child) => waitUntil(() => pidGone(child.pid), `process ${child.pid} to exit`);
 
 /** 起一个子进程,用共享模式 0 握住锁文件,一直握到被杀 */
 function holder() {
   const script = `
     const fs = require('node:fs');
-    // Node 没有 share_mode,用 PowerShell 那套开不了;这里用独占创建(wx)代表 Node 那层,
-    // 内核那层由下面的 PowerShell 持有者测
+    // Node has no share_mode, so the PowerShell approach cannot be used; exclusive creation (wx) stands in for the Node layer here,
+    // the kernel layer is tested by the PowerShell holder below
     const fd = fs.openSync(${JSON.stringify(LOCK)}, 'wx');
     process.stdout.write('HELD\\n');
     setInterval(() => {}, 1000);
@@ -89,7 +89,7 @@ function kernelHolder() {
 const waitHeld = (child) =>
   new Promise((resolve, reject) => {
     let out = "";
-    const timer = setTimeout(() => reject(new Error("持有者没起来")), 15000);
+    const timer = setTimeout(() => reject(new Error("the holder did not start")), 15000);
     child.stdout.on("data", (c) => {
       out += c;
       if (out.includes("HELD")) {
@@ -104,7 +104,7 @@ const kill = (child) => {
   else child.kill("SIGKILL");
 };
 
-test("并发抢锁只有一个赢(wx 是原子的,不是先查再写)", async () => {
+test("when locks are grabbed concurrently only one wins (wx is atomic, not check-then-write)", async () => {
   try { fs.unlinkSync(LOCK); } catch {}
   const script = `
     const fs = require('node:fs');
@@ -121,14 +121,14 @@ test("并发抢锁只有一个赢(wx 是原子的,不是先查再写)", async ()
       }),
     ),
   );
-  assert.equal(results.filter((r) => r === "WON").length, 1, "恰好一个进程该抢到");
+  assert.equal(results.filter((r) => r === "WON").length, 1, "exactly one process should win");
   fs.unlinkSync(LOCK);
 });
 
-test("持有者正常退出后,锁能被下一个拿到", async () => {
+test("after the holder exits normally, the next one can take the lock", async () => {
   const h = holder();
   await waitHeld(h);
-  assert.throws(() => fs.writeFileSync(LOCK, "me", { flag: "wx" }), /EEXIST/, "持有期间抢不到");
+  assert.throws(() => fs.writeFileSync(LOCK, "me", { flag: "wx" }), /EEXIST/, "cannot be acquired while held");
   const exited = new Promise((r) => h.once("exit", r));
   h.kill();
   await exited; // 等它真退出、句柄交还,不猜要多久
@@ -137,35 +137,35 @@ test("持有者正常退出后,锁能被下一个拿到", async () => {
   fs.unlinkSync(LOCK);
 });
 
-test("被内核句柄握着时:打不开、删不掉;强杀之后立刻放开", { skip: process.platform !== "win32" ? "只有 Windows 有共享模式" : false }, async () => {
+test("while held by a kernel handle: cannot be opened or deleted; released immediately after a force kill", { skip: process.platform !== "win32" ? "only Windows has share mode" : false }, async () => {
   try { fs.unlinkSync(LOCK); } catch {}
   const h = kernelHolder();
   await waitHeld(h);
 
   // 1. 别的进程打不开 —— 这就是 Node 那半探测「有没有人握着」用的信号
-  assert.throws(() => fs.closeSync(fs.openSync(LOCK, "r+")), (e) => e.code === "EBUSY", "该拿到 EBUSY");
+  assert.throws(() => fs.closeSync(fs.openSync(LOCK, "r+")), (e) => e.code === "EBUSY", "should get EBUSY");
   // 2. 连删都删不掉:锁偷不走
-  assert.throws(() => fs.unlinkSync(LOCK), (e) => e.code === "EBUSY" || e.code === "EPERM", "该删不掉");
+  assert.throws(() => fs.unlinkSync(LOCK), (e) => e.code === "EBUSY" || e.code === "EPERM", "should not be deletable");
 
   // 3. 强杀持有者(进程没有机会做任何清理),内核立刻收走句柄
   kill(h);
   await assert.doesNotReject(
-    waitUntil(lockOpenable, "放开句柄"),
-    "强杀之后内核该把句柄收走 —— 这正是 Node 那层做不到的",
+    waitUntil(lockOpenable, "the handle to be released"),
+    "the kernel should reclaim the handle after a force kill: exactly what the Node layer cannot do",
   );
   fs.unlinkSync(LOCK);
 });
 
-test("锁的是旁路 .lock,.proc 本体始终可读可写", { skip: process.platform !== "win32" ? "只有 Windows 有共享模式" : false }, async () => {
+test("the lock is on the sidecar .lock, and the .proc file itself always stays readable and writable", { skip: process.platform !== "win32" ? "only Windows has share mode" : false }, async () => {
   const h = kernelHolder();
   await waitHeld(h);
   // 本体必须一直能读能写:它正是自家 sidecar 要操作的文件,锁住本体等于把自己挡在门外
-  assert.doesNotThrow(() => fs.readFileSync(PROC, "utf8"), "本体该能读");
-  assert.doesNotThrow(() => fs.appendFileSync(PROC, ""), "本体该能写");
+  assert.doesNotThrow(() => fs.readFileSync(PROC, "utf8"), "the file itself should be readable");
+  assert.doesNotThrow(() => fs.appendFileSync(PROC, ""), "the file itself should be writable");
   kill(h);
   // 下一条要在同一个 .lock 上建空文件,得等内核真把句柄收走
   await waitGone(h);
-  await waitUntil(lockOpenable, "放开句柄");
+  await waitUntil(lockOpenable, "the handle to be released");
 });
 
 
@@ -184,19 +184,19 @@ function liveOtherPid() {
   return c;
 }
 
-test("空壳锁(0 字节)不该被当成「写不出来」而静默放行", () => {
+test("an empty lock file (0 bytes) must not be treated as \"cannot write\" and silently let through", () => {
   try { fs.unlinkSync(LOCK); } catch {}
   fs.writeFileSync(LOCK, "");                       // Rust 探活留下的那种
   const r = state.acquireLock(PROC);
   assert.equal(r.ok, true);
-  assert.equal(r.stolen, true, "该是「接管」,不是兜底放行");
+  assert.equal(r.stolen, true, "should be a \"takeover\", not a fallback let-through");
   const cur = JSON.parse(fs.readFileSync(LOCK, "utf8"));
-  assert.equal(cur.pid, process.pid, "锁文件里该写着我的 pid —— 我是真拿到了锁");
+  assert.equal(cur.pid, process.pid, "the lock file should contain my pid: I really did get the lock");
   state.releaseLock(PROC);
-  assert.equal(fs.existsSync(LOCK), false, "放锁该把文件删掉");
+  assert.equal(fs.existsSync(LOCK), false, "releasing the lock should delete the file");
 });
 
-test("持有者已经死了 → 接管;还活着 → 拿不到", async () => {
+test("holder already dead → take over; still alive → cannot acquire", async () => {
   try { fs.unlinkSync(LOCK); } catch {}
   const other = liveOtherPid();
   fs.writeFileSync(LOCK, JSON.stringify({ pid: other.pid, at: new Date().toISOString(), host: "promptcut" }));
@@ -212,7 +212,7 @@ test("持有者已经死了 → 接管;还活着 → 拿不到", async () => {
   state.releaseLock(PROC);
 });
 
-test("并发接管同一个死锁:恰好一个赢(不是两个都以为自己独占)", async () => {
+test("taking over the same stale lock concurrently: exactly one wins (not both believing they have exclusive hold)", async () => {
   try { fs.unlinkSync(LOCK); } catch {}
   // 一个绝不可能活着的 pid:先起一个再杀掉,拿它的号当死锁
   const dead = liveOtherPid();
@@ -266,7 +266,7 @@ test("并发接管同一个死锁:恰好一个赢(不是两个都以为自己独
     await Promise.all(competitors.map((c) => c.exited));
   }
   const won = results.filter((r) => r === "WON").length;
-  assert.equal(won, 1, `恰好一个该抢到死锁的接管权,实际 ${won} 个`);
+  assert.equal(won, 1, `exactly one should win the right to take over the stale lock, actually ${won}`);
   try { fs.unlinkSync(LOCK); } catch {}
 });
 
@@ -309,7 +309,7 @@ function raceChild({ stallMs }) {
   });
 }
 
-test("错开时序接管同一个死锁:仍然只有一个赢(不是两个都以为自己独占)", async () => {
+test("taking over the same stale lock at staggered times: still only one wins (not both believing they have exclusive hold)", async () => {
   try { fs.unlinkSync(LOCK); } catch {}
   try { fs.unlinkSync(LOCK + ".claim"); } catch {}
   const dead = liveOtherPid();
@@ -327,15 +327,15 @@ test("错开时序接管同一个死锁:仍然只有一个赢(不是两个都以
   const winners = [ra, rb].filter((r) => r.ok);
   assert.equal(
     winners.length, 1,
-    `恰好一个该赢,实际 ${winners.length} 个。A=${JSON.stringify(ra)} B=${JSON.stringify(rb)}`,
+    `exactly one should win, actually ${winners.length}. A=${JSON.stringify(ra)} B=${JSON.stringify(rb)}`,
   );
   // 锁文件里写的必须就是那个赢家
   const held = JSON.parse(fs.readFileSync(LOCK, "utf8"));
-  assert.equal(held.pid, winners[0].pid, "锁文件里的 pid 应该是赢家的");
+  assert.equal(held.pid, winners[0].pid, "the pid in the lock file should be the winner's");
   try { fs.unlinkSync(LOCK); } catch {}
 });
 
-test("接管权的 claim 文件残留了(持有者被强杀)不会把项目永久锁死", async () => {
+test("a leftover claim file for the takeover right (holder was force-killed) does not lock the project up forever", async () => {
   try { fs.unlinkSync(LOCK); } catch {}
   const dead = liveOtherPid();
   const deadPid = dead.pid;
@@ -346,8 +346,8 @@ test("接管权的 claim 文件残留了(持有者被强杀)不会把项目永�
   fs.writeFileSync(LOCK + ".claim", JSON.stringify({ pid: deadPid, at: "2020-01-01T00:00:00Z" }));
 
   const r = state.acquireLock(PROC);
-  assert.equal(r.ok, true, `残留 claim 不该挡住接管,实际:${JSON.stringify(r)}`);
-  assert.equal(fs.existsSync(LOCK + ".claim"), false, "接管完该把 claim 清掉");
+  assert.equal(r.ok, true, `a leftover claim should not block the takeover, actual: ${JSON.stringify(r)}`);
+  assert.equal(fs.existsSync(LOCK + ".claim"), false, "after the takeover the claim should be cleared");
   state.releaseLock(PROC);
 });
 

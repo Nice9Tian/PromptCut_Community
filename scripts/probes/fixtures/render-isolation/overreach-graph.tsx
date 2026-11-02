@@ -17,9 +17,9 @@ let started = false;
 
 export const overreachGraph: CardDef<any> = {
   id: "overreach-graph",
-  name: "越权探测卡（素材效果卡）",
-  description: "隔离验收用的测试夹具：素材效果卡形态的同一份固定清单，只读、只报告",
-  tags: ["探针"],
+  name: "Overreach probe card (media effect card)",
+  description: "Test fixture for the isolation acceptance check: the same fixed manifest in media effect card form, read-only, report-only",
+  tags: ["probe"],
   kind: "animation",
   frameMode: "direct",
   defaults: { ctx: null },

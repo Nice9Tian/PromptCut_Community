@@ -41,7 +41,7 @@ async function renewer(iss) {
   const m = {};
   for (const [k, names] of Object.entries(RENEW_METHODS)) {
     m[k] = pickMethod(r, names);
-    assert.ok(m[k], `假设 K12：续签器上找不到 ${k}（候选 ${names.join(' / ')}）；有的：${Object.keys(r).join(', ')}`);
+    assert.ok(m[k], `Assumption K12: ${k} not found on the renewer (candidates ${names.join(' / ')}); available: ${Object.keys(r).join(', ')}`);
   }
   return { start: () => r[m.start](), ticket: () => r[m.ticket](), stop: () => r[m.stop]() };
 }
@@ -68,36 +68,36 @@ async function run(ttl, opts) {
   const first = r.start();
   await drain();
   await first;
-  assert.ok(r.ticket(), 'start() 之后手里有票据');
+  assert.ok(r.ticket(), 'A ticket is held after start()');
   const bad = await simulate(iss, r, { totalMs: 3 * ttl });
   r.stop();
   return { iss, bad, r };
 }
 
-it('C10-TR-01 45 分钟导出、15 分钟票据：每次用到的票据都没过期（提前续签）', async () => {
+it('C10-TR-01 45-minute export, 15-minute ticket: every ticket used is unexpired (renewed ahead of time)', async () => {
   const { bad, iss } = await run(15 * MIN);
-  assert.deepEqual(bad.slice(0, 3), [], `有 ${bad.length} 次用到的是过期或空票据`);
-  assert.ok(iss.calls >= 3, `45 分钟至少换过两次票（取票 ${iss.calls} 次）`);
+  assert.deepEqual(bad.slice(0, 3), [], `An expired or empty ticket was used ${bad.length} times`);
+  assert.ok(iss.calls >= 3, `The ticket was replaced at least twice in 45 minutes (tickets fetched ${iss.calls} times)`);
 });
 
-it('C10-TR-02 续签不刷屏：45 分钟里取票不超过 11 次', async () => {
+it('C10-TR-02 renewal does not spam: no more than 11 ticket fetches in 45 minutes', async () => {
   const { iss } = await run(15 * MIN);
-  assert.ok(iss.calls <= 45 / 5 + 2, `取票 ${iss.calls} 次`);
+  assert.ok(iss.calls <= 45 / 5 + 2, `Fetched tickets ${iss.calls} times`);
 });
 
-it('C10-TR-03 缩短时限（2 分钟票据）同样成立', async () => {
+it('C10-TR-03 a shorter lifetime (2-minute ticket) holds as well', async () => {
   const { bad, iss } = await run(2 * MIN);
-  assert.deepEqual(bad.slice(0, 3), [], `有 ${bad.length} 次用到的是过期或空票据`);
-  assert.ok(iss.calls >= 3 && iss.calls <= 6 / (2 / 3) + 2, `取票 ${iss.calls} 次`);
+  assert.deepEqual(bad.slice(0, 3), [], `An expired or empty ticket was used ${bad.length} times`);
+  assert.ok(iss.calls >= 3 && iss.calls <= 6 / (2 / 3) + 2, `Fetched tickets ${iss.calls} times`);
 });
 
-it('C10-TR-04 某次续签失败：在旧票据过期前再试，导出不中断', async () => {
+it('C10-TR-04 a renewal fails once: retries before the old ticket expires, and the export is not interrupted', async () => {
   const { bad, iss } = await run(15 * MIN, { failAt: [2] });
-  assert.deepEqual(bad.slice(0, 3), [], `有 ${bad.length} 次用到的是过期或空票据`);
-  assert.ok(iss.calls >= 4, `失败之后又取过票（取票 ${iss.calls} 次）`);
+  assert.deepEqual(bad.slice(0, 3), [], `An expired or empty ticket was used ${bad.length} times`);
+  assert.ok(iss.calls >= 4, `Tickets were fetched again after the failure (fetched ${iss.calls} times)`);
 });
 
-it('C10-TR-05 stop() 之后不再取票', async () => {
+it('C10-TR-05 no tickets are fetched after stop()', async () => {
   mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: 1_700_000_000_000 });
   const iss = issuer(15 * MIN);
   const r = await renewer(iss);

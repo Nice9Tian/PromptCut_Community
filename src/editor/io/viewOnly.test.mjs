@@ -9,9 +9,9 @@ import assert from 'node:assert/strict';
 
 const { isViewOnly, projectAccessNow, setProjectAccess, viewOnlyReason, viewOnlyText } = await import('./viewOnly.ts');
 
-test('只读权限的项目按只读算，读写的不算；离开项目回到不知道', () => {
+test('A project with read-only permission counts as read-only, a read-write one does not; leaving the project returns to unknown', () => {
   setProjectAccess(null);
-  assert.equal(isViewOnly(), false, 'Node 里没有 location，也没进项目，不该是只读');
+  assert.equal(isViewOnly(), false, 'Node has no location and no project was entered, so it should not be read-only');
   assert.equal(viewOnlyReason(), null);
 
   setProjectAccess('r');
@@ -31,7 +31,7 @@ test('只读权限的项目按只读算，读写的不算；离开项目回到�
   setProjectAccess(null);
 });
 
-test('两种只读说的话不一样：自己用只读方式打开 vs 这个项目没给你写的权限', () => {
+test('The two kinds of read-only say different things: opened read-only by yourself vs this project did not give you write permission', () => {
   setProjectAccess('r');
   const member = viewOnlyText();
   setProjectAccess(null);

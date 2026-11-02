@@ -23,7 +23,7 @@ const LOGGED_IN = [
   { name: 'other', value: 'x', domain: 'example.com', path: '/', expires: IN_A_MONTH, httpOnly: false, secure: false, session: false },
 ];
 
-test('siteOfUrl:BV 号、av 号、各种 B 站链接都认,别的站不认', () => {
+test('siteOfUrl: recognizes BV IDs, av IDs and all kinds of Bilibili links, not other sites', () => {
   for (const u of ['BV1BYtB6GEFV', 'av170001', 'https://www.bilibili.com/video/BV1BYtB6GEFV', 'bilibili.com/video/BV1x', 'https://b23.tv/abc', 'https://m.bilibili.com/video/BV1x?p=2']) {
     assert.equal(siteOfUrl(u), 'bilibili', u);
   }
@@ -31,40 +31,40 @@ test('siteOfUrl:BV 号、av 号、各种 B 站链接都认,别的站不认', () 
   assert.equal(siteOfUrl('https://example.com/bilibili.com/x'), null);
 });
 
-test('assessLogin:三个关键 cookie 都在才算登录,过期时间取最早的那个', () => {
+test('assessLogin: logged in only when all three key cookies are present, expiry is taken from the earliest one', () => {
   const a = assessLogin('bilibili', LOGGED_IN, NOW);
   assert.equal(a.loggedIn, true);
   assert.deepEqual(a.missing, []);
   assert.equal(a.userId, '123456');
-  assert.equal(a.expiresAt, IN_A_MONTH * 1000, 'SESSDATA 最早过期,取它');
-  assert.equal(a.cookies.length, 5, '别的站的 cookie 不带');
+  assert.equal(a.expiresAt, IN_A_MONTH * 1000, 'SESSDATA expires first, take it');
+  assert.equal(a.cookies.length, 5, 'Cookies of other sites are not included');
 });
 
-test('assessLogin:缺一个就不算登录,并列出缺哪个', () => {
+test('assessLogin: missing one means not logged in, and lists which one is missing', () => {
   const a = assessLogin('bilibili', LOGGED_IN.filter((c) => c.name !== 'SESSDATA'), NOW);
   assert.equal(a.loggedIn, false);
   assert.deepEqual(a.missing, ['SESSDATA']);
 });
 
-test('assessLogin:关键 cookie 过期了就不算登录', () => {
+test('assessLogin: not logged in once a key cookie has expired', () => {
   const a = assessLogin('bilibili', LOGGED_IN, IN_A_MONTH * 1000 + 1);
   assert.equal(a.loggedIn, false);
   assert.equal(a.expired, true);
 });
 
-test('assessLogin:不认识的站点直接抛', () => {
-  assert.throws(() => assessLogin('nope', [], NOW), /没有叫 nope/);
+test('assessLogin: an unknown site throws directly', () => {
+  assert.throws(() => assessLogin('nope', [], NOW), /no site named nope/);
 });
 
-test('toNetscape / parseNetscape 往返一致,会话 cookie 写 0、含子域用 TRUE', () => {
+test('toNetscape / parseNetscape round-trip consistently, session cookies are written as 0, domains including subdomains use TRUE', () => {
   const text = toNetscape(LOGGED_IN);
-  assert.ok(text.startsWith('# Netscape HTTP Cookie File\n'), '首行必须是这句,yt-dlp 靠它认格式');
+  assert.ok(text.startsWith('# Netscape HTTP Cookie File\n'), 'The first line must be this one, yt-dlp relies on it to recognize the format');
   const lines = text.split('\n').filter((l) => l.trim() && !l.startsWith('#'));
   assert.equal(lines.length, LOGGED_IN.length);
   assert.equal(lines[0], `.bilibili.com\tTRUE\t/\tFALSE\t${IN_A_MONTH + 86400 * 300}\tbuvid3\t2AF9E3A3-x`);
-  assert.equal(lines[1].split('\t')[3], 'TRUE', 'secure 列');
-  assert.equal(lines[4].split('\t')[4], '0', '会话 cookie 的 expires 写 0');
-  assert.equal(lines[5].split('\t')[1], 'FALSE', '不带点的域不含子域');
+  assert.equal(lines[1].split('\t')[3], 'TRUE', 'secure column');
+  assert.equal(lines[4].split('\t')[4], '0', 'A session cookie\'s expires is written as 0');
+  assert.equal(lines[5].split('\t')[1], 'FALSE', 'A domain without a leading dot does not include subdomains');
 
   const back = parseNetscape(text);
   assert.equal(back.length, LOGGED_IN.length);
@@ -72,19 +72,19 @@ test('toNetscape / parseNetscape 往返一致,会话 cookie 写 0、含子域用
   assert.equal(back[1].value, 'abc%2Cdef');
   assert.equal(back[1].secure, true);
   assert.equal(back[1].expires, IN_A_MONTH);
-  assert.equal(back[4].expires, -1, '0 读回来当会话 cookie');
+  assert.equal(back[4].expires, -1, '0 is read back as a session cookie');
   // 解析后再判定,结果和原始 cookie 一样
   assert.equal(assessLogin('bilibili', back, NOW).loggedIn, true);
 });
 
-test('parseNetscape:#HttpOnly_ 前缀的行不当注释丢掉,值里的 tab 不截断', () => {
+test('parseNetscape: lines with the #HttpOnly_ prefix are not dropped as comments, tabs inside values are not truncated', () => {
   const back = parseNetscape('# x\n#HttpOnly_.bilibili.com\tTRUE\t/\tTRUE\t0\tSESSDATA\tv\n.b.com\tTRUE\t/\tFALSE\t0\tn\ta\tb\n');
   assert.equal(back[0].name, 'SESSDATA');
   assert.equal(back[0].domain, '.bilibili.com');
   assert.equal(back[1].value, 'a\tb');
 });
 
-test('存盘 / 读状态 / 退出登录 / 自动带 cookie', () => {
+test('Save to disk / read status / log out / automatically include cookies', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-cookies-'));
   try {
     // 没文件:未登录,pickCookies 说明原因但不给路径
@@ -93,7 +93,7 @@ test('存盘 / 读状态 / 退出登录 / 自动带 cookie', () => {
     assert.equal(s0.loggedIn, false);
     const p0 = pickCookies(dir, 'BV1BYtB6GEFV');
     assert.equal(p0.path, null);
-    assert.match(p0.reason, /未登录/);
+    assert.match(p0.reason, /Not logged in/);
     // 不是有登录支持的站:什么都不说
     assert.deepEqual(pickCookies(dir, 'https://youtube.com/watch?v=x'), { path: null, site: null, reason: null });
 
@@ -112,7 +112,7 @@ test('存盘 / 读状态 / 退出登录 / 自动带 cookie', () => {
     assert.equal(pickCookies(dir, 'BV1x', file).path, file);
     const bad = pickCookies(dir, 'BV1x', path.join(dir, 'nope.txt'));
     assert.equal(bad.path, null);
-    assert.match(bad.reason, /不存在/);
+    assert.match(bad.reason, /does not exist/);
 
     // 过期:文件还在但不带
     const sExp = savedCookieStatus(dir, 'bilibili', IN_A_MONTH * 1000 + 1);
@@ -129,7 +129,7 @@ test('存盘 / 读状态 / 退出登录 / 自动带 cookie', () => {
   }
 });
 
-test('SITES.bilibili 的登录页是 passport 域,关键 cookie 三个', () => {
+test('The login page of SITES.bilibili is on the passport domain, three key cookies', () => {
   assert.match(SITES.bilibili.loginUrl, /^https:\/\/passport\.bilibili\.com\//);
   assert.deepEqual(SITES.bilibili.required, ['SESSDATA', 'bili_jct', 'DedeUserID']);
 });

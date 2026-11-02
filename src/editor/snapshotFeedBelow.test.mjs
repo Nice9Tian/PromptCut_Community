@@ -66,7 +66,7 @@ beforeEach(() => {
   now += 10_000;
 });
 
-test("依赖下层的流:播放、暂停、拖动都发流平面(带 plane: stage)、被抑制;有流不读快照;追上以后不抑制、平面照发", () => {
+test("Below-dependent stream: playback, pause and scrub all send a stream plane (with plane: stage) and are suppressed; with a stream, snapshots are not read; once caught up, no suppression and the plane is still sent", () => {
   const p = project();
   plan = heavy("glass");
   src.push(local("glass", [[0, 119]]));             // 本地档快照盖着每一帧
@@ -79,13 +79,13 @@ test("依赖下层的流:播放、暂停、拖动都发流平面(带 plane: stag
     assert.deepEqual(f.streamPlanes, want, `playing=${playing}`);
     assert.deepEqual(streamPlanesAt(head), want);
     assert.deepEqual(suppressedAt(head), ["glass"]);
-    assert.equal(f.picks.size, 0, "有流不读快照");
+    assert.equal(f.picks.size, 0, "With a stream, snapshots are not read");
     assert.deepEqual(f.wanted, []);
   }
   // 拖到别的帧(分段中间、分段的第一帧、上一段的最后一帧)
   for (const frame of [41, 54, 55, 100, 159]) {
     const head = { project: p, t: at(frame), playing: false };
-    assert.deepEqual(streamPlanesAt(head), want, `第 ${frame} 帧`);
+    assert.deepEqual(streamPlanesAt(head), want, `Frame ${frame}`);
     assert.deepEqual(pickForSetTime(head), { snapshots: {}, awaiting: [] });
     assert.deepEqual(suppressedAt(head), ["glass"]);
   }
@@ -98,7 +98,7 @@ test("依赖下层的流:播放、暂停、拖动都发流平面(带 plane: stag
   assert.deepEqual(snapshotFeedDebug(head).staleBelow, []);
 });
 
-test("这一帧所在的分段没就绪:不发平面、重卡进 scrub 占位,不选快照", () => {
+test("The segment containing this frame is not ready: no plane is sent, heavy cards enter scrub for a placeholder, and no snapshot is picked", () => {
   const p = project();
   plan = heavy("glass");
   src.push(local("glass", [[0, 119]]));
@@ -112,18 +112,18 @@ test("这一帧所在的分段没就绪:不发平面、重卡进 scrub 占位,�
 });
 
 const EDITS = {
-  "下层的卡改了一个参数": (p) => { p.tracks[2].clips[0].params.speed = 2; return p; },
-  "下层的卡挪了位置": (p) => { p.tracks[2].clips[0].frame = { x: 10, y: 0, w: 1920, h: 1080 }; return p; },
-  "下层的卡改了不透明度": (p) => { p.tracks[2].clips[0].opacity = 0.5; return p; },
-  "下层的卡在时间轴上挪了": (p) => { p.tracks[2].clips[0].start = 0.5; return p; },
-  "下层多了一层": (p) => { p.tracks.push({ id: "bg", name: "bg", clips: [card("bg", 0, 10)] }); return p; },
-  "下层少了一层": (p) => { p.tracks.pop(); return p; },
-  "下层那条序列藏起来了": (p) => { p.tracks[2].hidden = true; return p; },
-  "目标卡自己挪了位置": (p) => { p.tracks[1].clips[0].frame.x = 300; return p; },
-  "目标卡自己改了参数": (p) => { p.tracks[1].clips[0].params.blur = 20; return p; },
+  "The lower-layer card had a parameter changed": (p) => { p.tracks[2].clips[0].params.speed = 2; return p; },
+  "The lower-layer card was moved": (p) => { p.tracks[2].clips[0].frame = { x: 10, y: 0, w: 1920, h: 1080 }; return p; },
+  "The lower-layer card's opacity was changed": (p) => { p.tracks[2].clips[0].opacity = 0.5; return p; },
+  "The lower-layer card was moved on the timeline": (p) => { p.tracks[2].clips[0].start = 0.5; return p; },
+  "A layer was added below": (p) => { p.tracks.push({ id: "bg", name: "bg", clips: [card("bg", 0, 10)] }); return p; },
+  "A layer was removed below": (p) => { p.tracks.pop(); return p; },
+  "The track below was hidden": (p) => { p.tracks[2].hidden = true; return p; },
+  "The target card itself was moved": (p) => { p.tracks[1].clips[0].frame.x = 300; return p; },
+  "The target card itself had a parameter changed": (p) => { p.tracks[1].clips[0].params.blur = 20; return p; },
 };
 for (const [what, edit] of Object.entries(EDITS)) {
-  test(`过期:${what} —— 旧流不贴(不发平面、不抑制),落到快照;重产以后又贴`, () => {
+  test(`Stale: ${what}. The old stream is not pasted (no plane is sent, no suppression) and falls back to the snapshot; it is pasted again after re-production`, () => {
     const p0 = project();
     plan = heavy("glass");
     src.push(local("glass", [[0, 119]]));
@@ -132,13 +132,13 @@ for (const [what, edit] of Object.entries(EDITS)) {
     assert.equal(streamPlanesAt(head0).length, 1);
 
     const p1 = project(edit);
-    assert.notEqual(sigOf(p1), sigOf(p0), "这一处改动进了输入签名");
+    assert.notEqual(sigOf(p1), sigOf(p0), "This change went into the input signature");
     for (const playing of [false, true]) {
       const head = { project: p1, t: at(77), playing };
       const f = planFeed(head);
-      assert.deepEqual(f.streamPlanes, [], `旧流不发(playing=${playing})`);
+      assert.deepEqual(f.streamPlanes, [], `The old stream is not sent (playing=${playing})`);
       assert.deepEqual(f.scrub, playing ? [] : ["glass"]);
-      assert.equal(f.picks.size, 0, "快照已退役");
+      assert.equal(f.picks.size, 0, "Snapshots are retired");
       // 播放中重卡照旧抑制(播放中 heavy: ["glass"]);暂停、拖动时未 settled 的重卡进 scrub (["glass"])
       assert.deepEqual(suppressedAt(head), ["glass"]);
       assert.deepEqual(snapshotFeedDebug(head).staleBelow, ["glass"]);
@@ -154,12 +154,12 @@ for (const [what, edit] of Object.entries(EDITS)) {
   });
 }
 
-test("上面的层怎么改都不算过期:旧流照贴", () => {
+test("No change to the layers above counts as stale: the old stream is still pasted", () => {
   const p0 = project();
   plan = heavy("glass");
   src.push(below(p0, [[0, 7]]));
   const edits = [
-    (p) => { p.tracks[0].clips[0].params.text = "换了标题"; return p; },
+    (p) => { p.tracks[0].clips[0].params.text = "Changed title"; return p; },
     (p) => { p.tracks[0].clips[0].frame = { x: 0, y: 0, w: 500, h: 100 }; return p; },
     (p) => { p.tracks.unshift({ id: "over", name: "over", clips: [card("over", 0, 10)] }); return p; },
     (p) => { p.tracks.shift(); return p; },
@@ -171,17 +171,17 @@ test("上面的层怎么改都不算过期:旧流照贴", () => {
   }
 });
 
-test("那一层没带签名(旧的生产者、别名):不比,照贴;没带 streamKind 的是普通单卡流,平面不带 plane", () => {
+test("A layer without a signature (old producer, alias): not compared, pasted as is; a stream without streamKind is an ordinary single-card stream, and its plane carries no plane field", () => {
   const p0 = project();
   plan = heavy("glass");
   src.push(below(p0, [[0, 7]], { inputSig: undefined }));
-  const p1 = project(EDITS["下层的卡改了一个参数"]);
+  const p1 = project(EDITS["The lower-layer card had a parameter changed"]);
   assert.deepEqual(streamPlanesAt({ project: p1, t: at(77), playing: true }), [{ clipIds: ["glass"], key: "s-glass", ranges: [[0, 7]], originFrame: 40, plane: "stage" }]);
   src.push({ type: "layer", clipId: "glass", kind: "stream", key: "s-card", ranges: [[0, 7]], originFrame: 40 });
   assert.deepEqual(streamPlanesAt({ project: p1, t: at(77), playing: true }), [{ clipIds: ["glass"], key: "s-card", ranges: [[0, 7]], originFrame: 40 }]);
 });
 
-test("占解码器预算:和别的流一起数;超出的那一张抑制着、落到快照", () => {
+test("Takes up decoder budget: counted together with the other streams; the one that goes over is suppressed and falls back to the snapshot", () => {
   const extra = Array.from({ length: DECODER_BUDGET }, (_, i) => `x${i}`);
   const p = project((q) => { q.tracks.unshift({ id: "many", name: "many", clips: [] }); for (const id of extra) q.tracks.push({ id: `t-${id}`, name: id, clips: [card(id, 0, 10)] }); return q; });
   plan = heavy("glass", ...extra);
@@ -193,7 +193,7 @@ test("占解码器预算:和别的流一起数;超出的那一张抑制着、落
   const f = planFeed(head);
   assert.equal(f.streamPlanes.length, DECODER_BUDGET);
   assert.equal(f.streamPlanes.some((x) => x.clipIds[0] === "glass"), false);
-  assert.ok(f.scrub.includes("glass"), "有流、只是超了预算:照旧抑制着");
-  assert.equal(f.picks.size, 0, "快照退役");
+  assert.ok(f.scrub.includes("glass"), "Has a stream, just over budget: still suppressed as before");
+  assert.equal(f.picks.size, 0, "Snapshots retired");
   assert.equal(f.overPlanes.some((x) => x.clipIds[0] === "glass"), true);
 });

@@ -17,11 +17,11 @@ fs.writeFileSync(kernel, "kernel");
 process.env.PROMPTCUT_CARD_OVERRIDES = over;
 const m = await import("../card-overrides.mjs");
 
-test("没改过时读底版", () => {
+test("reads the base copy when unmodified", () => {
   assert.equal(m.readEffective(root, card), "base");
 });
 
-test("写卡片进改动层,底版不动,读到改动层那一份", () => {
+test("writing a card into the overlay layer leaves the base copy untouched, and reads return the copy in the overlay layer", () => {
   const written = m.writeCardFile(root, card, "edited");
   assert.equal(written, path.join(over, "src", "cards", "native", "x.tsx"));
   assert.equal(fs.readFileSync(card, "utf8"), "base");
@@ -29,26 +29,26 @@ test("写卡片进改动层,底版不动,读到改动层那一份", () => {
   assert.equal(m.effectivePath(root, card), written);
 });
 
-test("改动层文件能反查回仓库里的原文件", () => {
+test("an overlay layer file can be traced back to its original file in the repo", () => {
   const o = m.overrideFileFor(root, card);
   assert.equal(path.resolve(m.repoFileForOverride(root, o)), path.resolve(card));
   assert.equal(m.repoFileForOverride(root, path.join(os.tmpdir(), "elsewhere.tsx")), null);
 });
 
-test("卡片 / 部件以外的文件不进改动层", () => {
+test("files other than cards / parts do not go into the overlay layer", () => {
   assert.equal(m.overrideFileFor(root, kernel), null);
   const written = m.writeCardFile(root, kernel, "k2");
   assert.equal(written, kernel);
 });
 
-test("没注入算法时代码哈希是空串;注入后按 id 算", () => {
+test("without an injected algorithm the code hash is an empty string; once injected it is computed by id", () => {
   assert.equal(m.cardCodeHash("x"), "");
   m.setCardHasher((id) => `h-${id}`);
   assert.equal(m.cardCodeHash("x"), "h-x");
   assert.equal(m.cardCodeHash(""), "");
 });
 
-test("变更通知送到每个订阅者,一个出错不影响别的", () => {
+test("change notifications reach every subscriber, and one failing does not affect the others", () => {
   const got = [];
   const off1 = m.onCardSourceChange(() => { throw new Error("boom"); });
   const off2 = m.onCardSourceChange((f) => got.push(f));

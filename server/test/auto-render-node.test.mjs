@@ -44,7 +44,7 @@ function harness({ requestTicket } = {}) {
   return { ctl, started, stopped, requests, logs, advance: (ms) => { t += ms; }, now, gate: (p) => { startGate = p; } };
 }
 
-test('ARN-01 开关与环境变量', () => {
+test('ARN-01 switch and environment variables', () => {
   assert.equal(autoRenderNodeOffReason({}), null);
   assert.equal(autoRenderNodeOffReason({ PROMPTCUT_AUTO_RENDER_NODE: '1' }), null);
   assert.equal(autoRenderNodeOffReason({ PROMPTCUT_AUTO_RENDER_NODE: '0' }), 'disabled');
@@ -57,18 +57,18 @@ test('ARN-01 开关与环境变量', () => {
   assert.equal(autoRenderNodeOffReason({ PROMPTCUT_AUTO_RENDER_NODE: '0', PROMPTCUT_QUEUE_NODE: '1' }), 'disabled');
 });
 
-test('ARN-02 共享配置的校验', () => {
+test('ARN-02 validation of the shared config', () => {
   assert.deepEqual(normalizeBinding({ ...BIND, assetBase: 'https://site.example/media/api/asset/' }), BIND);
   assert.deepEqual(normalizeBinding({ url: 'ws://127.0.0.1:5190/docservice', projectId: 'a.b:c-1' }), { url: 'ws://127.0.0.1:5190/docservice', projectId: 'a.b:c-1', assetBase: null, contentId: null });
   assert.throws(() => normalizeBinding({ ...BIND, url: 'http://x/' }), /ws/);
   assert.throws(() => normalizeBinding({ ...BIND, url: 'nope' }), /url/);
   assert.throws(() => normalizeBinding({ ...BIND, projectId: 'bad id' }), /projectId/);
   assert.throws(() => normalizeBinding({ ...BIND, assetBase: 'ftp://x' }), /assetBase/);
-  assert.throws(() => normalizeBinding(null), /对象/);
+  assert.throws(() => normalizeBinding(null), /object/);
   try { normalizeBinding({ ...BIND, projectId: '', ticket: 'v1.SECRET.sig' }); } catch (e) { assert.ok(!String(e.message).includes('SECRET')); }
 });
 
-test('ARN-03 交接:起一次,第一次建会话用页面交来的票据', async () => {
+test('ARN-03 handoff: start once, and the first session creation uses the ticket handed over by the page', async () => {
   const h = harness();
   const pageTicket = fakeTicket(h.now() + 120_000, 'page');
   const r = h.ctl.bind(BIND, { ticket: pageTicket });
@@ -82,58 +82,58 @@ test('ARN-03 交接:起一次,第一次建会话用页面交来的票据', async
   assert.equal(link.assetBase(), BIND.assetBase);
   assert.equal(link.alive(), true);
   assert.deepEqual(await link.protocols(), ['promptcut.v1', `promptcut.ticket.${pageTicket}`]);
-  assert.equal(h.requests.length, 0, '页面交来的票据还新鲜:不向页面要');
+  assert.equal(h.requests.length, 0, 'The ticket handed over by the page is still fresh: do not ask the page for one');
   const st = h.ctl.status();
   assert.equal(st.bound, true);
   assert.equal(st.started, true);
-  assert.ok(!JSON.stringify(st).includes(pageTicket), '状态里不带票据');
-  assert.ok(!JSON.stringify(h.logs).includes(pageTicket), '日志里不带票据');
+  assert.ok(!JSON.stringify(st).includes(pageTicket), 'The status carries no ticket');
+  assert.ok(!JSON.stringify(h.logs).includes(pageTicket), 'The logs carry no ticket');
 });
 
-test('ARN-04 票据往返:不新鲜了才要,并发只要一次,要到的缓存', async () => {
+test('ARN-04 ticket round trip: ask only when it is no longer fresh, ask only once under concurrency, cache the one obtained', async () => {
   const h = harness();
   h.ctl.bind(BIND, { ticket: fakeTicket(h.now() + 120_000, 'page') });
   await h.ctl.settled();
   const link = h.started[0];
   h.advance(120_000 - TICKET_MIN_LEFT_MS + 1); // 页面那张只剩不到 30 s
   const [a, b] = await Promise.all([link.protocols(), link.protocols()]);
-  assert.equal(h.requests.length, 1, '两条连接同时建会话只向页面要一次');
+  assert.equal(h.requests.length, 1, 'Two connections creating sessions at the same time ask the page only once');
   assert.deepEqual(a, b);
   assert.match(a[1], /^promptcut\.ticket\.v1\./);
   assert.ok(a[1].endsWith('sigr1'));
   h.advance(10_000);
   await link.protocols();
-  assert.equal(h.requests.length, 1, '要到的那张还新鲜:不再要');
+  assert.equal(h.requests.length, 1, 'The ticket obtained is still fresh: do not ask again');
   h.advance(100_000);
   const c = await link.protocols();
   assert.equal(h.requests.length, 2);
   assert.ok(c[1].endsWith('sigr2'));
 });
 
-test('ARN-05 要不到票据:等页面;页面回来续上,不重建', async () => {
+test('ARN-05 cannot get a ticket: wait for the page; when the page comes back, resume without rebuilding', async () => {
   let fail = true;
   let n = 0;
-  const h = harness({ requestTicket: async () => { n++; if (fail) throw Object.assign(new Error('没有页面连着编辑器'), { code: 'no-page' }); return fakeTicket(Date.now() + 1e12, 'late'); } });
+  const h = harness({ requestTicket: async () => { n++; if (fail) throw Object.assign(new Error('No page is connected to the editor'), { code: 'no-page' }); return fakeTicket(Date.now() + 1e12, 'late'); } });
   h.ctl.bind(BIND, {});
   await h.ctl.settled();
   const link = h.started[0];
-  await assert.rejects(link.protocols(), /没有页面/);
-  await assert.rejects(link.protocols(), /没有页面/);
+  await assert.rejects(link.protocols(), /No page/);
+  await assert.rejects(link.protocols(), /No page/);
   assert.equal(n, 2);
   assert.equal(h.ctl.status().waitingPage, true);
-  assert.equal(h.logs.filter((l) => l.event === 'render-node.waiting-page').length, 1, '等页面的日志不刷屏');
+  assert.equal(h.logs.filter((l) => l.event === 'render-node.waiting-page').length, 1, 'The log for waiting on the page does not flood the output');
   // 页面回来:同一个项目再交接一次(带票据)
   const again = fakeTicket(h.now() + 120_000, 'back');
   assert.equal(h.ctl.bind(BIND, { ticket: again }).action, 'same');
   assert.equal(h.ctl.status().waitingPage, false);
   assert.deepEqual(await link.protocols(), ['promptcut.v1', `promptcut.ticket.${again}`]);
-  assert.equal(n, 2, '页面交来的票据新鲜:不再要');
-  assert.equal(h.started.length, 1, '没有重建');
+  assert.equal(n, 2, 'The ticket handed over by the page is fresh: do not ask again');
+  assert.equal(h.started.length, 1, 'Not rebuilt');
   assert.equal(h.stopped.length, 0);
   fail = false;
 });
 
-test('ARN-06 同项目只换基址与文档 id;换项目先撤再起', async () => {
+test('ARN-06 same project: only swap the base URL and document id; for a different project, revoke first and then start', async () => {
   const h = harness();
   h.ctl.bind(BIND, { ticket: fakeTicket(h.now() + 120_000) });
   await h.ctl.settled();
@@ -141,7 +141,7 @@ test('ARN-06 同项目只换基址与文档 id;换项目先撤再起', async () 
   assert.equal(h.ctl.bind({ ...BIND, assetBase: 'https://other.example/api/asset', contentId: 'doc-2' }).action, 'same');
   assert.equal(first.assetBase(), 'https://other.example/api/asset');
   // push-scope:link 上的 contentId 现取(推送与发布的范围按它判,页面晚交来的 id 要看得到)
-  assert.equal(first.contentId, 'doc-2', 'link 上的 contentId 跟着同项目的交接换');
+  assert.equal(first.contentId, 'doc-2', 'The contentId on the link changes with a handoff within the same project');
   assert.equal(h.ctl.status().contentId, 'doc-2');
   // 同项目但没给基址:沿用原来的
   h.ctl.bind({ url: BIND.url, projectId: 'P1' });
@@ -150,19 +150,19 @@ test('ARN-06 同项目只换基址与文档 id;换项目先撤再起', async () 
   assert.equal(h.started.length, 1);
   // 换项目
   assert.equal(h.ctl.bind({ ...BIND, projectId: 'P2' }).action, 'rebind');
-  assert.equal(first.alive(), false, '旧链接当场失效');
+  assert.equal(first.alive(), false, 'The old link is invalidated on the spot');
   await h.ctl.settled();
   assert.deepEqual(h.stopped, [{ id: 1, reason: 'rebind' }]);
   assert.equal(h.started.length, 2);
   assert.equal(h.started[1].projectId, 'P2');
-  await assert.rejects(first.protocols(), /撤掉/);
+  await assert.rejects(first.protocols(), /revoked/);
   // 换文档服务地址也算换项目
   h.ctl.bind({ ...BIND, projectId: 'P2', url: 'ws://192.168.1.5:5190/docservice' });
   await h.ctl.settled();
   assert.equal(h.started.length, 3);
 });
 
-test('ARN-07 撤掉:只撤同一个项目的;起步期间撤掉,起完就收', async () => {
+test('ARN-07 revoke: only revoke the same project\'s; if revoked during startup, wind down as soon as startup finishes', async () => {
   const h = harness();
   h.ctl.bind(BIND, {});
   await h.ctl.settled();
@@ -183,14 +183,14 @@ test('ARN-07 撤掉:只撤同一个项目的;起步期间撤掉,起完就收', a
   assert.equal(h.started.length, 2);
   const link = h.started[1];
   const unbound = h.ctl.unbind({ projectId: 'P1' });
-  assert.equal(link.alive(), false, '撤的那一刻链接就失效(起步里的 start 据此收手)');
+  assert.equal(link.alive(), false, 'The link is invalidated the moment it is revoked (the start in progress backs off accordingly)');
   release();
   await unbound;
   assert.deepEqual(h.stopped.at(-1), { id: 2, reason: 'unbind' });
   assert.equal(h.ctl.status().bound, false);
 });
 
-test('RLY-01 中转:发 HMR、页面交回兑现;交回错误或不合格即失败', async () => {
+test('RLY-01 relay: send over HMR, fulfill when the page hands the ticket back; an error or an invalid reply fails', async () => {
   const sent = [];
   const relay = createTicketRelay({ send: (d) => sent.push(d) });
   const p = relay.request('P1');
@@ -200,37 +200,37 @@ test('RLY-01 中转:发 HMR、页面交回兑现;交回错误或不合格即失�
   assert.equal(typeof sent[0].reqId, 'string');
   assert.equal(relay.answer({ reqId: sent[0].reqId, ticket: 'v1.a.b' }), true);
   assert.equal(await p, 'v1.a.b');
-  assert.equal(relay.answer({ reqId: sent[0].reqId, ticket: 'v1.a.b' }), false, '同一张只兑现一次');
+  assert.equal(relay.answer({ reqId: sent[0].reqId, ticket: 'v1.a.b' }), false, 'The same ticket is fulfilled only once');
 
   const q = relay.request('P1');
-  relay.answer({ reqId: sent[1].reqId, error: '本页面没有连着这个共享项目' });
-  await assert.rejects(q, (e) => e.code === 'page-refused' && /没签出/.test(e.message));
+  relay.answer({ reqId: sent[1].reqId, error: 'This page is not connected to this shared project' });
+  await assert.rejects(q, (e) => e.code === 'page-refused' && /did not issue/.test(e.message));
   const r = relay.request('P1');
   relay.answer({ reqId: sent[2].reqId, ticket: 'has space' });
   await assert.rejects(r, (e) => e.code === 'page-refused');
   assert.equal(relay.pending(), 0);
 });
 
-test('RLY-02 没有页面立即失败;超时失败;不认识的 reqId', async () => {
+test('RLY-02 fails immediately when there is no page; fails on timeout; unknown reqId', async () => {
   const sent = [];
   let page = false;
   const timers = [];
   const relay = createTicketRelay({ send: (d) => sent.push(d), hasPage: () => page, timeoutMs: 10_000,
     setTimer: (fn, ms) => { const t = { fn, ms }; timers.push(t); return t; }, clearTimer: (t) => { t.cleared = true; } });
   await assert.rejects(relay.request('P1'), (e) => e.code === 'no-page');
-  assert.equal(sent.length, 0, '没有页面时不发');
+  assert.equal(sent.length, 0, 'Nothing is sent when there is no page');
   page = true;
   const p = relay.request('P1');
   assert.equal(timers[0].ms, 10_000);
   timers[0].fn();
   await assert.rejects(p, (e) => e.code === 'timeout');
-  assert.equal(relay.answer({ reqId: sent[0].reqId, ticket: 'v1.a.b' }), false, '超时之后交回的不算');
+  assert.equal(relay.answer({ reqId: sent[0].reqId, ticket: 'v1.a.b' }), false, 'A reply handed back after the timeout does not count');
   assert.equal(relay.answer({ reqId: 'nope', ticket: 'v1.a.b' }), false);
   assert.equal(relay.answer(null), false);
   assert.deepEqual(relay.stats(), { requests: 2, answered: 0, failed: 0, noPage: 1, timeouts: 1, pending: 0 });
 });
 
-test('RLY-03 配置记忆:不记票据;按项目撤', () => {
+test('RLY-03 config memory: does not remember tickets; revoke by project', () => {
   const m = createBindingMemory();
   assert.equal(m.get(), null);
   m.set({ ...BIND, ticket: 'v1.SECRET.sig' });
@@ -241,11 +241,11 @@ test('RLY-03 配置记忆:不记票据;按项目撤', () => {
   assert.equal(m.clear('P1'), true);
   assert.equal(m.get(), null);
   m.set(BIND);
-  assert.equal(m.clear(), true, '不给项目 id 一律撤');
+  assert.equal(m.clear(), true, 'Revoke everything when no project id is given');
   assert.equal(m.clear(), false);
 });
 
-test('ARN-08 编辑器进程的日志里看得到自动渲染节点的起停与推送目标(不转 queue.started 这类别的行)', async () => {
+test('ARN-08 the editor process log shows the auto render node\'s start and stop and its push target (other lines such as queue.started are not forwarded)', async () => {
   const { createSessionLineForwarder } = await import('../render-node/session-diag.mjs');
   const out = [];
   const fwd = createSessionLineForwarder((line) => out.push(line));

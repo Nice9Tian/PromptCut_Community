@@ -111,7 +111,7 @@ export const PIX_FMT = { h264_mf: 'nv12', h264_mf_sw: 'nv12' };
 /** G3 的整条命令行（不含 -i 之前的输入声明和最后的输出）。 */
 export function encodeArgs({ encoder, fps, quality, premultiplied = true, colorMatrix = 'bt709', tagColor = true, pixFmt, range = 'pc', crop = null }) {
   const enc = ENCODER_ARGS[encoder];
-  if (!enc) throw new Error(`未知编码器 ${encoder}`);
+  if (!enc) throw new Error(`unknown encoder ${encoder}`);
   if (quality == null) quality = QUALITY_DEFAULT[encoder] ?? 16;
   if (pixFmt == null) pixFmt = PIX_FMT[encoder] ?? 'yuv420p';
   return [

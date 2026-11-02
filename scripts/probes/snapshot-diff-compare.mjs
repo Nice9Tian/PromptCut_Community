@@ -167,7 +167,7 @@ for (const cardId of cards) {
 
     for (const n of frames) {
       const a = before.get(n), b = after.get(n);
-      if (!a || !b) { rows.push({ cardId, frame: n, note: `没拿到快照(旧 ${before.has(n)} / 新 ${after.has(n)})` }); bad++; continue; }
+      if (!a || !b) { rows.push({ cardId, frame: n, note: `No snapshot obtained (old ${before.has(n)} / new ${after.has(n)})` }); bad++; continue; }
       const pngBefore = await captureSnapshot(bakery, a.html);
       const pngAfter = await captureSnapshot(bakery, b.html);
       await fs.writeFile(path.join(outDir, `${cardId}-${n}-before.png`), pngBefore);
@@ -182,8 +182,8 @@ for (const cardId of cards) {
         controlBeforeKB: kb(a.controls?.[0]?.html), controlAfterKB: kb(b.controls?.[0]?.html) };
       rows.push(row);
       if (!cmp.equal) bad++;
-      console.log(`${cardId} f${n}: ${cmp.equal ? '逐字节相同' : `不同 ${cmp.pixels}/${cmp.total} 像素,最大通道差 ${cmp.maxDelta}`}`
-        + `  场景 ${row.sceneBeforeKB} → ${row.sceneAfterKB} KB,control ${row.controlBeforeKB} → ${row.controlAfterKB} KB`);
+      console.log(`${cardId} f${n}: ${cmp.equal ? 'byte-for-byte identical' : `${cmp.pixels}/${cmp.total} pixels differ, max channel difference ${cmp.maxDelta}`}`
+        + `  scene ${row.sceneBeforeKB} → ${row.sceneAfterKB} KB, control ${row.controlBeforeKB} → ${row.controlAfterKB} KB`);
     }
   } catch (err) {
     console.error(`${cardId}: ${err && err.stack || err}`);
@@ -196,6 +196,6 @@ for (const cardId of cards) {
 }
 
 await fs.writeFile(path.join(outDir, 'snapshot-diff-compare.json'), JSON.stringify({ origin, cards, frames, rows }, null, 2), 'utf8');
-console.log(`\n结果写到 ${path.join(outDir, 'snapshot-diff-compare.json')}`);
-console.log(bad ? `\n有 ${bad} 项不通过。` : '\n全部逐字节相同。');
+console.log(`\nResult written to ${path.join(outDir, 'snapshot-diff-compare.json')}`);
+console.log(bad ? `\n${bad} items failed.` : '\nAll byte-identical.');
 process.exit(bad ? 1 : 0);

@@ -53,7 +53,7 @@ const PORT = Number(flagArg('port', '27560', args));
 const KEEP = args.includes('--keep');
 const JSON_OUT = flagArg('json', null, args);
 const OUT = path.resolve(flagArg('out', null, args) || path.join(os.tmpdir(), `pc-noreplay-probe-${Date.now().toString(36)}`));
-if ([5190, 5191, 5192].some((p) => p >= PORT && p <= PORT + 2)) throw new Error('这一段是用户常驻的开发服务器的端口,换一个');
+if ([5190, 5191, 5192].some((p) => p >= PORT && p <= PORT + 2)) throw new Error('This port range belongs to the user\'s resident dev servers; use another one');
 
 const say = (step, fields = {}) => process.stderr.write(`${JSON.stringify({ step, t: Date.now(), ...fields })}\n`);
 const fails = [];
@@ -65,13 +65,13 @@ async function until(label, fn, timeoutMs, everyMs = 500) {
     let value = null;
     try { value = await fn(); } catch { value = null; }
     if (value) return value;
-    if (Date.now() > deadline) { fails.push(`超时:${label}`); return null; }
+    if (Date.now() > deadline) { fails.push(`Timeout: ${label}`); return null; }
     await sleep(everyMs);
   }
 }
 
 const PROJECT = {
-  id: 'noreplay-probe', name: '不回放探针', width: 1920, height: 1080, fps: 30, duration: 5,
+  id: 'noreplay-probe', name: 'No-replay probe', width: 1920, height: 1080, fps: 30, duration: 5,
   themeId: 'dark', media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
   tracks: [
     { id: 'tr-av', name: 'av', hidden: false, clips: [
@@ -149,11 +149,11 @@ try {
   child.stderr.on('data', keep);
   say('spawn', { pid: child.pid, port: PORT });
   const origin = `http://127.0.0.1:${PORT}`;
-  const up = await until('dev server 起来', async () => {
-    if (child.exitCode !== null) throw new Error(`dev server 退出了:${log.join('').slice(-600)}`);
+  const up = await until('dev server is up', async () => {
+    if (child.exitCode !== null) throw new Error(`dev server exited: ${log.join('').slice(-600)}`);
     return fetch(`${origin}/`, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok, () => false);
   }, 180_000, 300);
-  if (!up) throw new Error(`dev server 没起来:${log.join('').slice(-600)}`);
+  if (!up) throw new Error(`dev server did not start: ${log.join('').slice(-600)}`);
   out.origin = origin;
 
   // ---------- 1. 管线:把 remotion 式的卡钉成重卡,灌项目,等全部分段满密度
@@ -169,14 +169,14 @@ try {
   };
   const t0 = Date.now();
   await pipeline.preload(PROJECT);
-  const ready = await until('生产者起来', () => (pipeline._streams?.streams.size >= 4 ? pipeline._streams : null), 180_000);
-  if (!ready) throw new Error('生产者没起来');
-  const first = await until('全部分段满密度', dense, 900_000, 1000);
-  if (!first) throw new Error('第一轮生产没做完');
+  const ready = await until('producer is up', () => (pipeline._streams?.streams.size >= 4 ? pipeline._streams : null), 180_000);
+  if (!ready) throw new Error('The producer did not start');
+  const first = await until('all segments at full density', dense, 900_000, 1000);
+  if (!first) throw new Error('The first production round did not finish');
   out.produceMs = Date.now() - t0;
   const stateOf = (clipId) => [...producer.streams.values()].find((s) => s.spec.clipIds.length === 1 && s.spec.clipIds[0] === clipId);
   const rowOf = (status, clipId) => status.streams.find((s) => s.clipIds.length === 1 && s.clipIds[0] === clipId);
-  check(producer.streams.size === 4, '4 条流', producer.streams.size);
+  check(producer.streams.size === 4, '4 streams', producer.streams.size);
   out.encoder = first.encoder;
 
   // ---------- 2. planStreams 的 replay 和第一轮产出以后的 replayedFrames
@@ -184,11 +184,11 @@ try {
   for (const clipId of [...DIRECT, ...STATEFUL]) {
     const row = rowOf(first, clipId);
     const want = STATEFUL.includes(clipId);
-    check(!!row, `${clipId}:有流`);
+    check(!!row, `${clipId}: has a stream`);
     if (!row) continue;
-    check(row.replay === want, `${clipId}:replay 应当是 ${want}`, row.replay);
+    check(row.replay === want, `${clipId}: replay should be ${want}`, row.replay);
     out.firstRound[clipId] = { replay: row.replay, replayedFrames: row.replayedFrames, resets: row.resets, segments: row.lastSegment - row.firstSegment + 1 };
-    if (!want) check(row.replayedFrames === 0, `${clipId}:第一轮产完 replayedFrames 为 0`, row.replayedFrames);
+    if (!want) check(row.replayedFrames === 0, `${clipId}: replayedFrames is 0 after the first round of production`, row.replayedFrames);
   }
   say('first-round', out.firstRound);
 
@@ -202,20 +202,20 @@ try {
     for (const n of REGEN) delete state.manifest.segments[n];
   }
   producer.kick();
-  const second = await until('作废的分段重新产完', () => {
+  const second = await until('the invalidated segments are produced again', () => {
     const status = dense();
     return status && status.streams.every((s) => REGEN.every((n) => s.segments[n]?.stride === 1)) ? status : null;
   }, 900_000, 1000);
-  if (!second) throw new Error('第二轮生产没做完');
+  if (!second) throw new Error('The second production round did not finish');
   out.regen = {};
   for (const clipId of [...DIRECT, ...STATEFUL]) {
     const row = rowOf(second, clipId);
     const delta = row.replayedFrames - before[clipId].replayedFrames;
     const resetsDelta = (row.resets?.sparse ?? 0) + (row.resets?.dense ?? 0) - before[clipId].resets.sparse - before[clipId].resets.dense;
     out.regen[clipId] = { replay: row.replay, replayedFramesDelta: delta, resetsDelta };
-    check(resetsDelta >= REGEN.length, `${clipId}:作废的 ${REGEN.length} 段都断了租约(重灌页面 ≥ ${REGEN.length} 次)`, resetsDelta);
-    if (DIRECT.includes(clipId)) check(delta === 0 && row.replayedFrames === 0, `${clipId}(remotion 式):断租约重产以后 replayedFrames 仍是 0`, { delta, total: row.replayedFrames });
-    else check(delta > 0, `${clipId}(motion 式):断租约重产照旧从挂载帧回放(replayedFrames 增加)`, delta);
+    check(resetsDelta >= REGEN.length, `${clipId}: all ${REGEN.length} invalidated segments had their lease broken (page reset ≥ ${REGEN.length} times)`, resetsDelta);
+    if (DIRECT.includes(clipId)) check(delta === 0 && row.replayedFrames === 0, `${clipId}(remotion-style): replayedFrames is still 0 after the lease is broken and the segment is re-produced`, { delta, total: row.replayedFrames });
+    else check(delta > 0, `${clipId}(motion-style): after the lease is broken and the segment is re-produced, it still replays from the mount frame (replayedFrames increases)`, delta);
   }
   say('regen', out.regen);
 
@@ -251,20 +251,20 @@ try {
         if (segment < spec.firstSegment || segment > spec.lastSegment) continue;
         const direct = await shoot(segment, false); // A 路
         const replay = await shoot(segment, true); // B 路
-        check(direct.stats.replayed === 0, `${clipId}#${segment}:A 路 bakeStream 的 replayed 为 0`, direct.stats.replayed);
-        check(direct.pngs.length === replay.pngs.length && direct.pngs.length > 0, `${clipId}#${segment}:两路帧数相同`, [direct.pngs.length, replay.pngs.length]);
+        check(direct.stats.replayed === 0, `${clipId}#${segment}: replayed of path A's bakeStream is 0`, direct.stats.replayed);
+        check(direct.pngs.length === replay.pngs.length && direct.pngs.length > 0, `${clipId}#${segment}: both paths have the same frame count`, [direct.pngs.length, replay.pngs.length]);
         const diffs = direct.pngs.map((png, i) => diffPixels(png, replay.pngs[i]));
         const ink = replay.pngs.map(inkPixels);
-        const rec = { clipId, segment, mode: STATEFUL.includes(clipId) ? 'stateful(对照)' : 'direct', frames: direct.pngs.length, replayedB: replay.stats.replayed,
+        const rec = { clipId, segment, mode: STATEFUL.includes(clipId) ? 'stateful(control)' : 'direct', frames: direct.pngs.length, replayedB: replay.stats.replayed,
           diffPixelsMax: Math.max(...diffs), diffPixelsSum: diffs.reduce((a, b) => a + Math.max(0, b), 0), inkMin: Math.min(...ink), inkMax: Math.max(...ink) };
         out.compare.push(rec);
         say('compare', rec);
         if (DIRECT.includes(clipId)) {
-          check(rec.diffPixelsMax === 0, `${clipId}#${segment}:remotion 式的卡,不回放和回放着产逐帧相同(像素)`, diffs);
-          check(rec.inkMax > 0, `${clipId}#${segment}:画面不是空的`, ink);
-          check(replay.stats.replayed > 0, `${clipId}#${segment}:B 路确实回放了(replayed > 0)`, replay.stats.replayed);
+          check(rec.diffPixelsMax === 0, `${clipId}#${segment}: for remotion-style cards, producing without replay and with replay is identical frame by frame (pixels)`, diffs);
+          check(rec.inkMax > 0, `${clipId}#${segment}: the image is not empty`, ink);
+          check(replay.stats.replayed > 0, `${clipId}#${segment}: path B did replay (replayed > 0)`, replay.stats.replayed);
         } else {
-          check(rec.diffPixelsSum > 0, `${clipId}#${segment}:对照 —— motion 式的卡不回放必须比出差别(这套比法测得出)`, diffs);
+          check(rec.diffPixelsSum > 0, `${clipId}#${segment}: control: motion-style cards without replay must show a difference (this comparison can detect it)`, diffs);
         }
         // 留两张图看(第一帧):A 路、B 路
         await fs.writeFile(path.join(SHOTS, `${clipId}-seg${segment}-A-direct.png`), direct.pngs[Math.min(7, direct.pngs.length - 1)]);
@@ -289,8 +289,8 @@ try {
           const row = { clipId, segment, storedBytes: stored.length, refBytes: refSegs[0].length, sameBytes, sameDecoded, storedStride: seg.stride, storedRect: manifest.inits[seg.init]?.rect ?? null };
           out.compare.push({ ...row, kind: 'stream-vs-replay-encode' });
           say('stream-vs-replay', row);
-          check(seg.stride === 1, `${clipId}#${segment}:流库里这一段是满密度`, seg.stride);
-          check(sameBytes || sameDecoded === true, `${clipId}#${segment}:流库里不回放产出的分段和回放着产的编码结果相同(字节或解码像素)`, row);
+          check(seg.stride === 1, `${clipId}#${segment}: this segment in the stream store is at full density`, seg.stride);
+          check(sameBytes || sameDecoded === true, `${clipId}#${segment}: the segment produced without replay in the stream store has the same encoded result as the one produced with replay (bytes or decoded pixels)`, row);
         }
       }
     }
@@ -299,9 +299,9 @@ try {
   // ---------- 6. 键没变:replay 不进任何键(同一份计划里 direct 流的键 = 内容键 × 指纹,与 replay 无关)
   out.finalStatus = producer.status().streams.map((s) => ({ clipIds: s.clipIds, replay: s.replay, replayedFrames: s.replayedFrames, resets: s.resets }));
   out.stats = producer.status().stats;
-  check(DIRECT.every((id) => rowOf(producer.status(), id).replayedFrames === 0), 'remotion 式的流 replayedFrames 恒为 0(收尾再看一次)');
+  check(DIRECT.every((id) => rowOf(producer.status(), id).replayedFrames === 0), 'replayedFrames of remotion-style streams is always 0 (checked once more at the end)');
 } catch (error) {
-  fails.push(`异常:${error?.stack || error}`);
+  fails.push(`Exception: ${error?.stack || error}`);
   say('ERROR', { error: String(error?.stack || error) });
 } finally {
   try { await pipeline?.close(); } catch { /* ignore */ }

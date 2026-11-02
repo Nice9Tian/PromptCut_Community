@@ -59,8 +59,8 @@ export async function startIsolatedEditor({ port, work }) {
       });
       break;
     } catch (e) {
-      if (attempt >= 6 || !/没有全空着/.test(String(e?.message))) throw e;
-      console.error(`[preview-stop-lib] ${e.message};${attempt * 3} 秒后重试(第 ${attempt} 次)`);
+      if (attempt >= 6 || !/not all free/.test(String(e?.message))) throw e;
+      console.error(`[preview-stop-lib] ${e.message}; retrying in ${attempt * 3} seconds (attempt ${attempt})`);
       await sleep(attempt * 3000);
     }
   }

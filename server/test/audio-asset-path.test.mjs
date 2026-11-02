@@ -45,20 +45,20 @@ const closeServer = (s) => new Promise((resolve) => { s.closeAllConnections?.();
 
 /* ------------------------------------------------------------------ AR-1 / AR-2 */
 
-test('AR-1 解析器:不可达、拒绝、404、2xx 分得清', async () => {
+test('AR-1 resolver: unreachable, refused, 404 and 2xx are told apart', async () => {
   const toUrl = (m, o) => (m?.hash ? `${o}/@media/${m.hash}` : null);
   // 取不到地址
   const noOrigin = createAssetSourceResolver({ origin: () => null, toUrl });
-  await assert.rejects(noOrigin({ hash: 'a' }), (e) => e instanceof AssetSourceError && /取不到素材服务的地址/.test(e.message));
+  await assert.rejects(noOrigin({ hash: 'a' }), (e) => e instanceof AssetSourceError && /cannot get the asset service address/.test(e.message));
   // 连不上:起一个端口再关掉
   const gone = await listen(() => {});
   await closeServer(gone.server);
   const refused = createAssetSourceResolver({ origin: () => gone.origin, toUrl });
-  await assert.rejects(refused({ hash: 'a' }), (e) => e instanceof AssetSourceError && e.message.includes(`素材服务不可达(${gone.origin})`));
+  await assert.rejects(refused({ hash: 'a' }), (e) => e instanceof AssetSourceError && e.message.includes(`asset service unreachable (${gone.origin})`));
   // 超时
   const hang = await listen(() => { /* 不答 */ });
   const slow = createAssetSourceResolver({ origin: () => hang.origin, toUrl, timeoutMs: 300 });
-  await assert.rejects(slow({ hash: 'a' }), (e) => e instanceof AssetSourceError && /没有应答/.test(e.message));
+  await assert.rejects(slow({ hash: 'a' }), (e) => e instanceof AssetSourceError && /no response/.test(e.message));
   await closeServer(hang.server);
   // 404 / 401 / 206
   const seen = [];
@@ -70,19 +70,19 @@ test('AR-1 解析器:不可达、拒绝、404、2xx 分得清', async () => {
   });
   const r = createAssetSourceResolver({ origin: () => svc.origin, toUrl });
   assert.equal(await r({ hash: 'missing' }), null);
-  await assert.rejects(r({ hash: 'locked' }), (e) => e instanceof AssetSourceError && /拒绝了读取.*HTTP 401/.test(e.message));
+  await assert.rejects(r({ hash: 'locked' }), (e) => e instanceof AssetSourceError && /refused the read.*HTTP 401/.test(e.message));
   assert.equal(await r({ hash: 'ok' }), `${svc.origin}/@media/ok`);
-  assert.equal(await r({}), null, '拼不出地址');
-  assert.ok(seen.every((s) => s.range === 'bytes=0-0'), '只探 1 个字节');
+  assert.equal(await r({}), null, 'cannot build the URL');
+  assert.ok(seen.every((s) => s.range === 'bytes=0-0'), 'probes only 1 byte');
   await closeServer(svc.server);
 });
 
-test('AR-2 素材记录 → 素材服务上的地址;请求体里的 path 不用来读盘', async () => {
+test('AR-2 media record → URL on the asset service; the path in the request body is not used to read from disk', async () => {
   let mod;
   try {
     mod = await import(harness.compileTs(path.join(ROOT, 'server', 'vite-plugin-audio.ts')));
   } catch (e) {
-    assert.fail('转译 vite-plugin-audio.ts 失败:' + (e?.message || e));
+    assert.fail('failed to transpile vite-plugin-audio.ts:' + (e?.message || e));
   }
   const o = 'http://127.0.0.1:9';
   const h = 'ab'.repeat(32);
@@ -101,7 +101,7 @@ test('AR-2 素材记录 → 素材服务上的地址;请求体里的 path 不用
 
 const FFMPEG = findFfmpeg();
 const FFPROBE = FFMPEG ? path.join(path.dirname(FFMPEG), 'ffprobe' + path.extname(FFMPEG)) : null;
-const skip = FFMPEG ? false : '没找到 ffmpeg';
+const skip = FFMPEG ? false : 'ffmpeg not found';
 
 const gen = (out, lavfiArgs, codecArgs) => {
   const r = spawnSync(FFMPEG, ['-hide_banner', '-v', 'error', '-y', ...lavfiArgs, ...codecArgs, out], { windowsHide: true });
@@ -134,7 +134,7 @@ async function startService() {
     const count = Math.max(1, Math.ceil(size / cs));
     for (let n = 0; n < count; n++) {
       const r = await fetch(`${svc.base}/media/${hash}/${n}`, { method: 'PUT', body: buf.subarray(n * cs, Math.min(size, (n + 1) * cs)), headers: asset.chunkHeaders(size, path.basename(file)) });
-      assert.equal(r.status, 200, `分片 ${n}`);
+      assert.equal(r.status, 200, `chunk ${n}`);
     }
     assert.equal((await fetch(`${svc.base}/media/${hash}/complete`, { method: 'POST' })).status, 200);
     return { hash, count };
@@ -169,13 +169,13 @@ before(async () => {
 after(() => service?.stop());
 
 /** 项目里的素材记录:path 指向一个不存在的目录(素材目录不可读),只有 hash / url 可用 */
-const GONE = path.join(TMP, '不存在的素材目录');
+const GONE = path.join(TMP, 'nonexistent-asset-dir');
 const mediaOf = (k) => ({ id: `m-${k}`, name: path.basename(files[k]), url: `/@media/${hashes[k]}${path.extname(files[k])}`, hash: hashes[k], path: path.join(GONE, path.basename(files[k])) });
 const viaService = () => createAssetSourceResolver({ origin: () => service.origin, toUrl: (m, o) => `${o}/@media/${m.hash}` });
 /** 改前的读法:直接交本地文件路径(原来 mediaFileOf 返回的就是这个) */
 const direct = (m) => files[Object.keys(files).find((k) => hashes[k] === m?.hash)] ?? null;
 
-test('AR-3 测响度:三档经素材服务的回包与直接读文件的逐字相同;素材目录不可读照常出结果', { skip, timeout: 180_000 }, async () => {
+test('AR-3 loudness measurement: for all three tiers the response body through the asset service is identical character for character to the one read from the file directly; results still come out when the asset catalog is unreadable', { skip, timeout: 180_000 }, async () => {
   assert.equal(fs.existsSync(GONE), false);
   const bodies = [
     ...['wav', 'mp3', 'm4a', 'mono', 'mp4'].map((k) => ({ scope: 'media', media: mediaOf(k), series: true })),
@@ -199,32 +199,32 @@ test('AR-3 测响度:三档经素材服务的回包与直接读文件的逐字�
     const now = await measureLoudness({ body, resolveSource: viaService(), ffmpeg: FFMPEG, ffprobe: FFPROBE });
     const label = `${body.scope} ${body.media?.name ?? 'timeline'}`;
     assert.equal(before.status, 200, JSON.stringify(before.body));
-    assert.equal(JSON.stringify(now), JSON.stringify(before), `${label}:回包逐字相同`);
-    assert.ok(typeof now.body.integrated === 'number', `${label}:有响度数值`);
+    assert.equal(JSON.stringify(now), JSON.stringify(before), `${label}: response body identical character for character`);
+    assert.ok(typeof now.body.integrated === 'number', `${label}: has a loudness value`);
     const got = service.stats.requests.filter((r) => r.url.startsWith('/@media/') && r.method === 'GET');
-    assert.ok(got.length >= 2, `${label}:经素材服务取了字节(${got.length} 次)`);
+    assert.ok(got.length >= 2, `${label}: bytes were fetched through the asset service (${got.length} times)`);
   }
 });
 
-test('AR-4 自定义测量:解出的 PCM 与直接读文件的逐字节相同;经沙箱的结果相同', { skip, timeout: 180_000 }, async () => {
+test('AR-4 custom measurement: the decoded PCM is byte-for-byte identical to reading the file directly; the result through the sandbox is the same', { skip, timeout: 180_000 }, async () => {
   const resolve = viaService();
   const same = async (label, argsOf, fmt) => {
     const a = await decodePcm(FFMPEG, argsOf((k) => files[k]), fmt);
     const b = await decodePcm(FFMPEG, argsOf((k) => `${service.origin}/@media/${hashes[k]}`), fmt);
-    assert.ok(a[0].length > 0, `${label}:有样本`);
-    assert.equal(a.length, b.length, `${label}:声道数`);
-    for (let c = 0; c < a.length; c++) assert.ok(Buffer.from(a[c].buffer).equals(Buffer.from(b[c].buffer)), `${label}:声道 ${c} 逐字节相同`);
+    assert.ok(a[0].length > 0, `${label}: has samples`);
+    assert.equal(a.length, b.length, `${label}: channel count`);
+    for (let c = 0; c < a.length; c++) assert.ok(Buffer.from(a[c].buffer).equals(Buffer.from(b[c].buffer)), `${label}: channel ${c} is byte-for-byte identical`);
   };
-  await same('素材 wav', (src) => filePcmArgs({ file: src('wav'), sampleRate: 16000, channels: 2 }), { channels: 2, sampleRate: 16000 });
-  await same('片段 mp3 窗口', (src) => filePcmArgs({ file: src('mp3'), offset: 1.7, duration: 2.2, sampleRate: 48000, channels: 2 }), { channels: 2, sampleRate: 48000 });
-  await same('片段 m4a mono', (src) => filePcmArgs({ file: src('m4a'), offset: 0.3, duration: 4, sampleRate: 22050, channels: 1, sourceChannels: 2 }), { channels: 1, sampleRate: 22050 });
-  await same('mp4 的音轨', (src) => filePcmArgs({ file: src('mp4'), sampleRate: 16000, channels: 2 }), { channels: 2, sampleRate: 16000 });
+  await same('media wav', (src) => filePcmArgs({ file: src('wav'), sampleRate: 16000, channels: 2 }), { channels: 2, sampleRate: 16000 });
+  await same('clip mp3 window', (src) => filePcmArgs({ file: src('mp3'), offset: 1.7, duration: 2.2, sampleRate: 48000, channels: 2 }), { channels: 2, sampleRate: 48000 });
+  await same('clip m4a mono', (src) => filePcmArgs({ file: src('m4a'), offset: 0.3, duration: 4, sampleRate: 22050, channels: 1, sourceChannels: 2 }), { channels: 1, sampleRate: 22050 });
+  await same('mp4 audio track', (src) => filePcmArgs({ file: src('mp4'), sampleRate: 16000, channels: 2 }), { channels: 2, sampleRate: 16000 });
   const entries = (src) => [
     { file: src('wav'), start: 0, dur: 4, offset: 1, volume: 1, fadeIn: 0.5, fadeOut: 0 },
     { file: src('mono'), start: 1.5, dur: 3, offset: 0.5, volume: 0.7, fadeIn: 0, fadeOut: 0.8 },
   ];
-  await same('时间轴混音窗口', (src) => timelinePcmArgs(entries(src), { total: 5, offset: 0.5, duration: 3, sampleRate: 16000, channels: 2 }), { channels: 2, sampleRate: 16000 });
-  await same('时间轴混音 mono', (src) => timelinePcmArgs(entries(src), { total: 5, sampleRate: 8000, channels: 1 }), { channels: 1, sampleRate: 8000 });
+  await same('timeline mix window', (src) => timelinePcmArgs(entries(src), { total: 5, offset: 0.5, duration: 3, sampleRate: 16000, channels: 2 }), { channels: 2, sampleRate: 16000 });
+  await same('timeline mix mono', (src) => timelinePcmArgs(entries(src), { total: 5, sampleRate: 8000, channels: 1 }), { channels: 1, sampleRate: 8000 });
 
   // 整条 measureJs(沙箱里算 PCM 的指纹):经素材服务与直接读文件结果相同
   const sandbox = createAudioSandbox();
@@ -248,27 +248,27 @@ test('AR-4 自定义测量:解出的 PCM 与直接读文件的逐字节相同;�
       const b = await measureJs({ body, resolveSource: resolve, ffmpeg: FFMPEG, ffprobe: FFPROBE, sandbox });
       assert.equal(a.body.ok, true, JSON.stringify(a.body));
       const strip = (r) => { const { elapsedMs, ...rest } = r.body; return rest; };
-      assert.deepEqual(strip(b), strip(a), `${body.scope}:结果相同`);
-      assert.ok(service.stats.requests.some((r) => r.url.startsWith('/@media/') && r.method === 'GET' && r.range !== 'bytes=0-0'), `${body.scope}:ffmpeg 经素材服务取了字节`);
+      assert.deepEqual(strip(b), strip(a), `${body.scope}: result is the same`);
+      assert.ok(service.stats.requests.some((r) => r.url.startsWith('/@media/') && r.method === 'GET' && r.range !== 'bytes=0-0'), `${body.scope}: ffmpeg fetched bytes through the asset service`);
     }
   } finally {
     await sandbox.close();
   }
 });
 
-test('AR-5 大文件与分段取:片段档只取需要的那几段', { skip, timeout: 180_000 }, async (t) => {
+test('AR-5 large files and fetching in parts: the clip tier fetches only the parts it needs', { skip, timeout: 180_000 }, async (t) => {
   const size = fs.statSync(files.big).size;
-  assert.ok(size > 4 * 8 * 1024 * 1024, `大文件 ${size} 字节,多于 4 个分片`);
+  assert.ok(size > 4 * 8 * 1024 * 1024, `large file of ${size} bytes, more than 4 chunks`);
   const body = { scope: 'clip', media: mediaOf('big'), offset: 150, duration: 2, series: true };
   const before = await measureLoudness({ body, resolveSource: direct, ffmpeg: FFMPEG, ffprobe: FFPROBE });
   service.reset();
   const now = await measureLoudness({ body, resolveSource: viaService(), ffmpeg: FFMPEG, ffprobe: FFPROBE });
   assert.equal(JSON.stringify(now), JSON.stringify(before));
   const ranged = service.stats.requests.filter((r) => r.range && r.range !== 'bytes=0-0');
-  assert.ok(ranged.length >= 1, 'ffmpeg 按 Range 定位:' + JSON.stringify(service.stats.requests));
+  assert.ok(ranged.length >= 1, 'ffmpeg seeks using Range:' + JSON.stringify(service.stats.requests));
   // 请求可能是开放区间(bytes=N-),ffmpeg 读够就断开;真正传过来的字节远小于整个文件
-  t.diagnostic(`文件 ${size} 字节;经素材服务传过来 ${service.stats.bytes} 字节;请求 ${JSON.stringify(service.stats.requests.map((r) => r.range))}`);
-  assert.ok(service.stats.bytes < size / 4, `经素材服务传过来 ${service.stats.bytes} 字节,文件 ${size} 字节`);
+  t.diagnostic(`file ${size} bytes; ${service.stats.bytes} bytes transferred through the asset service; requests ${JSON.stringify(service.stats.requests.map((r) => r.range))}`);
+  assert.ok(service.stats.bytes < size / 4, `${service.stats.bytes} bytes transferred through the asset service, file ${size} bytes`);
 
   // 自定义测量同一段:PCM 逐字节相同
   const args = (src) => filePcmArgs({ file: src, offset: 150, duration: 2, sampleRate: 48000, channels: 2 });
@@ -277,34 +277,34 @@ test('AR-5 大文件与分段取:片段档只取需要的那几段', { skip, tim
   assert.ok(Buffer.from(a[0].buffer).equals(Buffer.from(b[0].buffer)) && Buffer.from(a[1].buffer).equals(Buffer.from(b[1].buffer)));
 });
 
-test('AR-6 素材服务不可达:回写明原因的错,不当成文件不存在或跳过', { skip, timeout: 60_000 }, async () => {
+test('AR-6 asset service unreachable: respond with an error that states the cause, and do not treat it as file not found or skipped', { skip, timeout: 60_000 }, async () => {
   const gone = await listen(() => {});
   await closeServer(gone.server);
   const resolve = createAssetSourceResolver({ origin: () => gone.origin, toUrl: (m, o) => `${o}/@media/${m.hash}` });
   const m = await measureLoudness({ body: { scope: 'media', media: mediaOf('wav') }, resolveSource: resolve, ffmpeg: FFMPEG, ffprobe: FFPROBE });
   assert.equal(m.status, 502);
   assert.equal(m.body.ok, false);
-  assert.ok(m.body.error.includes(`素材服务不可达(${gone.origin})`), m.body.error);
+  assert.ok(m.body.error.includes(`asset service unreachable (${gone.origin})`), m.body.error);
   const t = await measureLoudness({ body: { scope: 'timeline', duration: 3, entries: [{ clipId: 'c1', media: mediaOf('wav'), start: 0, dur: 3, offset: 0, volume: 1, fadeIn: 0, fadeOut: 0 }] }, resolveSource: resolve, ffmpeg: FFMPEG, ffprobe: FFPROBE });
-  assert.equal(t.status, 502, '时间轴档不当成「跳过」');
+  assert.equal(t.status, 502, 'the timeline tier is not treated as "skipped"');
   let ran = 0;
   const sandbox = { run: async () => { ran += 1; return { ok: true, value: 1 }; } };
   const j = await measureJs({ body: { scope: 'media', media: mediaOf('wav'), code: 'return 1' }, resolveSource: resolve, ffmpeg: FFMPEG, ffprobe: FFPROBE, sandbox });
   assert.equal(j.body.ok, false);
   assert.equal(j.body.kind, 'asset-service');
-  assert.match(j.body.error, /素材服务不可达/);
+  assert.match(j.body.error, /asset service unreachable/);
   const noOrigin = createAssetSourceResolver({ origin: () => null, toUrl: () => 'x' });
   const k = await measureJs({ body: { scope: 'timeline', entries: [{ media: mediaOf('wav') }], code: 'return 1' }, resolveSource: noOrigin, ffmpeg: FFMPEG, ffprobe: FFPROBE, sandbox });
   assert.equal(k.body.kind, 'asset-service');
   assert.equal(ran, 0);
 });
 
-test('AR-7 素材服务上没有这份素材:仍是「素材文件不存在」,时间轴档跳过那一段', { skip, timeout: 60_000 }, async () => {
+test('AR-7 the asset service does not have this media: still "media file does not exist", and the timeline tier skips that segment', { skip, timeout: 60_000 }, async () => {
   const ghost = { id: 'g', name: '没入库.wav', hash: 'ee'.repeat(32), path: files.wav };
   const r = await measureLoudness({ body: { scope: 'media', media: ghost }, resolveSource: viaService(), ffmpeg: FFMPEG, ffprobe: FFPROBE });
-  assert.deepEqual(r, { status: 400, body: { ok: false, error: '素材文件不存在' } }, '就算 path 指着一个真实存在的文件也不读它');
+  assert.deepEqual(r, { status: 400, body: { ok: false, error: 'Media file does not exist' } }, 'does not read the file even if path points to a real existing file');
   const s = await measureLoudness({ body: { scope: 'media', media: mediaOf('silent') }, resolveSource: viaService(), ffmpeg: FFMPEG, ffprobe: FFPROBE });
-  assert.deepEqual(s, { status: 400, body: { ok: false, error: '该文件没有音频流' } });
+  assert.deepEqual(s, { status: 400, body: { ok: false, error: 'This file has no audio stream' } });
   const t = await measureLoudness({ body: { scope: 'timeline', duration: 3, entries: [
     { clipId: 'c1', media: ghost, start: 0, dur: 3, offset: 0, volume: 1, fadeIn: 0, fadeOut: 0 },
     { clipId: 'c2', media: mediaOf('wav'), start: 0, dur: 3, offset: 0, volume: 1, fadeIn: 0, fadeOut: 0 },
@@ -315,7 +315,7 @@ test('AR-7 素材服务上没有这份素材:仍是「素材文件不存在」,�
   assert.equal(j.body.kind, 'no-media');
 });
 
-test('AR-8 单进程形态:素材服务在本进程里,ffprobe 走异步,事件循环照常转', { skip, timeout: 60_000 }, async () => {
+test('AR-8 single-process setup: the asset service runs in this process, ffprobe is async, and the event loop keeps turning as usual', { skip, timeout: 60_000 }, async () => {
   const url = `${service.origin}/@media/${hashes.mp3}`;
   let ticks = 0;
   const timer = setInterval(() => { ticks += 1; }, 20);
@@ -328,6 +328,6 @@ test('AR-8 单进程形态:素材服务在本进程里,ffprobe 走异步,事件�
     clearInterval(timer);
   }
   const ms = Date.now() - t0;
-  assert.ok(ms < 10_000, `三次探测 ${ms} ms(同步的话要等到 15 秒超时)`);
-  assert.ok(ticks >= 1, '定时器转过');
+  assert.ok(ms < 10_000, `three probes took ${ms} ms (a synchronous call would wait for the 15 s timeout)`);
+  assert.ok(ticks >= 1, 'timer ticked');
 });

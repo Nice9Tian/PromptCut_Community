@@ -12,7 +12,7 @@ import { createMirrorStore, MAX_WANTED } from '../mirror-store.mjs';
 
 const PROJECT = { id: 'p', name: 'demo', width: 1920, height: 1080, fps: 30, duration: 10, tracks: [] };
 
-test('setPlayhead 收得下 wanted,最多 8 条,坏条目丢掉', () => {
+test('setPlayhead accepts wanted, at most 8 entries, bad entries are dropped', () => {
   const store = createMirrorStore();
   store.pushFull({ session: 's1', localRev: 1, project: PROJECT });
 
@@ -34,7 +34,7 @@ test('setPlayhead 收得下 wanted,最多 8 条,坏条目丢掉', () => {
   assert.deepEqual(many.wanted.at(-1), { clipId: 'c7', frame: 7 });
 });
 
-test('原有的播放头推送路径行为不变,而且不抹掉上一次的提示', () => {
+test('The existing playhead push path behaves unchanged and does not wipe the previous hint', () => {
   const store = createMirrorStore();
   store.pushFull({ session: 's1', localRev: 1, project: PROJECT });
   store.setPlayhead('s1', 1.5, true, [{ clipId: 'a', frame: 45 }]);
@@ -44,7 +44,7 @@ test('原有的播放头推送路径行为不变,而且不抹掉上一次的提�
   assert.equal(plain.playing, false);
   // 拖动中两条路交替发;抹掉了预渲染就永远读不到提示
   assert.deepEqual(plain.wanted, [{ clipId: 'a', frame: 45 }]);
-  assert.deepEqual(store.setPlayhead('s1', 0, false, []).wanted, [{ clipId: 'a', frame: 45 }], '空数组当成「这一趟没报」');
+  assert.deepEqual(store.setPlayhead('s1', 0, false, []).wanted, [{ clipId: 'a', frame: 45 }], 'An empty array is treated as "not reported this time"');
   // 没报过 wanted 的 session 就是 undefined,不是空数组
   store.pushFull({ session: 's2', localRev: 1, project: PROJECT });
   assert.equal(store.setPlayhead('s2', 0, false).wanted, undefined);

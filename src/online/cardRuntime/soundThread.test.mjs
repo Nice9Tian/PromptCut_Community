@@ -277,9 +277,9 @@ test("OCE-A-03 stage-side host: spawn thread, load, request chunks; time limit; 
 /* ------------------------------------------------------------------ 编辑页面的分派 */
 
 let pageEvaluations = 0;
-const builtinAv = { id: "b-av", name: "内置有声卡", source: "native", defaults: { value: 0.25 }, controls: [], frameMode: "direct", kind: "animation", inputs: {}, Component() {},
+const builtinAv = { id: "b-av", name: "Built-in AV card", source: "native", defaults: { value: 0.25 }, controls: [], frameMode: "direct", kind: "animation", inputs: {}, Component() {},
   audio: (_s, range, p) => { pageEvaluations++; return new Float32Array(range.count * 2).fill(p.value); } };
-const builtinAudio = { id: "b-audio", name: "内置音频卡", source: "native", defaults: { value: 0.5 }, controls: [], kind: "audio", inputs: {},
+const builtinAudio = { id: "b-audio", name: "Built-in audio card", source: "native", defaults: { value: 0.5 }, controls: [], kind: "audio", inputs: {},
   audio: (_s, range, p) => { pageEvaluations++; return new Float32Array(range.count).fill(p.value); } };
 const defs = new Map([builtinAv, builtinAudio].map((d) => [d.id, d]));
 const SYNCED = [

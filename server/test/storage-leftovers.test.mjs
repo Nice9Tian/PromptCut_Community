@@ -28,15 +28,15 @@ async function put(root, rel, text = 'x', when = null) {
 }
 const tmpRoot = prefix => fs.mkdtemp(path.join(os.tmpdir(), prefix));
 
-test('pidAlive: 本进程在,一个已退出的进程不在', () => {
+test('pidAlive: this process is alive, an exited process is not', () => {
   assert.equal(pidAlive(process.pid), true);
   const child = spawnSync(process.execPath, ['-e', '0']);
   assert.equal(child.status, 0);
   assert.equal(pidAlive(child.pid), false);
-  assert.equal(pidAlive('abc'), true, '拿不准按「在」处理');
+  assert.equal(pidAlive('abc'), true, 'when unsure, treat as "alive"');
 });
 
-test('sweepFrameLibrary 只清死进程留下的几种形态,别的一律不动', async () => {
+test('sweepFrameLibrary only cleans the few forms left behind by dead processes and leaves everything else untouched', async () => {
   const base = await tmpRoot('pc-sweep-lib-');
   const root = path.join(base, 'frame-library');
   const outside = path.join(base, 'outside');
@@ -77,17 +77,17 @@ test('sweepFrameLibrary 只清死进程留下的几种形态,别的一律不动'
     await fs.symlink(outside, path.join(root, k, 'html-cache', `live-${DEAD}-nested`, 'inner'), linkType);
 
     const report = await sweepFrameLibrary(root, { alive });
-    for (const f of gone) assert.equal(await exists(f), false, `应删:${path.relative(root, f)}`);
-    for (const f of kept) assert.equal(await exists(f), true, `应留:${path.relative(root, f)}`);
-    assert.equal(await exists(target), true, '链接指向的文件不动');
-    assert.equal(await exists(path.join(root, k, 'html-cache', `live-${DEAD}-nested`, 'a.json')), true, '含链接的目录整个跳过');
-    assert.equal(report.removed.length, gone.length, '每个遗留一条(spill 目录整个算一条)');
+    for (const f of gone) assert.equal(await exists(f), false, `should be deleted: ${path.relative(root, f)}`);
+    for (const f of kept) assert.equal(await exists(f), true, `should be kept: ${path.relative(root, f)}`);
+    assert.equal(await exists(target), true, 'files the links point to are left alone');
+    assert.equal(await exists(path.join(root, k, 'html-cache', `live-${DEAD}-nested`, 'a.json')), true, 'directories containing links are skipped entirely');
+    assert.equal(report.removed.length, gone.length, 'one entry per leftover (a spill directory counts as one entry as a whole)');
     assert.deepEqual(report.skipped.map(s => s.reason).sort(), ['link', 'link']);
     assert.ok(report.bytes > 0);
   } finally { await fs.rm(base, { recursive: true, force: true }); }
 });
 
-test('sweepExportRoot 只清死进程的 export-vision-*', async () => {
+test('sweepExportRoot only cleans export-vision-* of dead processes', async () => {
   const root = await tmpRoot('pc-sweep-out-');
   try {
     const dead = await put(root, `export-vision-${DEAD}-abc-0/frames/000000.png`);
@@ -104,18 +104,18 @@ const INTERMEDIATE = ['frames/000000.png', 'parts/000/overlay.mov', 'parts/001/o
   'media/clip.mp4', 'dom/000000.html', 'filter-0.cmd', 'filter-graph.txt', 'compose-filter.txt', 'preview-audio.mp4', 'trace.json',
   'overlay.mov.concat.txt'];
 
-test('导出成功后产物目录只剩成片、透明层与 project.json', async () => {
+test('after a successful export the output directory holds only the final video, the transparent layer and project.json', async () => {
   const dir = await tmpRoot('pc-prune-done-');
   try {
     for (const rel of [...INTERMEDIATE, ...EXPORT_KEEP]) await put(dir, rel, rel);
     const report = await pruneExportDir(dir);
     assert.deepEqual((await fs.readdir(dir)).sort(), [...EXPORT_KEEP].sort());
-    for (const name of EXPORT_KEEP) assert.equal(await fs.readFile(path.join(dir, name), 'utf8'), name, '留下的文件内容不动');
+    for (const name of EXPORT_KEEP) assert.equal(await fs.readFile(path.join(dir, name), 'utf8'), name, 'the contents of the files that remain are untouched');
     assert.equal(report.skipped.length, 0);
   } finally { await fs.rm(dir, { recursive: true, force: true }); }
 });
 
-test('取消、失败的导出:大块中间文件不在,已有的 project.json 与成片 / 透明层留下;链接跳过', async () => {
+test('cancelled or failed exports: large intermediate files are gone, the existing project.json and the final video / transparent layer remain; links are skipped', async () => {
   const base = await tmpRoot('pc-prune-cancel-');
   const dir = path.join(base, 'export-20260929-120000');
   const outside = path.join(base, 'elsewhere');
@@ -133,7 +133,7 @@ test('取消、失败的导出:大块中间文件不在,已有的 project.json �
   } finally { await fs.rm(base, { recursive: true, force: true }); }
 });
 
-test('同一秒两次导出不复用目录', async () => {
+test('two exports in the same second do not reuse a directory', async () => {
   const base = await tmpRoot('pc-claim-');
   try {
     const at = new Date(2026, 8, 29, 12, 34, 56);
@@ -144,11 +144,11 @@ test('同一秒两次导出不复用目录', async () => {
   } finally { await fs.rm(base, { recursive: true, force: true }); }
 });
 
-test('合并:导出目录的规则只有一份 —— claimExportDir 起的名字导出列表都认得,只删中间文件与导出完成后的收拾留下同一组', async () => {
+test('Consolidation: the export directory rules exist in one place only. Every name claimExportDir creates is recognized by the export list, and deleting only intermediate files and the cleanup after an export completes leave the same set of files', async () => {
   const L = await import('../exports-list.mjs');
   const S = await import('../storage-leftovers.mjs');
-  assert.equal(L.EXPORT_ID_RE, S.EXPORT_ID_RE, '同一个正则对象');
-  assert.equal(L.KEEP_NAMES, S.EXPORT_KEEP, '留下的名字同一份');
+  assert.equal(L.EXPORT_ID_RE, S.EXPORT_ID_RE, 'the same regex object');
+  assert.equal(L.KEEP_NAMES, S.EXPORT_KEEP, 'the kept names are one and the same list');
   assert.equal(L.DELIVERABLE_NAMES, S.EXPORT_DELIVERABLES);
   assert.deepEqual([...S.EXPORT_KEEP], ['preview.mp4', 'overlay.mov', 'project.json']);
   const base = await tmpRoot('pc-claim-rule-');
@@ -161,10 +161,10 @@ test('合并:导出目录的规则只有一份 —— claimExportDir 起的名�
       assert.equal(S.isExportDirName(name), true, name);
       const parsed = L.parseExportId(name);
       assert.ok(parsed, name);
-      assert.equal(parsed.at.getTime(), at.getTime(), '列表里的时刻就是起名的时刻');
+      assert.equal(parsed.at.getTime(), at.getTime(), 'the time in the list is the time the name was created');
       assert.equal(name, `export-${id}`);
     }
-    assert.deepEqual(claimed.map(c => L.parseExportId(path.basename(c.outDir)).seq), [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], '后缀从 -2 起');
+    assert.deepEqual(claimed.map(c => L.parseExportId(path.basename(c.outDir)).seq), [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 'suffix starts at -2');
     // 两边收拾同一份目录,结果一样
     const one = path.join(base, 'a'), two = path.join(base, 'b');
     for (const dir of [one, two]) for (const rel of [...INTERMEDIATE, ...EXPORT_KEEP]) await put(dir, rel, rel);
@@ -174,11 +174,11 @@ test('合并:导出目录的规则只有一份 —— claimExportDir 起的名�
     assert.equal(pruned.ok, true);
     assert.deepEqual((await fs.readdir(one)).sort(), (await fs.readdir(path.join(base, 'export-20260929-080510'))).sort());
     const listed = (await L.listExports(base)).map(item => item.id);
-    assert.equal(listed.length, 13, '12 个起的名字加一个改名的,全列出');
+    assert.equal(listed.length, 13, '12 claimed names plus one renamed, all listed');
   } finally { await fs.rm(base, { recursive: true, force: true }); }
 });
 
-test('MovFrameStore.suspend 中止写入后临时 MOV 不在', async () => {
+test('after MovFrameStore.suspend aborts writing, the temporary MOV is gone', async () => {
   const dir = await tmpRoot('pc-suspend-');
   try {
     const store = new MovFrameStore({ dir });
@@ -194,7 +194,7 @@ test('MovFrameStore.suspend 中止写入后临时 MOV 不在', async () => {
   } finally { await fs.rm(dir, { recursive: true, force: true }); }
 });
 
-test('PlaybackMovStore:文件名带 pid,dispose 删文件', async () => {
+test('PlaybackMovStore: file names carry the pid, dispose deletes the file', async () => {
   const dir = await tmpRoot('pc-playback-mov-');
   try {
     const movie = new PlaybackMovStore({ dir, width: 8, height: 8, fps: 30, count: 4 });
@@ -208,7 +208,7 @@ test('PlaybackMovStore:文件名带 pid,dispose 删文件', async () => {
   } finally { await fs.rm(dir, { recursive: true, force: true }); }
 });
 
-test('旧式播放会话:换版本、会话结束、关闭时播放 MOV 都删掉', async () => {
+test('legacy playback session: the playback MOV is deleted on version change, on session end and on close', async () => {
   const dir = await tmpRoot('pc-playback-life-');
   const pipeline = new FramePipeline({ root: dir, origin: () => '' });
   const project = n => ({ id: 'life', width: 16, height: 8, fps: 10, duration: n, tracks: [], media: [] });
@@ -225,18 +225,18 @@ test('旧式播放会话:换版本、会话结束、关闭时播放 MOV 都删�
     assert.equal(first.length, 1);
     await pipeline.updatePlayback(project(2), { owner: 'a', sequence: 2, t: 0, playing: false });
     const second = await movies();
-    assert.equal(second.length, 1, '换到另一版,上一版的播放 MOV 删掉');
+    assert.equal(second.length, 1, 'switching to another version deletes the previous version\'s playback MOV');
     assert.notDeepEqual(second, first);
     await pipeline.updatePlayback(project(2), { owner: 'a', sequence: 3, close: true, t: 0, playing: false });
-    assert.deepEqual(await movies(), [], '会话结束即删');
+    assert.deepEqual(await movies(), [], 'deleted as soon as the session ends');
     await pipeline.updatePlayback(project(1), { owner: 'b', sequence: 1, t: 0, playing: false });
     assert.equal((await movies()).length, 1);
     await pipeline.close();
-    assert.deepEqual(await movies(), [], '关闭时删');
+    assert.deepEqual(await movies(), [], 'deleted on close');
   } finally { await pipeline.close(); await fs.rm(dir, { recursive: true, force: true }); }
 });
 
-test('FramePipeline 只对真正的帧库根做启动清理', async () => {
+test('FramePipeline only runs startup cleanup on the real frame store root', async () => {
   const base = await tmpRoot('pc-sweep-ctor-');
   try {
     // 用一个确实已退出的 pid,走真的 pidAlive

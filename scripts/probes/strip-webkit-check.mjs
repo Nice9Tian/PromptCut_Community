@@ -55,7 +55,7 @@ for (const mode of ['spacer', 'padding']) {
       scrollWidth: el.scrollWidth,
       range: el.scrollWidth - el.clientWidth,
       setTo40ReadBack: Math.round(el.scrollLeft),
-      尾占位: box ? `${box.width}x${box.height}` : '无（这一版没有占位 div）',
+      trailingPlaceholder: box ? `${box.width}x${box.height}` : 'none (this version has no placeholder div)',
     };
   });
 }
@@ -67,8 +67,10 @@ console.log(JSON.stringify({ engine: 'webkit', version, ua, viewport: W, ...out 
 
 const same = out.spacer.range === out.padding.range;
 console.log(same
-  ? `\n==> 本机这份 WebKit（${version}）两种写法读数相同（各可滚 ${out.padding.range}）。`
-    + `\n    它比用户的 iOS 18.1.1 新好几代，零高度占位在它这里是计入 scrollWidth 的。`
-    + `\n    **这不构成「旧 iOS 上也没问题」的证据** —— 别拿这一行当守门，见本文件开头。`
-  : `\n==> 两种写法读数不同：占位 ${out.spacer.range}、padding ${out.padding.range}。`
-    + `\n    本机这份 WebKit（${version}）就能看出差异，可以当这一类回归的本机守门。`);
+  ? `\n==> This machine's WebKit (${version}) reads the same for both variants (each can scroll ${out.padding.range}).`
+    + `
+    It is several generations newer than the user's iOS 18.1.1, and in it a zero-height placeholder counts toward scrollWidth.`
+    + `
+    **This does not constitute evidence that "older iOS is fine too"**: do not use this line as a gatekeeper, see the top of this file.`
+  : `\n==> The two variants read differently: placeholder ${out.spacer.range}, padding ${out.padding.range}.`
+    + `\n    This machine's WebKit (${version}) already shows the difference, so it can serve as the local gatekeeper for this class of regression.`);

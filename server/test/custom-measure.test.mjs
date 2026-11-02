@@ -36,7 +36,7 @@ import { findFfmpeg } from '../ai-visual.mjs';
 
 /* ------------------------------------------------------------------ 纯函数 */
 
-test('CM-1 采样率与窗口的规整', () => {
+test('CM-1 normalization of sample rate and window', () => {
   assert.deepEqual(pcmFormat({}), { sampleRate: 16000, mono: false });
   assert.deepEqual(pcmFormat({ sampleRate: 100, mono: true }), { sampleRate: 8000, mono: true });
   assert.deepEqual(pcmFormat({ sampleRate: 96000 }), { sampleRate: 48000, mono: false });
@@ -46,20 +46,20 @@ test('CM-1 采样率与窗口的规整', () => {
   assert.deepEqual(windowOf({ baseOffset: 3, baseDuration: 10, start: 8, duration: 4 }), { offset: 11, duration: 2 });
   assert.deepEqual(windowOf({ start: 1 }), { offset: 1, duration: undefined });
   assert.deepEqual(windowOf({ start: 1, duration: 2 }), { offset: 1, duration: 2 });
-  assert.throws(() => windowOf({ baseDuration: 5, start: 5 }), /超出了这段声音的长度/);
+  assert.throws(() => windowOf({ baseDuration: 5, start: 5 }), /exceeds the length of this audio/);
 });
 
-test('CM-2 样本数预算:超了先不解码,报错写明最多几秒与怎么缩', () => {
+test('CM-2 sample count budget: when exceeded, nothing is decoded first, and the error states the maximum number of seconds and how to shorten the range', () => {
   assert.equal(sampleBudgetError({ duration: undefined, sampleRate: 16000, channels: 2 }), null);
   assert.equal(sampleBudgetError({ duration: 60, sampleRate: 16000, channels: 2 }), null);
   const msg = sampleBudgetError({ duration: 600, sampleRate: 48000, channels: 2 });
-  assert.match(msg, /超过上限 12000000/);
-  assert.match(msg, /最多 125 秒/);
+  assert.match(msg, /exceeds the limit of 12000000/);
+  assert.match(msg, /at most 125 seconds/);
   assert.match(msg, /mono: true/);
   assert.match(msg, /start \/ duration/);
 });
 
-test('CM-3 ffmpeg 参数:单文件按窗口截;时间轴混音图与测响度同一份', () => {
+test('CM-3 ffmpeg arguments: a single file is trimmed by the window; the timeline mix graph is the same one used for measuring loudness', () => {
   const a = filePcmArgs({ file: 'x.wav', offset: 1.5, duration: 2, sampleRate: 16000, channels: 1 });
   assert.deepEqual(a.slice(a.indexOf('-ss'), a.indexOf('-ss') + 4), ['-ss', '1.5', '-t', '2']);
   assert.ok(a.join(' ').endsWith('-ac 1 -ar 16000 -f f32le -acodec pcm_f32le pipe:1'));
@@ -81,7 +81,7 @@ test('CM-3 ffmpeg 参数:单文件按窗口截;时间轴混音图与测响度同
   assert.match(graph(win), /atrim=0:5,atrim=start=1:duration=2,asetpts=PTS-STARTPTS\[aout\]$/);
 });
 
-test('CM-4 交错 PCM 拆声道,丢掉不完整的尾帧', () => {
+test('CM-4 interleaved PCM is split into channels, dropping the incomplete trailing frame', () => {
   const inter = new Float32Array([0.1, -0.1, 0.2, -0.2, 0.3, -0.3]);
   const buf = Buffer.concat([Buffer.from(inter.buffer), Buffer.from([1, 2, 3])]);
   const [l, r] = deinterleave(buf, 2);
@@ -93,26 +93,26 @@ test('CM-4 交错 PCM 拆声道,丢掉不完整的尾帧', () => {
   assert.deepEqual([...deinterleave(odd.subarray(1), 1)[0]], [0.5, 0.25, -1]);
 });
 
-test('CM-5 measureJs 的前置检查不解码、不进沙箱', async () => {
+test('CM-5 the pre-checks of measureJs neither decode nor enter the sandbox', async () => {
   let ran = 0;
   const sandbox = { run: async () => { ran += 1; return { ok: true, value: 1 }; } };
-  const base = { ffmpeg: 'ffmpeg-不存在', ffprobe: 'ffprobe-不存在', sandbox };
+  const base = { ffmpeg: 'ffmpeg-nonexistent', ffprobe: 'ffprobe-nonexistent', sandbox };
   const r1 = await measureJs({ ...base, body: { scope: 'media', media: {}, code: '  ' }, resolveFile: () => 'x' });
-  assert.equal(r1.body.ok, false); assert.match(r1.body.error, /code 是空的/);
+  assert.equal(r1.body.ok, false); assert.match(r1.body.error, /code is empty/);
   const r2 = await measureJs({ ...base, body: { scope: 'media', media: { url: '/x' }, code: 'return 1' }, resolveFile: () => null });
   assert.equal(r2.body.kind, 'no-media');
   const r3 = await measureJs({ ...base, body: { scope: 'clip', media: {}, code: 'return 1' }, resolveFile: () => 'x', probeChannels: () => 0 });
   assert.equal(r3.body.kind, 'no-audio');
   const r4 = await measureJs({ ...base, body: { scope: 'nope', code: 'return 1' }, resolveFile: () => 'x' });
-  assert.match(r4.body.error, /无效的 scope/);
+  assert.match(r4.body.error, /invalid scope/);
   const r5 = await measureJs({ ...base, body: { scope: 'clip', media: {}, offset: 0, duration: 900, sampleRate: 48000, code: 'return 1' }, resolveFile: () => 'x', probeChannels: () => 2 });
   assert.equal(r5.body.kind, 'too-many-samples');
-  const r6 = await measureJs({ ...base, body: { scope: 'timeline', entries: [{ media: { name: '甲' } }], code: 'return 1' }, resolveFile: () => null });
+  const r6 = await measureJs({ ...base, body: { scope: 'timeline', entries: [{ media: { name: 'A' } }], code: 'return 1' }, resolveFile: () => null });
   assert.equal(r6.body.kind, 'no-audio');
   assert.equal(ran, 0);
 });
 
-test('CM-14 时限规整、代码长度上限、排队上限', async () => {
+test('CM-14 time limit normalization, code length limit, queue limit', async () => {
   assert.equal(clampTimeout(undefined), SANDBOX_LIMITS.defaultTimeoutMs);
   assert.equal(clampTimeout(10), 1000);
   assert.equal(clampTimeout(999999), SANDBOX_LIMITS.maxTimeoutMs);
@@ -122,11 +122,11 @@ test('CM-14 时限规整、代码长度上限、排队上限', async () => {
   // 假的 Chrome:第一次 newPage 卡住,用来把队列塞满
   const fakeLaunch = async () => {
     launched += 1;
-    return { on() {}, close: async () => {}, process: () => null, createBrowserContext: async () => ({ close: async () => {}, newPage: async () => { await gate; throw new Error('假的'); } }) };
+    return { on() {}, close: async () => {}, process: () => null, createBrowserContext: async () => ({ close: async () => {}, newPage: async () => { await gate; throw new Error('Fake'); } }) };
   };
   const sb = createAudioSandbox({ launch: fakeLaunch, limits: { maxQueue: 2 } });
   const pcm = [new Float32Array(4)];
-  assert.match((await sb.run({ code: 'x'.repeat(SANDBOX_LIMITS.maxCodeChars + 1), channels: pcm, sampleRate: 8000 })).error, /超过上限/);
+  assert.match((await sb.run({ code: 'x'.repeat(SANDBOX_LIMITS.maxCodeChars + 1), channels: pcm, sampleRate: 8000 })).error, /exceeds the limit/);
   assert.equal((await sb.run({ code: '', channels: pcm, sampleRate: 8000 })).kind, 'invalid');
   const a = sb.run({ code: 'return 1', channels: pcm, sampleRate: 8000 });
   const b = sb.run({ code: 'return 2', channels: pcm, sampleRate: 8000 });
@@ -143,7 +143,7 @@ test('CM-14 时限规整、代码长度上限、排队上限', async () => {
 
 const FFMPEG = findFfmpeg();
 const FFPROBE = FFMPEG ? path.join(path.dirname(FFMPEG), 'ffprobe' + path.extname(FFMPEG)) : null;
-const skip = FFMPEG ? false : '没找到 ffmpeg';
+const skip = FFMPEG ? false : 'ffmpeg not found';
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-custom-measure-'));
 const SINE = path.join(TMP, 'sine.wav');
 const SINE_MONO = path.join(TMP, 'sine-mono.wav');
@@ -169,7 +169,7 @@ const RMS_PEAK = `
 const run = (body) => measureJs({ body, resolveFile: (m) => m?.path ?? null, ffmpeg: FFMPEG, ffprobe: FFPROBE, sandbox });
 const media = (file) => ({ id: 'm1', name: path.basename(file), path: file });
 
-test('CM-6 正常测量:正弦波的 RMS 与峰值与理论值一致', { skip, timeout: 120_000 }, async () => {
+test('CM-6 normal measurement: the RMS and peak of a sine wave match the theoretical values', { skip, timeout: 120_000 }, async () => {
   assert.equal(probeAudioChannels(SINE, FFPROBE), 2);
   const RMS = 20 * Math.log10(0.5 / Math.SQRT2); // -9.031
   const PEAK = 20 * Math.log10(0.5); // -6.021
@@ -179,7 +179,7 @@ test('CM-6 正常测量:正弦波的 RMS 与峰值与理论值一致', { skip, t
   assert.equal(v.channels.length, 2);
   for (const ch of v.channels) {
     assert.ok(Math.abs(ch.rmsDb - RMS) < 0.05, `RMS ${ch.rmsDb} vs ${RMS}`);
-    assert.ok(Math.abs(ch.peakDb - PEAK) < 0.1, `峰值 ${ch.peakDb} vs ${PEAK}`);
+    assert.ok(Math.abs(ch.peakDb - PEAK) < 0.1, `peak ${ch.peakDb} vs ${PEAK}`);
   }
   assert.equal(v.sampleRate, 16000);
   assert.ok(Math.abs(v.frames - 48000) <= 16, `frames ${v.frames}`);
@@ -205,8 +205,8 @@ test('CM-6 正常测量:正弦波的 RMS 与峰值与理论值一致', { skip, t
   assert.equal(t.body.ok, true, JSON.stringify(t.body));
   assert.equal(t.body.value.channels.length, 2);
   const HALF = RMS + 20 * Math.log10(0.5) + 20 * Math.log10(Math.SQRT1_2);
-  assert.ok(Math.abs(t.body.value.channels[0].rmsDb - HALF) < 0.1, `混音 RMS ${t.body.value.channels[0].rmsDb} vs ${HALF}`);
-  assert.ok(t.body.notes.some((n) => /每路低 3 dB/.test(n)), JSON.stringify(t.body.notes));
+  assert.ok(Math.abs(t.body.value.channels[0].rmsDb - HALF) < 0.1, `mix RMS ${t.body.value.channels[0].rmsDb} vs ${HALF}`);
+  assert.ok(t.body.notes.some((n) => /3 dB lower per channel/.test(n)), JSON.stringify(t.body.notes));
   // 同一段混音要单声道:两路相同,按平均混,响度不变
   const tm = await run({
     scope: 'timeline', total: 3, start: 1, length: 2, mono: true,
@@ -214,10 +214,10 @@ test('CM-6 正常测量:正弦波的 RMS 与峰值与理论值一致', { skip, t
     code: RMS_PEAK,
   });
   assert.equal(tm.body.value.channels.length, 1);
-  assert.ok(Math.abs(tm.body.value.channels[0].rmsDb - HALF) < 0.1, `单声道混音 RMS ${tm.body.value.channels[0].rmsDb} vs ${HALF}`);
+  assert.ok(Math.abs(tm.body.value.channels[0].rmsDb - HALF) < 0.1, `mono mix RMS ${tm.body.value.channels[0].rmsDb} vs ${HALF}`);
 });
 
-test('CM-7 死循环在时限内被终止,本进程的事件循环照常转', { skip, timeout: 60_000 }, async () => {
+test('CM-7 an infinite loop is terminated within the time limit, and this process\'s event loop keeps running as usual', { skip, timeout: 60_000 }, async () => {
   let ticks = 0;
   const iv = setInterval(() => { ticks += 1; }, 50);
   const t0 = Date.now();
@@ -226,9 +226,9 @@ test('CM-7 死循环在时限内被终止,本进程的事件循环照常转', { 
   clearInterval(iv);
   assert.equal(r.body.ok, false);
   assert.equal(r.body.kind, 'timeout');
-  assert.match(r.body.error, /超过 1\.5 秒,已终止/);
-  assert.ok(ms < 1500 + 8000, `死循环 ${ms} ms 才回来`);
-  assert.ok(ticks >= Math.floor(ms / 50) * 0.5, `事件循环被卡住了:${ms} ms 里只转了 ${ticks} 次`);
+  assert.match(r.body.error, /exceeded 1\.5 seconds, terminated/);
+  assert.ok(ms < 1500 + 8000, `the infinite loop took ${ms} ms to return`);
+  assert.ok(ticks >= Math.floor(ms / 50) * 0.5, `The event loop was blocked: only ${ticks} iterations in ${ms} ms`);
   // 沙箱之后照常可用
   const ok = await run({ scope: 'media', media: media(SINE_MONO), sampleRate: 8000, code: 'return input.frames' });
   assert.equal(ok.body.ok, true, JSON.stringify(ok.body));
@@ -237,14 +237,14 @@ test('CM-7 死循环在时限内被终止,本进程的事件循环照常转', { 
   assert.equal(r2.body.kind, 'timeout');
 });
 
-test('CM-8 内存炸弹回清楚的错误,之后的测量照常', { skip, timeout: 120_000 }, async () => {
+test('CM-8 a memory bomb returns a clear error, and later measurements proceed as usual', { skip, timeout: 120_000 }, async () => {
   const t0 = Date.now();
   const bomb = await run({ scope: 'media', media: media(SINE_MONO), sampleRate: 8000, timeoutMs: 30000, code: 'const keep = []; for (;;) keep.push(new Array(1e6).fill(Math.random()));' });
   // 实测 Worker 堆到上限后整个渲染进程卡死、不报 crash;心跳连续 3 次没回话就判,不等满 30 秒的时限
-  assert.ok(Date.now() - t0 < 20000, `内存炸弹 ${Date.now() - t0} ms 才回来`);
+  assert.ok(Date.now() - t0 < 20000, `the memory bomb took ${Date.now() - t0} ms to return`);
   assert.equal(bomb.body.ok, false, JSON.stringify(bomb.body));
   assert.ok(['crashed', 'exception', 'timeout'].includes(bomb.body.kind), bomb.body.kind);
-  assert.match(bomb.body.error, /内存|memory|heap|allocation/i, bomb.body.error);
+  assert.match(bomb.body.error, /memory|heap|allocation/i, bomb.body.error);
   // 一次要一块超大的 ArrayBuffer:浏览器拒绝分配,回抛错文字
   const big = await run({ scope: 'media', media: media(SINE_MONO), sampleRate: 8000, code: 'return new Float64Array(2 ** 40).length' });
   assert.equal(big.body.ok, false);
@@ -254,7 +254,7 @@ test('CM-8 内存炸弹回清楚的错误,之后的测量照常', { skip, timeou
   assert.equal(ok.body.value, 1);
 });
 
-test('CM-9 联网尝试失败;本机回环上的 HTTP 服务一次都没被打到', { skip, timeout: 60_000 }, async () => {
+test('CM-9 network access attempts fail; the HTTP service on the local loopback was never hit', { skip, timeout: 60_000 }, async () => {
   let hits = 0;
   const srv = http.createServer((req, res) => { hits += 1; res.setHeader('Access-Control-Allow-Origin', '*'); res.end('ok'); });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -271,9 +271,9 @@ test('CM-9 联网尝试失败;本机回环上的 HTTP 服务一次都没被打�
     };
     for (const [name, code] of Object.entries(cases)) {
       const r = await run({ scope: 'media', media: media(SINE_MONO), sampleRate: 8000, code });
-      assert.equal(r.body.ok, false, `${name} 居然成功了:${JSON.stringify(r.body)}`);
+      assert.equal(r.body.ok, false, `${name} unexpectedly succeeded: ${JSON.stringify(r.body)}`);
       assert.ok(r.body.error.length > 0, name);
-      if (name !== 'dynamicImport') assert.match(r.body.error, /沙箱里不能联网/, `${name}:${r.body.error}`);
+      if (name !== 'dynamicImport') assert.match(r.body.error, /cannot access the network in the sandbox/, `${name}:${r.body.error}`);
     }
     // 代码自己吞掉错误、回报「失败」:照样连不出去
     const swallowed = await run({ scope: 'media', media: media(SINE_MONO), sampleRate: 8000, code: `try { await fetch(${JSON.stringify(url)}); return 'leaked'; } catch (e) { return 'blocked: ' + e.message; }` });
@@ -281,33 +281,33 @@ test('CM-9 联网尝试失败;本机回环上的 HTTP 服务一次都没被打�
   } finally {
     await new Promise((r) => srv.close(r));
   }
-  assert.equal(hits, 0, '沙箱里的代码打到了本机的 HTTP 服务');
+  assert.equal(hits, 0, 'Code in the sandbox hit the local HTTP service');
 });
 
-test('CM-10 抛异常带报错文字和行号;语法错误也回清楚的话', { skip, timeout: 60_000 }, async () => {
-  const r = await run({ scope: 'media', media: media(SINE_MONO), sampleRate: 8000, code: 'const a = 1;\nthrow new Error("测不出来:" + a);' });
+test('CM-10 a thrown exception carries the error text and line number; a syntax error also returns a clear message', { skip, timeout: 60_000 }, async () => {
+  const r = await run({ scope: 'media', media: media(SINE_MONO), sampleRate: 8000, code: 'const a = 1;\nthrow new Error("cannot measure:" + a);' });
   assert.equal(r.body.ok, false);
   assert.equal(r.body.kind, 'exception');
-  assert.match(r.body.error, /代码运行时抛错:Error: 测不出来:1/);
-  assert.match(r.body.error, /第 2 行/);
+  assert.match(r.body.error, /code threw an error at runtime: Error: cannot measure:1/);
+  assert.match(r.body.error, /line 2/);
   const t = await run({ scope: 'media', media: media(SINE_MONO), sampleRate: 8000, code: 'return input.nope.deeper;' });
   assert.match(t.body.error, /TypeError/);
   const s = await run({ scope: 'media', media: media(SINE_MONO), sampleRate: 8000, code: 'return {;' });
   assert.equal(s.body.kind, 'syntax');
-  assert.match(s.body.error, /语法错误:SyntaxError/);
-  const nonErr = await run({ scope: 'media', media: media(SINE_MONO), sampleRate: 8000, code: 'throw "字符串";' });
-  assert.match(nonErr.body.error, /字符串/);
+  assert.match(s.body.error, /syntax error: SyntaxError/);
+  const nonErr = await run({ scope: 'media', media: media(SINE_MONO), sampleRate: 8000, code: 'throw "string";' });
+  assert.match(nonErr.body.error, /string/);
 });
 
-test('CM-11 结果超大被拒', { skip, timeout: 60_000 }, async () => {
+test('CM-11 an oversized result is rejected', { skip, timeout: 60_000 }, async () => {
   const r = await run({ scope: 'media', media: media(SINE_MONO), sampleRate: 8000, code: 'return Array.from(input.channels[0]);' });
   assert.equal(r.body.ok, false);
   assert.equal(r.body.kind, 'too-large');
-  assert.match(r.body.error, /超过上限 262144/);
-  assert.match(r.body.error, /不要返回原始样本/);
+  assert.match(r.body.error, /exceeds the limit of 262144/);
+  assert.match(r.body.error, /do not return raw samples/);
 });
 
-test('CM-12 结果不能序列化被拒', { skip, timeout: 60_000 }, async () => {
+test('CM-12 a result that cannot be serialized is rejected', { skip, timeout: 60_000 }, async () => {
   for (const code of ['return 1n;', 'const o = {}; o.self = o; return o;', 'return undefined;', 'return () => 1;']) {
     const r = await run({ scope: 'media', media: media(SINE_MONO), sampleRate: 8000, code });
     assert.equal(r.body.ok, false, code);
@@ -319,11 +319,11 @@ test('CM-12 结果不能序列化被拒', { skip, timeout: 60_000 }, async () =>
   assert.deepEqual(n.body.value, { a: null, b: null });
 });
 
-test('CM-13 拿不到 Node 能力,postMessage 伪造结果不行', { skip, timeout: 60_000 }, async () => {
+test('CM-13 no access to Node capabilities, and forging a result via postMessage does not work', { skip, timeout: 60_000 }, async () => {
   const r = await run({ scope: 'media', media: media(SINE_MONO), sampleRate: 8000, code: 'return [typeof process, typeof require, typeof Buffer, typeof module, typeof window, typeof document];' });
   assert.equal(r.body.ok, true, JSON.stringify(r.body));
   assert.deepEqual(r.body.value, ['undefined', 'undefined', 'undefined', 'undefined', 'undefined', 'undefined']);
-  const f = await run({ scope: 'media', media: media(SINE_MONO), sampleRate: 8000, code: 'postMessage({ ok: true, json: "\\"伪造\\"" }); return "真的";' });
+  const f = await run({ scope: 'media', media: media(SINE_MONO), sampleRate: 8000, code: 'postMessage({ ok: true, json: "\\"forged\\"" }); return "real";' });
   assert.equal(f.body.ok, false);
-  assert.match(f.body.error, /用 return 返回结果/);
+  assert.match(f.body.error, /use return to return the result/);
 });

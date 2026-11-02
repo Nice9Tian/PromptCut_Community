@@ -10,9 +10,9 @@ import { hostFor, createProject, proofFor, PROTOCOL } from './auth-kit.mjs';
 const PUBLIC = '203.0.113.41';
 
 for (const attached of [false, true]) {
-  const label = attached ? '挂载模式（局域网主机）' : '独立模式（托管端）';
+  const label = attached ? 'Attached mode (LAN host)' : 'Standalone mode (hosted side)';
 
-  test(`${label}：证明对 → 200 ok；口令错 → 401 unauthorized，与握手结论一致`, async (t) => {
+  test(`${label}: correct proof → 200 ok; wrong passphrase → 401 unauthorized, consistent with the handshake result`, async (t) => {
     const env = await hostFor(t, { attached });
     const proj = await createProject(env, { mode: 'free' });
 
@@ -30,7 +30,7 @@ for (const attached of [false, true]) {
     assert.equal((await env.handshake(bad2.protocols, PUBLIC)).status, 401);
   });
 
-  test(`${label}：nonce 只能用一次（核对过的证明再拿去握手被拒）`, async (t) => {
+  test(`${label}: a nonce can be used only once (a proof that was already verified is rejected when used for the handshake again)`, async (t) => {
     const env = await hostFor(t, { attached });
     const proj = await createProject(env, { mode: 'free' });
     const p = await proofFor(env, proj, { username: 'zoe', remote: PUBLIC });
@@ -39,11 +39,11 @@ for (const attached of [false, true]) {
     assert.equal((await env.handshake(p.protocols, PUBLIC)).status, 401);
   });
 
-  test(`${label}：没有证明项（空、只有 promptcut.v1、票据）→ 400`, async (t) => {
+  test(`${label}: no proof entries (empty, only promptcut.v1, ticket) → 400`, async (t) => {
     const env = await hostFor(t, { attached });
     for (const protocols of [[], [PROTOCOL], [PROTOCOL, 'promptcut.ticket.abc'], 'x', [PROTOCOL, 'a,b']]) {
       const r = await env.http('shared/verify', { method: 'POST', body: { protocols }, remote: PUBLIC });
-      assert.equal(r.status, 400, `${JSON.stringify(protocols)}：${r.text}`);
+      assert.equal(r.status, 400, `${JSON.stringify(protocols)}: ${r.text}`);
     }
   });
 }

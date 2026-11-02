@@ -59,7 +59,7 @@ const PR = await import(runnerUrl);
 const FPS = 30;
 let audioCalls = 0;
 const audio = () => { audioCalls++; return new Float32Array(2); };
-const base = (id, extra = {}) => ({ id, name: `名-${id}`, source: "native", defaults: { n: 1 }, controls: [], kind: "animation", inputs: {}, ...extra });
+const base = (id, extra = {}) => ({ id, name: `Name-${id}`, source: "native", defaults: { n: 1 }, controls: [], kind: "animation", inputs: {}, ...extra });
 /** 形状照 `src/cards/native/av-pulse.tsx`:画面组件加 `audio()`,声明 `direct` */
 const avDirect = base("av-direct", { frameMode: "direct", Component: () => null, audio });
 /** 没声明 `direct` 的有声动效卡:没有记录时按声明是重卡,要靠测量才判得了轻 */
@@ -94,25 +94,25 @@ const project = (extra = {}) => ({ version: 1, id: "p", name: "p", width: 1920, 
 const settle = () => new Promise((r) => setTimeout(r, 0));
 async function until(check, what) {
   for (let i = 0; i < 400; i++) { if (check()) return; await new Promise((r) => setTimeout(r, 5)); }
-  assert.fail(`等不到:${what}`);
+  assert.fail(`Timed out waiting for: ${what}`);
 }
 const memoryBackend = (records) => ({ forwardFrames: false,
   load: async () => ({ costs: [...records], tuning: { COST_SCALE: 1, STEP_PERCENTILE: 0.9, STEP_MIN_SAMPLES: 16 } }),
   save: async (next) => { records.push(...next); return true; } });
 
-test("AVC-01 clipCostNodes / clipCostIndex:片段自己的素材效果卡节点由调用方说算才算;键同预渲染进程的 costKey;节点不动", () => {
+test("AVC-01 clipCostNodes / clipCostIndex: a clip's own media effect card node counts only when the caller says to count it; the key matches the prerender process's costKey; nodes are left untouched", () => {
   setup();
   const p = project();
   const graph = G.projectCardGraph(p, R.getCard);
   const before = JSON.stringify(graph.nodes);
   const own = { ownNode: (node) => node.cardId === "av-direct" || node.cardId === "av-stateful" };
   const nodes = P.clipCostNodes(p, graph, own);
-  assert.equal(nodes.get("a")?.id, "@clip/a/card", "就地合成的节点");
-  assert.equal(nodes.get("m")?.id, "n-m", "物化过的节点(clip.nodeId 指的)");
-  assert.equal(nodes.get("p")?.id, "@clip/p/source", "普通卡照旧是带 clipId 的基节点");
-  assert.equal(nodes.has("g"), false, "调用方没说算的不算");
-  assert.equal(JSON.stringify(graph.nodes), before, "图里的节点一个字不动");
-  assert.ok(graph.nodes.filter((n) => n.adapter === "card").every((n) => n.clipId === undefined), "素材效果卡节点上不写 clipId(预渲染结果的键不变)");
+  assert.equal(nodes.get("a")?.id, "@clip/a/card", "A node synthesized in place");
+  assert.equal(nodes.get("m")?.id, "n-m", "A materialized node (the one clip.nodeId points to)");
+  assert.equal(nodes.get("p")?.id, "@clip/p/source", "A regular card is still a base node carrying clipId");
+  assert.equal(nodes.has("g"), false, "What the caller did not ask to count is not counted");
+  assert.equal(JSON.stringify(graph.nodes), before, "Nodes in the graph are not touched at all");
+  assert.ok(graph.nodes.filter((n) => n.adapter === "card").every((n) => n.clipId === undefined), "clipId is not written on media effect card nodes (the prerender output key is unchanged)");
 
   const version = (node) => `builtin:v-${node.cardId}`;
   const index = P.clipCostIndex(p, graph, version, own);
@@ -120,7 +120,7 @@ test("AVC-01 clipCostNodes / clipCostIndex:片段自己的素材效果卡节点�
   for (const id of ["a", "s", "m"]) {
     const out = graph.outputs.find((o) => o.clipId === id);
     const node = graph.nodes.find((n) => n.id === out.nodeId);
-    assert.equal(index.identityKeys[id], K.cardCostKey(node, version(node), FPS, 60), `${id} 的键与预渲染进程那一端相同`);
+    assert.equal(index.identityKeys[id], K.cardCostKey(node, version(node), FPS, 60), `The key of ${id} matches the one on the prerender process side`);
   }
   assert.equal(index.frameModes.a, "direct");
   assert.equal(index.frameModes.s, "stateful");
@@ -128,49 +128,49 @@ test("AVC-01 clipCostNodes / clipCostIndex:片段自己的素材效果卡节点�
   // 不给 ownNode:与以前逐字相同(只认带 clipId 的节点)
   const old = P.clipCostIndex(p, graph, version);
   assert.deepEqual(Object.keys(old.identityKeys).sort(), ["p"]);
-  assert.equal(old.identityKeys.p, index.identityKeys.p, "普通卡的键不受影响");
+  assert.equal(old.identityKeys.p, index.identityKeys.p, "The key of a regular card is unaffected");
 });
 
-test("AVC-02 clipIdentityOf:有声动效卡有身份、帧模式、能力表(桌面与在线双舞台);card() 素材效果卡与音频素材效果卡照旧没有", () => {
+test("AVC-02 clipIdentityOf: an audio motion card has an identity, frame mode and capabilities table (both the desktop and online stages); card() media effect cards and audio media effect cards still have none", () => {
   setup();
   const p = project();
   try {
     for (const online of [false, true]) {
       H.setOnlineBrowserMode(online);
       const id = CI.clipIdentityOf(p);
-      const where = online ? "在线" : "Desktop";
-      for (const c of ["a", "s", "m", "p"]) assert.equal(typeof id.identityKeys[c], "string", `${where}:${c} 有身份`);
-      assert.equal(id.frameModes.a, "direct", `${where}:声明的帧模式`);
+      const where = online ? "online" : "Desktop";
+      for (const c of ["a", "s", "m", "p"]) assert.equal(typeof id.identityKeys[c], "string", `${where}: ${c} has an identity`);
+      assert.equal(id.frameModes.a, "direct", `${where}: declared frame mode`);
       assert.equal(id.frameModes.s, "stateful");
-      assert.equal(id.capabilities.get("a")?.frameMode, "direct", `${where}:能力表(测量按它决定抽样还是推帧)`);
+      assert.equal(id.capabilities.get("a")?.frameMode, "direct", `${where}: capabilities table (measurement uses it to decide between sampling and frame push)`);
       assert.ok(id.capabilities.has("m"));
       for (const c of ["g", "o"]) {
-        assert.equal(id.identityKeys[c], undefined, `${where}:${c} 没有身份(素材效果卡的输入在测量用的缩水项目里取不到 / 音频素材效果卡没有画面)`);
+        assert.equal(id.identityKeys[c], undefined, `${where}: ${c} has no identity (a media effect card's input cannot be obtained in the reduced project used for measurement / an audio media effect card has no visuals)`);
         assert.equal(id.frameModes[c], undefined);
       }
-      assert.notEqual(id.identityKeys.a, id.identityKeys.s, "不同的卡不同的键");
+      assert.notEqual(id.identityKeys.a, id.identityKeys.s, "Different cards have different keys");
     }
   } finally { H.setOnlineBrowserMode(false); }
 });
 
-test("AVC-03 分派:没有记录按声明兜底,记录到了按记录判;判轻的不在预渲染集合里", async () => {
+test("AVC-03 Dispatch: with no record, fall back to the declaration; once a record arrives, judge by the record; cards classified as light are not in the prerender set", async () => {
   setup();
   const p = project();
   D.setPlanProject(p);
   await settle();
   const at = (plan, id, t) => P.pipelineAt(plan, id, t);
   let plan = D.currentPlan();
-  assert.equal(at(plan, "a", 1), "light", "声明 direct 的有声动效卡:没有记录也判轻(以前没有身份也没有帧模式,判重)");
+  assert.equal(at(plan, "a", 1), "light", "An audio motion card declared direct: classified as light even with no record (previously it had no identity and no frame mode, and was classified as heavy)");
   assert.equal(plan.prerenderSet.has("a"), false);
-  assert.equal(at(plan, "s", 3), "heavy", "没声明 direct 的:测完之前按声明兜底(与别的卡同一条规则)");
+  assert.equal(at(plan, "s", 3), "heavy", "One not declared direct: falls back to the declaration until measurement finishes (same rule as other cards)");
   // 测量写进一条很轻的记录
   const keys = CI.clipIdentityOf(p).identityKeys;
   const light = (identityKey) => ({ identityKey, device: "test-device", fps: FPS, kind: "stepped", stepMs: 1, catchUpMs: 5, seekOk: true, seekMs: 1, demoted: false });
   D.mergePlanCosts([light(keys.s)]);
   await settle();
   plan = D.currentPlan();
-  assert.equal(at(plan, "s", 3), "light", "记录到了:判轻,活渲");
-  assert.equal(plan.prerenderSet.has("s"), false, "不进预渲染集合(不等预渲染)");
+  assert.equal(at(plan, "s", 3), "light", "Record arrived: classified as light, live render");
+  assert.equal(plan.prerenderSet.has("s"), false, "Not in the prerender set (does not wait for prerender)");
   // 同一张卡的另一个片段(物化过的)时长相同、参数相同 → 同一个键,一起判轻
   assert.equal(keys.m, keys.s);
   assert.equal(at(plan, "m", 11), "light");
@@ -178,7 +178,7 @@ test("AVC-03 分派:没有记录按声明兜底,记录到了按记录判;判轻�
   assert.equal(at(plan, "g", 7), "heavy");
 });
 
-test("AVC-04 测量:第一次出现就测、只测一次、不调 audio();测完判轻;重开不重测", async () => {
+test("AVC-04 Measurement: measure on first appearance, only once, without calling audio(); classified as light once measured; no re-measure on reopen", async () => {
   setup();
   const records = [];
   PR.setCostBackend(memoryBackend(records));
@@ -189,7 +189,7 @@ test("AVC-04 测量:第一次出现就测、只测一次、不调 audio();测完
     p0.cardNodes = [];
     D.setPlanProject(p0);
     PR.syncProbeRun(p0);
-    await until(() => PR.probeSettledFor(p0), "第一轮测完");
+    await until(() => PR.probeSettledFor(p0), "First measurement round finished");
     assert.deepEqual(PR.probeRunDiag().probed.map((e) => e.cardId), ["plain"]);
 
     // 有声动效卡第一次出现
@@ -197,18 +197,18 @@ test("AVC-04 测量:第一次出现就测、只测一次、不调 audio();测完
     pushed.length = 0;
     D.setPlanProject(p1);
     PR.syncProbeRun(p1);
-    await until(() => PR.probeSettledFor(p1), "有声动效卡测完");
+    await until(() => PR.probeSettledFor(p1), "Audio motion card measurement finished");
     const probed = PR.probeRunDiag().probed.map((e) => e.cardId);
-    assert.deepEqual(probed, ["plain", "av-direct", "av-stateful"], "只补测新来的两张,各一次");
-    assert.deepEqual(pushed.map((q) => q.tracks[0].clips.map((c) => c.cardId).join()), ["av-direct", "av-stateful"], "各用只留这一个片段的缩水项目测");
-    assert.equal(audioCalls, 0, "测量期间不调 audio()(画面的测量不合成声音)");
+    assert.deepEqual(probed, ["plain", "av-direct", "av-stateful"], "Only the two new arrivals are measured additionally, once each");
+    assert.deepEqual(pushed.map((q) => q.tracks[0].clips.map((c) => c.cardId).join()), ["av-direct", "av-stateful"], "Each measured with a reduced project that keeps only that one clip");
+    assert.equal(audioCalls, 0, "audio() is not called during measurement (visual measurement does not synthesize sound)");
     const keys = CI.clipIdentityOf(p1).identityKeys;
-    assert.ok(records.some((r) => r.identityKey === keys.a) && records.some((r) => r.identityKey === keys.s), "成本记录按它们的身份键写进去了");
+    assert.ok(records.some((r) => r.identityKey === keys.a) && records.some((r) => r.identityKey === keys.s), "Cost records were written under their identity keys");
     await settle();
     const plan = D.currentPlan();
     for (const [id, t] of [["a", 1], ["s", 3]]) {
-      assert.equal(P.pipelineAt(plan, id, t), "light", `${id} 测完判轻,活渲`);
-      assert.equal(plan.prerenderSet.has(id), false, `${id} 不进预渲染集合`);
+      assert.equal(P.pipelineAt(plan, id, t), "light", `${id} classified as light once measured, live render`);
+      assert.equal(plan.prerenderSet.has(id), false, `${id} is not in the prerender set`);
     }
 
     // 重开:记录还在(同一份存放处),一张都不重测
@@ -218,37 +218,37 @@ test("AVC-04 测量:第一次出现就测、只测一次、不调 audio();测完
     const before = records.length;
     const reopened = structuredClone({ ...p1, tracks: p1.tracks });
     PR.syncProbeRun(reopened);
-    await until(() => PR.probeSettledFor(reopened), "重开后那一轮走完");
-    assert.deepEqual(PR.probeRunDiag().probed, [], "重开不重测");
+    await until(() => PR.probeSettledFor(reopened), "The round after reopening finished");
+    assert.deepEqual(PR.probeRunDiag().probed, [], "No re-measure on reopen");
     assert.equal(records.length, before);
     assert.equal(audioCalls, 0);
   } finally { PR.setCostBackend(null); }
 });
 
-test("AVC-05 卡片图里有悬空输入:普通卡与有声动效卡照样有身份、照样测", async () => {
+test("AVC-05 The card graph has a dangling input: regular cards and audio motion cards still get an identity and are still measured", async () => {
   setup();
   const good = project();
   const goodKeys = CI.clipIdentityOf(good).identityKeys;
   // 一个指向不存在节点的素材效果卡节点:完整的图摊不出来
   const broken = project({ cardNodes: [...good.cardNodes, { id: "dangling", adapter: "card", cardId: "gpu-card", inputs: { source: { nodeId: "gone" } }, params: {} }] });
-  assert.throws(() => G.projectCardGraph(broken, R.getCard), "完整的图会抛");
+  assert.throws(() => G.projectCardGraph(broken, R.getCard), "Building the complete graph throws");
   CI.resetClipIdentityCache();
   const id = CI.clipIdentityOf(broken);
-  for (const c of ["a", "s", "p"]) assert.equal(id.identityKeys[c], goodKeys[c], `${c}:键与图没坏时相同`);
-  assert.equal(typeof id.identityKeys.m, "string", "物化过的那一段退回按片段自己的卡摊,也有身份");
+  for (const c of ["a", "s", "p"]) assert.equal(id.identityKeys[c], goodKeys[c], `${c}: the key matches the one from when the graph was not broken`);
+  assert.equal(typeof id.identityKeys.m, "string", "A materialized segment falls back to being expanded by the clip's own card and also has an identity");
   assert.equal(id.identityKeys.g, undefined);
 
   const records = [];
   PR.setCostBackend(memoryBackend(records));
   try {
     PR.syncProbeRun(broken);
-    await until(() => PR.probeSettledFor(broken), "坏图的项目也测完");
-    assert.ok(PR.probeRunDiag().probed.length >= 3, "照样测(以前整个项目没有身份,一张都不测)");
+    await until(() => PR.probeSettledFor(broken), "The project with the broken graph is also measured to completion");
+    assert.ok(PR.probeRunDiag().probed.length >= 3, "Still measured (previously the whole project had no identity and not a single card was measured)");
     assert.ok(records.some((r) => r.identityKey === id.identityKeys.s));
   } finally { PR.setCostBackend(null); }
 });
 
-test("AVC-06 3D 模式 (setPlan3DView / plan3DView):开启时将独立轻卡也纳入 prerenderSet", async () => {
+test("AVC-06 3D mode (setPlan3DView / plan3DView): when enabled, standalone light cards are also included in prerenderSet", async () => {
   setup();
   const p = project();
   D.setPlanProject(p);

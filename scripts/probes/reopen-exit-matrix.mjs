@@ -41,10 +41,10 @@ export async function runRecoveryExitMatrix(o) {
         await actor.evaluate(() => window.dispatchEvent(new Event('pc-open-project-settings')));
         await actor.waitForSelector('[data-pc="collab-toggle"]');
         assert.equal(await actor.$eval('[data-pc="collab-toggle"]', el => el.disabled), true, 'unconfirmed identity cannot cancel a room');
-        await actor.evaluate(() => [...document.querySelectorAll('.pc-dialog button')].find(b => b.textContent?.trim() === '取消').click());
+        await actor.evaluate(() => [...document.querySelectorAll('.pc-dialog button')].find(b => b.textContent?.trim() === 'Cancel').click());
       }
       actor.once('dialog', d => void d.accept());
-      await actor.click('button[title="首页"]');
+      await actor.click('button[title="Home"]');
       await actor.waitForSelector('[data-pc="start-join"]');
       await held.respond(response).catch(() => {}); response = null;
       await new Promise(r => setTimeout(r, 800));

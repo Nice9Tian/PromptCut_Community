@@ -35,7 +35,7 @@ const { createPushQueue } = await import('../../server/artifact-push.mjs');
 const { webpSize, SMALL_SUFFIX } = await import('../../server/bakery/small-bitmap.mjs');
 
 const PROJECT = {
-  id: 'c10a-small-tier-probe', name: '小尺寸探针', width: 1920, height: 1080, fps: 30, duration: 2,
+  id: 'c10a-small-tier-probe', name: 'Small size probe', width: 1920, height: 1080, fps: 30, duration: 2,
   themeId: 'dark', media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
   tracks: [{ id: 'tr-pill', name: 'pill', hidden: false, clips: [
     { id: 'clip-pill', kind: 'card', cardId: 'punch-pill', start: 0, end: 2, params: { text: '小尺寸' }, frame: { x: 960, y: 540, w: 960, h: 540, anchor: [0.5, 0.5] } },
@@ -87,7 +87,7 @@ async function runOnce(label, smallTier) {
         const smalls = smallTier ? (await fs.readdir(dir).catch(() => [])).filter((n) => n.endsWith(SMALL_SUFFIX)).length : count;
         if (index.count >= count && smalls >= count) break;
       }
-      if (Date.now() > deadline) { fails.push(`${label}:5 分钟内没产齐`); break; }
+      if (Date.now() > deadline) { fails.push(`${label}: not all produced within 5 minutes`); break; }
       await sleep(1000);
     }
     await pipeline.whenSmallSettled?.();
@@ -111,7 +111,7 @@ try {
   const htmls = names.filter((n) => /^\d+\.html$/.test(n)).map((n) => Number(n.split('.')[0])).sort((x, y) => x - y);
   const smalls = names.filter((n) => n.endsWith(SMALL_SUFFIX));
   out.S1 = { html: htmls.length, small: smalls.length };
-  check(htmls.length === 60 && smalls.length === 60, 'S1 每一帧 HTML 快照旁边都有小位图', out.S1);
+  check(htmls.length === 60 && smalls.length === 60, 'S1 every frame\'s HTML snapshot has a small bitmap next to it', out.S1);
   const sizes = new Set();
   let alpha = true;
   for (const n of smalls) {
@@ -121,15 +121,15 @@ try {
     if (buf.toString('ascii', 12, 16) === 'VP8X' && !(buf[20] & 0x10)) alpha = false;
   }
   out.S1.sizes = [...sizes];
-  check(sizes.size === 1 && sizes.has('400x225'), 'S1 小位图尺寸 = 框 960×540 × (800/1920) = 400×225', [...sizes]);
-  check(alpha, 'S1 小位图带 alpha(VP8X 的 alpha 标志)');
+  check(sizes.size === 1 && sizes.has('400x225'), 'S1 small bitmap size = box 960×540 × (800/1920) = 400×225', [...sizes]);
+  check(alpha, 'S1 small bitmap has alpha (VP8X alpha flag)');
   await fs.copyFile(path.join(dir, `30${SMALL_SUFFIX}`), path.join(OUT, 'frame30.small.webp'));
   await fs.copyFile(path.join(dir, `30${SMALL_SUFFIX}`), path.join(OUT, 'frame30.small.webp.png')).catch(() => {});
 
   // S2 清单与推送
   const manifests = [...content.items.entries()].filter(([k]) => k.startsWith('snapshot-manifest|') && !k.includes('|layers:')).map(([, v]) => v);
   out.S2 = { manifests: manifests.map((m) => ({ range: m.range, frames: m.frames.length, small: m.small?.length ?? 0 })) };
-  check(manifests.length >= 1, 'S2 内容库里有段清单', out.S2);
+  check(manifests.length >= 1, 'S2 the content store has a segment manifest', out.S2);
   let bad = 0;
   for (const m of manifests) {
     const smallFrames = new Set((m.small ?? []).map(([f]) => f));
@@ -143,18 +143,18 @@ try {
     for (const [, hash] of m.frames) if (!asset.blobs.has(`snap/${hash}`)) bad++;
   }
   out.S2.bad = bad;
-  check(bad === 0, 'S2 small 表覆盖每一帧、哈希对得上、两档都在素材服务上(snap + px/webp)', out.S2);
+  check(bad === 0, 'S2 the small table covers every frame, the hashes match, and both tiers are on the asset service (snap + px/webp)', out.S2);
   // S3 层表
   const map = content.items.get(`snapshot-manifest|layers:${PROJECT.id}`);
   out.S3 = map ? { layers: map.layers, span: map.span, fps: map.fps } : null;
   check(map?.kind === 'layer-map' && map.layers.some((l) => l.clipId === 'clip-pill' && l.key === control.snapshotKey && l.resultKey === control.snapshotKey && l.count === 60),
-    'S3 内容库里有层表,列着这张卡', out.S3);
+    'S3 the content store has a layer table that lists this card', out.S3);
   out.pushStats = a.queue.stats();
   out.smallStats = a.pipeline.smallStats;
   // S4 关掉小尺寸再跑一遍,原尺寸逐字节相同
   b = await runOnce('without-small', false);
   const namesB = await fs.readdir(b.dir);
-  check(!namesB.some((n) => n.endsWith(SMALL_SUFFIX)), 'S4 关掉小尺寸时不生成');
+  check(!namesB.some((n) => n.endsWith(SMALL_SUFFIX)), 'S4 nothing is generated when small size is turned off');
   let diff = 0;
   for (const f of htmls) {
     const x = await fs.readFile(path.join(dir, `${f}.html`));
@@ -164,11 +164,11 @@ try {
   const ia = await fs.readFile(path.join(dir, 'index.json'), 'utf8');
   const ib = await fs.readFile(path.join(b.dir, 'index.json'), 'utf8');
   out.S4 = { htmlDiff: diff, indexSame: ia === ib, keySame: a.control?.snapshotKey === b.control?.snapshotKey };
-  check(diff === 0 && ia === ib && out.S4.keySame, 'S4 原尺寸 HTML 快照、index.json、键逐字节不变', out.S4);
+  check(diff === 0 && ia === ib && out.S4.keySame, 'S4 original-size HTML snapshots, index.json and keys are byte-for-byte unchanged', out.S4);
   const mB = [...b.content.items.entries()].filter(([k]) => k.startsWith('snapshot-manifest|') && !k.includes('|layers:')).map(([, v]) => v);
-  check(mB.every((m) => !('small' in m)), 'S4 关掉小尺寸时清单不带 small 项(与 C6.4 一字不差)');
+  check(mB.every((m) => !('small' in m)), 'S4 with small size turned off, the manifest has no small entry (identical to C6.4, character for character)');
 } catch (e) {
-  fails.push('探针异常:' + (e?.stack || e));
+  fails.push('Probe exception:' + (e?.stack || e));
 } finally {
   for (const r of [a, b]) { if (r) { await r.queue.stop().catch(() => {}); await r.pipeline.close().catch(() => {}); } }
 }

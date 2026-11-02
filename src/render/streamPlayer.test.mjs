@@ -41,7 +41,7 @@ test('parseInit builds the codec string from avcC (never hard-coded) and reads t
   assert.equal(out.codec, 'avc1.640032');
   assert.equal(out.width, 704);
   assert.equal(out.height, 864);
-  assert.equal(out.description[0], 1, 'description = avcC 原样');
+  assert.equal(out.description[0], 1, 'description = avcC as is');
   assert.throws(() => parseInit(ab(box('ftyp', u32(0)))), /avcC/);
 });
 
@@ -73,14 +73,14 @@ test('streamPlanesFor: only suppressed cards whose current segment is ready; a g
   assert.deepEqual(planes, [
     { clipIds: ['a'], key: 'KA', ranges: [[0, 3]], originFrame: 0 },
     { clipIds: ['b', 'c'], key: 'KG', ranges: [[0, 9]], originFrame: 0 },
-  ], 'd 的第 1 段还没就绪:不挂平面(父页给它投最近快照)');
-  assert.deepEqual(streamPlanesFor(layers, new Set(['a', 'c']), 20).map((p) => p.clipIds), [['a']], '组里有一张没被抑制就不贴组流');
+  ], 'Segment 1 of d is not ready yet: do not mount the plane (the parent page projects the latest snapshot for it)');
+  assert.deepEqual(streamPlanesFor(layers, new Set(['a', 'c']), 20).map((p) => p.clipIds), [['a']], 'If any card in the group is not suppressed, do not attach the group stream');
   assert.equal(rangesHave([[0, 3], [7, 7]], 7), true);
   assert.equal(rangesHave([[0, 3]], 4), false);
   assert.equal(rangesHave(undefined, 0), false);
 });
 
-test('streamPlanesFor / streamLayerHas: 每一层按它自己的第一帧把项目帧号换成分段号;没带第一帧的层不出流平面', () => {
+test('streamPlanesFor / streamLayerHas: each layer converts the project frame number to a segment number by its own first frame; a layer without a first frame produces no stream plane', () => {
   // a 从第 100 帧开始、d 从第 7 帧开始,两条流都只有第 1 段就绪
   const layers = [
     { clipId: 'a', key: 'KA', ranges: [[1, 1]], originFrame: 100 },
@@ -89,19 +89,19 @@ test('streamPlanesFor / streamLayerHas: 每一层按它自己的第一帧把项�
   ];
   const all = new Set(['a', 'd', 'old']);
   const at = (frame) => streamPlanesFor(layers, all, frame).map((p) => p.clipIds[0]);
-  assert.deepEqual(at(21), [], 'd 的第 1 段是第 22～36 帧');
+  assert.deepEqual(at(21), [], 'segment 1 of d is frames 22-36');
   assert.deepEqual(at(22), ['d']);
   assert.deepEqual(at(36), ['d']);
   assert.deepEqual(at(37), []);
-  assert.deepEqual(at(114), [], 'a 的第 1 段是第 115～129 帧');
+  assert.deepEqual(at(114), [], 'segment 1 of a is frames 115-129');
   assert.deepEqual(at(115), ['a']);
   assert.deepEqual(at(129), ['a']);
   assert.deepEqual(at(130), []);
-  assert.equal(streamPlanesFor(layers, all, 115)[0].originFrame, 100, '流平面带着第一帧交给舞台');
-  assert.equal(streamLayerHas(layers[0], 99), false, '早于第一帧:没有分段');
+  assert.equal(streamPlanesFor(layers, all, 115)[0].originFrame, 100, 'The stream plane hands the first frame to the stage');
+  assert.equal(streamLayerHas(layers[0], 99), false, 'Before the first frame: no segment');
   assert.equal(streamLayerHas({ ranges: [[0, 0]], originFrame: 100 }, 99), false);
   assert.equal(streamLayerHas({ ranges: [[0, 0]], originFrame: 100 }, 100), true);
-  assert.equal(streamLayerHas(layers[2], 0), false, '没带第一帧的层一律算没有');
+  assert.equal(streamLayerHas(layers[2], 0), false, 'A layer without a first frame always counts as having none');
 });
 
 test('capFor: bytes budget shared between streams, clamped to [3, 8] frames per decoder', () => {
@@ -121,7 +121,7 @@ test('capFor: bytes budget shared between streams, clamped to [3, 8] frames per 
 test('a stopped player ignores present(); planes without a key are placeholders only', () => {
   const player = new StreamPlayer({ root: () => null });
   player.setPlanes([{ clipIds: ['a'] }, { clipIds: ['b'], key: 'K', originFrame: 0 }, { clipIds: ['c'], key: 'L' }], 30);
-  assert.equal(player.diag().planes, 1, '没有流键、没带第一帧的平面都只占位');
+  assert.equal(player.diag().planes, 1, 'Planes with no stream key or no first frame are placeholder only');
   player.stop();
   player.present(1);
   assert.equal(player.diag().stopped, true);

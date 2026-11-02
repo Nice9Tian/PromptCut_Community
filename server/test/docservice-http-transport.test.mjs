@@ -73,30 +73,30 @@ const openNew = async (env, user = 'alice', headers = {}) => {
   return r.body;
 };
 
-test('LP-open 建会话：回 sid、resumed false、ack 0、retainMs、waitMs、maxFrameBytes、protocol、transport http；缺头、第一项不是 v1、没有会话项 400；鉴权不过 401', async (t) => {
+test('LP-open creates a session: replies sid, resumed false, ack 0, retainMs, waitMs, maxFrameBytes, protocol, transport http; a missing header, a first item that is not v1, or no session item gives 400; failed authentication gives 401', async (t) => {
   const env = await startLp(t, { retainMs: 45_000, waitMs: 5000 });
   const o = await openNew(env);
   assert.match(o.sid, SID_RE);
   assert.deepEqual({ ...o, sid: 'x' }, { ok: true, sid: 'x', resumed: false, ack: 0, retainMs: 45_000, waitMs: 5000, maxFrameBytes: 1024 * 1024, protocol: 'promptcut.v1', transport: 'http' });
   assert.equal(env.mod.connects.length, 1);
   assert.equal(env.mod.connects[0].principal.userId, 'alice');
-  assert.equal((await env.c.open(null)).status, 400, '缺 X-Promptcut-Protocols');
-  assert.equal((await env.c.open(['x-user.bob', 'promptcut.v1', NEW])).status, 400, '第一项不是 promptcut.v1');
-  assert.equal((await env.c.open(['promptcut.v1', 'x-user.bob'])).status, 400, '长轮询没有旧客户端：要有会话项');
+  assert.equal((await env.c.open(null)).status, 400, 'missing X-Promptcut-Protocols');
+  assert.equal((await env.c.open(['x-user.bob', 'promptcut.v1', NEW])).status, 400, 'first item is not promptcut.v1');
+  assert.equal((await env.c.open(['promptcut.v1', 'x-user.bob'])).status, 400, 'long polling has no old clients: a session item is required');
   assert.equal((await env.c.open(['promptcut.v1', 'x-user.deny', NEW])).status, 401);
   const s = env.sessions.stats();
   assert.deepEqual({ total: s.total, http: s.http, ws: s.ws }, { total: 1, http: 1, ws: 0 });
-  assert.ok(!JSON.stringify(env.logs).includes(o.sid), '会话号不进日志');
+  assert.ok(!JSON.stringify(env.logs).includes(o.sid), 'the session id stays out of the log');
 });
 
-test('LP-send-recv 帧带 seq：模块看不到 seq / ack；回包按序、带 seq 与 ack；POST 回服务端已收全的 ack；重发丢弃；跳号 1002 结束会话，之后 410', async (t) => {
+test('LP-send-recv frames carry seq: modules do not see seq / ack; replies are in order and carry seq and ack; POST returns the ack for everything the server has fully received; a resend is dropped; a skipped number ends the session with 1002, and 410 afterwards', async (t) => {
   const env = await startLp(t);
   const { sid } = await openNew(env);
   const s1 = await env.c.send(sid, [{ type: 't.echo', n: 1, seq: 1 }, { type: 't.echo', n: 2, seq: 2 }]);
   assert.deepEqual(s1.body, { ok: true, ack: 2 });
   const got = await recvUntil(env.c, sid, (m) => m.n === 2);
   assert.deepEqual(got.frames.map((m) => [m.type, m.n, m.seq, m.ack]), [['t.echoed', 1, 1, 2], ['t.echoed', 2, 2, 2]]);
-  assert.deepEqual(env.mod.seen, [{ type: 't.echo', n: 1 }, { type: 't.echo', n: 2 }], '模块看不到 seq / ack');
+  assert.deepEqual(env.mod.seen, [{ type: 't.echo', n: 1 }, { type: 't.echo', n: 2 }], 'modules do not see seq / ack');
   // 重发同一批：丢弃，照样回 ack
   assert.deepEqual((await env.c.send(sid, [{ type: 't.echo', n: 2, seq: 2 }])).body, { ok: true, ack: 2 });
   assert.equal(env.mod.seen.length, 2);
@@ -104,22 +104,22 @@ test('LP-send-recv 帧带 seq：模块看不到 seq / ack；回包按序、带 s
   const bad = await env.c.send(sid, [{ type: 't.echo', n: 9, seq: 9 }]);
   assert.equal(bad.status, 410);
   assert.equal(bad.body.code, 1002);
-  await waitFor(() => env.mod.disconnects.length === 1, 1000, '会话结束');
+  await waitFor(() => env.mod.disconnects.length === 1, 1000, 'session ended');
   const after = await env.c.recv(sid, 2, 0);
-  assert.equal(after.status, 200, '剩下的帧与 closed 先回给客户端');
+  assert.equal(after.status, 200, 'the remaining frames and closed are returned to the client first');
   assert.deepEqual(after.body.closed, { code: 1002, reason: 'bad-seq' });
   const gone = await env.c.recv(sid, 2, 0);
   assert.equal(gone.status, 410);
   assert.equal(gone.body.error, 'session-closed');
 });
 
-test('LP-recv 没帧就挂着、到 wait 回空；有新帧立刻回；新的 GET 替换旧的（旧的回 superseded）；ack 释放后 drained', async (t) => {
+test('LP-recv with no frames the GET hangs and returns empty when wait elapses; a new frame returns immediately; a new GET replaces the old one (the old one replies superseded); drained after ack releases', async (t) => {
   const env = await startLp(t);
   const { sid } = await openNew(env);
   const t0 = Date.now();
   const empty = await env.c.recv(sid, 0, 200);
   assert.deepEqual(empty.body, { ok: true, frames: [], closed: null });
-  assert.ok(Date.now() - t0 >= 150, '挂满 wait');
+  assert.ok(Date.now() - t0 >= 150, 'hung for the full wait');
   const hanging = env.c.recv(sid, 0, 1500);
   await sleep(50);
   const connId = env.mod.connects[0].connId;
@@ -133,10 +133,10 @@ test('LP-recv 没帧就挂着、到 wait 回空；有新帧立刻回；新的 GE
   const second = env.c.recv(sid, 1, 100);
   assert.equal((await first).body.superseded, true);
   assert.equal((await second).status, 200);
-  assert.equal(env.sessions.buffered(connId), 0, 'ack 1 已释放');
+  assert.equal(env.sessions.buffered(connId), 0, 'ack 1 released');
 });
 
-test('LP-resume 经 open 接续：不再鉴权，resumed true、ack 是服务端已收全的；补发还没确认的帧（原 seq）；越界 ack 的接续 410', async (t) => {
+test('LP-resume resumes via open: no re-authentication, resumed true, ack is what the server has fully received; unacknowledged frames are resent (original seq); a resume with an out-of-range ack gets 410', async (t) => {
   const env = await startLp(t);
   const { sid } = await openNew(env);
   await env.c.send(sid, [{ type: 't.echo', n: 1, seq: 1 }, { type: 't.echo', n: 2, seq: 2 }]);
@@ -146,12 +146,12 @@ test('LP-resume 经 open 接续：不再鉴权，resumed true、ack 是服务端
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.deepEqual({ sid: r.body.sid, resumed: r.body.resumed, ack: r.body.ack }, { sid, resumed: true, ack: 2 });
   const again = await env.c.recv(sid, 1, 0);
-  assert.deepEqual(again.body.frames.map((f) => JSON.parse(f).seq), [2], '补发 seq 2');
+  assert.deepEqual(again.body.frames.map((f) => JSON.parse(f).seq), [2], 'resend seq 2');
   const s = env.sessions.stats();
   assert.equal(s.resumed, 1);
   assert.equal(s.fallbacks, 1);
   assert.equal(s.list[0].fallback, 'ws-error');
-  assert.equal(env.mod.connects.length, 1, '模块只见一次 connect');
+  assert.equal(env.mod.connects.length, 1, 'the module sees connect only once');
   // 接续项与鉴权项同给 400；会话不存在 404
   assert.equal((await env.c.open(['promptcut.v1', 'x-user.alice', `promptcut.session.${sid}.2`])).status, 400);
   assert.equal((await env.c.open(['promptcut.v1', `promptcut.session.${'A'.repeat(43)}.0`])).status, 404);
@@ -159,14 +159,14 @@ test('LP-resume 经 open 接续：不再鉴权，resumed true、ack 是服务端
   const over = await env.c.open(['promptcut.v1', `promptcut.session.${sid}.99`]);
   assert.equal(over.status, 410);
   assert.equal(over.body.code, 1002);
-  await waitFor(() => env.mod.disconnects.length === 1, 1000, '会话结束');
+  await waitFor(() => env.mod.disconnects.length === 1, 1000, 'session ended');
 });
 
-test('LP-close 客户端 POST /lp/close：会话立刻结束（模块见断开），之后 410；服务端关（4003）时挂着的 GET 先回剩下的帧再带 closed', async (t) => {
+test('LP-close the client POSTs /lp/close: the session ends immediately (the module sees a disconnect), then 410; when the server closes (4003), the hanging GET first returns the remaining frames and then carries closed', async (t) => {
   const env = await startLp(t);
   const a = await openNew(env, 'alice');
   assert.equal((await env.c.close(a.sid, { code: 1000, reason: 'bye' })).status, 200);
-  await waitFor(() => env.mod.disconnects.length === 1, 1000, '立刻断线');
+  await waitFor(() => env.mod.disconnects.length === 1, 1000, 'disconnects immediately');
   const r = await env.c.recv(a.sid, 0, 0);
   assert.equal(r.status, 410);
   assert.deepEqual({ code: r.body.code, reason: r.body.reason }, { code: 1000, reason: 'bye' });
@@ -185,40 +185,40 @@ test('LP-close 客户端 POST /lp/close：会话立刻结束（模块见断开�
   env.mod.ctx.close(connId, 4003, 'kicked');
   const [, rest] = await waitAll;
   assert.equal(rest.status, 200);
-  assert.deepEqual(rest.body.frames.map((f) => JSON.parse(f).k), [1, 2], '会话结束前没确认的帧都先回');
+  assert.deepEqual(rest.body.frames.map((f) => JSON.parse(f).k), [1, 2], 'all frames unacknowledged when the session ended are returned first');
   assert.deepEqual(rest.body.closed, { code: 4003, reason: 'kicked' });
   assert.equal((await env.c.recv(b.sid, 0, 0)).status, 410);
 });
 
-test('LP-idle 既没有挂着的 GET、也没来过请求：sweep 判传输断开，会话只脱开（模块不见断开），之后经 open 接续', async (t) => {
+test('LP-idle with no hanging GET and no request at all: sweep treats the transport as disconnected, the session only detaches (the module sees no disconnect), and it resumes later via open', async (t) => {
   const env = await startLp(t, { waitMs: 50, retainMs: 60_000 });
   const { sid } = await openNew(env);
   env.transport.sweep();
-  assert.equal(env.sessions.stats().detached, 0, '还没到空闲时限');
+  assert.equal(env.sessions.stats().detached, 0, 'idle limit not reached yet');
   // 空闲判据是 waitMs + 15 s：把传输的时钟往后拨
   env.clock.offset = 20_000;
   env.transport.sweep();
   env.clock.offset = 0;
-  await waitFor(() => env.logs.some((l) => l.event === 'session.detach'), 1000, '脱开');
+  await waitFor(() => env.logs.some((l) => l.event === 'session.detach'), 1000, 'detached');
   assert.equal(env.sessions.stats().detached, 1);
   assert.equal(env.mod.disconnects.length, 0);
-  assert.equal((await env.c.recv(sid, 0, 0)).status, 409, '断开的传输要先经 open 接续');
+  assert.equal((await env.c.recv(sid, 0, 0)).status, 409, 'a disconnected transport must resume via open first');
   const r = await env.c.open(['promptcut.v1', `promptcut.session.${sid}.0`]);
   assert.equal(r.body.resumed, true);
   assert.equal(env.sessions.stats().detached, 0);
 });
 
-test('LP-413 单帧超过 maxFrameBytes：413，会话以 1009 结束', async (t) => {
+test('LP-413 a single frame over maxFrameBytes: 413, the session ends with 1009', async (t) => {
   const env = await startLp(t, { maxFrameBytes: 1000 });
   const { sid } = await openNew(env);
   const r = await env.c.send(sid, [{ type: 't.echo', n: 1, seq: 1, pad: 'x'.repeat(2000) }]);
   assert.equal(r.status, 413);
-  await waitFor(() => env.mod.disconnects.length === 1, 1000, '会话结束');
+  await waitFor(() => env.mod.disconnects.length === 1, 1000, 'session ended');
   const after = await env.c.recv(sid, 0, 0);
   assert.equal(after.body.closed?.code ?? after.body.code, 1009);
 });
 
-test('LP-busy 同一会话同一时刻只一个 POST /lp/send 在途：第二个回 409 busy', async (t) => {
+test('LP-busy only one POST /lp/send per session is in flight at a time: the second replies 409 busy', async (t) => {
   const env = await startLp(t);
   const { sid } = await openNew(env);
   const url = new URL(`${env.base}/lp/send`);
@@ -233,13 +233,13 @@ test('LP-busy 同一会话同一时刻只一个 POST /lp/send 在途：第二个
   req.destroy();
 });
 
-test('LP-backpressure 客户端不来取：未确认字节涨过 maxPendingBytes，核心以 1013 结束会话，下一次 GET 拿到 closed', async (t) => {
+test('LP-backpressure the client does not fetch: unacknowledged bytes grow past maxPendingBytes, the core ends the session with 1013, and the next GET gets closed', async (t) => {
   const env = await startLp(t, { highWaterBytes: 4 * 1024, maxPendingBytes: 16 * 1024 });
   const { sid } = await openNew(env);
   const connId = env.mod.connects[0].connId;
   const pad = 'y'.repeat(1024);
   for (let i = 0; i < 40 && env.mod.disconnects.length === 0; i++) env.mod.ctx.send(connId, { type: 't.blob', i, pad });
-  await waitFor(() => env.mod.disconnects.length === 1, 1000, '背压结束');
+  await waitFor(() => env.mod.disconnects.length === 1, 1000, 'ended by backpressure');
   const r = await env.c.recv(sid, 0, 0);
   assert.equal(r.status, 200);
   let closed = r.body.closed;
@@ -247,7 +247,7 @@ test('LP-backpressure 客户端不来取：未确认字节涨过 maxPendingBytes
   assert.equal(closed.code, 1013);
 });
 
-test('LP-cors 名单里的 Origin 回 ACAO 与 Vary；预检 204 带允许的方法与头（含 X-Promptcut-Fallback）；名单空不回 CORS 头', async (t) => {
+test('LP-cors an Origin on the list gets ACAO and Vary; the preflight 204 carries the allowed methods and headers (including X-Promptcut-Fallback); an empty list sends no CORS headers', async (t) => {
   const env = await startLp(t, { corsOrigins: ['https://ok.example'] });
   const pre = await env.c.options('open', { origin: 'https://ok.example' });
   assert.equal(pre.status, 204);

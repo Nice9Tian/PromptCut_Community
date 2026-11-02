@@ -52,19 +52,19 @@ async function waitPrerender(port, label) {
   const t0 = Date.now();
   for (;;) {
     const info = await fetch(`http://127.0.0.1:${port}/api/prerender/info`, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-    if (info?.ready && typeof info.url === 'string') { log(`${label}:预渲染进程就绪,等了 ${Date.now() - t0} ms`); return; }
-    if (Date.now() - t0 > 180000) throw new Error(`${label}:预渲染进程 180 秒没就绪`);
+    if (info?.ready && typeof info.url === 'string') { log(`${label}: prerender process ready, waited ${Date.now() - t0} ms`); return; }
+    if (Date.now() - t0 > 180000) throw new Error(`${label}: prerender process not ready after 180 seconds`);
     await new Promise((r) => setTimeout(r, 1000));
   }
 }
 const HASH = /^[0-9a-f]{64}$/;
-const MISSING = '(缺失) ';
+const MISSING = '(missing) ';
 
 const ffmpeg = await findFfmpeg();
 const ffprobe = ffmpeg.replace(/ffmpeg(\.exe)?$/i, (m) => (m.toLowerCase().endsWith('.exe') ? 'ffprobe.exe' : 'ffprobe'));
 function run(cmd, a) {
   const r = spawnSync(cmd, a, { encoding: 'buffer', windowsHide: true, maxBuffer: 1024 * 1024 * 1024 });
-  if (r.status !== 0) throw new Error(`${path.basename(cmd)} 退出码 ${r.status}:${String(r.stderr).slice(-600)}`);
+  if (r.status !== 0) throw new Error(`${path.basename(cmd)} exit code ${r.status}: ${String(r.stderr).slice(-600)}`);
   return r.stdout;
 }
 
@@ -148,7 +148,7 @@ try {
   browser = await puppeteer.launch({ headless: true, protocolTimeout: 900000, args: [...PROBE_CHROME_ARGS, '--no-first-run', '--hide-scrollbars', '--force-device-scale-factor=1', '--autoplay-policy=no-user-gesture-required'] });
 
   // ── 实例 A:建项目、存成 .proc ──
-  log(`起实例 A(${PORT_A})`);
+  log(`Start instance A (${PORT_A})`);
   const srvA = await startDevServer({ port: PORT_A, env: envOf(A), logFile: path.join(OUT, 'vite-A.log'), log });
   servers.push(srvA);
   const eventsA = [];
@@ -168,10 +168,10 @@ try {
     await io.importVideoFiles([b64ToFile(o.video, o.videoName, 'video/mp4')]);
     for (let i = 0; i < 150 && getState().project.media.some((m) => m.pending || !m.url); i++) await new Promise((r) => setTimeout(r, 200));
     const up = await uploadMediaFile(b64ToFile(o.voice, o.voiceName, 'audio/mpeg'));
-    if (!up) throw new Error('入库接口没收下音频');
+    if (!up) throw new Error('The ingest endpoint did not accept the audio');
     const mVoice = actions.addMedia({ kind: 'audio', name: o.voiceName, url: up.url, hash: up.hash, ext: up.ext, size: up.bytes, path: up.path, duration: 2 });
-    const track = actions.addTrack('配音');
-    if (!actions.addMediaClip(mVoice.id, 0.5, { trackId: track.id, duration: 2 })) throw new Error('音频放不上时间轴');
+    const track = actions.addTrack('Voiceover');
+    if (!actions.addMediaClip(mVoice.id, 0.5, { trackId: track.id, duration: 2 })) throw new Error('The audio could not be placed on the timeline');
     const text = serializeProc();
     const saved = JSON.parse(text);
     return { text, media: (saved.project || saved).media.map((m) => ({ id: m.id, kind: m.kind, name: m.name, hash: m.hash ?? null, url: m.url, path: m.path ?? null })), clips: getState().project.tracks.reduce((n, t) => n + t.clips.length, 0) };
@@ -183,17 +183,17 @@ try {
   const procFile = path.join(OUT, `cross-${RUN}.proc`);
   await fs.writeFile(procFile, setup.text);
   out.a = { media: setup.media, clips: setup.clips, proc: procFile };
-  check(setup.media.length === 2, 'A:素材表两条', setup.media);
-  check(setup.clips >= 2, 'A:视频与音频都在时间轴上', setup.clips);
+  check(setup.media.length === 2, 'A: the media table has two entries', setup.media);
+  check(setup.clips >= 2, 'A: both the video and the audio are on the timeline', setup.clips);
   for (const m of setup.media) {
-    check(HASH.test(String(m.hash)), `A:${m.kind} 带哈希`, m);
-    check(m.path && path.resolve(m.path).startsWith(path.resolve(A.base)), `A:${m.kind} 的 path 指向 A 的目录`, m);
+    check(HASH.test(String(m.hash)), `A: ${m.kind} has a hash`, m);
+    check(m.path && path.resolve(m.path).startsWith(path.resolve(A.base)), `A: the path of ${m.kind} points into A's directory`, m);
   }
-  check(!eventsA.some((e) => e.type === 'pageerror'), 'A:页面没有报错', eventsA);
+  check(!eventsA.some((e) => e.type === 'pageerror'), 'A: no page errors', eventsA);
 
   // ── 实例 B:数据目录空,但内容库里已经有这两份字节 ──
-  check(await isEmptyDir(B.exportDir) && await isEmptyDir(B.dataDir), 'B:开跑前数据目录与导出目录是空的');
-  log(`起实例 B(${PORT_B})`);
+  check(await isEmptyDir(B.exportDir) && await isEmptyDir(B.dataDir), 'B: the data directory and the export directory are empty before the run');
+  log(`Start instance B (${PORT_B})`);
   const srvB = await startDevServer({ port: PORT_B, env: envOf(B), logFile: path.join(OUT, 'vite-B.log'), log });
   servers.push(srvB);
   // A 的字节原样取出来,经 B 的上传接口(不带 tiers,不重封装)放进 B 的内容库:哈希不变
@@ -205,30 +205,30 @@ try {
     seeded.push({ name: m.name, bytes: bytes.length, hash: j?.hash ?? null, want: m.hash });
   }
   out.b = { seeded };
-  for (const s of seeded) check(s.hash === s.want, `B:内容库里放进了 ${s.name} 的同一份字节(哈希一致)`, s);
+  for (const s of seeded) check(s.hash === s.want, `B: the content store holds the same bytes as ${s.name} (hashes match)`, s);
   const localB = await (await fetch(`${srvB.origin}/api/media/local?hashes=${setup.media.map((m) => m.hash).join(',')}`)).json();
-  check(setup.media.every((m) => localB.hashes?.includes(m.hash)), 'B:/api/media/local 报两份都在', localB);
+  check(setup.media.every((m) => localB.hashes?.includes(m.hash)), 'B: /api/media/local reports both present', localB);
   // 改前的导出按 path 读:A 的路径在 B 上读不到
   const byPath = [];
   for (const m of setup.media) byPath.push({ kind: m.kind, status: (await fetch(`${srvB.origin}/api/media/file?path=${encodeURIComponent(m.path)}`)).status });
   out.b.byPath = byPath;
-  check(byPath.every((x) => x.status >= 400), 'B:A 的路径在 B 上按路径读不到(改前导出按 path 读必失败)', byPath);
+  check(byPath.every((x) => x.status >= 400), 'B: A\'s paths cannot be read by path on B (before the change, export reading by path always failed)', byPath);
 
   const eventsB = [];
   const pageB = await openEditor(browser, srvB.origin, eventsB);
   const openedB = await openProc(pageB, setup.text);
   out.b.opened = openedB;
   for (const m of openedB) {
-    check(HASH.test(String(m.hash)) && m.url === `/@media/${m.hash}`, `B:${m.kind} 按哈希还原`, m);
-    check(m.path && path.resolve(m.path).startsWith(path.resolve(A.base)), `B:${m.kind} 的 path 还是 A 的(导出若按 path 读就会读错)`, m);
+    check(HASH.test(String(m.hash)) && m.url === `/@media/${m.hash}`, `B: ${m.kind} is restored by hash`, m);
+    check(m.path && path.resolve(m.path).startsWith(path.resolve(A.base)), `B: the path of ${m.kind} is still A's (export would read the wrong file if it read by path)`, m);
   }
   // 等打开后的后台检查(1.5 s 后)做完:内容库里有的不标
   await new Promise((r) => setTimeout(r, 4000));
   const afterB = await mediaOf(pageB);
   out.b.afterCheck = afterB;
-  check(afterB.every((m) => !String(m.name).startsWith(MISSING) && m.url === `/@media/${m.hash}`), 'B:内容库里有的素材不标「(缺失)」', afterB);
+  check(afterB.every((m) => !String(m.name).startsWith(MISSING) && m.url === `/@media/${m.hash}`), 'B: media present in the content store is not marked "(missing)"', afterB);
 
-  log('B:导出');
+  log('B: export');
   await waitPrerender(PORT_B, 'B');
   const exp = await pageB.evaluate(async () => {
     const io = await import('/src/editor/io/index.ts');
@@ -245,17 +245,17 @@ try {
   const seg = audioStats(kept, 0.7, 1.5);
   const silentHead = audioStats(kept, 0.0, 0.4);
   out.b.export = { file: kept, exportUrls, streams, frames, seg, silentHead };
-  for (const m of setup.media) check(exportUrls.some((x) => x.url === `/@media/${m.hash}`), `B 导出:导出页拿到的 ${m.kind} 地址是按哈希的`, exportUrls);
-  check(streams.some((s) => s.codec_type === 'video'), 'B 导出:有视频流', streams);
-  check(frames.every((f) => f.std > 20), 'B 导出:三个时刻的画面都不是一片纯色(视频层画出来了)', frames);
-  check(streams.some((s) => s.codec_type === 'audio'), 'B 导出:有音轨', streams);
-  check(seg.rmsDb > -40, 'B 导出:音频那一段(0.7～2.2 s)不是静音', seg);
-  check(Math.abs(seg.hz - 440) <= 30, 'B 导出:那一段是 440 Hz(确实是那条音频)', seg);
-  check(!eventsB.some((e) => e.type === 'pageerror'), 'B:页面没有报错', eventsB);
+  for (const m of setup.media) check(exportUrls.some((x) => x.url === `/@media/${m.hash}`), `B export: the ${m.kind} URL obtained by the export page is hash-based`, exportUrls);
+  check(streams.some((s) => s.codec_type === 'video'), 'B export: has a video stream', streams);
+  check(frames.every((f) => f.std > 20), 'B export: the frames at all three moments are not a flat solid color (the video layer was drawn)', frames);
+  check(streams.some((s) => s.codec_type === 'audio'), 'B export: has an audio track', streams);
+  check(seg.rmsDb > -40, 'B export: the audio segment (0.7-2.2 s) is not silent', seg);
+  check(Math.abs(seg.hz - 440) <= 30, 'B export: that segment is 440 Hz (it really is that audio)', seg);
+  check(!eventsB.some((e) => e.type === 'pageerror'), 'B: no page errors', eventsB);
 
   // ── 实例 C:数据目录空、内容库里也没有 ──
-  check(await isEmptyDir(C.exportDir) && await isEmptyDir(C.dataDir), 'C:开跑前数据目录与导出目录是空的');
-  log(`起实例 C(${PORT_C})`);
+  check(await isEmptyDir(C.exportDir) && await isEmptyDir(C.dataDir), 'C: the data directory and the export directory are empty before the run');
+  log(`Start instance C (${PORT_C})`);
   const srvC = await startDevServer({ port: PORT_C, env: envOf(C), logFile: path.join(OUT, 'vite-C.log'), log });
   servers.push(srvC);
   const eventsC = [];
@@ -268,11 +268,11 @@ try {
   }
   out.c = { opened: openedC, afterCheck: afterC };
   for (const m of afterC) {
-    check(String(m.name).startsWith(MISSING), `C:${m.kind} 标「(缺失)」`, m);
-    check(m.url === `/@media/${m.hash}` && m.record === 'confirmed-missing', `C:${m.kind} 地址留着、写了「确认缺失」的记录(预览与导出出占位)`, m);
-    check(HASH.test(String(m.hash)), `C:${m.kind} 哈希留着`, m);
+    check(String(m.name).startsWith(MISSING), `C: ${m.kind} is marked "(missing)"`, m);
+    check(m.url === `/@media/${m.hash}` && m.record === 'confirmed-missing', `C: the ${m.kind} URL is kept and a "confirmed missing" record is written (preview and export show a placeholder)`, m);
+    check(HASH.test(String(m.hash)), `C: the ${m.kind} hash is kept`, m);
   }
-  check(!eventsC.some((e) => e.type === 'pageerror'), 'C:页面没有报错', eventsC);
+  check(!eventsC.some((e) => e.type === 'pageerror'), 'C: no page errors', eventsC);
 
   // ── 实例 C:缺失的老视频导出时跳过这一段,其余画面与音轨正常,完成对话框里列出它 ──
   const video2 = path.join(src, `clip2-${RUN}.mp4`);
@@ -296,15 +296,15 @@ try {
     await io.importVideoFiles([b64ToFile(o.video, o.videoName, 'video/mp4')]);
     for (let i = 0; i < 150 && getState().project.media.some((m) => m.pending || !m.url); i++) await new Promise((r) => setTimeout(r, 200));
     const up = await uploadMediaFile(b64ToFile(o.voice, o.voiceName, 'audio/mpeg'));
-    if (!up) throw new Error('入库接口没收下音频');
+    if (!up) throw new Error('The ingest endpoint did not accept the audio');
     const mVoice = actions.addMedia({ kind: 'audio', name: o.voiceName, url: up.url, hash: up.hash, ext: up.ext, size: up.bytes, path: up.path, duration: 2 });
-    const ta = actions.addTrack('配音');
-    if (!actions.addMediaClip(mVoice.id, 0.5, { trackId: ta.id, duration: 2 })) throw new Error('音频放不上时间轴');
+    const ta = actions.addTrack('Voiceover');
+    if (!actions.addMediaClip(mVoice.id, 0.5, { trackId: ta.id, duration: 2 })) throw new Error('The audio could not be placed on the timeline');
     // 老形态:只有 path(另一台机器 A 的文件)、没有哈希,地址是打开老项目时还原出来的按路径地址
     const mOld = actions.addMedia({ kind: 'video', name: o.oldName, url: '/api/media/file?path=' + encodeURIComponent(o.oldPath), path: o.oldPath, duration: 3, width: 640, height: 360 });
     // 放在最上面一条序列:它的占位要盖在底下那条视频上才看得见(放在最底下时被上面的视频挡住,和素材在的时候一样)
-    const tv = actions.addTrack('老视频', { index: 0 });
-    if (!actions.addMediaClip(mOld.id, 1, { trackId: tv.id, duration: 1 })) throw new Error('老视频放不上时间轴');
+    const tv = actions.addTrack('Old video', { index: 0 });
+    if (!actions.addMediaClip(mOld.id, 1, { trackId: tv.id, duration: 1 })) throw new Error('The old video could not be placed on the timeline');
     const p = getState().project;
     return { oldId: mOld.id, tracks: p.tracks.map((t) => ({ id: t.id, clips: t.clips.map((c) => ({ id: c.id, mediaId: c.mediaId ?? null, start: c.start, end: c.end })) })), duration: p.duration };
   }, {
@@ -321,8 +321,8 @@ try {
     await new Promise((r) => setTimeout(r, 250));
   }
   out.d.old = oldD;
-  check(oldD && String(oldD.name).startsWith(MISSING) && oldD.record === 'confirmed-missing' && oldD.url && !oldD.hash, 'D:只有路径的老视频标「(缺失)」、写了「确认缺失」的记录、地址留着、没有哈希', oldD);
-  log('C:缺失老视频的项目从顶栏导出');
+  check(oldD && String(oldD.name).startsWith(MISSING) && oldD.record === 'confirmed-missing' && oldD.url && !oldD.hash, 'D: an old video with only a path is marked "(missing)", gets a "confirmed missing" record, keeps its URL, and has no hash', oldD);
+  log('C: export the project with the missing old video from the top bar');
   await waitPrerender(PORT_C, 'C');
   const exportsBefore = new Set(await fs.readdir(C.exportDir));
   /*
@@ -338,15 +338,15 @@ try {
     });
     dialog = await pageC.waitForFunction(() => {
       const t = document.querySelector('.pc-export-dialog .pc-export-title')?.textContent?.trim();
-      return t === '导出完成' || t === '导出失败' || t === '已取消导出' ? t : null;
-    }, { timeout: 900000, polling: 1000 }).then((h) => h.jsonValue()).catch((e) => `等不到结果:${e.message}`);
+      return t === 'Export complete' || t === 'Export failed' || t === 'Export canceled' ? t : null;
+    }, { timeout: 900000, polling: 1000 }).then((h) => h.jsonValue()).catch((e) => `Timed out waiting for a result: ${e.message}`);
     note = await pageC.evaluate(() => ({
       skipped: document.querySelector('[data-pc="export-skipped"]')?.textContent ?? null,
       err: document.querySelector('.pc-export-dialog .pc-export-err')?.textContent ?? null,
     }));
     attempts.push({ attempt, dialog, err: note.err });
-    if (dialog !== '导出失败' || !/没就绪/.test(note.err || '') || attempt === 3) break;
-    log(`C:导出第 ${attempt} 次报没就绪,${attempt * 10} 秒后重试`, note.err?.slice(0, 80));
+    if (dialog !== 'Export failed' || !/not ready/.test(note.err || '') || attempt === 3) break;
+    log(`C: export attempt ${attempt} reported not ready, retrying in ${attempt * 10} seconds`, note.err?.slice(0, 80));
     await pageC.evaluate(() => document.querySelector('.pc-export-dialog .pc-export-primary')?.click());
     await new Promise((r) => setTimeout(r, attempt * 10000));
   }
@@ -354,11 +354,11 @@ try {
   const shot = path.join(OUT, `D-export-dialog-${RUN}.png`);
   await pageC.screenshot({ path: shot }).catch(() => {});
   out.d.dialog = { title: dialog, ...note, shot };
-  check(dialog === '导出完成', 'D:导出完成(不因缺失的老视频解码失败)', { dialog, err: note.err });
-  check(!note.skipped, 'D:没有素材被跳过(缺失的老视频照原位置出占位)', note);
+  check(dialog === 'Export complete', 'D: export completes (no decode failure from the missing old video)', { dialog, err: note.err });
+  check(!note.skipped, 'D: no media was skipped (the missing old video shows a placeholder at its original position)', note);
   const newDirs = (await fs.readdir(C.exportDir)).filter((d) => d.startsWith('export-') && !exportsBefore.has(d));
   const expDir = newDirs.length ? path.join(C.exportDir, newDirs.sort().pop()) : null;
-  if (check(expDir, 'D:产物目录里有这次导出', newDirs)) {
+  if (check(expDir, 'D: the output directory contains this export', newDirs)) {
     const keptD = path.join(OUT, `D-export-${RUN}.mp4`);
     await fs.copyFile(path.join(expDir, 'preview.mp4'), keptD);
     const pj = JSON.parse(await fs.readFile(path.join(expDir, 'project.json'), 'utf8'));
@@ -368,17 +368,17 @@ try {
     const framesD = [0.5, 1.5, 2.5].map((t) => ({ t, ...frameStats(keptD, t) }));
     const segD = audioStats(keptD, 2.05, 0.4); // 1～2 s 那段叠着「找不到素材」的人声,量它后面那一截
     out.d.export = { file: keptD, streams: streamsD, frames: framesD, seg: segD, clipsOfOld: clipsOfOld.length, oldUrl: oldInJson?.url ?? null };
-    check(clipsOfOld.length === 1, 'D:导出用的 project.json 里引用缺失老视频的片段还在(位置和编排保留)', clipsOfOld);
-    check(oldInJson && oldInJson.missingMaterial?.reason === 'confirmed-missing' && oldInJson.url === oldD.url, 'D:导出用的 project.json 里缺失老视频带着记录、地址没被改写', oldInJson);
-    check(streamsD.some((x) => x.codec_type === 'video'), 'D:有视频流', streamsD);
-    check(framesD[0].std > 20 && framesD[2].std > 20, 'D:0.5 s 与 2.5 s 是正常画面', framesD);
-    check(framesD[1].mean > 25 && framesD[1].mean < 80 && framesD[1].std > 2 && framesD[1].std < 60, 'D:1.5 s 处是「找不到素材」的占位(深色底加白字)', framesD[1]);
-    check(streamsD.some((x) => x.codec_type === 'audio'), 'D:有音轨', streamsD);
-    check(segD.rmsDb > -40 && Math.abs(segD.hz - 660) <= 40, 'D:音频那段不是静音、是 660 Hz', segD);
+    check(clipsOfOld.length === 1, 'D: the clip that references the missing old video is still in the export\'s project.json (position and arrangement are preserved)', clipsOfOld);
+    check(oldInJson && oldInJson.missingMaterial?.reason === 'confirmed-missing' && oldInJson.url === oldD.url, 'D: in the export\'s project.json the missing old video carries a record and its URL was not rewritten', oldInJson);
+    check(streamsD.some((x) => x.codec_type === 'video'), 'D: has a video stream', streamsD);
+    check(framesD[0].std > 20 && framesD[2].std > 20, 'D: the frames at 0.5 s and 2.5 s are normal', framesD);
+    check(framesD[1].mean > 25 && framesD[1].mean < 80 && framesD[1].std > 2 && framesD[1].std < 60, 'D: at 1.5 s there is a "Media not found" placeholder (dark background with white text)', framesD[1]);
+    check(streamsD.some((x) => x.codec_type === 'audio'), 'D: has an audio track', streamsD);
+    check(segD.rmsDb > -40 && Math.abs(segD.hz - 660) <= 40, 'D: the audio segment is not silent and is 660 Hz', segD);
   }
-  check(!eventsC.some((e) => e.type === 'pageerror'), 'D:页面没有报错', eventsC);
+  check(!eventsC.some((e) => e.type === 'pageerror'), 'D: no page errors', eventsC);
 } catch (e) {
-  fails.push('探针异常:' + (e?.stack || e));
+  fails.push('Probe exception:' + (e?.stack || e));
 } finally {
   await browser?.close().catch(() => {});
   for (const s of servers) s.stop();

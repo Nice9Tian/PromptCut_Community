@@ -67,8 +67,8 @@ try {
   /* 准备:剪辑2(一张卡 0～6 秒),剪辑1 里 1 秒处一个引用剪辑2 的剪辑段 */
   const ids = await page.evaluate(() => {
     const a = window.__pcStore.actions;
-    a.newProject('数字框撤销');
-    const c2 = a.addCut('剪辑2', { switchTo: true });
+    a.newProject('Number box undo');
+    const c2 = a.addCut('Cut 2', { switchTo: true });
     a.addCardClip('punch-pill', 0, { duration: 6, params: { text: '剪辑二' } });
     a.setProjectMeta({ duration: 6 });
     const root = window.__pcStore.getState().project.cuts[0].id;
@@ -123,7 +123,7 @@ try {
   await undo();
   const afterUndo = await opacity();
   check('N1', noneYet && afterEnter.calls.length === 1 && afterEnter.calls[0] === 0.3 && afterEnter.stored === 0.3 && afterUndo === 1,
-    '敲「0」「.」「3」期间项目里的不透明度一直是 1、零次提交;回车后恰好一次提交 0.3;撤销一次回到 1', { trace, afterEnter, afterUndo });
+    'While typing "0", ".", "3", the opacity in the project stays 1 with zero commits; after Enter, exactly one commit of 0.3; one undo returns to 1', { trace, afterEnter, afterUndo });
 
   /* N2 Esc */
   await resetCalls();
@@ -134,7 +134,7 @@ try {
   const escBox = await boxText();
   await page.keyboard.press('Tab');
   await sleep(250);
-  check('N2', escBox === '1' && (await calls()).length === 0 && (await opacity()) === 1, 'Esc 放弃草稿:框里回到 1,失焦后也没有提交', { escBox, calls: await calls() });
+  check('N2', escBox === '1' && (await calls()).length === 0 && (await opacity()) === 1, 'Esc discards the draft: the box goes back to 1, and there is no commit after blur either', { escBox, calls: await calls() });
 
   /* N3 空值 */
   await resetCalls();
@@ -147,7 +147,7 @@ try {
   await page.keyboard.press('Tab');
   await sleep(250);
   const halfBox = await boxText();
-  check('N3', emptyBox === '1' && halfBox === '1' && (await calls()).length === 0 && (await opacity()) === 1, '空值、半截值(「-」)失焦:不提交,框里显示回 1', { emptyBox, halfBox, calls: await calls() });
+  check('N3', emptyBox === '1' && halfBox === '1' && (await calls()).length === 0 && (await opacity()) === 1, 'Empty or partial value ("-") on blur: no commit, the box shows 1 again', { emptyBox, halfBox, calls: await calls() });
 
   /* N4 失焦提交 */
   await resetCalls();
@@ -160,7 +160,7 @@ try {
   const blurCalls = await calls();
   const blurStored = await opacity();
   await undo();
-  check('N4', midCalls === 0 && blurCalls.length === 1 && blurCalls[0] === 0.6 && blurStored === 0.6 && (await opacity()) === 1, '失焦才提交一次 0.6;撤销一次回到 1', { midCalls, blurCalls, blurStored });
+  check('N4', midCalls === 0 && blurCalls.length === 1 && blurCalls[0] === 0.6 && blurStored === 0.6 && (await opacity()) === 1, 'Commits 0.6 exactly once, on blur; one undo returns to 1', { midCalls, blurCalls, blurStored });
 
   /* N5 回车后 Ctrl+Z */
   await clearBox();
@@ -172,7 +172,7 @@ try {
   await page.keyboard.press('z');
   await page.keyboard.up('Control');
   await sleep(400);
-  check('N5', set04 === 0.4 && (await opacity()) === 1, '回车提交 0.4 后直接按 Ctrl+Z 撤回 1(框已失焦,全局撤销键有效)', { set04, after: await opacity() });
+  check('N5', set04 === 0.4 && (await opacity()) === 1, 'After Enter commits 0.4, pressing Ctrl+Z directly reverts to 1 (the box has lost focus, so the global undo key works)', { set04, after: await opacity() });
 
   /* N6 方向键步进 */
   await resetCalls();
@@ -199,7 +199,7 @@ try {
   await undo();
   const gapAfter2 = await opacity();
   check('N6', s1.calls === 1 && s1.stored === 0.95 && s3.calls === 3 && Math.abs(s3.stored - 0.85) < 1e-9 && s3u === 1 && Math.abs(gapAfter1 - 0.95) < 1e-9 && gapAfter2 === 1,
-    '方向键:每一下立即提交(0.95、0.9、0.85),连按撤销一次回到 1;隔了 1.3 秒再按另起一步(撤销一次只退到 0.95)', { s1, s3, s3u, gapAfter1, gapAfter2 });
+    'Arrow keys: each press commits immediately (0.95, 0.9, 0.85), and one undo after consecutive presses returns to 1; pressing again after a 1.3 second gap starts a new step (one undo only goes back to 0.95)', { s1, s3, s3u, gapAfter1, gapAfter2 });
 
   /* N7 滑块一次拖动 */
   await resetCalls();
@@ -229,7 +229,7 @@ try {
   await page.evaluate(() => window.__pcStore.actions.redo());
   await sleep(250);
   check('N7', dragCalls.length >= 2 && dragCalls.length <= 30 && dragCalls.length < moves / 2 && Math.abs(finalVal - last) < 1e-9 && finalVal < 0.5 && dragUndo === 1,
-    `滑块一次拖动(${moves} 次指针移动,中途停 400 ms):提交 ${dragCalls.length} 条(限速);松手后项目里是最后的值 ${finalVal};撤销一次回到 1`, { moves, duringDrag, total: dragCalls.length, finalVal, last, dragUndo });
+    `One slider drag (${moves} pointer moves, pausing 400 ms midway): ${dragCalls.length} commits (rate-limited); after release the project holds the final value ${finalVal}; one undo returns to 1`, { moves, duringDrag, total: dragCalls.length, finalVal, last, dragUndo });
   await undo(); // redo 过了,再撤回 1,保证状态干净
   const back = await opacity();
 
@@ -243,15 +243,15 @@ try {
   const keyCalls = (await calls()).length;
   const keyVal = await opacity();
   await undo();
-  check('N8', back === 1 && keyCalls === 3 && keyVal < 1 && (await opacity()) === 1, '滑块方向键连按 3 下提交 3 次,撤销一次回到 1', { back, keyCalls, keyVal });
+  check('N8', back === 1 && keyCalls === 3 && keyVal < 1 && (await opacity()) === 1, 'Pressing the slider arrow keys 3 times in a row commits 3 times; one undo returns to 1', { back, keyCalls, keyVal });
 
   const everCalls = await page.evaluate(() => window.__all);
-  check('N9', everCalls.length > 0 && !everCalls.includes(0), `整个过程共 ${everCalls.length} 次提交,不透明度从未被提交为 0`, { everCalls: everCalls.slice(0, 12) });
+  check('N9', everCalls.length > 0 && !everCalls.includes(0), `${everCalls.length} commits in the whole run, and opacity was never committed as 0`, { everCalls: everCalls.slice(0, 12) });
   /* ---- 其它面板:卡片段的开始 / 结束、参数数字框、参数名拖动、三维面板 ---- */
   const cardId = await page.evaluate(() => {
     const a = window.__pcStore.actions;
     a.switchCut(window.__pcStore.getState().project.cuts[0].id);
-    const c = a.addCardClip('blur-text', 0, { duration: 5, params: { text: '参数面板' } });
+    const c = a.addCardClip('blur-text', 0, { duration: 5, params: { text: 'Parameters panel' } });
     a.select([c.id]);
     a.seek(1);
     window.__mcalls = [];
@@ -279,13 +279,13 @@ try {
   const m1after = { calls: await mcalls(), end: (await clipNow()).end };
   await undo();
   check('M1', m1mid.calls === 0 && m1mid.end === end0 && m1after.calls === 1 && m1after.end === 4.5 && (await clipNow()).end === end0,
-    '「结束」敲 4.5:敲字时零次提交,回车一次提交,撤销一次回原值', { end0, m1mid, m1after, undone: (await clipNow()).end });
+    'Typing 4.5 into "End": zero commits while typing, one commit on Enter, one undo restores the original value', { end0, m1mid, m1after, undone: (await clipNow()).end });
 
   // M2 参数数字框
   const numParam = await page.evaluate(() => { const el = document.querySelector('input[type="number"][data-pc-param]'); return el ? { key: el.getAttribute('data-pc-param'), value: el.value, min: el.min, max: el.max, step: el.step } : null; });
   if (!numParam) {
-    check('M2', false, '这张卡的参数面板里找不到数字框', numParam);
-    check('M3', false, '找不到参数名拖动', numParam);
+    check('M2', false, 'No number box found in this card\'s parameters panel', numParam);
+    check('M3', false, 'Cannot find a draggable parameter name', numParam);
   } else {
     const sel = `input[type="number"][data-pc-param="${numParam.key}"]`;
     const before = (await clipNow()).params[numParam.key];
@@ -304,7 +304,7 @@ try {
     await undo();
     const undone = (await clipNow()).params[numParam.key];
     check('M2', mid.calls === 0 && mid.v === before && after.calls === 1 && after.v === Number(target) && undone === before,
-      `参数「${numParam.key}」敲 ${target}:敲字时零次提交,回车一次提交,撤销一次回原值`, { numParam, before, mid, after, undone });
+      `Typing ${target} into parameter "${numParam.key}": zero commits while typing, one commit on Enter, one undo restores the original value`, { numParam, before, mid, after, undone });
 
     // M3 参数名拖动
     await mreset();
@@ -320,7 +320,7 @@ try {
     await undo();
     const dragUndone = (await clipNow()).params[numParam.key];
     check('M3', dragCalls >= 2 && dragCalls < mv / 2 && dragged !== before && dragUndone === before,
-      `参数名上左右拖动(${mv} 次指针移动,中途停 400 ms):提交 ${dragCalls} 条(限速),值 ${before} → ${dragged};撤销一次回 ${before}`, { dragCalls, mv, before, dragged, dragUndone });
+      `Dragging left and right on the parameter name (${mv} pointer moves, pausing 400 ms midway): ${dragCalls} commits (rate-limited), value ${before} → ${dragged}; one undo returns to ${before}`, { dragCalls, mv, before, dragged, dragUndone });
   }
 
   // M4 三维面板
@@ -356,14 +356,14 @@ try {
   await undo();
   const nundone = ((await clipNow()).frame?.rotateY) ?? 0;
   check('M4', rcalls >= 2 && rcalls < rmv / 2 && rval !== 0 && rundone === 0 && rnum === 1 && nmid === 0 && ncalls === 1 && nval === 30 && nundone === 0,
-    `三维:滑块一次拖动(${rmv} 次移动)提交 ${rcalls} 条、值 ${rval},撤销一次回 0;数字框敲 30 时零次提交、回车一次、撤销一次回 0`, { rcalls, rmv, rval, rundone, rnum, nmid, ncalls, nval, nundone });
+    `3D: one slider drag (${rmv} moves) commits ${rcalls}, value ${rval}, one undo returns to 0; typing 30 into the number box gives zero commits while typing, one on Enter, and one undo returns to 0`, { rcalls, rmv, rval, rundone, rnum, nmid, ncalls, nval, nundone });
 
   // M5 滤镜参数
   const fclip = await page.evaluate(() => {
     const a = window.__pcStore.actions;
-    const m = a.addMedia({ kind: 'image', name: '图.svg', url: '/favicon.svg', width: 64, height: 64 });
+    const m = a.addMedia({ kind: 'image', name: 'Image.svg', url: '/favicon.svg', width: 64, height: 64 });
     const c = a.addMediaClip(m.id, 0, { duration: 4 });
-    a.addFilter({ id: 'f-probe', name: '探针亮度', params: { amount: { default: 1, min: 0, max: 3, label: '量' } }, ops: [{ kind: 'brightness', value: 'amount' }] }, { clipId: c.id, filter: { id: 'f-probe' } });
+    a.addFilter({ id: 'f-probe', name: 'Probe brightness', params: { amount: { default: 1, min: 0, max: 3, label: 'Amount' } }, ops: [{ kind: 'brightness', value: 'amount' }] }, { clipId: c.id, filter: { id: 'f-probe' } });
     a.select([c.id]);
     return c.id;
   });
@@ -382,9 +382,9 @@ try {
   await panelShot('08-filter-param-after-enter');
   await undo();
   const fundone = await fstored();
-  check('M5', fmid === f0 && fafter === 2 && fundone === f0, '滤镜参数敲 2:敲字时项目里不动,回车一次提交,撤销一次回原值', { f0, fmid, fafter, fundone });
+  check('M5', fmid === f0 && fafter === 2 && fundone === f0, 'Typing 2 into a filter parameter: the project does not change while typing, one commit on Enter, one undo restores the original value', { f0, fmid, fafter, fundone });
 
-  check('E0', errors.length === 0, '页面零报错', errors);
+  check('E0', errors.length === 0, 'Page has zero errors', errors);
 } finally {
   await browser.close();
 }

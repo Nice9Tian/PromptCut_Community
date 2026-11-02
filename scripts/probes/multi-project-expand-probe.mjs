@@ -40,13 +40,13 @@ const renderFrames = (project, frames, dir) => renderAt(origin, project, frames,
 
 /** 一个请求要的帧（项目帧号）。挑在挂载边界、转场重叠、剪辑段里、最后一帧等地方 */
 const REQUESTS = [
-  { name: 'odometer 回放到 0.5s', frames: [15] },
-  { name: '毛玻璃卡刚挂上（1.0s 前一帧与当帧）+ 推帧卡', frames: [29, 30, 45] },
-  { name: '交叉溶解重叠段 3.3s～3.8s', frames: [100, 114] },
-  { name: '画布卡与毛玻璃卡同屏 4.6s', frames: [138] },
-  { name: 'remotion 卡 + 图片 + 剪辑段（段里 1.5s 处）7.5s', frames: [225] },
-  { name: '剪辑段里两张卡重叠（段里 3.5s）+ 推帧卡挂载边界 8.2s', frames: [246, 255] },
-  { name: '末尾 11.5s～最后一帧', frames: [345, 359] },
+  { name: 'odometer replayed to 0.5s', frames: [15] },
+  { name: 'frosted-glass card just mounted (the frame before 1.0s and the frame at 1.0s) + frame-push card', frames: [29, 30, 45] },
+  { name: 'crossfade overlap segment 3.3s-3.8s', frames: [100, 114] },
+  { name: 'canvas card and frosted-glass card on screen together at 4.6s', frames: [138] },
+  { name: 'remotion card + image + cut segment (at 1.5s within the segment) 7.5s', frames: [225] },
+  { name: 'two cards overlapping in a cut segment (at 3.5s within the segment) + frame-push card mount boundary 8.2s', frames: [246, 255] },
+  { name: 'end 11.5s to the last frame', frames: [345, 359] },
 ];
 
 async function main() {
@@ -63,7 +63,7 @@ async function main() {
     diffPixels += c.pixels;
     perFrame.push({ frame: f, diffPixels: c.pixels, totalPixels: c.total, opaquePixels: c.opaque ?? null, ...extra });
   };
-  const line = (perFrame) => perFrame.map((p) => `帧 ${p.frame} 不同像素 ${p.diffPixels}/${p.totalPixels}（不透明 ${p.opaquePixels}）`).join('；');
+  const line = (perFrame) => perFrame.map((p) => `frame ${p.frame} differing pixels ${p.diffPixels}/${p.totalPixels} (opaque ${p.opaquePixels})`).join(';');
   try {
     // 第一趟：导出取帧（exportUnified）
     for (const [i, req] of REQUESTS.entries()) {
@@ -74,7 +74,7 @@ async function main() {
       const perFrame = [];
       for (const f of req.frames) tally(perFrame, full.get(f), multi.get(f), f);
       results.push({ path: 'export', request: req.name, frames: req.frames, clipsFull: allClips, clipsExpanded: exp.clipIds.length, cards: exp.cardIds, media: exp.mediaIds, cuts: exp.cutIds, perFrame });
-      console.log(`[MPE-PROBE] ${i + 1}. ${req.name}：帧 ${req.frames.join(',')}；片段 ${allClips} → ${exp.clipIds.length}（${exp.clipIds.join(',')}）；素材 ${exp.mediaIds.join(',') || '无'}；${line(perFrame)}`);
+      console.log(`[MPE-PROBE] ${i + 1}. ${req.name}: frames ${req.frames.join(',')}; clips ${allClips} → ${exp.clipIds.length} (${exp.clipIds.join(',')}); media ${exp.mediaIds.join(',') || 'none'}; ${line(perFrame)}`);
     }
     // 第二趟：看画面那一路（工作进程的 renderFrames 用的 FramePipeline#see_frames）
     if (!argv.includes('--no-pipeline')) {
@@ -88,7 +88,7 @@ async function main() {
           const perFrame = [];
           for (const f of req.frames) tally(perFrame, full.get(f).buf, multi.get(f).buf, f, { source: [full.get(f).source ?? null, multi.get(f).source ?? null] });
           results.push({ path: 'see_frames', request: req.name, frames: req.frames, clipsFull: allClips, clipsExpanded: exp.clipIds.length, perFrame });
-          console.log(`[MPE-PROBE see_frames] ${i + 1}. ${req.name}：${line(perFrame)}`);
+          console.log(`[MPE-PROBE see_frames] ${i + 1}. ${req.name}: ${line(perFrame)}`);
         }
       } finally { await service.close(); }
     }

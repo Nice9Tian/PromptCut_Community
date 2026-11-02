@@ -104,7 +104,7 @@ async function startServer() {
     await sleep(500);
   }
   proc.kill();
-  throw new Error(`dev server 240 秒没起来:\n${log.join('')}`);
+  throw new Error(`dev server did not start within 240 seconds:\n${log.join('')}`);
 }
 
 async function stopServer() {
@@ -190,12 +190,12 @@ try {
 
   const built = await page.evaluate(BUILD_PROJECT, { want: wantCards, pinned: ['probe-css', 'probe-motion-js', 'particles-snow'] });
   out.cards = built.picked;
-  check(built.picked.length === wantCards, `项目里有 ${wantCards} 张卡`, built.picked.length);
+  check(built.picked.length === wantCards, `The project has ${wantCards} cards`, built.picked.length);
 
   // 遮罩出现(要测的卡不为 0)
   await page.waitForFunction(() => window.__gateSeen === true, { timeout: 60000, polling: 100 }).catch(() => {});
   out.gateAppearedFirstOpen = await page.evaluate(() => window.__gateSeen);
-  check(out.gateAppearedFirstOpen, '第一次打开遮罩出现了');
+  check(out.gateAppearedFirstOpen, 'The overlay appeared on the first open');
 
   /*
    * 探针期间量可见舞台的帧间隔(第 4 条)。用**舞台 iframe 自己**的 `__pcRealRaf`:
@@ -237,13 +237,13 @@ try {
     return m.probeProgress();
   });
   out.gateStillUp = await page.evaluate(() => window.__gateNow);
-  check(!out.gateStillUp, '测完之后遮罩摘掉了');
+  check(!out.gateStillUp, 'The overlay was removed after measurement finished');
 
   out.raf = await rafTask;
   if (out.raf && out.raf.n > 30) {
-    check(typeof out.raf.p50 === 'number', '探针期间量到了可见舞台的帧间隔中位数(只记录;原先要求 ≤ 20 ms —— 耗时只记录,不当闸门(verification.md,2026-10-07 用户改定);2026-10-23 探针总审第二遍扫描补改)', out.raf);
+    check(typeof out.raf.p50 === 'number', 'The median frame interval of the visible stage was measured during the probe (record only; formerly required ≤ 20 ms: timing is only recorded, not used as a gate (verification.md, user decision, 2026-10-07); patched in the second scan pass of the 2026-10-23 full probe audit)', out.raf);
   } else {
-    out.rafNote = '没量到足够的帧(探针跑得太快或者舞台 iframe 没找到),这一条跳过';
+    out.rafNote = 'Not enough frames were measured (the probe ran too fast or the stage iframe was not found), skipping this check';
   }
 
   /* ---------------- 记录:N 条、每条该有的字段都在 ---------------- */
@@ -251,12 +251,12 @@ try {
   const costs = await page.evaluate(async () => (await (await fetch('/api/data/costs')).json()));
   out.recordCount = costs?.costs?.length ?? 0;
   out.device = costs?.costs?.[0]?.device ?? null;
-  check(out.recordCount === wantCards, `成本记录有 ${wantCards} 条`, out.recordCount);
+  check(out.recordCount === wantCards, `There are ${wantCards} cost records`, out.recordCount);
   const bad = (costs?.costs ?? []).filter((r) =>
     !Number.isFinite(r.stepMs) || !Number.isFinite(r.inlineMs) || !Number.isFinite(r.rasterMs)
     || !Number.isFinite(r.serializeMs) || !Number.isFinite(r.catchUpMs)
     || (r.mode !== 'dev' && r.mode !== 'build') || r.demoted !== false);
-  check(bad.length === 0, '每条都带四个数 + catchUpMs + mode + demoted: false', bad.map((r) => r.identityKey));
+  check(bad.length === 0, 'Every record carries four numbers + catchUpMs + mode + demoted: false', bad.map((r) => r.identityKey));
   out.records = (costs?.costs ?? []).map((r) => ({
     identityKey: r.identityKey, kind: r.kind, stepMs: r.stepMs, stepMaxMs: r.stepMaxMs, inlineMs: r.inlineMs,
     rasterMs: r.rasterMs, serializeMs: r.serializeMs, catchUpMs: r.catchUpMs, capped: !!r.capped,
@@ -267,7 +267,7 @@ try {
   if (!originArg) {
     out.costsFile = costsFile;
     out.costsFileExists = fs.existsSync(costsFile);
-    check(out.costsFileExists, 'out/card-costs.json 写在隔离的临时目录里,没碰仓库的 out/');
+    check(out.costsFileExists, 'out/card-costs.json is written in an isolated temp directory and does not touch the repo\'s out/');
   }
 
   /* ---------------- 布尔探针的三张判例 ---------------- */
@@ -292,9 +292,9 @@ try {
     return outv;
   }, ['probe-css', 'probe-motion-js', 'particles-snow']);
   check(out.verdicts['probe-css']?.vtOk === true && out.verdicts['probe-css']?.seekOk === true,
-    '只有 CSS / WAAPI 动画的卡 vtOk 且 seekOk', out.verdicts['probe-css']);
-  check(out.verdicts['particles-snow']?.vtOk === true, '粒子卡 vtOk', out.verdicts['particles-snow']);
-  check(out.verdicts['probe-motion-js']?.vtOk === false, 'JS 驱动的卡 vtOk 为 false', out.verdicts['probe-motion-js']);
+    'A card with only CSS / WAAPI animation has vtOk and seekOk', out.verdicts['probe-css']);
+  check(out.verdicts['particles-snow']?.vtOk === true, 'particle card vtOk', out.verdicts['particles-snow']);
+  check(out.verdicts['probe-motion-js']?.vtOk === false, 'A JS-driven card has vtOk false', out.verdicts['probe-motion-js']);
 
   /* ---------------- setPlan:表到了舞台、pipelineAt 查得出来 ---------------- */
   out.plan = await page.evaluate(async () => {
@@ -308,7 +308,7 @@ try {
     return p ? { segments: p.plan.segments.length, prerender: [...p.plan.prerenderSet].length, costs: p.costs.length } : null;
   }).catch(() => null) : null;
   check(!!out.stagePlan && out.stagePlan.segments === out.plan?.segments,
-    'setPlan 把同一张表送到了可见舞台', { parent: out.plan, stage: out.stagePlan });
+    'setPlan sent the same table to the visible stage', { parent: out.plan, stage: out.stagePlan });
 
   /* ---------------- 第二次打开:遮罩一帧都不出现 ---------------- */
   const page2 = await browser.newPage();
@@ -331,8 +331,8 @@ try {
     const m = await import('/src/editor/probeRunner.ts');
     return { gateSeen: window.__gateSeen, progress: m.probeProgress() };
   });
-  check(out.secondOpen.gateSeen === false, '第二次打开遮罩一帧都不出现', out.secondOpen);
-  check(out.secondOpen.progress.total === 0, '第二次一张都不用测(记录全命中)', out.secondOpen.progress);
+  check(out.secondOpen.gateSeen === false, 'The overlay does not appear for even one frame on the second open', out.secondOpen);
+  check(out.secondOpen.progress.total === 0, 'The second time, no card needs measuring (all records hit)', out.secondOpen.progress);
   await page2.close();
 
   /* ---------------- 项目中途改了:队列重排,而且不推全量项目 ---------------- */
@@ -376,7 +376,7 @@ try {
   out.backWrapCounts = wrapCounts;
   const maxWrap = wrapCounts.length ? Math.max(...wrapCounts) : 0;
   check(wrapCounts.length > 0 && maxWrap <= 1,
-    '后台舞台上任何时刻只有一个卡片段(先换缩水项目再 render)', { maxWrap, wrapCounts });
+    'At any moment there is only one card clip on the background stage (swap to the reduced project first, then render)', { maxWrap, wrapCounts });
 
   // 中途换项目:队列应当按新项目重排,而不是接着测旧项目的卡
   const beforeSwap = await page3.evaluate(async () => (await import('/src/editor/probeRunner.ts')).probeProgress());
@@ -389,7 +389,7 @@ try {
   await sleep(1500);
   const afterSwap = await page3.evaluate(async () => (await import('/src/editor/probeRunner.ts')).probeProgress());
   out.replan = { beforeSwap, afterSwap };
-  check(afterSwap.total <= 2, '换了项目之后队列按新项目重排(只剩新项目那两张卡)', out.replan);
+  check(afterSwap.total <= 2, 'After the project is swapped, the queue is rearranged for the new project (only the two cards of the new project remain)', out.replan);
   await page3.waitForFunction(async () => (await import('/src/editor/probeRunner.ts')).probeProgress().running === false,
     { timeout: 180000, polling: 300 }).catch(() => {});
   await page3.close();
@@ -430,22 +430,22 @@ try {
   await page4.click('.pc-proj-btn');
   await page4.waitForSelector('.pc-proj-item', { timeout: 10000 });
   const openedSettings = await page4.evaluate(() => {
-    const item = [...document.querySelectorAll('.pc-proj-item')].find((b) => (b.textContent || '').includes('项目设置'));
+    const item = [...document.querySelectorAll('.pc-proj-item')].find((b) => (b.textContent || '').includes('Project settings'));
     if (!item) return false;
     item.click();
     return true;
   });
-  check(openedSettings, '项目菜单里有「项目设置…」');
+  check(openedSettings, 'The project menu has "Project settings…"');
   await page4.waitForSelector('select[data-pc="fps-select"]', { timeout: 10000 }).catch(() => {});
   out.fpsSelect = await page4.evaluate(() => {
     const el = document.querySelector('select[data-pc="fps-select"]');
     if (!el) return null;
     return { value: el.value, options: [...el.options].map((o) => Number(o.value)) };
   });
-  check(!!out.fpsSelect, 'pinned 架构 7:项目选项里有 fps 下拉', out.fpsSelect);
+  check(!!out.fpsSelect, 'pinned architecture 7: the project options have an fps dropdown', out.fpsSelect);
   check(!!out.fpsSelect && JSON.stringify(out.fpsSelect.options) === JSON.stringify([24, 25, 30, 60]),
-    'fps 下拉的四档是 24 / 25 / 30 / 60', out.fpsSelect);
-  check(!!out.fpsSelect && Number(out.fpsSelect.value) === 30, '新项目默认 30', out.fpsSelect);
+    'The fps dropdown has four options: 24 / 25 / 30 / 60', out.fpsSelect);
+  check(!!out.fpsSelect && Number(out.fpsSelect.value) === 30, 'A new project defaults to 30', out.fpsSelect);
 
   // 切成 60 并确定 —— 遮罩这一刻起应当重新出现
   await page4.evaluate(() => { window.__gateSeen = false; });
@@ -455,25 +455,25 @@ try {
     ok?.click();
   });
   out.fpsAfterConfirm = await page4.evaluate(async () => (await import('/src/store/project.ts')).getState().project.fps);
-  check(out.fpsAfterConfirm === 60, '确定之后项目的 fps 是 60', out.fpsAfterConfirm);
+  check(out.fpsAfterConfirm === 60, 'After confirming, the project\'s fps is 60', out.fpsAfterConfirm);
 
   const regated = await page4.waitForFunction(() => window.__gateSeen === true, { timeout: 60000, polling: 50 })
     .then(() => true, () => false);
   out.gateAfterFpsChange = regated;
-  check(regated, '切 fps 之后遮罩重走(pinned 架构 7 / 渲染 5)');
+  check(regated, 'After switching fps, the overlay runs again (pinned architecture 7 / rendering 5)');
   await page4.waitForFunction(async () => (await import('/src/editor/probeRunner.ts')).probeProgress().running === false,
     { timeout: 180000, polling: 300 }).catch(() => {});
   await sleep(800);
   const costsAfterFps = JSON.parse(fs.readFileSync(costsFile, 'utf8'));
   const list60 = (Array.isArray(costsAfterFps) ? costsAfterFps : costsAfterFps.costs || []).filter((r) => r.fps === 60);
   out.costs60 = { count: list60.length, sample: list60.slice(0, 2).map((r) => ({ fps: r.fps, stepMs: r.stepMs, identityKey: r.identityKey })) };
-  check(list60.length >= 2, '切 fps 之后重测出来的成本记录 fps 字段是 60', out.costs60);
+  check(list60.length >= 2, 'After switching fps, the fps field of the re-measured cost records is 60', out.costs60);
   await page4.close();
 
   out.pageErrors = errors.filter((e) => !/favicon|React DevTools|Failed to load resource|ResizeObserver/i.test(e)).slice(0, 8);
 } catch (err) {
   console.error(err && err.stack || err);
-  fails.push('探针自己抛了:' + String(err && err.message || err));
+  fails.push('The probe itself threw:' + String(err && err.message || err));
   exitCode = 1;
 } finally {
   await browser.close();
@@ -490,10 +490,10 @@ if (outJson) {
   const file = path.resolve(outJson);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(out, null, 2), 'utf8');
-  console.log(`\n写到 ${file}`);
+  console.log(`\nWritten to ${file}`);
 }
 if (fails.length) {
-  console.log('\n不通过:');
+  console.log('\nFailed:');
   for (const f of fails) console.log('  ' + f);
   exitCode = 1;
 }

@@ -25,19 +25,19 @@ function anim(props) {
   };
 }
 
-test("整页 sync 与子树 syncIn 都放过占位符自己的 CSS 动画", () => {
+test("both whole-page sync and subtree syncIn leave the placeholder's own CSS animations alone", () => {
   const ph = anim({ animationName: `${PLACEHOLDER_ANIMATION_PREFIX}appear` });
   const phWaapi = anim({ id: `${PLACEHOLDER_ANIMATION_PREFIX}spin` });
   const p = createAnimationPinner({ getAnimations: () => [ph, phWaapi] });
   p.sync(500);
   p.syncIn({ getAnimations: () => [ph, phWaapi] }, 700);
   for (const a of [ph, phWaapi]) {
-    assert.equal(a.playState, "running", "按真实时间走,不被暂停");
-    assert.equal(a.currentTime, null, "不被拨时间");
+    assert.equal(a.playState, "running", "runs on real time, not paused");
+    assert.equal(a.currentTime, null, "time is not seeked");
   }
 });
 
-test("对照:名字不以前缀开头的卡片动画(哪怕含 ph)照样被钉", () => {
+test("control: card animations whose name does not start with the prefix (even if it contains ph) are still pinned", () => {
   const card = [anim({ animationName: "ph-appear" }), anim({ animationName: "card-pc-ph-x" }), anim({ id: "fade" }), anim({})];
   const p = createAnimationPinner({ getAnimations: () => card });
   p.sync(500);

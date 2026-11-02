@@ -60,8 +60,8 @@ const SETTLE_CONTROL = args.includes('--settle-control');
 const JSON_OUT = flagArg('json', null, args);
 const RUN = Date.now().toString(36);
 const OUT = path.resolve(flagArg('out', null, args) || path.join(os.tmpdir(), `pc-below-paste-editor-${RUN}`));
-if (!GIVEN_ORIGIN && !PORT) { console.error('要给 --origin <dev server> 或 --port <自己起一台>'); process.exit(2); }
-if (SETTLE_CONTROL && GIVEN_ORIGIN) { console.error('--settle-control 要自己起编辑器(给 --port)'); process.exit(2); }
+if (!GIVEN_ORIGIN && !PORT) { console.error('Pass --origin <dev server> or --port <start your own>'); process.exit(2); }
+if (SETTLE_CONTROL && GIVEN_ORIGIN) { console.error('--settle-control requires starting your own editor (pass --port)'); process.exit(2); }
 // 对照档:这台编辑器和它的预渲染进程不产依赖下层的流
 if (SETTLE_CONTROL) process.env.PROMPTCUT_TEST_BELOW_STREAMS = '0';
 
@@ -87,7 +87,7 @@ async function until(label, fn, timeoutMs, everyMs = 100, soft = false) {
     let value = null;
     try { value = await fn(); } catch { value = null; }
     if (value) return value;
-    if (Date.now() > deadline) { (soft ? notes : fails).push(`超时:${label}`); say('TIMEOUT', { label, soft }); return null; }
+    if (Date.now() > deadline) { (soft ? notes : fails).push(`Timeout: ${label}`); say('TIMEOUT', { label, soft }); return null; }
     await sleep(everyMs);
   }
 }
@@ -112,16 +112,16 @@ function BpMover({ params, t = 0 }: CardProps<Params>) {
 
 export const bpMover: CardDef<Params> = {
   id: "${MOVER_CARD}",
-  name: "贴流探针：扫过去的亮带",
-  description: "探针用的 remotion 式 DOM 卡：铺满的底色上一条亮带从左往右扫",
+  name: "Stream-paste probe: sweeping bright band",
+  description: "Probe-only remotion-style DOM card: a bright band sweeps from left to right over a full-bleed background color",
   source: "user",
-  useWhen: "探针用，不用于真实项目。",
-  tags: ["探针"],
+  useWhen: "For probes only, not for real projects.",
+  tags: ["probe"],
   frameMode: "direct",
-  defaults: { accent: "#ffd166", label: "下层" },
+  defaults: { accent: "#ffd166", label: "Below" },
   controls: [
-    { key: "accent", label: "主色", type: "color" },
-    { key: "label", label: "文字", type: "text" },
+    { key: "accent", label: "Primary color", type: "color" },
+    { key: "label", label: "Text", type: "text" },
   ],
   Component: BpMover,
   lifecycle: { settleMs: 500, after: "hold", exit: ["fade"] },
@@ -129,7 +129,7 @@ export const bpMover: CardDef<Params> = {
 `;
 
 const PROJECT = {
-  id: `below-paste-${RUN}`, name: '依赖下层的卡贴流', width: WIDTH, height: HEIGHT, fps: FPS, duration: SECONDS,
+  id: `below-paste-${RUN}`, name: 'Stream paste for a card that depends on the layer below', width: WIDTH, height: HEIGHT, fps: FPS, duration: SECONDS,
   themeId: 'dark', media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
   tracks: [
     { id: 'tr-glass', name: 'glass', hidden: false, clips: [
@@ -192,7 +192,7 @@ try {
       body: JSON.stringify({ id: MOVER_CARD, source: MOVER_SOURCE, projectId: PROJECT.id }), signal: AbortSignal.timeout(60_000) });
     const body = await r.json().catch(() => null);
     out.moverCard = { id: MOVER_CARD, status: r.status, ok: body?.ok ?? null, errors: r.status === 200 ? undefined : (body?.errors ?? [body?.error]).slice?.(0, 6) };
-    if (!check(r.status === 200 && body?.ok === true, '下面那张用户卡建出来了(POST /api/cards/create 回 200)', out.moverCard)) throw new Error('用户卡没建出来');
+    if (!check(r.status === 200 && body?.ok === true, 'The user card underneath was created (POST /api/cards/create returned 200)', out.moverCard)) throw new Error('The user card was not created');
   }
 
   browser = await puppeteer.launch({ headless: true, protocolTimeout: 300000,
@@ -228,7 +228,7 @@ try {
   /* ---------------------------------------------------------------- 0. 项目、钉重卡、等流 */
   const loaded = await store(`actions.loadProject(args[0]); actions.select([]); actions.pause(); actions.seek(0); return getState().project.tracks.map(t => t.clips.map(c => c.id))`, PROJECT);
   out.loaded = loaded;
-  if (!check(JSON.stringify(loaded) === JSON.stringify([[GLASS], [MOVER]]), '项目载入了:上面毛玻璃卡、下面那张用户卡', loaded)) throw new Error('项目没载入');
+  if (!check(JSON.stringify(loaded) === JSON.stringify([[GLASS], [MOVER]]), 'Project loaded: the frosted-glass card above and the user card below', loaded)) throw new Error('The project did not load');
   const project = await storeProject();
   /*
    * 活渲的参照:流还没产出来(毛玻璃卡在舞台上没有流平面、没有快照)的时候,暂停着点到第 1 步要用的那几帧,各截一张。
@@ -270,7 +270,7 @@ try {
       await sleep(150);
       await store(`actions.pause(); actions.seek(args[0]);`, f / FPS);
       let last = null, kept = null;
-      await until(`活渲的参照:第 ${f} 帧稳定下来`, async () => {
+      await until(`Live render reference: frame ${f} settled`, async () => {
         if (!(await plain(f))) { last = null; return null; }
         const shot = await shootStage();
         if (!shot) return null;
@@ -295,7 +295,7 @@ try {
     if (persist && typeof rec.stepMs === 'number') await fetch('/api/data/costs', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ records: [rec] }) });
     return { vtOk: rec.vtOk ?? null, seekOk: rec.seekOk ?? null, stepMs: rec.stepMs ?? null };
   }, GLASS, persist, patch);
-  await until('毛玻璃卡的成本记录', () => page.evaluate(async (id) => {
+  await until('Cost record of the frosted-glass card', () => page.evaluate(async (id) => {
     const { getState } = await import('/src/store/project.ts');
     const { clipIdentityOf } = await import('/src/editor/costIdentity.ts');
     const pd = await import('/src/editor/planDispatch.ts');
@@ -343,7 +343,7 @@ try {
       return [...scores].sort((x, y) => x[1] - y[1])[0]?.[0] ?? null;
     };
     await store(`actions.pause(); actions.seek(args[0]);`, (FIRST + 5) / FPS);
-    await until('对照:父页的分派表里毛玻璃卡判重', async () => { await pinHeavy(); const p = await parentDiag(); return p?.heavy.includes(GLASS) ? true : null; }, 30000, 200);
+    await until('Control: the frosted-glass card is classified as heavy in the parent page\'s dispatch table', async () => { await pinHeavy(); const p = await parentDiag(); return p?.heavy.includes(GLASS) ? true : null; }, 30000, 200);
     const rows = [];
     for (const f of CLICKS) {
       const ref = liveRef.get(f);
@@ -351,7 +351,7 @@ try {
       await sleep(400);
       await store(`actions.pause(); actions.seek(args[0]);`, f / FPS);
       let last = null, kept = null;
-      await until(`对照:第 ${f} 帧停下以后稳定下来`, async () => {
+      await until(`Control: frame ${f} settled after stopping`, async () => {
         const fr = await frontFrame();
         const ok = await fr?.evaluate((id, sec) => {
           const d = window.__pcStageDiag();
@@ -367,23 +367,23 @@ try {
         if (stable) { kept = shot; return true; }
         return null;
       }, 15000, 200, true);
-      rows.push({ frame: f, 重卡停下以后对轻卡时的活渲: ref && kept ? round2(rectMean(kept, ref.shot, GLASS_REGION)) : null, 轻卡时最像导出页的: ref ? bestOf(ref.shot, f) : null, 重卡停下以后最像导出页的: kept ? bestOf(kept, f) : null });
+      rows.push({ frame: f, heavyAfterStopVsLightLiveRender: ref && kept ? round2(rectMean(kept, ref.shot, GLASS_REGION)) : null, lightBestMatchExportFrame: ref ? bestOf(ref.shot, f) : null, heavyAfterStopBestMatchExportFrame: kept ? bestOf(kept, f) : null });
     }
     out.settleControl = rows;
     say('settle-control', { rows, setTimeLog: (await parentDiag())?.setTimeLog.slice(-4) });
     throw Object.assign(new Error('settle-control-done'), { done: true });
   }
   const startedPrerender = Date.now();
-  const ready = await waitStream('毛玻璃卡的依赖下层的流全部分段满密度');
-  if (!ready) throw new Error('依赖下层的流没产出来');
+  const ready = await waitStream('All segments of the frosted-glass card\'s below-dependent stream at full density');
+  if (!ready) throw new Error('The below-dependent stream was not produced');
   out.produceMs = Date.now() - startedPrerender;
   const key0 = ready.layers.stream.key;
   out.ready = { stream: { ...ready.layers.stream, key: key0.slice(0, 12) }, manifest: { kind: ready.manifest.kind, plane: ready.manifest.plane, bound: ready.manifest.bound, tight: ready.manifest.tight },
     hasSnapshotLayer: !!(ready.layers.html || ready.layers.local) };
   say('stream-ready', { ms: out.produceMs, ...out.ready });
-  check(ready.manifest.kind === 'below' && ready.manifest.plane === 'stage', '预渲染进程产的是依赖下层的流(清单:kind below、plane stage)', out.ready.manifest);
-  check(ready.layers.stream.originFrame === FIRST, `这条流的第一帧是第 ${FIRST} 帧(不是 15 的倍数)`, ready.layers.stream);
-  check(ready.layers.stream.streamKind === 'below' && /^s1-/.test(ready.layers.stream.inputSig ?? ''), '就绪索引里那一层带着种类和输入签名', out.ready.stream);
+  check(ready.manifest.kind === 'below' && ready.manifest.plane === 'stage', 'The prerender process produces a below-dependent stream (manifest: kind below, plane stage)', out.ready.manifest);
+  check(ready.layers.stream.originFrame === FIRST, `The first frame of this stream is frame ${FIRST} (not a multiple of 15)`, ready.layers.stream);
+  check(ready.layers.stream.streamKind === 'below' && /^s1-/.test(ready.layers.stream.inputSig ?? ''), 'That layer in the ready index carries the kind and the input signature', out.ready.stream);
   await pinHeavy();
   await store(`actions.pause(); actions.seek(args[0]);`, (FIRST + 5) / FPS);
   await sleep(500);
@@ -395,8 +395,8 @@ try {
       return streamInputSig(getState().project, { clipIds: [id], kind: 'below' });
     }, GLASS);
     out.signature = { layer: ready.layers.stream.inputSig, page: pageSig, staleBelow: p?.staleBelow ?? null };
-    check(pageSig === ready.layers.stream.inputSig && (p?.staleBelow ?? []).length === 0, '预渲染进程带来的签名和页面按 store 里的项目算的是同一个(父页没有把它判成过期)', out.signature);
-    check(!!p?.heavy.includes(GLASS) && !p.heavy.includes(MOVER), '父页的分派表里毛玻璃卡判重、下面那张卡是轻卡(活渲)', p?.heavy);
+    check(pageSig === ready.layers.stream.inputSig && (p?.staleBelow ?? []).length === 0, 'The signature from the prerender process is the same one the page computes from the project in the store (the parent page did not mark it as stale)', out.signature);
+    check(!!p?.heavy.includes(GLASS) && !p.heavy.includes(MOVER), 'In the parent page\'s dispatch table the frosted-glass card is classified as heavy and the card below it is a light card (live render)', p?.heavy);
   }
 
   /* ---------------------------------------------------------------- 参照:导出页逐帧 */
@@ -432,7 +432,7 @@ try {
   };
   const shootAndScore = async (candidates, saveAs = null, from = exported, tag = 'p') => {
     const shot = await shootStage(saveAs);
-    return shot ? scoreShot(shot, candidates, from, tag) : { error: '找不到可见舞台' };
+    return shot ? scoreShot(shot, candidates, from, tag) : { error: 'Visible stage not found' };
   };
   // 参照的那几张(不贴流的活渲)各最像导出页的哪一帧:只记录
   for (const ref of liveRef.values()) ref.best = scoreShot(ref.shot, [ref.frame - 2, ref.frame - 1, ref.frame, ref.frame + 1, ref.frame + 2]).best;
@@ -520,16 +520,16 @@ try {
     return total;
   };
   const checkSampler = (label, s) => {
-    check(s.samples > 0, `${label}:采到了样`, s.samples);
-    check(s.empty === 0, `${label}:毛玻璃卡没有「活子树藏着、流又没有画面」的时刻`, { empty: s.empty, runs: s.emptyRuns, log: s.log.slice(0, 40) });
-    check(s.placeholder === 0, `${label}:占位符没有显示出来`, { placeholder: s.placeholder, log: s.log.slice(0, 40) });
-    check(s.snapshot === 0, `${label}:一张快照都没有挂(有流不读快照)`, { snapshot: s.snapshot, log: s.log.slice(0, 40) });
-    check(s.both === 0, `${label}:活画面和流没有叠在一起的时刻`, { both: s.both, log: s.log.slice(0, 40) });
+    check(s.samples > 0, `${label}: samples were collected`, s.samples);
+    check(s.empty === 0, `${label}: the frosted-glass card never has a moment when "the live subtree is hidden and the stream has no picture"`, { empty: s.empty, runs: s.emptyRuns, log: s.log.slice(0, 40) });
+    check(s.placeholder === 0, `${label}: the placeholder was not shown`, { placeholder: s.placeholder, log: s.log.slice(0, 40) });
+    check(s.snapshot === 0, `${label}: no snapshot is mounted at all (with a stream, snapshots are not read)`, { snapshot: s.snapshot, log: s.log.slice(0, 40) });
+    check(s.both === 0, `${label}: there is no moment when the live picture and the stream are stacked together`, { both: s.both, log: s.log.slice(0, 40) });
   };
   /** 停下以后:回到精确活渲 —— 不抑制、活子树露着、没有快照、没有占位符;流平面藏着、这一帧已经解好;父页照发着流平面 */
   const waitSettled = async (label, frame) => {
     const began = Date.now();
-    const state = await until(`${label}:停下以后回到精确活渲`, async () => {
+    const state = await until(`${label}: back to the exact live render after stopping`, async () => {
       const s = await cardState();
       const p = await parentDiag();
       if (!s || s.error || !p || !s.mounted) return null;
@@ -538,36 +538,36 @@ try {
       return exact ? { s, p } : null;
     }, 60000, 40);
     if (!state) { say('not-settled', { card: await cardState(), parent: await parentDiag() }); return { ok: false, ms: Date.now() - began }; }
-    const warm = await until(`${label}:停下以后流平面藏着、这一帧已经解好`, async () => {
+    const warm = await until(`${label}: after stopping, the stream plane is hidden and this frame is already decoded`, async () => {
       const s = await cardState();
       return s && s.track && s.track.lastDrawn === frame && !s.planeShown && s.planes.length === 1 ? s : null;
     }, 8000, 40);
     const p = await parentDiag();
-    check(!!warm, `${label}:停下以后流平面藏着、播放头下这一帧已经解好`, await cardState());
-    check(p.streams.length === 1 && p.streams[0].plane === 'stage' && p.scrub.length === 0 && p.picks.length === 0 && p.mounted.length === 0, `${label}:停下以后父页照发流平面(舞台坐标)、不抑制、不选快照`, p);
+    check(!!warm, `${label}: after stopping, the stream plane is hidden and the frame under the playhead is already decoded`, await cardState());
+    check(p.streams.length === 1 && p.streams[0].plane === 'stage' && p.scrub.length === 0 && p.picks.length === 0 && p.mounted.length === 0, `${label}: after stopping, the parent page keeps sending the stream plane (stage coordinates), with no suppression and no snapshot picked`, p);
     return { ok: true, ms: Date.now() - began };
   };
 
-  check(CLICKS.filter((f) => liveRef.has(f)).length >= 3, '活渲的参照:流产出来之前至少截到了三处', [...liveRef.keys()]);
-  if ([...liveRef.values()].some((r) => r.best !== r.frame)) notes.push(`里程表不贴流时预览的活渲就和导出页对不齐(与流无关;帧号 → 最像导出页的帧):${JSON.stringify([...liveRef.values()].map((r) => [r.frame, r.best]))}`);
+  check(CLICKS.filter((f) => liveRef.has(f)).length >= 3, 'Live render reference: at least three spots were captured before the stream was produced', [...liveRef.keys()]);
+  if ([...liveRef.values()].some((r) => r.best !== r.frame)) notes.push(`When the odometer does not paste the stream, the preview's live render already does not line up with the export page (unrelated to the stream; frame number → closest export-page frame): ${JSON.stringify([...liveRef.values()].map((r) => [r.frame, r.best]))}`);
 
   /* ---------------------------------------------------------------- 1. 点时间轴跳过去 */
   await store(`actions.pause(); actions.seek(args[0]);`, (FIRST + 5) / FPS);
-  await waitSettled('起步', FIRST + 5);
+  await waitSettled('Start', FIRST + 5);
   out.click = [];
   for (const f of CLICKS) {
     await installSampler();
     await store(`actions.pause(); actions.seek(args[0]);`, f / FPS);
-    const settled = await waitSettled(`点到第 ${f} 帧`, f);
+    const settled = await waitSettled(`Click to frame ${f}`, f);
     const sampler = await collectSampler();
-    checkSampler(`点到第 ${f} 帧`, sampler);
+    checkSampler(`Click to frame ${f}`, sampler);
     const score = await shootAndScore([f - 2, f - 1, f, f + 1, f + 2], f === CLICKS[0] ? `click-${f}-settled.png` : null);
     const ref = liveRef.get(f);
     const vsLive = ref ? round2(rectMean(score.shot, ref.shot, region)) : null;
     // 只记录:重卡停下追到活渲走的是另一条路(子树虚拟时间追帧),入场动画没放完的帧上它和轻卡时的活渲会差一帧 ——
     // 不产这种流的对照档(`--settle-control`)里同样如此,不是贴流带来的。差得多的记进 notes
-    if (ref && !(vsLive < 1)) notes.push(`点到第 ${f} 帧:贴流再停下以后的活渲和轻卡时的活渲不是同一张(平均差 ${vsLive};最像导出页的帧 ${score.best} 对 ${ref.best})。对照档 --settle-control(不产这种流)里重卡停下以后同样如此`);
-    out.click.push({ 对不贴流的活渲: vsLive, 不贴流最像导出页的: ref?.best ?? null, frame: f, settledMs: settled.ms, best: score.best, mean: score.mean, runnerUp: score.runnerUp, log: sampler.log.slice(0, 10) });
+    if (ref && !(vsLive < 1)) notes.push(`Click to frame ${f}: the live render after stream paste and then stopping is not the same image as the live render with the light card (mean difference ${vsLive}; closest export-page frame ${score.best} vs ${ref.best}). The same holds after a heavy card stops in the control mode --settle-control (which does not produce this kind of stream)`);
+    out.click.push({ vsLiveRenderWithoutStreamPaste: vsLive, bestMatchExportFrameWithoutStreamPaste: ref?.best ?? null, frame: f, settledMs: settled.ms, best: score.best, mean: score.mean, runnerUp: score.runnerUp, log: sampler.log.slice(0, 10) });
   }
   say('1-click', { clicks: out.click.map((c) => ({ frame: c.frame, settledMs: c.settledMs, best: c.best, mean: c.mean, runnerUp: c.runnerUp })) });
 
@@ -583,7 +583,7 @@ try {
     }).filter(Boolean);
     return { left: r.left, right: r.right, y: r.top + r.height / 2, ticks };
   });
-  if (!ruler || ruler.ticks.length < 2) throw new Error('量不到标尺的刻度');
+  if (!ruler || ruler.ticks.length < 2) throw new Error('Cannot measure the ruler ticks');
   const tk0 = ruler.ticks[0], tk1 = ruler.ticks[ruler.ticks.length > 2 ? 2 : 1];
   const pxPerSec = (tk1.x - tk0.x) / (tk1.sec - tk0.sec);
   await store(`actions.pause(); actions.seek(args[0]);`, 2);
@@ -595,7 +595,7 @@ try {
   });
   let xZero = head ? head.x - head.t * pxPerSec : tk0.x - tk0.sec * pxPerSec;
   out.ruler = { pxPerSec: +pxPerSec.toFixed(3), xZero: +xZero.toFixed(2) };
-  check(pxPerSec / FPS >= 2, '标尺上一帧至少 2 像素(指针落得准)', out.ruler);
+  check(pxPerSec / FPS >= 2, 'At least 2 pixels per frame on the ruler (the pointer lands accurately)', out.ruler);
   const xOf = (frame) => xZero + ((frame + 0.5) / FPS) * pxPerSec;
   const moveToFrame = async (frame, { down = false } = {}) => {
     let landed = null;
@@ -611,26 +611,26 @@ try {
   };
   /** 拖到这一帧以后:流画出这一帧;核这张卡在舞台上、父页那一侧的样子;截图和导出页比 */
   const checkDragStep = async (label, target, { from = exported, tag = 'p', key = null, saveAs = null } = {}) => {
-    const state = await until(`${label}:流画出这一帧`, async () => {
+    const state = await until(`${label}: the stream draws this frame`, async () => {
       const s = await cardState();
       return s && !s.error && s.track && s.track.lastDrawn === target && !s.track.stale && Math.abs(s.t - target / FPS) < 1e-6 && (!key || s.track.key === key.slice(0, 12)) ? s : null;
     }, 15000, 15);
     const s = state ?? await cardState();
     const p = await parentDiag();
     if (s && !s.error) {
-      check(s.suppressed && /\bpc-suppressed\b/.test(s.cls ?? '') && s.liveHidden, `${label}:毛玻璃卡被抑制、活子树藏着`, s);
-      check(s.planeShown && !s.canvasInWrapper && s.track?.level === 'dense' && s.track?.kind === 'below' && s.track?.plane === 'stage' && s.track?.fits === true, `${label}:舞台根下的流平面露着,贴的是满密度的这一帧`, s);
-      check(!s.placeholder && !s.snapshot && !s.awaiting, `${label}:没有占位符、没有快照、不等快照`, s);
-      check((s.track?.errors ?? 0) === 0, `${label}:解码没有报错`, s.track);
+      check(s.suppressed && /\bpc-suppressed\b/.test(s.cls ?? '') && s.liveHidden, `${label}: the frosted-glass card is suppressed and the live subtree is hidden`, s);
+      check(s.planeShown && !s.canvasInWrapper && s.track?.level === 'dense' && s.track?.kind === 'below' && s.track?.plane === 'stage' && s.track?.fits === true, `${label}: the stream plane under the stage root is shown, pasting the full-density version of this frame`, s);
+      check(!s.placeholder && !s.snapshot && !s.awaiting, `${label}: no placeholder, no snapshot, not waiting for a snapshot`, s);
+      check((s.track?.errors ?? 0) === 0, `${label}: no decode errors`, s.track);
     }
     check(p.suppressed.includes(GLASS) && !p.suppressed.includes(MOVER) && p.streams.length === 1 && p.streams[0].plane === 'stage' && p.picks.length === 0 && p.mounted.length === 0 && p.staleBelow.length === 0,
-      `${label}:父页只抑制毛玻璃卡、发它的流平面(舞台坐标)、不选快照`, p);
+      `${label}: the parent page only suppresses the frosted-glass card, sends its stream plane (stage coordinates) and does not pick a snapshot`, p);
     const score = await shootAndScore([target - 1, target, target + 1], saveAs, from, tag);
-    check(score.best === target, `${label}:截图和导出页的第 ${target} 帧最像(比前一帧、后一帧都像)`, { best: score.best, scores: score.scores });
+    check(score.best === target, `${label}: the screenshot most resembles frame ${target} of the export page (more than both the previous frame and the next frame)`, { best: score.best, scores: score.scores });
     return { state: s, parent: p, score };
   };
   {
-    await waitSettled('拖动之前', 60);
+    await waitSettled('Before drag', 60);
     await installSampler();
     await page.keyboard.down('Alt');   // 不吸附到整秒 / 片段边界,落在哪一帧由坐标定
     const steps = [];
@@ -639,17 +639,17 @@ try {
       const landed = await moveToFrame(target, { down: i === 0 });
       const step = { i, target, landed, sample: (target - FIRST) % SEG };
       steps.push(step);
-      if (!check(landed === target, `拖动第 ${i} 步落在第 ${target} 帧`, { landed })) continue;
-      const r = await checkDragStep(`拖动第 ${i} 步(第 ${target} 帧)`, target, { saveAs: [33, 70].includes(target) ? `drag-${target}-stream.png` : null });
+      if (!check(landed === target, `Drag step ${i} lands on frame ${target}`, { landed })) continue;
+      const r = await checkDragStep(`Drag step ${i} (frame ${target})`, target, { saveAs: [33, 70].includes(target) ? `drag-${target}-stream.png` : null });
       step.best = r.score.best; step.mean = r.score.mean; step.runnerUp = r.score.runnerUp;
-      check(r.parent.setTimeLog.at(-1)?.settle === false, `拖动第 ${i} 步:这一次 setTime 不带「停下」`, r.parent.setTimeLog.at(-1));
+      check(r.parent.setTimeLog.at(-1)?.settle === false, `Drag step ${i}: this setTime call does not carry "settle"`, r.parent.setTimeLog.at(-1));
     }
     await page.mouse.up();
     await page.keyboard.up('Alt');
     const released = STEPS.at(-1);
-    const settled = await waitSettled('松手', released);
+    const settled = await waitSettled('Release', released);
     const sampler = await collectSampler();
-    checkSampler('拖动全程', sampler);
+    checkSampler('Entire drag', sampler);
     out.drag = { steps, releasedAt: released, settleMs: settled.ms, empty: sampler.empty, placeholder: sampler.placeholder, snapshot: sampler.snapshot };
     say('2-drag', { steps: steps.map((s) => [s.target, s.best, s.mean, s.runnerUp]), settleMs: settled.ms });
   }
@@ -658,7 +658,7 @@ try {
   out.play = [];
   for (const [round, [from, playMs]] of [[20, 900], [45, 600]].entries()) {
     await store(`actions.pause(); actions.seek(args[0]);`, from / FPS);
-    await waitSettled(`第 ${round} 轮起播之前`, from);
+    await waitSettled(`Before playback starts in round ${round}`, from);
     await installSampler();
     for (const f of stageFrames()) await f.evaluate(() => { window.__pcFallbackTrace = []; }).catch(() => {});
     await store(`actions.play();`);
@@ -673,15 +673,15 @@ try {
     }
     const beats = traces.map((b) => ({ frame: Math.round(b.sec * FPS), level: b.levels[GLASS] ?? null, snapshots: b.snapshots }));
     const stopped = frameOf(await storeT());
-    const settled = await waitSettled(`第 ${round} 轮播放中暂停`, stopped);
+    const settled = await waitSettled(`Pause during playback in round ${round}`, stopped);
     const sampler = await collectSampler();
-    checkSampler(`第 ${round} 轮起播到暂停全程`, sampler);
+    checkSampler(`Round ${round}, entire run from playback start to pause`, sampler);
     const inRange = beats.filter((b) => b.frame >= FIRST && b.frame <= LAST);
     const notDense = inRange.filter((b) => b.level !== 'dense');
-    check(inRange.length >= 8, `第 ${round} 轮:播了一段`, beats.length);
-    check(beats[0]?.frame === from + 1 && beats[0]?.level === 'dense', `第 ${round} 轮起播:头一拍毛玻璃卡就是流的画面(暂停着已经把这一帧解好)`, beats.slice(0, 3));
-    check(notDense.length === 0, `第 ${round} 轮播放:每一拍都是满密度流的画面(没有空拍、没有占位符、没有快照)`, notDense.slice(0, 5));
-    check(beats.every((b) => b.snapshots === 0), `第 ${round} 轮播放:舞台上一张快照都没有`, beats.filter((b) => b.snapshots).slice(0, 3));
+    check(inRange.length >= 8, `Round ${round}: played a stretch`, beats.length);
+    check(beats[0]?.frame === from + 1 && beats[0]?.level === 'dense', `Round ${round} playback start: on the first tick the frosted-glass card already shows the stream picture (this frame was already decoded while paused)`, beats.slice(0, 3));
+    check(notDense.length === 0, `Round ${round} playback: every tick shows the full-density stream picture (no empty ticks, no placeholders, no snapshots)`, notDense.slice(0, 5));
+    check(beats.every((b) => b.snapshots === 0), `Round ${round} playback: there is not a single snapshot on the stage`, beats.filter((b) => b.snapshots).slice(0, 3));
     const score = await shootAndScore([stopped - 2, stopped - 1, stopped, stopped + 1, stopped + 2], round === 0 ? `pause-${stopped}-settled.png` : null);
     const entry = { from, stoppedAt: stopped, beats: beats.length, firstBeat: beats[0] ?? null, notDense: notDense.length, settleMs: settled.ms, best: score.best, mean: score.mean };
     out.play.push(entry);
@@ -691,45 +691,45 @@ try {
   /* ---------------------------------------------------------------- 4. 下层改一处:旧流不贴、重产、再贴 */
   {
     await store(`actions.pause(); actions.seek(args[0]);`, 60 / FPS);
-    await waitSettled('改下层之前', 60);
+    await waitSettled('Before editing the layer below', 60);
     await page.keyboard.down('Alt');
     const landed = await moveToFrame(EDIT_AT, { down: true });
-    check(landed === EDIT_AT, `按着标尺停在第 ${EDIT_AT} 帧`, { landed });
-    const before = await checkDragStep('改下层之前(贴着旧流)', EDIT_AT, { key: key0 });
+    check(landed === EDIT_AT, `Pressing on the ruler lands on frame ${EDIT_AT}`, { landed });
+    const before = await checkDragStep('Before editing the layer below (pasting the old stream)', EDIT_AT, { key: key0 });
     await installSampler();
     // 把下面那张卡的一个参数改掉(亮带的颜色)。store 换成新的项目对象,父页按它算的签名和旧流带的对不上
     const editedAt = Date.now();
     await store(`actions.setClipParams(args[0], { accent: '#ff4d6d' });`, MOVER);
-    const dropped = await until('下层改了以后父页不再发旧流的流平面', async () => {
+    const dropped = await until('After the layer below changes, the parent page no longer sends the stream plane of the old stream', async () => {
       const p = await parentDiag();
       const s = await cardState();
       return p && p.staleBelow.includes(GLASS) && p.streams.length === 0 && s && !s.error && !s.track && s.planes.length === 0 ? { p, s, ms: Date.now() - editedAt } : null;
     }, 5000, 10);
     const edit = { frame: EDIT_AT, oldKey: key0.slice(0, 12), droppedMs: dropped?.ms ?? null, afterDrop: dropped ? { staleBelow: dropped.p.staleBelow, streams: dropped.p.streams.length, suppressed: dropped.p.suppressed, picks: dropped.p.picks, stageSuppressed: dropped.s.suppressed, placeholder: dropped.s.placeholder } : null };
-    check(!!dropped, '下层改了一处:父页当场认出旧流过期(签名对不上),不再发它的流平面,舞台上旧流的轨道关掉', { parent: await parentDiag(), card: await cardState() });
+    check(!!dropped, 'One spot in the layer below changed: the parent page immediately recognizes the old stream as stale (signature mismatch), stops sending its stream plane, and the old stream\'s track on the stage is closed', { parent: await parentDiag(), card: await cardState() });
     // 这一帧没有流了:暂停 / 拖动时照没有流的重卡办(现状:不抑制,落到快照,再没有就露出活组件)
-    if (dropped) check(!dropped.p.suppressed.includes(GLASS) && !dropped.p.scrub.includes(GLASS), '旧流过期以后这张卡当作没有流:不再因为贴流而抑制', dropped.p);
+    if (dropped) check(!dropped.p.suppressed.includes(GLASS) && !dropped.p.scrub.includes(GLASS), 'After the old stream goes stale, this card is treated as having no stream: no longer suppressed because of stream paste', dropped.p);
     // 重产:预渲染进程按新项目换版本,新键到货
     const t0 = Date.now();
-    const again = await waitStream('下层改了以后新流全部分段满密度', key0);
-    if (!again) throw new Error('改了下层以后新流没产出来');
+    const again = await waitStream('After the layer below changes, all segments of the new stream are at full density', key0);
+    if (!again) throw new Error('The new stream was not produced after the layer below was edited');
     edit.reproduceMs = Date.now() - t0;
     const key1 = again.layers.stream.key;
     edit.newKey = key1.slice(0, 12);
     edit.newLayer = { streamKind: again.layers.stream.streamKind, inputSig: again.layers.stream.inputSig, oldSig: ready.layers.stream.inputSig };
-    check(key1 !== key0 && again.layers.stream.inputSig !== ready.layers.stream.inputSig && again.layers.stream.streamKind === 'below', '重产出来的是新键、新签名', edit);
+    check(key1 !== key0 && again.layers.stream.inputSig !== ready.layers.stream.inputSig && again.layers.stream.streamKind === 'below', 'The re-produced stream has a new key and a new signature', edit);
     region = tightOf(again.manifest);
     const edited = await storeProject();
     const exported1 = await exportAll(edited, 'edited');
     // 手还按着:父页收到新的一层以后自己重新发流平面,舞台贴上新流
-    const after = await checkDragStep('重产以后(贴着新流)', EDIT_AT, { from: exported1, tag: 'e', key: key1, saveAs: `edit-${EDIT_AT}-new-stream.png` });
+    const after = await checkDragStep('After re-producing (pasting the new stream)', EDIT_AT, { from: exported1, tag: 'e', key: key1, saveAs: `edit-${EDIT_AT}-new-stream.png` });
     const vsOld = round2(rectMean(after.score.shot, resized(exported.get(EDIT_AT), after.score.size[0], after.score.size[1]), region));
-    edit.afterMean = after.score.mean; edit.afterRunnerUp = after.score.runnerUp; edit.对改之前的导出页同一帧 = vsOld; edit.beforeMean = before.score.mean;
-    check(vsOld > after.score.mean * 1.3 + 0.3, '对照:贴着新流的画面拿改之前的导出页比明显更差(这套比法分得出下层变没变)', edit);
+    edit.afterMean = after.score.mean; edit.afterRunnerUp = after.score.runnerUp; edit.vsPreEditExportSameFrame = vsOld; edit.beforeMean = before.score.mean;
+    check(vsOld > after.score.mean * 1.3 + 0.3, 'Control: the picture pasting the new stream is clearly worse when compared against the pre-edit export page (this comparison method can tell whether the layer below changed)', edit);
     // 再拖两处,都是新流
     for (const f of [EDIT_AT + 19, EDIT_AT - 13]) {
       const got = await moveToFrame(f);
-      if (check(got === f, `重产以后拖到第 ${f} 帧`, { got })) await checkDragStep(`重产以后拖到第 ${f} 帧`, f, { from: exported1, tag: 'e', key: key1 });
+      if (check(got === f, `Drag to frame ${f} after re-producing`, { got })) await checkDragStep(`Drag to frame ${f} after re-producing`, f, { from: exported1, tag: 'e', key: key1 });
     }
     await page.mouse.up();
     await page.keyboard.up('Alt');
@@ -738,17 +738,17 @@ try {
     const order = sampler.keys.filter((k, i, a) => i === 0 || a[i - 1] !== k);
     edit.shownKeys = order;
     const firstGone = order.findIndex((k) => k !== key0.slice(0, 12));
-    check(order.includes(key1.slice(0, 12)) && (firstGone < 0 || !order.slice(firstGone).includes(key0.slice(0, 12))), '旧流撤下以后再也没有被贴回去;后来贴的是新流', order);
+    check(order.includes(key1.slice(0, 12)) && (firstGone < 0 || !order.slice(firstGone).includes(key0.slice(0, 12))), 'After the old stream was withdrawn it was never pasted back; what was pasted afterwards is the new stream', order);
     out.edit = edit;
     say('4-edit', edit);
-    await waitSettled('改完松手', EDIT_AT - 13);
+    await waitSettled('Release after editing', EDIT_AT - 13);
   }
 
   out.pageErrors = pageErrors.slice(0, 5);
-  check(pageErrors.length === 0, '页面没有未捕获的错误', pageErrors.slice(0, 3));
+  check(pageErrors.length === 0, 'Page has no uncaught errors', pageErrors.slice(0, 3));
 } catch (error) {
   if (!error?.done) {
-    fails.push(`异常:${error?.stack || error}`);
+    fails.push(`Exception: ${error?.stack || error}`);
     say('ERROR', { error: String(error?.stack || error) });
   }
 } finally {

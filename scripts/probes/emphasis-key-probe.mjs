@@ -50,7 +50,7 @@ const PORT = Number(flagArg('port', '27840', args));
 const KEEP = args.includes('--keep');
 const JSON_OUT = flagArg('json', null, args);
 const OUT = path.resolve(flagArg('out', null, args) || path.join(os.tmpdir(), `pc-emphasis-key-probe-${Date.now().toString(36)}`));
-if (!(PORT >= 20000)) throw new Error('端口要在 20000 以上');
+if (!(PORT >= 20000)) throw new Error('The port must be 20000 or above');
 
 const say = (step, fields = {}) => process.stderr.write(`${JSON.stringify({ step, t: Date.now(), ...fields })}\n`);
 const fails = [];
@@ -62,7 +62,7 @@ async function until(label, fn, timeoutMs, everyMs = 500) {
     let value = null;
     try { value = await fn(); } catch { value = null; }
     if (value) return value;
-    if (Date.now() > deadline) { fails.push(`超时:${label}`); return null; }
+    if (Date.now() > deadline) { fails.push(`Timeout: ${label}`); return null; }
     await sleep(everyMs);
   }
 }
@@ -72,7 +72,7 @@ const BOX_L = { x: 80, y: 60, w: 800, h: 450 };
 const BOX_R = { x: 1040, y: 570, w: 800, h: 450 };
 const TEXT = { 'clip-l': 'AAA', 'clip-r': 'ZZZ', 'clip-late': 'LATE', 'clip-twin': 'AAA' };
 const PROJECT = {
-  id: 'emphasis-key-probe', name: '强调键探针', width: 1920, height: 1080, fps: 30, duration: 8,
+  id: 'emphasis-key-probe', name: 'Emphasis key probe', width: 1920, height: 1080, fps: 30, duration: 8,
   themeId: 'dark', media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
   tracks: [
     { id: 'tr-l', name: 'l', hidden: false, clips: [
@@ -176,11 +176,11 @@ try {
   child.stderr.on('data', keep);
   say('spawn', { pid: child.pid, port: PORT });
   const origin = `http://127.0.0.1:${PORT}`;
-  const up = await until('dev server 起来', async () => {
-    if (child.exitCode !== null) throw new Error(`dev server 退出了:${log.join('').slice(-600)}`);
+  const up = await until('dev server is up', async () => {
+    if (child.exitCode !== null) throw new Error(`dev server exited: ${log.join('').slice(-600)}`);
     return fetch(`${origin}/`, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok, () => false);
   }, 180_000, 300);
-  if (!up) throw new Error(`dev server 没起来:${log.join('').slice(-600)}`);
+  if (!up) throw new Error(`dev server did not start: ${log.join('').slice(-600)}`);
   out.origin = origin;
 
   // ---------- 1. 管线:灌项目,等流全部满密度、共享档快照产齐。不钉预渲染集合:进不进集合照产品自己判
@@ -197,9 +197,9 @@ try {
     for (const s of status.streams) for (let n = s.firstSegment; n <= s.lastSegment; n++) if (s.segments[n]?.stride !== 1) return null;
     return !producer.workers.size && !producer.encoding.size ? status : null;
   };
-  await until('card plan 算出来', () => (Array.isArray(entry.cardPlan) && entry.cardPlan.length ? entry.cardPlan : null), 180_000);
-  const status = await until('全部分段满密度', dense, 900_000, 1000);
-  if (!status) throw new Error('流没产完');
+  await until('card plan is computed', () => (Array.isArray(entry.cardPlan) && entry.cardPlan.length ? entry.cardPlan : null), 180_000);
+  const status = await until('all segments at full density', dense, 900_000, 1000);
+  if (!status) throw new Error('The streams were not fully produced');
   const plan = entry.cardPlan ?? [];
   const controlOf = Object.fromEntries(plan.map((control) => [control.clipId, control]));
   // 快照是后台一张卡一张卡、每批 4 帧慢慢产的(实测一批十几秒),每张卡的头一帧先产:等到每个片段的键下面至少有一帧(不要求整张产齐),进度记进结论
@@ -218,7 +218,7 @@ try {
     if (!last || CLIPS.some((clipId) => last[clipId] !== row[clipId])) out.snapshotProgress.push(row);
     return done ? true : null;
   };
-  await until('每个片段的键下面都有快照', snapshotsDone, 1_200_000, 2000);
+  await until('every clip\'s key has a snapshot', snapshotsDone, 1_200_000, 2000);
   out.produceMs = Date.now() - t0;
 
   // ---------- 2. 记下计划、流、层
@@ -248,25 +248,25 @@ try {
   // ---------- 3. 前提与键
   for (const clipId of CLIPS) {
     const c = controlOf[clipId];
-    if (!check(!!c, `${clipId}:card plan 里有它`)) continue;
-    check(/\/emphasis$/.test(c.nodeId), `${clipId}:输出节点是强调节点`, c.nodeId);
-    check(c.tier === 'shared' && c.cacheable === true, `${clipId}:共享档、能单独预渲染`, { tier: c.tier, cacheable: c.cacheable });
-    check(pipeline.prerenderPicked(entry, clipId), `${clipId}:进了预渲染集合`);
-    check(!!stateOf(clipId), `${clipId}:有单卡流(自己的,或与别的片段共用的)`);
+    if (!check(!!c, `${clipId}: it is in the card plan`)) continue;
+    check(/\/emphasis$/.test(c.nodeId), `${clipId}: the output node is the emphasis node`, c.nodeId);
+    check(c.tier === 'shared' && c.cacheable === true, `${clipId}: shared tier, can be prerendered on its own`, { tier: c.tier, cacheable: c.cacheable });
+    check(pipeline.prerenderPicked(entry, clipId), `${clipId}: it is in the prerender set`);
+    check(!!stateOf(clipId), `${clipId}: has a single-card stream (its own, or one shared with other clips)`);
   }
   for (const [a, b] of DISTINCT) {
     const ca = controlOf[a], cb = controlOf[b];
     if (!ca || !cb) continue;
-    for (const name of ['contentKey', 'streamMemberKey', 'snapshotKey']) check(ca[name] !== cb[name], `${a} 与 ${b}:${name} 不能相同`, short(ca[name]));
+    for (const name of ['contentKey', 'streamMemberKey', 'snapshotKey']) check(ca[name] !== cb[name], `${a} and ${b}: ${name} must not be the same`, short(ca[name]));
   }
   {
     const sl = stateOf('clip-l'), sr = stateOf('clip-r');
-    check(!!sl && !!sr && sl !== sr && sl.spec.streamKey !== sr.spec.streamKey, 'clip-l 与 clip-r:各有各的流(流键不同)', { l: short(sl?.spec.streamKey), r: short(sr?.spec.streamKey) });
+    check(!!sl && !!sr && sl !== sr && sl.spec.streamKey !== sr.spec.streamKey, 'clip-l and clip-r: each has its own stream (stream keys differ)', { l: short(sl?.spec.streamKey), r: short(sr?.spec.streamKey) });
     const l = controlOf['clip-l'], twin = controlOf['clip-twin'];
     if (l && twin) {
-      check(l.contentKey === twin.contentKey && l.snapshotKey === twin.snapshotKey && l.streamMemberKey === twin.streamMemberKey, 'clip-l 与 clip-twin:里外都相同,快照的键相同(共用一份)',
+      check(l.contentKey === twin.contentKey && l.snapshotKey === twin.snapshotKey && l.streamMemberKey === twin.streamMemberKey, 'clip-l and clip-twin: identical inside and out, so the snapshot keys are the same (one shared copy)',
         { l: short(l.contentKey), twin: short(twin.contentKey) });
-      check(stateOf('clip-l')?.spec.streamKey !== stateOf('clip-twin')?.spec.streamKey, 'clip-l 与 clip-twin:入点不同,流键不同');
+      check(stateOf('clip-l')?.spec.streamKey !== stateOf('clip-twin')?.spec.streamKey, 'clip-l and clip-twin: different in points, so the stream keys differ');
     }
   }
 
@@ -281,15 +281,15 @@ try {
     const has = Object.fromEntries(['AAA', 'ZZZ', 'LATE'].map((text) => [text, typeof html === 'string' && html.includes(text)]));
     out.snapshots[clipId] = { key: short(c.snapshotKey), localFrame, frames: index.frames, bytes: typeof html === 'string' ? html.length : null, has };
     if (typeof html === 'string') await fs.writeFile(path.join(SHOTS, `snapshot-${clipId}.html`), html);
-    if (!check(typeof html === 'string', `${clipId}:它的键下面有快照`)) continue;
+    if (!check(typeof html === 'string', `${clipId}: there is a snapshot under its key`)) continue;
     const own = TEXT[clipId];
-    check(has[own] && Object.entries(has).every(([text, hit]) => text === own || !hit), `${clipId}:快照里是自己的文字 ${own}`, has);
+    check(has[own] && Object.entries(has).every(([text, hit]) => text === own || !hit), `${clipId}: the snapshot contains its own text ${own}`, has);
   }
   say('snapshots', out.snapshots);
 
   // ---------- 5. 舞台:贴流截图 vs 活渲截图
   const ports = await (await fetch(`${origin}/api/stage/ports`)).json();
-  if (!ports.ok || !Array.isArray(ports.ports) || !ports.ports.length) throw new Error(`舞台端口没起来:${JSON.stringify(ports)}`);
+  if (!ports.ok || !Array.isArray(ports.ports) || !ports.ports.length) throw new Error(`Stage ports did not come up: ${JSON.stringify(ports)}`);
   const stageOrigin = `http://127.0.0.1:${ports.ports[0]}`;
   out.stageOrigin = stageOrigin;
   hostServer = await serve(PORT + 5, (req, res) => {
@@ -355,13 +355,13 @@ try {
       rec.regions[clipId] = { box, ...diff };
       await cropPng(streamShot, box, path.join(SHOTS, `crop-${label}-${clipId}-streams.png`));
       await cropPng(liveShot, box, path.join(SHOTS, `crop-${label}-${clipId}-live.png`));
-      check(diff.bigRatio !== null && diff.bigRatio < BIG_RATIO_MAX, `${clipId}:贴流的画面和它自己活渲的画面相符(相差很大的像素 < ${BIG_RATIO_MAX * 100}%)`, diff);
+      check(diff.bigRatio !== null && diff.bigRatio < BIG_RATIO_MAX, `${clipId}: the stream-attached frame matches its own live rendered frame (pixels with large differences < ${BIG_RATIO_MAX * 100}%)`, diff);
     }
     out.stage.push(rec);
     say('stage', rec);
   }
 } catch (error) {
-  fails.push(`异常:${error?.stack || error}`);
+  fails.push(`Exception: ${error?.stack || error}`);
   say('ERROR', { error: String(error?.stack || error) });
 } finally {
   try { await browser?.close(); } catch { /* ignore */ }

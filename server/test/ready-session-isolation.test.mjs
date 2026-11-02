@@ -46,7 +46,7 @@ const layerKeys = list => list.map(l => `${l.clipId}:${l.kind}:${l.key}`).sort()
 
 /* ------------------------------------------------------------ 1. 旧批次晚到 */
 
-test('旧批次晚到:会话换到 E2 之后,E1 的整场景批、控件批、本地档批、锚帧 done 一律进不来', async () => {
+test('late arrival of old batches: after the session switches to E2, E1\'s whole-scene batch, controls batch, local-tier batch and anchor-frame done are all rejected', async () => {
   const p = pipeline();
   const page = watch(p, 's');
   const E1 = entryOf('E1'), E2 = entryOf('E2');
@@ -65,12 +65,12 @@ test('旧批次晚到:会话换到 E2 之后,E1 的整场景批、控件批、�
   assert.equal(p.publishLayer(E1, control('blur', 'BA'), 'local', [[0, 3]]), 0); // renderLocalSnapshots
   p.ready.markDone(E1.key);                                                     // fillAnchorSnapshots 的收尾
 
-  assert.deepEqual(page.seen, [], `旧版本的消息一条都不该到页面:${JSON.stringify(page.seen)}`);
+  assert.deepEqual(page.seen, [], `not a single message from the old version should reach the page: ${JSON.stringify(page.seen)}`);
   assert.deepEqual(layerKeys(page.layers()), ['h:html:KB']);
-  assert.equal(p.ready.peek('s').index.done, false, '旧版本的 done 不算这一版的锚帧就绪');
+  assert.equal(p.ready.peek('s').index.done, false, 'an old version\'s done does not count as this version\'s anchor frame being ready');
 });
 
-test('旧批次晚到:会话从 E2 切回 E1(撤销)之后,E1 的层重新有效,E2 晚到的反而被拦', async () => {
+test('late arrival of old batches: after the session switches from E2 back to E1 (undo), E1\'s layers are valid again and E2\'s late arrivals are blocked instead', async () => {
   const p = pipeline();
   const page = watch(p, 's');
   const E1 = entryOf('E1', [control('h', 'KA')]), E2 = entryOf('E2', [control('h', 'KB')]);
@@ -80,10 +80,10 @@ test('旧批次晚到:会话从 E2 切回 E1(撤销)之后,E1 的层重新有效
   assert.equal(p.publishLayer(E2, control('h', 'KB'), 'shared', [[0, 9]]), 0);
   assert.equal(p.publishLayer(E1, control('h', 'KA'), 'shared', [[0, 9]]), 1);
   assert.deepEqual(layerKeys(page.layers()), ['h:html:KA']);
-  assert.deepEqual(page.seen.filter(m => m.type === 'reset').map(m => m.localRev), [0, 1, 2, 3], '每次换版本各 reset 一次(0 是连上时的 backlog)');
+  assert.deepEqual(page.seen.filter(m => m.type === 'reset').map(m => m.localRev), [0, 1, 2, 3], 'one reset per version change (0 is the backlog at connect time)');
 });
 
-test('旧批次晚到:轨道流的分段落盘时流已属于别的版本,不发到会话', () => {
+test('late arrival of old batches: when a track stream segment is written to disk, the stream already belongs to another version, so it is not sent to the session', () => {
   const p = pipeline();
   const page = watch(p, 's');
   p.adoptSession('s', entryOf('E2'), 2);
@@ -92,12 +92,12 @@ test('旧批次晚到:轨道流的分段落盘时流已属于别的版本,不发
   assert.equal(p.ready.publish('E1', { clipId: 'h', kind: 'stream', key: 'S1', ranges: [[0, 3]] }), 0);
   assert.equal(p.ready.publish('E2', { clipId: 'h', kind: 'stream', key: 'S2', ranges: [[0, 1]] }), 1);
   assert.deepEqual(page.seen.filter(m => m.type === 'layer').map(m => m.key), ['S2']);
-  assert.deepEqual(page.seen.map(m => m.type), ['reset', 'layer'], 'E2 第一次写进来时才补上挂着的 reset,紧挨着新层');
+  assert.deepEqual(page.seen.map(m => m.type), ['reset', 'layer'], 'the pending reset is added only when E2 is first written in, right next to the new layer');
 });
 
 /* ------------------------------------------------------------ 2. Agent / 导出混杂渲染 */
 
-test('Agent / 导出 / 交互帧的 cardRender 渲别的版本:只把计划记在它自己的 entry 上,不 reset、不认领页面会话', async () => {
+test('cardRender for Agent / export / interactive frames rendering another version: records the plan only on its own entry, does not reset, and does not claim the page session', async () => {
   const p = pipeline();
   p.ready.stageByKey({ kind: 'html', key: 'KC', ranges: [[0, 99]] });   // 扫盘挂着 C 版的键
   const page = watch(p, 's');
@@ -110,10 +110,10 @@ test('Agent / 导出 / 交互帧的 cardRender 渲别的版本:只把计划记�
   for (const lane of ['agent', 'final', 'background', 'user', 'playback']) {
     await p.cardRender(C, fakeBakery([control('h', 'KC')]), [0, 1], lane);
   }
-  assert.deepEqual(C.cardPlan.map(c => c.snapshotKey), ['KC'], '计划记在 C 自己身上');
+  assert.deepEqual(C.cardPlan.map(c => c.snapshotKey), ['KC'], 'the plan is recorded on C itself');
   assert.ok(C.prerenderSet instanceof Set);
-  assert.deepEqual(page.seen, [], `页面会话一条消息都不该收到:${JSON.stringify(page.seen)}`);
-  assert.deepEqual(layerKeys(page.layers()), ['h:html:KA'], '页面的层原样留着');
+  assert.deepEqual(page.seen, [], `the page session should not receive a single message: ${JSON.stringify(page.seen)}`);
+  assert.deepEqual(layerKeys(page.layers()), ['h:html:KA'], 'the page\'s layers are left as they were');
   assert.equal(p.ready.current('s'), 'E1');
 
   // Agent 那一版落盘、交批:没有会话在 C 上,全丢
@@ -122,7 +122,7 @@ test('Agent / 导出 / 交互帧的 cardRender 渲别的版本:只把计划记�
   assert.deepEqual(page.seen, []);
 });
 
-test('导出 / 让路恢复重排的 preload(adopt: false)不动任何会话的版本', async () => {
+test('preloads for export / reordering when resuming after a yield (adopt: false) do not change any session\'s version', async () => {
   const p = pipeline();
   const page = watch(p, 's');
   const E1 = entryOf('E1'), X = entryOf('X');
@@ -131,18 +131,18 @@ test('导出 / 让路恢复重排的 preload(adopt: false)不动任何会话的�
   assert.equal(p.ready.current('s'), 'E1');
   page.seen.length = 0;
   await p.preload({ key: 'X', id: 'p', duration: 1 }, { adopt: false, owner: 'session:s' });
-  assert.equal(p.ready.current('s'), 'E1', 'adopt: false 只排活');
+  assert.equal(p.ready.current('s'), 'E1', 'adopt: false only schedules work');
   assert.deepEqual(page.seen, []);
   await p.background;
 });
 
-test('页面的 preload 到时,这一版的计划已被 Agent 算过:马上认领挂着的区间,不等后台排到', async () => {
+test('when the page\'s preload arrives, this version\'s plan has already been computed by the Agent: it claims the pending ranges at once, without waiting for the background queue to reach them', async () => {
   const p = pipeline();
   p.ready.stageByKey({ kind: 'html', key: 'KA', ranges: [[0, 40]] });
   const page = watch(p, 's');
   const E1 = entryOf('E1');
   await p.cardRender(E1, fakeBakery([control('h', 'KA')]), [0], 'agent');   // Agent 先渲过这一版
-  assert.deepEqual(page.layers(), [], 'Agent 渲的时候没有认领');
+  assert.deepEqual(page.layers(), [], 'no claim was made while the Agent was rendering');
   p.entry = async () => E1;
   await p.preload({ id: 'p', duration: 1 }, { session: 's', localRev: 7 });
   assert.deepEqual(page.layers(), [{ clipId: 'h', kind: 'html', key: 'KA', ranges: [[0, 40]] }]);
@@ -152,7 +152,7 @@ test('页面的 preload 到时,这一版的计划已被 Agent 算过:马上认�
 
 /* ------------------------------------------------------------ 3. 多会话交替 */
 
-test('两个会话交替前进:各自只收自己版本的层,共享键相同也不串', () => {
+test('two sessions advance in alternation: each receives only layers of its own version, and nothing gets mixed up even when the shared keys are the same', () => {
   const p = pipeline();
   const a = watch(p, 'tab-a'), b = watch(p, 'tab-b');
   const A1 = entryOf('A1'), B1 = entryOf('B1'), A2 = entryOf('A2'), B2 = entryOf('B2');
@@ -176,12 +176,12 @@ test('两个会话交替前进:各自只收自己版本的层,共享键相同也
   assert.deepEqual(layerKeys(b.layers()), ['g:html:G2']);
   const aReset = a.seen.filter(m => m.type === 'reset').length, bReset = b.seen.filter(m => m.type === 'reset').length;
   assert.equal(aReset, 3, 'A:backlog + A1 + A2');
-  assert.equal(bReset, 3, 'B:backlog + B1 + B2 —— A 换版本不清 B 的表');
-  assert.ok(!a.seen.some(m => m.key === 'G' || m.key === 'G2'), 'B 的层没串到 A');
-  assert.ok(!b.seen.some(m => m.key === 'K2'), 'A 的层没串到 B');
+  assert.equal(bReset, 3, 'B: backlog + B1 + B2: A\'s version change does not clear B\'s table');
+  assert.ok(!a.seen.some(m => m.key === 'G' || m.key === 'G2'), 'B\'s layers did not leak into A');
+  assert.ok(!b.seen.some(m => m.key === 'K2'), 'A\'s layers did not leak into B');
 });
 
-test('两个会话在同一版上:一次发布两边都收到;一边换走另一边照常', () => {
+test('two sessions on the same version: one publish reaches both; when one switches away the other carries on as usual', () => {
   const p = pipeline();
   const a = watch(p, 'a'), b = watch(p, 'b');
   const E = entryOf('E');
@@ -190,11 +190,11 @@ test('两个会话在同一版上:一次发布两边都收到;一边换走另一
   assert.equal(p.publishLayer(E, control('h', 'K'), 'shared', [[0, 3]]), 2);
   p.adoptSession('a', entryOf('F'), 2);
   assert.equal(p.publishLayer(E, control('h', 'K'), 'shared', [[0, 5]]), 1);
-  assert.deepEqual(a.layers()[0].ranges, [[0, 3]], 'a 换到 F(计划还没算出来):旧表先顶着,但 E 的新发布进不来');
+  assert.deepEqual(a.layers()[0].ranges, [[0, 3]], 'a switches to F (plan not computed yet): the old table holds for now, but new publishes for E do not get in');
   assert.deepEqual(b.layers()[0].ranges, [[0, 5]]);
 });
 
-test('同一会话的 preload 乱序完成:晚发出的那一版赢(领号),旧 localRev 也不认', async () => {
+test('preloads of the same session complete out of order: the version issued later wins (it takes a number), and old localRevs are not accepted either', async () => {
   const p = pipeline();
   const page = watch(p, 's');
   const E1 = entryOf('E1', [control('h', 'K1')]), E2 = entryOf('E2', [control('h', 'K2')]);
@@ -203,11 +203,11 @@ test('同一会话的 preload 乱序完成:晚发出的那一版赢(领号),旧 
   const first = p.preload({ key: 'E1', delay: 40, duration: 1 }, { session: 's', localRev: 1 });
   const second = p.preload({ key: 'E2', delay: 1, duration: 1 }, { session: 's', localRev: 2 });
   await Promise.all([first, second]);
-  assert.equal(p.ready.current('s'), 'E2', '先发的那个晚算完,不能把会话拉回旧版');
-  assert.equal(page.seen.filter(m => m.type === 'reset').length, 2, 'backlog + E2,E1 那次没有 reset');
+  assert.equal(p.ready.current('s'), 'E2', 'the one sent first finishes computing later and must not pull the session back to the old version');
+  assert.equal(page.seen.filter(m => m.type === 'reset').length, 2, 'backlog + E2, and there was no reset for E1');
   const generation = p.generations.get('session:s');
-  assert.equal(generation?.key, 'E2', '作废的请求不排后台活');
-  assert.equal(generation.controller.signal.aborted, false, '也不掐掉新那一版的后台代次');
+  assert.equal(generation?.key, 'E2', 'an invalidated request schedules no background work');
+  assert.equal(generation.controller.signal.aborted, false, 'and does not cut off the newer version\'s background generation');
 
   // 号对得上、但 localRev 比记着的旧:也不认
   const ticket = p.ready.request('s');
@@ -216,7 +216,7 @@ test('同一会话的 preload 乱序完成:晚发出的那一版赢(领号),旧 
   await p.background;
 });
 
-test('/ready 按 session 订阅:backlog 只含自己会话的层;不带 session 的是缺省会话', () => {
+test('/ready subscribes by session: the backlog contains only the layers of its own session; one without a session is the default session', () => {
   const p = pipeline();
   p.adoptSession('a', entryOf('A'), 4);
   p.publishLayer(entryOf('A'), control('h', 'KA'), 'shared', [[0, 1]]);
@@ -225,15 +225,15 @@ test('/ready 按 session 订阅:backlog 只含自己会话的层;不带 session 
   const late = [];
   p.ready.subscribe('a', m => late.push(m));
   assert.deepEqual(late, [{ type: 'reset', localRev: 4 }, { type: 'layer', clipId: 'h', kind: 'html', key: 'KA', ranges: [[0, 1]] }]);
-  assert.deepEqual(p.readyIndex.list().map(l => l.key), ['KD'], '`pipeline.readyIndex` 是缺省会话那一份');
+  assert.deepEqual(p.readyIndex.list().map(l => l.key), ['KD'], '`pipeline.readyIndex` is the default session\'s copy');
   const stranger = [];
   p.ready.subscribe('nobody', m => stranger.push(m));
-  assert.deepEqual(stranger, [{ type: 'reset', localRev: 0 }], '没发过 preload 的会话是空表');
+  assert.deepEqual(stranger, [{ type: 'reset', localRev: 0 }], 'a session that never sent a preload has an empty table');
 });
 
 /* ------------------------------------------------------------ 回收 */
 
-test('断开的会话不常驻:没有订阅者、超过空闲时间就回收;有订阅者的永远不回收', () => {
+test('disconnected sessions do not stay resident: with no subscribers and past the idle time they are reclaimed; those with subscribers are never reclaimed', () => {
   let now = 0;
   const hub = createReadyHub({ now: () => now, idleMs: 1000, maxSessions: 100 });
   const offA = hub.subscribe('a', () => {});
@@ -243,31 +243,31 @@ test('断开的会话不常驻:没有订阅者、超过空闲时间就回收;有
   offA();                                  // a 断开
   now = 1400;
   hub.request('d');                        // 任何新会话进来时顺带回收
-  assert.deepEqual(hub.describe().map(r => r.session).sort(), ['a', 'b', 'd'], 'c 闲了 1400 > 1000,回收');
+  assert.deepEqual(hub.describe().map(r => r.session).sort(), ['a', 'b', 'd'], 'c idle for 1400 > 1000, reclaimed');
   now = 1600;
   hub.subscribe('e', () => {})();
-  assert.deepEqual(hub.describe().map(r => r.session).sort(), ['b', 'd', 'e'], 'a 断开 1100 > 1000,回收;b 一直连着');
+  assert.deepEqual(hub.describe().map(r => r.session).sort(), ['b', 'd', 'e'], 'a disconnected 1100 > 1000, reclaimed; b stays connected');
   // 被回收的会话再来就是新的:没有版本,发布进不去
   assert.equal(hub.current('c'), undefined);
   assert.equal(hub.publish('E', { clipId: 'h', kind: 'html', key: 'K', ranges: [[0, 0]] }), 0);
 });
 
-test('会话数封顶:超过上限先回收最久没动静、又没有订阅者的', () => {
+test('session count cap: when over the limit, first reclaim the one that has been inactive longest and has no subscribers', () => {
   let now = 0;
   const hub = createReadyHub({ now: () => now, idleMs: 1e9, maxSessions: 3 });
   hub.subscribe('live', () => {});
   for (const id of ['x1', 'x2', 'x3', 'x4']) { now++; hub.request(id); }
   const ids = hub.describe().map(r => r.session).sort();
   assert.equal(ids.length, 3);
-  assert.ok(ids.includes('live'), '有订阅者的不回收');
-  assert.ok(ids.includes('x4'), '刚进来的不回收');
-  assert.ok(!ids.includes('x1') && !ids.includes('x2'), '最旧的先走');
+  assert.ok(ids.includes('live'), 'those with subscribers are not reclaimed');
+  assert.ok(ids.includes('x4'), 'the one that just came in is not reclaimed');
+  assert.ok(!ids.includes('x1') && !ids.includes('x2'), 'the oldest goes first');
 });
 
-test('一个会话退订两次、订阅者抛错:不影响别的订阅者,也不重复回收', () => {
+test('a session unsubscribing twice, or a subscriber throwing: does not affect other subscribers, and is not reclaimed twice', () => {
   const hub = createReadyHub();
   const good = [];
-  hub.subscribe('s', () => { throw new Error('断了'); });
+  hub.subscribe('s', () => { throw new Error('broken'); });
   const off = hub.subscribe('s', m => good.push(m));
   hub.adopt('s', 'E', 1);
   hub.publish('E', { clipId: 'h', kind: 'html', key: 'K', ranges: [[0, 0]] });
@@ -276,7 +276,7 @@ test('一个会话退订两次、订阅者抛错:不影响别的订阅者,也不
   assert.equal(hub.peek('s').index.subscriberCount(), 1);
 });
 
-test('共用的 staged:一个会话 clear 不会清掉别的会话要认领的区间', () => {
+test('shared staged: one session calling clear does not wipe the ranges other sessions need to claim', () => {
   const hub = createReadyHub();
   hub.stageByKey({ kind: 'html', key: 'K', ranges: [[0, 9]] });
   hub.session('a').index.clear();
@@ -292,7 +292,7 @@ test('共用的 staged:一个会话 clear 不会清掉别的会话要认领的�
 const fullIndex = { count: 3, frames: [[0, 2]], oversize: [] };
 const planned = (clipId, key, tier = 'shared') => ({ ...control(clipId, key, tier), count: 3, sampling: { firstFrame: 0 }, end: 1 });
 
-test('真的调用点:missingSnapshotFrames / fillAnchorSnapshots 渲旧版本时,发层和 done 都进不了新版本的会话', async () => {
+test('the real call sites: when missingSnapshotFrames / fillAnchorSnapshots render an old version, the layers and done they send cannot get into the session of the new version', async () => {
   const p = pipeline();
   p.snapshots = () => ({ snapshotIndex: async () => fullIndex });
   const page = watch(p, 's');
@@ -304,7 +304,7 @@ test('真的调用点:missingSnapshotFrames / fillAnchorSnapshots 渲旧版本�
   // 旧版本的整场景那一趟在跑:它顺带把已有区间发成层、锚帧齐了发 done
   assert.deepEqual(await p.missingSnapshotFrames(E1, { tiers: ['shared', 'local'] }), []);
   await p.fillAnchorSnapshots(E1, null, null);
-  assert.deepEqual(page.seen, [], `旧版本的层 / done 不进来:${JSON.stringify(page.seen)}`);
+  assert.deepEqual(page.seen, [], `layers / done of the old version do not get in: ${JSON.stringify(page.seen)}`);
   // 正向对照:新版本自己的这两步照常到
   await p.missingSnapshotFrames(E2, { tiers: ['shared'] });
   await p.fillAnchorSnapshots(E2, null, null);
@@ -312,7 +312,7 @@ test('真的调用点:missingSnapshotFrames / fillAnchorSnapshots 渲旧版本�
   assert.ok(page.seen.filter(m => m.type === 'layer').every(m => m.key === 'KB'));
 });
 
-test('两个标签页保活同一个已就绪的版本:后来的会话当场拿到全部层和 done;各自至多重跑一趟,之后保活不互相掐、不再重跑', async () => {
+test('two tabs keep the same ready version alive: the later session gets all layers and done on the spot; each re-runs at most one pass, after which the keep-alive does not cut each other off and does not re-run again', async () => {
   const p = pipeline();
   p.snapshots = () => ({ snapshotIndex: async () => fullIndex });
   const E = entryOf('E', [planned('h', 'K')]);
@@ -332,10 +332,10 @@ test('两个标签页保活同一个已就绪的版本:后来的会话当场拿�
 
   const b = watch(p, 'b');
   await p.preload({ id: 'p', duration: 1 }, { session: 'b', localRev: 1 });
-  assert.deepEqual(layerKeys(b.layers()), ['h:html:K'], '从 staged 当场认领回来,不等后台那一趟');
-  assert.equal(p.ready.peek('b').index.done, true, '锚帧早就齐了:done 也补上');
+  assert.deepEqual(layerKeys(b.layers()), ['h:html:K'], 'claimed back from staged on the spot, without waiting for the background pass');
+  assert.equal(p.ready.peek('b').index.done, true, 'the anchor frames were complete long ago: done is also filled in');
   await p.background;
-  assert.equal(acquired, 1, '新会话第一次来重跑一趟(大多命中缓存)');
+  assert.equal(acquired, 1, 'a new session re-runs one pass the first time it comes (mostly cache hits)');
   E.status = 'ready';                    // 那一趟跑完了(单测里没有 Chrome,手动置回)
   acquired = 0;
   // 30 秒保活一轮一轮地来(远超 PRELOAD_STALE_MS):谁都不重跑
@@ -345,12 +345,12 @@ test('两个标签页保活同一个已就绪的版本:后来的会话当场拿�
     await p.preload({ id: 'p', duration: 1 }, { session: 'b', localRev: 1 });
   }
   await p.background;
-  assert.equal(acquired, 0, '已就绪的版本不再开后台 Chrome');
+  assert.equal(acquired, 0, 'a version that is already ready no longer opens a background Chrome');
   assert.equal(E.status, 'ready');
-  assert.ok(p.generations.has('session:a') && p.generations.has('session:b'), '跑完的代次不被当成过期掐掉');
+  assert.ok(p.generations.has('session:a') && p.generations.has('session:b'), 'a finished generation is not mistaken for stale and cut off');
 });
 
-test('让路恢复:让路期间已经没有会话停在那一版的不重排;还有会话在的照常接回原 owner', async () => {
+test('yield resume: a version that no session sits on anymore after the yield is not reordered; one that still has sessions is handed back to the original owner as usual', async () => {
   const p = pipeline();
   const E1 = entryOf('E1'), E2 = entryOf('E2'), E3 = entryOf('E3');
   p.adoptSession('s', E1, 1);
@@ -367,7 +367,7 @@ test('让路恢复:让路期间已经没有会话停在那一版的不重排;还
   assert.equal(p.ready.current('s'), 'E2');
 });
 
-test('会话在领号之后被回收又重建:不算被取代,preload 照常认领', () => {
+test('a session that is reclaimed and recreated after taking a number: not counted as superseded, and the preload claims as usual', () => {
   let now = 0;
   const hub = createReadyHub({ now: () => now, idleMs: 10 });
   const ticket = hub.request('s');
@@ -379,7 +379,7 @@ test('会话在领号之后被回收又重建:不算被取代,preload 照常认�
   assert.equal(hub.current('s'), 'E');
 });
 
-test('staged 封顶:超过上限丢最久没动的键', () => {
+test('staged cap: when over the limit, drop the key untouched the longest', () => {
   const hub = createReadyHub({ maxStaged: 2 });
   hub.stageByKey({ kind: 'html', key: 'A', ranges: [[0, 0]] });
   hub.stageByKey({ kind: 'html', key: 'B', ranges: [[0, 0]] });
@@ -388,7 +388,7 @@ test('staged 封顶:超过上限丢最久没动的键', () => {
   assert.deepEqual(hub.stagedKeys().map(s => s.key), ['A', 'C']);
 });
 
-test('session 参数校验:缺省 = 缺省会话,超长 / 非字符串 = 拒绝', async () => {
+test('session parameter validation: omitted = default session, too long / non-string = rejected', async () => {
   const { readySessionOf, READY_SESSION_ID_MAX } = await import('../ready-index.mjs');
   assert.equal(readySessionOf(undefined), DEFAULT_READY_SESSION);
   assert.equal(readySessionOf('abc'), 'abc');
@@ -396,7 +396,7 @@ test('session 参数校验:缺省 = 缺省会话,超长 / 非字符串 = 拒绝'
   assert.equal(readySessionOf(42), null);
 });
 
-test('按新 costs 重算后集合缩了:会话里判轻那张卡的旧层撤掉(reset + 从 staged 全量补回其余层)', () => {
+test('after recomputing with the new costs the set shrank: the old layer of the card classified as light is removed from the session (reset + re-adding all the remaining layers from staged)', () => {
   const p = pipeline();
   const E = entryOf('E');
   const page = watch(p, 's');
@@ -410,7 +410,7 @@ test('按新 costs 重算后集合缩了:会话里判轻那张卡的旧层撤掉
   p.recordCardPlan = function (entry, plan) { entry.cardPlan = plan; entry.prerenderSet = new Set(['heavy']); return plan; };
   page.seen.length = 0;
   p.adoptCardPlan(E, [planned('heavy', 'KH'), planned('light', 'KL')]);
-  assert.deepEqual(layerKeys(page.layers()), ['heavy:html:KH'], '判轻的那张撤掉,判重的补回来');
+  assert.deepEqual(layerKeys(page.layers()), ['heavy:html:KH'], 'the one classified as light is removed, the one classified as heavy is added back');
   assert.deepEqual(page.seen.map(m => m.type), ['reset', 'layer']);
   // 集合没再缩:不再 reset
   page.seen.length = 0;
@@ -418,7 +418,7 @@ test('按新 costs 重算后集合缩了:会话里判轻那张卡的旧层撤掉
   assert.deepEqual(page.seen, []);
 });
 
-test('换到计划还没算出来的新版本:旧表先顶着(闸门已经换过去),计划一到 reset 和补层紧挨着发', () => {
+test('switching to a new version whose plan is not computed yet: the old table holds for now (the gate has already switched over), and once the plan arrives the reset and the layer top-up are sent back to back', () => {
   const p = pipeline();
   p.ready.stageByKey({ kind: 'html', key: 'KB', ranges: [[0, 5]] });
   const page = watch(p, 's');
@@ -428,9 +428,9 @@ test('换到计划还没算出来的新版本:旧表先顶着(闸门已经换过
   page.seen.length = 0;
   const E2 = entryOf('E2');                                    // 刚编辑完,计划还没算
   assert.equal(p.adoptSession('s', E2, 2), true);
-  assert.deepEqual(page.seen, [], '不清表');
-  assert.deepEqual(layerKeys(page.layers()), ['h:html:KA'], '旧层顶着');
-  assert.equal(p.publishLayer(E1, control('h', 'KA'), 'shared', [[0, 20]]), 0, '闸门已换:旧版本进不来');
+  assert.deepEqual(page.seen, [], 'table not cleared');
+  assert.deepEqual(layerKeys(page.layers()), ['h:html:KA'], 'the old layers hold');
+  assert.equal(p.publishLayer(E1, control('h', 'KA'), 'shared', [[0, 20]]), 0, 'the gate has switched: the old version cannot get in');
   assert.equal(p.ready.describe().find(r => r.session === 's').pendingReset, true);
   p.adoptCardPlan(E2, [control('h', 'KB')]);                    // 后台那一趟算出了计划
   assert.deepEqual(page.seen, [{ type: 'reset', localRev: 2 }, { type: 'layer', clipId: 'h', kind: 'html', key: 'KB', ranges: [[0, 5]] }]);

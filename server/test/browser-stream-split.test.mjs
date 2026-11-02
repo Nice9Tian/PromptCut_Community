@@ -67,9 +67,9 @@ function ownTaskBefore({ clipId, from, to, fingerprint = OWN, cardSources = {} }
   };
 }
 
-test('BS-01 浏览器做得了的单卡流:切分方一份、浏览器一份,都带 dual;浏览器那一份的形状逐字段对', () => {
+test('BS-01 single-card stream the browser can handle: one copy from the splitter and one from the browser, both carry dual; the shape of the browser copy matches field by field', () => {
   const tasks = split({ cardPlan: [control('a')], streams: [cardStream('a')] });
-  assert.equal(tasks.length, 2, '分段 0～7 共 8 段一个任务 × 两份');
+  assert.equal(tasks.length, 2, 'Segments 0-7, 8 segments in total, one task × two copies');
   const [own] = ofFp(tasks, OWN);
   const [br] = ofFp(tasks, BR);
   assert.ok(own && br);
@@ -87,19 +87,19 @@ test('BS-01 浏览器做得了的单卡流:切分方一份、浏览器一份,都
     requires: { envFingerprint: BR, codeVersion: 'cv-1', cardSources: {}, transcode: false, userCards: false, graphCards: false, belowDependent: false, capabilities: { streams: true } },
     priority: 10,
   });
-  assert.equal(own.input.dual, true, '切分方那一份也带 dual:队列建锁时据此把没抢到的那一份作废');
+  assert.equal(own.input.dual, true, 'The splitter\'s copy carries dual too: when the queue builds the lock, it uses this to void the copy that was not claimed');
   assert.equal('takeover' in own, false);
   assert.equal('takeover' in br, false);
-  assert.equal(own.input.contentKey, br.input.contentKey, '两份同一个内容键(同一把锁 stream:<内容键>)');
+  assert.equal(own.input.contentKey, br.input.contentKey, 'Both copies share the same content key (same lock stream:<content key>)');
 });
 
-test('BS-02 切分方自己的那一份一个字不变:没有浏览器时与原来逐字相同;有浏览器时只多一个 input.dual', () => {
+test('BS-02 the splitter\'s own copy is unchanged to the last character: identical to before when there is no browser; with a browser it only gains input.dual', () => {
   const cardPlan = [control('a')];
   const cardSourceVersions = { 'user-x': 'user:abc' };
   for (const streams of [[cardStream('a')], [legacyStream('a')]]) {
     const none = split({ cardPlan, streams, browser: null, cardSourceVersions });
     const { firstSegment: from, lastSegment: to } = streams[0];
-    assert.deepEqual(none, [ownTaskBefore({ clipId: 'a', from, to, cardSources: { 'user-x': 'user:abc' } })], '没有浏览器指纹:与原来逐字相同');
+    assert.deepEqual(none, [ownTaskBefore({ clipId: 'a', from, to, cardSources: { 'user-x': 'user:abc' } })], 'No browser fingerprint: identical to before, character for character');
   }
   const withBrowser = ofFp(split({ cardPlan, streams: [cardStream('a')], cardSourceVersions }), OWN);
   const expected = ownTaskBefore({ clipId: 'a', from: 0, to: 7, cardSources: { 'user-x': 'user:abc' } });
@@ -118,18 +118,18 @@ test('BS-02 切分方自己的那一份一个字不变:没有浏览器时与原�
   assert.deepEqual(ofFp(short, BR).map(t => t.weight.frames), [120, 120, 53]);
 });
 
-test('BS-03 只给单卡流:组流、缺形状字段的流、成员卡不在 card plan 里的流,只出切分方自己的一份(与原来逐字相同)', () => {
+test('BS-03 only single-card streams: group streams, streams missing shape fields, and streams whose member card is not in the card plan yield only the splitter\'s own copy (identical to before, character for character)', () => {
   const cardPlan = [control('a'), control('b')];
   const cases = {
-    组流: cardStream('b', { kind: 'group', plane: 'stage', clipIds: ['a', 'b'] }),
-    '单卡流但平面不是 local': cardStream('b', { plane: 'stage' }),
-    旧调用方只给流键与分段范围: legacyStream('b'),
-    '缺 bound': cardStream('b', { bound: null }),
-    '宽不是偶数': cardStream('b', { bound: { x: 0, y: 0, w: 463, h: 304 } }),
-    '缺 total': cardStream('b', { total: undefined }),
-    '缺这条流的第一帧(改分段规则之前的计划)': cardStream('b', { originFrame: undefined }),
-    '缺这条流的最后一帧': cardStream('b', { lastFrame: undefined }),
-    成员卡不在计划里: cardStream('zz'),
+    groupStream: cardStream('b', { kind: 'group', plane: 'stage', clipIds: ['a', 'b'] }),
+    'single-card stream but the plane is not local': cardStream('b', { plane: 'stage' }),
+    legacyCallerGivesOnlyStreamKeyAndSegmentRange: legacyStream('b'),
+    'missing bound': cardStream('b', { bound: null }),
+    'width is not even': cardStream('b', { bound: { x: 0, y: 0, w: 463, h: 304 } }),
+    'missing total': cardStream('b', { total: undefined }),
+    'missing the first frame of this stream (a plan from before the segmentation rule changed)': cardStream('b', { originFrame: undefined }),
+    'missing the last frame of this stream': cardStream('b', { lastFrame: undefined }),
+    memberCardNotInPlan: cardStream('zz'),
   };
   for (const [name, stream] of Object.entries(cases)) {
     const tasks = split({ cardPlan, streams: [stream] });
@@ -137,20 +137,20 @@ test('BS-03 只给单卡流:组流、缺形状字段的流、成员卡不在 car
   }
 });
 
-test('BS-04 画布卡、重度为「重」的卡、本地档、标了超体积的卡、用到只在发布方本机的素材的卡:不出浏览器那一份', () => {
+test('BS-04 canvas cards, cards whose heaviness is "heavy", local tier, cards marked oversize, and cards that use assets existing only on the publisher\'s machine: no browser copy', () => {
   const cases = {
-    画布卡: control('a', { capabilities: { compositing: 'independent', canvasHeavy: true } }),
-    '依赖下层(重)': control('a', { compositing: 'belowDependent', capabilities: { compositing: 'belowDependent' } }),
-    '不认识的合成方式(重)': control('a', { compositing: 'unknown', capabilities: { compositing: 'unknown' } }),
-    本地档: control('a', { tier: 'local' }),
-    超体积: control('a', { snapshotOversize: true }),
-    改过源码的内置卡: control('a'),
+    canvasCard: control('a', { capabilities: { compositing: 'independent', canvasHeavy: true } }),
+    'depends on the layer below (heavy)': control('a', { compositing: 'belowDependent', capabilities: { compositing: 'belowDependent' } }),
+    'unknown compositing mode (heavy)': control('a', { compositing: 'unknown', capabilities: { compositing: 'unknown' } }),
+    localTier: control('a', { tier: 'local' }),
+    oversize: control('a', { snapshotOversize: true }),
+    builtinCardWithModifiedSource: control('a'),
   };
   for (const [name, c] of Object.entries(cases)) {
-    const extra = name === '改过源码的内置卡' ? { cardSourceVersions: { 'card-a': 'override:1' } } : {};
+    const extra = name === 'builtinCardWithModifiedSource' ? { cardSourceVersions: { 'card-a': 'override:1' } } : {};
     const tasks = split({ cardPlan: [c], streams: [cardStream('a')], entryKey: 'entry-1', ...extra });
     assert.deepEqual(tasks.map(t => t.requires.envFingerprint), [OWN], name);
-    assert.equal('dual' in tasks[0].input, false, `${name}:只有一份,不带 dual`);
+    assert.equal('dual' in tasks[0].input, false, `${name}: only one copy, no dual`);
   }
   // 只在发布方本机的素材(M6c X2)
   const local = split({ cardPlan: [control('a')], streams: [cardStream('a')], localMedia: 'node-pub', usesLocalMedia: () => true });
@@ -159,18 +159,18 @@ test('BS-04 画布卡、重度为「重」的卡、本地档、标了超体积�
   // 没有浏览器指纹、浏览器指纹与切分方相同:不另出
   assert.equal(split({ cardPlan: [control('a')], streams: [cardStream('a')], browser: null }).length, 1);
   const same = split({ cardPlan: [control('a')], streams: [cardStream('a')], browser: { nodeId: 'n', envFingerprint: OWN } });
-  assert.deepEqual(same, [ownTaskBefore({ clipId: 'a', from: 0, to: 7 })], '同指纹:只有切分方那一份,仍是要本机转码的形状');
+  assert.deepEqual(same, [ownTaskBefore({ clipId: 'a', from: 0, to: 7 })], 'Same fingerprint: only the splitter\'s copy, still the shape that needs local transcoding');
 });
 
-test('BS-05 锁在别处的卡不出浏览器那一份:照锁只出一份;锁在浏览器指纹上时那一份是浏览器的形状', () => {
+test('BS-05 a card locked elsewhere gets no browser copy: it follows the lock and yields one copy; when locked on the browser fingerprint, that copy has the browser\'s shape', () => {
   const base = { cardPlan: [control('a')], streams: [cardStream('a')] };
   const third = split({ ...base, cardLocks: { 'stream:sk-a': THIRD } });
-  assert.deepEqual(third, [ownTaskBefore({ clipId: 'a', from: 0, to: 7, fingerprint: THIRD })], '锁在第三个环境:照它的指纹出切分方形状的一份');
+  assert.deepEqual(third, [ownTaskBefore({ clipId: 'a', from: 0, to: 7, fingerprint: THIRD })], 'Locked on a third environment: yields one copy in the splitter\'s shape, following its fingerprint');
   const br = split({ ...base, cardLocks: { 'stream:sk-a': BR } });
   assert.equal(br.length, 1);
   assert.equal(br[0].requires.envFingerprint, BR);
   assert.equal(br[0].requires.transcode, false);
-  assert.ok(br[0].input.stream && br[0].input.bake, '锁在浏览器指纹上:浏览器的形状');
+  assert.ok(br[0].input.stream && br[0].input.bake, 'Locked on the browser fingerprint: the browser\'s shape');
   assert.equal('dual' in br[0].input, false);
   // 接手:按自己的指纹出一份、带 takeover,不出浏览器那一份
   const taken = split({ ...base, cardLocks: { 'stream:sk-a': BR }, takeover: true });
@@ -182,7 +182,7 @@ test('BS-05 锁在别处的卡不出浏览器那一份:照锁只出一份;锁在
   assert.deepEqual(snapLocked.map(t => t.requires.envFingerprint), [OWN, BR]);
 });
 
-test('BS-06 用户卡与素材效果卡:浏览器那一份用页面的 cardEnvFingerprint,cardSources 只写这张卡的;页面没声明或身份对不上就不出', () => {
+test('BS-06 user cards and media effect cards: the browser copy uses the page\'s cardEnvFingerprint, and cardSources lists only this card\'s entry; no copy is produced if the page did not declare it or the identity does not match', () => {
   const cardPlan = [control('a', { cardId: 'user-x' })];
   const cardSourceVersions = { 'user-x': 'user:abc', 'user-y': 'user:def' };
   const browserCards = { cardEnvFingerprint: CARD_FP, userCards: true, graphCards: false, cardSources: { 'user-x': 'user:abc' } };
@@ -191,10 +191,10 @@ test('BS-06 用户卡与素材效果卡:浏览器那一份用页面的 cardEnvFi
   assert.deepEqual(tasks.map(t => t.requires.envFingerprint), [OWN, CARD_FP]);
   const br = tasks[1];
   assert.equal(br.resultKey, rk('sk-a', CARD_FP));
-  assert.deepEqual(br.requires.cardSources, { 'user-x': 'user:abc' }, '只写这张卡的代码身份');
+  assert.deepEqual(br.requires.cardSources, { 'user-x': 'user:abc' }, 'Lists only this card\'s code identity');
   assert.equal(br.requires.userCards, true);
-  assert.deepEqual(tasks[0].requires.cardSources, cardSourceVersions, '切分方那一份照旧写全部定制卡');
-  assert.equal(tasks[0].requires.userCards, false, '切分方那一份照旧');
+  assert.deepEqual(tasks[0].requires.cardSources, cardSourceVersions, 'The splitter\'s copy still lists all custom cards');
+  assert.equal(tasks[0].requires.userCards, false, 'The splitter\'s copy stays as before');
   // 文档服务没确认这个 cardEnvFingerprint、页面没声明能力、代码身份对不上:都不出
   assert.equal(split({ ...args, browserCardEnvFingerprints: [] }).length, 1);
   assert.equal(split({ ...args, browserCards: { ...browserCards, userCards: false } }).length, 1);
@@ -205,21 +205,21 @@ test('BS-06 用户卡与素材效果卡:浏览器那一份用页面的 cardEnvFi
   assert.equal(graph[1].requires.graphCards, true);
 });
 
-test('BS-07 browserOnly(在线页面的清单计划):只出浏览器那一份、不带 dual;浏览器做不了就一份都不出', () => {
+test('BS-07 browserOnly (manifest plan of the online page): yields only the browser copy, without dual; yields no copy at all if the browser cannot do it', () => {
   const only = cardStream('a', { browserOnly: true });
   const tasks = split({ cardPlan: [control('a')], streams: [only] });
   assert.deepEqual(tasks.map(t => t.requires.envFingerprint), [BR]);
   assert.equal('dual' in tasks[0].input, false);
   assert.equal(tasks[0].requires.transcode, false);
-  assert.equal(split({ cardPlan: [control('a')], streams: [only], browser: null }).length, 0, '没有浏览器节点');
-  assert.equal(split({ cardPlan: [control('a', { capabilities: { compositing: 'independent', canvasHeavy: true } })], streams: [only] }).length, 0, '画布卡');
-  assert.equal(split({ cardPlan: [control('a'), control('b')], streams: [cardStream('b', { kind: 'group', plane: 'stage', clipIds: ['a', 'b'], browserOnly: true })] }).length, 0, '组流');
-  assert.equal(split({ cardPlan: [control('a')], streams: [only], cardLocks: { 'stream:sk-a': THIRD } }).length, 0, '锁在别的环境上:那边在产,这里不出');
+  assert.equal(split({ cardPlan: [control('a')], streams: [only], browser: null }).length, 0, 'No browser node');
+  assert.equal(split({ cardPlan: [control('a', { capabilities: { compositing: 'independent', canvasHeavy: true } })], streams: [only] }).length, 0, 'canvas card');
+  assert.equal(split({ cardPlan: [control('a'), control('b')], streams: [cardStream('b', { kind: 'group', plane: 'stage', clipIds: ['a', 'b'], browserOnly: true })] }).length, 0, 'group stream');
+  assert.equal(split({ cardPlan: [control('a')], streams: [only], cardLocks: { 'stream:sk-a': THIRD } }).length, 0, 'Locked on another environment: it is being produced there, none is produced here');
   const locked = split({ cardPlan: [control('a')], streams: [only], cardLocks: { 'stream:sk-a': BR } });
-  assert.deepEqual(locked.map(t => t.requires.envFingerprint), [BR], '锁在浏览器指纹上:照锁出那一份');
+  assert.deepEqual(locked.map(t => t.requires.envFingerprint), [BR], 'Locked on the browser fingerprint: yields that copy following the lock');
 });
 
-test('BS-08 快照任务不受影响:带不带流、流带不带形状,快照那一半逐字相同', () => {
+test('BS-08 snapshot tasks are unaffected: with or without streams, with or without stream shapes, the snapshot half is identical character for character', () => {
   const cardPlan = [control('a'), control('b', { capabilities: { compositing: 'independent', canvasHeavy: true } })];
   const run = streams => splitPlan({ planTask: clipsPlan({ clips: ['a', 'b'] }), entryKey: 'entry-1', cardPlan, prerenderSet: null, streams,
     envFingerprint: OWN, codeVersion: 'cv-1', weightOf, anchorFrames: [50], browser: { nodeId: 'n', envFingerprint: BR } }).filter(t => t.kind === 'snapshot');
@@ -229,7 +229,7 @@ test('BS-08 快照任务不受影响:带不带流、流带不带形状,快照那
   assert.deepEqual(run([legacyStream('a'), cardStream('b', { browserOnly: true })]), none);
 });
 
-test('BS-09 浏览器那一份的 input.stream 是拷贝:改它不影响调用方给的流', () => {
+test('BS-09 input.stream of the browser copy is a copy: changing it does not affect the stream the caller gave', () => {
   const stream = cardStream('a');
   const [, br] = split({ cardPlan: [control('a')], streams: [stream] });
   br.input.stream.bound.w = 2;
@@ -247,40 +247,40 @@ function bothCopies() {
   return { own: ofFp(tasks, OWN)[0], br: ofFp(tasks, BR)[0] };
 }
 
-test('BS-10 规则 2:切分方自己的流任务(写了 transcode: true)行为不变', () => {
+test('BS-10 rule 2: the splitter\'s own stream task (with transcode: true) behaves the same', () => {
   const { own } = bothCopies();
   assert.deepEqual(checkClaimable(own, nodeOf('pc', { transcode: true, streams: true })), { ok: true });
   assert.deepEqual(checkClaimable(own, nodeOf('host', { transcode: true, streams: true })), { ok: true });
-  assert.deepEqual(checkClaimable(own, nodeOf('pc', { transcode: true })), { ok: true }, '没报 streams 的旧形状按 transcode 算');
+  assert.deepEqual(checkClaimable(own, nodeOf('pc', { transcode: true })), { ok: true }, 'The legacy shape that does not report streams is judged by transcode');
   assert.deepEqual(checkClaimable(own, nodeOf('pc', { transcode: true, streams: false })), { ok: false, rule: 2, reason: 'streams' });
   assert.deepEqual(checkClaimable(own, nodeOf('pc', { transcode: false, streams: false })), { ok: false, rule: 2, reason: 'streams' });
   assert.deepEqual(checkClaimable(own, nodeOf('pc', { transcode: false })), { ok: false, rule: 2, reason: 'streams' });
-  assert.deepEqual(checkClaimable(own, nodeOf('pc', { transcode: false, streams: true })), { ok: false, rule: 2, reason: 'transcode' }, '能压流但不能转码:切分方那一份要转码');
-  assert.deepEqual(checkClaimable(own, nodeOf('browser', { transcode: false, streams: true })), { ok: false, rule: 2, reason: 'transcode' }, '浏览器不接切分方那一份');
+  assert.deepEqual(checkClaimable(own, nodeOf('pc', { transcode: false, streams: true })), { ok: false, rule: 2, reason: 'transcode' }, 'Can encode streams but cannot transcode: the splitter\'s copy needs transcoding');
+  assert.deepEqual(checkClaimable(own, nodeOf('browser', { transcode: false, streams: true })), { ok: false, rule: 2, reason: 'transcode' }, 'The browser does not take the splitter\'s copy');
 });
 
-test('BS-11 规则 2:浏览器那一份(transcode: false)只凭 capabilities.streams 认领', () => {
+test('BS-11 rule 2: the browser copy (transcode: false) is claimed solely on capabilities.streams', () => {
   const { br } = bothCopies();
   const browser = caps => nodeOf('browser', caps, { envFingerprint: BR });
   assert.deepEqual(checkClaimable(br, browser({ transcode: false, streams: true, userCards: false, graphCards: false })), { ok: true });
-  assert.deepEqual(checkClaimable(br, browser({ transcode: false, streams: false })), { ok: false, rule: 2, reason: 'streams' }, '宿主探不到编码器就不认领');
+  assert.deepEqual(checkClaimable(br, browser({ transcode: false, streams: false })), { ok: false, rule: 2, reason: 'streams' }, 'Does not claim when the host cannot detect an encoder');
   assert.deepEqual(checkClaimable(br, browser({ transcode: false })), { ok: false, rule: 2, reason: 'streams' });
-  assert.deepEqual(checkClaimable(br, nodeOf('browser', { transcode: false, streams: true })), { ok: false, rule: 1, reason: 'env-fingerprint' }, '指纹不是这一份的');
+  assert.deepEqual(checkClaimable(br, nodeOf('browser', { transcode: false, streams: true })), { ok: false, rule: 1, reason: 'env-fingerprint' }, 'The fingerprint is not this copy\'s');
   assert.deepEqual(checkClaimable({ ...br, source: { ...br.source, userId: 'other@d' } }, browser({ streams: true })), { ok: false, rule: 0, reason: 'other-user' });
 });
 
-test('BS-12 规则 2 只看任务自己写的 requires.transcode:快照写了要转码照旧被挡;流任务没写这一项时不再一律要求转码', () => {
+test('BS-12 rule 2 only looks at the requires.transcode written by the task itself: a snapshot that requires transcoding is still blocked; a stream task that does not write this field no longer always requires transcoding', () => {
   const snap = { id: 'snapshot:k:0-29', kind: 'snapshot', tier: 'shared', resultKey: 'k', range: { from: 0, to: 29 }, source: { projectId: 'p', projectRev: 1, userId: 'u@d' },
     input: { clipId: 'c' }, weight: { class: 'medium' }, requires: { transcode: true } };
   assert.deepEqual(checkClaimable(snap, nodeOf('pc', { transcode: false })), { ok: false, rule: 2, reason: 'transcode' });
   assert.deepEqual(checkClaimable(snap, nodeOf('pc', { transcode: true })), { ok: true });
   const bare = { id: 'stream:k:0-7', kind: 'stream', resultKey: 'k', range: { unit: 'segment', from: 0, to: 7 }, source: { projectId: 'p', projectRev: 1, userId: 'u@d' },
     input: { clipId: 'c' }, weight: { class: 'medium' }, requires: {} };
-  assert.deepEqual(checkClaimable(bare, nodeOf('pc', { transcode: false })), { ok: true }, '没写 transcode、没要求 streams 的流任务:规则 2 不挡');
+  assert.deepEqual(checkClaimable(bare, nodeOf('pc', { transcode: false })), { ok: true }, 'A stream task that sets neither transcode nor streams: rule 2 does not block it');
   assert.deepEqual(checkClaimable({ ...bare, requires: { transcode: true } }, nodeOf('pc', { transcode: false })), { ok: false, rule: 2, reason: 'transcode' });
 });
 
-test('BS-13 规则 7:纯浏览器只收浏览器形状的单卡流', () => {
+test('BS-13 rule 7: a pure browser takes only single-card streams in the browser shape', () => {
   const { br } = bothCopies();
   const browser = nodeOf('browser', { transcode: false, streams: true }, { envFingerprint: BR });
   const tweak = input => ({ ...br, input: { ...br.input, ...input } });
@@ -297,7 +297,7 @@ test('BS-13 规则 7:纯浏览器只收浏览器形状的单卡流', () => {
   assert.deepEqual(checkClaimable(card, { ...browser, cardEnvFingerprint: BR, capabilities: { ...browser.capabilities, userCards: true } }), { ok: false, rule: 7, reason: 'card-source-missing' });
 });
 
-test('BS-14 别的节点对浏览器那一份:指纹不同被规则 1 挡;形状闸只管纯浏览器', () => {
+test('BS-14 other nodes versus the browser copy: a different fingerprint is blocked by rule 1; the shape gate only applies to a pure browser', () => {
   const { br } = bothCopies();
   assert.deepEqual(checkClaimable(br, nodeOf('pc', { transcode: true, streams: true })), { ok: false, rule: 1, reason: 'env-fingerprint' });
   assert.deepEqual(checkClaimable({ ...br, input: { ...br.input, stream: undefined } }, nodeOf('pc', { transcode: true, streams: true }, { envFingerprint: BR })), { ok: true });
@@ -318,20 +318,20 @@ function entryOf() {
   return { project, cardPlan };
 }
 
-test('BS-15 queueStreamOf 把 planStreams 的形状原样交给切分;planListStreams 只算清单里的片段;切分据此出得了浏览器那一份', () => {
+test('BS-15 queueStreamOf passes the shape from planStreams to the split unchanged; planListStreams only computes the clips in the manifest; the split can produce the browser copy from this', () => {
   const entry = entryOf();
   const all = planStreams(entry, { envFingerprint: OWN, codeVersion: 'cv' });
   assert.deepEqual(all.map(s => s.topClipId).sort(), ['a', 'b']);
   const listed = planListStreams(entry, new Set(['a']), { envFingerprint: OWN, codeVersion: 'cv' });
   assert.deepEqual(listed.map(s => s.topClipId), ['a']);
-  assert.equal(listed[0].contentKey, all.find(s => s.topClipId === 'a').contentKey, '单卡流的内容键与按别的集合算出来的相同');
-  assert.deepEqual(planListStreams(entry, ['a'], { envFingerprint: OWN, codeVersion: 'cv' }).map(s => s.streamKey), listed.map(s => s.streamKey), '清单给数组也行');
+  assert.equal(listed[0].contentKey, all.find(s => s.topClipId === 'a').contentKey, 'The content key of a single-card stream equals the one computed from a different set');
+  assert.deepEqual(planListStreams(entry, ['a'], { envFingerprint: OWN, codeVersion: 'cv' }).map(s => s.streamKey), listed.map(s => s.streamKey), 'The manifest may also be an array');
   const q = queueStreamOf(listed[0]);
   const spec = listed[0];
   assert.deepEqual(q, { streamKey: spec.streamKey, contentKey: spec.contentKey, topClipId: 'a', originFrame: 45, firstSegment: 0, lastSegment: 7,
     kind: 'card', plane: 'local', clipIds: ['a'], fps: 30, bound: spec.bound, offset: spec.offset, firstFrame: 45, lastFrame: 164, total: 300, mountFrame: spec.mountFrame });
-  assert.deepEqual(q.bound, { x: -32, y: -32, w: 464, h: 304 }, '框 400×240 外扩 32');
-  assert.notEqual(q.bound, spec.bound, 'bound 是拷贝');
+  assert.deepEqual(q.bound, { x: -32, y: -32, w: 464, h: 304 }, 'Box 400×240 expanded outward by 32');
+  assert.notEqual(q.bound, spec.bound, 'bound is a copy');
   const control = { ...entry.cardPlan[0], cardId: 'punch-pill', tier: 'shared', start: 1.5, end: 5.5, sampling: { firstFrame: 45, phase: { numerator: 0, denominator: 1 } } };
   const tasks = split({ cardPlan: [control], streams: [{ ...q, browserOnly: true }] });
   assert.equal(tasks.length, 1);
@@ -356,7 +356,7 @@ async function publishedBy({ planTask, plan }) {
   handler({ type: 'queue.snapshot', epoch: 1, tasks: [view] });
   node.tick();
   const claim = sent.find(m => m.type === 'task.claim');
-  assert.ok(claim, '节点认领了 plan');
+  assert.ok(claim, 'The node claimed the plan');
   handler({ type: 'task.claimed', id: planTask.id, token: 1, task: view, browserFingerprints: [BR], epoch: 1 });
   for (let i = 0; i < 20 && !sent.some(m => m.type === 'task.publish'); i++) await new Promise(resolve => setImmediate(resolve));
   const publish = sent.find(m => m.type === 'task.publish');
@@ -364,7 +364,7 @@ async function publishedBy({ planTask, plan }) {
   return publish?.tasks ?? null;
 }
 
-test('BS-16 local-node:在线页面的清单计划只给浏览器出流(browserStreamsFor);预渲染重试计划、旧执行器、桌面的普通计划照旧', async () => {
+test('BS-16 local-node: the manifest plan of the online page produces streams only for the browser (browserStreamsFor); prerender retry plans, the legacy executor and ordinary desktop plans stay as before', async () => {
   const cardPlan = [control('a')];
   const base = { entryKey: 'entry-1', cardPlan, weightOf, streams: [cardStream('a')] };
   const asked = [];
@@ -372,8 +372,8 @@ test('BS-16 local-node:在线页面的清单计划只给浏览器出流(browserS
   // 清单计划 + 执行器给了 browserStreamsFor:快照两份照旧;流只有浏览器那一份
   const clips = clipsPlan({ clips: ['a'] });
   const listed = await publishedBy({ planTask: clips, plan: { ...base, browserStreamsFor } });
-  assert.ok(listed, '发布了细任务');
-  assert.deepEqual(asked, [['a']], '按清单里的片段去要流');
+  assert.ok(listed, 'Fine-grained tasks were published');
+  assert.deepEqual(asked, [['a']], 'Asks for streams by the clips in the manifest');
   const streams = listed.filter(t => t.kind === 'stream');
   assert.deepEqual(streams.map(t => t.requires.envFingerprint), [BR]);
   assert.equal(streams[0].requires.transcode, false);

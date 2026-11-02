@@ -103,12 +103,12 @@ function createSpaces(projectIds) {
       for (let i = 0; i < 3; i++) await new Promise((resolve) => setImmediate(resolve));
       if (all.every((s) => s.lb.pending() === 0)) return;
     }
-    throw new Error('消息往返不收敛');
+    throw new Error('message round trips do not converge');
   };
   const hygiene = () => {
     for (const s of all) {
-      assert.deepEqual(s.lb.errors().map((e) => String(e?.stack ?? e)), [], '端点处理器 / queue.handle 抛出了异常');
-      assert.deepEqual(s.lb.nonJson(), [], '有消息不能 JSON 往返');
+      assert.deepEqual(s.lb.errors().map((e) => String(e?.stack ?? e)), [], 'The endpoint handler / queue.handle threw an exception');
+      assert.deepEqual(s.lb.nonJson(), [], 'some message cannot round-trip through JSON');
     }
   };
   return { clock, spaces, all, settle, hygiene };
@@ -143,7 +143,7 @@ async function drive(env, step, until, maxSteps = 300) {
     if (until()) return i;
     env.clock.advance(STEP_MS);
   }
-  assert.fail(`超过 ${maxSteps} 步仍未满足条件`);
+  assert.fail(`Condition still not met after ${maxSteps} steps`);
 }
 
 /* ================================================================== RH1 */
@@ -164,70 +164,70 @@ const ENTRY = Object.freeze({
   deviceId: 'render-box-device-0001', deviceName: 'Render Box', as: 'member', password: 'secret-pw', role: 'render',
 });
 
-test('RH1 配置解析:单项、数组、缺字段报错;maxConcurrent 缺省 1、上限 4、环境变量覆盖', () => {
-  assert.equal(loadHostConfig({}), null, '没设环境变量回 null');
+test('RH1 config parsing: single entry, array, missing fields throw an error; maxConcurrent defaults to 1, limit 4, environment variable override', () => {
+  assert.equal(loadHostConfig({}), null, 'Returns null when the environment variable is not set');
 
   const single = loadHostConfig({ PROMPTCUT_SHARED_CONFIG: configFile(ENTRY) });
-  assert.equal(single.entries.length, 1, '单项');
+  assert.equal(single.entries.length, 1, 'Single entry');
   assert.equal(single.entries[0].projectId, ENTRY.projectId);
   assert.equal(single.entries[0].role, 'render');
-  assert.equal(single.maxConcurrent, 1, '缺省 1');
+  assert.equal(single.maxConcurrent, 1, 'Default 1');
 
   const second = { ...ENTRY, projectId: 'sp_bbbbbbbbbbbbbbbbbbbbbbbbbb', url: 'ws://127.0.0.1:8787', maxConcurrent: 3 };
   const array = loadHostConfig({ PROMPTCUT_SHARED_CONFIG: configFile([ENTRY, second]) });
-  assert.deepEqual(array.entries.map((e) => e.projectId), [ENTRY.projectId, second.projectId], '数组按顺序');
-  assert.equal(array.maxConcurrent, 3, '取各项里给的最大值');
+  assert.deepEqual(array.entries.map((e) => e.projectId), [ENTRY.projectId, second.projectId], 'Array entries keep their order');
+  assert.equal(array.maxConcurrent, 3, 'Takes the largest value given among the entries');
 
   // 集成裁定(契约第 6 节):maxConcurrent 超过 4 是配置错误,不截断;0、负数、小数、字符串也是
-  assert.equal(loadHostConfig({ PROMPTCUT_SHARED_CONFIG: configFile([{ ...ENTRY, maxConcurrent: HOST_MAX_CONCURRENT }]) }).maxConcurrent, HOST_MAX_CONCURRENT, '4 本身可以');
-  assert.throws(() => loadHostConfig({ PROMPTCUT_SHARED_CONFIG: configFile([{ ...ENTRY, maxConcurrent: 9 }]) }), { code: 'bad-host-config' }, '超过 4 报错');
-  assert.equal(parseHostConfig([ENTRY, { ...second, maxConcurrent: 2 }, { ...ENTRY, maxConcurrent: 4 }]).maxConcurrent, 4, '写在任意一项上,取最大值');
-  assert.equal(loadHostConfig({ PROMPTCUT_SHARED_CONFIG: configFile([ENTRY, second]), PROMPTCUT_HOST_MAX_CONCURRENT: '2' }).maxConcurrent, 2, '环境变量覆盖');
-  assert.throws(() => loadHostConfig({ PROMPTCUT_SHARED_CONFIG: configFile([ENTRY]), PROMPTCUT_HOST_MAX_CONCURRENT: '5' }), { code: 'bad-host-config' }, '环境变量超过 4 报错');
-  assert.equal(hostMaxConcurrent(undefined), 1, '不给是 1');
+  assert.equal(loadHostConfig({ PROMPTCUT_SHARED_CONFIG: configFile([{ ...ENTRY, maxConcurrent: HOST_MAX_CONCURRENT }]) }).maxConcurrent, HOST_MAX_CONCURRENT, '4 itself is accepted');
+  assert.throws(() => loadHostConfig({ PROMPTCUT_SHARED_CONFIG: configFile([{ ...ENTRY, maxConcurrent: 9 }]) }), { code: 'bad-host-config' }, 'Over 4 throws an error');
+  assert.equal(parseHostConfig([ENTRY, { ...second, maxConcurrent: 2 }, { ...ENTRY, maxConcurrent: 4 }]).maxConcurrent, 4, 'Set on any one entry, the largest value is taken');
+  assert.equal(loadHostConfig({ PROMPTCUT_SHARED_CONFIG: configFile([ENTRY, second]), PROMPTCUT_HOST_MAX_CONCURRENT: '2' }).maxConcurrent, 2, 'Environment variable override');
+  assert.throws(() => loadHostConfig({ PROMPTCUT_SHARED_CONFIG: configFile([ENTRY]), PROMPTCUT_HOST_MAX_CONCURRENT: '5' }), { code: 'bad-host-config' }, 'An environment variable over 4 throws an error');
+  assert.equal(hostMaxConcurrent(undefined), 1, 'Defaults to 1 when not given');
   for (const bad of [0, -1, 2.7, '2', 'x', 5]) assert.throws(() => hostMaxConcurrent(bad), { code: 'bad-host-config' }, JSON.stringify(bad));
-  assert.throws(() => parseHostConfig({ ...ENTRY, role: 'page' }), { code: 'bad-host-config' }, '主机只开 render 连接');
+  assert.throws(() => parseHostConfig({ ...ENTRY, role: 'page' }), { code: 'bad-host-config' }, 'The host opens only render connections');
 
   for (const [label, bad] of [
-    ['缺 username', { ...ENTRY, username: undefined }],
-    ['缺口令与 key', { ...ENTRY, password: undefined }],
-    ['缺 url', { ...ENTRY, url: undefined }],
-    ['缺 projectId 与 name', { ...ENTRY, projectId: undefined }],
-    ['角色不对', { ...ENTRY, role: 'admin' }],
+    ['Missing username', { ...ENTRY, username: undefined }],
+    ['Missing passphrase and key', { ...ENTRY, password: undefined }],
+    ['Missing url', { ...ENTRY, url: undefined }],
+    ['Missing projectId and name', { ...ENTRY, projectId: undefined }],
+    ['Wrong role', { ...ENTRY, role: 'admin' }],
   ]) {
     assert.throws(() => loadHostConfig({ PROMPTCUT_SHARED_CONFIG: configFile([ENTRY, bad]) }), (error) => {
       assert.equal(error.code, 'bad-shared-config', label);
-      assert.ok(!String(error.message).includes('secret-pw'), `${label}:错误信息里没有口令`);
+      assert.ok(!String(error.message).includes('secret-pw'), `${label}: the error message contains no passphrase`);
       return true;
     }, label);
   }
-  assert.throws(() => loadHostConfig({ PROMPTCUT_SHARED_CONFIG: configFile('[]') }), { code: 'bad-shared-config' }, '空数组');
-  assert.throws(() => loadHostConfig({ PROMPTCUT_SHARED_CONFIG: configFile('{oops') }), { code: 'bad-shared-config' }, '不是 JSON');
-  assert.throws(() => loadHostConfig({ PROMPTCUT_SHARED_CONFIG: path.join(tempDir('pc-rh1-none-'), 'missing.json') }), { code: 'bad-shared-config' }, '文件不存在');
+  assert.throws(() => loadHostConfig({ PROMPTCUT_SHARED_CONFIG: configFile('[]') }), { code: 'bad-shared-config' }, 'Empty array');
+  assert.throws(() => loadHostConfig({ PROMPTCUT_SHARED_CONFIG: configFile('{oops') }), { code: 'bad-shared-config' }, 'Not JSON');
+  assert.throws(() => loadHostConfig({ PROMPTCUT_SHARED_CONFIG: path.join(tempDir('pc-rh1-none-'), 'missing.json') }), { code: 'bad-shared-config' }, 'File does not exist');
 });
 
-test('RH1 render-host:参数解析与子进程环境变量(契约第 2 节)', () => {
-  assert.deepEqual(parseArgs(['--config', 'h.json']), { port: 5400, config: 'h.json', data: null, maxConcurrent: null, streams: false, verbose: false, cwd: null }, '缺省端口 5400；--cwd（隔离工作进程用自己的检出副本）缺省不给');
+test('RH1 render-host: argument parsing and child process environment variables (contract section 2)', () => {
+  assert.deepEqual(parseArgs(['--config', 'h.json']), { port: 5400, config: 'h.json', data: null, maxConcurrent: null, streams: false, verbose: false, cwd: null }, 'Default port 5400; --cwd (an isolated worker process uses its own checkout copy) is not given by default');
   assert.equal(parseArgs(['--port', '5403', '--max-concurrent', '2', '--streams']).port, 5403);
-  assert.throws(() => parseArgs(['--max-concurrent', '5']), /1～4/);
-  assert.throws(() => parseArgs(['--nope']), /不认识/);
+  assert.throws(() => parseArgs(['--max-concurrent', '5']), /1-4/);
+  assert.throws(() => parseArgs(['--nope']), /unrecognized/);
   const env = hostEnv({ PATH: 'x', PROMPTCUT_CLUSTER_TOKEN: 'tok', PROMPTCUT_DOCSERVICE_URL: 'ws://x', PROMPTCUT_HEADLESS: '1', PROMPTCUT_PUSH: '0', PROMPTCUT_ROLE: 'prerender' },
     { config: 'cfg/host.json', data: path.resolve('d'), streams: false, maxConcurrent: 2 });
   assert.equal(env.PROMPTCUT_QUEUE_NODE, '1');
   assert.equal(env.PROMPTCUT_NODE_PROFILE, 'host');
-  assert.equal(env.PROMPTCUT_SHARED_CONFIG, path.resolve('cfg/host.json'), '配置文件用绝对路径');
+  assert.equal(env.PROMPTCUT_SHARED_CONFIG, path.resolve('cfg/host.json'), 'The config file uses an absolute path');
   assert.equal(env.PROMPTCUT_STREAMS, '0');
   assert.equal(env.PROMPTCUT_HOST_MAX_CONCURRENT, '2');
   assert.equal(env.PROMPTCUT_EXPORT_DIR, path.resolve('d'));
-  assert.equal(env.TEMP, path.join(path.resolve('d'), 'tmp'), '临时目录在实例自己的数据目录下(不写公共的 port.json)');
-  for (const key of ['PROMPTCUT_CLUSTER_TOKEN', 'PROMPTCUT_DOCSERVICE_URL', 'PROMPTCUT_HEADLESS', 'PROMPTCUT_PUSH', 'PROMPTCUT_ROLE']) assert.equal(env[key], undefined, `${key} 删掉`);
+  assert.equal(env.TEMP, path.join(path.resolve('d'), 'tmp'), 'The temp directory is under the data directory of the instance itself (does not write the shared port.json)');
+  for (const key of ['PROMPTCUT_CLUSTER_TOKEN', 'PROMPTCUT_DOCSERVICE_URL', 'PROMPTCUT_HEADLESS', 'PROMPTCUT_PUSH', 'PROMPTCUT_ROLE']) assert.equal(env[key], undefined, `${key} is removed`);
   assert.equal(env.PATH, 'x');
   assert.equal(hostEnv({}, { config: 'a', data: 'd', streams: true }).PROMPTCUT_STREAMS, '1');
 });
 
 /* ================================================================== RH2 */
 
-test('RH2 多项目开多条连接:两个共享项目各一条 render 连接、一个 host 节点,各自只做自己项目的任务', async () => {
+test('RH2 multiple projects open multiple connections: two shared projects get one render connection each and a host node, and each does only the tasks of its own project', async () => {
   const svc = await startSharedService({ mode: 'hosted' });   // isLoopback 一律 false:只能凭证明进入
   const pages = [];
   let host = null;
@@ -255,8 +255,8 @@ test('RH2 多项目开多条连接:两个共享项目各一条 render 连接、�
     host.start();
     const deadline = Date.now() + 20_000;
     while (!host.nodes().every((n) => n.connected) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20));
-    assert.equal(host.nodes().length, 2, '两项配置两个节点');
-    assert.ok(host.nodes().every((n) => n.connected), `两条连接都连上:${JSON.stringify(host.nodes())}`);
+    assert.equal(host.nodes().length, 2, 'Two config entries, two nodes');
+    assert.ok(host.nodes().every((n) => n.connected), `Both connections are connected: ${JSON.stringify(host.nodes())}`);
     assert.deepEqual(host.nodes().map((n) => n.projectId), [a.projectId, b.projectId]);
 
     // 每个项目里一个成员页面发布一个细任务
@@ -278,17 +278,17 @@ test('RH2 多项目开多条连接:两个共享项目各一条 render 连接、�
       host.tick();
       await new Promise((r) => setTimeout(r, 30));
     }
-    assert.deepEqual(sinks.get(a.projectId).puts, [tasks.get(a.projectId).id], '项目 A 的节点只做 A 的任务');
-    assert.deepEqual(sinks.get(b.projectId).puts, [tasks.get(b.projectId).id], '项目 B 的节点只做 B 的任务');
-    for (const n of host.nodes()) assert.equal(n.seen, 1, `每个节点只见到自己项目的 1 个任务:${JSON.stringify(n)}`);
-    assert.deepEqual(executors.get(a.projectId).calls.plan, [], '不认领 plan');
+    assert.deepEqual(sinks.get(a.projectId).puts, [tasks.get(a.projectId).id], 'The node of project A does only the tasks of A');
+    assert.deepEqual(sinks.get(b.projectId).puts, [tasks.get(b.projectId).id], 'The node of project B does only the tasks of B');
+    for (const n of host.nodes()) assert.equal(n.seen, 1, `Each node sees only 1 task of its own project: ${JSON.stringify(n)}`);
+    assert.deepEqual(executors.get(a.projectId).calls.plan, [], 'Does not claim plan');
 
     // node.hello:文档服务侧的记录(role.node)与各空间队列里的节点
     const hellos = svc.logs.filter((l) => l.event === 'role.node');
-    assert.equal(hellos.length, 2, `两次 node.hello:${JSON.stringify(hellos)}`);
+    assert.equal(hellos.length, 2, `node.hello twice: ${JSON.stringify(hellos)}`);
     for (const h of hellos) {
       assert.equal(h.profile, 'host');
-      assert.equal(h.userId, `renderbox@${device}`, '身份是「用户名@设备」');
+      assert.equal(h.userId, `renderbox@${device}`, 'Identity is "username@device"');
     }
   } finally {
     host?.shutdown();
@@ -298,17 +298,17 @@ test('RH2 多项目开多条连接:两个共享项目各一条 render 连接、�
   }
 });
 
-test('RH2 host 节点的 node.hello 字段(profile / codeVersions / capabilities / maxConcurrent)', async () => {
+test('RH2 node.hello fields of a host node (profile / codeVersions / capabilities / maxConcurrent)', async () => {
   const env = createSpaces(['proj-a', 'proj-b']);
   const host = hostOn(env, { projectIds: ['proj-a', 'proj-b'], cap: 3 });
   host.start();
   await env.settle();
   for (const [index, projectId] of ['proj-a', 'proj-b'].entries()) {
     const hello = env.spaces.get(projectId).sent(`host-${index}`).find((m) => m.type === 'node.hello');
-    assert.ok(hello, `${projectId} 报到了`);
+    assert.ok(hello, `${projectId} checked in`);
     assert.equal(hello.profile, 'host');
-    assert.deepEqual(hello.codeVersions, [CV], '一个实例一个代码版本');
-    assert.deepEqual(hello.capabilities, { ...HOST_CAPABILITIES }, '能力与 PC 相同');
+    assert.deepEqual(hello.codeVersions, [CV], 'One code version per instance');
+    assert.deepEqual(hello.capabilities, { ...HOST_CAPABILITIES }, 'Capabilities are the same as PC');
     assert.deepEqual(hello.capabilities, { userCards: true, graphCards: false });
     assert.equal(hello.envFingerprint, FP);
     assert.equal(hello.maxConcurrent, 3);
@@ -320,7 +320,7 @@ test('RH2 host 节点的 node.hello 字段(profile / codeVersions / capabilities
 
 /* ================================================================== RH3 */
 
-test('RH3 plan 跳过:host 见到 plan 不发认领,只认领细任务;同一队列上的 pc 节点照常认领 plan', async () => {
+test('RH3 plan skipping: when host sees a plan it sends no claim and claims only fine-grained tasks; a pc node on the same queue claims the plan as usual', async () => {
   assert.deepEqual(checkClaimable({ ...planTaskOf({ projectId: 'p', projectRev: 1, codeVersion: CV }), state: 'open', version: 1 },
     { profile: 'host', envFingerprint: FP, codeVersions: [CV], capabilities: HOST_CAPABILITIES }), { ok: false, rule: 6, reason: 'plan-on-host' });
 
@@ -337,10 +337,10 @@ test('RH3 plan 跳过:host 见到 plan 不发认领,只认领细任务;同一队
   for (let i = 0; i < 20; i++) { await env.settle(); host.tick(); env.clock.advance(STEP_MS); }
   await env.settle();
   const claims = space.sent('host-0').filter((m) => m.type === 'task.claim').map((m) => m.id);
-  assert.deepEqual(claims, [fine.id], 'host 只认领了细任务');
-  assert.deepEqual(executor.calls.plan, [], '执行器的 plan 一次都没被调');
-  assert.equal(space.task(plan.id).state, 'open', 'plan 留在队列里');
-  assert.ok(host.nodes()[0].seen >= 2, 'plan 是看得见的,只是不认领');
+  assert.deepEqual(claims, [fine.id], 'host claimed only fine-grained tasks');
+  assert.deepEqual(executor.calls.plan, [], 'The executor plan was never called');
+  assert.equal(space.task(plan.id).state, 'open', 'plan stays in the queue');
+  assert.ok(host.nodes()[0].seen >= 2, 'plan is visible, it is just not claimed');
 
   // 对照:pc 节点在同一队列上认领 plan
   const pcEndpoint = space.lb.connect('pc-0', { userId: 'alice@pc-device-000001', tenantId: 'proj-a' });
@@ -351,8 +351,8 @@ test('RH3 plan 跳过:host 见到 plan 不发认领,只认领细任务;同一队
   });
   pc.start();
   await drive(env, () => { host.tick(); pc.tick(); }, () => space.doneCount(plan.id) === 1);
-  assert.deepEqual(space.sent('pc-0').filter((m) => m.type === 'task.claim').map((m) => m.id), [plan.id], 'pc 认领了 plan');
-  assert.deepEqual(space.sent('host-0').filter((m) => m.type === 'task.claim').map((m) => m.id), [fine.id], 'host 始终没认领 plan');
+  assert.deepEqual(space.sent('pc-0').filter((m) => m.type === 'task.claim').map((m) => m.id), [plan.id], 'pc claimed plan');
+  assert.deepEqual(space.sent('host-0').filter((m) => m.type === 'task.claim').map((m) => m.id), [fine.id], 'host never claimed plan');
   env.hygiene();
   host.shutdown();
   pc.stop();
@@ -361,7 +361,7 @@ test('RH3 plan 跳过:host 见到 plan 不发认领,只认领细任务;同一队
 /* ================================================================== RH4 */
 
 for (const cap of [1, 2]) {
-  test(`RH4 并发上限 maxConcurrent=${cap}:两个项目共 6 个任务,全部节点的持有 + 在飞任何一拍都不超过 ${cap},且会到达 ${cap}`, async () => {
+  test(`RH4 concurrency limit maxConcurrent=${cap}: two projects with 6 tasks in total, and held + in flight across all nodes never exceeds ${cap} on any tick and does reach ${cap}`, async () => {
     const projectIds = ['proj-a', 'proj-b'];
     const env = createSpaces(projectIds);
     const executors = new Map(projectIds.map((p) => [p, fakeExecutor({ hang: true })]));
@@ -373,26 +373,26 @@ for (const cap of [1, 2]) {
     for (let i = 0; i < 80; i++) {
       await env.settle();
       host.tick();
-      assert.ok(host.busy() <= cap, `第 ${i} 拍:持有 + 在飞 ${host.busy()} 超过 ${cap}`);
+      assert.ok(host.busy() <= cap, `Tick ${i}: held + in flight ${host.busy()} exceeds ${cap}`);
       peak = Math.max(peak, host.busy());
       await env.settle();
       for (const s of env.all) s.queue.tick();
       const claimedInQueues = env.all.reduce((n, s) => n + s.queue.describe().tasks.filter((t) => t.state === 'claimed').length, 0);
-      assert.ok(claimedInQueues <= cap, `第 ${i} 拍:队列里被认领的 ${claimedInQueues} 超过 ${cap}`);
+      assert.ok(claimedInQueues <= cap, `Tick ${i}: ${claimedInQueues} claimed in the queue exceeds ${cap}`);
       peakQueue = Math.max(peakQueue, claimedInQueues);
       env.clock.advance(STEP_MS);
     }
-    assert.equal(peak, cap, '会用满上限');
-    assert.equal(peakQueue, cap, '队列那边同时被认领的也到上限');
+    assert.equal(peak, cap, 'The limit is fully used');
+    assert.equal(peakQueue, cap, 'On the queue side, the number claimed at the same time also reaches the limit');
     const rendering = [...executors.values()].reduce((n, e) => n + e.calls.render.length, 0);
-    assert.equal(rendering, cap, `同时在渲的只有 ${cap} 个(执行器卡住不返回)`);
+    assert.equal(rendering, cap, `Only ${cap} are rendering at the same time (the executor is stuck and does not return)`);
     assert.equal(host.maxConcurrent, cap);
     env.hygiene();
     host.shutdown();
   });
 }
 
-test('RH4 并发上限不超过 4:给 9 是配置错误(集成裁定,不截断)', () => {
+test('RH4 the concurrency limit does not exceed 4: 9 is a config error (integration ruling, no truncation)', () => {
   const env = createSpaces(['proj-a']);
   assert.throws(() => hostOn(env, { projectIds: ['proj-a'], cap: 9 }), { code: 'bad-host-config' });
   assert.equal(hostOn(env, { projectIds: ['proj-a'], cap: 4 }).maxConcurrent, 4);
@@ -400,7 +400,7 @@ test('RH4 并发上限不超过 4:给 9 是配置错误(集成裁定,不截断)'
 
 /* ================================================================== RH5 */
 
-test('RH5 退出时让掉认领:每个持有发 task.release,队列立即放回 open,别的节点马上能认领;执行被中止', async () => {
+test('RH5 release claims on exit: each held claim sends task.release, the queue puts the task back to open immediately, other nodes can claim it right away; the execution is aborted', async () => {
   const projectIds = ['proj-a', 'proj-b'];
   const env = createSpaces(projectIds);
   const executors = new Map(projectIds.map((p) => [p, fakeExecutor({ hang: true })]));
@@ -412,13 +412,13 @@ test('RH5 退出时让掉认领:每个持有发 task.release,队列立即放回 
   assert.equal(host.busy(), 2);
 
   const released = host.shutdown('shutdown');
-  assert.equal(released, 2, '让掉两个认领');
+  assert.equal(released, 2, 'Two claims released');
   await env.settle();
   for (const [index, p] of projectIds.entries()) {
     const releases = env.spaces.get(p).sent(`host-${index}`).filter((m) => m.type === 'task.release');
-    assert.deepEqual(releases.map((m) => [m.id, m.reason]), [[tasks.get(p).id, 'shutdown']], `${p}:发了 task.release`);
-    assert.equal(env.spaces.get(p).task(tasks.get(p).id).state, 'open', `${p}:队列立即放回 open(没有断线,不靠宽限期)`);
-    assert.deepEqual(executors.get(p).calls.aborted, [tasks.get(p).id], `${p}:在跑的执行被中止`);
+    assert.deepEqual(releases.map((m) => [m.id, m.reason]), [[tasks.get(p).id, 'shutdown']], `${p}: task.release sent`);
+    assert.equal(env.spaces.get(p).task(tasks.get(p).id).state, 'open', `${p}: the queue puts it back to open immediately (no disconnect, no reliance on the grace period)`);
+    assert.deepEqual(executors.get(p).calls.aborted, [tasks.get(p).id], `${p}: the running execution is aborted`);
   }
   await host.settled();   // 卡住的执行器被中止后也能落定
   assert.equal(host.busy(), 0);
@@ -434,14 +434,14 @@ test('RH5 退出时让掉认领:每个持有发 task.release,队列立即放回 
   await drive(env, () => { host.tick(); other.tick(); }, () => space.doneCount(tasks.get('proj-a').id) === 1, 20);
   // 停下来的 host 之后一条认领都不再发
   const claimsAfterStop = space.sent('host-0').filter((m) => m.type === 'task.claim').length;
-  assert.equal(claimsAfterStop, 1, 'host 停了之后不再认领');
+  assert.equal(claimsAfterStop, 1, 'host no longer claims after it stops');
   env.hygiene();
   other.stop();
 });
 
 /* ================================================================== RH6 */
 
-test('RH6 代码版本过滤照旧:codeVersion 不同的 host 看得见任务、认领 0 次', async () => {
+test('RH6 code version filtering is unchanged: a host with a different codeVersion sees the task but claims it 0 times', async () => {
   const env = createSpaces(['proj-a']);
   const space = env.spaces.get('proj-a');
   const stale = hostOn(env, { projectIds: ['proj-a'], cv: 'other-code-version' });
@@ -451,9 +451,9 @@ test('RH6 代码版本过滤照旧:codeVersion 不同的 host 看得见任务、
   // M6c X3：host 凭队列 tick 发的摘要才知道哪个项目有活，这里每拍也 tick 队列（原来只推时钟）
   for (let i = 0; i < 20; i++) { await env.settle(); stale.tick(); for (const s of env.all) s.queue.tick(); env.clock.advance(STEP_MS); }
   await env.settle();
-  assert.equal(stale.nodes()[0].seen, 1, '看得见');
-  assert.equal(stale.nodes()[0].claimed, 0, '认领 0 次');
-  assert.equal(space.sent('host-0').filter((m) => m.type === 'task.claim').length, 0, '一条认领都没发');
+  assert.equal(stale.nodes()[0].seen, 1, 'Can see it');
+  assert.equal(stale.nodes()[0].claimed, 0, '0 claims');
+  assert.equal(space.sent('host-0').filter((m) => m.type === 'task.claim').length, 0, 'no claim was sent at all');
   assert.equal(space.task(task.id).state, 'open');
   env.hygiene();
   stale.shutdown();
@@ -461,7 +461,7 @@ test('RH6 代码版本过滤照旧:codeVersion 不同的 host 看得见任务、
 
 /* ================================================================== RH-fallback-ticket */
 
-test('RH-fallback-ticket 素材回退按基址挑票据:两台素材服务各认各的票据,读第二台用第二个项目的票据(不再 401)', async (t) => {
+test('RH-fallback-ticket asset fallback picks the ticket by base URL: each of the two asset services accepts only its own ticket, and reading from the second one uses the ticket of the second project (no longer 401)', async (t) => {
   const harness = createAssetHarness();
   t.after(() => harness.cleanup());
   const client = await import(harness.compileTs(path.join(ROOT, 'server', 'asset-client.ts')));
@@ -495,7 +495,7 @@ test('RH-fallback-ticket 素材回退按基址挑票据:两台素材服务各认
   // 修之前的做法:一律用第一个项目的票据 → A 回 404 后 B 拒 401
   const asked = [];
   client.setMediaFallbackTicket(async () => kitA.issue('r'));
-  assert.equal((await fetch(via)).status, 401, '对照:只用第一个项目的票据,第二台素材服务回 401');
+  assert.equal((await fetch(via)).status, 401, 'Control: with only the ticket of the first project, the second asset service returns 401');
 
   // 按基址挑:A 用 A 的票据(合法、没有这份素材 → 404,改试下一个),B 用 B 的票据
   const records = [
@@ -503,10 +503,10 @@ test('RH-fallback-ticket 素材回退按基址挑票据:两台素材服务各认
     { base: () => `${svcB.base}/`, ticket: async () => { asked.push('B'); return kitB.issue('r'); } },
   ];
   const pick = fallbackTicketFor(records);
-  assert.equal(pick('http://127.0.0.1:1/api/asset'), null, '不属于任何项目的基址不带票据');
+  assert.equal(pick('http://127.0.0.1:1/api/asset'), null, 'A base URL that belongs to no project carries no ticket');
   client.setMediaFallbackTicket(pick);
   const got = await fetch(via, { headers: { Range: 'bytes=0-9' } });
   assert.equal(got.status, 206);
   assert.deepEqual(Buffer.from(await got.arrayBuffer()), buf.subarray(0, 10));
-  assert.deepEqual(asked, ['A', 'B'], '每个回退基址各取一次、取的是它所属项目的票据');
+  assert.deepEqual(asked, ['A', 'B'], 'A ticket is requested once per fallback base URL, and it is the ticket of the project that base URL belongs to');
 });

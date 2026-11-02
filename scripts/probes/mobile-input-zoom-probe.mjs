@@ -90,14 +90,14 @@ try {
     }
     return { coarse: matchMedia('(pointer: coarse)').matches, inputs: visible, probe };
   });
-  check(out.F.coarse, 'F 触屏仿真下 (pointer: coarse) 应成立', out.F);
-  check(out.F.inputs.length > 0, 'F 开始页上应有文字输入框', out.F);
-  for (const i of [...out.F.inputs, ...out.F.probe]) check(i.fontSize >= 16, `F 输入框 ${i.name} 字号应 ≥ 16px`, i);
+  check(out.F.coarse, 'F (pointer: coarse) should hold under touch emulation', out.F);
+  check(out.F.inputs.length > 0, 'F the start page should have text input boxes', out.F);
+  for (const i of [...out.F.inputs, ...out.F.probe]) check(i.fontSize >= 16, `F input box ${i.name} font size should be ≥ 16px`, i);
 
   /* Z:放大 → 点输入框打字 → 失焦 → viewport 临时加 maximum-scale=1 再恢复 */
   await pinchTo(page);
   out.Z.zoomed = await scale(page);
-  check(out.Z.zoomed > 1.5, 'Z 双指捏合后页面应放大', out.Z);
+  check(out.Z.zoomed > 1.5, 'Z the page should zoom in after a two-finger pinch', out.Z);
   const first = await page.$('.pcm input.text-in');
   await first.tap();
   // 放大 5 倍时输入框可能在可视区外,点不中就直接给焦点:这里验的是失焦之后,不是点击
@@ -105,18 +105,18 @@ try {
   await page.keyboard.type('probe');
   await sleep(300);
   out.Z.whileTyping = await metaLog();
-  check(out.Z.whileTyping.length === 0, 'Z 输入期间不动 viewport', out.Z);
+  check(out.Z.whileTyping.length === 0, 'Z the viewport is not touched while typing', out.Z);
   await page.evaluate(() => document.activeElement?.blur());
   await sleep(1200);
   out.Z.afterBlur = await metaLog();
   out.Z.metaAfter = await viewportMeta(page);
-  check(out.Z.afterBlur.length === 2 && /maximum-scale=1$/.test(out.Z.afterBlur[0]) && out.Z.afterBlur[1] === base, 'Z 失焦后 viewport 先加 maximum-scale=1、再恢复原内容', { base, log: out.Z.afterBlur });
-  check(out.Z.metaAfter === base, 'Z 最终 viewport 是原内容', { base, after: out.Z.metaAfter });
+  check(out.Z.afterBlur.length === 2 && /maximum-scale=1$/.test(out.Z.afterBlur[0]) && out.Z.afterBlur[1] === base, 'Z after blur, the viewport first gets maximum-scale=1 added, then the original content is restored', { base, log: out.Z.afterBlur });
+  check(out.Z.metaAfter === base, 'Z the final viewport is the original content', { base, after: out.Z.metaAfter });
   out.Z.scaleAfterBlur = await scale(page);
   await resetZoom(page);
   await pinchTo(page);
   out.Z.pinchAgain = await scale(page);
-  check(out.Z.pinchAgain > 1.5, 'Z 恢复后仍能双指放大', out.Z);
+  check(out.Z.pinchAgain > 1.5, 'Z pinch zoom still works after restoring', out.Z);
   await resetZoom(page);
   await metaLog();
 
@@ -127,17 +127,17 @@ try {
     if (all.length < 2) all[0].after(Object.assign(document.createElement('input'), { className: 'text-in' }));
   });
   const inputs = await page.$$('.pcm input.text-in');
-  if (check(inputs.length >= 2, 'K 开始页应有两个以上输入框', { n: inputs.length })) {
+  if (check(inputs.length >= 2, 'K the start page should have two or more input boxes', { n: inputs.length })) {
     await pinchTo(page);
     await inputs[0].evaluate((el) => el.focus());
     await page.evaluate(() => { const all = [...document.querySelectorAll('.pcm input.text-in')]; all[1].focus(); });
     await sleep(800);
     out.K.afterMove = await metaLog();
-    check(out.K.afterMove.length === 0, 'K 焦点挪到下一个输入框时不动 viewport', out.K);
+    check(out.K.afterMove.length === 0, 'K the viewport is not touched when focus moves to the next input box', out.K);
     await page.evaluate(() => document.activeElement?.blur());
     await sleep(1200);
     out.K.afterBlur = await metaLog();
-    check(out.K.afterBlur.length === 2, 'K 最后失焦才动 viewport', out.K);
+    check(out.K.afterBlur.length === 2, 'K the viewport changes only on the final blur', out.K);
     await resetZoom(page);
     await metaLog();
   }
@@ -147,11 +147,11 @@ try {
   await page.evaluate(() => { document.body.focus(); document.body.blur(); });
   await sleep(1200);
   out.N.log = await metaLog();
-  check(out.N.log.length === 0, 'N 没碰输入框时不动 viewport', out.N);
+  check(out.N.log.length === 0, 'N the viewport is not touched when no input box is touched', out.N);
 
-  check(page.errors.length === 0, '页面无未捕获异常', page.errors.slice(0, 3));
+  check(page.errors.length === 0, 'no uncaught exceptions on the page', page.errors.slice(0, 3));
 } catch (e) {
-  fails.push(`异常:${e?.stack ?? e}`);
+  fails.push(`Exception: ${e?.stack ?? e}`);
 } finally {
   await browser.close().catch(() => {});
   await env.close();

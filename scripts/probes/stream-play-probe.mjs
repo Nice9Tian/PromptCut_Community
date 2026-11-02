@@ -49,7 +49,7 @@ const check = (cond, label, extra) => { if (!cond) fails.push(label + (extra ===
 async function stageOrigins() {
   const r = await fetch(origin + '/api/stage/ports');
   const j = await r.json();
-  if (!j.ok || !Array.isArray(j.ports) || j.ports.length < 2) throw new Error(`舞台端口没起来:${JSON.stringify(j)}`);
+  if (!j.ok || !Array.isArray(j.ports) || j.ports.length < 2) throw new Error(`Stage ports did not come up: ${JSON.stringify(j)}`);
   const u = new URL(origin);
   return j.ports.slice(0, 2).map((p) => `${u.protocol}//${u.hostname}:${p}`);
 }
@@ -124,7 +124,7 @@ try {
   pipeline = produced.pipeline;
   const producer = produced.producer;
   out.produceMs = produced.produceMs;
-  if (!producer) throw new Error('轨道流没生产完');
+  if (!producer) throw new Error('track stream production did not finish');
   const layers = latestLayers(produced.layers);
   out.layers = layers.map(l => ({ clipId: l.clipId, key: l.key.slice(0, 12), ranges: l.ranges, originFrame: l.originFrame ?? null, groupClipIds: l.groupClipIds ?? null }));
   // 播放中被抑制的:有流的那几张(毛玻璃的里程表不进流,照常活渲 —— 它要模糊的正是下面的流画布)
@@ -202,27 +202,27 @@ try {
   out.pause = stop;
   const hash2 = await bgHash();
   out.bgCanvas = { hash0, hash1, hash2 };
-  check(!!hash1 && hash1.h === hash2?.h, '被抑制的粒子卡:自己那块画布的像素哈希在抑制期间不变', out.bgCanvas);
-  check(!!hash1 && hash1.localFrame !== hash2?.localFrame, '被抑制的粒子卡:包裹层的 data-pc-local-frame 仍随 t 变', out.bgCanvas);
+  check(!!hash1 && hash1.h === hash2?.h, 'suppressed particle card: its own canvas\'s pixel hash does not change during suppression', out.bgCanvas);
+  check(!!hash1 && hash1.localFrame !== hash2?.localFrame, 'suppressed particle card: the wrapper layer\'s data-pc-local-frame still changes with t', out.bgCanvas);
   // 节拍
   out.beats = beatsOf(await page.evaluate(() => window.__frames), PROJECT.fps);
-  check(out.beats.noSkip, '播放中 frame 的 sec 差恒为 1/fps(不跳帧)', out.beats.secStepsUnique);
+  check(out.beats.noSkip, 'during playback the sec difference between frames is always 1/fps (no frame skipping)', out.beats.secStepsUnique);
   check(out.beats.gapMedianMs !== null && out.beatsNoStreams.gapMedianMs !== null,
-    '贴流前后都量到了 frame 间隔中位数(两者之差只记录,不当闸门;原先要求 ≤ 3 ms —— 耗时只记录,不当闸门(verification.md,2026-10-07 用户改定);2026-10-23 探针总审第二遍扫描补改)', { streams: out.beats, none: out.beatsNoStreams, deltaMs: out.beats.gapMedianMs - out.beatsNoStreams.gapMedianMs });
+    'the median frame interval was measured both before and after stream paste (the difference between the two is only recorded, not a gate; it used to require ≤ 3 ms: durations are only recorded, not a gate (verification.md, user decision, 2026-10-07); amended in the second-pass scan of the full probe audit, 2026-10-23)', { streams: out.beats, none: out.beatsNoStreams, deltaMs: out.beats.gapMedianMs - out.beatsNoStreams.gapMedianMs });
   // 解码器状态
   const d = await diagA();
   out.diagMid = mid.streams;
   out.diagPaused = d.streams;
   const tracks = mid.streams.tracks;
-  check(tracks.length === planes.length, 'front 上每个平面一条流', { tracks: tracks.length, planes: planes.length });
+  check(tracks.length === planes.length, 'one stream per plane on front', { tracks: tracks.length, planes: planes.length });
   for (const t of tracks) {
-    check(t.drawn > 10, `${t.id}: 播放中流平面画出了帧`, { drawn: t.drawn, errors: t.errors, lastError: t.lastError });
-    check(t.errors === 0, `${t.id}: 解码器没报错`, t.lastError);
-    check(t.maxHeld <= 8, `${t.id}: 单个解码器同时持有 ≤ 8 帧`, t.maxHeld);
+    check(t.drawn > 10, `${t.id}: the stream plane drew frames during playback`, { drawn: t.drawn, errors: t.errors, lastError: t.lastError });
+    check(t.errors === 0, `${t.id}: the decoder reported no errors`, t.lastError);
+    check(t.maxHeld <= 8, `${t.id}: a single decoder holds ≤ 8 frames at a time`, t.maxHeld);
   }
-  check(mid.streams.heldBytes <= 80 * 1024 * 1024, '解码帧总字节 ≤ 80 MB', mid.streams.heldBytes);
+  check(mid.streams.heldBytes <= 80 * 1024 * 1024, 'total bytes of decoded frames ≤ 80 MB', mid.streams.heldBytes);
   const b = await diagB();
-  check(b.streams.tracks.length === 0 && b.streamPlanes.length === 0, 'back 舞台不建 decoder、不收流平面', b.streams);
+  check(b.streams.tracks.length === 0 && b.streamPlanes.length === 0, 'the back stage creates no decoder and accepts no stream planes', b.streams);
   // 暂停在这一帧:舞台截图 vs 导出页同一帧
   const iframeBox = await (await page.$('#a')).boundingBox();
   /*
@@ -264,12 +264,12 @@ try {
     out.exportShot = exportFile;
     const stageRgb = rgbOver(shot), exportRgb = rgbOver(exportBuf);
     out.compare = compare(stageRgb, exportRgb);
-    check(!out.compare.sizeMismatch && out.compare.meanAbs < 3, '暂停帧:舞台(贴流)与导出同一帧的平均误差 < 3/255', out.compare);
+    check(!out.compare.sizeMismatch && out.compare.meanAbs < 3, 'paused frame: mean error between the stage (stream paste) and the same export frame < 3/255', out.compare);
     // 毛玻璃(里程表)那一块:它活渲,背后是流画布 —— 模糊采样对了,这一块和导出就对得上
     const glass = PROJECT.tracks.flatMap(t => t.clips).find(c => c.id === 'clip-glass')?.frame;
     if (glass) {
       out.compareGlass = compare(stageRgb, exportRgb, { x: glass.x, y: glass.y, w: glass.w, h: Math.min(glass.h, 1080 - glass.y) });
-      check(out.compareGlass.meanAbs < 3, '毛玻璃卡叠在流画布上:那一块和导出同一帧的平均误差 < 3/255', out.compareGlass);
+      check(out.compareGlass.meanAbs < 3, 'frosted-glass card over the stream canvas: mean error of that region against the same export frame < 3/255', out.compareGlass);
     }
   }
   /*
@@ -290,8 +290,8 @@ try {
     out.compareLive = compare(a, b2);
     const glass = PROJECT.tracks.flatMap(t => t.clips).find(c => c.id === 'clip-glass')?.frame;
     if (glass) out.compareLiveGlass = compare(a, b2, { x: glass.x, y: glass.y, w: glass.w, h: Math.min(glass.h, 1080 - glass.y) });
-    check(out.compareLive.meanAbs < 3, '贴流 vs 同一舞台活渲同一帧:平均误差 < 3/255', out.compareLive);
-    if (out.compareLiveGlass) check(out.compareLiveGlass.meanAbs < 3, '毛玻璃叠在流画布上 vs 叠在活渲的卡上:平均误差 < 3/255', out.compareLiveGlass);
+    check(out.compareLive.meanAbs < 3, 'stream paste vs live render of the same frame on the same stage: mean error < 3/255', out.compareLive);
+    if (out.compareLiveGlass) check(out.compareLiveGlass.meanAbs < 3, 'frosted glass over the stream canvas vs over a live-rendered card: mean error < 3/255', out.compareLiveGlass);
     // 还原成贴流的状态,后面的命中测试照旧
     await rpc('setSuppressed', heavy);
     await rpc('setStreamPlanes', planes);
@@ -300,20 +300,20 @@ try {
   // 命中测试:药丸的中心 → 药丸;没有药丸的地方 → 粒子背景(它的流平面铺满画面)
   out.hit = { pill: await rpc('hitTest', 960, 540), corner: await rpc('hitTest', 60, 1000) };
   if (!GROUP) {
-    check(out.hit.pill?.clipId === 'clip-pill', '点药丸的流画布命中药丸', out.hit.pill);
-    check(out.hit.corner?.clipId === 'clip-bg', '点粒子背景的流画布命中粒子背景', out.hit.corner);
+    check(out.hit.pill?.clipId === 'clip-pill', 'clicking the pill\'s stream canvas hits the pill', out.hit.pill);
+    check(out.hit.corner?.clipId === 'clip-bg', 'clicking the particle background\'s stream canvas hits the particle background', out.hit.corner);
   } else {
     const group = planes.find(p => p.clipIds.length > 1);
-    check(!!group, '组流模式下有一条组流平面', planes);
+    check(!!group, 'in group stream mode there is one group stream plane', planes);
     const cv = await frameA().evaluate(() => {
       const c = document.querySelector('canvas[data-pc-group-plane]');
       return c ? { pe: getComputedStyle(c).pointerEvents, w: c.width, h: c.height } : null;
     });
     out.groupPlane = cv;
-    check(cv?.pe === 'none', '组流平面带 pointer-events: none', cv);
-    check(!!out.hit.pill && group?.clipIds.includes(out.hit.pill.clipId), '点组流平面命中的是背后组内被抑制的卡', out.hit.pill);
+    check(cv?.pe === 'none', 'the group stream plane has pointer-events: none', cv);
+    check(!!out.hit.pill && group?.clipIds.includes(out.hit.pill.clipId), 'clicking the group stream plane hits the suppressed card in the group behind it', out.hit.pill);
     const rects = await rpc('rectsWithBounds', { pixels: 'none' });
-    check(rects.every(r => !String(r.clipId).includes(',')), 'rects 不把组流平面算进去', rects.map(r => r.clipId));
+    check(rects.every(r => !String(r.clipId).includes(',')), 'rects do not include the group stream plane', rects.map(r => r.clipId));
   }
   // 冷 seek:从当前位置跳到别的分段(没缓存过),量到解出并画上目标帧
   out.seek = await frameA().evaluate(async (target, fps) => {
@@ -329,7 +329,7 @@ try {
       await wait(1);
     }
   }, 3.9, PROJECT.fps);
-  check(out.seek.ms !== null, '冷 seek 解出了目标帧(用时只记录;原先要求 ≤ 60 ms —— 耗时只记录,不当闸门(verification.md,2026-10-07 用户改定);2026-10-23 探针总审第二遍扫描补改)', out.seek);
+  check(out.seek.ms !== null, 'Cold seek decoded the target frame (duration is only recorded; previously required ≤ 60 ms: timing is only recorded, not used as a gate (verification.md, user decision revised, 2026-10-07); 2026-10-23 probe audit, second-pass scan, follow-up fix)', out.seek);
   // 缺分段:粒子背景只给前两段(0～29 帧)就绪,从第 1 秒起播 —— 第 30 帧起那一层透明、播放头照走
   if (!GROUP) {
     const bgPlane = planes.find(p => p.clipIds.length === 1 && p.clipIds[0] === 'clip-bg');
@@ -344,17 +344,17 @@ try {
       const beats = beatsOf(await page.evaluate(() => window.__frames), PROJECT.fps);
       const bg = missing.streams.tracks.find(t => t.id.startsWith('clip-bg#'));
       out.missing = { beats, bg };
-      check(beats.noSkip && beats.last > 1.5, '缺分段时播放头不停、不跳帧', beats);
-      check(!!bg && bg.lastDrawn === null, '缺分段的那一层清成透明(这一拍没有画任何一帧)', bg);
+      check(beats.noSkip && beats.last > 1.5, 'The playhead keeps running and does not skip frames when a segment is missing', beats);
+      check(!!bg && bg.lastDrawn === null, 'The layer with the missing segment is cleared to transparent (no frame was drawn on this tick)', bg);
       await rpc('setStreamPlanes', planes);
     }
   }
   // 退回后台:streamPlayer 停下、帧全部关掉
   await rpc('setRole', 'back', { job: 'probe' });
   const after = await diagA();
-  check(after.streams.stopped === true && after.streams.tracks.length === 0 && after.streams.heldBytes === 0, 'setRole(back) 之后 streamPlayer 停下、VideoFrame 全部关掉', after.streams);
+  check(after.streams.stopped === true && after.streams.tracks.length === 0 && after.streams.heldBytes === 0, 'After setRole(back), streamPlayer stops and all VideoFrames are closed', after.streams);
 } catch (error) {
-  fails.push(`异常:${error?.stack || error}`);
+  fails.push(`Exception: ${error?.stack || error}`);
 } finally {
   out.fails = fails;
   await browser?.close().catch(() => {});

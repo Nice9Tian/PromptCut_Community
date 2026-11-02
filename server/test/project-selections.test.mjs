@@ -65,7 +65,7 @@ test('018 project selection provider over real WS: all pages, authority, revoke,
   assert.equal(state.type, 'selection.state');
   assert.equal(state.projectRev, 7);
   assert.deepEqual(state.members.map(m => m.accountId), ['alice', 'bob', 'carol']);
-  assert.equal(state.members[0].displayName, 'alice-trusted（当前用户）');
+  assert.equal(state.members[0].displayName, 'alice-trusted (current user)');
   assert.deepEqual(state.members[0].pages.map(p => p.pageId), ['a1', 'a2']);
   assert.deepEqual(state.members[0].pages[0].items.map(i => [i.id, !!i.missing]), [['c1', false], ['gone', true]]);
   assert.deepEqual(state.members[2].pages[0].selection.clipIds, [], 'empty online page remains');
@@ -98,7 +98,7 @@ test('018 project selection provider over real WS: all pages, authority, revoke,
     selection: { clipIds: ['c1'] } })).reason, 'forbidden');
   state = await askQuery();
   assert.deepEqual(state.members[0].pages.map(p => [p.pageId, p.live, p.note]),
-    [['sent-page', false, '发消息时的选区，非实时']]);
+    [['sent-page', false, 'Selection at the time the message was sent, not live']]);
   failHead = true;
   assert.equal((await askQuery()).reason, 'authority-unavailable', 'unreachable head fails closed');
   failHead = false;
@@ -177,7 +177,7 @@ test('018 read-only selection and strict authority/grant fences', async () => {
     runGrantId: 'run1' }), err => err.code === 'run-fence-unavailable');
 });
 
-test('一位成员的登录过期或被撤销:这一位不算,别的成员的选区照常读到;权威不可用仍然整次失败', async () => {
+test('when one member\'s login expires or is revoked: that member does not count, other members\' selections are still read as usual; if the authority is unavailable, the whole call still fails', async () => {
   const projectId = 'p1';
   const pageOf = accountId => ({ role: 'page', tenantId: projectId, accountId, accountName: accountId, loginId: `L-${accountId}` });
   const agent = { service: 'agent', tenantId: projectId };
@@ -207,12 +207,12 @@ test('一位成员的登录过期或被撤销:这一位不算,别的成员的选
   answers.set('carol', fail(401, 'credential-revoked'));
   answers.set('dave', fail(401, 'principal-mismatch'));
   let state = await query();
-  assert.deepEqual(liveOf(state), ['alice', 'erin'], '过期、被撤销的三位不算,发起方和另一位照常');
+  assert.deepEqual(liveOf(state), ['alice', 'erin'], 'the three members whose logins expired or were revoked do not count; the initiator and one other member are as usual');
   assert.equal(state.members.find(m => m.accountId === 'alice').isInitiator, true);
   assert.deepEqual(state.members.find(m => m.accountId === 'alice').pages.map(p => [p.pageId, p.live, p.selection.clipIds]), [['page-alice', true, ['c1']]],
-    '发起方读到的是它页面上实时的选区,不是发消息时的那一份');
-  assert.equal(/page-(bob|carol|dave)/.test(JSON.stringify(state)), false, '不算的成员的选区一个字都不在结果里');
-  assert.equal(selection.describe().pages, 2, '不算的那三条连接的在场记录撤掉了');
+    'the initiator reads the live selection on its page, not the one from when the message was sent');
+  assert.equal(/page-(bob|carol|dave)/.test(JSON.stringify(state)), false, 'not a single character of the uncounted members\' selections is in the result');
+  assert.equal(selection.describe().pages, 2, 'the presence records of the three uncounted connections were removed');
 
   // 权限没有放松:那条连接凭过期的登录再发选区照旧被拒,进不了表
   await selection.handle(ctx, 'conn-bob', { type: 'selection.set', projectId, pageId: 'page-bob', revision: 2, selection: { clipIds: ['c2'] } });
@@ -239,8 +239,8 @@ test('一位成员的登录过期或被撤销:这一位不算,别的成员的选
   selection.connect(ctx, 'conn-gina', pageOf('gina'));
   answers.set('gina', () => 'yes');
   state = await query();
-  assert.deepEqual(liveOf(state), ['bob'], '答非所问的两位不算');
-  assert.equal(state.members.find(m => m.accountId === 'bob').pages.length, 1, '也没有被算成别人的页面');
+  assert.deepEqual(liveOf(state), ['bob'], 'the two members whose answers do not match the question do not count');
+  assert.equal(state.members.find(m => m.accountId === 'bob').pages.length, 1, 'and was not counted as someone else\'s page either');
   assert.equal(selection.describe().pages, 1);
 
   // 查询途中断线的那一位不算,别的照常
@@ -251,9 +251,9 @@ test('一位成员的登录过期或被撤销:这一位不算,别的成员的选
   // 不是哪一位成员的事:权威不可用(5xx)、超时或连不上(没有状态码)、项目没了(404)、正在搬迁(409)、请求写错(400) —— 整次失败,不给缺人的表
   for (const [status, code] of [[503, 'account-event-gap'], [500, 'internal'], [undefined, 'timeout'], [404, 'no-project'], [409, 'relocating'], [400, 'invalid-action'], [429, 'busy']]) {
     answers.set('bob', fail(status, code));
-    await assert.rejects(query(), err => err.status === 503 && err.code === 'authority-unavailable', `${status ?? '没有状态码'} ${code} 应该整次失败`);
-    assert.equal(selection.describe().pages, 1, '整次失败时不撤任何人的记录');
+    await assert.rejects(query(), err => err.status === 503 && err.code === 'authority-unavailable', `${status ?? 'no status code'} ${code} should fail the whole call`);
+    assert.equal(selection.describe().pages, 1, 'when the whole call fails, nobody\'s records are removed');
   }
   answers.set('bob', true);
-  assert.deepEqual(liveOf(await query()), ['bob'], '权威恢复后照常');
+  assert.deepEqual(liveOf(await query()), ['bob'], 'back to normal once the authority recovers');
 });

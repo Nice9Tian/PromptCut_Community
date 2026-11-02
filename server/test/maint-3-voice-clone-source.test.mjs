@@ -33,27 +33,27 @@ before(async () => {
   ({ VoiceError } = await import('../voice/providers.mjs'));
 });
 
-test('MNT3-V-1 复刻源文件只认素材标识:老请求体只给 path 被拒,不去读那个路径', async () => {
+test('MNT3-V-1 the clone source file is recognized only by asset identifier: an old request body with only path is rejected, and that path is not read', async () => {
   const seen = [];
   const resolve = async (m) => { seen.push(m); return m.hash === 'ab'.repeat(32) ? `http://asset.test/@media/${m.hash}` : null; };
   const real = path.join(TMP, 'real.wav');
   fs.writeFileSync(real, 'x');
-  await assert.rejects(voice.resolveCloneSource({ path: real, consent: true }, resolve), (e) => e instanceof VoiceError && /素材标识/.test(e.message));
-  assert.deepEqual(seen, [], '没有标识时连解析器都不问');
+  await assert.rejects(voice.resolveCloneSource({ path: real, consent: true }, resolve), (e) => e instanceof VoiceError && /asset identifier/.test(e.message));
+  assert.deepEqual(seen, [], 'Without an identifier the resolver is not even asked');
   // media 里夹带 path 也不看
   const ok = await voice.resolveCloneSource({ media: { hash: 'ab'.repeat(32), name: '我的声音.m4a', path: real } }, resolve);
   assert.deepEqual(ok, { src: `http://asset.test/@media/${'ab'.repeat(32)}`, label: '我的声音.m4a' });
-  assert.equal(seen[0].path, undefined, '解析器拿到的标识里没有 path');
+  assert.equal(seen[0].path, undefined, 'The identifier the resolver receives has no path');
   await assert.rejects(voice.resolveCloneSource({ media: { hash: 'cd'.repeat(32), name: '没入库.wav' } }, resolve),
     (e) => e instanceof VoiceError && /素材服务上没有这份素材:没入库\.wav/.test(e.message));
-  const down = async () => { throw new AssetSourceError('素材服务不可达(http://127.0.0.1:9):ECONNREFUSED'); };
+  const down = async () => { throw new AssetSourceError('Asset service unreachable (http://127.0.0.1:9): ECONNREFUSED'); };
   await assert.rejects(voice.resolveCloneSource({ media: { hash: 'ab'.repeat(32) } }, down), (e) => e instanceof AssetSourceError);
 });
 
 const FFMPEG = findFfmpeg();
-const skip = FFMPEG ? false : '没找到 ffmpeg';
+const skip = FFMPEG ? false : 'ffmpeg not found';
 
-test('MNT3-V-2 真的素材服务(本进程)+ 真 ffmpeg:经标识取字节转出复刻用的 wav,转码期间事件循环不停', { skip, timeout: 120_000 }, async () => {
+test('MNT3-V-2 a real asset service (in this process) + real ffmpeg: bytes are fetched by identifier and converted to the wav used for cloning, and the event loop keeps running during transcoding', { skip, timeout: 120_000 }, async () => {
   const asset = await harness.asset();
   const svc = await harness.serve({ stores: 'default' });
   try {
@@ -79,19 +79,19 @@ test('MNT3-V-2 真的素材服务(本进程)+ 真 ffmpeg:经标识取字节转�
     try { prepared = await voice.prepareCloneAudio(source.src, { ffmpeg: FFMPEG }); }
     finally { clearInterval(timer); }
     try {
-      assert.ok(prepared.seconds > 10 && prepared.seconds <= 12.1, `秒数 ${prepared.seconds}`);
+      assert.ok(prepared.seconds > 10 && prepared.seconds <= 12.1, `Seconds ${prepared.seconds}`);
       const head = fs.readFileSync(prepared.file).subarray(0, 44);
       assert.equal(head.toString('ascii', 0, 4), 'RIFF');
-      assert.equal(head.readUInt16LE(22), 1, '单声道');
+      assert.equal(head.readUInt16LE(22), 1, 'Mono');
       assert.equal(head.readUInt32LE(24), 32000, '32 kHz');
-      assert.ok(ticks >= 1, `转码期间事件循环在转(ticks=${ticks})`);
+      assert.ok(ticks >= 1, `The event loop kept running during transcoding (ticks=${ticks})`);
     } finally { fs.rmSync(prepared.file, { force: true }); }
 
     // 素材服务上没有的哈希:resolveCloneSource 就拦下,不交给 ffmpeg
     await assert.rejects(voice.resolveCloneSource({ media: { hash: 'ee'.repeat(32), name: '没入库.wav' } }, resolve), (e) => e instanceof VoiceError);
     // 地址读不到时 prepareCloneAudio 报「源文件转音频失败」,不留临时文件
     const before = fs.readdirSync(os.tmpdir()).filter(n => n.startsWith(`pc-voice-clone-${process.pid}-`)).length;
-    await assert.rejects(voice.prepareCloneAudio(`${svc.origin}/@media/${'ee'.repeat(32)}`, { ffmpeg: FFMPEG }), (e) => e instanceof VoiceError && /源文件转音频失败/.test(e.message));
+    await assert.rejects(voice.prepareCloneAudio(`${svc.origin}/@media/${'ee'.repeat(32)}`, { ffmpeg: FFMPEG }), (e) => e instanceof VoiceError && /Failed to convert the source file to audio/.test(e.message));
     await new Promise(r2 => setTimeout(r2, 50));
     assert.equal(fs.readdirSync(os.tmpdir()).filter(n => n.startsWith(`pc-voice-clone-${process.pid}-`)).length, before);
   } finally {
@@ -99,7 +99,7 @@ test('MNT3-V-2 真的素材服务(本进程)+ 真 ffmpeg:经标识取字节转�
   }
 });
 
-test('MNT3-V-3 页面 cloneVoiceFromFile:上传后递素材标识 media,不递 path', async () => {
+test('MNT3-V-3 page cloneVoiceFromFile: after uploading, passes the asset identifier media and not path', async () => {
   const mod = await import(harness.compileTs(path.join(ROOT, 'src', 'ai', 'voice.ts')));
   const calls = [];
   const realFetch = globalThis.fetch;
@@ -112,7 +112,7 @@ test('MNT3-V-3 页面 cloneVoiceFromFile:上传后递素材标识 media,不递 p
   };
   try {
     const file = new File([new Uint8Array([1, 2, 3])], '我的声音.m4a');
-    const r = await mod.cloneVoiceFromFile(file, { name: '复刻' });
+    const r = await mod.cloneVoiceFromFile(file, { name: 'clone' });
     assert.equal(r.voiceId, 'pcVoice1');
   } finally { globalThis.fetch = realFetch; }
   const clone = calls.find(c => c.url === '/api/voice/clone');
@@ -121,5 +121,5 @@ test('MNT3-V-3 页面 cloneVoiceFromFile:上传后递素材标识 media,不递 p
   assert.deepEqual(body.media, { hash: 'ab'.repeat(32), url: `/@media/${'ab'.repeat(32)}.m4a`, name: '我的声音.m4a' });
   assert.equal(body.path, undefined);
   assert.equal(body.consent, true);
-  assert.equal(body.name, '复刻');
+  assert.equal(body.name, 'clone');
 });

@@ -38,7 +38,7 @@ function harness({ renew = async () => true, life = 120_000 } = {}) {
 }
 async function open(h) { await h.life_.ticket(); h.life_.opened(); }
 
-test("ALL-01 取票据要求令牌至少剩 60 秒;进项目时那份会话够用就用", async () => {
+test("ALL-01 fetching a ticket requires the token to have at least 60 seconds left; the session obtained when entering the project is used if it is sufficient", async () => {
   const h = harness();
   assert.equal(await h.life_.ticket({ connectionTicket: "first", expiresAt: h.now + 90_000 }), "first");
   assert.deepEqual(h.sessions, []);
@@ -48,7 +48,7 @@ test("ALL-01 取票据要求令牌至少剩 60 秒;进项目时那份会话够�
   assert.deepEqual([h.life_.describe().expiresAt, h.life_.describe().trusted], [h.now + 120_000, true]);
 });
 
-test("ALL-02 建好连接后不按钟点作废或换会话:时间流逝不自动换也不断开", async () => {
+test("ALL-02 once the connection is established, do not invalidate or replace the session by the clock: the passage of time neither replaces it automatically nor disconnects", async () => {
   const h = harness();
   await open(h);
   h.now += 80_000;
@@ -61,14 +61,14 @@ test("ALL-02 建好连接后不按钟点作废或换会话:时间流逝不自动
   assert.equal(h.expired, 0);
 });
 
-test("ALL-03 没有会话时不管:断线重连由重连逻辑处理", async () => {
+test("ALL-03 do nothing when there is no session: reconnection after a drop is handled by the reconnect logic", async () => {
   const h = harness();
   assert.equal(await h.life_.tick(), "idle");
   h.connected = false;
   assert.equal(await h.life_.tick(), "idle");
 });
 
-test("ALL-04 会话接口回 401 / 403:交给 onTerminal,不 expire", async () => {
+test("ALL-04 session endpoint returns 401 / 403: hand over to onTerminal, do not expire", async () => {
   for (const status of [401, 403]) {
     const h = harness();
     await open(h);
@@ -80,21 +80,21 @@ test("ALL-04 会话接口回 401 / 403:交给 onTerminal,不 expire", async () =
   }
 });
 
-test("ALL-05 只有服务端回凭证到期(authExpired)才 expire;纯时钟流逝(睡眠醒来)不自动失效", async () => {
+test("ALL-05 expire only when the server reports credential expiry (authExpired); the mere passage of clock time (waking from sleep) does not invalidate automatically", async () => {
   const slept = harness();
   await open(slept);
   slept.now += 300_000;
-  assert.equal(await slept.life_.tick(), "idle", "时间流逝不会让已建好的连接失效");
+  assert.equal(await slept.life_.tick(), "idle", "the passage of time does not invalidate an established connection");
   assert.equal(slept.expired, 0);
 
   const refused = harness();
   await open(refused);
   assert.equal(await refused.life_.authExpired(), "expired");
   assert.deepEqual([refused.renews, refused.expired], [0, 1]);
-  assert.equal(await refused.life_.authExpired(), "idle", "已经按断线处理了,再来的不重复");
+  assert.equal(await refused.life_.authExpired(), "idle", "already handled as a disconnect, later ones are not repeated");
 });
 
-test("ALL-06 没有会话时不管;换的途中不重入", async () => {
+test("ALL-06 do nothing when there is no session; no reentry while a replacement is in progress", async () => {
   const h = harness();
   await open(h);
   h.connected = false;
@@ -103,18 +103,18 @@ test("ALL-06 没有会话时不管;换的途中不重入", async () => {
   assert.equal(await h.life_.authExpired(), "idle");
 });
 
-test("ALL-07 权限变了(只读改可写)换一个会话;第一次读到、没变时不动;正忙着就记下,下一次 tick 补换", async () => {
+test("ALL-07 when permissions change (read-only to writable), replace the session; do nothing on the first read or when unchanged; if busy, note it and make up the replacement on the next tick", async () => {
   const h = harness();
   await open(h);
-  assert.equal(await h.life_.accessSeen("r"), "idle", "第一次读到只是记下");
+  assert.equal(await h.life_.accessSeen("r"), "idle", "the first read only records it");
   assert.equal(await h.life_.accessSeen("r"), "idle");
   assert.equal(await h.life_.accessSeen("rw"), "renewed");
   assert.equal(h.renews, 1);
   h.connected = false;
-  assert.equal(await h.life_.accessSeen("rw"), "idle", "没有会话(服务端已经关掉旧连接):交给断线重连");
+  assert.equal(await h.life_.accessSeen("rw"), "idle", "no session (the server has already closed the old connection): hand over to reconnection");
 });
 
-test("ALL-08 本机的钟快时不凭本机的钟判过期", async () => {
+test("ALL-08 when the local clock runs fast, do not judge expiry by the local clock", async () => {
   const far = harness({ life: -30_000 });
   await open(far);
   assert.equal(far.life_.describe().trusted, false);

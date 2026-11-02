@@ -90,7 +90,7 @@ try {
       } catch {}
       await sleep(500);
     }
-    if (!up) throw new Error(`Dev server 启动超时: ${origin}`);
+    if (!up) throw new Error(`Dev server startup timed out: ${origin}`);
   }
 
   out.origin = origin;
@@ -150,7 +150,7 @@ try {
     return { scene: a?.id, pill: b?.id, clips: getState().project.tracks.reduce((n, t) => n + t.clips.length, 0) };
   });
   out.ids = ids;
-  check(ids.scene && ids.pill, '成功添加 scene-3d 与 punch-pill 片段', ids);
+  check(ids.scene && ids.pill, 'Successfully added scene-3d and punch-pill clips', ids);
 
   await sleep(1000);
 
@@ -173,9 +173,9 @@ try {
     };
   }, ids.pill, ids.scene);
   out.planInfo = planInfo;
-  check(planInfo.view3d === true, '切到 3D 视图时 plan3DView() 为 true', planInfo);
-  check(planInfo.pillInPrerenderSet === true, '3D 模式下 punch-pill 独立轻卡纳入 prerenderSet', planInfo);
-  check(planInfo.sceneInPrerenderSet === false, '3D 模式下 scene-3d 真三维卡不纳入 prerenderSet', planInfo);
+  check(planInfo.view3d === true, 'plan3DView() is true when switching to the 3D view', planInfo);
+  check(planInfo.pillInPrerenderSet === true, 'In 3D mode the standalone light card punch-pill is included in prerenderSet', planInfo);
+  check(planInfo.sceneInPrerenderSet === false, 'In 3D mode the true 3D card scene-3d is not included in prerenderSet', planInfo);
 
   // 触发并等待预渲染进程产出 punch-pill 的轨道流
   const streamReadyDeadline = Date.now() + 120000;
@@ -224,7 +224,7 @@ try {
   out.streamReady = streamReady;
   out.lastDiag = lastDiag;
   out.lastReadyIndex = lastReadyIndex;
-  check(streamReady, 'punch-pill 轨道流已在父页就绪索引中 ready', { streamReady, lastReadyIndex, lastDiag: out.lastDiag?.streams?.stats });
+  check(streamReady, 'The punch-pill track stream is already ready in the ready index of the parent page', { streamReady, lastReadyIndex, lastDiag: out.lastDiag?.streams?.stats });
 
   // 2. 播放测试：播放中绝对不发 bake-batch 请求，在两个不同时刻分别截图
   bakeRequestsWhilePlaying = 0;
@@ -242,7 +242,7 @@ try {
     return { t: getState().t, playing: getState().playing };
   });
   out.headT1 = headT1;
-  check(headT1.playing === true, '时刻 1 播放中 playing 为 true', headT1);
+  check(headT1.playing === true, 'At time point 1, during playback, playing is true', headT1);
 
   // 截图 1：播放中时刻 1
   const playingT1Path = path.join(OUT_DIR, '3d-playing-t1.png');
@@ -256,9 +256,9 @@ try {
     return { t: getState().t, playing: getState().playing };
   });
   out.headT2 = headT2;
-  check(headT2.playing === true, '时刻 2 播放中 playing 为 true', headT2);
-  check(headT2.t > headT1.t, '播放头从时刻 1 持续前进至时刻 2', { t1: headT1.t, t2: headT2.t });
-  check(bakeRequestsWhilePlaying === 0, '播放中严禁调用 /bake-batch', { bakeRequestsWhilePlaying });
+  check(headT2.playing === true, 'At time point 2, during playback, playing is true', headT2);
+  check(headT2.t > headT1.t, 'The playhead keeps advancing from time point 1 to time point 2', { t1: headT1.t, t2: headT2.t });
+  check(bakeRequestsWhilePlaying === 0, '/bake-batch must never be called during playback', { bakeRequestsWhilePlaying });
 
   // 截图 2：播放中时刻 2
   const playingT2Path = path.join(OUT_DIR, '3d-playing-t2.png');
@@ -285,7 +285,7 @@ try {
     return { t: getState().t, playing: getState().playing };
   });
   out.headAfterPause = headAfterPause;
-  check(headAfterPause.playing === false, '暂停后 playing 变为 false', headAfterPause);
+  check(headAfterPause.playing === false, 'playing becomes false after pause', headAfterPause);
 
   // 截图 3：暂停后精确渲染
   const pausedExactPath = path.join(OUT_DIR, '3d-paused-exact.png');
@@ -303,10 +303,10 @@ try {
     return plan3DView();
   });
   out.view3dAfter2D = view3dAfter2D;
-  check(view3dAfter2D === false, '切回 2D 视图后 plan3DView() 恢复为 false', { view3dAfter2D });
+  check(view3dAfter2D === false, 'plan3DView() returns to false after switching back to the 2D view', { view3dAfter2D });
 
   out.errors = errors.filter((e) => !/favicon|Download the React DevTools|Failed to load resource/i.test(e));
-  check(out.errors.length === 0, '页面无未捕获异常', out.errors);
+  check(out.errors.length === 0, 'no uncaught exceptions on the page', out.errors);
 } catch (err) {
   fails.push('exception: ' + (err?.stack || err));
 } finally {

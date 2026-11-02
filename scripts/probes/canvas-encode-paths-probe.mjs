@@ -70,7 +70,7 @@ function parseArgs(argv) {
     scenes: 'particles,three', fps: 30, hw: 'no-preference,prefer-software', chromeArg: [], timeoutSec: 300, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    const val = () => { if (i + 1 >= argv.length) throw new Error(`${a} 缺少取值`); return argv[++i]; };
+    const val = () => { if (i + 1 >= argv.length) throw new Error(`${a} is missing a value`); return argv[++i]; };
     switch (a) {
       case '--chrome': o.chrome = val(); break;
       case '--no-gpu': o.noGpu = true; break;
@@ -85,23 +85,23 @@ function parseArgs(argv) {
       case '--chrome-arg': o.chromeArg.push(val()); break;
       case '--timeout': o.timeoutSec = Number(val()); break;
       case '-h': case '--help': o.help = true; break;
-      default: throw new Error(`不认识的参数 ${a}`);
+      default: throw new Error(`Unknown argument ${a}`);
     }
   }
   if (o.help) return o;
-  if (!o.chrome) throw new Error('要 --chrome <可执行文件路径>');
-  if (!fs.existsSync(o.chrome)) throw new Error(`--chrome 指的文件不存在:${o.chrome}`);
-  if (!Number.isInteger(o.frames) || o.frames < 1) throw new Error('--frames 要是正整数');
-  if (!(o.fps > 0)) throw new Error('--fps 要是正数');
+  if (!o.chrome) throw new Error('Requires --chrome <executable path>');
+  if (!fs.existsSync(o.chrome)) throw new Error(`The file --chrome points to does not exist: ${o.chrome}`);
+  if (!Number.isInteger(o.frames) || o.frames < 1) throw new Error('--frames must be a positive integer');
+  if (!(o.fps > 0)) throw new Error('--fps must be a positive number');
   o.sizeList = o.sizes.split(',').map(s => s.trim()).filter(Boolean).map((s) => {
     const m = /^(\d+)x(\d+)$/.exec(s);
-    if (!m) throw new Error(`--sizes 里的 ${s} 不是 宽x高`);
+    if (!m) throw new Error(`${s} in --sizes is not width x height`);
     const w = Number(m[1]), h = Number(m[2]);
-    if (w % 2 || h % 2) throw new Error(`尺寸要是偶数:${s}`);
+    if (w % 2 || h % 2) throw new Error(`Dimensions must be even: ${s}`);
     return { w, h, label: `${w}x${h}` };
   });
   o.sceneList = o.scenes.split(',').map(s => s.trim()).filter(Boolean);
-  for (const s of o.sceneList) if (!['particles', 'three'].includes(s)) throw new Error(`不认识的场景 ${s}(particles / three)`);
+  for (const s of o.sceneList) if (!['particles', 'three'].includes(s)) throw new Error(`Unknown scene ${s} (particles / three)`);
   o.hwList = o.hw.split(',').map(s => s.trim()).filter(Boolean);
   o.out = path.resolve(o.out || 'canvas-encode-paths-out');
   return o;
@@ -111,11 +111,11 @@ function parseArgs(argv) {
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const round = (x, n = 2) => (Number.isFinite(x) ? Math.round(x * 10 ** n) / 10 ** n : null);
-const log = (...a) => console.error('[探针]', ...a);
+const log = (...a) => console.error('[probe]', ...a);
 
 function withTimeout(promise, ms, label) {
   let t;
-  const timer = new Promise((_, rej) => { t = setTimeout(() => rej(Object.assign(new Error(`${label} 超时(${Math.round(ms / 1000)} 秒)`), { timeout: true })), ms); });
+  const timer = new Promise((_, rej) => { t = setTimeout(() => rej(Object.assign(new Error(`${label} timed out (${Math.round(ms / 1000)} seconds)`), { timeout: true })), ms); });
   return Promise.race([promise, timer]).finally(() => clearTimeout(t));
 }
 
@@ -231,7 +231,7 @@ class SegmentProc {
     this.done = new Promise((resolve, reject) => {
       this.proc.on('error', reject);
       this.proc.on('close', (code) => (code === 0 ? resolve(Buffer.concat(this.out, this.outLen))
-        : reject(new Error(`ffmpeg 退出码 ${code}:${this.err.trim().split(/\r?\n/).slice(-3).join(' | ')}`))));
+        : reject(new Error(`ffmpeg exit code ${code}: ${this.err.trim().split(/\r?\n/).slice(-3).join(' | ')}`))));
     });
     this.done.catch(() => {});
   }
@@ -309,7 +309,7 @@ function decodeSegment(ffmpeg, bytes, frameSize, onFrame) {
     proc.on('error', reject);
     proc.on('close', (code) => {
       if (fail) return reject(fail);
-      if (code !== 0) return reject(new Error(`ffmpeg 解码退出码 ${code}:${err.trim().split(/\r?\n/).slice(-3).join(' | ')}`));
+      if (code !== 0) return reject(new Error(`ffmpeg decode exit code ${code}: ${err.trim().split(/\r?\n/).slice(-3).join(' | ')}`));
       resolve(n);
     });
     proc.stdin.end(bytes);
@@ -384,7 +384,7 @@ class Cdp {
       const ws = new WebSocket(this.url);
       this.ws = ws;
       ws.addEventListener('open', () => resolve(), { once: true });
-      ws.addEventListener('error', () => reject(new Error('连不上 Chrome 的调试口')), { once: true });
+      ws.addEventListener('error', () => reject(new Error('Cannot connect to Chrome\'s debugging port')), { once: true });
       ws.addEventListener('message', (ev) => {
         let m; try { m = JSON.parse(typeof ev.data === 'string' ? ev.data : String(ev.data)); } catch { return; }
         if (m.id === undefined) return;
@@ -393,14 +393,14 @@ class Cdp {
         this.pending.delete(m.id);
         if (m.error) p.reject(new Error(`${p.method}:${m.error.message}`)); else p.resolve(m.result);
       });
-      ws.addEventListener('close', () => { for (const p of this.pending.values()) p.reject(new Error('调试连接已关闭')); this.pending.clear(); });
+      ws.addEventListener('close', () => { for (const p of this.pending.values()) p.reject(new Error('Debugging connection closed')); this.pending.clear(); });
     });
   }
   send(method, params = {}, sessionId, timeoutMs = 120000) {
     const id = ++this.id;
     const msg = { id, method, params, ...(sessionId ? { sessionId } : {}) };
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`${method} 超时`)); }, timeoutMs);
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`${method} timed out`)); }, timeoutMs);
       this.pending.set(id, { method, resolve: (v) => { clearTimeout(timer); resolve(v); }, reject: (e) => { clearTimeout(timer); reject(e); } });
       this.ws.send(JSON.stringify(msg));
     });
@@ -419,14 +419,14 @@ async function launchChrome(opts, userDataDir) {
   const proc = track(spawn(opts.chrome, args, { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' }));
   let stderr = '';
   const wsUrl = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Chrome 30 秒内没给出调试地址。stderr:${stderr.slice(-600)}`)), 30000);
+    const timer = setTimeout(() => reject(new Error(`Chrome gave no debugging address within 30 seconds. stderr: ${stderr.slice(-600)}`)), 30000);
     proc.stderr.on('data', (d) => {
       stderr = (stderr + d).slice(-4000);
       const m = /DevTools listening on (ws:\/\/\S+)/.exec(stderr);
       if (m) { clearTimeout(timer); resolve(m[1]); }
     });
     proc.on('error', (e) => { clearTimeout(timer); reject(e); });
-    proc.on('exit', (code) => { clearTimeout(timer); reject(new Error(`Chrome 退出了(${code})。stderr:${stderr.slice(-600)}`)); });
+    proc.on('exit', (code) => { clearTimeout(timer); reject(new Error(`Chrome exited (${code}). stderr: ${stderr.slice(-600)}`)); });
   });
   return { proc, wsUrl, args };
 }
@@ -481,13 +481,13 @@ function pageMain() {
     S.canvas = c;
     if (scene === 'particles') setupParticles(c, w, h);
     else if (scene === 'three') setupThree(c, w, h);
-    else throw new Error('不认识的场景 ' + scene);
+    else throw new Error('Unknown scene ' + scene);
     return { ok: true, kind: S.kind };
   };
 
   function setupParticles(c, w, h) {
     const ctx = c.getContext('2d');
-    if (!ctx) throw new Error('拿不到 2D 上下文');
+    if (!ctx) throw new Error('Could not get a 2D context');
     S.ctx = ctx; S.kind = '2d';
     const rnd = mulberry32(20261013), sc = h / 540, ps = [];
     for (let k = 0; k < 400; k++) {
@@ -507,9 +507,9 @@ function pageMain() {
 
   function setupThree(c, w, h) {
     const gl = c.getContext('webgl', { alpha: true, premultipliedAlpha: true, antialias: true, depth: true, preserveDrawingBuffer: false });
-    if (!gl) throw new Error('WebGL 不可用(getContext 返回 null)');
+    if (!gl) throw new Error('WebGL unavailable (getContext returned null)');
     S.gl = gl; S.kind = 'webgl';
-    const compile = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error('着色器编译失败:' + gl.getShaderInfoLog(s)); return s; };
+    const compile = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error('Shader compile failed:' + gl.getShaderInfoLog(s)); return s; };
     const prog = gl.createProgram();
     gl.attachShader(prog, compile(gl.VERTEX_SHADER, `
       attribute vec3 aPos; attribute vec3 aNrm;
@@ -531,7 +531,7 @@ function pageMain() {
       }`));
     gl.bindAttribLocation(prog, 0, 'aPos'); gl.bindAttribLocation(prog, 1, 'aNrm');
     gl.linkProgram(prog);
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error('着色器链接失败:' + gl.getProgramInfoLog(prog));
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error('Shader link failed:' + gl.getProgramInfoLog(prog));
     const U = {}; for (const n of ['uMVP', 'uMV', 'uRot', 'uBase', 'uStripe']) U[n] = gl.getUniformLocation(prog, n);
 
     const makeMesh = (pos, nrm, idx) => {
@@ -636,7 +636,7 @@ function pageMain() {
   P.supportMatrix = async (w, h, fps) => {
     const ph = 2 * h + 2 * PAD;
     const rows = [];
-    if (typeof VideoEncoder !== 'function') return { packed: `${w}x${ph}`, rows, error: '没有 VideoEncoder' };
+    if (typeof VideoEncoder !== 'function') return { packed: `${w}x${ph}`, rows, error: 'No VideoEncoder' };
     for (const [profile, hex] of [['baseline', '4200'], ['main', '4D00'], ['high', '6400']]) {
       for (const hw of ['no-preference', 'prefer-software']) {
         for (const mode of ['quantizer', 'variable']) {
@@ -653,7 +653,7 @@ function pageMain() {
   /* ---------------------------------------------------------------- 浏览器自带的编码器 */
   P.runBrowserEncoder = async ({ frames, fps, hw, quantizer, indices }) => {
     const w = S.w, h = S.h, ph = 2 * h + 2 * PAD;
-    if (typeof VideoEncoder !== 'function' || typeof VideoFrame !== 'function') throw new Error('这个浏览器没有 VideoEncoder / VideoFrame');
+    if (typeof VideoEncoder !== 'function' || typeof VideoFrame !== 'function') throw new Error('This browser has no VideoEncoder / VideoFrame');
     // 配置:高档,先按固定量化,不认再按码率(照 streamEncode.ts 的 probeStreamEncoder)
     const base = { codec: avcCodec('6400', w, ph), width: w, height: ph, framerate: fps, avc: { format: 'avc' }, latencyMode: 'quality', ...(hw && hw !== 'no-preference' ? { hardwareAcceleration: hw } : {}) };
     let cfg = null, mode = null;
@@ -661,7 +661,7 @@ function pageMain() {
       const c = { ...base, ...extra };
       try { const r = await VideoEncoder.isConfigSupported(c); if (r && r.supported) { cfg = c; mode = m; break; } } catch { /* 下一种 */ }
     }
-    if (!cfg) throw new Error(`编码器不认 ${w}x${ph} 的 ${base.codec}(hardwareAcceleration=${hw})`);
+    if (!cfg) throw new Error(`The encoder does not support ${base.codec} at ${w}x${ph} (hardwareAcceleration=${hw})`);
 
     const packedC = new OffscreenCanvas(w, ph), pg = packedC.getContext('2d', { alpha: false });
     const scrC = new OffscreenCanvas(w, h), sg = scrC.getContext('2d');
@@ -692,7 +692,7 @@ function pageMain() {
     let paintMs = 0, packMs = 0, waitMs = 0;
     const t0 = now();
     for (let i = 0; i < frames; i++) {
-      if (encErr) throw new Error('编码器出错:' + encErr);
+      if (encErr) throw new Error('Encoder error:' + encErr);
       let a = now(); S.drawFn(i); paintMs += now() - a;
       a = now();
       drawPacked(S.canvas);
@@ -706,14 +706,14 @@ function pageMain() {
     let a2 = now(); await enc.flush(); waitMs += now() - a2;
     const loopMs = now() - t0;
     enc.close();
-    if (encErr) throw new Error('编码器出错:' + encErr);
+    if (encErr) throw new Error('Encoder error:' + encErr);
 
     const problems = [];
-    if (chunks.length !== frames) problems.push(`送进去 ${frames} 帧,出来 ${chunks.length} 个样本`);
+    if (chunks.length !== frames) problems.push(`${frames} frames in, ${chunks.length} samples out`);
     let keyOk = true, orderOk = true, lastTs = -1;
     chunks.forEach((c, k) => { if ((c.type === 'key') !== (k % SEG === 0)) keyOk = false; if (c.timestamp <= lastTs) orderOk = false; lastTs = c.timestamp; });
-    if (!keyOk) problems.push('关键帧位置不是每 15 帧一个');
-    if (!orderOk) problems.push('出来的样本时间戳不单调(有 B 帧重排)');
+    if (!keyOk) problems.push('Keyframes are not placed every 15 frames');
+    if (!orderOk) problems.push('Output sample timestamps are not monotonic (B-frame reordering present)');
     const bytes = chunks.reduce((s, c) => s + c.data.length, 0);
 
     // 交给 Node(把全部编码块一次 POST 过去,量搬运)
@@ -725,10 +725,10 @@ function pageMain() {
     // 解回来
     const out = { frames, mode, codec: cfg.codec, hardwareAcceleration: hw || 'no-preference', packed: `${w}x${ph}`, bytes, kbps: Math.round(bytes * 8 / (frames / fps) / 1000),
       paintMs, packMs, waitMs, loopMs, handoffMs, problems, decoded: 0, compared: 0, colorMean: null, alphaMean: null, colorMax: null, alphaMax: null, decodeMs: null };
-    if (!decCfg) { problems.push('编码器没有给出 decoderConfig'); return out; }
+    if (!decCfg) { problems.push('The encoder did not provide a decoderConfig'); return out; }
     let decSupported = false;
     try { const r = await VideoDecoder.isConfigSupported({ codec: decCfg.codec, codedWidth: w, codedHeight: ph, description: decCfg.description }); decSupported = !!r.supported; } catch { /* 记 false */ }
-    if (!decSupported) { problems.push('VideoDecoder 不认这个配置(' + decCfg.codec + ')'); return out; }
+    if (!decSupported) { problems.push('VideoDecoder does not support this config (' + decCfg.codec + ')'); return out; }
     const og = new OffscreenCanvas(w, ph).getContext('2d', { willReadFrequently: true });
     const acc = { cs: 0, cn: 0, cm: 0, as: 0, an: 0, am: 0, n: 0 };
     let decErr = null, decoded = 0;
@@ -756,7 +756,7 @@ function pageMain() {
     }
     try { dec.close(); } catch { /* 已关 */ }
     out.decodeMs = now() - td;
-    if (decErr) problems.push('解码出错:' + decErr);
+    if (decErr) problems.push('Decode error:' + decErr);
     out.decoded = decoded; out.compared = acc.n;
     out.colorMean = acc.cn ? acc.cs / acc.cn : null; out.alphaMean = acc.an ? acc.as / acc.an : null; out.colorMax = acc.cm; out.alphaMax = acc.am;
     return out;
@@ -839,12 +839,12 @@ function pageMain() {
       acc.cn += w * h * 3; acc.an += w * h; acc.n++;
     };
     for (let s = 0; s < count; s++) {
-      const r = await fetch(`/segout/${runId}/${s}`); if (!r.ok) throw new Error('取不到分段 ' + s);
+      const r = await fetch(`/segout/${runId}/${s}`); if (!r.ok) throw new Error('Could not fetch segment ' + s);
       const m = parseFmp4(new Uint8Array(await r.arrayBuffer()));
       if (!cfg) {
-        if (!m.description) throw new Error('分段里找不到 avcC');
+        if (!m.description) throw new Error('avcC not found in the segment');
         cfg = { codec: m.codec, codedWidth: w, codedHeight: ph, description: m.description };
-        const sup = await VideoDecoder.isConfigSupported(cfg); if (!sup.supported) throw new Error('VideoDecoder 不认 ' + m.codec);
+        const sup = await VideoDecoder.isConfigSupported(cfg); if (!sup.supported) throw new Error('VideoDecoder does not support ' + m.codec);
         dec = new VideoDecoder({ output: (f) => { try { decoded++; compare(f, Math.round(f.timestamp * fps / 1e6)); } catch (e) { decErr = decErr || e; } finally { f.close(); } }, error: (e) => { decErr = decErr || e; } });
         dec.configure(cfg);
       }
@@ -852,7 +852,7 @@ function pageMain() {
       await dec.flush();
     }
     try { dec.close(); } catch { /* 已关 */ }
-    if (decErr) throw new Error('解码出错:' + decErr);
+    if (decErr) throw new Error('Decode error:' + decErr);
     return { decoded, compared: acc.n, colorMean: acc.cn ? acc.cs / acc.cn : null, alphaMean: acc.an ? acc.as / acc.an : null };
   };
 
@@ -887,15 +887,15 @@ function sampleIndices(frames) {
 
 const verdictOf = (r, frames) => {
   const reasons = [];
-  if (!r.ran) reasons.push(r.error || '没跑出来');
+  if (!r.ran) reasons.push(r.error || 'Did not run');
   else {
-    if (!(r.bytes > 0)) reasons.push('没编出字节');
-    if (r.decodedFrames !== frames) reasons.push(`解回 ${r.decodedFrames} 帧,应为 ${frames}`);
-    if (!(r.colorMeanDiff < COLOR_MEAN_MAX)) reasons.push(`颜色平均差 ${r.colorMeanDiff} 不小于 ${COLOR_MEAN_MAX}`);
-    if (!(r.alphaMeanDiff < ALPHA_MEAN_MAX)) reasons.push(`不透明度平均差 ${r.alphaMeanDiff} 不小于 ${ALPHA_MEAN_MAX}`);
+    if (!(r.bytes > 0)) reasons.push('Encoded no bytes');
+    if (r.decodedFrames !== frames) reasons.push(`Decoded back ${r.decodedFrames} frames, expected ${frames}`);
+    if (!(r.colorMeanDiff < COLOR_MEAN_MAX)) reasons.push(`Mean color difference ${r.colorMeanDiff} is not below ${COLOR_MEAN_MAX}`);
+    if (!(r.alphaMeanDiff < ALPHA_MEAN_MAX)) reasons.push(`Mean opacity difference ${r.alphaMeanDiff} is not below ${ALPHA_MEAN_MAX}`);
     if (r.problems?.length) reasons.push(...r.problems);
   }
-  return { available: r.ran && reasons.length === 0, verdict: r.ran && reasons.length === 0 ? '可用' : '不可用', reasons };
+  return { available: r.ran && reasons.length === 0, verdict: r.ran && reasons.length === 0 ? 'available' : 'unavailable', reasons };
 };
 
 async function main() {
@@ -905,8 +905,8 @@ async function main() {
   const profileDir = fs.mkdtempSync(path.join(opts.out, 'chrome-profile-'));
   const summary = { probe: 'canvas-encode-paths', probeVersion: PROBE_VERSION, when: new Date().toISOString(),
     options: { chrome: opts.chrome, noGpu: opts.noGpu, noSandbox: opts.noSandbox, ffmpeg: opts.ffmpeg, frames: opts.frames, fps: opts.fps, sizes: opts.sizeList.map(s => s.label), scenes: opts.sceneList, hw: opts.hwList, chromeArgExtra: opts.chromeArg },
-    criteria: { colorMeanMax: COLOR_MEAN_MAX, alphaMeanMax: ALPHA_MEAN_MAX, note: '可用 = 编得出来、解回来帧数对、颜色平均差 < colorMeanMax、不透明度平均差 < alphaMeanMax' },
-    proxies: { particles: '2D 画布,400 个半透明小圆点(粒子卡的替身)', three: 'WebGL 画布,带光照的转动球体加一圈环(scene-3d 的替身)' },
+    criteria: { colorMeanMax: COLOR_MEAN_MAX, alphaMeanMax: ALPHA_MEAN_MAX, note: 'available = encodes successfully, decoded frame count correct, mean color difference < colorMeanMax, mean opacity difference < alphaMeanMax' },
+    proxies: { particles: '2D canvas, 400 semi-transparent dots (stand-in for the particles card)', three: 'WebGL canvas, a lit rotating sphere plus a ring (stand-in for scene-3d)' },
     host: null, ffmpeg: null, chrome: null, encoderSupport: {}, results: [], comparison: [], failures: [], exit: { code: 0, reason: null } };
 
   let server = null, chrome = null, cdp = null;
@@ -918,17 +918,17 @@ async function main() {
     killAllChildren();
     if (chrome?.proc) { killTree(chrome.proc); await sleep(300); }
     const left = killByProfileDir(profileDir);
-    if (left) { log(`兜底结束了 ${left} 个残留的 Chrome 进程`); await sleep(500); }
+    if (left) { log(`Fallback cleanup terminated ${left} leftover Chrome processes`); await sleep(500); }
     try { server?.closeAllConnections?.(); server?.close(); } catch { /* 忽略 */ }
     let rmErr = null;
     for (let k = 0; k < 15; k++) { try { fs.rmSync(profileDir, { recursive: true, force: true }); rmErr = null; break; } catch (e) { rmErr = e; await sleep(400); } }
-    if (rmErr) log(`临时 Chrome 用户目录没删掉(${rmErr.code}):${profileDir}`);
+    if (rmErr) log(`Could not delete the temporary Chrome user directory (${rmErr.code}): ${profileDir}`);
   };
   for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { cleanup().finally(() => process.exit(130)); });
   process.on('exit', () => { killAllChildren(); if (chrome?.proc) killTree(chrome.proc); });
 
   try {
-    log(`载入前处理器占用(1 秒采样)…`);
+    log(`CPU usage before load (sampled for 1 second)…`);
     const busyBefore = await sampleCpuBusy(1000);
     summary.host = { ...hostInfo(), cpuBusyPercentBefore: busyBefore };
 
@@ -936,8 +936,8 @@ async function main() {
     const ver = tryExec(opts.ffmpeg, ['-hide_banner', '-version'], 10000);
     const encoders = tryExec(opts.ffmpeg, ['-hide_banner', '-encoders'], 10000) || '';
     summary.ffmpeg = { path: opts.ffmpeg, version: ver ? ver.split('\n')[0] : null, usable: !!ver, libx264: /\blibx264\b/.test(encoders) };
-    if (!ver) log(`找不到可用的 ffmpeg(${opts.ffmpeg}):两条 ffmpeg 的路都会记「不可用」`);
-    else if (!summary.ffmpeg.libx264) log('这个 ffmpeg 没有 libx264:两条 ffmpeg 的路都会记「不可用」');
+    if (!ver) log(`No usable ffmpeg found (${opts.ffmpeg}): both ffmpeg paths will be recorded as "unavailable"`);
+    else if (!summary.ffmpeg.libx264) log('This ffmpeg has no libx264: both ffmpeg paths will be recorded as "unavailable"');
     const ffmpegOk = summary.ffmpeg.usable && summary.ffmpeg.libx264;
 
     // HTTP 口
@@ -962,9 +962,9 @@ async function main() {
           else if (m[1] === 'null') { /* 只量搬运:收下就丢 */ }
           else {
             const sink = state.rawSinks.get(m[2]);
-            if (!sink) throw new Error('没有这个 runId 的接收口');
+            if (!sink) throw new Error('No sink for this runId');
             const i = Number(url.searchParams.get('i'));
-            if (body.length !== sink.expect) throw new Error(`第 ${i} 帧收到 ${body.length} 字节,应为 ${sink.expect}`);
+            if (body.length !== sink.expect) throw new Error(`Frame ${i} received ${body.length} bytes, expected ${sink.expect}`);
             await sink.pipeline.write(i, body);
             if (i < SEGMENT_FRAMES) sink.first.push(body);
             sink.count++;
@@ -979,7 +979,7 @@ async function main() {
     const origin = `http://127.0.0.1:${state.port}`;
 
     // Chrome
-    log(`起 Chrome:${opts.chrome}`);
+    log(`Launching Chrome: ${opts.chrome}`);
     chrome = await launchChrome(opts, profileDir);
     cdp = new Cdp(chrome.wsUrl);
     await cdp.open();
@@ -997,20 +997,20 @@ async function main() {
     await call('Runtime.enable');
 
     const evalPage = async (expression, timeoutMs = opts.timeoutSec * 1000) => {
-      const r = await withTimeout(call('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, timeoutMs + 5000), timeoutMs, '页面脚本');
-      if (r.exceptionDetails) throw new Error((r.exceptionDetails.exception?.description || r.exceptionDetails.text || '页面脚本出错').split('\n')[0]);
+      const r = await withTimeout(call('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, timeoutMs + 5000), timeoutMs, 'Page script');
+      if (r.exceptionDetails) throw new Error((r.exceptionDetails.exception?.description || r.exceptionDetails.text || 'Page script error').split('\n')[0]);
       return r.result.value;
     };
     const loadPage = async () => {
       await call('Page.navigate', { url: origin + '/' });
       for (let k = 0; k < 100; k++) { try { if (await evalPage('typeof window.P === "object" && document.readyState !== "loading"', 5000)) return; } catch { /* 还没好 */ } await sleep(100); }
-      throw new Error('页面没有载入');
+      throw new Error('Page did not load');
     };
     await loadPage();
     const pageInfo = await evalPage('P.info()');
     summary.chrome = { executable: opts.chrome, product: version.product, userAgent: version.userAgent, isHeadlessShell: /headless[-_]?shell/i.test(path.basename(opts.chrome)) || /headless[-_]?shell/i.test(opts.chrome),
       launchArgs: chrome.args.filter(a => !a.startsWith('--user-data-dir')), page: pageInfo, systemInfo };
-    log(`${version.product};WebGL:${pageInfo.webgl?.available ? pageInfo.webgl.unmaskedRenderer || pageInfo.webgl.renderer : '不可用'};VideoEncoder:${pageInfo.videoEncoder}`);
+    log(`${version.product};WebGL:${pageInfo.webgl?.available ? pageInfo.webgl.unmaskedRenderer || pageInfo.webgl.renderer : 'unavailable'};VideoEncoder:${pageInfo.videoEncoder}`);
 
     const frames = opts.frames, fps = opts.fps;
     const indices = sampleIndices(frames);
@@ -1040,9 +1040,9 @@ async function main() {
         try { await prepare(); }
         catch (e) {
           const msg = String(e.message || e);
-          log(`  场景起不来:${msg}`);
+          log(`  Scene failed to start: ${msg}`);
           row.setup = { ok: false, error: msg };
-          for (const k of ['browserEncoder', ...opts.hwList.filter(x => x !== 'no-preference').map(x => `browserEncoder:${x}`), 'ffmpegRaw', 'ffmpegScreenshot']) row.paths[k] = { ran: false, error: `场景「不可用」:${msg}`, ...verdictOf({ ran: false, error: `场景「不可用」:${msg}` }, frames) };
+          for (const k of ['browserEncoder', ...opts.hwList.filter(x => x !== 'no-preference').map(x => `browserEncoder:${x}`), 'ffmpegRaw', 'ffmpegScreenshot']) row.paths[k] = { ran: false, error: `Scene "unavailable": ${msg}`, ...verdictOf({ ran: false, error: `Scene "unavailable": ${msg}` }, frames) };
           continue;
         }
 
@@ -1063,13 +1063,13 @@ async function main() {
           try { r = await withTimeout(fn(), opts.timeoutSec * 1000, key); r.ran = true; }
           catch (e) {
             r = { ran: false, error: String(e.message || e) };
-            log(`  ${key} 失败:${r.error}`);
-            if (e.timeout) { try { await loadPage(); await call('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false }); await prepare(); } catch (e2) { log(`  重载页面失败:${e2.message}`); } }
+            log(`  ${key} failed: ${r.error}`);
+            if (e.timeout) { try { await loadPage(); await call('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false }); await prepare(); } catch (e2) { log(`  Page reload failed: ${e2.message}`); } }
           }
           Object.assign(r, verdictOf(r, frames));
           r.secondsSpent = round((performance.now() - t) / 1000, 1);
           row.paths[key] = r;
-          log(`  ${key}:${r.verdict}${r.available ? '' : '(' + r.reasons.join(';') + ')'} 端到端 ${r.e2ePerFrameMs ?? '-'} ms/帧`);
+          log(`  ${key}: ${r.verdict}${r.available ? '' : '(' + r.reasons.join(';') + ')'} end-to-end ${r.e2ePerFrameMs ?? '-'} ms/frame`);
         };
 
         // 3. 浏览器自带的编码器(默认「不限」一遍,另按 --hw 里的其它取值各一遍)
@@ -1090,7 +1090,7 @@ async function main() {
 
         // 4. 原始像素交给 ffmpeg
         await runPath('ffmpegRaw', async () => {
-          if (!ffmpegOk) throw new Error('ffmpeg 不可用(找不到或没有 libx264)');
+          if (!ffmpegOk) throw new Error('ffmpeg unavailable (not found or no libx264)');
           const args = rawSegmentArgs(w, h, fps);
           const runId = crypto.randomBytes(6).toString('hex');
           const sink = { pipeline: new SegmentPipeline(opts.ffmpeg, args), first: [], count: 0, expect: w * h * 4 };
@@ -1116,7 +1116,7 @@ async function main() {
 
         // 5. 现在的办法:截图 → PNG → ffmpeg
         await runPath('ffmpegScreenshot', async () => {
-          if (!ffmpegOk) throw new Error('ffmpeg 不可用(找不到或没有 libx264)');
+          if (!ffmpegOk) throw new Error('ffmpeg unavailable (not found or no libx264)');
           const args = pngSegmentArgs(fps);
           const pipe = new SegmentPipeline(opts.ffmpeg, args);
           const firstPngs = [];
@@ -1163,20 +1163,20 @@ async function main() {
     for (const k of pathKeys) {
       const rows = summary.results.filter(r => r.paths[k]);
       const ok = rows.length > 0 && rows.every(r => r.paths[k].available);
-      summary.pathVerdicts[k] = { verdict: ok ? '可用' : '不可用', availableIn: rows.filter(r => r.paths[k].available).map(r => `${r.scene} ${r.size}`), unavailableIn: rows.filter(r => !r.paths[k].available).map(r => `${r.scene} ${r.size}:${r.paths[k].reasons.join(';')}`) };
+      summary.pathVerdicts[k] = { verdict: ok ? 'available' : 'unavailable', availableIn: rows.filter(r => r.paths[k].available).map(r => `${r.scene} ${r.size}`), unavailableIn: rows.filter(r => !r.paths[k].available).map(r => `${r.scene} ${r.size}:${r.paths[k].reasons.join(';')}`) };
     }
     for (const r of summary.results) {
       const g = (k) => r.paths[k]?.e2ePerFrameMs ?? null;
       summary.comparison.push({ scene: r.scene, size: r.size, e2eMsPerFrame: { browserEncoder: g('browserEncoder'), ffmpegRaw: g('ffmpegRaw'), ffmpegScreenshot: g('ffmpegScreenshot') },
         available: { browserEncoder: r.paths.browserEncoder?.available ?? false, ffmpegRaw: r.paths.ffmpegRaw?.available ?? false, ffmpegScreenshot: r.paths.ffmpegScreenshot?.available ?? false } });
       const ran = Object.values(r.paths).some(p => p.ran);
-      if (!ran) summary.failures.push(`${r.scene} ${r.size}:三条路全都跑不出来`);
+      if (!ran) summary.failures.push(`${r.scene} ${r.size}: all three paths failed to run`);
     }
     summary.host.cpuBusyPercentAfter = await sampleCpuBusy(1000);
     if (summary.failures.length) { summary.exit = { code: 1, reason: summary.failures.join(';') }; }
   } catch (e) {
     summary.fatal = String(e?.stack || e);
-    summary.exit = { code: 2, reason: `探针自己出错:${String(e?.message || e)}` };
+    summary.exit = { code: 2, reason: `Probe itself failed: ${String(e?.message || e)}` };
     log(summary.exit.reason);
   } finally {
     await cleanup();
@@ -1191,21 +1191,21 @@ async function main() {
 
 function printTable(s) {
   const out = [];
-  out.push(`机器:${s.host?.cpu},${s.host?.logicalCores} 个逻辑核,${s.host?.memGiB} GiB,${s.host?.platform};显卡:${s.host?.gpuAdapters === null ? '未知' : s.host?.gpuAdapters.length ? s.host.gpuAdapters.join(' / ') : '无'};处理器占用(开跑前)${s.host?.cpuBusyPercentBefore}%`);
-  out.push(`Chrome:${s.chrome?.product};无头壳:${s.chrome?.isHeadlessShell};WebGL:${s.chrome?.page?.webgl?.available ? s.chrome.page.webgl.unmaskedRenderer || s.chrome.page.webgl.renderer : '不可用'};${s.options.noGpu ? '--no-gpu' : '缺省(有显卡就用)'}`);
-  out.push(`ffmpeg:${s.ffmpeg?.version ?? '不可用'}`);
+  out.push(`Machine: ${s.host?.cpu}, ${s.host?.logicalCores} logical cores, ${s.host?.memGiB} GiB, ${s.host?.platform}; GPU: ${s.host?.gpuAdapters === null ? 'unknown' : s.host?.gpuAdapters.length ? s.host.gpuAdapters.join(' / ') : 'none'}; CPU usage (before the run) ${s.host?.cpuBusyPercentBefore}%`);
+  out.push(`Chrome: ${s.chrome?.product}; headless shell: ${s.chrome?.isHeadlessShell}; WebGL: ${s.chrome?.page?.webgl?.available ? s.chrome.page.webgl.unmaskedRenderer || s.chrome.page.webgl.renderer : 'unavailable'}; ${s.options.noGpu ? '--no-gpu' : 'Default (use the GPU if present)'}`);
+  out.push(`ffmpeg:${s.ffmpeg?.version ?? 'unavailable'}`);
   for (const [size, m] of Object.entries(s.encoderSupport)) {
     if (!m.rows) { out.push(`isConfigSupported ${size}:${m.error}`); continue; }
-    const cell = (p, hw) => { const rs = m.rows.filter(r => r.profile === p && r.hardwareAcceleration === hw); return rs.map(r => `${r.bitrateMode[0]}:${r.supported ? '是' : '否'}`).join(','); };
-    out.push(`isConfigSupported ${size}(拼合 ${m.packed}):` + ['baseline', 'main', 'high'].map(p => `${p}[不限 ${cell(p, 'no-preference')} | 软件 ${cell(p, 'prefer-software')}]`).join(' '));
+    const cell = (p, hw) => { const rs = m.rows.filter(r => r.profile === p && r.hardwareAcceleration === hw); return rs.map(r => `${r.bitrateMode[0]}:${r.supported ? 'yes' : 'no'}`).join(','); };
+    out.push(`isConfigSupported ${size} (packed ${m.packed}):` + ['baseline', 'main', 'high'].map(p => `${p}[no preference ${cell(p, 'no-preference')} | software ${cell(p, 'prefer-software')}]`).join(' '));
   }
-  out.push('场景 尺寸 路径 | 判定 | 解回帧 | 颜色差 | 透明差 | (浏览器解)颜色差/透明差 | 读(截图那条是截图) | 搬(单量) | 编码(单量;浏览器那条是每秒帧数) | 端到端 ms/帧');
+  out.push('Scene Size Path | Verdict | Decoded frames | Color diff | Opacity diff | (Browser decode) color diff/opacity diff | Read (screenshot path: the screenshot) | Transfer (single measurement) | Encode (single measurement; browser path: frames per second) | End-to-end ms/frame');
   for (const r of s.results) {
-    out.push(`  [${r.scene} ${r.size}] 不透明像素占比 ${r.opaqueFraction ?? '-'}`);
+    out.push(`  [${r.scene} ${r.size}] opaque pixel fraction ${r.opaqueFraction ?? '-'}`);
     for (const [k, p] of Object.entries(r.paths)) {
       const t = p.timingMsPerFrame || {};
       const bd = p.browserDecode && !p.browserDecode.error ? `${p.browserDecode.colorMeanDiff}/${p.browserDecode.alphaMeanDiff}` : '-';
-      out.push(`${r.scene} ${r.size} ${k} | ${p.verdict}${p.available ? '' : '(' + p.reasons.join(';') + ')'} | ${p.decodedFrames ?? '-'}/${r.frames} | ${p.colorMeanDiff ?? '-'} | ${p.alphaMeanDiff ?? '-'} | ${bd} | ${t.read ?? t.pack ?? t.screenshot ?? '-'} | ${t.transferPure ?? t.handoff ?? t.transfer ?? '-'} | ${t.encodeIsolated ?? (p.encodeFps ? `${p.encodeFps} 帧/秒` : '-')} | ${p.e2ePerFrameMs ?? '-'}`);
+      out.push(`${r.scene} ${r.size} ${k} | ${p.verdict}${p.available ? '' : '(' + p.reasons.join(';') + ')'} | ${p.decodedFrames ?? '-'}/${r.frames} | ${p.colorMeanDiff ?? '-'} | ${p.alphaMeanDiff ?? '-'} | ${bd} | ${t.read ?? t.pack ?? t.screenshot ?? '-'} | ${t.transferPure ?? t.handoff ?? t.transfer ?? '-'} | ${t.encodeIsolated ?? (p.encodeFps ? `${p.encodeFps} frames/s` : '-')} | ${p.e2ePerFrameMs ?? '-'}`);
     }
   }
   console.log(out.join('\n'));

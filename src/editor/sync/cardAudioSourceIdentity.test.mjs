@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'vite';
 
-test('同步AV代码只读解析，身份与本地闭包一致；改共享依赖使WAV过期', async () => {
+test('Synced AV code is parsed read-only, identity matches the local closure; changing a shared dependency makes the WAV stale', async () => {
   const server = await createServer({ configFile: false, server: { middlewareMode: true, hmr: false, ws: false, watch: null }, appType: 'custom', optimizeDeps: { noDiscovery: true, include: [] } });
   try {
     const { OnlineCardSources } = await server.ssrLoadModule('/src/editor/sync/onlineCardSources.ts');
@@ -10,9 +10,9 @@ test('同步AV代码只读解析，身份与本地闭包一致；改共享依赖
     const { cyrb53 } = await server.ssrLoadModule('/src/render/cyrb53.mjs');
     const { builtinCardSourceFiles } = await server.ssrLoadModule('/src/render/cardSourceFiles.mjs');
     const key = 'src/cards/user/av-synced.tsx', dep = 'src/cards/user/av-data.ts';
-    const body = `import { value } from './av-data'; export const card = { id:'av-synced', name:'测试', defaults:{ value }, controls:[], Component:()=>null, audio:()=>{ throw Error('不得执行'); } };`;
+    const body = `import { value } from './av-data'; export const card = { id:'av-synced', name:'Test', defaults:{ value }, controls:[], Component:()=>null, audio:()=>{ throw Error('must not be executed'); } };`;
     const audioKey = 'src/cards/user/upstream-audio.tsx';
-    const store = new Map([[key, body], [dep, 'export const value = 1;'], [audioKey, `export const c = { id:'upstream',name:'音频',defaults:{},controls:[],audio:()=>new Float32Array(2) };`]]);
+    const store = new Map([[key, body], [dep, 'export const value = 1;'], [audioKey, `export const c = { id:'upstream',name:'Audio',defaults:{},controls:[],audio:()=>new Float32Array(2) };`]]);
     let entries = [], gen = 1;
     const request = async msg => msg.type === 'content.list'
       ? { type: 'content.listing', items: [...store.keys()].map(key => ({ key, hash: String(gen) })) }

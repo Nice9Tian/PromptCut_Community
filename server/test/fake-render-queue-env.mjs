@@ -55,12 +55,12 @@ function viewOf(entries) {
     /** 发给 `connId` 的 `type` 消息恰好一条，返回它。 */
     one(connId, type) {
       const list = of(connId, type);
-      assert.equal(list.length, 1, `期望给 ${connId} 恰好一条 ${type}，实际 ${list.length} 条；这一步发出的全部消息：${JSON.stringify(entries.map(e => [e.connId, e.message]))}`);
+      assert.equal(list.length, 1, `expected exactly one ${type} for ${connId}, got ${list.length}; all messages sent in this step: ${JSON.stringify(entries.map(e => [e.connId, e.message]))}`);
       return list[0];
     },
     /** 这一步什么都没发。 */
-    assertSilent(what = '这一步') {
-      assert.equal(entries.length, 0, `${what}不应发任何消息，实际：${JSON.stringify(entries.map(e => [e.connId, e.message]))}`);
+    assertSilent(what = 'this step') {
+      assert.equal(entries.length, 0, `${what}: expected no messages to be sent, got: ${JSON.stringify(entries.map(e => [e.connId, e.message]))}`);
     },
   };
 }

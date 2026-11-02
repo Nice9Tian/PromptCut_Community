@@ -29,7 +29,7 @@ async function client(url, user, createDocEndpoint) {
   let opens = 0;
   ep.onOpen(() => { opens += 1; });
   ep.onMessage((m) => got.push(m));
-  await waitFor(() => opens === 1, 4000, `${user} 建会话`);
+  await waitFor(() => opens === 1, 4000, `${user} creates a session`);
   let n = 0;
   return {
     ep,
@@ -38,7 +38,7 @@ async function client(url, user, createDocEndpoint) {
     async rpc(msg, ms = 5000) {
       const reqId = `${user}-${++n}`;
       ep.send({ ...msg, reqId });
-      return waitFor(() => got.find((m) => m.reqId === reqId), ms, `${msg.type} 的回包`);
+      return waitFor(() => got.find((m) => m.reqId === reqId), ms, `reply to ${msg.type}`);
     },
     wait: (pred, what, ms = 5000) => waitFor(() => got.find(pred), ms, what),
   };
@@ -85,7 +85,7 @@ async function runScenario(t, mode) {
   const t2 = snapshotTaskInput({ resultKey: 'ht3-b', projectId: 'proj', projectRev: 1 });
   await cut();
   rec('task.published', (await A.rpc({ type: 'task.publish', tasks: [t1, t2] })).results);
-  await N.wait((m) => m.type === 'task.opened' && m.task?.id === t2.id, 'N 看到 task.opened');
+  await N.wait((m) => m.type === 'task.opened' && m.task?.id === t2.id, 'N sees task.opened');
   rec('opened@N', N.got.filter((m) => m.type === 'task.opened').map((m) => m.task.id).sort());
 
   // ---- 认领、完成
@@ -95,10 +95,10 @@ async function runScenario(t, mode) {
   await cut();
   rec('task.completed', pick(await N.rpc({ type: 'task.complete', id: t1.id, token: c1.token, result: { ranges: [[0, 29]] } }), ['type', 'id']));
   await cut();
-  const done = await A.wait((m) => m.type === 'task.done' && m.id === t1.id, 'A 收到 task.done');
+  const done = await A.wait((m) => m.type === 'task.done' && m.id === t1.id, 'A receives task.done');
   rec('task.done@A', pick(done, ['id', 'resultKey', 'projectId', 'projectRev', 'result']));
-  rec('taken@B', pick(await B.wait((m) => m.type === 'task.taken' && m.id === t1.id, 'B 看到 task.taken'), ['id', 'version']));
-  rec('closed@B', pick(await B.wait((m) => m.type === 'task.closed' && m.id === t1.id, 'B 看到 task.closed'), ['id', 'state']));
+  rec('taken@B', pick(await B.wait((m) => m.type === 'task.taken' && m.id === t1.id, 'B sees task.taken'), ['id', 'version']));
+  rec('closed@B', pick(await B.wait((m) => m.type === 'task.closed' && m.id === t1.id, 'B sees task.closed'), ['id', 'state']));
 
   // ---- 断线放回：传输断不放回；会话结束才放回
   const c2 = await N.rpc({ type: 'task.claim', id: t2.id, expectVersion: 1 });
@@ -110,10 +110,10 @@ async function runScenario(t, mode) {
   rec('still-claimed-after-transport-cut', !B.got.some((m) => m.type === 'task.opened' && m.task?.id === t2.id && m.task?.version > 2));
   const openedBefore = B.got.length;
   N.ep.close();
-  await waitFor(() => env.service.describe().conns.length === 2, 3000, 'N 的会话结束');
+  await waitFor(() => env.service.describe().conns.length === 2, 3000, 'N\'s session ends');
   await sleep(10);
   env.service.tick();
-  const back = await waitFor(() => B.got.slice(openedBefore).find((m) => m.type === 'task.opened' && m.task?.id === t2.id), 3000, 'B 看到 t2 放回');
+  const back = await waitFor(() => B.got.slice(openedBefore).find((m) => m.type === 'task.opened' && m.task?.id === t2.id), 3000, 'B sees t2 put back');
   rec('reopened@B', pick(back.task, ['id', 'state', 'version', 'attempts']));
 
   // ---- project：提交与 stale
@@ -122,7 +122,7 @@ async function runScenario(t, mode) {
   await cut();
   rec('project.op.ok', pick(await A.rpc({ type: 'project.op', projectId: 'proj', opId: 'o1', expectRev: 0, ops: [{ op: 'set', path: '', value: { a: 1 } }] }), ['type', 'rev']));
   await cut();
-  rec('project.ops@B', pick(await B.wait((m) => m.type === 'project.ops' && m.rev === 1, 'B 收到 project.ops'), ['type', 'rev', 'ops']));
+  rec('project.ops@B', pick(await B.wait((m) => m.type === 'project.ops' && m.rev === 1, 'B receives project.ops'), ['type', 'rev', 'ops']));
   const stale = await B.rpc({ type: 'project.op', projectId: 'proj', opId: 'o2', expectRev: 0, ops: [{ op: 'set', path: '/a', value: 2 }] });
   rec('project.op.rejected', pick(stale, ['type', 'reason']));
 
@@ -131,28 +131,28 @@ async function runScenario(t, mode) {
   await cut();
   rec('content.stored', pick(await A.rpc({ type: 'content.put', kind: 'card-source', key: 'cards/x', body: { v: 1 } }), ['type', 'kind', 'key', 'rev', 'hash']));
   await cut();
-  rec('content.changed@B', pick(await B.wait((m) => m.type === 'content.changed' && m.key === 'cards/x', 'B 收到 content.changed'), ['type', 'kind', 'key', 'rev', 'hash']));
+  rec('content.changed@B', pick(await B.wait((m) => m.type === 'content.changed' && m.key === 'cards/x', 'B receives content.changed'), ['type', 'kind', 'key', 'rev', 'hash']));
   rec('content.item', pick(await B.rpc({ type: 'content.get', kind: 'card-source', key: 'cards/x' }), ['type', 'body', 'rev']));
 
   // 业务消息两边都没有 seq / ack，也没有 error
   for (const c of [A, N, B]) {
-    for (const m of c.got) assert.ok(!('seq' in m) && !('ack' in m), `上层看不到 seq / ack：${JSON.stringify(m)}`);
-    assert.deepEqual(c.got.filter((m) => m.type === 'error'), [], '没有 error 回包');
+    for (const m of c.got) assert.ok(!('seq' in m) && !('ack' in m), `the upper layer cannot see seq / ack: ${JSON.stringify(m)}`);
+    assert.deepEqual(c.got.filter((m) => m.type === 'error'), [], 'no error replies');
   }
   const stats = { A: A.ep.stats(), B: B.ep.stats() };
   const health = await env.health();
   return { out, cuts, stats, health };
 }
 
-test('HT3-ws-vs-resume 同一段业务（队列认领 / 完成 / 断线放回、项目提交与 stale、内容库 put 与 watch）：只走 WebSocket 与中途断开再接续，结果逐项相同', { skip: SKIP_BOTH, timeout: 60_000 }, async (t) => {
+test('HT3-ws-vs-resume the same sequence of operations (queue claim / completion / put back on disconnect, project commit and stale, content store put and watch): over WebSocket only versus with mid-run disconnects and resumes, the results are identical item by item', { skip: SKIP_BOTH, timeout: 60_000 }, async (t) => {
   const plain = await runScenario(t, 'ws');
   const resumed = await runScenario(t, 'resume');
   assert.equal(plain.cuts, 0);
-  assert.ok(resumed.cuts >= 8, `断开再接续那一遍确实断了多次（${resumed.cuts}）`);
-  assert.ok(resumed.stats.A.resumes >= 1 && resumed.stats.B.resumes >= 1, `端点确实接续过：${JSON.stringify(resumed.stats)}`);
-  assert.ok(resumed.health.sessions.resumed >= 2, `服务端记了接续：${JSON.stringify(resumed.health.sessions)}`);
+  assert.ok(resumed.cuts >= 8, `the disconnect-and-resume run did drop multiple times (${resumed.cuts})`);
+  assert.ok(resumed.stats.A.resumes >= 1 && resumed.stats.B.resumes >= 1, `the endpoints did resume: ${JSON.stringify(resumed.stats)}`);
+  assert.ok(resumed.health.sessions.resumed >= 2, `the server recorded the resumes: ${JSON.stringify(resumed.health.sessions)}`);
   assert.equal(plain.health.sessions.resumed, 0);
-  assert.deepEqual(resumed.out, plain.out, '两遍的业务结果逐项相同');
+  assert.deepEqual(resumed.out, plain.out, 'the results of the two runs are identical item by item');
   // 放回确实是会话结束引起的，不是传输断开引起的
   assert.deepEqual(plain.out.find(([k]) => k === 'still-claimed-after-transport-cut')[1], true);
 });

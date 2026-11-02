@@ -26,7 +26,7 @@ const AGY_LIST = [
 ].join("|");
 const cfg = { cliModels: { agy: AGY_LIST } };
 
-test("带档位后缀的名字折成一个模型,档位数出来", () => {
+test("Names with a tier suffix are folded into one model, and the tiers are enumerated", () => {
   assert.deepEqual(agyGroups(AGY_LIST.split("|")), [
     { base: "gemini-3.8-flash", efforts: ["low", "medium", "high"] },
     // 清单里就没有 medium —— 不能硬塞一个 agy 会拒的档位进去
@@ -38,7 +38,7 @@ test("带档位后缀的名字折成一个模型,档位数出来", () => {
   ]);
 });
 
-test("面板上的模型下拉框列的是基名,不再是一行一个档位", () => {
+test("The model dropdown on the panel lists base names, no longer one row per tier", () => {
   assert.deepEqual(modelsFor("agy", cfg), [
     "gemini-3.8-flash", "gemini-3.1-pro", "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b",
   ]);
@@ -46,15 +46,15 @@ test("面板上的模型下拉框列的是基名,不再是一行一个档位", (
   assert.deepEqual(modelsFor("claude", { cliModels: { claude: "opus|sonnet" } }), ["opus", "sonnet"]);
 });
 
-test("思考下拉框按模型给档位,不是一张固定表", () => {
+test("The thinking dropdown gives tiers per model, not one fixed table", () => {
   assert.deepEqual(effortsFor("agy", "gemini-3.8-flash", cfg), ["low", "medium", "high"]);
-  assert.deepEqual(effortsFor("agy", "gemini-3.1-pro", cfg), ["low", "high"], "它没有 medium");
-  assert.deepEqual(effortsFor("agy", "claude-sonnet-4-6", cfg), [], "一档都没有,界面上该灰掉");
+  assert.deepEqual(effortsFor("agy", "gemini-3.1-pro", cfg), ["low", "high"], "It has no medium");
+  assert.deepEqual(effortsFor("agy", "claude-sonnet-4-6", cfg), [], "It has no tiers at all, so the interface should gray it out");
   // 没选模型时用 agy 自己的默认模型,配什么档它都收
   assert.ok(effortsFor("agy", "", cfg).includes(""));
 });
 
-test("发出去的一对一定配得上", () => {
+test("The pair that is sent must always match", () => {
   assert.deepEqual(pairModelEffort("agy", "gemini-3.8-flash", "medium", cfg),
     { model: "gemini-3.8-flash", effort: "medium" });
   // 这个模型没有 medium:往下取一档,宁可比要的轻,也别背着用户更贵更慢地跑
@@ -67,18 +67,18 @@ test("发出去的一对一定配得上", () => {
   assert.equal(pairModelEffort("agy", "gemini-3.8-flash", "", cfg).effort, "low");
 });
 
-test("早先存的带后缀写法照样认,并且当初选的那档兜底", () => {
+test("The earlier saved suffixed form is still recognized, and the tier chosen back then is the fallback", () => {
   // 清单换成基名之后,老的 localStorage 里还是 gemini-3.8-flash-low
   assert.deepEqual(pairModelEffort("agy", "gemini-3.8-flash-low", "medium", cfg),
-    { model: "gemini-3.8-flash", effort: "medium" }, "存着的档位有效就听它的");
+    { model: "gemini-3.8-flash", effort: "medium" }, "If the saved tier is valid, follow it");
   assert.deepEqual(pairModelEffort("agy", "gemini-3.1-pro-high", "medium", cfg),
-    { model: "gemini-3.1-pro", effort: "high" }, "存着的档位这模型没有,退回名字里那档");
+    { model: "gemini-3.1-pro", effort: "high" }, "If the model does not have the saved tier, fall back to the one in the name");
 });
 
-test("别的驱动一个字都不动", () => {
+test("Other drivers are left completely untouched", () => {
   for (const p of ["claude", "codex", "api"]) {
     assert.deepEqual(pairModelEffort(p, "gpt-5.6-terra-low", "high", cfg),
-      { model: "gpt-5.6-terra-low", effort: "high" }, `${p} 不该被剥后缀`);
+      { model: "gpt-5.6-terra-low", effort: "high" }, `${p} must not have its suffix stripped`);
   }
-  assert.deepEqual(pairModelEffort("agy", "", "high", cfg), { model: "", effort: "high" }, "没选模型就别管");
+  assert.deepEqual(pairModelEffort("agy", "", "high", cfg), { model: "", effort: "high" }, "If no model is selected, leave it alone");
 });

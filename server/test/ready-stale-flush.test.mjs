@@ -23,7 +23,7 @@ function pipeline() {
   return p;
 }
 
-test('换了一版项目之后,旧 entry 攒着的那一批不再发布到就绪索引', async () => {
+test('after the project switches to a new version, the batch accumulated by the old entry is no longer published to the ready index', async () => {
   const p = pipeline();
   const seen = [];
   p.ready.subscribe('s', (m) => seen.push(m));
@@ -44,11 +44,11 @@ test('换了一版项目之后,旧 entry 攒着的那一批不再发布到就绪
   // 旧 entry 的那一批这时才交完
   await p.flushSnapshots(entryA);
   const stale = seen.filter((m) => m.type === 'layer' && m.key === 'KA');
-  assert.deepEqual(stale, [], `旧版的层不该在 reset 之后再发出去:${JSON.stringify(seen)}`);
-  assert.equal(p.ready.peek('s').index.list().find((l) => l.clipId === 'h')?.key, 'KB', '就绪索引里 h 仍是新版的键');
+  assert.deepEqual(stale, [], `layers of the old version must not be sent out again after reset: ${JSON.stringify(seen)}`);
+  assert.equal(p.ready.peek('s').index.list().find((l) => l.clipId === 'h')?.key, 'KB', 'in the ready index, h still has the new version\'s key');
 });
 
-test('当前这一版自己的批照常发布', async () => {
+test('the current version\'s own batch is published as usual', async () => {
   const p = pipeline();
   const entry = { key: 'E1', project: { fps: 30 } };
   p.adoptSession('s', entry, 1);

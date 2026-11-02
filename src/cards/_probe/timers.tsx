@@ -60,8 +60,8 @@ function ProbeCountdown({ t, playToken }: CardProps<Record<string, never>>) {
 export const probeTimerCards: CardDef<Record<string, never>>[] = [
   {
     id: "probe-typewriter",
-    name: "探针卡:打字机(setInterval)",
-    description: "E4b 验收用:每 100 ms 推一格",
+    name: "Probe card: typewriter (setInterval)",
+    description: "For E4b acceptance check: advance one step every 100 ms",
     source: "native",
     frameMode: "stateful",
     defaults: {},
@@ -70,8 +70,8 @@ export const probeTimerCards: CardDef<Record<string, never>>[] = [
   },
   {
     id: "probe-countdown",
-    name: "探针卡:倒计时(Date.now)",
-    description: "E4b 验收用:按 Date.now() 倒数",
+    name: "Probe card: countdown (Date.now)",
+    description: "For E4b acceptance check: count down by Date.now()",
     source: "native",
     frameMode: "stateful",
     defaults: {},

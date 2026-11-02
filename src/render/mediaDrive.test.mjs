@@ -49,26 +49,26 @@ class FakeVideo {
 
 const paused = (target) => ({ target, playing: false, volume: 0, scrubbing: false });
 
-test("暂停中:驱动之后元素被 load() 重载,元数据到了自己回到目标时刻(不等下一次渲染)", () => {
+test("Paused: after driving, the element is reloaded via load(); once metadata arrives it returns to the target time by itself (without waiting for the next render)", () => {
   const el = new FakeVideo();
   driveMedia(el, paused(2.5));
-  assert.equal(el.defaultStart, 2.5, "readyState 0 时只记成默认起播位置");
+  assert.equal(el.defaultStart, 2.5, "At readyState 0 it is only recorded as the default start position");
   el.load(); // 到齐后重载:把默认起播位置清回 0
   el.metadata();
-  assert.equal(el.currentTime, 2.5, "重载之后回到 2.5 s,不停在 0");
+  assert.equal(el.currentTime, 2.5, "After reload it returns to 2.5 s, not stuck at 0");
 });
 
-test("暂停中:目标在元数据到之前又变了,按最新的目标", () => {
+test("Paused: the target changed again before metadata arrived, use the latest target", () => {
   const el = new FakeVideo();
   driveMedia(el, paused(2.5));
   el.load();
   driveMedia(el, paused(3.1)); // 重载之后又来一次渲染:记成默认起播位置 3.1
   el.metadata();
   assert.equal(el.currentTime, 3.1);
-  assert.deepEqual(el.seeks, [3.1], "浏览器按默认起播位置 seek 过去之后,不再多发一次");
+  assert.deepEqual(el.seeks, [3.1], "After the browser seeks to the default start position, no extra seek is sent");
 });
 
-test("不再驱动的元素(备用、顶班)元数据到了不动它", () => {
+test("Elements no longer driven (spare, stand-in) are left alone when metadata arrives", () => {
   const el = new FakeVideo();
   driveMedia(el, paused(2.5));
   releaseMedia(el);
@@ -78,7 +78,7 @@ test("不再驱动的元素(备用、顶班)元数据到了不动它", () => {
   assert.deepEqual(el.seeks, []);
 });
 
-test("播放中:重载之后元数据到了就对齐并起播", () => {
+test("Playing: once metadata arrives after reload, align and start playback", () => {
   const el = new FakeVideo();
   let now = 100_000;
   window.__pcRealNow = () => now;
@@ -92,7 +92,7 @@ test("播放中:重载之后元数据到了就对齐并起播", () => {
   } finally { delete window.__pcRealNow; }
 });
 
-test("播放中:元素先放到了素材尽头、播放头还在这一段里,不从头重播", () => {
+test("during playback: element already played to the end of the media, playhead still inside this segment, no replay from the start", () => {
   // 浏览器对放完了的元素调 play() 是「回到 0 重播」;驱动不能在片段末尾触发它
   const el = new FakeVideo();
   el.readyState = 4;
@@ -101,7 +101,7 @@ test("播放中:元素先放到了素材尽头、播放头还在这一段里,不
   const play = el.play.bind(el);
   el.play = () => { if (el.ended) { el.ended = false; el.pos = 0; } return play(); };
   driveMedia(el, { target: 3.733, playing: true, volume: 1, scrubbing: false });
-  assert.equal(el.currentTime, 3.945, "没有回到开头");
-  assert.equal(el.paused, true, "放完了就安静等播放头走出这一段");
+  assert.equal(el.currentTime, 3.945, "did not go back to the start");
+  assert.equal(el.paused, true, "after finishing, wait quietly for the playhead to leave this segment");
   assert.deepEqual(el.seeks, []);
 });

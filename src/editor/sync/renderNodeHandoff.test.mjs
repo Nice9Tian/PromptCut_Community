@@ -24,10 +24,10 @@ let refuse = false;
 const hooks = { ticket: async (projectId) => { if (refuse) throw new Error("This page is not connected to this shared project"); signed++; return `v1.t${signed}-${projectId}.s`; } };
 const B = { url: "wss://site.example/hosted/", projectId: "P1", contentId: "doc-1" };
 
-test("RNH-01 接上共享项目:等挑到素材服务再交,带基址与票据;重复接不再交", async () => {
+test("RNH-01 Connecting to a shared project: wait until an asset service is picked, then hand off with the base URL and ticket; connecting again does not hand off again", async () => {
   H.bindRenderNode(B, hooks);
   await flush();
-  assert.equal(posts.length, 0, "还在等本页面挑素材服务");
+  assert.equal(posts.length, 0, "Still waiting for this page to pick an asset service");
   assert.equal(timers.at(-1).ms, H.ASSET_WAIT_MS);
   H.noteRenderNodeAssetBase("https://site.example/media/api/asset/");
   await flush();
@@ -39,10 +39,10 @@ test("RNH-01 接上共享项目:等挑到素材服务再交,带基址与票据;�
   await flush();
   assert.equal(posts.length, 1);
   assert.deepEqual(H.renderNodeHandoffDiag().bound, { url: B.url, projectId: "P1", contentId: "doc-1" });
-  assert.ok(!JSON.stringify(H.renderNodeHandoffDiag()).includes("v1.t1"), "诊断里不带票据");
+  assert.ok(!JSON.stringify(H.renderNodeHandoffDiag()).includes("v1.t1"), "The diagnostics do not include the ticket");
 });
 
-test("RNH-02 文档 id 晚到、素材基址挑到:再交一次,不另签票据", async () => {
+test("RNH-02 The document id arrives late and the asset base URL is picked: hand off once more without signing another ticket", async () => {
   const before = signed;
   H.bindRenderNode({ ...B, contentId: "doc-2" }, hooks);
   await flush();
@@ -55,13 +55,13 @@ test("RNH-02 文档 id 晚到、素材基址挑到:再交一次,不另签票据"
   H.noteRenderNodeAssetBase(null); // 本机当主机:不交(预渲染进程推本机的)
   await flush();
   assert.equal(posts.length, n);
-  assert.equal(signed, before, "没有另签票据");
+  assert.equal(signed, before, "No additional ticket was signed");
 });
 
-test("RNH-03 票据往返:只答本页面连着的项目", async () => {
+test("RNH-03 Ticket round trip: only answer for the project this page is connected to", async () => {
   const n = posts.length;
   await H.answerRenderNodeTicket({ type: "ticket", reqId: "rn1", projectId: "OTHER" });
-  assert.equal(posts.length, n, "别的项目不答");
+  assert.equal(posts.length, n, "Other projects get no answer");
   await H.answerRenderNodeTicket({ type: "ticket", reqId: "rn2", projectId: "P1" });
   assert.deepEqual(posts.at(-1), { path: "/api/render-node/ticket", body: { reqId: "rn2", ticket: `v1.t${signed}-P1.s` } });
   refuse = true;
@@ -70,7 +70,7 @@ test("RNH-03 票据往返:只答本页面连着的项目", async () => {
   refuse = false;
 });
 
-test("RNH-04 离开:只撤同一个项目的", async () => {
+test("RNH-04 Leaving: only withdraw the handoff for the same project", async () => {
   const n = posts.length;
   H.unbindRenderNode("OTHER");
   await flush();
@@ -83,7 +83,7 @@ test("RNH-04 离开:只撤同一个项目的", async () => {
   await H.answerRenderNodeTicket({ type: "ticket", reqId: "rn4", projectId: "P1" });
   H.unbindRenderNode("P1");
   await flush();
-  assert.equal(posts.length, m, "撤完不再答票据、不重复撤");
+  assert.equal(posts.length, m, "After withdrawing, no more ticket answers and no repeated withdrawal");
   // 再接别的项目:重新签票据交接
   H.bindRenderNode({ url: "ws://192.168.1.5:5190/docservice", projectId: "P2", contentId: "doc-9" }, hooks);
   H.noteRenderNodeAssetBase(null); // 局域网主机没登记素材服务:照交,不带基址(预渲染进程按登记或本机挑)
@@ -94,7 +94,7 @@ test("RNH-04 离开:只撤同一个项目的", async () => {
   assert.match(posts.at(-1).body.ticket, /-P2\.s$/);
 });
 
-test("RNH-05 挑不到素材服务:等满就照交;等的时候离开照样撤", async () => {
+test("RNH-05 No asset service can be picked: hand off anyway once the wait is up; leaving during the wait still withdraws", async () => {
   H.unbindRenderNode("P2");
   await flush();
   H.bindRenderNode({ url: B.url, projectId: "P3", contentId: "doc-3" }, hooks);
@@ -115,7 +115,7 @@ test("RNH-05 挑不到素材服务:等满就照交;等的时候离开照样撤",
   assert.deepEqual(posts.at(-1), { path: "/api/render-node/unbind", body: { projectId: "P4", reason: "page-left" } });
 });
 
-test("RNH-06 已发出的旧绑定延迟完成，离开与新房间必须最后生效", async () => {
+test("RNH-06 An old binding that was already sent completes late: leaving and the new room must take effect last", async () => {
   let release;
   let backend = null;
   const started = [];
@@ -138,7 +138,7 @@ test("RNH-06 已发出的旧绑定延迟完成，离开与新房间必须最后�
   await flush();
   release();
   await flush();
-  assert.equal(backend, "NEW", "旧 HTTP 不能晚到后把节点绑回旧房间");
+  assert.equal(backend, "NEW", "A late old HTTP response must not bind the node back to the old room");
   assert.deepEqual(started.map(x => [x.path.split("/").at(-1), x.body.projectId]), [
     ["bind", "SLOW"], ["unbind", "SLOW"], ["bind", "NEW"],
   ]);
@@ -147,7 +147,7 @@ test("RNH-06 已发出的旧绑定延迟完成，离开与新房间必须最后�
   assert.equal(backend, null);
 });
 
-test("RNH-07 旧房间签票据期间离开并重入同房间，旧票据不能交给新连接", async () => {
+test("RNH-07 When leaving and re-entering the same room while the old room is signing a ticket, the old ticket must not be handed to the new connection", async () => {
   const late = [];
   let release;
   H.setRenderNodeDeps({ post: async (path, body) => { late.push({ path, body }); return { ok: true }; },
@@ -167,7 +167,7 @@ test("RNH-07 旧房间签票据期间离开并重入同房间，旧票据不能�
   await flush();
 });
 
-test("RNH-08 旧连接的票据往返离开后不能交回或覆盖诊断", async () => {
+test("RNH-08 After leaving, a ticket round trip of the old connection must not hand back or overwrite the diagnostics", async () => {
   const replies = [];
   let release;
   H.setRenderNodeDeps({ post: async (path, body) => { replies.push({ path, body }); return { ok: true }; },

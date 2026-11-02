@@ -84,14 +84,14 @@ export function tempDir(prefix = 'pc-c66-') {
 /** 从模块里按名字（含别名）取函数；都没有就断言失败并列出实际导出 */
 function pick(mod, names, file) {
   for (const n of names) if (typeof mod[n] === 'function') return mod[n];
-  assert.fail(`${file} 要导出 ${names.join(' / ')} 之一；实际导出：${Object.keys(mod).join(', ') || '（无）'}`);
+  assert.fail(`${file} must export one of ${names.join(' / ')}; actual exports: ${Object.keys(mod).join(', ') || '(none)'}`);
 }
 
 async function importRepo(rel) {
   try {
     return await import(pathToFileURL(path.join(ROOT, rel)).href);
   } catch (err) {
-    assert.fail(`载不进 ${rel}：${err?.message ?? err}`);
+    assert.fail(`cannot load ${rel}: ${err?.message ?? err}`);
   }
 }
 
@@ -121,7 +121,7 @@ export function run(cmd, args, { timeoutMs = 120_000 } = {}) {
     p.on('close', (code) => {
       clearTimeout(timer);
       if (code === 0) resolve({ out, err });
-      else reject(new Error(`${path.basename(cmd)} ${args.join(' ')} 退出码 ${code}：${err.slice(-800)}`));
+      else reject(new Error(`${path.basename(cmd)} ${args.join(' ')} exit code ${code}: ${err.slice(-800)}`));
     });
   });
 }
@@ -234,7 +234,7 @@ export async function loadTiers() {
   const createTierManager = pick(mod, ['createTierManager'], file);
   const makeSmall = async ({ ffmpeg: f, input, output }) => {
     const r = await makeSmallVersion({ ffmpeg: f, input, output });
-    if (!r?.ok) throw new Error(`makeSmallVersion 没生成素材小尺寸：${r?.reason}`);
+    if (!r?.ok) throw new Error(`makeSmallVersion did not produce a small-size asset: ${r?.reason}`);
     return r;
   };
   const hasFaststartFn = async (f) => {
@@ -278,12 +278,12 @@ export async function loadTiers() {
     hasFaststart: async (f) => hasFaststartFn(f),
     ensureFaststart: async (opts) => {
       const r = await ensureFaststartFn(opts);
-      assert.ok(r && typeof r.path === 'string', `ensureFaststart 要回 { path, remuxed }：${JSON.stringify(r)}`);
+      assert.ok(r && typeof r.path === 'string', `ensureFaststart must return { path, remuxed }: ${JSON.stringify(r)}`);
       return { path: r.path, remuxed: !!r.remuxed };
     },
     prepare: async (opts) => {
       const r = await prepareFn(opts);
-      assert.ok(r && r.original && typeof r.original.path === 'string', `prepareTiers 要回 { original: { path, hash }, small? }：${JSON.stringify(r)}`);
+      assert.ok(r && r.original && typeof r.original.path === 'string', `prepareTiers must return { original: { path, hash }, small? }: ${JSON.stringify(r)}`);
       return r;
     },
   };
@@ -306,8 +306,8 @@ export async function loadUploadQueue() {
       target: () => ({ client, base }),
       resolveFile: (hash) => UPLOAD_FILES.get(String(hash).toLowerCase()) ?? null,
     });
-    assert.equal(typeof q?.enqueue, 'function', 'createUploadQueue 的实例要有 enqueue');
-    assert.equal(typeof q?.drain, 'function', 'createUploadQueue 的实例要有 drain');
+    assert.equal(typeof q?.enqueue, 'function', 'an instance of createUploadQueue must have enqueue');
+    assert.equal(typeof q?.drain, 'function', 'an instance of createUploadQueue must have drain');
     q.start();
     return {
       raw: q,
@@ -347,7 +347,7 @@ export function recordingFetch(hook = () => undefined) {
     else if (m?.[3] === 'complete') info.action = 'complete';
     else if (m?.[3] && method === 'PUT') { info.action = 'put'; info.n = Number(m[3]); }
     log.push(info);
-    if (state.offline) { info.ok = false; throw new TypeError('fetch failed (测试断网)'); }
+    if (state.offline) { info.ok = false; throw new TypeError('fetch failed (test network outage)'); }
     const replaced = await hook(info, log, state);
     if (replaced !== undefined) return replaced;
     const res = await globalThis.fetch(input, init);
@@ -360,7 +360,7 @@ export function recordingFetch(hook = () => undefined) {
 /** 直接问素材服务 `GET media/<hash>/chunks` */
 export async function chunksOf(base, hash, ns = 'media') {
   const res = await fetch(`${base}/${ns}/${hash}/chunks`);
-  assert.equal(res.status, 200, `GET ${ns}/${hash}/chunks 应回 200`);
+  assert.equal(res.status, 200, `GET ${ns}/${hash}/chunks should return 200`);
   return res.json();
 }
 
@@ -382,7 +382,7 @@ export async function loadExportGate() {
   const check = pick(mod, ['checkExportOriginals', 'checkOriginals', 'exportGate'], file);
   return async ({ project, has }) => {
     const r = await check({ project, has });
-    assert.ok(r && typeof r.ok === 'boolean', `checkExportOriginals 要回 { ok, ... }：${JSON.stringify(r)}`);
+    assert.ok(r && typeof r.ok === 'boolean', `checkExportOriginals must return { ok, ... }: ${JSON.stringify(r)}`);
     const missing = (r.missing ?? []).map((m) => (typeof m === 'string' ? { hash: m } : m));
     return { ...r, missing, missingHashes: missing.map((m) => String(m.hash).toLowerCase()).sort() };
   };
@@ -563,7 +563,7 @@ export async function loadCardSync() {
         else if (e?.type === 'conflict') host.notify({ type: 'card-conflict', key: e.key, rev: e.rev, mine: e.mine, cloud: e.cloud });
       },
     });
-    for (const n of ['saved', 'bind', 'idle']) assert.equal(typeof s?.[n], 'function', `createCardSync 的实例要有 ${n}`);
+    for (const n of ['saved', 'bind', 'idle']) assert.equal(typeof s?.[n], 'function', `an instance of createCardSync must have ${n}`);
     return {
       raw: s,
       /** 本机保存：先改本机文件，再告诉同步（未改的内置卡不算，调用方不报） */
@@ -575,7 +575,7 @@ export async function loadCardSync() {
       /** 打开共享项目：绑上、等连上、等对账做完 */
       open: async () => {
         s.bind({ projectId: 'p-c66', url: 'ws://fake-docservice.invalid/', protocols: () => [], local: false, keys: [] });
-        await waitFor(() => s.status().connected, { what: '假连接连上' });
+        await waitFor(() => s.status().connected, { what: 'the fake connection to connect' });
         await s.idle();
       },
       close: async () => { s.close(); },
@@ -631,11 +631,11 @@ function fakeContentEndpoint(view) {
 }
 
 /** 等到 pred() 为真；超时断言失败 */
-export async function waitFor(pred, { timeoutMs = 3000, stepMs = 10, what = '条件' } = {}) {
+export async function waitFor(pred, { timeoutMs = 3000, stepMs = 10, what = 'condition' } = {}) {
   const end = Date.now() + timeoutMs;
   for (;;) {
     if (await pred()) return;
-    if (Date.now() > end) assert.fail(`等 ${what} 超时（${timeoutMs} ms）`);
+    if (Date.now() > end) assert.fail(`timed out waiting for ${what} (${timeoutMs} ms)`);
     await sleep(stepMs);
   }
 }

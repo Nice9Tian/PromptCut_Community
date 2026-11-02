@@ -14,15 +14,15 @@ import { fileNameOf } from '../docservice/store/index.mjs';
 
 const ROOM = 'sp_abcdefghijklmnopqrstuvwxyz';
 const descriptor = { version: 1, roomId: ROOM, service: 'http://192.0.2.10:5190/docservice', where: 'lan' };
-const record = { as: 'creator', username: 'alice', key: 'k'.repeat(43), candidate: { where: 'lan', projectId: ROOM, base: descriptor.service, name: '房间', mode: 'free' } };
+const record = { as: 'creator', username: 'alice', key: 'k'.repeat(43), candidate: { where: 'lan', projectId: ROOM, base: descriptor.service, name: 'Room', mode: 'free' } };
 
 async function start(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'recovery-local-'));
   const closers = [];
   const handler = recoveryHttp({
     dir: path.join(root, 'vault'), dataDir: root,
-    store: { peek: (id) => (id === ROOM ? { projectId: ROOM, name: '房间', mode: 'free' } : null), list: () => [] },
-    device: { deviceId: 'device-host', deviceName: '主机' }, baseOf: () => 'http://127.0.0.1:5190/docservice',
+    store: { peek: (id) => (id === ROOM ? { projectId: ROOM, name: 'Room', mode: 'free' } : null), list: () => [] },
+    device: { deviceId: 'device-host', deviceName: 'Host' }, baseOf: () => 'http://127.0.0.1:5190/docservice',
     onClose: (fn) => closers.push(fn),
   });
   const server = http.createServer((req, res) => handler(req, res, () => { res.writeHead(404); res.end(); }));
@@ -43,7 +43,7 @@ async function start(t) {
   return { root, call };
 }
 
-test('开启：记下身份、绑定主机，主机状态是 inactive（没有后台任务）', async (t) => {
+test('enable: records the identity, binds the host, and the host status is inactive (no background tasks)', async (t) => {
   const { call } = await start(t);
   assert.equal((await call('identity', { record, contentId: 'content-1' })).status, 200);
   assert.equal((await call('activate-host')).status, 200);
@@ -52,7 +52,7 @@ test('开启：记下身份、绑定主机，主机状态是 inactive（没有�
   assert.equal((await call('cancel-host')).status, 200);
 });
 
-test('刷新：选回原身份，主机拿回本机地址', async (t) => {
+test('refresh: picks the original identity again, and the host gets its local address back', async (t) => {
   const { root, call } = await start(t);
   await call('identity', { record, contentId: 'content-1' });
   await call('activate-host');
@@ -61,7 +61,7 @@ test('刷新：选回原身份，主机拿回本机地址', async (t) => {
   assert.deepEqual(selected.host, { deviceId: 'device-host' });
   assert.equal(selected.recoveryMove, null);
 
-  assert.equal((await call('restore-host')).body.error, 'host-data-missing', '项目日志不在就不认');
+  assert.equal((await call('restore-host')).body.error, 'host-data-missing', 'not accepted when the project log is missing');
   const projects = path.join(root, 'tenants', ROOM, 'projects');
   fs.mkdirSync(projects, { recursive: true });
   fs.writeFileSync(path.join(projects, `${fileNameOf(ROOM)}.ops.ndjson`), '');
@@ -70,7 +70,7 @@ test('刷新：选回原身份，主机拿回本机地址', async (t) => {
   assert.equal(candidate.originalHost, true);
 });
 
-test('离线修改与本机设置存得下、读得回', async (t) => {
+test('offline edits and local settings can be saved and read back', async (t) => {
   const { call } = await start(t);
   assert.equal((await call('settings-write', { settings: { projectId: ROOM, creatorUsername: 'alice' } })).status, 200);
   assert.equal((await call('settings-read')).body.settings.creatorUsername, 'alice');
@@ -79,14 +79,14 @@ test('离线修改与本机设置存得下、读得回', async (t) => {
   assert.deepEqual((await call('select', { contentId: 'content-1' })).body.journal, journal);
 });
 
-test('注销之后不再给身份', async (t) => {
+test('no identity is handed out after sign-out', async (t) => {
   const { call } = await start(t);
   await call('identity', { record, contentId: 'content-1' });
   assert.equal((await call('revoke')).status, 200);
   assert.equal((await call('select', { contentId: 'content-1' })).body.revoked, true);
 });
 
-test('没有扩展就没有搬迁接口', async (t) => {
+test('without the extension there is no move endpoint', async (t) => {
   const { call } = await start(t);
   assert.equal((await call('move-hosted')).status, 404);
   assert.equal((await call('move-lan')).status, 404);

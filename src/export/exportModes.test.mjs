@@ -30,7 +30,7 @@ const FPS = 30;
 const dense = (...segs) => new Map(segs.map((n) => [n, 15]));
 const clip = (id, start, end, cardId = "card") => ({ id, start, end, cardId });
 
-test("XM-01 每张卡怎么出", () => {
+test("XM-01 How each card is produced", () => {
   // a:第 12～71 帧(60 帧,4 段);b、s 同长
   const clips = [clip("a", 0.4, 2.4), clip("b", 0.4, 2.4), clip("s", 0.4, 2.4), clip("light", 0, 3), { id: "video", start: 0, end: 3 }];
   assert.deepEqual(L.clipFrameWindow(clips[0], FPS, 90), { first: 12, last: 71 });
@@ -42,15 +42,15 @@ test("XM-01 每张卡怎么出", () => {
   ];
   const nonRunnable = new Set(["s"]);
   const full = L.planCardLayers({ clips, fps: FPS, total: 90, mode: "full", nonRunnable, streams });
-  assert.equal(full.streamOf.size, 0, "完整导出不取流");
+  assert.equal(full.streamOf.size, 0, "Full export does not fetch streams");
   assert.deepEqual(full.wrapperOnly, ["s"]);
   assert.deepEqual(full.needFrames, ["s"]);
   assert.equal(full.nodeFrames, 60);
   const fast = L.planCardLayers({ clips, fps: FPS, total: 90, mode: "fast", nonRunnable, streams });
   assert.deepEqual([...fast.streamOf.keys()].sort(), ["a", "b", "s"]);
   assert.equal(fast.streamOf.get("s").resultKey, "ks");
-  assert.deepEqual(fast.wrapperOnly.sort(), ["a", "s"], "整段都有满密度流的卡导出页不挂组件;只有一部分有的照旧活渲");
-  assert.deepEqual(fast.needFrames, ["s"], "本页不执行的卡没被满密度流盖满:请渲染节点");
+  assert.deepEqual(fast.wrapperOnly.sort(), ["a", "s"], "For a card with a full-density stream over its whole range, the export page does not mount the component; for one with a stream over only part of it, live render continues as before");
+  assert.deepEqual(fast.needFrames, ["s"], "A card this page does not execute that is not fully covered by a full-density stream: ask a render node");
   assert.equal(fast.streamFrames, 60 + 30 + 30);
   assert.equal(fast.nodeFrames, 30);
   // 本页不执行的卡整段都有满密度流:不用请渲染节点
@@ -61,10 +61,10 @@ test("XM-01 每张卡怎么出", () => {
   const short = { clipId: "a", plane: "local", resultKey: "ka", originFrame: 12, dense: new Map([[0, 15], [1, 5]]) };
   assert.equal(L.streamCovers(short, 31), true);
   assert.equal(L.streamCovers(short, 32), false);
-  assert.equal(L.streamCovers(short, 11), false, "这条流的第一帧之前");
+  assert.equal(L.streamCovers(short, 11), false, "Before the first frame of this stream");
 });
 
-test("XM-02 这一帧取哪一样", () => {
+test("XM-02 Which source this frame takes", () => {
   const clips = [clip("b", 0.4, 2.4), clip("s", 0.4, 2.4)];
   const nonRunnable = new Set(["s"]);
   const streams = [
@@ -74,25 +74,25 @@ test("XM-02 这一帧取哪一样", () => {
   const plan = L.planCardLayers({ clips, fps: FPS, total: 90, mode: "fast", nonRunnable, streams });
   const frames = new Map([["s", { clipId: "s", plane: "local", rect: { x: 0, y: 0, w: 4, h: 4 }, frames: new Set(Array.from({ length: 60 }, (_, i) => 12 + i)) }]]);
   assert.equal(L.layerChoiceAt(plan, "b", 12, frames, nonRunnable).from, "stream");
-  assert.equal(L.layerChoiceAt(plan, "b", 27, frames, nonRunnable).from, "live", "这一段只有稀疏版:本页逐帧渲,不拿稀疏版顶");
-  assert.equal(L.layerChoiceAt(plan, "b", 42, frames, nonRunnable).from, "stream", "衔接处:下一段有满密度的又取流");
+  assert.equal(L.layerChoiceAt(plan, "b", 27, frames, nonRunnable).from, "live", "This range has only the sparse version: this page renders frame by frame and does not substitute the sparse version");
+  assert.equal(L.layerChoiceAt(plan, "b", 42, frames, nonRunnable).from, "stream", "At the junction: the next range has full density, so take the stream again");
   assert.equal(L.layerChoiceAt(plan, "s", 41, frames, nonRunnable).from, "stream");
-  assert.equal(L.layerChoiceAt(plan, "s", 42, frames, nonRunnable).from, "frames", "本页不执行的卡没有流的帧取渲染节点的位图");
+  assert.equal(L.layerChoiceAt(plan, "s", 42, frames, nonRunnable).from, "frames", "For a frame of a card this page does not execute that has no stream, take the render node's bitmap");
   assert.equal(L.layerChoiceAt(plan, "s", 80, frames, nonRunnable).from, "missing");
   assert.equal(L.layerChoiceAt(plan, "other", 20, frames, nonRunnable).from, "live");
 });
 
-test("XM-03 只为导出的清单计划:队列收它,和平时那份不是一个任务", () => {
+test("XM-03 Export-only manifest plan: the queue accepts it, and it is not the same task as the usual one", () => {
   const task = F.exportPlanTask({ projectId: "proj-1", projectRev: 7, clips: ["c2", "c1", "c2"], codeVersion: "cv-1" });
   assert.deepEqual(task.input, { clips: ["c1", "c2"], exportOnly: true });
   assert.deepEqual(task.requires, { codeVersion: "cv-1" });
-  assert.equal(task.priority, 70, "排在所有细任务前面(整数名次仍是 normal 档)");
+  assert.equal(task.priority, 70, "Ranked ahead of all fine-grained tasks (the integer rank is still the normal tier)");
   const parsed = parseInbound({ type: "task.publish", tasks: [task] });
   assert.equal(parsed.ok, true, parsed.detail);
   assert.equal(parsed.body.tasks[0].input.exportOnly, true);
   assert.ok(isClipsPlan(parsed.body.tasks[0]));
   const normal = P.clipsPlanTask({ projectId: "proj-1", projectRev: 7, clips: ["c1", "c2"], codeVersion: "cv-1" });
-  assert.notEqual(task.id, normal.id, "签名里多一段:同一份清单也是另一个任务");
+  assert.notEqual(task.id, normal.id, "One extra segment in the signature: the same manifest is also a different task");
   assert.equal(F.exportPlanTask({ projectId: "proj-1", projectRev: 7, clips: ["c1", "c2"] }).id, F.exportPlanTask({ projectId: "proj-1", projectRev: 7, clips: ["c2", "c1"] }).id);
 });
 
@@ -134,7 +134,7 @@ const manifestOf = (from, to, origin, last) => {
 const indexOf = (over = {}) => ({ v: 1, projectRev: 7, unsupported: [], streams: [{ clipId: "s", kind: "card", plane: "local", resultKey: RK, envFingerprint: "f".repeat(16),
   originFrame: 12, lastFrame: 143, lastSegment: 8, segmentsPerTask: 8, fps: 30, rect: { x: -32, y: -32, w: 704, h: 424 }, offset: { x: 0, y: 0 }, inputSig: "s1-abc" }], ...over });
 
-test("XM-04 请渲染节点、等到齐、按帧取", async () => {
+test("XM-04 Ask render nodes, wait until everything arrives, fetch by frame", async () => {
   F.resetExportRetry();
   const svc = fakeService({ project: {} });
   const statuses = [];
@@ -158,15 +158,15 @@ test("XM-04 请渲染节点、等到齐、按帧取", async () => {
   assert.equal(cov.plane, "local");
   const url = await got.dataUrl("s", 20);
   assert.match(url, /^data:image\/png;base64,/);
-  assert.equal(Buffer.from(url.split(",")[1], "base64")[4], 0x14, "取的是第 20 帧的那一块");
+  assert.equal(Buffer.from(url.split(",")[1], "base64")[4], 0x14, "Fetched the piece for frame 20");
   assert.equal(got.stats.fetched, 1);
   await assert.rejects(got.dataUrl("s", 200));
-  assert.equal(svc.listeners.size, 0, "退订了队列事件");
+  assert.equal(svc.listeners.size, 0, "Unsubscribed from queue events");
   assert.equal(svc.log.filter((x) => x === "publisher.hello").length, 1);
-  assert.equal(svc.log.filter((x) => x === "task.publish").length, 2, "没等到索引就隔一会儿重发一次:问状态、要回完成通知");
+  assert.equal(svc.log.filter((x) => x === "task.publish").length, 2, "If the index has not arrived, republish after a short wait: ask for the status and request the completion notice again");
 });
 
-test("XM-05 出不了、失败、不是这一版:各自停下并说明", async () => {
+test("XM-05 Cannot be produced, failed, not this version: each stops and explains why", async () => {
   const run = async (prepare) => {
     F.resetExportRetry();
     const svc = fakeService({ project: {} });
@@ -210,7 +210,7 @@ test("XM-05 出不了、失败、不是这一版:各自停下并说明", async (
   assert.deepEqual(F.exportSpans({ lastSegment: 8, segmentsPerTask: 8 }), [[0, 7], [8, 8]]);
 });
 
-test("XM-06 流的一帧上下两半合成", () => {
+test("XM-06 A stream frame composed from its top and bottom halves", () => {
   // 宽 2、色半区高 2;整帧高 = 2 × 2 + 16 = 20;不透明度从第 2 + 8 = 10 行起
   const w = 2, h = 2, total = 2 * h + 16;
   const raw = new Uint8ClampedArray(w * total * 4);
@@ -228,7 +228,7 @@ test("XM-06 流的一帧上下两半合成", () => {
   assert.equal(S.HALF_GAP_ROWS, 8);
 });
 
-test("XM-07 流清单的读法", () => {
+test("XM-07 How stream manifests are read", () => {
   const init = "0123456789abcdef";
   const body = { kind: "stream", resultKey: RK, header: { fps: 30 },
     inits: { [init]: { hash: hashOf(1), rect: { x: 0, y: 0, w: 64, h: 32 } }, bad: { hash: "x", rect: null } },
@@ -236,7 +236,7 @@ test("XM-07 流清单的读法", () => {
       9: { hash: hashOf(5), init, stride: 1, samples: 15 } } };
   const got = S.readStreamManifest(body, RK, [0, 7]);
   assert.equal(got.fps, 30);
-  assert.deepEqual([...got.segments.keys()], [0, 1], "范围外的、开头文件不在的不收");
+  assert.deepEqual([...got.segments.keys()], [0, 1], "Those out of range and those whose head file is missing are not accepted");
   assert.equal(got.segments.get(1).stride, 15);
   assert.deepEqual(got.inits.get(init).rect, { x: 0, y: 0, w: 64, h: 32 });
   assert.equal(S.readStreamManifest({ ...body, resultKey: "other" }, RK, [0, 7]), null);
@@ -244,7 +244,7 @@ test("XM-07 流清单的读法", () => {
   assert.equal(S.readStreamManifest(null, RK, [0, 7]), null);
 });
 
-test("XM-08 在线导出可执行卡判定与 nonRunnableClips: 就绪的同步卡活渲、错误状态等节点", () => {
+test("XM-08 Online export runnable-card check and nonRunnableClips: ready synced cards render live, cards in an error state wait for a node", () => {
   R.resetRuntimeCardsForTest();
   R.registerCards([{ id: "builtin-card", name: "Builtin Card" }]);
   // 模拟同步卡
@@ -256,10 +256,10 @@ test("XM-08 在线导出可执行卡判定与 nonRunnableClips: 就绪的同步�
     "synced-ready": { state: "ready" },
     "synced-bad": { state: "unsupported-syntax", detail: "SyntaxError" },
   });
-  assert.equal(L.isCardRunnable("builtin-card"), true, "内置卡一律可运行");
-  assert.equal(L.isCardRunnable("synced-ready"), true, "运行状态为 ready 的同步用户卡可运行");
-  assert.equal(L.isCardRunnable("synced-bad"), false, "运行状态为 unsupported-syntax 的不可运行");
-  assert.equal(L.isCardRunnable("unknown-card"), false, "未知卡不可运行");
+  assert.equal(L.isCardRunnable("builtin-card"), true, "Built-in cards are always runnable");
+  assert.equal(L.isCardRunnable("synced-ready"), true, "A synced user card whose run state is ready is runnable");
+  assert.equal(L.isCardRunnable("synced-bad"), false, "One whose run state is unsupported-syntax is not runnable");
+  assert.equal(L.isCardRunnable("unknown-card"), false, "An unknown card is not runnable");
 
   const p = {
     width: 1280, height: 720, fps: 30, duration: 3,
@@ -274,7 +274,7 @@ test("XM-08 在线导出可执行卡判定与 nonRunnableClips: 就绪的同步�
     ],
   };
   const nonRunnable = L.nonRunnableClips(p);
-  assert.deepEqual(nonRunnable.sort(), ["c3", "c4"].sort(), "只有真正不能在浏览器运行的卡进入 nonRunnableClips");
+  assert.deepEqual(nonRunnable.sort(), ["c3", "c4"].sort(), "Only cards that truly cannot run in the browser go into nonRunnableClips");
   R.resetRuntimeCardsForTest();
   R.resetCards();
 });

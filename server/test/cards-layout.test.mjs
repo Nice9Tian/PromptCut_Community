@@ -39,7 +39,7 @@ const { FramePipeline, layoutClips, frameContentBox, measureEntityRects } = awai
 
 const stage = { width: 1920, height: 1080 };
 
-test('素材段的 contentBox 就是它的 frameCss 框', () => {
+test('A media clip\'s contentBox is its frameCss box', () => {
   // 没有 frame = 铺满舞台(resolveFrameSize 的默认值)
   assert.deepEqual(frameContentBox(undefined, stage), { left: 0, top: 0, width: 1920, height: 1080 });
   // 锚点在左上角:(x, y) 就是左上角
@@ -61,7 +61,7 @@ const project = {
   ] }],
 };
 
-test('回包成型:卡片按量到的实体框,素材段按项目数据,找不到 / 不在画面上都带 contentNote', () => {
+test('Response shape: cards use the measured entity box, media clips use project data, and not found / not in frame both carry contentNote', () => {
   const list = [{ clipId: 'card-a', rect: { left: 0, top: 0, width: 1920, height: 1080 }, bounds: { left: 704.2, top: 268.8, width: 512.4, height: 541.1 } }];
   const { stage: st, clips, cardIds } = layoutClips(project, ['card-a', 'card-b', 'media-a', 'nope'], list, 1);
   assert.deepEqual(st, stage);
@@ -71,14 +71,14 @@ test('回包成型:卡片按量到的实体框,素材段按项目数据,找不�
   assert.equal(clips['card-a'].contentNote, undefined);
   // 这一刻不在画面上:null + 说明,别被当成「没内容」
   assert.equal(clips['card-b'].contentBox, null);
-  assert.match(clips['card-b'].contentNote, /不在画面上/);
+  assert.match(clips['card-b'].contentNote, /not in frame/);
   // 素材段:不进快照,等于它的 frameCss 框
   assert.deepEqual(clips['media-a'].contentBox, { left: 200, top: 100, width: 800, height: 450 });
   assert.equal(clips['nope'].contentBox, null);
-  assert.match(clips['nope'].contentNote, /找不到 clip nope/);
+  assert.match(clips['nope'].contentNote, /Cannot find clip nope/);
 });
 
-test('量不到实体范围时退回包裹层外框;不传 clipIds 返回全部片段(卡片 + 素材段)', () => {
+test('When the entity extent cannot be measured, fall back to the wrapper layer\'s outer box; without clipIds, return all clips (cards + media clips)', () => {
   const list = [{ clipId: 'card-a', rect: { left: 1, top: 2, width: 3, height: 4 }, bounds: null }];
   const { clips } = layoutClips(project, null, list, 0);
   assert.deepEqual(Object.keys(clips).sort(), ['card-a', 'card-b', 'media-a']);
@@ -97,7 +97,7 @@ function stubbed(entryProject, html = new Map()) {
   return { service, entry };
 }
 
-test('一次请求只渲一遍,和问了几个 clipId 无关;第二次命中 entry.html 不再渲', async () => {
+test('A single request renders only once, regardless of how many clipIds are asked; a second request hits entry.html and does not render again', async () => {
   bakeCalls.length = 0; captureCalls.length = 0;
   const clips = Array.from({ length: 30 }, (_, i) => ({ id: `c${i}`, cardId: 'odometer', start: 0, end: 4, frame: { x: i, y: 0, w: 100, h: 100 } }));
   const big = { ...project, tracks: [{ id: 't1', clips }] };
@@ -105,10 +105,10 @@ test('一次请求只渲一遍,和问了几个 clipId 无关;第二次命中 ent
   const { service, entry } = stubbed(big);
 
   const first = await service.layout(big, { t: 1, clipIds: clips.map(c => c.id) });
-  assert.equal(bakeCalls.length, 1, '30 个 clipId 只触发一次预渲染渲染');
-  assert.equal(captureCalls.length, 1, '一次请求只注一次快照');
+  assert.equal(bakeCalls.length, 1, '30 clipIds trigger only one prerender');
+  assert.equal(captureCalls.length, 1, 'A single request injects a snapshot only once');
   assert.deepEqual([...bakeCalls[0].snapshotFrames], [30], 'round(1 × 30)');
-  assert.equal(bakeCalls[0].snapshotOnly, true, 'layout 不产 PNG');
+  assert.equal(bakeCalls[0].snapshotOnly, true, 'layout produces no PNG');
   assert.equal(first.frame, 30);
   assert.equal(first.t, 1);
   assert.equal(first.baked, true);
@@ -122,13 +122,13 @@ test('一次请求只渲一遍,和问了几个 clipId 无关;第二次命中 ent
   assert.equal(entry.html.has(30), true);
 
   const second = await service.layout(big, { t: 1, clipIds: ['c0'] });
-  assert.equal(bakeCalls.length, 1, '命中 entry.html 就不再 bake');
-  assert.equal(captureCalls.length, 2, '还是要注一次快照才量得到');
+  assert.equal(bakeCalls.length, 1, 'Once entry.html is hit, it does not bake again');
+  assert.equal(captureCalls.length, 2, 'A snapshot still has to be injected before it can be measured');
   assert.equal(second.baked, false);
   assert.deepEqual(second.clips['c0'].contentBox, { left: 10, top: 10, width: 40, height: 40 });
 });
 
-test('像素已经有了也不短路:entry.html 没有这一帧照样冻一张出来量', async () => {
+test('Do not short-circuit even when the pixels already exist: if entry.html lacks this frame, still freeze one to measure', async () => {
   bakeCalls.length = 0; captureCalls.length = 0;
   measured = [{ clipId: 'card-a', rect: { left: 0, top: 0, width: 1920, height: 1080 }, bounds: { left: 8, top: 8, width: 64, height: 64 } }];
   const { service, entry } = stubbed(project);
@@ -139,7 +139,7 @@ test('像素已经有了也不短路:entry.html 没有这一帧照样冻一张�
   assert.deepEqual(out.clips['card-a'].contentBox, { left: 8, top: 8, width: 64, height: 64 });
 });
 
-test('只问素材段时一趟浏览器都不开', async () => {
+test('Asking only for media clips does not open the browser at all', async () => {
   bakeCalls.length = 0; captureCalls.length = 0;
   const { service } = stubbed(project);
   const out = await service.layout(project, { t: 1, clipIds: ['media-a'] });
@@ -148,7 +148,7 @@ test('只问素材段时一趟浏览器都不开', async () => {
   assert.deepEqual(out.clips['media-a'].contentBox, { left: 200, top: 100, width: 800, height: 450 });
 });
 
-test('t 夹在项目时长内,帧号按 round(t × fps)', async () => {
+test('t is clamped to the project duration, frame number is round(t × fps)', async () => {
   bakeCalls.length = 0;
   measured = [];
   const { service } = stubbed(project);
@@ -159,25 +159,25 @@ test('t 夹在项目时长内,帧号按 round(t × fps)', async () => {
 
 /* ---------------- D3:see_frames 每帧附的实体矩形 ---------------- */
 
-test('D3 entityRects:缺的帧一次 bakeFrames 补齐,每帧注一次快照、不截图,钩子就是 measureEntityRects', async () => {
+test('D3 entityRects: missing frames are filled by a single bakeFrames, one snapshot is injected per frame with no screenshot, and the hook is measureEntityRects', async () => {
   bakeCalls.length = 0; captureCalls.length = 0;
   measured = [{ clipId: 'card-a', box: [0, 0, 1920, 1080], solid: [10, 20, 30, 40] }];
   const { service, entry } = stubbed(project, new Map([[15, '<div data-pc-scene=""></div>']]));
   const out = await service.entityRects(project, [0.5, 1, 1, 999]);
-  assert.deepEqual([...out.keys()], [15, 30, 119], '去重、夹进时长、按帧号排');
-  assert.equal(bakeCalls.length, 1, '缺的两帧合成一趟');
+  assert.deepEqual([...out.keys()], [15, 30, 119], 'Deduplicated, clamped into the duration, sorted by frame number');
+  assert.equal(bakeCalls.length, 1, 'The two missing frames are merged into one run');
   assert.deepEqual(bakeCalls[0].targetFrames, [30, 119]);
   assert.equal(bakeCalls[0].snapshotOnly, true);
-  assert.equal(captureCalls.length, 3, '每帧一次');
+  assert.equal(captureCalls.length, 3, 'Once per frame');
   for (const call of captureCalls) {
     assert.equal(call.options.screenshot, false);
     assert.equal(call.options.afterFonts, measureEntityRects);
   }
   assert.deepEqual(out.get(30), measured);
-  assert.equal(entry.html.has(119), true, '补出来的快照 record 进去,下次命中');
+  assert.equal(entry.html.has(119), true, 'The newly produced snapshot is recorded, so the next call hits');
 });
 
-test('D3 entityRects:页面没挂 __pcSolid(钩子回 null)时那一帧是 null,不是空数组', async () => {
+test('D3 entityRects: when the page has no __pcSolid attached (hook returns null), that frame is null, not an empty array', async () => {
   measured = null;
   const { service } = stubbed(project, new Map([[0, '<div></div>']]));
   const out = await service.entityRects(project, [0]);
@@ -214,7 +214,7 @@ async function runMeasure(root, list) {
   finally { Object.assign(globalThis, saved); }
 }
 
-test('D3 measureEntityRects:有实体给 bounds,整张卡没画 / 实体全在舞台外 / 只有组流平面 都给 null', async () => {
+test('D3 measureEntityRects: bounds when there are entities; null when the whole card is not painted / all entities are off stage / there is only a group stream plane', async () => {
   const full = new FakeRect(0, 0, 1920, 1080);
   const root = el('DIV', { 'data-pc-scene': '' }, [0, 0, 1920, 1080], [
     el('DIV', { 'data-pc-clip': 'painted' }, [0, 0, 1920, 1080], [el('DIV', {}, [0, 0, 1920, 1080], [el('SPAN', { solid: 1 }, [100, 200, 300.4, 50.6])])]),
@@ -228,12 +228,12 @@ test('D3 measureEntityRects:有实体给 bounds,整张卡没画 / 实体全在�
   const list = ['painted', 'empty', 'offstage', 'group', 'plane', 'painted-off'].map(clipId => ({ clipId, rect: full, bounds: clipId === 'painted' ? new FakeRect(100, 200, 300.4, 50.6) : full }));
   const out = await runMeasure(root, list);
   const by = Object.fromEntries(out.map(r => [r.clipId, r]));
-  assert.deepEqual(by.painted, { clipId: 'painted', box: [0, 0, 1920, 1080], solid: [100, 200, 300, 51] }, '取整');
-  assert.equal(by.empty.solid, null, '没有实体元素');
-  assert.equal(by.offstage.solid, null, '实体全在舞台外');
-  assert.equal(by.group.solid, null, '组流平面不算这张卡的实体');
-  assert.deepEqual(by.plane.solid, [0, 0, 1920, 1080], '快照 / 流 / 代理平面算实体');
-  assert.equal(by['painted-off'].solid, null, '按 data-pc-painted-box 那一块判');
+  assert.deepEqual(by.painted, { clipId: 'painted', box: [0, 0, 1920, 1080], solid: [100, 200, 300, 51] }, 'Rounded to integers');
+  assert.equal(by.empty.solid, null, 'No entity elements');
+  assert.equal(by.offstage.solid, null, 'All entities are off stage');
+  assert.equal(by.group.solid, null, 'A group stream plane does not count as this card\'s entity');
+  assert.deepEqual(by.plane.solid, [0, 0, 1920, 1080], 'Snapshot / stream / proxy planes count as entities');
+  assert.equal(by['painted-off'].solid, null, 'Judged by the data-pc-painted-box region');
   // 页面上没挂 __pcSolid
   globalThis.window = {};
   const saved = globalThis.document;
@@ -243,7 +243,7 @@ test('D3 measureEntityRects:有实体给 bounds,整张卡没画 / 实体全在�
 });
 
 /* 真打一台 dev server(PC_STAGE_TEST_URL=http://127.0.0.1:5214);不设就跳过。 */
-test('集成:/api/cards/layout 对真实项目返回整数框', { skip: !process.env.PC_STAGE_TEST_URL }, async () => {
+test('Integration: /api/cards/layout returns integer boxes for a real project', { skip: !process.env.PC_STAGE_TEST_URL }, async () => {
   const origin = process.env.PC_STAGE_TEST_URL.replace(/\/+$/, '');
   const live = {
     width: 1920, height: 1080, fps: 30, duration: 3, tracks: [{ id: 't1', clips: [
@@ -260,5 +260,5 @@ test('集成:/api/cards/layout 对真实项目返回整数框', { skip: !process
   assert.equal(data.frame, 30);
   assert.deepEqual(data.clips['live-media'].contentBox, { left: 120, top: 60, width: 640, height: 360 });
   const box = data.clips['live-card'].contentBox;
-  assert.ok(box && Object.values(box).every(Number.isInteger), `contentBox 要是整数:${JSON.stringify(data.clips['live-card'])}`);
+  assert.ok(box && Object.values(box).every(Number.isInteger), `contentBox must be integers: ${JSON.stringify(data.clips['live-card'])}`);
 });

@@ -78,74 +78,74 @@ async function script(base, ns) {
   const hash = sha256(buf);
   const h = { 'X-Media-Size': String(size), 'X-Media-Ext': 'bin', ...AUTH };
 
-  await step('预检（局域网来源）', fetch(`${base}/${ns}/${hash}/0`, {
+  await step('preflight (LAN origin)', fetch(`${base}/${ns}/${hash}/0`, {
     method: 'OPTIONS',
     headers: { Origin: LAN, 'Access-Control-Request-Method': 'PUT', 'Access-Control-Request-Headers': 'x-media-size, authorization', 'Access-Control-Request-Private-Network': 'true' },
   }));
-  await step('预检（公网来源）', fetch(`${base}/${ns}/${hash}/chunks`, {
+  await step('preflight (public network origin)', fetch(`${base}/${ns}/${hash}/chunks`, {
     method: 'OPTIONS',
     headers: { Origin: 'https://evil.example.com', 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Private-Network': 'true' },
   }));
-  await step('对账不带票据 401', fetch(`${base}/${ns}/${hash}/chunks`, { headers: { Origin: LAN } }));
-  await step('对账：没见过', fetch(`${base}/${ns}/${hash}/chunks`, { headers: { Origin: LAN, ...AUTH } }));
-  await step('PUT 不带令牌 401', put(base, ns, hash, 0, sliceOf(buf, 0), { 'X-Media-Size': String(size), Origin: LAN }));
-  await step('PUT 令牌错 401', put(base, ns, hash, 0, sliceOf(buf, 0), { 'X-Media-Size': String(size), Authorization: `Bearer ${TOKEN}x` }));
-  await step('对账：被拒的不算', fetch(`${base}/${ns}/${hash}/chunks`, { headers: AUTH }));
-  await step('PUT 第 0 片', put(base, ns, hash, 0, sliceOf(buf, 0), { ...h, Origin: LAN }));
-  await step('PUT 第 2 片', put(base, ns, hash, 2, sliceOf(buf, 2), h));
-  await step('对账：收了 0、2', fetch(`${base}/${ns}/${hash}/chunks`, { headers: AUTH }));
-  await step('收尾：缺片', complete(base, ns, hash, { ...AUTH, Origin: LAN }));
-  await step('补传第 1 片', put(base, ns, hash, 1, sliceOf(buf, 1), h));
-  await step('收尾不带令牌 401', complete(base, ns, hash));
-  await step('收尾：到齐', complete(base, ns, hash, { ...AUTH, Origin: LAN }));
-  await step('对账：已入库', fetch(`${base}/${ns}/${hash}/chunks`, { headers: AUTH }));
-  await step('入库后重传', put(base, ns, hash, 0, sliceOf(buf, 0), h));
-  await step('入库后再收尾', complete(base, ns, hash, AUTH));
+  await step('reconcile without ticket 401', fetch(`${base}/${ns}/${hash}/chunks`, { headers: { Origin: LAN } }));
+  await step('reconcile: never seen', fetch(`${base}/${ns}/${hash}/chunks`, { headers: { Origin: LAN, ...AUTH } }));
+  await step('PUT without token 401', put(base, ns, hash, 0, sliceOf(buf, 0), { 'X-Media-Size': String(size), Origin: LAN }));
+  await step('PUT wrong token 401', put(base, ns, hash, 0, sliceOf(buf, 0), { 'X-Media-Size': String(size), Authorization: `Bearer ${TOKEN}x` }));
+  await step('reconcile: rejected ones do not count', fetch(`${base}/${ns}/${hash}/chunks`, { headers: AUTH }));
+  await step('PUT chunk 0', put(base, ns, hash, 0, sliceOf(buf, 0), { ...h, Origin: LAN }));
+  await step('PUT chunk 2', put(base, ns, hash, 2, sliceOf(buf, 2), h));
+  await step('reconcile: received 0, 2', fetch(`${base}/${ns}/${hash}/chunks`, { headers: AUTH }));
+  await step('finalize: missing chunk', complete(base, ns, hash, { ...AUTH, Origin: LAN }));
+  await step('re-upload chunk 1', put(base, ns, hash, 1, sliceOf(buf, 1), h));
+  await step('finalize without token 401', complete(base, ns, hash));
+  await step('finalize: all chunks present', complete(base, ns, hash, { ...AUTH, Origin: LAN }));
+  await step('reconcile: already stored', fetch(`${base}/${ns}/${hash}/chunks`, { headers: AUTH }));
+  await step('re-upload after storing', put(base, ns, hash, 0, sliceOf(buf, 0), h));
+  await step('finalize again after storing', complete(base, ns, hash, AUTH));
 
-  await step('GET 不带票据 401', fetch(`${base}/${ns}/${hash}`, { headers: { Origin: LAN } }));
-  await step('GET 全件', fetch(`${base}/${ns}/${hash}`, { headers: { Origin: LAN, ...AUTH } }));
-  await step('GET 大写哈希', fetch(`${base}/${ns}/${hash.toUpperCase()}`, { headers: AUTH }));
+  await step('GET without ticket 401', fetch(`${base}/${ns}/${hash}`, { headers: { Origin: LAN } }));
+  await step('GET whole file', fetch(`${base}/${ns}/${hash}`, { headers: { Origin: LAN, ...AUTH } }));
+  await step('GET uppercase hash', fetch(`${base}/${ns}/${hash.toUpperCase()}`, { headers: AUTH }));
   await step('Range 100-199', fetch(`${base}/${ns}/${hash}`, { headers: { Range: 'bytes=100-199', Origin: LAN, ...AUTH } }));
-  await step('Range 跨片', fetch(`${base}/${ns}/${hash}`, { headers: { Range: `bytes=${CHUNK - 10}-${CHUNK + 9}`, ...AUTH } }));
-  await step('Range 尾 10', fetch(`${base}/${ns}/${hash}`, { headers: { Range: 'bytes=-10', ...AUTH } }));
-  await step('Range 开口', fetch(`${base}/${ns}/${hash}`, { headers: { Range: `bytes=${size - 5}-`, ...AUTH } }));
-  await step('Range 越界 416', fetch(`${base}/${ns}/${hash}`, { headers: { Range: `bytes=${size + 10}-${size + 20}`, ...AUTH } }));
+  await step('Range across chunks', fetch(`${base}/${ns}/${hash}`, { headers: { Range: `bytes=${CHUNK - 10}-${CHUNK + 9}`, ...AUTH } }));
+  await step('Range last 10', fetch(`${base}/${ns}/${hash}`, { headers: { Range: 'bytes=-10', ...AUTH } }));
+  await step('Range open-ended', fetch(`${base}/${ns}/${hash}`, { headers: { Range: `bytes=${size - 5}-`, ...AUTH } }));
+  await step('Range out of bounds 416', fetch(`${base}/${ns}/${hash}`, { headers: { Range: `bytes=${size + 10}-${size + 20}`, ...AUTH } }));
   await step('HEAD', fetch(`${base}/${ns}/${hash}`, { method: 'HEAD', headers: AUTH }));
-  await step('HEAD 带 Range', fetch(`${base}/${ns}/${hash}`, { method: 'HEAD', headers: { Range: 'bytes=0-9', ...AUTH } }));
-  await step('GET 查询串只读票据', fetch(`${base}/${ns}/${hash}?t=${encodeURIComponent(KIT.issue('r'))}`));
-  await step('PUT 只读票据 403', put(base, ns, hash, 0, sliceOf(buf, 0), { ...h, Authorization: `Bearer ${KIT.issue('r')}` }));
+  await step('HEAD with Range', fetch(`${base}/${ns}/${hash}`, { method: 'HEAD', headers: { Range: 'bytes=0-9', ...AUTH } }));
+  await step('GET query-string read-only ticket', fetch(`${base}/${ns}/${hash}?t=${encodeURIComponent(KIT.issue('r'))}`));
+  await step('PUT read-only ticket 403', put(base, ns, hash, 0, sliceOf(buf, 0), { ...h, Authorization: `Bearer ${KIT.issue('r')}` }));
 
   // 409：全件哈希不符
   const small = bytesOf(300, 12);
   const claimed = sha256(Buffer.from('not the same bytes'));
-  await step('PUT（哈希不符的内容）', put(base, ns, claimed, 0, small, { 'X-Media-Size': '300', ...AUTH }));
-  await step('收尾：hash-mismatch', complete(base, ns, claimed, AUTH));
-  await step('对账：丢弃后', fetch(`${base}/${ns}/${claimed}/chunks`, { headers: AUTH }));
-  await step('收尾：丢弃后是没见过的', complete(base, ns, claimed, AUTH));
-  await step('GET 没入库', fetch(`${base}/${ns}/${claimed}`, { headers: AUTH }));
+  await step('PUT (content that does not match the hash)', put(base, ns, claimed, 0, small, { 'X-Media-Size': '300', ...AUTH }));
+  await step('finalize: hash-mismatch', complete(base, ns, claimed, AUTH));
+  await step('reconcile: after discard', fetch(`${base}/${ns}/${claimed}/chunks`, { headers: AUTH }));
+  await step('finalize: after discard it is never seen', complete(base, ns, claimed, AUTH));
+  await step('GET not stored', fetch(`${base}/${ns}/${claimed}`, { headers: AUTH }));
 
   // 分片校验
   const s2 = CHUNK + 10;
   const b2 = bytesOf(s2, 13);
   const h2 = sha256(b2);
   const hh = { 'X-Media-Size': String(s2), ...AUTH };
-  await step('越界 416', put(base, ns, h2, 2, Buffer.alloc(10), hh));
-  await step('长度不对 400', put(base, ns, h2, 1, Buffer.alloc(11), hh));
-  await step('缺 size 400', put(base, ns, h2, 1, Buffer.alloc(10), AUTH));
-  await step('分片号前导零 400', put(base, ns, h2, '01', Buffer.alloc(10), hh));
-  await step('PUT 第 1 片', put(base, ns, h2, 1, sliceOf(b2, 1), hh));
-  await step('size 不一致 409', put(base, ns, h2, 0, sliceOf(b2, 0), { 'X-Media-Size': String(s2 + 1), ...AUTH }));
-  await step('对账：校验之后', fetch(`${base}/${ns}/${h2}/chunks`, { headers: AUTH }));
-  await step('坏哈希 400', fetch(`${base}/${ns}/xyz/chunks`));
-  await step('方法不对 405（chunks）', fetch(`${base}/${ns}/${h2}/chunks`, { method: 'POST' }));
-  await step('方法不对 405（complete）', fetch(`${base}/${ns}/${h2}/complete`));
-  await step('方法不对 405（全件）', fetch(`${base}/${ns}/${h2}`, { method: 'DELETE' }));
+  await step('out of range 416', put(base, ns, h2, 2, Buffer.alloc(10), hh));
+  await step('wrong length 400', put(base, ns, h2, 1, Buffer.alloc(11), hh));
+  await step('missing size 400', put(base, ns, h2, 1, Buffer.alloc(10), AUTH));
+  await step('chunk number with leading zero 400', put(base, ns, h2, '01', Buffer.alloc(10), hh));
+  await step('PUT chunk 1', put(base, ns, h2, 1, sliceOf(b2, 1), hh));
+  await step('size mismatch 409', put(base, ns, h2, 0, sliceOf(b2, 0), { 'X-Media-Size': String(s2 + 1), ...AUTH }));
+  await step('reconcile: after validation', fetch(`${base}/${ns}/${h2}/chunks`, { headers: AUTH }));
+  await step('bad hash 400', fetch(`${base}/${ns}/xyz/chunks`));
+  await step('wrong method 405 (chunks)', fetch(`${base}/${ns}/${h2}/chunks`, { method: 'POST' }));
+  await step('wrong method 405 (complete)', fetch(`${base}/${ns}/${h2}/complete`));
+  await step('wrong method 405 (whole file)', fetch(`${base}/${ns}/${h2}`, { method: 'DELETE' }));
   return { out, hash, size };
 }
 
 /* ------------------------------------------------------------------ S1 */
 
-test('S1 同一份字节分别传进 media、snap、px：三个命名空间互不可见，一个里有、另一个里 404', async () => {
+test('S1 the same bytes are uploaded into media, snap and px separately: the three namespaces are invisible to each other, present in one and 404 in another', async () => {
   const srv = await harness.serve({ chunkSize: CHUNK, isTrusted: () => true, token: null });
   const { base, stores } = srv;
   const buf = bytesOf(CHUNK + 77, 1);
@@ -153,11 +153,11 @@ test('S1 同一份字节分别传进 media、snap、px：三个命名空间互�
   const upload = async (ns) => {
     for (let n = 0; n < 2; n++) {
       const r = await put(base, ns, hash, n, sliceOf(buf, n), { 'X-Media-Size': String(buf.length) });
-      assert.equal(r.status, 200, `${ns} 第 ${n} 片`);
+      assert.equal(r.status, 200, `${ns} chunk ${n}`);
       await r.arrayBuffer();
     }
     const c = await complete(base, ns, hash);
-    assert.equal(c.status, 200, `${ns} 收尾`);
+    assert.equal(c.status, 200, `${ns} finalize`);
     await c.arrayBuffer();
   };
   const visible = async (ns) => {
@@ -171,11 +171,11 @@ test('S1 同一份字节分别传进 media、snap、px：三个命名空间互�
     for (const ns of NS) {
       const v = await visible(ns);
       if (have.includes(ns)) {
-        assert.deepEqual(v, { status: 200, same: true, complete: true, received: [0, 1], head: 200 }, `${ns} 里应当有`);
-        assert.notEqual(await stores[ns].stat(hash), null, `${ns} 的数据层里应当有`);
+        assert.deepEqual(v, { status: 200, same: true, complete: true, received: [0, 1], head: 200 }, `${ns} should have it`);
+        assert.notEqual(await stores[ns].stat(hash), null, `the ${ns} store should have it`);
       } else {
-        assert.deepEqual(v, { status: 404, same: false, complete: false, received: [], head: 404 }, `${ns} 里应当没有`);
-        assert.equal(await stores[ns].stat(hash), null, `${ns} 的数据层里应当没有`);
+        assert.deepEqual(v, { status: 404, same: false, complete: false, received: [], head: 404 }, `${ns} should not have it`);
+        assert.equal(await stores[ns].stat(hash), null, `the ${ns} store should not have it`);
       }
     }
   };
@@ -196,13 +196,13 @@ test('S1 同一份字节分别传进 media、snap、px：三个命名空间互�
   for (const ns of ['media', 'snap']) assert.deepEqual(await chunks(base, ns, oh), { size: null, chunkSize: CHUNK, received: [], complete: false }, ns);
   // 另一个命名空间登记了别的 size 也不冲突（各自一份登记）
   const r = await put(base, 'snap', oh, 0, Buffer.alloc(10), { 'X-Media-Size': '10' });
-  assert.equal(r.status, 200, 'snap 里同一个哈希按自己的 size 登记，不和 px 冲突');
+  assert.equal(r.status, 200, 'in snap the same hash is registered with its own size and does not conflict with px');
   await r.arrayBuffer();
 });
 
 /* ------------------------------------------------------------------ S2 */
 
-test('S2 snap、px 的分片、对账、收尾、Range、HEAD、CORS、401 规则与 media 相同，字段逐个比较', async () => {
+test('S2 snap and px chunks, reconcile, finalize, Range, HEAD, CORS and 401 rules are the same as media, compared field by field', async () => {
   const runs = {};
   for (const ns of NS) {
     // 每个命名空间一台新服务，剧本从同一个空状态起跑
@@ -213,24 +213,24 @@ test('S2 snap、px 的分片、对账、收尾、Range、HEAD、CORS、401 规�
   const ref = runs.media.out;
   // media 自己先按 C5 契约核几处，免得三家一起错
   const get = (name) => ref.find(([n]) => n === name)[1];
-  assert.deepEqual(get('对账：没见过').body, { size: null, chunkSize: CHUNK, received: [], complete: false });
-  assert.deepEqual([get('PUT 不带令牌 401').status, get('PUT 不带令牌 401').body], [401, { ok: false, error: 'unauthorized' }]);
-  assert.deepEqual([get('对账不带票据 401').status, get('对账不带票据 401').body], [401, { ok: false, error: 'unauthorized' }]);
-  assert.equal(get('GET 不带票据 401').status, 401);
-  assert.equal(get('GET 查询串只读票据').status, 200);
-  assert.equal(get('GET 查询串只读票据').headers['cache-control'], 'no-store');
-  assert.deepEqual([get('PUT 只读票据 403').status, get('PUT 只读票据 403').body], [403, { ok: false, error: 'forbidden' }]);
-  assert.deepEqual(get('对账：收了 0、2').body.received, [0, 2]);
-  assert.deepEqual([get('收尾：缺片').status, get('收尾：缺片').body.missing], [400, [1]]);
-  assert.equal(get('收尾：到齐').status, 200);
-  assert.equal(get('GET 全件').status, 200);
-  assert.equal(get('GET 全件').headers['access-control-allow-origin'], '*');
+  assert.deepEqual(get('reconcile: never seen').body, { size: null, chunkSize: CHUNK, received: [], complete: false });
+  assert.deepEqual([get('PUT without token 401').status, get('PUT without token 401').body], [401, { ok: false, error: 'unauthorized' }]);
+  assert.deepEqual([get('reconcile without ticket 401').status, get('reconcile without ticket 401').body], [401, { ok: false, error: 'unauthorized' }]);
+  assert.equal(get('GET without ticket 401').status, 401);
+  assert.equal(get('GET query-string read-only ticket').status, 200);
+  assert.equal(get('GET query-string read-only ticket').headers['cache-control'], 'no-store');
+  assert.deepEqual([get('PUT read-only ticket 403').status, get('PUT read-only ticket 403').body], [403, { ok: false, error: 'forbidden' }]);
+  assert.deepEqual(get('reconcile: received 0, 2').body.received, [0, 2]);
+  assert.deepEqual([get('finalize: missing chunk').status, get('finalize: missing chunk').body.missing], [400, [1]]);
+  assert.equal(get('finalize: all chunks present').status, 200);
+  assert.equal(get('GET whole file').status, 200);
+  assert.equal(get('GET whole file').headers['access-control-allow-origin'], '*');
   assert.equal(get('Range 100-199').status, 206);
-  assert.equal(get('Range 越界 416').status, 416);
-  assert.equal(get('预检（局域网来源）').status, 204);
-  assert.equal(get('预检（局域网来源）').headers['access-control-allow-private-network'], 'true');
-  assert.equal(get('预检（公网来源）').headers['access-control-allow-private-network'], null);
-  assert.deepEqual([get('收尾：hash-mismatch').status, get('收尾：hash-mismatch').body.error], [409, 'hash-mismatch']);
+  assert.equal(get('Range out of bounds 416').status, 416);
+  assert.equal(get('preflight (LAN origin)').status, 204);
+  assert.equal(get('preflight (LAN origin)').headers['access-control-allow-private-network'], 'true');
+  assert.equal(get('preflight (public network origin)').headers['access-control-allow-private-network'], null);
+  assert.deepEqual([get('finalize: hash-mismatch').status, get('finalize: hash-mismatch').body.error], [409, 'hash-mismatch']);
 
   for (const ns of ['snap', 'px']) {
     const got = runs[ns].out;
@@ -239,27 +239,27 @@ test('S2 snap、px 的分片、对账、收尾、Range、HEAD、CORS、401 规�
       const [name, a] = ref[i];
       const [name2, b] = got[i];
       assert.equal(name2, name);
-      assert.equal(b.status, a.status, `${ns}「${name}」状态码`);
+      assert.equal(b.status, a.status, `${ns} "${name}" status code`);
       // 带 url 的回包长度随 url 变，content-length 不比
       const hasUrl = a.body && typeof a.body === 'object' && 'url' in a.body;
       for (const k of Object.keys(a.headers)) {
         if (hasUrl && k === 'content-length') continue;
-        assert.equal(b.headers[k], a.headers[k], `${ns}「${name}」响应头 ${k}`);
+        assert.equal(b.headers[k], a.headers[k], `${ns} "${name}" response header ${k}`);
       }
       // 收尾回包里的 `url` 是取回地址，按命名空间不同，单独核（见下）；其余字段逐个比较
       const strip = (body) => (body && typeof body === 'object' && 'url' in body ? { ...body, url: typeof body.url } : body);
-      assert.deepEqual(strip(b.body), strip(a.body), `${ns}「${name}」回包`);
+      assert.deepEqual(strip(b.body), strip(a.body), `${ns} "${name}" response body`);
     }
     // 契约第 10 节第 2 条：snap / px 的 url 是 `/api/asset/<ns>/<hash>`；media 照旧 `/@media/<hash>`
-    const fin = got.find(([n]) => n === '收尾：到齐')[1].body;
-    assert.equal(fin.url, `/api/asset/${ns}/${runs[ns].hash}`, `${ns} 收尾回包的 url`);
-    const again = got.find(([n]) => n === '入库后再收尾')[1].body;
-    assert.equal(again.url, `/api/asset/${ns}/${runs[ns].hash}`, `${ns} 入库后再收尾的 url`);
+    const fin = got.find(([n]) => n === 'finalize: all chunks present')[1].body;
+    assert.equal(fin.url, `/api/asset/${ns}/${runs[ns].hash}`, `${ns} url in the finalize response body`);
+    const again = got.find(([n]) => n === 'finalize again after storing')[1].body;
+    assert.equal(again.url, `/api/asset/${ns}/${runs[ns].hash}`, `${ns} url when finalizing again after storing`);
   }
-  assert.equal(get('收尾：到齐').body.url, `/@media/${runs.media.hash}`, 'media 的 url 照旧');
+  assert.equal(get('finalize: all chunks present').body.url, `/@media/${runs.media.hash}`, 'media\'s url stays as before');
 });
 
-test('S2b snap / px 专用的 MIME 表认 text/html → html、video/iso.segment → m4s，media 的表不变；X-Media-Ext 优先', async () => {
+test('S2b the MIME table dedicated to snap / px recognizes text/html → html and video/iso.segment → m4s, media\'s table is unchanged; X-Media-Ext takes precedence', async () => {
   const srv = await harness.serve({ chunkSize: CHUNK, isTrusted: () => true, token: null });
   const { base, stores } = srv;
   let seed = 100;
@@ -277,38 +277,38 @@ test('S2b snap / px 专用的 MIME 表认 text/html → html、video/iso.segment
     assert.equal(await one(ns, { 'X-Media-Type': 'video/mp4' }), 'mp4', `${ns} video/mp4`);
   }
   for (const ns of NS) {
-    assert.equal(await one(ns, { 'X-Media-Ext': 'mp4', 'X-Media-Type': 'video/iso.segment' }), 'mp4', `${ns} 扩展名优先`);
-    assert.equal(await one(ns, { 'X-Media-Ext': 'm4s' }), 'm4s', `${ns} 直接给扩展名`);
-    assert.equal(await one(ns, {}), '', `${ns} 都没给`);
+    assert.equal(await one(ns, { 'X-Media-Ext': 'mp4', 'X-Media-Type': 'video/iso.segment' }), 'mp4', `${ns} extension takes precedence`);
+    assert.equal(await one(ns, { 'X-Media-Ext': 'm4s' }), 'm4s', `${ns} extension given directly`);
+    assert.equal(await one(ns, {}), '', `${ns} neither given`);
   }
   // 契约第 10 节第 8、10 条：snap / px 只存候选扩展名（html、mp4、m4s、专用 MIME 表里的全部扩展名、htm、m4v、jpeg），
   // 不在表里的一律存成不带扩展名；media 不受影响
   for (const ns of ['snap', 'px']) {
-    assert.equal(await one(ns, { 'X-Media-Ext': 'bin' }), '', `${ns} bin 不在候选表里`);
-    assert.equal(await one(ns, { 'X-Media-Ext': 'xyz' }), '', `${ns} xyz 不在候选表里`);
-    assert.equal(await one(ns, { 'X-Media-Ext': 'html' }), 'html', `${ns} html 在候选表里`);
-    for (const ext of ['htm', 'm4v', 'jpeg']) assert.equal(await one(ns, { 'X-Media-Ext': ext }), ext, `${ns} ${ext} 在候选表里`);
+    assert.equal(await one(ns, { 'X-Media-Ext': 'bin' }), '', `${ns} bin is not in the candidate list`);
+    assert.equal(await one(ns, { 'X-Media-Ext': 'xyz' }), '', `${ns} xyz is not in the candidate list`);
+    assert.equal(await one(ns, { 'X-Media-Ext': 'html' }), 'html', `${ns} html is in the candidate list`);
+    for (const ext of ['htm', 'm4v', 'jpeg']) assert.equal(await one(ns, { 'X-Media-Ext': ext }), ext, `${ns} ${ext} is in the candidate list`);
     // png 在专用 MIME 表里：存成 <hash>.png，按候选找得回来
     const png = bytesOf(200, ++seed);
     const ph = sha256(png);
     assert.equal((await put(base, ns, ph, 0, png, { 'X-Media-Size': '200', 'X-Media-Ext': 'png' })).status, 200);
     assert.equal((await complete(base, ns, ph)).status, 200);
-    assert.equal((await stores[ns].stat(ph))?.ext, 'png', `${ns} png 存成 <hash>.png`);
-    assert.equal((await chunks(base, ns, ph)).complete, true, `${ns} png 按候选算已入库`);
+    assert.equal((await stores[ns].stat(ph))?.ext, 'png', `${ns} png is stored as <hash>.png`);
+    assert.equal((await chunks(base, ns, ph)).complete, true, `${ns} png counts as stored by candidate`);
     const back = await fetch(`${base}/${ns}/${ph}`);
-    assert.equal(back.status, 200, `${ns} png 取得回来`);
-    assert.ok(Buffer.from(await back.arrayBuffer()).equals(png), `${ns} png 字节一致`);
-    assert.equal(await one(ns, { 'X-Media-Type': 'image/png' }), 'png', `${ns} image/png 反查出 png，在候选表里`);
+    assert.equal(back.status, 200, `${ns} png can be retrieved`);
+    assert.ok(Buffer.from(await back.arrayBuffer()).equals(png), `${ns} png bytes are identical`);
+    assert.equal(await one(ns, { 'X-Media-Type': 'image/png' }), 'png', `${ns} image/png reverse-maps to png, which is in the candidate list`);
   }
-  assert.equal(await one('media', { 'X-Media-Ext': 'png' }), 'png', 'media 照旧存 png');
-  assert.equal(await one('media', { 'X-Media-Ext': 'bin' }), 'bin', 'media 照旧存 bin');
+  assert.equal(await one('media', { 'X-Media-Ext': 'png' }), 'png', 'media still stores png as before');
+  assert.equal(await one('media', { 'X-Media-Ext': 'bin' }), 'bin', 'media still stores bin as before');
   // 契约第 10 节第 1 条：不改共享的 MIME_TO_EXT，media 落盘的文件名不变
-  assert.equal(await one('media', { 'X-Media-Type': 'text/html' }), '', 'media 不认 text/html');
-  assert.equal(await one('media', { 'X-Media-Type': 'video/iso.segment' }), '', 'media 不认 video/iso.segment');
-  assert.equal(await one('media', { 'X-Media-Type': 'video/mp4' }), 'mp4', 'media 原有的表照旧');
+  assert.equal(await one('media', { 'X-Media-Type': 'text/html' }), '', 'media does not recognize text/html');
+  assert.equal(await one('media', { 'X-Media-Type': 'video/iso.segment' }), '', 'media does not recognize video/iso.segment');
+  assert.equal(await one('media', { 'X-Media-Type': 'video/mp4' }), 'mp4', 'media\'s original table is unchanged');
 });
 
-test('S2c 缺省的 snap、px 是 fs 实现，目录固定在 <root>/out/asset-store/<ns>、不看 PROMPTCUT_EXPORT_DIR，不写媒体索引；按候选文件名找已有文件', async () => {
+test('S2c the default snap and px are the fs implementation, with the directory fixed at <root>/out/asset-store/<ns>, ignoring PROMPTCUT_EXPORT_DIR and not writing the media index; existing files are found by candidate file name', async () => {
   const fsp = await import('node:fs/promises');
   const os = await import('node:os');
   const path = await import('node:path');
@@ -328,8 +328,8 @@ test('S2c 缺省的 snap、px 是 fs 实现，目录固定在 <root>/out/asset-s
 
     const snapDir = path.join(root, 'out', 'asset-store', 'snap');
     const pxDir = path.join(root, 'out', 'asset-store', 'px');
-    assert.ok((await fsp.readFile(path.join(snapDir, `${hh}.html`))).equals(html), 'snap 落在 <root>/out/asset-store/snap/<hash>.html');
-    assert.ok((await fsp.readFile(path.join(pxDir, `${hs}.m4s`))).equals(seg), 'px 落在 <root>/out/asset-store/px/<hash>.m4s');
+    assert.ok((await fsp.readFile(path.join(snapDir, `${hh}.html`))).equals(html), 'snap lands at <root>/out/asset-store/snap/<hash>.html');
+    assert.ok((await fsp.readFile(path.join(pxDir, `${hs}.m4s`))).equals(seg), 'px lands at <root>/out/asset-store/px/<hash>.m4s');
     const walk = async (dir) => {
       const out = [];
       let items = [];
@@ -341,13 +341,13 @@ test('S2c 缺省的 snap、px 是 fs 实现，目录固定在 <root>/out/asset-s
       return out;
     };
     for (const file of await walk(exportDir)) {
-      assert.ok(!file.includes(hh) && !file.includes(hs), `PROMPTCUT_EXPORT_DIR 下不该有 snap / px 的文件：${file}`);
+      assert.ok(!file.includes(hh) && !file.includes(hs), `PROMPTCUT_EXPORT_DIR must not contain snap / px files: ${file}`);
       if (file.endsWith('.json')) {
         const text = await fsp.readFile(file, 'utf8');
-        assert.ok(!text.includes(hh) && !text.includes(hs), `媒体索引不该记 snap / px 的块：${file}`);
+        assert.ok(!text.includes(hh) && !text.includes(hs), `the media index must not record snap / px chunks: ${file}`);
       }
     }
-    assert.equal((await fetch(`${base}/media/${hh}`)).status, 404, 'media 里没有 snap 的块');
+    assert.equal((await fetch(`${base}/media/${hh}`)).status, 404, 'media has no snap chunk');
 
     // 取回（Content-Type 契约没定，不比）
     const g = await fetch(`${base}/snap/${hh}`);
@@ -361,11 +361,11 @@ test('S2c 缺省的 snap、px 是 fs 实现，目录固定在 <root>/out/asset-s
     const bare = bytesOf(222, 43);
     const hb = sha256(bare);
     await fsp.writeFile(path.join(snapDir, hb), bare);
-    assert.equal((await chunks(base, 'px', hi)).complete, true, 'px/<hash>.mp4 算已入库');
+    assert.equal((await chunks(base, 'px', hi)).complete, true, 'px/<hash>.mp4 counts as stored');
     const gi = await fetch(`${base}/px/${hi}`);
     assert.equal(gi.status, 200);
     assert.ok(Buffer.from(await gi.arrayBuffer()).equals(init));
-    assert.equal((await chunks(base, 'snap', hb)).complete, true, '无扩展名的 <hash> 也算已入库');
+    assert.equal((await chunks(base, 'snap', hb)).complete, true, 'an extensionless <hash> also counts as stored');
     assert.equal((await fetch(`${base}/snap/${hb}`)).status, 200);
 
     // 第 8 条：不在候选表里的扩展名存成不带扩展名的 <hash>，之后照样找得到
@@ -373,8 +373,8 @@ test('S2c 缺省的 snap、px 是 fs 实现，目录固定在 <root>/out/asset-s
     const ho = sha256(odd);
     assert.equal((await put(base, 'px', ho, 0, odd, { 'X-Media-Size': String(odd.length), 'X-Media-Ext': 'bin' })).status, 200);
     assert.equal((await complete(base, 'px', ho)).status, 200);
-    assert.ok((await fsp.readFile(path.join(pxDir, ho))).equals(odd), 'bin 存成 <root>/out/asset-store/px/<hash>');
-    await assert.rejects(fsp.stat(path.join(pxDir, `${ho}.bin`)), '不存 <hash>.bin');
+    assert.ok((await fsp.readFile(path.join(pxDir, ho))).equals(odd), 'bin is stored as <root>/out/asset-store/px/<hash>');
+    await assert.rejects(fsp.stat(path.join(pxDir, `${ho}.bin`)), '<hash>.bin is not stored');
     assert.equal((await chunks(base, 'px', ho)).complete, true);
     const go = await fetch(`${base}/px/${ho}`);
     assert.equal(go.status, 200);
@@ -386,8 +386,8 @@ test('S2c 缺省的 snap、px 是 fs 实现，目录固定在 <root>/out/asset-s
     const hp = sha256(pic);
     assert.equal((await put(base, 'snap', hp, 0, pic, { 'X-Media-Size': String(pic.length), 'X-Media-Ext': 'png' })).status, 200);
     assert.equal((await complete(base, 'snap', hp)).status, 200);
-    assert.ok((await fsp.readFile(path.join(snapDir, `${hp}.png`))).equals(pic), 'png 存成 <root>/out/asset-store/snap/<hash>.png');
-    assert.equal((await chunks(base, 'snap', hp)).complete, true, '<hash>.png 按候选算已入库');
+    assert.ok((await fsp.readFile(path.join(snapDir, `${hp}.png`))).equals(pic), 'png is stored as <root>/out/asset-store/snap/<hash>.png');
+    assert.equal((await chunks(base, 'snap', hp)).complete, true, '<hash>.png counts as stored by candidate');
     const gp = await fetch(`${base}/snap/${hp}`);
     assert.equal(gp.status, 200);
     assert.ok(Buffer.from(await gp.arrayBuffer()).equals(pic));
@@ -399,7 +399,7 @@ test('S2c 缺省的 snap、px 是 fs 实现，目录固定在 <root>/out/asset-s
 
 /* ------------------------------------------------------------------ S3 */
 
-test('S3 旧写法 opts.store 仍然认、当作 stores.media；只给 stores.media 时 media 的行为与 C5 相同', async () => {
+test('S3 the old form opts.store is still accepted and treated as stores.media; when only stores.media is given, media behaves the same as C5', async () => {
   // 旧写法：只传 opts.store
   const legacy = await harness.serve({ chunkSize: CHUNK, isTrusted: () => true, token: null, legacyStore: true });
   const buf = bytesOf(CHUNK + 3, 21);
@@ -408,7 +408,7 @@ test('S3 旧写法 opts.store 仍然认、当作 stores.media；只给 stores.me
   const fin = await complete(legacy.base, 'media', hash);
   assert.equal(fin.status, 200);
   assert.deepEqual(await fin.json(), { ok: true, hash, size: buf.length, complete: true, url: `/@media/${hash}` });
-  assert.notEqual(await legacy.stores.media.stat(hash), null, 'opts.store 就是 media 的数据层');
+  assert.notEqual(await legacy.stores.media.stat(hash), null, 'opts.store is the media store');
   const got = await fetch(`${legacy.base}/media/${hash}`);
   assert.equal(got.status, 200);
   assert.ok(Buffer.from(await got.arrayBuffer()).equals(buf));
@@ -417,12 +417,12 @@ test('S3 旧写法 opts.store 仍然认、当作 stores.media；只给 stores.me
   // 新写法：media 的回包与旧写法逐字段相同
   const a =await script((await harness.serve({ chunkSize: CHUNK, tickets: KIT.tickets, isTrusted: () => false, legacyStore: true })).base, 'media');
   const b = await script((await harness.serve({ chunkSize: CHUNK, tickets: KIT.tickets, isTrusted: () => false })).base, 'media');
-  assert.deepEqual(b.out, a.out, 'stores.media 与 opts.store 的 media 行为相同');
+  assert.deepEqual(b.out, a.out, 'stores.media and opts.store give the same media behavior');
 });
 
 /* ------------------------------------------------------------------ S4 */
 
-test('S4 不认识的命名空间：素材服务不处理（交给 next，本测试的兜底回 404）、回 4xx、不落任何状态；isAssetServicePath 只认三个命名空间', async () => {
+test('S4 unknown namespace: the asset service does not handle it (hands off to next, this test\'s fallback returns 404), returns 4xx, and persists no state; isAssetServicePath accepts only the three namespaces', async () => {
   const srv = await harness.serve({ chunkSize: CHUNK, isTrusted: () => true, token: null });
   const { base, stores } = srv;
   const buf = bytesOf(100, 31);
@@ -430,23 +430,23 @@ test('S4 不认识的命名空间：素材服务不处理（交给 next，本测
   const is4xx = (s) => s >= 400 && s < 500;
   for (const ns of ['foo', 'snaps', 'pix', 'mediax', 'asset', 'png', 'x']) {
     const p = await put(base, ns, hash, 0, buf, { 'X-Media-Size': '100' });
-    assert.ok(is4xx(p.status), `${ns} PUT 回 ${p.status}`);
+    assert.ok(is4xx(p.status), `${ns} PUT returns ${p.status}`);
     // 契约第 10 节第 3 条：中间件交给 next()，回包来自本测试的兜底（纯文本 no route），不是素材服务的 JSON，也不带跨源头
-    assert.equal(await p.text(), 'no route', `${ns} PUT 应当落到兜底`);
-    assert.equal(p.headers.get('access-control-allow-origin'), null, `${ns} 素材服务没接手，不补跨源头`);
+    assert.equal(await p.text(), 'no route', `${ns} PUT should fall through to the fallback`);
+    assert.equal(p.headers.get('access-control-allow-origin'), null, `${ns} the asset service did not take over, so it adds no CORS headers`);
     const c = await complete(base, ns, hash);
-    assert.ok(is4xx(c.status), `${ns} complete 回 ${c.status}`);
+    assert.ok(is4xx(c.status), `${ns} complete returns ${c.status}`);
     assert.equal(await c.text(), 'no route');
     for (const tail of ['/chunks', '']) {
       const g = await fetch(`${base}/${ns}/${hash}${tail}`);
-      assert.ok(is4xx(g.status), `${ns} GET${tail} 回 ${g.status}`);
+      assert.ok(is4xx(g.status), `${ns} GET${tail} returns ${g.status}`);
       assert.equal(await g.text(), 'no route');
     }
   }
   for (const ns of NS) {
-    assert.deepEqual(await stores[ns].chunks(hash), { size: null, chunkSize: CHUNK, received: [], complete: false }, `${ns} 没落任何状态`);
+    assert.deepEqual(await stores[ns].chunks(hash), { size: null, chunkSize: CHUNK, received: [], complete: false }, `${ns} persisted no state`);
     assert.equal(await stores[ns].stat(hash), null);
-    assert.deepEqual((await stores[ns].usage()).blobs, 0, `${ns} 一件都没入库`);
+    assert.deepEqual((await stores[ns].usage()).blobs, 0, `nothing was stored in ${ns}`);
   }
 
   const h = 'ab'.repeat(32);
@@ -454,14 +454,14 @@ test('S4 不认识的命名空间：素材服务不处理（交给 next，本测
     for (const tail of ['', '/chunks', '/complete', '/0', '/12']) {
       assert.equal(isAssetServicePath(`/api/asset/${ns}/${h}${tail}`), true, `${ns}${tail}`);
     }
-    assert.equal(isAssetServicePath(`/api/asset/${ns}/${h}?x=1`), true, `${ns} 带查询串`);
+    assert.equal(isAssetServicePath(`/api/asset/${ns}/${h}?x=1`), true, `${ns} with query string`);
     assert.equal(isAssetServicePath(`/api/asset/${ns}/${h}/bogus`), false, `${ns}/bogus`);
-    assert.equal(isAssetServicePath(`/api/asset/${ns}`), false, `${ns} 没有哈希`);
-    assert.equal(isAssetServicePath(`/api/asset/${ns}/xyz`), false, `${ns} 坏哈希`);
+    assert.equal(isAssetServicePath(`/api/asset/${ns}`), false, `${ns} without hash`);
+    assert.equal(isAssetServicePath(`/api/asset/${ns}/xyz`), false, `${ns} bad hash`);
   }
   for (const ns of ['foo', 'snaps', 'pix', 'mediax', 'asset', 'png', 'x', '']) {
-    assert.equal(isAssetServicePath(`/api/asset/${ns}/${h}`), false, `不认 ${JSON.stringify(ns)}`);
-    assert.equal(isAssetServicePath(`/api/asset/${ns}/${h}/0`), false, `不认 ${JSON.stringify(ns)}/0`);
+    assert.equal(isAssetServicePath(`/api/asset/${ns}/${h}`), false, `does not accept ${JSON.stringify(ns)}`);
+    assert.equal(isAssetServicePath(`/api/asset/${ns}/${h}/0`), false, `does not accept ${JSON.stringify(ns)}/0`);
   }
   assert.equal(isAssetServicePath(`/api/asset/snap/px/${h}`), false);
   assert.equal(isAssetServicePath(`/api/ai/snap/${h}`), false);

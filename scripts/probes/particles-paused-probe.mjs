@@ -68,7 +68,7 @@ try {
     actions.seek(${T});
     return c?.id;`, CONFIG);
   out.clipId = clipId;
-  check(!!clipId, '加上了粒子卡');
+  check(!!clipId, 'particle card added');
 
   const stageFrames = () => page.frames().filter((f) => /[?&]stage=1/.test(f.url()));
   const frontFrame = async () => {
@@ -116,7 +116,7 @@ try {
     if (!f) return;
     const url = await f.evaluate(() => document.querySelector('.inset-0 > canvas')?.toDataURL('image/png') ?? null).catch(() => null);
     if (url) await fs.writeFile(path.join(OUT, `${name}-canvas.png`), Buffer.from(url.split(',')[1], 'base64'));
-    await until(() => page.evaluate(() => !document.body.innerText.includes('正在测量卡片')), 90000, 500);
+    await until(() => page.evaluate(() => !document.body.innerText.includes('Measuring cards')), 90000, 500);
     const el = await f.frameElement();
     if (el) await el.screenshot({ path: path.join(OUT, `${name}-stage.png`) });
   };
@@ -124,18 +124,18 @@ try {
   const a = await seekAndRead(T);
   out.first = a;
   await shoot(`t${T}-first`);
-  check(!!a && a.w > 0, '粒子 canvas 在位', a);
-  check(!!a && a.ink > 0, `t=${T}s 暂停时粒子画面非空(不透明像素 > 0)`, a);
+  check(!!a && a.w > 0, 'particle canvas is in place', a);
+  check(!!a && a.ink > 0, `t=${T}s the particle image is non-empty when paused (opaque pixels > 0)`, a);
 
   const b = await seekAndRead(T2);
   out.other = b;
-  check(!!b && b.ink > 0, `t=${T2}s 暂停时粒子画面非空`, b);
-  check(!!a && !!b && a.hash !== b.hash, '不同时刻画面不同', { a: a?.hash, b: b?.hash });
+  check(!!b && b.ink > 0, `t=${T2}s the particle image is non-empty when paused`, b);
+  check(!!a && !!b && a.hash !== b.hash, 'the image differs at different times', { a: a?.hash, b: b?.hash });
 
   const a2 = await seekAndRead(T);
   out.again = a2;
   await shoot(`t${T}-again`);
-  check(!!a && !!a2 && a.hash === a2.hash, `跳走再跳回 t=${T}s,两次画面逐像素相同`, { a: a?.hash, a2: a2?.hash });
+  check(!!a && !!a2 && a.hash === a2.hash, `jump away and back to t=${T}s, the two images are pixel-identical`, { a: a?.hash, a2: a2?.hash });
   out.pageErrors = errors.slice(-5);
 } finally {
   await browser.close();

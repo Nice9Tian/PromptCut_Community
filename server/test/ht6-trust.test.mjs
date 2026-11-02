@@ -39,40 +39,40 @@ async function probe(r, clusterToken) {
   return { handshake: hs.status, media: media.status, admin: admin.status, adminBadToken: adminBad.status, adminToken: adminOk?.status ?? null };
 }
 
-test('HT6-off PROMPTCUT_TRUST_LOOPBACK=0：回环不带凭证握手 401、不带票据读素材 401、不带令牌调管理接口 401；带对令牌的管理接口 200', T, async (t) => {
+test('HT6-off PROMPTCUT_TRUST_LOOPBACK=0: a loopback handshake without credentials gets 401, reading an asset without a ticket gets 401, calling the admin API without a token gets 401; the admin API with the right token gets 200', T, async (t) => {
   const tok = token();
   const r = await runMain(t, { PROMPTCUT_DATA_DIR: tempData(t), PROMPTCUT_TRUST_LOOPBACK: '0', PROMPTCUT_CLUSTER_TOKEN: tok });
-  assert.equal(r.code, null, `起得来：${r.out.slice(-1500)}`);
+  assert.equal(r.code, null, `starts up: ${r.out.slice(-1500)}`);
   const got = await probe(r, tok);
   assert.deepEqual(got, { handshake: 401, media: 401, admin: 401, adminBadToken: 401, adminToken: 200 });
   // 本机声明（promptcut.tenant.* / promptcut.role.*）同样不认
   const hs = await rawHandshake(r.doc, { protocols: [PROTOCOL, 'promptcut.tenant.local', 'promptcut.role.page'] });
   hs.sock.destroy();
-  assert.equal(hs.status, 401, '=0 时本机声明不认');
+  assert.equal(hs.status, 401, 'with =0 the claim of being local is not honored');
 });
 
-for (const [label, env] of [['=1', { PROMPTCUT_TRUST_LOOPBACK: '1' }], ['缺省', {}]]) {
-  test(`HT6-on PROMPTCUT_TRUST_LOOPBACK ${label}：行为不变（回环握手成功、读素材不要票据、管理接口不要令牌）`, T, async (t) => {
+for (const [label, env] of [['=1', { PROMPTCUT_TRUST_LOOPBACK: '1' }], ['default', {}]]) {
+  test(`HT6-on PROMPTCUT_TRUST_LOOPBACK ${label}: behavior unchanged (loopback handshake succeeds, reading an asset needs no ticket, the admin API needs no token)`, T, async (t) => {
     const tok = token();
     const r = await runMain(t, { PROMPTCUT_DATA_DIR: tempData(t), PROMPTCUT_CLUSTER_TOKEN: tok, ...env });
-    assert.equal(r.code, null, `起得来：${r.out.slice(-1500)}`);
+    assert.equal(r.code, null, `starts up: ${r.out.slice(-1500)}`);
     const got = await probe(r, tok);
-    assert.equal(got.handshake, 101, '回环不带凭证照旧是本机身份');
-    assert.equal(got.media, 404, '回环读素材不要票据（这个哈希不存在，回 404 而不是 401）');
-    assert.equal(got.admin, 200, '回环调管理接口不要令牌');
+    assert.equal(got.handshake, 101, 'loopback without credentials is still the local identity');
+    assert.equal(got.media, 404, 'reading an asset over loopback needs no ticket (this hash does not exist, so it returns 404 rather than 401)');
+    assert.equal(got.admin, 200, 'calling the admin API over loopback needs no token');
     assert.equal(got.adminToken, 200);
   });
 }
 
-test('HT6-old-name 旧名 PROMPTCUT_TEST_NO_LOOPBACK_TRUST=1 不再生效：回环照旧被信任', T, async (t) => {
+test('HT6-old-name the old name PROMPTCUT_TEST_NO_LOOPBACK_TRUST=1 no longer takes effect: loopback is still trusted', T, async (t) => {
   const tok = token();
   const r = await runMain(t, { PROMPTCUT_DATA_DIR: tempData(t), PROMPTCUT_CLUSTER_TOKEN: tok, PROMPTCUT_TEST_NO_LOOPBACK_TRUST: '1' });
-  assert.equal(r.code, null, `起得来：${r.out.slice(-1500)}`);
+  assert.equal(r.code, null, `starts up: ${r.out.slice(-1500)}`);
   const got = await probe(r, tok);
   assert.deepEqual({ handshake: got.handshake, media: got.media, admin: got.admin }, { handshake: 101, media: 404, admin: 200 });
 });
 
-test('HT6-no-token PROMPTCUT_TRUST_LOOPBACK=0 而没有集群令牌：拒绝启动，config.error cluster-token-required，退出码 1', T, async (t) => {
+test('HT6-no-token PROMPTCUT_TRUST_LOOPBACK=0 without a cluster token: refuses to start, config.error cluster-token-required, exit code 1', T, async (t) => {
   const r = await runMain(t, { PROMPTCUT_DATA_DIR: tempData(t), PROMPTCUT_TRUST_LOOPBACK: '0' });
   assert.equal(r.code, 1, r.out.slice(-1500));
   assert.equal(configErrorOf(r.out)?.reason, 'cluster-token-required', r.out.slice(-1500));

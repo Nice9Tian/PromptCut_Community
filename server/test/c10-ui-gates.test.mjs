@@ -23,13 +23,13 @@ import {
 const ui = uiGate();
 const itUi = (name, fn) => test(name, { skip: ui.ok ? false : ui.reason }, fn);
 
-itUi('C10-UI-01 表 A 的文案以原文出现在 src/ 的非测试源文件里', () => {
+itUi('C10-UI-01 the Table A texts appear verbatim in the non-test source files in src/', () => {
   const missing = TABLE_A.filter((text) => srcFilesContaining(text).length === 0);
-  assert.deepEqual(missing, [], `这些文案在 src/ 里找不到：\n${missing.join('\n')}`);
+  assert.deepEqual(missing, [], `These texts are not found in src/:\n${missing.join('\n')}`);
 });
 
-itUi('C10-UI-02 「该模式暂不支持素材输入的音频素材效果卡」不再单独出现', () => {
-  for (const text of DROPPED_TEXTS) assert.deepEqual(srcFilesContaining(text), [], `「${text}」还在`);
+itUi('C10-UI-02 "This mode does not yet support audio media effect cards that take media input" no longer appears on its own', () => {
+  for (const text of DROPPED_TEXTS) assert.deepEqual(srcFilesContaining(text), [], `"${text}" is still present`);
 });
 
 /* ------------------------------------------------------------------ 用户卡、素材效果卡不发快照请求（K7） */
@@ -77,7 +77,7 @@ beforeEach(async () => {
   ]);
   registry.setUserCardSources({ 'c10-user-card.tsx': '' }, { 'c10-user-card': 'c10-user-card.tsx' });
   // 内容库同步来的用户卡:本机没有定义,只在同步表里
-  registry.setSyncedUserCards([{ id: 'c10-synced-card', name: '同步卡', source: 'src/cards/user/c10-synced-card.tsx' }]);
+  registry.setSyncedUserCards([{ id: 'c10-synced-card', name: 'Synced card', source: 'src/cards/user/c10-synced-card.tsx' }]);
   plan = { segments: [{ fromSec: 0, toSec: 1000, heavy: new Set(['b', 'g', 'u']) }] };
   for (const id of ['b', 'g', 'u', 's']) src.push({ type: 'layer', clipId: id, kind: 'html', key: `k-${id}`, ranges: [[0, 100]] });
   now += 10_000;
@@ -100,11 +100,11 @@ async function feedOnce(online, { playing = true } = {}) {
   }
 }
 
-itUi('C10-UI-03 在线时用户卡、素材效果卡（含同步来的）与内置重卡一样一律按重卡抑制', async () => {
+itUi('C10-UI-03 when online, user cards and media effect cards (including synced ones) are all suppressed as heavy cards, like built-in heavy cards', async () => {
   const { f, fetched } = await feedOnce(true);
-  assert.deepEqual(f.heavy, ['b', 'g', 's', 'u'], '同步卡分派表里没判重,在线照样按重卡');
-  assert.equal(f.picks.size, 0, '快照已退役');
-  assert.equal(fetched.length, 0, '不再取快照字节');
+  assert.deepEqual(f.heavy, ['b', 'g', 's', 'u'], 'Synced cards not classified as heavy in the dispatch table are still treated as heavy cards online');
+  assert.equal(f.picks.size, 0, 'Snapshots are retired');
+  assert.equal(fetched.length, 0, 'Snapshot bytes are no longer fetched');
   placeholder.setOnlineBrowserMode(true);
   try {
     // 第 150 帧不在就绪区间里:退役后 picks 仍为空
@@ -118,38 +118,38 @@ itUi('C10-UI-03 在线时用户卡、素材效果卡（含同步来的）与内�
   // 暂停态整台「已精确」(K5 第二路互换之后):内置卡不再抑制,这台设备跑不了的卡停下不追,进 scrub 占位
   placeholder.setOnlineBrowserMode(true);
   try {
-    assert.deepEqual(feed.suppressedAt({ project: project(clips()), t: 1, playing: true }), ['b', 'g', 's', 'u'], '播放中一律抑制');
+    assert.deepEqual(feed.suppressedAt({ project: project(clips()), t: 1, playing: true }), ['b', 'g', 's', 'u'], 'Always suppressed while playing');
     feed.markAllSettled('front');
     const paused = feed.planFeed({ project: project(clips()), t: 1, playing: false });
     // 2026-10-06(online-card-exec-contract.md 第 6 节):构建时就在包里的用户卡本页能运行,停下照内置卡追精确、不再抑制
-    assert.deepEqual(paused.scrub.sort(), ['g', 's'], '停下只剩本页运行不了的卡还进 scrub 占位');
+    assert.deepEqual(paused.scrub.sort(), ['g', 's'], 'When paused, only the cards this page cannot run still get scrub placeholders');
     // 同步来的卡载入成功(运行状态 ready):不再一律按重,照分派表(表里没判它重)
     registry.setCardRunStates([['c10-synced-card', { state: 'ready', version: 'g1' }]]);
-    assert.deepEqual(feed.suppressedAt({ project: project(clips()), t: 1, playing: true }), ['b', 'g', 'u'], '能运行的同步卡不再一律抑制');
-    assert.deepEqual(feed.planFeed({ project: project(clips()), t: 1, playing: false }).scrub.sort(), ['g'], '停下它也追精确');
+    assert.deepEqual(feed.suppressedAt({ project: project(clips()), t: 1, playing: true }), ['b', 'g', 'u'], 'Synced cards that can run are no longer always suppressed');
+    assert.deepEqual(feed.planFeed({ project: project(clips()), t: 1, playing: false }).scrub.sort(), ['g'], 'When paused it also catches up to exact rendering');
     registry.setCardRunStates([['c10-synced-card', { state: 'missing-module', detail: 'lodash' }]]);
-    assert.deepEqual(feed.suppressedAt({ project: project(clips()), t: 1, playing: true }), ['b', 'g', 's', 'u'], '运行不了的照旧一律抑制');
+    assert.deepEqual(feed.suppressedAt({ project: project(clips()), t: 1, playing: true }), ['b', 'g', 's', 'u'], 'Cards that cannot run are still always suppressed');
     // 2026-10-21 用户定「暂停时渲染出精确的帧」:不按档另挡本页能运行的用户卡(原来按档挡的开关 2026-10-22 删掉),
     // 只有一个舞台时构建时的用户卡停下照内置卡追精确
-    assert.deepEqual(feed.planFeed({ project: project(clips()), t: 1, playing: false, single: true }).scrub.sort(), ['g', 's'], '单舞台:构建时的用户卡停下也追精确');
+    assert.deepEqual(feed.planFeed({ project: project(clips()), t: 1, playing: false, single: true }).scrub.sort(), ['g', 's'], 'Single stage: build-time user cards also catch up to exact rendering when paused');
   } finally {
     placeholder.setOnlineBrowserMode(false);
     registry.setCardRunStates([]);
   }
 });
 
-itUi('C10-UI-04 桌面（在线开关关着）用户卡、素材效果卡按分派表，同步表不影响桌面', async () => {
+itUi('C10-UI-04 on the desktop (online switch off), user cards and media effect cards follow the dispatch table, and the synced table does not affect the desktop', async () => {
   const { f } = await feedOnce(false);
-  assert.deepEqual(f.heavy, ['b', 'g', 'u'], '桌面按分派表:同步表不起作用(桌面也不设它)');
+  assert.deepEqual(f.heavy, ['b', 'g', 'u'], 'The desktop follows the dispatch table: the synced table has no effect (the desktop does not set it either)');
   assert.equal(f.heavy.includes('s'), false);
   feed.markAllSettled('front');
-  assert.equal(feed.planFeed({ project: project(clips()), t: 1, playing: false }).scrub.length, 0, '桌面暂停态整台精确:一张不抑制');
+  assert.equal(feed.planFeed({ project: project(clips()), t: 1, playing: false }).scrub.length, 0, 'Desktop paused state is exact across the whole stage: not a single card is suppressed');
 });
 
-itUi('C10-UI-05 双舞台同步卡变更为 ready 后自动重投 pumpFeed 与 localOnlyMissing（无需手动播放或跳转）', async () => {
+itUi('C10-UI-05 on a dual stage, once a synced card changes to ready, pumpFeed and localOnlyMissing are re-delivered automatically (no manual play or seek needed)', async () => {
   const previewSrc = fs.readFileSync(repoPath('src/editor/Preview.tsx'), 'utf8');
-  assert.match(previewSrc, /onCardRunStatesChanged\(refresh\)/, 'Preview.tsx 应订阅 onCardRunStatesChanged 刷新抑制与缺失表');
-  assert.match(previewSrc, /queueMicrotask\(\(\)\s*=>\s*\{\s*void pumpRef\.current\(\);\s*\}\)/, 'Preview.tsx 应在 planDispatch 微任务之后重投 pumpRef.current()');
+  assert.match(previewSrc, /onCardRunStatesChanged\(refresh\)/, 'Preview.tsx should subscribe to onCardRunStatesChanged to refresh the suppression and missing tables');
+  assert.match(previewSrc, /queueMicrotask\(\(\)\s*=>\s*\{\s*void pumpRef\.current\(\);\s*\}\)/, 'Preview.tsx should re-run pumpRef.current() after the planDispatch microtask');
 
   placeholder.setOnlineBrowserMode(true);
   try {
@@ -157,7 +157,7 @@ itUi('C10-UI-05 双舞台同步卡变更为 ready 后自动重投 pumpFeed 与 l
     plan = { segments: [{ fromSec: 0, toSec: 1000, heavy: new Set() }] };
     // 初载时舞台 B 尚未报回 card-states，同步卡 s 仍属 localOnly，暂停在 t=0 时被抑制显示沙漏
     registry.setCardRunStates([['c10-synced-card', { state: 'loading' }]]);
-    assert.deepEqual(feed.suppressedAt({ project: p, t: 0, playing: false }), ['s'], 'loading 期间暂停在 t=0 应抑制');
+    assert.deepEqual(feed.suppressedAt({ project: p, t: 0, playing: false }), ['s'], 'Paused at t=0 during loading should be suppressed');
 
     let pumpedSuppressed = null;
     const offRun = registry.onCardRunStatesChanged(() => {
@@ -168,7 +168,7 @@ itUi('C10-UI-05 双舞台同步卡变更为 ready 后自动重投 pumpFeed 与 l
     try {
       registry.setCardRunStates([['c10-synced-card', { state: 'ready', version: 'g1' }]]);
       await new Promise((r) => queueMicrotask(r));
-      assert.deepEqual(pumpedSuppressed, [], '变为 ready 后不经 seek/play 即解除抑制');
+      assert.deepEqual(pumpedSuppressed, [], 'Suppression is lifted once ready, without a seek/play');
     } finally {
       offRun();
     }
@@ -215,26 +215,26 @@ test('C10-RA-03 project members has one separate exact hosted path without enlar
   assertRatchet(list.paths, baseline);
 });
 function assertRatchet(paths, baseline) {
-  assert.ok(Array.isArray(paths), `${RATCHET_FILE} 应有 paths 数组`);
-  assert.deepEqual(baseline.accountPaths, ACCOUNT_PATHS, '账号许可必须是固定8条，不能扩为前缀');
-  assert.deepEqual(baseline.storagePaths, STORAGE_PATHS, '网盘路径一条都不许进在线产物');
-  assert.equal(new Set(paths).size, paths.length, '清单里有重复');
+  assert.ok(Array.isArray(paths), `${RATCHET_FILE} should have a paths array`);
+  assert.deepEqual(baseline.accountPaths, ACCOUNT_PATHS, 'Account permits must be exactly 8 fixed entries and must not be widened to a prefix');
+  assert.deepEqual(baseline.storagePaths, STORAGE_PATHS, 'Not a single cloud drive path may enter the online build output');
+  assert.equal(new Set(paths).size, paths.length, 'The manifest has duplicates');
   const legacy = new Set(baseline.paths);
-  assert.ok(baseline.paths.every((p) => !p.startsWith('/api/account/')), '旧基线不能夹带账号许可');
-  assert.ok(baseline.paths.every((p) => !p.startsWith('/api/media/storage/')), '旧基线不能夹带网盘许可');
+  assert.ok(baseline.paths.every((p) => !p.startsWith('/api/account/')), 'The old baseline must not carry account permits');
+  assert.ok(baseline.paths.every((p) => !p.startsWith('/api/media/storage/')), 'The old baseline must not carry cloud drive permits');
   const added = paths.filter((p) => p.startsWith('/api/account/') ? !ACCOUNT_PATHS.includes(p)
     : p.startsWith('/api/media/storage/') ? !STORAGE_PATHS.includes(p)
     : !legacy.has(p));
-  assert.deepEqual(added, [], `棘轮清单多出了未许可的路径：${added.join(', ')}`);
-  assert.deepEqual(paths.filter((p) => p.startsWith('/api/account/')), ACCOUNT_PATHS, '账号产物清单逐条精确登记');
-  assert.deepEqual(paths.filter((p) => p.startsWith('/api/media/storage/')), STORAGE_PATHS, '在线产物里不许出现网盘路径');
+  assert.deepEqual(added, [], `The ratchet manifest has extra unpermitted paths: ${added.join(', ')}`);
+  assert.deepEqual(paths.filter((p) => p.startsWith('/api/account/')), ACCOUNT_PATHS, 'The account entries in the output manifest are registered exactly, one by one');
+  assert.deepEqual(paths.filter((p) => p.startsWith('/api/media/storage/')), STORAGE_PATHS, 'No cloud drive paths may appear in the online build output');
 }
-test('C10-RA-01 旧本机 /api 只减不增、账号入口固定11条、不重复', { skip: ratchet.ok ? false : ratchet.reason }, () => {
+test('C10-RA-01 legacy local /api entries only shrink and never grow, account entry points are a fixed 11, and there are no duplicates', { skip: ratchet.ok ? false : ratchet.reason }, () => {
   const list = JSON.parse(fs.readFileSync(repoPath(RATCHET_FILE), 'utf8'));
   const baseline = JSON.parse(fs.readFileSync(repoPath(RATCHET_BASELINE), 'utf8'));
   assertRatchet(list.paths, baseline);
 });
-test('C10-RA-02 未知账号、恢复桌面账号入口、旧本机增项和重复仍拒绝', { skip: ratchet.ok ? false : ratchet.reason }, () => {
+test('C10-RA-02 unknown accounts, restored desktop account entry points, additions to the legacy local entries, and duplicates are still rejected', { skip: ratchet.ok ? false : ratchet.reason }, () => {
   const list = JSON.parse(fs.readFileSync(repoPath(RATCHET_FILE), 'utf8'));
   const baseline = JSON.parse(fs.readFileSync(repoPath(RATCHET_BASELINE), 'utf8'));
   for (const extra of ['/api/account/unknown', '/api/account/editor/login', '/api/account/editor/recover', '/api/ai/chat', '/api/new-local', '/api/media/storage/unknown', '/api/media/storage/config']) {

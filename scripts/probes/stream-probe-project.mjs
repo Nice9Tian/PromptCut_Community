@@ -25,7 +25,7 @@ import { FramePipeline } from '../../server/frame-pipeline.mjs';
 process.env.PROMPTCUT_TEST_BELOW_STREAMS = '0';
 
 export const PROJECT = {
-  id: 'r8-stream-probe', name: 'R8 轨道流探针', width: 1920, height: 1080, fps: 30, duration: 5,
+  id: 'r8-stream-probe', name: 'R8 track stream probe', width: 1920, height: 1080, fps: 30, duration: 5,
   themeId: 'dark', media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
   tracks: [
     { id: 'tr-glass', name: 'glass', hidden: false, clips: [
@@ -49,7 +49,7 @@ export async function until(fails, label, fn, timeoutMs, everyMs = 500) {
     let value = null;
     try { value = await fn(); } catch { value = null; }
     if (value) return value;
-    if (Date.now() > deadline) { fails.push(`超时:${label}`); return null; }
+    if (Date.now() > deadline) { fails.push(`Timeout: ${label}`); return null; }
     await new Promise(r => setTimeout(r, everyMs));
   }
 }
@@ -66,9 +66,9 @@ export async function produceStreams({ origin, root, project = PROJECT, fails })
   pipeline.readyIndex.subscribe(message => { if (message.type === 'layer' && message.kind === 'stream') layers.push(message); });
   const started = Date.now();
   await pipeline.preload(project);
-  const producer = await until(fails, '生产者起来', () => pipeline._streams?.streams.size ? pipeline._streams : null, 120000);
+  const producer = await until(fails, 'producer is up', () => pipeline._streams?.streams.size ? pipeline._streams : null, 120000);
   if (!producer) return { pipeline, producer: null, layers, produceMs: Date.now() - started };
-  const done = await until(fails, '全部分段满密度', () => {
+  const done = await until(fails, 'all segments at full density', () => {
     const status = producer.status();
     if (!status.streams.length) return null;
     for (const s of status.streams) {

@@ -53,15 +53,15 @@ export function cutProject({ glassValue = 42, midText = 'm', upText = 'up', segF
       { id: 'tv', clips: [{ id: 'vid', mediaId: 'm1', start: 0, end: 8, mediaOffset: 0, params: {} }] },
     ],
     cuts: [
-      { id: 'A', name: '主' },
-      { id: 'B', name: '段里', duration: 8, transitions: [], tracks: [
+      { id: 'A', name: 'Main' },
+      { id: 'B', name: 'In segment', duration: 8, transitions: [], tracks: [
         { id: 'b-up', clips: [card('up', 'caption-track', 0, 8, { params: { text: upText } })] },
         { id: 'b-glass', clips: [card('g', 'odometer', 0, 8, { params: { value: glassValue }, frame: { x: 100, y: 100, w: 600, h: 300 } })] },
         { id: 'b-mid', clips: [card('m', 'caption-track', 2, 6, { params: { text: midText } })] },
         { id: 'b-user', clips: [card('u', 'user-glass', 0, 8, { frame: { x: 700, y: 300, w: 400, h: 200 } })] },
         { id: 'b-seg', clips: [seg('S2', 'C', 0, 8)] },
       ] },
-      { id: 'C', name: '里面', duration: 8, transitions: [], tracks: [
+      { id: 'C', name: 'Inside', duration: 8, transitions: [], tracks: [
         { id: 'c1', clips: [card('cc', 'caption-track', 0, 8)] },
       ] },
     ],

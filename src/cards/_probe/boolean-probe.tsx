@@ -70,8 +70,8 @@ function ProbeMotionJsCard({ playToken }: CardProps<Record<string, never>>) {
 
 export const probeCssCard: CardDef<Record<string, never>> = {
   id: "probe-css",
-  name: "探针卡 · 纯 CSS",
-  description: "K1 布尔探针的判例:只有 CSS @keyframes,应当 vtOk / seekOk 都为 true",
+  name: "Probe card · pure CSS",
+  description: "Reference case for the K1 boolean probe: CSS @keyframes only, both vtOk and seekOk should be true",
   source: "native",
   // 帧模式:有动画历史,按 stateful 走推帧那条路(布尔探针只对 stepped 卡跑)
   frameMode: "stateful",
@@ -82,8 +82,8 @@ export const probeCssCard: CardDef<Record<string, never>> = {
 
 export const probeMotionJsCard: CardDef<Record<string, never>> = {
   id: "probe-motion-js",
-  name: "探针卡 · JS 驱动",
-  description: "K1 布尔探针的判例:Motion 的帧循环每帧自己写 transform,应当 vtOk 为 false",
+  name: "Probe card · JS-driven",
+  description: "Reference case for the K1 boolean probe: Motion's frame loop writes transform itself every frame, vtOk should be false",
   source: "native",
   frameMode: "stateful",
   defaults: {},

@@ -58,37 +58,37 @@ async function run(ms) {
   }
 }
 
-test("保活间隔是常量、明显小于服务端的 5 秒窗口", () => {
+test("the keepalive interval is a constant, clearly smaller than the server's 5-second window", () => {
   assert.ok(Number.isFinite(mirror.PLAYHEAD_KEEPALIVE_MS));
-  assert.ok(mirror.PLAYHEAD_KEEPALIVE_MS <= 2500, "要明显小于 5 秒,丢一两拍也不过期");
-  assert.ok(mirror.PLAYHEAD_KEEPALIVE_MS >= 500, "不能比 wanted 的 100 毫秒节流还密");
+  assert.ok(mirror.PLAYHEAD_KEEPALIVE_MS <= 2500, "must be clearly under 5 seconds, so missing a beat or two does not expire it");
+  assert.ok(mirror.PLAYHEAD_KEEPALIVE_MS >= 500, "must not be denser than wanted's 100 ms throttle");
 });
 
-test("播放中每隔不超过 2 秒发一条 {session, t, playing: true}", async () => {
+test("during playback, send a {session, t, playing: true} at most every 2 seconds", async () => {
   const stop = startMirror();
   await run(500);
   calls = [];
   setStore({ playing: true });
   await run(30_000);
   const list = keepalives();
-  assert.ok(list.length >= 14 && list.length <= 16, `30 秒该有 15 条左右,实际 ${list.length}`);
+  assert.ok(list.length >= 14 && list.length <= 16, `30 seconds should yield about 15 messages, actual ${list.length}`);
   for (const c of list) {
     assert.equal(c.body.playing, true);
     assert.equal(typeof c.body.session, "string");
     assert.ok(Number.isFinite(c.body.t));
-    assert.equal(c.body.wanted, undefined, "保活不带 wanted:不刷新也不清掉缺口提示");
+    assert.equal(c.body.wanted, undefined, "keepalive carries no wanted: it neither refreshes nor clears the gap hint");
     assert.equal(c.init.method, "POST");
-    assert.equal(c.init.signal, undefined, "轻路不挂 10 秒超时");
+    assert.equal(c.init.signal, undefined, "the light path does not attach a 10-second timeout");
   }
   const gaps = list.slice(1).map((c, i) => c.at - list[i].at);
-  assert.ok(Math.max(...gaps) <= 2000, `相邻两条间隔不超过 2 秒,最大 ${Math.max(...gaps)}`);
-  assert.ok(list[0].at - 1_000_500 <= 2000, "起播后第一条保活也在 2 秒内");
+  assert.ok(Math.max(...gaps) <= 2000, `the interval between adjacent messages is at most 2 seconds, max ${Math.max(...gaps)}`);
+  assert.ok(list[0].at - 1_000_500 <= 2000, "the first keepalive after playback starts also arrives within 2 seconds");
   // t 是发的那一刻的播放头,不是起播时的
   assert.ok(list.at(-1).body.t > list[0].body.t);
   stop();
 });
 
-test("停下之后不再发保活;原有的「停下推一次」照旧", async () => {
+test("no keepalives after stopping; the existing \"push once on stop\" behavior is unchanged", async () => {
   const stop = startMirror();
   await run(500);
   setStore({ playing: true });
@@ -97,14 +97,14 @@ test("停下之后不再发保活;原有的「停下推一次」照旧", async (
   setStore({ playing: false });
   calls = [];
   await run(20_000);
-  assert.equal(keepalives().length, 0, "停下以后一条保活都没有");
+  assert.equal(keepalives().length, 0, "no keepalives at all after stopping");
   const pushed = heads().filter((c) => c.body.playing === false);
-  assert.equal(pushed.length, 1, "停下推一次");
-  assert.equal(pushed[0].init.keepalive, undefined, "停下那一条走原来的路(等响应、带超时)");
+  assert.equal(pushed.length, 1, "push once on stop");
+  assert.equal(pushed[0].init.keepalive, undefined, "the stop push takes the original path (waits for the response, with a timeout)");
   stop();
 });
 
-test("播放过程中停了又播:每次播放各自保活,间隔不叠加", async () => {
+test("stop and play again during playback: each playback keeps alive on its own, intervals do not stack", async () => {
   const stop = startMirror();
   await run(500);
   setStore({ playing: true });
@@ -116,11 +116,11 @@ test("播放过程中停了又播:每次播放各自保活,间隔不叠加", asy
   setStore({ playing: true });
   await run(10_000);
   const list = keepalives();
-  assert.ok(list.length >= 4 && list.length <= 6, `10 秒该有 5 条左右,实际 ${list.length}(重复订阅回调不会起两个计时器)`);
+  assert.ok(list.length >= 4 && list.length <= 6, `expected about 5 in 10 seconds, got ${list.length} (a repeated subscription callback must not start two timers)`);
   stop();
 });
 
-test("页面隐藏时不发保活(用户没在看,恢复产流可以接受);回到前台接着发", async () => {
+test("no keepalives while the page is hidden (the user is not watching, resuming the stream is acceptable); resume sending when back in the foreground", async () => {
   const stop = startMirror();
   await run(500);
   setStore({ playing: true });
@@ -135,23 +135,23 @@ test("页面隐藏时不发保活(用户没在看,恢复产流可以接受);回�
   stop();
 });
 
-test("fetch 抛错或被拒:静默,下一拍照发", async () => {
+test("fetch throws or is rejected: stay silent, send on the next tick as usual", async () => {
   const stop = startMirror();
   await run(500);
   let n = 0;
   globalThis.fetch = (url, init) => {
     n++;
     calls.push({ url: String(url), init: init ?? {}, body: init?.body ? JSON.parse(init.body) : null, at: Date.now() });
-    if (n % 2) throw new Error("页面正在卸载");
-    return Promise.reject(new Error("网络断了"));
+    if (n % 2) throw new Error("Page is unloading");
+    return Promise.reject(new Error("Network disconnected"));
   };
   setStore({ playing: true });
   await run(8_000);
-  assert.ok(keepalives().length >= 3, "失败不影响后面的保活");
+  assert.ok(keepalives().length >= 3, "a failure does not affect later keepalives");
   stop();
 });
 
-test("disposer 把保活的计时器收掉", async () => {
+test("disposer clears the keepalive timer", async () => {
   const stop = startMirror();
   await run(500);
   setStore({ playing: true });
@@ -159,10 +159,10 @@ test("disposer 把保活的计时器收掉", async () => {
   stop();
   calls = [];
   await run(10_000);
-  assert.equal(heads().length, 0, "收掉以后什么都不发");
+  assert.equal(heads().length, 0, "nothing is sent after clearing");
 });
 
-test("起播时页面已经在播放:开始镜像就接上保活", async () => {
+test("page is already playing at start: keepalive attaches as soon as mirroring starts", async () => {
   storeState = { ...storeState, playing: true };
   const stop = startMirror();
   await run(6_000);
@@ -170,18 +170,18 @@ test("起播时页面已经在播放:开始镜像就接上保活", async () => {
   stop();
 });
 
-for (const [label, search] of [["只读观看页 ?observe", "?observe"], ["只读观看页 ?view=x", "?view=abc"], ["舞台页 ?stage", "?stage=1"], ["导出页 ?export", "?export=1"]]) {
-  test(`${label} 不做镜像、不发保活`, async () => {
+for (const [label, search] of [["read-only viewer page ?observe", "?observe"], ["read-only viewer page ?view=x", "?view=abc"], ["stage page ?stage", "?stage=1"], ["export page ?export", "?export=1"]]) {
+  test(`${label} does no mirroring and sends no keepalives`, async () => {
     globalThis.location = { search };
     const stop = startMirror();
     setStore({ playing: true });
     await run(10_000);
-    assert.equal(calls.length, 0, "一条请求都没有");
+    assert.equal(calls.length, 0, "no requests at all");
     stop();
   });
 }
 
-test("在线页面没有本机预渲染进程:不发保活", async () => {
+test("online page has no local prerender process: no keepalives", async () => {
   online = true;
   const stop = startMirror();
   setStore({ playing: true });

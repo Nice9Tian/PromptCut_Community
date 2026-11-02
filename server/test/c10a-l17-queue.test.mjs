@@ -53,7 +53,7 @@ function rig() {
   };
 }
 
-test('C10A-L17-Q1 认领顺序:normal 先于 backfill,同一优先级按发布先后;normal 还有时节点一张 backfill 都不挑', () => {
+test('C10A-L17-Q1 claim order: normal before backfill, and within the same priority by publish order; while normal tasks remain, a node picks not a single backfill', () => {
   const r = rig();
   r.publish([fineTask('b1', 'backfill')]); r.tick(10);
   r.publish([fineTask('n1', 10)]); r.tick(10);
@@ -74,14 +74,14 @@ test('C10A-L17-Q1 认领顺序:normal 先于 backfill,同一优先级按发布�
   while (view.length) {
     const pick = pickCandidate(view, { k: 1 });
     r.q.handle('node', { type: 'task.claim', id: pick.id, expectVersion: pick.version });
-    assert.ok(r.take('node').some((m) => m.type === 'task.claimed' && m.id === pick.id), `认领 ${pick.id}`);
+    assert.ok(r.take('node').some((m) => m.type === 'task.claimed' && m.id === pick.id), `claim ${pick.id}`);
     order.push(pick.resultKey);
     view = view.filter((t) => t.id !== pick.id);
   }
   assert.deepEqual(order, ['n1', 'n2', 'n3', 'b1', 'b2']);
 });
 
-test('C10A-L17-Q2 同一个结果键已有任务不另起:细任务重复发布只合并;预渲染重试计划任务按片段清单定键', () => {
+test('C10A-L17-Q2 a task that already exists for the same result key is not started again: republishing fine-grained tasks only merges them; a prerender retry plan task takes its key from the clip manifest', () => {
   const r = rig();
   const first = r.publish([fineTask('k1', 'backfill')]);
   assert.equal(first.results[0].created, true);
@@ -101,12 +101,12 @@ test('C10A-L17-Q2 同一个结果键已有任务不另起:细任务重复发布�
   assert.equal(a.priority, 'backfill');
   assert.ok(isBackfillPlan(a));
   assert.equal(r.publish([a]).results[0].created, true);
-  assert.equal(r.publish([b]).results[0].created, false, '同一批还在等的不另起');
+  assert.equal(r.publish([b]).results[0].created, false, 'a batch that is still waiting is not started again');
   assert.equal(r.publish([c]).results[0].created, true);
   assert.equal(r.q.describe().tasks.filter((t) => t.id.startsWith('plan:')).length, 2);
 });
 
-test('C10A-L17-Q3 已有的 backfill 被 normal 发布升为 normal;normal 不被 backfill 降级', () => {
+test('C10A-L17-Q3 an existing backfill task is promoted to normal by a normal publish; normal is not downgraded by a backfill publish', () => {
   const r = rig();
   r.publish([fineTask('u1', 'backfill')]);
   const before = r.take('node').find((m) => m.type === 'task.opened');
@@ -116,9 +116,9 @@ test('C10A-L17-Q3 已有的 backfill 被 normal 发布升为 normal;normal 不�
   const up = r.publish([fineTask('u1', 10)]);
   assert.equal(up.results[0].created, false);
   const reopened = r.take('node').filter((m) => m.type === 'task.opened');
-  assert.equal(reopened.length, 1, '升级后节点视图收到一条新的 task.opened');
+  assert.equal(reopened.length, 1, 'after the promotion the node view receives a new task.opened');
   assert.equal(reopened[0].task.priority, 10);
-  assert.equal(reopened[0].task.version, version, '升级不是状态转移,version 不变');
+  assert.equal(reopened[0].task.version, version, 'promotion is not a state transition, version unchanged');
   assert.equal(priorityBand(reopened[0].task.priority), 'normal');
 
   // 反过来:已有 normal,再按 backfill 发布,不降
@@ -131,7 +131,7 @@ test('C10A-L17-Q3 已有的 backfill 被 normal 发布升为 normal;normal 不�
   assert.ok(r.take('node').some((m) => m.type === 'task.claimed' && m.task.priority === 10));
 });
 
-test('C10A-L17-Q4 旧客户端照旧按 normal;priority 与预渲染重试计划任务的形状校验', () => {
+test('C10A-L17-Q4 old clients are still treated as normal; shape validation of priority and of the prerender retry plan task', () => {
   const parse = (task) => parseInbound({ type: 'task.publish', tasks: [task] });
   // 不带 priority → 0;整数原样;'normal' / 'backfill' 原样
   assert.equal(parse(fineTask('a')).body.tasks[0].priority, 0);
@@ -174,7 +174,7 @@ function contextWithLight() {
   };
 }
 
-test('C10A-L17-Q5 认领预渲染重试计划任务的节点:清单里的片段当重卡切细任务,细任务标 backfill、不切流', async () => {
+test('C10A-L17-Q5 a node that claims a prerender retry plan task: treats the clips in the manifest as heavy cards and cuts them into fine-grained tasks, marks the fine-grained tasks backfill, and does not cut track streams', async () => {
   let now = 5_000;
   const lb = createLoopback();
   const q = createRenderQueue({ now: () => now, send: lb.queueSend, epoch: 'e1' });
@@ -210,14 +210,14 @@ test('C10A-L17-Q5 认领预渲染重试计划任务的节点:清单里的片段�
     node.tick();
     now += 250;
   }
-  assert.deepEqual(plans, [backfill.id], '节点认领了预渲染重试计划任务');
+  assert.deepEqual(plans, [backfill.id], 'the node claimed the prerender retry plan task');
   const derived = nodeOut.filter((m) => m.type === 'task.publish').flatMap((m) => m.tasks);
-  assert.ok(derived.length > 0, '切出了细任务');
-  assert.ok(derived.every((t) => t.input.clipId === 'c-light'), '只切清单里的片段(本机判重的卡不在这一批)');
-  assert.ok(derived.every((t) => t.kind === 'snapshot'), '预渲染重试不切轨道流');
-  assert.ok(derived.every((t) => t.priority === 'backfill'), '细任务同样标 backfill');
+  assert.ok(derived.length > 0, 'Fine-grained tasks were split out');
+  assert.ok(derived.every((t) => t.input.clipId === 'c-light'), 'only cut the clips in the manifest (cards classified as heavy on this machine are not in this batch)');
+  assert.ok(derived.every((t) => t.kind === 'snapshot'), 'prerender retry does not cut track streams');
+  assert.ok(derived.every((t) => t.priority === 'backfill'), 'fine-grained tasks are also marked backfill');
   assert.ok(derived.every((t) => t.source.derivedFrom === backfill.id));
-  assert.equal(derived.length, 2, '90 帧按 60 帧一段切两段');
+  assert.equal(derived.length, 2, '90 frames are cut into two segments of 60 frames each');
   // 页面只发布、不认领:它从没发过 node.hello,队列里也没有它的节点
   assert.ok(!q.describe().nodes.some((n) => n.nodeId === 'page'));
   node.stop();
@@ -227,7 +227,7 @@ test('C10A-L17-Q5 认领预渲染重试计划任务的节点:清单里的片段�
   assert.ok(normal.every((t) => Number.isInteger(t.priority)));
 });
 
-test('C10A-L17-Q6 管线的预渲染重试登记:并进预渲染集合、按内容身份认;普通计划与轨道流不带预渲染重试的片段', async () => {
+test('C10A-L17-Q6 the pipeline\'s prerender retry registration: merged into the prerender set and matched by content identity; regular plans and track streams do not carry the prerender retry clips', async () => {
   const { FramePipeline } = await import('../frame-pipeline.mjs');
   const control = (clipId, label) => ({ clipId, snapshotKey: `snap-${label}`, contentKey: `ck-${label}`, tier: 'shared' });
   const entry = { key: 'e1', project: { id: 'doc-1' }, cardPlan: [control('c-heavy', 'h'), control('c-light', 'l')], basePrerenderSet: new Set(['c-heavy']) };
@@ -243,13 +243,13 @@ test('C10A-L17-Q6 管线的预渲染重试登记:并进预渲染集合、按内�
 
   assert.equal(pipe.prerenderPicked(entry, 'c-light'), false);
   assert.equal(pipe.addBackfill(entry, ['c-light']), 1);
-  assert.equal(pipe.prerenderPicked(entry, 'c-light'), true, '进了预渲染集合');
-  assert.equal(pipe.prerenderPicked(other, 'c-light'), true, '同一项目、同一内容的另一个 entry 也带上(谁写层表都列着它)');
-  assert.equal(pipe.prerenderPicked(edited, 'c-light'), false, '内容改了的不算:新内容没有产物,页面会再发预渲染重试');
-  assert.equal(pipe.streamPicked(entry, 'c-light'), false, '轨道流只给本机判重的卡');
+  assert.equal(pipe.prerenderPicked(entry, 'c-light'), true, 'it is in the prerender set');
+  assert.equal(pipe.prerenderPicked(other, 'c-light'), true, 'another entry of the same project and the same content also carries it (whichever entry writes the layer table lists it)');
+  assert.equal(pipe.prerenderPicked(edited, 'c-light'), false, 'edited content does not count: the new content has no output, and the page will send a prerender retry again');
+  assert.equal(pipe.streamPicked(entry, 'c-light'), false, 'track streams are only given to cards classified as heavy on this machine');
   assert.equal(pipe.streamPicked(entry, 'c-heavy'), true);
-  assert.deepEqual(layerMaps, ['e1'], '登记之后写一次层表');
-  assert.equal(pipe.addBackfill(entry, ['c-light']), 0, '重复登记不再写');
+  assert.deepEqual(layerMaps, ['e1'], 'the layer table is written once after registration');
+  assert.equal(pipe.addBackfill(entry, ['c-light']), 0, 'repeated registration does not write again');
   // 重算集合(新的成本记录)之后预渲染重试的片段仍在
   entry.prerenderSet = entry.basePrerenderSet;
   pipe.applyBackfill(entry);

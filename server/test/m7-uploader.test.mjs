@@ -20,7 +20,7 @@ const KIT = await assetTicketKit();
 
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
-test('M7-UP-01 推 snap 与 px:对账、PUT、complete;已有的跳过;401 换票据重试一次;哈希与 WebCrypto 算的一致', async () => {
+test('M7-UP-01 push snap and px: reconcile, PUT, complete; skip what already exists; on 401 get a fresh ticket and retry once; the hash matches what WebCrypto computes', async () => {
   const srv = await harness.serve({ tickets: KIT.tickets, isTrusted: () => false });
   const issued = [];
   const ticket = async (force) => {
@@ -29,7 +29,7 @@ test('M7-UP-01 推 snap 与 px:对账、PUT、complete;已有的跳过;401 换�
     return force ? KIT.issue('rw') : 'v1.bad.ticket';
   };
   const up = createSnapUploader({ base: () => srv.base, ticket });
-  const html = Buffer.from('<div class="pc-snap">hello 快照</div>', 'utf8');
+  const html = Buffer.from('<div class="pc-snap">hello snapshot</div>', 'utf8');
   const webp = Buffer.from('RIFF\x10\x00\x00\x00WEBPVP8 fake-bytes', 'latin1');
   const h1 = await sha256Hex(new Uint8Array(html));
   assert.equal(h1, sha256(html));
@@ -43,16 +43,16 @@ test('M7-UP-01 推 snap 与 px:对账、PUT、complete;已有的跳过;401 换�
   const st = up.stats();
   assert.deepEqual([st.pushed, st.skipped, st.failed], [2, 1, 0]);
   assert.equal(st.pushedBytes, html.length + webp.length);
-  assert.ok(st.reauth >= 1 && issued.includes(true), '401 之后强制换了票据');
+  assert.ok(st.reauth >= 1 && issued.includes(true), 'The ticket was force-refreshed after the 401');
   // 取回来的字节就是推上去的
   const got = await fetch(`${srv.base}/snap/${h1}`, { headers: { Authorization: `Bearer ${KIT.issue('r')}` } });
   assert.equal(got.status, 200);
   assert.equal(Buffer.from(await got.arrayBuffer()).equals(html), true);
-  assert.equal(JSON.stringify(st).includes(KIT.issue('rw').slice(0, 20)), false, '诊断里没有票据');
+  assert.equal(JSON.stringify(st).includes(KIT.issue('rw').slice(0, 20)), false, 'No ticket in the diagnostics');
   await srv.close();
 });
 
-test('M7-UP-02 哈希不符 complete 回 409 抛出(可重试);没有素材服务抛出', async () => {
+test('M7-UP-02 hash mismatch: complete answers 409 and throws (retryable); throws when there is no asset service', async () => {
   const chunk = 1024;
   const srv = await harness.serve({ chunkSize: chunk, tickets: KIT.tickets, isTrusted: () => false });
   assert.equal(CHUNK_SIZE, 8 * 1024 * 1024);
@@ -67,21 +67,21 @@ test('M7-UP-02 哈希不符 complete 回 409 抛出(可重试);没有素材服�
   await srv.close();
 });
 
-test('M7-UP-03 同一哈希并发推只推一次(单飞),另一个等它的结果;对着真素材服务', async () => {
+test('M7-UP-03 concurrent pushes of the same hash push only once (single-flight), and the other waits for its result; runs against a real asset service', async () => {
   const srv = await harness.serve({ tickets: KIT.tickets, isTrusted: () => false });
   const puts = [];
   const f = async (url, init) => { if (init?.method === 'PUT') puts.push(url); return fetch(url, init); };
   const up = createSnapUploader({ base: () => srv.base, ticket: async () => KIT.issue('rw'), fetch: f });
-  const body = Buffer.from('<p>同一块</p>', 'utf8');
+  const body = Buffer.from('<p>same chunk</p>', 'utf8');
   const h = sha256(body);
   const [a, b, c] = await Promise.all([1, 2, 3].map(() => up.put('snap', h, new Uint8Array(body), 'html')));
   assert.deepEqual([a, b, c].sort(), ['pushed', 'skipped', 'skipped']);
-  assert.equal(puts.length, 1, '只 PUT 了一次');
+  assert.equal(puts.length, 1, 'PUT only once');
   assert.equal(await up.has('snap', h), true);
   await srv.close();
 });
 
-test('M7-UP-04 收尾回 400 incomplete:重查 chunks、补传一次再收尾', async () => {
+test('M7-UP-04 finalize answers 400 incomplete: re-check chunks, upload the missing ones once, then finalize again', async () => {
   const body = new Uint8Array(Buffer.from('<p>x</p>', 'utf8'));
   const h = sha256(Buffer.from(body));
   let completes = 0, puts = 0, chunkCalls = 0;

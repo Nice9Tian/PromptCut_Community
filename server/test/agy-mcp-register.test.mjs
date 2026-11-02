@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mcpAddArgs } from '../runners/agy.mjs';
 
-test('登记命令里没有端口:只有名字、node、脚本', () => {
+test('The registration command has no port: only the name, node and the script', () => {
   const args = mcpAddArgs({ command: 'C:/node.exe', args: ['C:/app/server/mcp-server.mjs'], env: { PROMPTCUT_PORT: '5198' } });
   assert.deepEqual(args, ['mcp', 'add', 'promptcut', 'C:/node.exe', 'C:/app/server/mcp-server.mjs']);
   assert.ok(!args.includes('-e') && !args.some((a) => /PROMPTCUT_PORT|5198/.test(a)));

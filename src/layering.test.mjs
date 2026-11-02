@@ -116,18 +116,18 @@ function reverseEdges() {
   return [...new Set(found)].sort();
 }
 
-test("src/kernel 不 import render / editor / mcp / ai / store / cards / parts", () => {
+test("src/kernel does not import render / editor / mcp / ai / store / cards / parts", () => {
   const offenders = reverseEdges().filter((e) => layerOf(e.split(" -> ")[0]) === "kernel" && !ALLOWED.has(e));
-  assert.deepEqual(offenders, [], `kernel 反向依赖上层:\n${offenders.join("\n")}`);
+  assert.deepEqual(offenders, [], `kernel has reverse dependencies on upper layers:\n${offenders.join("\n")}`);
 });
 
-test("src/render 不 import editor / mcp / ai", () => {
+test("src/render does not import editor / mcp / ai", () => {
   const offenders = reverseEdges().filter((e) => layerOf(e.split(" -> ")[0]) === "render" && !ALLOWED.has(e));
-  assert.deepEqual(offenders, [], `render 反向依赖上层:\n${offenders.join("\n")}`);
+  assert.deepEqual(offenders, [], `render has reverse dependencies on upper layers:\n${offenders.join("\n")}`);
 });
 
-test("白名单里的边还在(修好了就把它从 ALLOWED 删掉)", () => {
+test("Edges in the allowlist still exist (once fixed, remove it from ALLOWED)", () => {
   const live = new Set(reverseEdges());
   const stale = [...ALLOWED].filter((e) => !live.has(e));
-  assert.deepEqual(stale, [], `这些边已经不存在了,白名单该收短:\n${stale.join("\n")}`);
+  assert.deepEqual(stale, [], `These edges no longer exist, so the allowlist should be shortened:\n${stale.join("\n")}`);
 });

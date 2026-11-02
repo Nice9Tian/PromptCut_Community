@@ -66,7 +66,7 @@ const project = { id: 'p', width: 1920, height: 1080, fps: 30, duration: 4, them
 const value = { graph: projectCardGraph(project, id => DEFS[id]), sourceVersions: Object.fromEntries(Object.keys(DEFS).map(id => [id, `builtin:${id}-v1`])), environment: { width: 1920, height: 1080, fps: 30, theme: 'dark', fontFingerprint: 'ff' } };
 const run = async root => { const { CardFrameCache } = await load(root); return new CardFrameCache({ root: 'unused', project, envFingerprint: '0123456789abcdef' }).plan(structuredClone(value)); };
 const before = await run(BASE), after = await run(HERE);
-console.log(`基准 ${BASE_REF} = ${base.sha.slice(0, 12)};当前 HEAD = ${git('rev-parse', 'HEAD').slice(0, 12)}${git('status', '--porcelain', '--', 'src', 'server') ? '(src/ 或 server/ 有未提交的改动,算的是工作区)' : ''}`);
+console.log(`Baseline ${BASE_REF} = ${base.sha.slice(0, 12)}; current HEAD = ${git('rev-parse', 'HEAD').slice(0, 12)}${git('status', '--porcelain', '--', 'src', 'server') ? '(uncommitted changes in src/ or server/, computed from the working tree)' : ''}`);
 const KEYS = ['key', 'cacheContentKey', 'contentKey', 'snapshotKey', 'streamMemberKey', 'costKey'];
 let bad = 0;
 for (const a of after) {
@@ -76,7 +76,7 @@ for (const a of after) {
   const wrapped = !a.clipId.startsWith('plain-');
   const ok = rest && (wrapped ? changed.join() === 'contentKey,snapshotKey,streamMemberKey' : changed.length === 0);
   if (!ok) bad++;
-  console.log(`${ok ? '✔' : '✖'} ${a.clipId.padEnd(18)} 输出节点 ${a.nodeId.padEnd(28)} 档位 ${a.tier.padEnd(6)} 变了的键: ${changed.join(', ') || '无'}${rest ? '' : ' (别的字段也变了!)'}`);
+  console.log(`${ok ? '✔' : '✖'} ${a.clipId.padEnd(18)} output node ${a.nodeId.padEnd(28)} tier ${a.tier.padEnd(6)} changed keys: ${changed.join(', ') || 'none'}${rest ? '' : ' (other fields changed too!)'}`);
 }
-console.log(before.length === after.length && !bad ? `✔ ${after.length} 个片段:没有上游的 6 个键逐字相同;有上游的只变 contentKey / snapshotKey / streamMemberKey` : `✖ ${bad} 个不符`);
+console.log(before.length === after.length && !bad ? `✔ ${after.length} clips: for clips with no upstream, the 6 keys are verbatim identical; for clips with upstream, only contentKey / snapshotKey / streamMemberKey change` : `✖ ${bad} mismatches`);
 process.exit(bad ? 1 : 0);

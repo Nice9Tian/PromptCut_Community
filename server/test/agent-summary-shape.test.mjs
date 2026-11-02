@@ -40,37 +40,37 @@ function consecutiveSameRole(msgs) {
   return -1;
 }
 
-test("撞到轮次上限时,收尾那句要并进同一条 assistant", async () => {
+test("When the round limit is hit, the closing sentence must be merged into the same assistant message", async () => {
   // maxIterations = 1:第一轮调完工具就触发上限,第二轮进 summarizing
-  const agent = new Agent({ provider: scripted("我做了一半"), system: "", tools: [NOOP_TOOL], maxIterations: 1 });
-  const out = await agent.run("开始");
-  assert.equal(out.outcome, "round_limit", "得真的走到收尾轮,不然这条测试什么也没测");
+  const agent = new Agent({ provider: scripted("I did half of it"), system: "", tools: [NOOP_TOOL], maxIterations: 1 });
+  const out = await agent.run("Start");
+  assert.equal(out.outcome, "round_limit", "It must really reach the wrap-up round, otherwise this test checks nothing");
 
   const msgs = agent.history.get();
-  assert.equal(consecutiveSameRole(msgs), -1, `不许有连着的同角色:${msgs.map((m) => m.role).join(",")}`);
+  assert.equal(consecutiveSameRole(msgs), -1, `No consecutive messages with the same role: ${msgs.map((m) => m.role).join(",")}`);
 
   const last = msgs.at(-1);
   assert.equal(last.role, "assistant");
   const text = last.content.filter((b) => b.type === "text").map((b) => b.text).join("");
-  assert.match(text, /我做了一半/, "模型说的话要在");
-  assert.match(text, /本次执行已暂停/, "收尾那句也要在同一条里,不能另起一条 assistant");
+  assert.match(text, /I did half of it/, "What the model said must be present");
+  assert.match(text, /This run has been paused/, "The closing sentence must also be in the same message and must not start a separate assistant message");
 });
 
-test("收尾轮模型一个字都没说时,那句自己成一条 assistant —— 仍然不连排", async () => {
+test("When the model says nothing at all in the wrap-up round, that sentence becomes an assistant message of its own, still with no consecutive same-role messages", async () => {
   const agent = new Agent({ provider: scripted(""), system: "", tools: [NOOP_TOOL], maxIterations: 1 });
-  await agent.run("开始");
+  await agent.run("Start");
 
   const msgs = agent.history.get();
   assert.equal(consecutiveSameRole(msgs), -1);
-  assert.match(msgs.at(-1).content.map((b) => b.text || "").join(""), /本次执行已暂停/);
+  assert.match(msgs.at(-1).content.map((b) => b.text || "").join(""), /This run has been paused/);
 });
 
-test("整段历史从头到尾角色都交替 —— 这才是发出去不会 400 的前提", async () => {
-  const agent = new Agent({ provider: scripted("收工"), system: "", tools: [NOOP_TOOL], maxIterations: 1 });
-  await agent.run("开始");
+test("Roles alternate through the whole history from start to end: that is the precondition for a request that will not get a 400", async () => {
+  const agent = new Agent({ provider: scripted("All done"), system: "", tools: [NOOP_TOOL], maxIterations: 1 });
+  await agent.run("Start");
   assert.deepEqual(
     agent.history.get().map((m) => m.role),
     ["user", "assistant", "user", "assistant"],
-    "提问 → 调工具 → 工具结果+收尾指令 → 汇总",
+    "Question → tool call → tool result + wrap-up instruction → summary",
   );
 });

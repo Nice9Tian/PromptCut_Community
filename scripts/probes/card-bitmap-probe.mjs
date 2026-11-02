@@ -56,7 +56,7 @@ const MAKE_FIXTURE = args.includes('--make-fixture');
 const SAVE_DIR = argOf('--save') ? path.resolve(argOf('--save')) : null;
 const COMPARE_DIR = argOf('--compare') ? path.resolve(argOf('--compare')) : null;
 const REMOTE_PORT = PORT + 5;
-if (!(PORT >= 20000 && PORT % 10 <= 4)) throw new Error(`--port ${PORT} 不行:要在 20000 以上,占 PORT～PORT+2 与 PORT+5,PORT 的个位 ≤ 4`);
+if (!(PORT >= 20000 && PORT % 10 <= 4)) throw new Error(`--port ${PORT} is not allowed: must be at least 20000, occupies PORT to PORT+2 and PORT+5, and the last digit of PORT must be ≤ 4`);
 const EDITOR = `http://127.0.0.1:${PORT}`;
 const REMOTE = `http://127.0.0.1:${REMOTE_PORT}`;
 const TMP = path.join(os.tmpdir(), `pc-card-bitmap-probe-${Date.now().toString(36)}`);
@@ -87,7 +87,7 @@ async function until(label, fn, timeoutMs = 120000, everyMs = 300) {
     let value;
     try { value = await fn(); } catch { value = null; }
     if (value) return value;
-    if (Date.now() > deadline) { fails.push(`超时:${label}`); return null; }
+    if (Date.now() > deadline) { fails.push(`Timeout: ${label}`); return null; }
     await delay(everyMs);
   }
 }
@@ -113,7 +113,7 @@ async function startEditor() {
   const keep = (c) => { editorLog.push(c.toString()); if (editorLog.length > 800) editorLog.shift(); };
   editor.stdout.on('data', keep);
   editor.stderr.on('data', keep);
-  return until('编辑器进程起来', async () => (await fetch(EDITOR + '/api/prerender/info').then((r) => r.ok, () => false)) || null, 180000);
+  return until('editor process is up', async () => (await fetch(EDITOR + '/api/prerender/info').then((r) => r.ok, () => false)) || null, 180000);
 }
 function stopEditor() {
   if (!editor || editor.exitCode !== null || !editor.pid) return;
@@ -209,10 +209,10 @@ function record(name, bytes, meta = {}) {
   if (SAVE_DIR) fs.writeFileSync(path.join(SAVE_DIR, `${name}.png`), bytes);
   if (COMPARE_DIR) {
     const file = path.join(COMPARE_DIR, `${name}.png`);
-    if (!fs.existsSync(file)) { notes.push(`改之前没有存 ${name},这一张没比`); return; }
+    if (!fs.existsSync(file)) { notes.push(`${name} was not saved before the change, so this one was not compared`); return; }
     const r = comparePng(fs.readFileSync(file), bytes);
     compared.push({ name, ...r });
-    check(r.same, `和改之前逐像素相同:${name}`, r);
+    check(r.same, `Pixel-identical to before the change: ${name}`, r);
   }
 }
 const safe = (s) => String(s).replace(/[^\w.-]/g, '_');
@@ -222,8 +222,8 @@ const out = { port: PORT, remote: REMOTE, tmp: TMP, mode: SAVE_DIR ? 'save' : CO
 if (SAVE_DIR) fs.mkdirSync(SAVE_DIR, { recursive: true });
 try {
   await new Promise((resolve, reject) => { remote.once('error', reject); remote.listen(REMOTE_PORT, '127.0.0.1', resolve); });
-  if (!(await startEditor())) throw new Error('编辑器进程没起来');
-  const prerender = await until('预渲染进程起来', async () => {
+  if (!(await startEditor())) throw new Error('The editor process did not start');
+  const prerender = await until('prerender process is up', async () => {
     const info = await fetch(EDITOR + '/api/prerender/info').then((r) => r.json());
     return info?.ready && info.url ? info : null;
   }, 180000, 500);
@@ -232,7 +232,7 @@ try {
 
   // 用户卡夹具:经真的建卡接口落进临时的改动层
   const created = await post(`${EDITOR}/api/cards/create`, { id: 'rs-bar-race', source: fs.readFileSync(USER_CARD, 'utf8'), projectId: 'card-bitmap-probe' });
-  check(created.status === 200 && created.ok === true, '用户卡夹具 rs-bar-race 建进了临时的改动层', { status: created.status, error: created.error, errors: created.errors });
+  check(created.status === 200 && created.ok === true, 'User card fixture rs-bar-race created in the temporary overlay layer', { status: created.status, error: created.error, errors: created.errors });
 
   const launch = () => puppeteer.launch({ headless: true, args: [...PROBE_CHROME_ARGS, '--window-position=-32000,-32000', '--no-first-run'] });
   const openEditorPage = async () => {
@@ -256,12 +256,12 @@ try {
     made.id = 'card-bitmap-probe';
     const names = { 'blur-text': 'blur', 'punch-pill': 'pill', particles: 'particles' };
     made.tracks = made.tracks.filter((tr) => tr.clips?.length === 1 && names[tr.clips[0].cardId]);
-    if (made.tracks.length !== 3) throw new Error(`夹具项目该有三条序列,实际 ${made.tracks.length}`);
+    if (made.tracks.length !== 3) throw new Error(`The fixture project should have three tracks, got ${made.tracks.length}`);
     for (const tr of made.tracks) { const n = names[tr.clips[0].cardId]; tr.id = `t-${n}`; tr.clips[0].id = `c-${n}`; }
-    made.tracks.push({ id: 't-user', name: `序列 ${made.tracks.length + 1}`, clips: [{ id: 'c-user', cardId: 'rs-bar-race', start: 0, end: 4, params: { count: 14, seed: 7, accent: '#ffffff' } }] });
+    made.tracks.push({ id: 't-user', name: `Track ${made.tracks.length + 1}`, clips: [{ id: 'c-user', cardId: 'rs-bar-race', start: 0, end: 4, params: { count: 14, seed: 7, accent: '#ffffff' } }] });
     made.duration = Math.max(Number(made.duration) || 0, 4);
     fs.writeFileSync(FIXTURE, JSON.stringify(made, null, 2) + '\n');
-    console.log(`夹具项目写到 ${FIXTURE}`);
+    console.log(`Fixture project written to ${FIXTURE}`);
     throw Object.assign(new Error('made'), { made: true });
   }
 
@@ -273,14 +273,14 @@ try {
   /** 取回一个 px 地址,核对是 PNG、哈希对得上,记成用例的图 */
   const take = async (name, item, label) => {
     const okUrl = /^\/api\/asset\/px\/[0-9a-f]{64}$/.test(item?.url || '');
-    if (!check(okUrl, `${label}:回 /api/asset/px/<sha256>`, item)) return null;
+    if (!check(okUrl, `${label}: returns /api/asset/px/<sha256>`, item)) return null;
     const hash = item.url.split('/').pop();
     ourHashes.add(hash);
     const got = await getBytes(EDITOR + item.url);
-    check(got.status === 200 && got.type === 'image/png' && isPng(got.bytes) && sha256(got.bytes) === hash, `${label}:取回的是 PNG,sha256 与地址一致`, { status: got.status, type: got.type, bytes: got.bytes.length });
+    check(got.status === 200 && got.type === 'image/png' && isPng(got.bytes) && sha256(got.bytes) === hash, `${label}: the fetched file is a PNG and its sha256 matches the address`, { status: got.status, type: got.type, bytes: got.bytes.length });
     if (!isPng(got.bytes)) return null;
     const png = PNG.sync.read(got.bytes);
-    check(png.width === item.width && png.height === item.height, `${label}:图的宽高与返回的 width / height 一致`, { png: [png.width, png.height], said: [item.width, item.height] });
+    check(png.width === item.width && png.height === item.height, `${label}: the image's width and height match the returned width / height`, { png: [png.width, png.height], said: [item.width, item.height] });
     record(name, got.bytes, { width: png.width, height: png.height });
     return { hash, bytes: got.bytes, width: png.width, height: png.height };
   };
@@ -297,39 +297,39 @@ try {
     const t0 = Date.now();
     const r = await post(`${EDITOR}/api/vision/bake`, { project, clipId: b.clipId, t: b.t, size: b.size, bg: b.bg });
     out.a1.push({ name: b.name, ok: r.ok, url: r.url, width: r.width, height: r.height, cached: r.cached, transparentRatio: r.transparentRatio, error: r.error, ms: Date.now() - t0 });
-    if (!check(r.ok === true, `A1 ${b.name}:bake_card 成功`, { status: r.status, error: r.error })) continue;
+    if (!check(r.ok === true, `A1 ${b.name}: bake_card succeeded`, { status: r.status, error: r.error })) continue;
     check(r.clipId === b.clipId && r.t === b.t && r.width === b.size && r.height === b.size && r.cached === false
-      && typeof r.bytes === 'number' && typeof r.transparentRatio === 'number' && typeof r.hint === 'string' && /贴图/.test(r.hint) && typeof r.note === 'string' && /PNG 快照/.test(r.note),
-      `A1 ${b.name}:返回的字段齐全(clipId、t、正方形尺寸、bytes、transparentRatio、hint、note)`, { ...r, hint: undefined, note: undefined });
-    check(b.bg ? /不透明贴图/.test(r.hint) : /透明底贴图/.test(r.hint), `A1 ${b.name}:说明文字跟着 bg 走`, r.hint);
-    check(r.transparentRatio < 1, `A1 ${b.name}:画面不是空的`, r.transparentRatio);
+      && typeof r.bytes === 'number' && typeof r.transparentRatio === 'number' && typeof r.hint === 'string' && /texture/.test(r.hint) && typeof r.note === 'string' && /PNG snapshot/.test(r.note),
+      `A1 ${b.name}: all returned fields present (clipId, t, square size, bytes, transparentRatio, hint, note)`, { ...r, hint: undefined, note: undefined });
+    check(b.bg ? /opaque texture/.test(r.hint) : /transparent-background texture/.test(r.hint), `A1 ${b.name}: the description text follows bg`, r.hint);
+    check(r.transparentRatio < 1, `A1 ${b.name}: the image is not empty`, r.transparentRatio);
     await take(b.name, r, `A1 ${b.name}`);
   }
 
   /* ---- A2 3D 视图的贴图预取那条路(预渲染进程;普通预渲染队尾 / 插队) ---- */
   const idle = await post(`${PRE}/api/vision/bake-batch`, { project, clips: [{ clipId: CLIP.blur, t: 1 }, { clipId: CLIP.blur, t: 3 }, { clipId: CLIP.particles, t: 1 }], size: 1024 });
   out.a2idle = { ok: idle.ok, baked: idle.baked?.map((x) => ({ clipId: x.clipId, t: x.t, url: x.url, width: x.width, height: x.height, cached: x.cached })), failed: idle.failed, error: idle.error };
-  check(idle.ok && idle.baked?.length === 3 && !(idle.failed || []).length, 'A2 贴图预取(队尾):三张都渲出来了', out.a2idle);
-  for (const x of idle.baked || []) await take(`batch-idle-${safe(x.clipId)}-${x.t}`, x, `A2 预取 ${x.clipId}@${x.t}`);
+  check(idle.ok && idle.baked?.length === 3 && !(idle.failed || []).length, 'A2 texture prefetch (back of queue): all three rendered', out.a2idle);
+  for (const x of idle.baked || []) await take(`batch-idle-${safe(x.clipId)}-${x.t}`, x, `A2 prefetch ${x.clipId}@${x.t}`);
   const front = await post(`${PRE}/api/vision/bake-batch`, { project, clips: [{ clipId: CLIP.pill, t: 0.3 }, { clipId: CLIP.user, t: 2 }], size: 1024, priority: 1 });
   out.a2front = { ok: front.ok, baked: front.baked?.map((x) => ({ clipId: x.clipId, t: x.t, url: x.url, width: x.width, height: x.height, cached: x.cached })), failed: front.failed, error: front.error };
-  check(front.ok && front.baked?.length === 2 && !(front.failed || []).length, 'A2 贴图预取(插队):两张都渲出来了', out.a2front);
-  for (const x of front.baked || []) await take(`batch-front-${safe(x.clipId)}-${x.t}`, x, `A2 插队 ${x.clipId}@${x.t}`);
-  check([...(idle.baked || []), ...(front.baked || [])].every((x) => x.width === project.width && x.height === project.height), 'A2 贴图按卡片的框(没有 frame 就是项目画幅)出,清晰度不降', { want: [project.width, project.height] });
+  check(front.ok && front.baked?.length === 2 && !(front.failed || []).length, 'A2 texture prefetch (front of queue): both rendered', out.a2front);
+  for (const x of front.baked || []) await take(`batch-front-${safe(x.clipId)}-${x.t}`, x, `A2 front of queue ${x.clipId}@${x.t}`);
+  check([...(idle.baked || []), ...(front.baked || [])].every((x) => x.width === project.width && x.height === project.height), 'A2 textures come out at the card\'s frame (the project aspect ratio when there is no frame), with no loss of sharpness', { want: [project.width, project.height] });
 
   /* ---- A3 3D 视图前台那条路(编辑器进程的热备渲染器) ---- */
   const ui = await post(`${EDITOR}/api/ui-render/bake-batch`, { project, clips: [{ clipId: CLIP.blur, t: 2.5 }, { clipId: CLIP.particles, t: 2.5 }], size: 1024, priority: 1 });
   out.a3 = { ok: ui.ok, baked: ui.baked?.map((x) => ({ clipId: x.clipId, t: x.t, url: x.url, width: x.width, height: x.height, cached: x.cached })), failed: ui.failed, error: ui.error };
-  check(ui.ok && ui.baked?.length === 2 && !(ui.failed || []).length, 'A3 热备渲染器:两张都渲出来了', out.a3);
-  for (const x of ui.baked || []) await take(`ui-${safe(x.clipId)}-${x.t}`, x, `A3 热备 ${x.clipId}@${x.t}`);
+  check(ui.ok && ui.baked?.length === 2 && !(ui.failed || []).length, 'A3 hot-standby renderer: both rendered', out.a3);
+  for (const x of ui.baked || []) await take(`ui-${safe(x.clipId)}-${x.t}`, x, `A3 hot standby ${x.clipId}@${x.t}`);
 
   /* ---- A4 同一输入再要一次:命中 ---- */
   const again = await post(`${EDITOR}/api/vision/bake`, { project, clipId: BAKES[0].clipId, t: BAKES[0].t, size: BAKES[0].size, bg: BAKES[0].bg });
-  check(again.ok && again.cached === true && again.url === out.a1[0].url, 'A4 bake_card 同一输入再要:cached、同一个地址', { cached: again.cached, url: again.url });
+  check(again.ok && again.cached === true && again.url === out.a1[0].url, 'A4 bake_card with the same input again: cached, same address', { cached: again.cached, url: again.url });
   const againBatch = await post(`${PRE}/api/vision/bake-batch`, { project, clips: [{ clipId: CLIP.blur, t: 1 }, { clipId: CLIP.blur, t: 3 }], size: 1024 });
-  check(againBatch.ok && againBatch.baked?.length === 2 && againBatch.baked.every((x, i) => x.cached === true && x.url === idle.baked?.[i]?.url), 'A4 贴图预取同一输入再要:cached、同一个地址', againBatch.baked?.map((x) => ({ t: x.t, cached: x.cached })));
+  check(againBatch.ok && againBatch.baked?.length === 2 && againBatch.baked.every((x, i) => x.cached === true && x.url === idle.baked?.[i]?.url), 'A4 texture prefetch with the same input again: cached, same address', againBatch.baked?.map((x) => ({ t: x.t, cached: x.cached })));
   const status = await post(`${PRE}/api/vision/bake-status`, { project, clips: [{ clipId: CLIP.blur, t: 2.5 }], size: 1024 });
-  check(status.ok && status.items?.[0]?.url === ui.baked?.[0]?.url, 'A4 热备渲染器渲的那张在盘点里算渲好了(两个进程共用索引)', status.items?.[0]);
+  check(status.ok && status.items?.[0]?.url === ui.baked?.[0]?.url, 'A4 the texture rendered by the hot-standby renderer counts as rendered in the inventory (both processes share the index)', status.items?.[0]);
 
   /* ---- A5 落盘:只有位图,没有 HTML ---- */
   const allPushed = () => [...ourHashes].every((h) => remoteBlobs.has(`px/${h}`));
@@ -337,11 +337,11 @@ try {
   if (!allPushed()) {
     // 预渲染进程的推送目标是它起来之后异步登记的(连上文档服务才登记);登记之前入库的位图当时不推,「下次命中时再推」(`bake-store.mjs`)。
     // 机器忙的时候第一批会赶在登记之前:这里各再要一次(命中),再等
-    notes.push(`第一轮有 ${[...ourHashes].filter((h) => !remoteBlobs.has(`px/${h}`)).length} 张没推到远程(推送目标登记得晚),各再要一次后再等`);
+    notes.push(`${[...ourHashes].filter((h) => !remoteBlobs.has(`px/${h}`)).length} bitmaps were not pushed to the remote in the first round (the push target registered late); request each once more, then wait`);
     for (const b of BAKES) await post(`${EDITOR}/api/vision/bake`, { project, clipId: b.clipId, t: b.t, size: b.size, bg: b.bg });
     await post(`${PRE}/api/vision/bake-batch`, { project, clips: [{ clipId: CLIP.blur, t: 1 }, { clipId: CLIP.blur, t: 3 }, { clipId: CLIP.particles, t: 1 }], size: 1024 });
     await post(`${PRE}/api/vision/bake-batch`, { project, clips: [{ clipId: CLIP.pill, t: 0.3 }, { clipId: CLIP.user, t: 2 }], size: 1024, priority: 1 });
-    await until('远程素材服务收全这几张', async () => allPushed(), 60000, 250);
+    await until('Remote asset service received all of these', async () => allPushed(), 60000, 250);
   }
   await delay(1500); // 帧库的存档是异步落盘的,等它写完再列
   const libraryNew = walk(LIBRARY_DIR).filter((f) => !libraryBefore.has(f));
@@ -356,13 +356,13 @@ try {
   const entries = indexEntries();
   out.a5 = { libraryNew: libraryNew.length, libraryNewSample: libraryNew.slice(0, 12), libraryHtml: libraryHtml.slice(0, 12), libraryEntries, artifactsNew: artifactsNew.length, pxNew: pxNew.length, snapNew: snapNew.slice(0, 8),
     remotePx: [...remoteBlobs.keys()].filter((id) => id.startsWith('px/')).length, remoteSnap: remoteSnap.length, indexEntries: entries.length, ourHashes: ourHashes.size };
-  const storage = (cond, label, extra) => (SAVE_DIR ? (notes.push(`(改之前,只记录)${label}:${cond ? '成立' : '不成立'}${extra === undefined ? '' : ' ' + JSON.stringify(extra).slice(0, 300)}`), cond) : check(cond, label, extra));
-  storage(libraryHtml.length === 0, 'A5 帧库里没有新写入的 HTML(html-manifest.json / html-cache / snapshots / *.html)', libraryHtml.slice(0, 8));
-  storage(libraryEntries.length === 0, 'A5 帧库里没有为这些单卡项目新建的条目目录', libraryEntries.slice(0, 8));
-  storage(snapNew.length === 0 && pxNotPng.length === 0, 'A5 本机素材服务的产物目录里新写入的只有 px 下的 PNG,snap 下没有东西', { snapNew: snapNew.slice(0, 6), pxNotPng });
-  storage(remoteSnap.length === 0 && remotePxNotPng.length === 0, 'A5 远程素材服务只收到 px 的 PNG,没有收到 snap', { remoteSnap: remoteSnap.slice(0, 6), remotePxNotPng });
-  check([...ourHashes].every((h) => remoteBlobs.has(`px/${h}`)), 'A5 每一张位图都推到了连着的远程素材服务', { want: ourHashes.size, got: [...ourHashes].filter((h) => remoteBlobs.has(`px/${h}`)).length });
-  check(entries.length >= ourHashes.size - 1 && entries.every((e) => /^[0-9a-f]{64}$/.test(e.hash)) && [...ourHashes].every((h) => entries.some((e) => e.hash === h)), 'A5 索引 bake-index 里每一张都记着「输入哈希 → 内容哈希」', { entries: entries.length });
+  const storage = (cond, label, extra) => (SAVE_DIR ? (notes.push(`(before the change, record only) ${label}: ${cond ? 'holds' : 'does not hold'}${extra === undefined ? '' : ' ' + JSON.stringify(extra).slice(0, 300)}`), cond) : check(cond, label, extra));
+  storage(libraryHtml.length === 0, 'A5 No newly written HTML in the frame store (html-manifest.json / html-cache / snapshots / *.html)', libraryHtml.slice(0, 8));
+  storage(libraryEntries.length === 0, 'A5 No newly created entry directories in the frame store for these single-card projects', libraryEntries.slice(0, 8));
+  storage(snapNew.length === 0 && pxNotPng.length === 0, 'A5 The only new files in the local asset service\'s output directory are PNGs under px, nothing under snap', { snapNew: snapNew.slice(0, 6), pxNotPng });
+  storage(remoteSnap.length === 0 && remotePxNotPng.length === 0, 'A5 The remote asset service received only PNGs under px, nothing under snap', { remoteSnap: remoteSnap.slice(0, 6), remotePxNotPng });
+  check([...ourHashes].every((h) => remoteBlobs.has(`px/${h}`)), 'A5 Every bitmap was pushed to the connected remote asset service', { want: ourHashes.size, got: [...ourHashes].filter((h) => remoteBlobs.has(`px/${h}`)).length });
+  check(entries.length >= ourHashes.size - 1 && entries.every((e) => /^[0-9a-f]{64}$/.test(e.hash)) && [...ourHashes].every((h) => entries.some((e) => e.hash === h)), 'A5 Every bitmap in the bake-index records "input hash → content hash"', { entries: entries.length });
 
   /* ---- B 3D 视图开着:贴图出得来 ---- */
   browser = await launch();
@@ -388,34 +388,34 @@ try {
   const cardClips = Object.values(CLIP);
   // 等待时限只为防卡死(机器忙时热备渲染器一张要一两分钟);用了多久记下来,不当通过条件
   const b1Started = Date.now();
-  const allSeen = await until('3D 视图四块板子的贴图都到了', async () => cardClips.every((id) => seen.some((s) => s.clipId === id && /^\/api\/asset\/px\//.test(s.url || ''))) || null, 600000, 500);
+  const allSeen = await until('Textures for all four boards in the 3D view arrived', async () => cardClips.every((id) => seen.some((s) => s.clipId === id && /^\/api\/asset\/px\//.test(s.url || ''))) || null, 600000, 500);
   const b1Ms = Date.now() - b1Started;
   await delay(4000); // 让空闲预取再走几轮,多收几张(收到多少比多少)
   out.b1 = { ms: b1Ms, seen: seen.length, byRoute: { ui: seen.filter((s) => s.route === 'ui').length, prefetch: seen.filter((s) => s.route === 'prefetch').length }, clips: cardClips.map((id) => ({ id, got: seen.filter((s) => s.clipId === id).length })) };
-  check(!!allSeen, 'B1 3D 视图开着:四张卡的贴图都出来了(页面收到 px 地址)', out.b1);
+  check(!!allSeen, 'B1 3D view open: textures for all four cards came out (the page received px addresses)', out.b1);
   const uniq = new Map();
   for (const s of seen) if (s.url && !uniq.has(`${s.clipId}@${s.t}`)) uniq.set(`${s.clipId}@${s.t}`, s);
   const loaded = await page.evaluate(async (urls) => Promise.all(urls.map((url) => new Promise((resolve) => { const img = new Image(); img.onload = () => resolve([img.naturalWidth, img.naturalHeight]); img.onerror = () => resolve(null); img.src = url; }))), [...uniq.values()].map((s) => s.url));
-  check(loaded.length > 0 && loaded.every((sz) => Array.isArray(sz) && sz[0] === project.width && sz[1] === project.height), 'B1 页面把每张贴图当图片加载得出来,宽高等于卡片的框', { loaded: loaded.slice(0, 6), want: [project.width, project.height] });
+  check(loaded.length > 0 && loaded.every((sz) => Array.isArray(sz) && sz[0] === project.width && sz[1] === project.height), 'B1 The page can load every texture as an image, and its width and height equal the card\'s frame', { loaded: loaded.slice(0, 6), want: [project.width, project.height] });
   for (const [key, s] of uniq) {
     const got = await getBytes(EDITOR + s.url);
-    if (check(got.status === 200 && isPng(got.bytes), `B1 贴图 ${key} 取回是 PNG`, { status: got.status })) record(`view3d-${safe(key)}`, got.bytes);
+    if (check(got.status === 200 && isPng(got.bytes), `B1 texture ${key} fetched back is a PNG`, { status: got.status })) record(`view3d-${safe(key)}`, got.bytes);
   }
   out.b1.moments = [...uniq.keys()];
   const shot = path.join(SAVE_DIR || COMPARE_DIR || TMP, COMPARE_DIR ? 'view3d-after.png' : 'view3d.png');
   await page.screenshot({ path: shot });
   out.b1.screenshot = shot;
-  check(pageErrors.length === 0, '页面没有未捕获的错误', pageErrors.slice(0, 5));
+  check(pageErrors.length === 0, 'Page has no uncaught errors', pageErrors.slice(0, 5));
   if (SAVE_DIR) fs.writeFileSync(path.join(SAVE_DIR, 'manifest.json'), JSON.stringify(Object.fromEntries([...images].map(([name, v]) => [name, { sha256: sha256(v.bytes), bytes: v.bytes.length, ...v.meta }])), null, 2));
   if (COMPARE_DIR) {
     out.compared = { total: compared.length, same: compared.filter((c) => c.same).length, bytesEqual: compared.filter((c) => c.bytesEqual).length, different: compared.filter((c) => !c.same) };
-    check(compared.length >= BAKES.length + 7, '逐像素比对覆盖了 bake_card、两条预取、热备渲染器各用例', { compared: compared.length });
+    check(compared.length >= BAKES.length + 7, 'Pixel-by-pixel comparison covered every case of bake_card, the two prefetch paths and the hot-standby renderer', { compared: compared.length });
   }
 } catch (e) {
-  if (!e?.made) fails.push('探针异常:' + (e?.stack || e));
+  if (!e?.made) fails.push('Probe exception:' + (e?.stack || e));
 } finally {
-  out.editorLogTail = editorLog.join('').split(/\r?\n/).filter((l) => /error|错误|bake-store/i.test(l)).slice(-20);
-  try { out.prerenderLog = fs.readFileSync(PRERENDER_LOG, 'utf8').split(/\r?\n/).filter((l) => /\[bake-store\] bake\.(push-failed|stale)|\[artifact-push\] push\.|渲染超时/.test(l)).map((l) => l.slice(0, 260)).slice(0, 40); } catch { out.prerenderLog = null; }
+  out.editorLogTail = editorLog.join('').split(/\r?\n/).filter((l) => /error|bake-store/i.test(l)).slice(-20);
+  try { out.prerenderLog = fs.readFileSync(PRERENDER_LOG, 'utf8').split(/\r?\n/).filter((l) => /\[bake-store\] bake\.(push-failed|stale)|\[artifact-push\] push\.|render timeout/.test(l)).map((l) => l.slice(0, 260)).slice(0, 40); } catch { out.prerenderLog = null; }
   if (!KEEP) {
     try { await browser?.close(); } catch { /* 已关 */ }
     stopEditor();
@@ -430,5 +430,5 @@ out.notes = notes;
 out.passes = passes;
 out.fails = fails;
 console.log(JSON.stringify(out, null, 2));
-console.log(`\n通过 ${passes.length},失败 ${fails.length}`);
+console.log(`\nPassed ${passes.length}, failed ${fails.length}`);
 process.exit(fails.length ? 1 : 0);

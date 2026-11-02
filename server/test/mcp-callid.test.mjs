@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 const MCP = fileURLToPath(new URL('../mcp-server.mjs', import.meta.url));
 
-test('MCP-CALLID tools/call 的 _meta["claudecode/toolUseId"] 原样转成 /api/mcp/call 的 callId;没带就不带', async () => {
+test('MCP-CALLID _meta["claudecode/toolUseId"] of tools/call is passed through unchanged as the callId of /api/mcp/call; if it is missing, callId is omitted', async () => {
   const bodies = [];
   const bridge = http.createServer((req, res) => {
     let body = '';
@@ -31,7 +31,7 @@ test('MCP-CALLID tools/call 的 _meta["claudecode/toolUseId"] 原样转成 /api/
     const tick = () => {
       const line = buf.split('\n').find((l) => l.includes(`"id":${id}`));
       if (line) return resolve(JSON.parse(line));
-      if (Date.now() - t0 > 10000) return reject(new Error(`10 秒没收到 id ${id} 的回复`));
+      if (Date.now() - t0 > 10000) return reject(new Error(`No reply for id ${id} received within 10 s`));
       setTimeout(tick, 20);
     };
     tick();
@@ -45,7 +45,7 @@ test('MCP-CALLID tools/call 的 _meta["claudecode/toolUseId"] 原样转成 /api/
     assert.equal(calls.length, 2);
     assert.equal(calls[0].callId, 'toolu_01XYZ');
     assert.equal(calls[0].agent, 'conv-x');
-    assert.equal('callId' in calls[1], false, '没带 _meta 就不带 callId');
+    assert.equal('callId' in calls[1], false, 'No callId when _meta is absent');
   } finally {
     child.kill();
     bridge.close();

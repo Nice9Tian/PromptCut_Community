@@ -63,15 +63,15 @@ async function makeVideo(ffmpeg) {
 const CARD_SOURCE = [
   'import type { CardDef } from "../../kernel/types";',
   '',
-  '/** 探针用(speed-audio-input-probe.mjs 临时写进改动层):把输入的声音原样交出去 */',
+  '/** For the probe (speed-audio-input-probe.mjs temporarily writes it into the overlay layer): hands the input sound out unchanged */',
   'export const probeAudioPass: CardDef<{ gain: number }> = {',
   `  id: "${PASS}",`,
-  '  name: "速度探针:直通",',
-  '  description: "输入的声音原样输出",',
+  '  name: "Speed probe: passthrough",',
+  '  description: "Outputs the input sound unchanged",',
   '  source: "user",',
   '  kind: "audio",',
   '  frameMode: "direct",',
-  '  inputs: { source: { description: "输入声音" } },',
+  '  inputs: { source: { description: "Input sound" } },',
   '  defaults: { gain: 1 },',
   '  controls: [],',
   '  audio: async (sources, range, params) => {',
@@ -115,7 +115,7 @@ function projectOf(media) {
   return {
     version: 1, id: 'p-speed-audio-input', name: 'speed-audio-input', width: W, height: H, fps: FPS, duration: DURATION, themeId: 'midnight',
     media: [media], filters: [], audioFx: [], cardNodes,
-    tracks: [{ id: 't-main', name: '序列 1', clips: main }, { id: 't-fx', name: '卡', clips: fx }],
+    tracks: [{ id: 't-main', name: 'Track 1', clips: main }, { id: 't-fx', name: 'Card', clips: fx }],
   };
 }
 
@@ -189,15 +189,15 @@ try {
   const url = `${dev.origin}/?export=1&timeline=${encodeURIComponent(`/@export/${id}/project.json`)}`;
   let code = 1;
   for (let attempt = 1; attempt <= 3 && code !== 0; attempt++) {
-    say(`导出成片第 ${attempt} 次`);
+    say(`Exporting final video, attempt ${attempt}`);
     code = await run(process.execPath, ['scripts/export-frames.mjs', '--url', url, '--out', outDir, '--fps', String(FPS), '--workers', '1'], env, path.join(OUT, 'export.log'));
   }
-  if (code !== 0) throw new Error(`导出退出码 ${code}(日志 ${path.join(OUT, 'export.log')})`);
+  if (code !== 0) throw new Error(`Export exit code ${code} (log ${path.join(OUT, 'export.log')})`);
   const log = await fs.readFile(path.join(OUT, 'export.log'), 'utf8');
-  result.mixedIn = /退回 ffmpeg/.test(log) ? 'ffmpeg(Chrome 失败后退回)' : /in Chrome/.test(log) ? 'chrome' : /Muxing .* with ffmpeg/.test(log) ? 'ffmpeg' : '不明';
-  if (result.mixedIn !== 'chrome') result.fails.push(`实际在 ${result.mixedIn} 里混音`);
+  result.mixedIn = /falling back to ffmpeg/.test(log) ? 'ffmpeg (fell back after Chrome failed)' : /in Chrome/.test(log) ? 'chrome' : /Muxing .* with ffmpeg/.test(log) ? 'ffmpeg' : 'unknown';
+  if (result.mixedIn !== 'chrome') result.fails.push(`Audio was actually mixed in ${result.mixedIn}`);
   const mp4 = (await fs.readdir(outDir)).find((f) => f.endsWith('.mp4'));
-  if (!mp4) throw new Error('没有 mp4');
+  if (!mp4) throw new Error('No mp4');
   result.file = path.join(outDir, mp4);
   const pcm = await pcmOf(ffmpeg, result.file);
   result.segs = {};
@@ -206,7 +206,7 @@ try {
     const db = loudness(pcm, a, b), hz = pitch(pcm, a, b), peak = peakHz(pcm, a, b);
     const ok = db > -30 && Math.abs(hz - s.hz) <= s.hz * 0.02 && Math.abs(peak - s.hz) <= s.hz * 0.02;
     result.segs[s.id] = { speed: s.speed ?? s.external?.speed ?? 1, expectHz: s.hz, zeroCrossHz: +hz.toFixed(1), dftPeakHz: peak, dBFS: +db.toFixed(1), ok };
-    if (!ok) result.fails.push(`${s.id} 段应为 ${s.hz} Hz 有声,实测过零 ${hz.toFixed(1)} Hz、DFT 峰 ${peak} Hz、${db.toFixed(1)} dBFS`);
+    if (!ok) result.fails.push(`Segment ${s.id} should sound at ${s.hz} Hz, measured zero-crossing ${hz.toFixed(1)} Hz, DFT peak ${peak} Hz, ${db.toFixed(1)} dBFS`);
   }
   result.ok = result.fails.length === 0;
 } catch (error) {

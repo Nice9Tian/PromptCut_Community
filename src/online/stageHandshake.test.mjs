@@ -232,12 +232,12 @@ test("H12 switch only once: if problems occur again after switching back to dual
   clock.advance(STAGE_HANDSHAKE_TOTAL_MS);
   assert.equal(calls.interim.length, 1);
   // 状态机也不许 ok → interim
-  markStageHandshake("interim", "不该生效");
+  markStageHandshake("interim", "should not take effect");
   assert.equal(onlineStageState().handshake, "ok");
   // 看守判断开 → failed,之后 interim、ok 都不生效
   markStageHandshake("failed", "Stage A disconnected and reloaded, no handshake back within 20 seconds");
   assert.equal(layout(), "single");
-  markStageHandshake("interim", "不该生效");
+  markStageHandshake("interim", "should not take effect");
   markStageHandshake("ok");
   assert.equal(onlineStageState().handshake, "failed");
   assert.equal(layout(), "single");

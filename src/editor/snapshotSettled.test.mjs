@@ -25,7 +25,7 @@ let push = null;
 const sent = [];
 const stage = { setSnapshots: async (patch, opts) => { sent.push({ patch, opts }); return { ok: true }; } };
 const card = (params) => ({ id: "h", cardId: "c", start: 0, end: 10, params });
-const P0 = { fps: 30, tracks: [{ id: "t", clips: [card({ text: "旧字" })] }] };
+const P0 = { fps: 30, tracks: [{ id: "t", clips: [card({ text: "Old text" })] }] };
 const P1 = { fps: 30, tracks: [{ id: "t", clips: [card({ text: "" })] }] };   // 用户删掉了卡里的字
 const tick = () => new Promise((r) => setTimeout(r, 40));   // > 33 ms 节流
 let head;
@@ -40,35 +40,35 @@ beforeEach(async () => {
   head = { project: P0, t: 1, playing: false };
   feed.syncSnapshotSubscription(() => { void feed.deliverSnapshots(stage, "front", head); });
   push({ type: "layer", clipId: "h", kind: "html", key: "OLDKEY", ranges: [[0, 299]] });
-  assert.deepEqual(feed.suppressedAt(head), ["h"], "暂停时未 settled 先抑制");
+  assert.deepEqual(feed.suppressedAt(head), ["h"], "When paused, suppress first if not yet settled");
 });
 
-test("settled 之后改卡:暂停中不再抑制", async () => {
+test("Editing a card after settled: no longer suppressed while paused", async () => {
   feed.noteSettled("front", ["h"]);
   sent.length = 0;
   head = { project: P1, t: 1, playing: false };
-  assert.deepEqual(feed.suppressedAt(head), [], "settled 的卡不再抑制");
-  assert.deepEqual(feed.planFeed(head).scrub, [], "planFeed 暂停态也不再进 scrub");
+  assert.deepEqual(feed.suppressedAt(head), [], "A settled card is no longer suppressed");
+  assert.deepEqual(feed.planFeed(head).scrub, [], "planFeed no longer puts it into scrub in the paused state either");
 });
 
-test("下一次 setTime 清掉 settled:同一张卡照常进入抑制", async () => {
+test("The next setTime clears settled: the same card enters suppression as usual", async () => {
   feed.noteSettled("front", ["h"]);
   head = { project: P0, t: 2, playing: false };
   feed.pickForSetTime(head);
-  assert.deepEqual(feed.suppressedAt(head), ["h"], "setTime 之后重新进入抑制");
+  assert.deepEqual(feed.suppressedAt(head), ["h"], "Re-enters suppression after setTime");
 });
 
-test("起播清掉 settled:播放后回到暂停照常进入抑制", async () => {
+test("Starting playback clears settled: after playing and returning to pause, it enters suppression as usual", async () => {
   feed.noteSettled("front", ["h"]);
   head = { project: P0, t: 1, playing: true };
   await feed.deliverSnapshots(stage, "front", head);
   head = { project: P0, t: 1, playing: false };
-  assert.deepEqual(feed.suppressedAt(head), ["h"], "播放过一次之后 settled 已经清空");
+  assert.deepEqual(feed.suppressedAt(head), ["h"], "After playing once, settled has been cleared");
 });
 
-test("暂停态互换之后整台精确:markAllSettled 期间一张都不抑制,setTime 后恢复", async () => {
+test("After a swap in paused state, the whole stage is exact: during markAllSettled no card is suppressed, and suppression resumes after setTime", async () => {
   feed.markAllSettled("front");
-  assert.deepEqual(feed.suppressedAt(head), [], "互换后整台精确,不抑制");
+  assert.deepEqual(feed.suppressedAt(head), [], "After the swap the whole stage is exact, no suppression");
   feed.pickForSetTime({ project: P0, t: 1.5, playing: false });
-  assert.deepEqual(feed.suppressedAt({ project: P0, t: 1.5, playing: false }), ["h"], "setTime 后恢复抑制");
+  assert.deepEqual(feed.suppressedAt({ project: P0, t: 1.5, playing: false }), ["h"], "Suppression resumes after setTime");
 });

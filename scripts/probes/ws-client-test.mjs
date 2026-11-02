@@ -44,9 +44,9 @@ async function connect() {
   return new Promise((resolve, reject) => {
     const ws = protocols ? new WebSocket(url, protocols) : new WebSocket(url);
     socket = ws;
-    const t = setTimeout(() => { ws.close(); reject(new Error(`${TIMEOUT_MS} ms 内没连上`)); }, TIMEOUT_MS);
+    const t = setTimeout(() => { ws.close(); reject(new Error(`Could not connect within ${TIMEOUT_MS} ms`)); }, TIMEOUT_MS);
     ws.addEventListener('open', () => { clearTimeout(t); resolve(ws); }, { once: true });
-    ws.addEventListener('error', (e) => { clearTimeout(t); reject(new Error(e.message ?? '连接出错')); }, { once: true });
+    ws.addEventListener('error', (e) => { clearTimeout(t); reject(new Error(e.message ?? 'Connection error')); }, { once: true });
   });
 }
 
@@ -61,7 +61,7 @@ function request(ws, message) {
       cleanup();
       resolve({ msg, rttMs: Math.round(performance.now() - sentAt) });
     };
-    const t = setTimeout(() => { cleanup(); reject(new Error(`${message.type} 在 ${TIMEOUT_MS} ms 内没有回包`)); }, TIMEOUT_MS);
+    const t = setTimeout(() => { cleanup(); reject(new Error(`${message.type} got no reply within ${TIMEOUT_MS} ms`)); }, TIMEOUT_MS);
     const cleanup = () => { clearTimeout(t); ws.removeEventListener('message', onMessage); };
     ws.addEventListener('message', onMessage);
     ws.send(JSON.stringify(message));
@@ -89,12 +89,12 @@ async function run() {
   try {
     ws = await connect();
   } catch (err) {
-    check('WebSocket 握手', false, err.message);
+    check('WebSocket handshake', false, err.message);
     await closeAndWait(socket);
     return 2;
   }
-  check('WebSocket 握手', true, `${Math.round(performance.now() - t0)} ms`);
-  if (protocols) check('子协议只回显 promptcut.v1', ws.protocol === 'promptcut.v1', `protocol=${JSON.stringify(ws.protocol)}`);
+  check('WebSocket handshake', true, `${Math.round(performance.now() - t0)} ms`);
+  if (protocols) check('Subprotocol echoes only promptcut.v1', ws.protocol === 'promptcut.v1', `protocol=${JSON.stringify(ws.protocol)}`);
 
   try {
     // 1. 渲染节点报到
@@ -106,9 +106,9 @@ async function run() {
     const { msg: welcome, rttMs } = await request(ws, hello);
     console.log(`<<< ${JSON.stringify(welcome)}`);
     check('node.hello → node.welcome', welcome.type === 'node.welcome', `${rttMs} ms`);
-    check('welcome.nodeId 回显', welcome.nodeId === nodeId);
-    check('welcome 带 resumed / lost 数组', Array.isArray(welcome.resumed) && Array.isArray(welcome.lost));
-    check('welcome 带队列 epoch', typeof welcome.epoch === 'string' && welcome.epoch.length > 0);
+    check('welcome.nodeId echoed back', welcome.nodeId === nodeId);
+    check('welcome carries resumed / lost arrays', Array.isArray(welcome.resumed) && Array.isArray(welcome.lost));
+    check('welcome carries the queue epoch', typeof welcome.epoch === 'string' && welcome.epoch.length > 0);
 
     // 2. 同一连接再以发布方报到（契约 A.5：一条连接可以两者都是）
     const { msg: pub } = await request(ws, { type: 'publisher.hello', reqId: 'hello-2', publisherId });
@@ -120,20 +120,20 @@ async function run() {
 
     // 4. 格式错误的消息
     const { msg: bad } = await request(ws, { type: 'node.hello', reqId: 'bad-1', nodeId, profile: 'toaster' });
-    check('格式错误 → error bad-message', bad.type === 'error' && bad.reason === 'bad-message', bad.detail);
+    check('Malformed message → error bad-message', bad.type === 'error' && bad.reason === 'bad-message', bad.detail);
 
     // 5. 服务端记下了这条连接的身份（HTTP 同端口）
     const health = await fetch(url.replace(/^ws/, 'http').replace(/\/?$/, '/healthz')).then((r) => r.json());
     console.log(`healthz ${JSON.stringify(health)}`);
-    check('healthz 里记到节点与发布方', health.ok === true && health.nodes >= 1 && health.publishers >= 1);
-    check('healthz.protocol 是 promptcut.v1', health.protocol === 'promptcut.v1', `protocol=${JSON.stringify(health.protocol)}`);
-    check('healthz.modules 是模块名数组', Array.isArray(health.modules) && health.modules.every((m) => typeof m === 'string'), JSON.stringify(health.modules));
+    check('healthz records the node and the publisher', health.ok === true && health.nodes >= 1 && health.publishers >= 1);
+    check('healthz.protocol is promptcut.v1', health.protocol === 'promptcut.v1', `protocol=${JSON.stringify(health.protocol)}`);
+    check('healthz.modules is an array of module names', Array.isArray(health.modules) && health.modules.every((m) => typeof m === 'string'), JSON.stringify(health.modules));
     // 按空间各起一份队列（auth-contract 第 6 节）：/healthz 的 epoch 是本机（local）空间那一份；凭共享项目进入时 welcome 是项目空间的
-    if (sharedEntry) check('healthz 带队列 epoch', typeof health.epoch === 'string' && typeof welcome.epoch === 'string');
-    else check('healthz 带队列 epoch', health.epoch === welcome.epoch);
-    if (protocols) check('healthz 里没有证明', !JSON.stringify(health).includes(protocols[1]));
+    if (sharedEntry) check('healthz carries the queue epoch', typeof health.epoch === 'string' && typeof welcome.epoch === 'string');
+    else check('healthz carries the queue epoch', health.epoch === welcome.epoch);
+    if (protocols) check('healthz does not contain the proof', !JSON.stringify(health).includes(protocols[1]));
   } catch (err) {
-    check('请求过程', false, err.message);
+    check('Request flow', false, err.message);
   }
 
   await closeAndWait(ws, 1000, 'probe done');

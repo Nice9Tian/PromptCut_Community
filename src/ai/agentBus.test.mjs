@@ -22,31 +22,31 @@ function project(tracks, activeCutId = "c1") {
   return {
     name: "p", width: 1080, height: 1920, fps: 30, duration: 10, media: [],
     tracks,
-    cuts: [{ id: "c1", name: "剪辑 1" }, { id: "c2", name: "剪辑 2" }],
+    cuts: [{ id: "c1", name: "Cut 1" }, { id: "c2", name: "Cut 2" }],
     activeCutId,
   };
 }
 const track = (id, name, clips = []) => ({ id, name, clips });
 
-test("MA-P1 diffScopes:只报 clips 数组换了引用的那几条序列,格式是「剪辑->序列」;切剪辑整条算;删序列标出来;只调顺序记序列顺序", () => {
-  const a = [track("t1", "序列 1", []), track("t2", "序列 2", [])];
+test("MA-P1 diffScopes: only reports tracks whose clips array changed reference, in the format \"cut->track\"; switching cuts counts the whole cut; a deleted track is flagged; only reordering is recorded as track order", () => {
+  const a = [track("t1", "Track 1", []), track("t2", "Track 2", [])];
   const before = project(a);
   const after = project([a[0], { ...a[1], clips: [{ id: "x" }] }]);
-  assert.deepEqual(bus.diffScopes(before, after), ["剪辑 1->序列 2"]);
-  assert.deepEqual(bus.diffScopes(before, project(a, "c2")), ["剪辑 2"]);
-  assert.deepEqual(bus.diffScopes(before, project([a[0]])), ["剪辑 1->序列 2(已删)"]);
-  assert.deepEqual(bus.diffScopes(before, project([a[1], a[0]])), ["剪辑 1->序列顺序"]);
+  assert.deepEqual(bus.diffScopes(before, after), ["cut 1->track 2"]);
+  assert.deepEqual(bus.diffScopes(before, project(a, "c2")), ["Cut 2"]);
+  assert.deepEqual(bus.diffScopes(before, project([a[0]])), ["cut 1->track 2 (deleted)"]);
+  assert.deepEqual(bus.diffScopes(before, project([a[1], a[0]])), ["cut 1->track order"]);
   assert.deepEqual(bus.diffScopes(before, before), []);
 });
 
-test("MA-P2 agent.board:页签名跟着范围改,页签上标未读;可自动投递的条数决定 hasAutoDeliverable", () => {
+test("MA-P2 agent.board: the tab name follows the scope and the tab shows unread; the number of auto-deliverable items determines hasAutoDeliverable", () => {
   // 清单按项目分开之后,没有会话时只有开始页占位页;先让用户「点发送」建出第一个会话,再开第二页
   tabs.commitDraft(tabs.getActiveTabId());
   const t = tabs.addTab();
   tabs.setTabConversation(t.id, "conv-p2");
-  bus.applyBoard([{ id: "conv-p2", scope: "剪辑1->序列2", unread: 2, deliverable: 1, busy: false }]);
+  bus.applyBoard([{ id: "conv-p2", scope: "Cut 1->Track 2", unread: 2, deliverable: 1, busy: false }]);
   const now = tabs.findTabByConversation("conv-p2");
-  assert.equal(now.title, "剪辑1->序列2");
+  assert.equal(now.title, "Cut 1->Track 2");
   assert.equal(now.unread, 2);
   assert.equal(bus.hasAutoDeliverable("conv-p2"), true);
   bus.applyBoard([{ id: "conv-p2", scope: null, unread: 0, deliverable: 0, busy: false }]);
@@ -54,38 +54,38 @@ test("MA-P2 agent.board:页签名跟着范围改,页签上标未读;可自动投
   assert.equal(tabs.findTabByConversation("conv-p2").unread, 0);
 });
 
-test("MA-P3 agent.spawn:开一页带角色名、对话 ID 是服务端给的、驱动与等级沿用父对话,不抢焦点;回话给服务端", async () => {
+test("MA-P3 agent.spawn: opens a tab with the role name, the chat ID is given by the server, the driver and level are inherited from the parent chat, it does not steal focus, and it replies to the server", async () => {
   const active = tabs.getActiveTabId();
-  await bus.handleSpawn({ reqId: "s1", conversationId: "sub-abc", role: "director", roleName: "剪辑导演", parent: "conv-main", provider: "claude", creativity: "medium" });
+  await bus.handleSpawn({ reqId: "s1", conversationId: "sub-abc", role: "director", roleName: "Editing director", parent: "conv-main", provider: "claude", creativity: "medium" });
   const t = tabs.findTabByConversation("sub-abc");
-  assert.ok(t, "开了页");
-  assert.equal(t.title, "剪辑导演");
+  assert.ok(t, "A tab was opened");
+  assert.equal(t.title, "Editing director");
   assert.equal(t.role, "director");
   assert.equal(t.parent, "conv-main");
   assert.equal(t.provider, "claude");
   assert.equal(t.creativity, "medium");
   assert.equal(tabs.getTabProvider(t.id), "claude");
-  assert.equal(localStorage.getItem(`pcChatId:${t.id}`), "sub-abc", "页面挂上时 useChatHistory 读到这个对话 ID");
-  assert.equal(tabs.getActiveTabId(), active, "不抢当前页的焦点");
+  assert.equal(localStorage.getItem(`pcChatId:${t.id}`), "sub-abc", "When the page mounts, useChatHistory reads this chat ID");
+  assert.equal(tabs.getActiveTabId(), active, "Does not steal focus from the current tab");
   assert.deepEqual(posted.find((p) => p.url === "/api/agent/spawned")?.body, { reqId: "s1", ok: true });
   // 同角色第二个编号;声明范围后页签名是「角色 · 范围」
-  await bus.handleSpawn({ reqId: "s2", conversationId: "sub-def", role: "director", roleName: "剪辑导演", parent: "conv-main", provider: "claude", creativity: "high" });
-  assert.equal(tabs.findTabByConversation("sub-def").title, "剪辑导演 2");
-  tabs.setScopeByConversation("sub-abc", "剪辑1->序列1");
-  assert.equal(tabs.findTabByConversation("sub-abc").title, "剪辑导演 · 剪辑1->序列1");
+  await bus.handleSpawn({ reqId: "s2", conversationId: "sub-def", role: "director", roleName: "Editing director", parent: "conv-main", provider: "claude", creativity: "high" });
+  assert.equal(tabs.findTabByConversation("sub-def").title, "Cut director 2");
+  tabs.setScopeByConversation("sub-abc", "Cut 1->Track 1");
+  assert.equal(tabs.findTabByConversation("sub-abc").title, "Cut director · cut 1->track 1");
   tabs.setScopeByConversation("sub-abc", null);
-  assert.equal(tabs.findTabByConversation("sub-abc").title, "剪辑导演");
+  assert.equal(tabs.findTabByConversation("sub-abc").title, "Editing director");
   // 对话 ID 不合法:回话 ok:false
-  await bus.handleSpawn({ reqId: "s3", conversationId: "bad id!", role: "director", roleName: "剪辑导演" });
+  await bus.handleSpawn({ reqId: "s3", conversationId: "bad id!", role: "director", roleName: "Editing director" });
   assert.equal(posted.find((p) => p.body.reqId === "s3")?.body.ok, false);
 });
 
-test("MA-P4 formatInbound:每条标出是谁发的", () => {
-  const text = bus.formatInbound([{ from: "conv-a", text: "序列2 我来", hops: 1 }, { from: null, fromLabel: "Agent x(成员 bob 那边)", text: "好", hops: 1 }]);
+test("MA-P4 formatInbound: each message is labeled with who sent it", () => {
+  const text = bus.formatInbound([{ from: "conv-a", text: "I'll take Track 2", hops: 1 }, { from: null, fromLabel: "Agent x (on member bob's side)", text: "OK", hops: 1 }]);
   assert.equal(text, "[Message from Agent conv-a]\n序列2 我来\n\n[Message from Agent x(成员 bob 那边)]\n好");
 });
 
-test("MA-P5 取走又忙了:stash 放回页面这边,下次先送它们", async () => {
+test("MA-P5 taken away and then busy again: the stash is put back on the page side and delivered first next time", async () => {
   bus.stash("conv-p5", [{ from: "a", text: "t", hops: 1 }]);
   assert.equal(bus.hasAutoDeliverable("conv-p5"), true);
   const got = await bus.takeInbox("conv-p5");
@@ -93,12 +93,12 @@ test("MA-P5 取走又忙了:stash 放回页面这边,下次先送它们", async 
   assert.equal(bus.hasAutoDeliverable("conv-p5"), false);
 });
 
-test("MA-P1b diffScopes:不切换剪辑、就地改了停放剪辑里的序列,也记「那条剪辑->序列」", () => {
-  const act = [track("t1", "序列 1", [])];
-  const pk = [track("p1", "序列 A", []), track("p2", "序列 B", [])];
-  const mk = (parked) => ({ ...project(act), cuts: [{ id: "c1", name: "剪辑 1" }, { id: "c2", name: "剪辑 2", tracks: parked, duration: 5 }], activeCutId: "c1" });
+test("MA-P1b diffScopes: without switching cuts, modifying a track in a parked cut in place is also recorded as \"that cut->track\"", () => {
+  const act = [track("t1", "Track 1", [])];
+  const pk = [track("p1", "Track A", []), track("p2", "Track B", [])];
+  const mk = (parked) => ({ ...project(act), cuts: [{ id: "c1", name: "Cut 1" }, { id: "c2", name: "Cut 2", tracks: parked, duration: 5 }], activeCutId: "c1" });
   const before = mk(pk);
-  assert.deepEqual(bus.diffScopes(before, mk([pk[0], { ...pk[1], clips: [{ id: "y" }] }])), ["剪辑 2->序列 B"]);
-  assert.deepEqual(bus.diffScopes(before, mk([pk[0]])), ["剪辑 2->序列 B(已删)"]);
+  assert.deepEqual(bus.diffScopes(before, mk([pk[0], { ...pk[1], clips: [{ id: "y" }] }])), ["cut 2->track B"]);
+  assert.deepEqual(bus.diffScopes(before, mk([pk[0]])), ["cut 2->track B (deleted)"]);
   assert.deepEqual(bus.diffScopes(before, mk(pk)), []);
 });

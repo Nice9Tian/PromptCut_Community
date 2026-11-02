@@ -64,7 +64,7 @@ async function waitFor(fn, ms, what) {
     let v = null;
     try { v = await fn(); } catch { v = null; }
     if (v) return v;
-    if (Date.now() - t0 > ms) throw new Error(`等 ${what} 超时(${ms} ms)`);
+    if (Date.now() - t0 > ms) throw new Error(`Timed out waiting for ${what} (${ms} ms)`);
     await sleep(100);
   }
 }
@@ -81,10 +81,10 @@ function C({ params }: CardProps<Params>) {
   return <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 72, color: "#fff", background: "#224" }}>{"${MARK(v)}"} {params.text}</div>;
 }
 export const csProbe: CardDef<Params> = {
-  id: "${CARD_ID}", name: "同步探针", description: "card-sync-probe", source: "user",
+  id: "${CARD_ID}", name: "Sync probe", description: "card-sync-probe", source: "user",
   frameMode: "direct",
   defaults: { text: "" },
-  controls: [{ key: "text", label: "文字", type: "text" }],
+  controls: [{ key: "text", label: "Text", type: "text" }],
   Component: C,
 };
 `;
@@ -151,9 +151,9 @@ async function startEditor(tag, port) {
   });
   const origin = `http://127.0.0.1:${port}`;
   await waitFor(async () => {
-    if (p.child.exitCode !== null) throw new Error(`编辑器 ${tag} 退出了:${p.log.join('').slice(-600)}`);
+    if (p.child.exitCode !== null) throw new Error(`Editor ${tag} exited: ${p.log.join('').slice(-600)}`);
     return fetch(`${origin}/`, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok, () => false);
-  }, 180_000, `编辑器 ${tag} 起来`);
+  }, 180_000, `Editor ${tag} started`);
   return { tag, origin, overrides, proc: p };
 }
 
@@ -186,10 +186,10 @@ async function openEditor(browser, ed) {
     else if (ed.tag === 'b' && /[?&]stage=/.test(f.url())) stageNavs.push({ at: Date.now(), url: f.url() });
   });
   await page.goto(`${ed.origin}/?editor`, { waitUntil: 'domcontentloaded' });
-  await waitFor(() => P(page, () => !!window.__pcSyncTest && window.__pcSyncTest.view().status === 'online'), 120_000, `${ed.tag} 页面同步接上`);
+  await waitFor(() => P(page, () => !!window.__pcSyncTest && window.__pcSyncTest.view().status === 'online'), 120_000, `${ed.tag} page sync connected`);
   // 打开项目时的卡片测量遮罩:等它退下
-  await waitFor(() => P(page, () => !document.querySelector('[data-pc="probe-gate"]')), 300_000, `${ed.tag} 测量遮罩退下`).catch(() => null);
-  await P(page, () => { for (const b of document.querySelectorAll('.ais-dialog .ais-btn')) if (b.textContent?.trim() === '关闭') b.click(); });
+  await waitFor(() => P(page, () => !document.querySelector('[data-pc="probe-gate"]')), 300_000, `${ed.tag} measurement overlay dismissed`).catch(() => null);
+  await P(page, () => { for (const b of document.querySelectorAll('.ais-dialog .ais-btn')) if (b.textContent?.trim() === 'Close') b.click(); });
   return page;
 }
 
@@ -203,7 +203,7 @@ async function hostedCard(base, projectId, cred) {
   });
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsBaseOf(base), protocols);
-    const timer = setTimeout(() => { reject(new Error('托管端 content.get 超时')); ws.close(); }, 10_000);
+    const timer = setTimeout(() => { reject(new Error('Hosted side content.get timed out')); ws.close(); }, 10_000);
     ws.addEventListener('open', () => ws.send(JSON.stringify({ type: 'content.get', kind: 'card-source', key: CARD_REL, reqId: 'g1' })));
     ws.addEventListener('message', (e) => {
       const m = JSON.parse(e.data);
@@ -212,7 +212,7 @@ async function hostedCard(base, projectId, cred) {
       resolve(m);
       ws.close();
     });
-    ws.addEventListener('error', () => { clearTimeout(timer); reject(new Error('连不上托管端')); });
+    ws.addEventListener('error', () => { clearTimeout(timer); reject(new Error('Cannot connect to the hosted side')); });
   });
 }
 
@@ -258,18 +258,18 @@ try {
   });
   const hostedUrl = `http://127.0.0.1:${DOC_PORT}`;
   await waitFor(async () => {
-    if (hosted.child.exitCode !== null) throw new Error(`托管组合退出了:${hosted.log.join('').slice(-600)}`);
+    if (hosted.child.exitCode !== null) throw new Error(`Hosted bundle exited: ${hosted.log.join('').slice(-600)}`);
     return fetch(`${hostedUrl}/healthz`, { signal: AbortSignal.timeout(2000) }).then((r) => r.ok, () => false);
-  }, 30_000, '托管组合起来');
+  }, 30_000, 'Hosted bundle started');
   say('hosted.ready', { hostedUrl });
   // --cut-b:B 与托管组合之间插一层 TCP 代理,只切一次(按标准输入的 cut)
   let cutProxy = null;
   if (CUT_B_PORT !== null) {
     cutProxy = start('cut-proxy', [path.join(ROOT, 'scripts', 'probes', 'render-queue-proxy.mjs'), '--listen', `127.0.0.1:${CUT_B_PORT}`, '--target', `127.0.0.1:${DOC_PORT}`, '--cut-once', '--stdin-control'], {}, { stdin: 'pipe' });
     await waitFor(async () => {
-      if (cutProxy.child.exitCode !== null) throw new Error(`代理退出了:${cutProxy.log.join('').slice(-400)}`);
+      if (cutProxy.child.exitCode !== null) throw new Error(`Proxy exited: ${cutProxy.log.join('').slice(-400)}`);
       return fetch(`http://127.0.0.1:${CUT_B_PORT}/healthz`, { signal: AbortSignal.timeout(2000) }).then((r) => r.ok, () => false);
-    }, 15_000, '代理起来');
+    }, 15_000, 'Proxy started');
     say('cut-proxy.ready', { port: CUT_B_PORT });
   }
 
@@ -288,14 +288,14 @@ try {
   say('editors.ready', { a: A.origin, b: B.origin });
 
   // ---------- 3. A 的项目里放一个探针卡的片段,建共享项目,A、B 进入
-  await waitFor(() => P(pageA, async (id) => (await import('/src/kernel/registry.ts')).getCard(id) != null, CARD_ID), 30_000, 'A 页面认出探针卡');
+  await waitFor(() => P(pageA, async (id) => (await import('/src/kernel/registry.ts')).getCard(id) != null, CARD_ID), 30_000, 'Page A recognizes the probe card');
   const clipId = await P(pageA, async (id) => {
     const S = await import('/src/store/project.ts');
     const c = S.actions.addCardClip(id, 0, { duration: 5 });
     S.actions.seek(1);
     return c?.id ?? null;
   }, CARD_ID);
-  if (!clipId) throw new Error('A 没放上探针卡的片段');
+  if (!clipId) throw new Error('No clip with the probe card was placed on A');
   res.clipId = clipId;
 
   const name = `card-sync-${RUN}`;
@@ -313,23 +313,23 @@ try {
   }, cand, cred, initialize);
   // A has just created this fixture room; B and later entries must never initialize it.
   const ea = await enter(pageA, { as: 'creator', username: 'alice', password: creatorPw }, candidate, true);
-  if (!ea?.ok) throw new Error(`A 进不去共享项目:${JSON.stringify(ea)}`);
+  if (!ea?.ok) throw new Error(`A cannot join the shared project: ${JSON.stringify(ea)}`);
   // A 把项目带进共享项目时,项目用到的探针卡(用户卡)传上内容库
   const aPushed = await waitFor(async () => {
     const s = await getJson(`${A.origin}/api/cards/sync/status`);
     return s.projectId === shared.projectId && s.connected && s.records?.[CARD_REL]?.rev >= 1 ? s : null;
-  }, 20_000, 'A 把探针卡传上内容库');
+  }, 20_000, 'A uploads the probe card to the content store');
   say('a.pushed', { rev: aPushed.records[CARD_REL].rev, spaceId: aPushed.spaceId });
 
   // --cut-b:B 经代理进入(页面连接与卡片同步连接都走代理)
   const eb = await enter(pageB, { as: 'member', username: 'bob', password: projectPw }, CUT_B_PORT !== null ? { ...candidate, base: `http://127.0.0.1:${CUT_B_PORT}` } : candidate);
-  if (!eb?.ok) throw new Error(`B 进不去共享项目:${JSON.stringify(eb)}`);
-  await waitFor(() => P(pageB, async (clipId) => (await import('/src/store/project.ts')).getState().project.tracks.some((t) => t.clips.some((c) => c.id === clipId)), clipId), 20_000, 'B 看到探针卡的片段');
+  if (!eb?.ok) throw new Error(`B cannot join the shared project: ${JSON.stringify(eb)}`);
+  await waitFor(() => P(pageB, async (clipId) => (await import('/src/store/project.ts')).getState().project.tracks.some((t) => t.clips.some((c) => c.id === clipId)), clipId), 20_000, 'B sees the clip with the probe card');
   await P(pageB, async () => (await import('/src/store/project.ts')).actions.seek(1));
   const bBound = await waitFor(async () => {
     const s = await getJson(`${B.origin}/api/cards/sync/status`);
     return s.projectId === shared.projectId && s.connected && s.records?.[CARD_REL] ? s : null;
-  }, 20_000, 'B 对账到探针卡');
+  }, 20_000, 'B reconciles the probe card');
   say('b.bound', { record: bBound.records[CARD_REL] });
   // 进入共享项目后的第一轮测量(挡界面的那一轮)先测完,再改卡。
   // 只看遮罩会抢跑:遮罩可能还没出来(集成时见过一次,改卡后才冒出这一轮的遮罩、测了 18 s)。
@@ -343,7 +343,7 @@ try {
     if (!idle) { idleSince = null; return false; }
     idleSince ??= Date.now();
     return Date.now() - idleSince >= 1500;
-  }, 300_000, 'B 第一轮测量测完').catch(() => null);
+  }, 300_000, 'B finishes its first round of measurement').catch(() => null);
   const before = await pageCardState(pageB, CARD_ID, clipId);
   res.keyBefore = before.key;
   if (!before.src?.includes(MARK('v1'))) fails.push('b-page-not-v1-before');
@@ -353,7 +353,7 @@ try {
 
   // ---------- 集成 3b:改卡前记下编辑器的一批 DOM 节点(重挂的话全换新)、关掉首启的 AI 助手对话框,
   // 改卡后看它们还在不在、对话框有没有重新弹出;另起一路采样可见舞台上的 v1 / v2,量预览中断多久
-  await P(pageB, () => { for (const b of document.querySelectorAll('.ais-dialog .ais-btn')) if (b.textContent?.trim() === '关闭') b.click(); });
+  await P(pageB, () => { for (const b of document.querySelectorAll('.ais-dialog .ais-btn')) if (b.textContent?.trim() === 'Close') b.click(); });
   await sleep(300);
   res.dialogBeforeEdit = await P(pageB, () => !!document.querySelector('.ais-dialog'));
   await P(pageB, () => { window.__pcProbeNodes = [...document.querySelectorAll('#root *')].filter((_, i) => i % 40 === 0); });
@@ -402,7 +402,7 @@ try {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: CARD_ID, find: MARK('v1'), replace: MARK('v2') }),
   }).then((r) => r.json());
-  if (!edit.ok) throw new Error(`A 改卡失败:${edit.error}`);
+  if (!edit.ok) throw new Error(`A failed to edit the card: ${edit.error}`);
   res.aEditBackup = edit.backup ?? null; // B2:用户卡也备份
   if (!edit.backup) fails.push('a-edit-no-backup(B2)');
   say('a.edited', { backup: edit.backup });
@@ -411,12 +411,12 @@ try {
   const installed = await waitFor(async () => {
     const s = await getJson(`${B.origin}/api/cards/source?id=${CARD_ID}`);
     return s.ok && s.source.includes(MARK('v2')) ? Date.now() : null;
-  }, 15_000, 'B 装上新版').catch(() => null);
+  }, 15_000, 'B installs the new version').catch(() => null);
   res.installMs = installed ? installed - t0 : null;
   const hmr = await waitFor(async () => {
     const s = await pageCardState(pageB, CARD_ID, clipId);
     return s.src?.includes(MARK('v2')) ? Date.now() : null;
-  }, 15_000, 'B 页面热更新').catch(() => null);
+  }, 15_000, 'Page B hot update').catch(() => null);
   res.hmrMs = hmr ? hmr - t0 : null;
   if (!hmr && process.env.PROBE_DEBUG) {
     const d = await P(pageB, async (cardId, v1, v2) => {
@@ -484,7 +484,7 @@ try {
     })));
     res.stageV1After = !!(await stageHas(pageB, MARK('v1')));
   }
-  const stageAt = await waitFor(async () => ((await stageHas(pageB, MARK('v2'))) ? Date.now() : null), 15_000, 'B 舞台画出 v2').catch(() => null);
+  const stageAt = await waitFor(async () => ((await stageHas(pageB, MARK('v2'))) ? Date.now() : null), 15_000, 'B stage renders v2').catch(() => null);
   res.stageMs = stageAt ? stageAt - t0 : null;
   sampling = false;
   await sampler;
@@ -533,8 +533,8 @@ try {
   res.bOverrideV2 = !!overOf(B)?.includes(MARK('v2'));
 
   // 原来 installMs、remeasureMs 各有 ≤ 5 秒的通过条件;到没到、测没测仍然判,用时只记录
-  timingLog.record('B 装上 A 改的卡片源码', res.installMs, { formerLimit: '≤ 5 秒' });
-  timingLog.record('B 装上后重新测量', res.remeasureMs, { formerLimit: '≤ 5 秒' });
+  timingLog.record('B installs the card source A edited', res.installMs, { formerLimit: '≤ 5 seconds' });
+  timingLog.record('B re-measures after installing', res.remeasureMs, { formerLimit: '≤ 5 seconds' });
   if (res.installMs === null) fails.push('installMs=null');
   if (res.hmrMs === null) fails.push('b-page-no-hmr');
   if (res.remeasureMs === null) fails.push('b-no-remeasure');

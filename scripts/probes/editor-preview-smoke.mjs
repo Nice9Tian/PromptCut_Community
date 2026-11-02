@@ -45,7 +45,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const browser = await puppeteer.launch({ headless: true, args: [...PROBE_CHROME_ARGS, '--window-position=-32000,-32000', '--no-first-run', '--hide-scrollbars', '--force-device-scale-factor=1'] });
 /** 显式指定时就是它;不带参数时等页面加载完按「有没有第二个舞台」认出来 */
 let stageMode = forceStage;
-const out = { mode: forceStage ? 'stage' : forceLegacy ? 'legacy' : '(默认,待认)', modeFrom: forceStage || forceLegacy ? 'flag' : 'default' };
+const out = { mode: forceStage ? 'stage' : forceLegacy ? 'legacy' : '(default, to be identified)', modeFrom: forceStage || forceLegacy ? 'flag' : 'default' };
 try {
   const page = await browser.newPage();
   await page.setViewport({ width: 1600, height: 1000 });

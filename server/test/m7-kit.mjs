@@ -122,32 +122,32 @@ export function pickMethod(obj, names) {
   return null;
 }
 
-const SKIP_TAIL = '（M7 实现未集成，集成后自动转为真跑）';
+const SKIP_TAIL = '(M7 implementation not integrated yet; once integrated it automatically becomes a real run)';
 /** 源文件里出现某个标志（字符串或正则）才算实现在 */
 function markerGate(files, marker, what) {
   const hit = files.find((f) => (marker instanceof RegExp ? marker.test(textOf(f)) : textOf(f).includes(marker)));
-  return hit ? { ok: true, file: hit } : { ok: false, reason: `实现缺失：${files.join('、')} 里没有 ${what}${SKIP_TAIL}` };
+  return hit ? { ok: true, file: hit } : { ok: false, reason: `Implementation missing: no ${what} in ${files.join(', ')} ${SKIP_TAIL}` };
 }
 function exportGate(files, names) {
   const hit = findExport(files, names);
   if (hit) return { ok: true, ...hit };
   const present = files.filter(exists);
-  const where = present.length ? `文件 ${present.join('、')} 在，但没有导出 ${names.join(' / ')}` : `文件 ${files.join('、')} 都不存在`;
-  return { ok: false, reason: `实现缺失：${where}${SKIP_TAIL}` };
+  const where = present.length ? `File ${present.join(', ')} exists, but does not export ${names.join(' / ')}` : `None of the files ${files.join(', ')} exist`;
+  return { ok: false, reason: `Implementation missing: ${where} ${SKIP_TAIL}` };
 }
 /** `test(name, gateOpts(gate), fn)`：门没开就 skip 并写原因 */
 export const gateOpts = (gate) => (gate.ok ? {} : { skip: gate.reason });
 
 const QUEUE_FILE = 'server/render-queue/queue.mjs';
 const MODULE_FILE = 'server/docservice/modules/render-queue.mjs';
-export const ownerGate = () => markerGate([MODULE_FILE, QUEUE_FILE], /\.owner\b/, '`.owner`（K2，D9 profile 与 nodeId 绑凭证）');
-export const authOwnerGate = () => markerGate(['server/auth/protocol.mjs'], /kind\s*===\s*'browser'/, "`kind === 'browser'`（K2，normalizeOwner 认 browser）");
-export const serverFpGate = () => markerGate([MODULE_FILE, QUEUE_FILE], 'describeEnvironment', '`describeEnvironment`（K3，D10 指纹由服务端算）');
-export const queueDualGate = () => markerGate([QUEUE_FILE], 'dual', '`dual`（K4，D1 建锁时作废另一份）');
-export const lockIdleGate = () => markerGate([QUEUE_FILE], 'lockIdleMs', '`lockIdleMs`（K5，D2 锁闲置）');
-export const splitDualGate = () => markerGate(['server/render-node/split.mjs'], 'dual', '`dual`（K6，D1 双份出键）');
-export const filterIndependentGate = () => markerGate(['server/render-node/filter.mjs'], 'compositing', '`compositing`（K7，D4 只收独立卡）');
-export const layerV3Gate = () => markerGate(['src/render/snapshotSource.ts'], /KNOWN_LAYER_MAP_VERSIONS[^=]*=\s*\[[^\]]*\b3\b/, 'KNOWN_LAYER_MAP_VERSIONS 含 3（K9，层表 v3）');
+export const ownerGate = () => markerGate([MODULE_FILE, QUEUE_FILE], /\.owner\b/, '`.owner` (K2, D9 profile and nodeId are bound to the credential)');
+export const authOwnerGate = () => markerGate(['server/auth/protocol.mjs'], /kind\s*===\s*'browser'/, "`kind === 'browser'` (K2, normalizeOwner accepts browser)");
+export const serverFpGate = () => markerGate([MODULE_FILE, QUEUE_FILE], 'describeEnvironment', '`describeEnvironment` (K3, D10 the fingerprint is computed by the server)');
+export const queueDualGate = () => markerGate([QUEUE_FILE], 'dual', '`dual` (K4, D1 invalidates the other copy when the lock is created)');
+export const lockIdleGate = () => markerGate([QUEUE_FILE], 'lockIdleMs', '`lockIdleMs` (K5, D2 lock idle)');
+export const splitDualGate = () => markerGate(['server/render-node/split.mjs'], 'dual', '`dual` (K6, D1 keys issued for both copies)');
+export const filterIndependentGate = () => markerGate(['server/render-node/filter.mjs'], 'compositing', '`compositing` (K7, D4 accepts only independent cards)');
+export const layerV3Gate = () => markerGate(['src/render/snapshotSource.ts'], /KNOWN_LAYER_MAP_VERSIONS[^=]*=\s*\[[^\]]*\b3\b/, 'KNOWN_LAYER_MAP_VERSIONS contains 3 (K9, layer table v3)');
 
 /* K8 */
 export const IDLE_TAKEOVER_FILES = [
@@ -170,7 +170,7 @@ export function normalizeEligible(r) {
     if (typeof r.ok === 'boolean') return r.ok;
     if (typeof r.eligible === 'boolean') return r.eligible;
   }
-  throw new Error(`假设 K10：认不出节点资格的回包：${JSON.stringify(r)}`);
+  throw new Error(`Assumption K10: response from which node eligibility cannot be recognized: ${JSON.stringify(r)}`);
 }
 
 /* K11 */

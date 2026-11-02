@@ -47,7 +47,7 @@ const PATHS = flagArg('paths', 'front,measure,bake').split(',').map((s) => s.tri
 const JSON_OUT = flagArg('json', null);
 const OUT = flagArg('out', null);
 for (const [name, dir] of [['--before', BEFORE], ['--after', AFTER]]) {
-  if (!dir || !fs.existsSync(path.join(dir, 'stage.html'))) { console.error(`${name} 要给一份在线构建的目录(里面有 stage.html):${dir}`); process.exit(2); }
+  if (!dir || !fs.existsSync(path.join(dir, 'stage.html'))) { console.error(`${name} needs the directory of an online build (containing stage.html): ${dir}`); process.exit(2); }
 }
 
 /** React 自动生成的元素编号:每重新挂载一次就换一个号,按出现顺序重排以后再比(同 `stateful-seq-vs-jump-probe.mjs`) */
@@ -56,12 +56,12 @@ const renumberIds = (html) => { const seen = new Map(); return html.replace(REAC
 const sameHtml = (a, b) => {
   if (a === b) return { same: true };
   const r = compareSnapshotHtml(renumberIds(a), renumberIds(b));
-  const clip = (v) => { const s = String(v ?? '(无)'); return s.length > 70 ? `${s.slice(0, 70)}…` : s; };
+  const clip = (v) => { const s = String(v ?? '(none)'); return s.length > 70 ? `${s.slice(0, 70)}…` : s; };
   return r.same ? { same: true } : { same: false, why: `${r.reason}${r.expected !== undefined || r.actual !== undefined ? `:${clip(r.expected)} → ${clip(r.actual)}` : ''}` };
 };
 
 const projectOf = (cardId) => ({
-  id: `ba-${cardId}`, name: '改前改后对照', width: 1920, height: 1080, fps: FPS, duration: SECONDS,
+  id: `ba-${cardId}`, name: 'Before and after comparison', width: 1920, height: 1080, fps: FPS, duration: SECONDS,
   themeId: 'dark', media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
   tracks: [{ id: 'tr', name: cardId, hidden: false, clips: [{ id: 'clip', kind: 'card', cardId, start: 0, end: SECONDS, params: {} }] }],
 });
@@ -86,7 +86,7 @@ addEventListener('message', (e) => {
 });
 window.__rpc = (method, ...args) => new Promise((res, rej) => { const id = ++seq; waiting.set(id, { res, rej }); stageWin.postMessage({ type: 'pc-rpc', id, method, args }, stageOrigin); });
 window.__setup = async (src) => { ready = null; frames.clear(); const f = document.getElementById('st'); f.src = src; stageWin = f.contentWindow; stageOrigin = new URL(src).origin;
-  const t0 = performance.now(); while (!ready) { if (performance.now() - t0 > 60000) throw new Error('舞台 60 秒没就绪'); await new Promise((r) => setTimeout(r, 50)); } stageWin = f.contentWindow; return ready; };
+  const t0 = performance.now(); while (!ready) { if (performance.now() - t0 > 60000) throw new Error('stage not ready within 60 seconds'); await new Promise((r) => setTimeout(r, 50)); } stageWin = f.contentWindow; return ready; };
 </script>`;
 
 const TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html; charset=utf-8', '.json': 'application/json', '.wasm': 'application/wasm', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf', '.png': 'image/png', '.webp': 'image/webp' };
@@ -105,7 +105,7 @@ const handlerFor = (dist) => (req, res) => {
 };
 
 const failures = [];
-const guard = (what, job) => { let timer; return Promise.race([job, new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`${what} 5 分钟没有结果`)), 300000); })]).finally(() => clearTimeout(timer)); };
+const guard = (what, job) => { let timer; return Promise.race([job, new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`${what} produced no result in 5 minutes`)), 300000); })]).finally(() => clearTimeout(timer)); };
 
 /** 在一份构建上把每张卡的几条路各走一遍;回 { 卡: { 路: Map(帧 → HTML) } } */
 async function runBuild(label, dist) {
@@ -119,13 +119,13 @@ async function runBuild(label, dist) {
       args: [...PROBE_CHROME_ARGS, '--window-size=1100,820'] });
     const page = await browser.newPage();
     await page.setViewport({ width: 1000, height: 640 });
-    page.on('pageerror', (e) => failures.push(`${label} 页面报错:${String(e.message || e).slice(0, 160)}`));
+    page.on('pageerror', (e) => failures.push(`${label} page error: ${String(e.message || e).slice(0, 160)}`));
     await page.goto(`http://127.0.0.1:${BASE}/probe-parent`, { waitUntil: 'load' });
     await page.bringToFront();
-    const rpc = (method, ...args) => guard(`${label} 舞台调用 ${method}`, page.evaluate((m, a) => window.__rpc(m, ...a), method, args));
+    const rpc = (method, ...args) => guard(`${label} stage call ${method}`, page.evaluate((m, a) => window.__rpc(m, ...a), method, args));
     const stageFrame = () => page.frames().find((f) => f.url().includes('/editor/stage.html')) ?? null;
     const load = async () => {
-      await guard('载入舞台', page.evaluate((src) => window.__setup(src), `http://127.0.0.1:${BASE + 2}/editor/stage.html?stage=1&id=B&preview=stage&dual=1&lm=0`));
+      await guard('Load stage', page.evaluate((src) => window.__setup(src), `http://127.0.0.1:${BASE + 2}/editor/stage.html?stage=1&id=B&preview=stage&dual=1&lm=0`));
       await sleep(400);
     };
     const taken = async () => new Map(await page.evaluate(() => window.__frames()));
@@ -141,7 +141,7 @@ async function runBuild(label, dist) {
             for (let n = 0; n <= LAST; n++) {
               await rpc('setTime', n / FPS);
               // 舞台的补拍排在微任务里;再等真实的一帧,让这一帧排下的提交和动画事件都落地
-              const html = await guard('取快照', stageFrame().evaluate(async (clipId) => {
+              const html = await guard('Get snapshot', stageFrame().evaluate(async (clipId) => {
                 const raf = window.__pcRealRaf || window.requestAnimationFrame.bind(window);
                 const wait = window.__pcRealSetTimeout || window.setTimeout.bind(window);
                 await new Promise((r) => { let done = false; const go = () => { if (!done) { done = true; r(); } }; raf(() => raf(go)); wait(go, 250); });
@@ -167,7 +167,7 @@ async function runBuild(label, dist) {
             await rpc('bakeCancel');
             for (let n = 0; n <= LAST; n++) {
               const r = await rpc('bakeFrame', { session: 'ba', clipId: 'clip', localFrame: n, mode: 'seq', small: false });
-              if (!r?.ok) { failures.push(`${label} ${cardId} bake 第 ${n} 帧:${r?.reason}`); break; }
+              if (!r?.ok) { failures.push(`${label} ${cardId} bake frame ${n}: ${r?.reason}`); break; }
             }
             for (const [n, html] of await taken()) got.set(n, html);
           }
@@ -175,7 +175,7 @@ async function runBuild(label, dist) {
           failures.push(`${label} ${cardId} ${how}:${String(e?.message || e).slice(0, 200)}`);
         }
         out[cardId][how] = got;
-        console.error(`[${label}] ${cardId} ${how}:${got.size} 帧`);
+        console.error(`[${label}] ${cardId} ${how}: ${got.size} frames`);
       }
     }
   } finally {
@@ -185,8 +185,8 @@ async function runBuild(label, dist) {
   return out;
 }
 
-const before = await runBuild('改前', BEFORE);
-const after = await runBuild('改后', AFTER);
+const before = await runBuild('Before', BEFORE);
+const after = await runBuild('After', AFTER);
 if (OUT) fs.mkdirSync(OUT, { recursive: true });
 
 /** 两组「帧 → HTML」逐帧比(只比两边都有的帧) */
@@ -198,38 +198,38 @@ const compare = (a, b, label) => {
     const r = sameHtml(a.get(n), b.get(n));
     if (r.same) continue;
     differ.push(n);
-    first ??= `第 ${n} 帧:${r.why}`;
+    first ??= `Frame ${n}: ${r.why}`;
     if (OUT && label) { fs.writeFileSync(path.join(OUT, `${label}-${n}-a.html`), a.get(n)); fs.writeFileSync(path.join(OUT, `${label}-${n}-b.html`), b.get(n)); }
   }
   return { compared: frames.length, same: frames.length - differ.length, differ, first };
 };
-const brief = (r) => (r.compared === 0 ? '没有可比的帧' : r.differ.length === 0 ? `${r.compared} 帧全部相同` : `${r.compared} 帧里 ${r.differ.length} 帧不同(${r.differ.slice(0, 24).join('、')}${r.differ.length > 24 ? '…' : ''})`);
+const brief = (r) => (r.compared === 0 ? 'No frames to compare' : r.differ.length === 0 ? `All ${r.compared} frames are identical` : `${r.differ.length} of ${r.compared} frames differ (${r.differ.slice(0, 24).join(', ')}${r.differ.length > 24 ? '…' : ''})`);
 
 const report = { when: new Date().toISOString(), host: { cpu: os.cpus()[0]?.model?.trim(), logicalCores: os.cpus().length },
   options: { before: BEFORE, after: AFTER, cards: CARDS, last: LAST, fps: FPS, paths: PATHS }, cards: [], failures };
-console.log(`每张卡一个 ${SECONDS} 秒的片段(${FPS} 帧/秒),每条路从第 0 帧逐帧做到第 ${LAST} 帧`);
+console.log(`One ${SECONDS}-second clip per card (${FPS} fps), each path goes frame by frame from frame 0 to frame ${LAST}`);
 for (const cardId of CARDS) {
   const row = { cardId, beforeVsAfter: {}, frontVsBake: {} };
-  console.log(`卡 ${cardId}`);
+  console.log(`Card ${cardId}`);
   for (const how of PATHS) {
     if (how === 'booleans') {
-      const x = before[cardId][how]?.get(0) ?? '没量出来', y = after[cardId][how]?.get(0) ?? '没量出来';
+      const x = before[cardId][how]?.get(0) ?? 'not measured', y = after[cardId][how]?.get(0) ?? 'not measured';
       row.booleans = { before: x, after: y, same: x === y };
-      console.log(`   booleans 改前 ${x};改后 ${y}${x === y ? '' : '  ← 变了'}`);
+      console.log(`   booleans before ${x}; after ${y}${x === y ? '' : '  ← changed'}`);
       continue;
     }
     const r = compare(before[cardId][how] ?? new Map(), after[cardId][how] ?? new Map(), `${cardId}-${how}`);
     row.beforeVsAfter[how] = r;
-    console.log(`   ${how.padEnd(7)} 改前对改后:${brief(r)}${r.first ? `〔${r.first}〕` : ''}`);
+    console.log(`   ${how.padEnd(7)} before vs after: ${brief(r)}${r.first ? `[${r.first}]` : ''}`);
   }
   if (PATHS.includes('front') && PATHS.includes('bake')) {
-    for (const [label, set] of [['改前', before], ['改后', after]]) {
+    for (const [label, set] of [['Before', before], ['After', after]]) {
       const r = compare(set[cardId].front ?? new Map(), set[cardId].bake ?? new Map(), null);
       row.frontVsBake[label] = r;
-      console.log(`   ${label}:可见舞台逐帧走 对 后台生成快照:${brief(r)}${r.first ? `〔${r.first}〕` : ''}`);
+      console.log(`   ${label}: visible stage stepping frame by frame vs generate snapshots in the background: ${brief(r)}${r.first ? `[${r.first}]` : ''}`);
     }
   }
   report.cards.push(row);
 }
 if (JSON_OUT) fs.writeFileSync(JSON_OUT, JSON.stringify(report, null, 2));
-if (failures.length) { console.log(`失败:\n  ${failures.join('\n  ')}`); process.exit(1); }
+if (failures.length) { console.log(`Failed:\n  ${failures.join('\n  ')}`); process.exit(1); }

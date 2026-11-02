@@ -19,8 +19,8 @@ const PROJECT = {
     { id: "t2", clips: [{ id: "S", cardId: "", cutId: "B", start: 1, end: 5, cutOffset: 0.5, params: {}, frame: { x: 0, y: 0, w: 640, h: 360 } }] },
   ],
   cuts: [
-    { id: "A", name: "主" },
-    { id: "B", name: "里", duration: 8, tracks: [
+    { id: "A", name: "Main" },
+    { id: "B", name: "Inner", duration: 8, tracks: [
       { id: "b1", clips: [{ id: "m", cardId: "punch-pill", start: 0, end: 8, params: { text: "m" }, opacity: 0.5 }] },
       { id: "b2", clips: [{ id: "n", cardId: "caption-track", start: 0, end: 8, params: {} }] },
     ] },
@@ -50,28 +50,28 @@ function harness() {
 }
 const taskOf = (clipId, bake) => ({ id: `stream:k:${clipId}`, kind: "stream", range: { unit: "segment", from: 0, to: 0 }, input: { clipId, bake } });
 
-test("QM-FLAT-01 剪辑段里的卡:灌带剪辑段链的隔离工程,请求带 frameBase", async () => {
+test("QM-FLAT-01 A card inside a cut segment: push an isolated project carrying the cut-segment chain, and the request carries frameBase", async () => {
   const { baker, pushed, requests } = harness();
   const task = taskOf("S~m", { start: 1, end: 5, count: 120, sampling: { firstFrame: 30, phase: { numerator: "0", denominator: "1" } } });
   const signal = new AbortController().signal;
   await baker.bakeFrame({ task, project: PROJECT, localFrame: 0, signal, ahead: null });
   await baker.bakeFrame({ task, project: PROJECT, localFrame: 5, signal, ahead: null });
   baker.close();
-  assert.equal(pushed.length, 1, "同一段只灌一次");
+  assert.equal(pushed.length, 1, "The same segment is pushed only once");
   const iso = pushed[0];
-  assert.deepEqual(iso.tracks.filter((t) => !t.hidden).flatMap((t) => t.clips).map((c) => [c.id, c.start]), [["S", 1]], "顶层只有剪辑段,时间不平移");
+  assert.deepEqual(iso.tracks.filter((t) => !t.hidden).flatMap((t) => t.clips).map((c) => [c.id, c.start]), [["S", 1]], "The top level has only the cut segment, and time is not shifted");
   const inner = iso.cuts.find((c) => c.id === "B").tracks.filter((t) => !t.hidden).flatMap((t) => t.clips);
-  assert.deepEqual(inner.map((c) => c.id), ["m"], "被引用剪辑里只有目标卡");
-  assert.equal(inner[0].opacity, undefined, "目标卡自己的外观拿掉(由舞台上它的包裹层加)");
+  assert.deepEqual(inner.map((c) => c.id), ["m"], "The referenced cut contains only the target card");
+  assert.equal(inner[0].opacity, undefined, "The target card's own appearance is removed (added by its wrapper layer on the stage)");
   assert.deepEqual(requests.map((r) => [r.clipId, r.localFrame, r.frameBase]), [["S~m", 0, 30], ["S~m", 5, 30]]);
 });
 
-test("QM-FLAT-02 顶层的卡:隔离单卡工程,请求不带 frameBase", async () => {
+test("QM-FLAT-02 A top-level card: an isolated single-card project, and the request carries no frameBase", async () => {
   const { baker, pushed, requests } = harness();
   const task = taskOf("top", { start: 0, end: 4, count: 120, sampling: { firstFrame: 0, phase: { numerator: "0", denominator: "1" } } });
   await baker.bakeFrame({ task, project: PROJECT, localFrame: 3, signal: new AbortController().signal, ahead: null });
   baker.close();
   assert.deepEqual(pushed[0].tracks.filter((t) => !t.hidden).flatMap((t) => t.clips).map((c) => c.id), ["top"]);
   assert.equal(requests.length, 1);
-  assert.equal("frameBase" in requests[0], false, "顶层的卡请求里没有 frameBase");
+  assert.equal("frameBase" in requests[0], false, "The request for a top-level card has no frameBase");
 });

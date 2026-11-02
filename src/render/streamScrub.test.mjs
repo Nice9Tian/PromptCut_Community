@@ -150,7 +150,7 @@ const flush = async (n = 12) => { for (let i = 0; i < n; i++) await new Promise(
 /** 等到条件成立(每轮让出一个宏任务);等不到就照实断言失败 */
 async function until(fn, label, rounds = 400) {
   for (let i = 0; i < rounds; i++) { if (fn()) return; await new Promise((r) => setImmediate(r)); }
-  assert.fail(`等不到:${label}`);
+  assert.fail(`Timed out waiting for: ${label}`);
 }
 
 /* ---------------------------------------------------------------- 一条流 */
@@ -214,13 +214,13 @@ function playerFor(stream, { onShowingChange } = {}) {
   return { player, dom, track, last, seek: (f) => player.present(f / FPS) };
 }
 /** 等播放器把要的那一帧画出来 */
-const drawn = (h, f) => until(() => h.track()?.lastDrawn === f, `画出第 ${f} 帧(现在 ${JSON.stringify(h.track()?.lastDrawn)})`);
+const drawn = (h, f) => until(() => h.track()?.lastDrawn === f, `draw frame ${f} (currently ${JSON.stringify(h.track()?.lastDrawn)})`);
 
 beforeEach(() => { decoders.length = 0; frames.open = 0; frames.maxOpen = 0; now = 1_000_000; timers = []; decoderGate.hold = false; });
 
 /* ---------------------------------------------------------------- 取任意一帧 */
 
-test('暂停着把时间设到任意一帧:片段从第 100 帧开始(不是 15 的倍数),非关键帧、往回、跨分段,每次画出来的都是这一帧,从本段关键帧一帧不缺解过来', async () => {
+test('while paused, set the time to any frame: the clip starts at frame 100 (not a multiple of 15), non-keyframes, backward, across segments; every time the frame drawn is exactly this one, decoded from the segment\'s keyframe with no frame missing', async () => {
   const stream = streamOf(100, 189);   // 6 个分段
   const h = playerFor(stream);
   for (const f of [137, 152, 108, 185, 187, 160, 159, 100, 189, 114, 115]) {
@@ -228,18 +228,18 @@ test('暂停着把时间设到任意一帧:片段从第 100 帧开始(不是 15 
     await drawn(h, f);
     const seg = Math.floor((f - 100) / 15), sample = (f - 100) % 15;
     const shot = h.last();
-    assert.deepEqual(shot.mark, [seg, sample, 1], `第 ${f} 帧是第 ${seg} 段的第 ${sample} 个样本`);
-    assert.equal(frameOfTimestamp(shot.timestamp, FPS), f, `第 ${f} 帧:画上去的那一帧记在它自己的项目帧号上`);
-    assert.equal(shot.intact, true, `第 ${f} 帧:从关键帧一帧不缺解过来`);
+    assert.deepEqual(shot.mark, [seg, sample, 1], `frame ${f} is sample ${sample} of segment ${seg}`);
+    assert.equal(frameOfTimestamp(shot.timestamp, FPS), f, `frame ${f}: the drawn frame is recorded under its own project frame number`);
+    assert.equal(shot.intact, true, `frame ${f}: decoded from the keyframe with no frame missing`);
     assert.equal(h.track().stale, false);
-    assert.equal(h.track().picture, f, '满密度的分段:画面就是这一帧自己');
+    assert.equal(h.track().picture, f, 'full-density segment: the picture is this frame itself');
   }
-  assert.ok(frames.maxOpen <= MAX_FRAMES_PER_DECODER + 1, `同时开着的帧 ${frames.maxOpen} 不超过解码器上限(另加画布上那一张)`);
+  assert.ok(frames.maxOpen <= MAX_FRAMES_PER_DECODER + 1, `frames open at the same time (${frames.maxOpen}) do not exceed the decoder limit (plus the one on the canvas)`);
   h.player.stop();
-  assert.equal(frames.open, 0, '停下以后帧全部关掉');
+  assert.equal(frames.open, 0, 'all frames are closed after stopping');
 });
 
-test('随机跳到一帧:只取它所在的那个分段,从这一段的第一个样本喂起', async () => {
+test('random jump to a frame: fetch only the segment it is in, feeding from the first sample of that segment', async () => {
   const stream = streamOf(100, 189);
   const h = playerFor(stream);
   h.seek(149);   // 第 3 段的第 4 个样本
@@ -252,29 +252,29 @@ test('随机跳到一帧:只取它所在的那个分段,从这一段的第一个
 
 /* ---------------------------------------------------------------- 留着上一张 */
 
-test('这一帧还没解出来:留着上一张,最多留一个分段的时长;到时还没有新画面才清空,并叫宿主一次(暂停着没有下一拍)', async () => {
+test('this frame is not decoded yet: keep the previous one, for at most one segment duration; clear only if there is still no new picture by then, and call the host once (no next tick while paused)', async () => {
   const stream = streamOf(100, 189);
   let calls = 0;
   const h = playerFor(stream, { onShowingChange: () => { calls++; } });
   h.seek(105);
   await drawn(h, 105);
   await flush();
-  assert.equal(calls, 1, '第一张画面异步画出来:叫宿主一次');
+  assert.equal(calls, 1, 'first picture drawn asynchronously: call the host once');
   // 往回跳到很远、往前跳到很远都一样:那一段的字节迟迟不到
   stream.hold('4-s1.m4s');
   h.seek(170);
   await flush();
-  assert.equal(h.track().lastDrawn, 105, '留着上一张');
+  assert.equal(h.track().lastDrawn, 105, 'keeps the previous frame');
   assert.equal(h.track().stale, true);
   assert.deepEqual([...h.player.showingClips()], ['a']);
   await advance(HOLD_MS - 30);
-  assert.equal(h.track().lastDrawn, 105, `还没到 ${HOLD_MS} 毫秒:照旧留着`);
+  assert.equal(h.track().lastDrawn, 105, `${HOLD_MS} ms not reached yet: keep holding as before`);
   assert.equal(calls, 1);
   await advance(60);
   await flush();
-  assert.equal(h.track().lastDrawn, null, '到时了:清空,这一层落到占位符');
+  assert.equal(h.track().lastDrawn, null, 'time is up: clear, this layer falls back to the placeholder');
   assert.deepEqual([...h.player.showingClips()], []);
-  assert.equal(calls, 2, '画面从有到无:叫宿主一次');
+  assert.equal(calls, 2, 'picture goes from present to absent: call the host once');
   // 字节到了:要的那一帧自己画上,再叫宿主一次(占位符靠它撤)
   stream.release('4-s1.m4s');
   await drawn(h, 170);
@@ -284,7 +284,7 @@ test('这一帧还没解出来:留着上一张,最多留一个分段的时长;�
   h.player.stop();
 });
 
-test('往回跳也留着上一张(以前往回跳当场清空,靠下面垫着的快照)', async () => {
+test('jumping backward also keeps the previous picture (previously a backward jump cleared immediately, relying on the snapshot underneath)', async () => {
   const stream = streamOf(100, 189);
   const h = playerFor(stream);
   h.seek(160);
@@ -299,19 +299,19 @@ test('往回跳也留着上一张(以前往回跳当场清空,靠下面垫着的
   h.player.stop();
 });
 
-test('这一段不在就绪区间里:已经画着的留着、限时;本来没有画面的不画', async () => {
+test('this segment is not in the ready range: what is already drawn is kept, time-limited; what had no picture is not drawn', async () => {
   const stream = streamOf(100, 189);
   stream.plane = { ...stream.plane, ranges: [[0, 1]] };
   const h = playerFor(stream);
   h.seek(170);
   await flush();
   assert.equal(h.track().lastDrawn, null);
-  assert.deepEqual(stream.asked, [], '没就绪的分段不取');
+  assert.deepEqual(stream.asked, [], 'segments that are not ready are not fetched');
   h.seek(110);
   await drawn(h, 110);
   h.seek(170);
   await flush();
-  assert.equal(h.track().lastDrawn, 110, '留着上一张');
+  assert.equal(h.track().lastDrawn, 110, 'keeps the previous frame');
   await advance(HOLD_MS + 40);
   await flush();
   assert.equal(h.track().lastDrawn, null);
@@ -320,7 +320,7 @@ test('这一段不在就绪区间里:已经画着的留着、限时;本来没有
 
 /* ---------------------------------------------------------------- 连着跳 */
 
-test('拖得快:不打断在途的那一次寻帧,它解到了先画上,再解此刻要的那一帧;中间经过的帧所在的分段不取', async () => {
+test('fast drag: do not interrupt the in-flight seek, draw it first once decoded, then decode the frame wanted now; segments of frames passed over in between are not fetched', async () => {
   const stream = streamOf(100, 189);
   const h = playerFor(stream);
   h.seek(104);
@@ -329,46 +329,46 @@ test('拖得快:不打断在途的那一次寻帧,它解到了先画上,再解�
   stream.asked.length = 0;
   decoderGate.hold = true;
   h.seek(140);            // 第 2 段:在途
-  await until(() => decoders[0].fed.some((c) => c.segment === 2), '在途的那一次已经喂进去了');
+  await until(() => decoders[0].fed.some((c) => c.segment === 2), 'the in-flight one has already been fed');
   h.seek(155);            // 第 3 段:经过,不解
   h.seek(125);            // 第 1 段:经过,不解
   h.seek(186);            // 第 5 段:此刻要的
   await flush(4);
-  assert.equal(decoders[0].resets, before + 1, '连着四步只重置了一次解码器');
+  assert.equal(decoders[0].resets, before + 1, 'four consecutive steps reset the decoder only once');
   assert.ok(h.track().deferred >= 3);
-  assert.equal(h.track().lastDrawn, 104, '在途的还没解出来:留着上一张');
+  assert.equal(h.track().lastDrawn, 104, 'the in-flight one is not decoded yet: keep the previous picture');
   decoderGate.hold = false;
-  await until(() => h.track().lastDrawn === 140 || h.track().lastDrawn === 186, '在途的那一帧先画上');
+  await until(() => h.track().lastDrawn === 140 || h.track().lastDrawn === 186, 'the in-flight frame is drawn first');
   await drawn(h, 186);
   assert.deepEqual(h.last().mark, [5, 11, 1]);
   assert.equal(h.last().intact, true);
-  assert.ok(!stream.asked.includes('1-s1.m4s') && !stream.asked.includes('3-s1.m4s'), `中间经过的分段没有取:${stream.asked}`);
+  assert.ok(!stream.asked.includes('1-s1.m4s') && !stream.asked.includes('3-s1.m4s'), `segments passed over in between were not fetched: ${stream.asked}`);
   assert.ok(stream.asked.includes('2-s1.m4s') && stream.asked.includes('5-s1.m4s'));
-  assert.ok(!decoders[0].fed.some((c) => c.segment === 3 || c.segment === 1), '中间经过的帧一块都没喂给解码器');
+  assert.ok(!decoders[0].fed.some((c) => c.segment === 3 || c.segment === 1), 'not a single chunk of the frames passed over in between was fed to the decoder');
   h.player.stop();
 });
 
-test('在途的寻帧超过耐心时限还没解到:新的目标照样重置解码器', async () => {
+test('in-flight seek not decoded within the patience limit: a new target still resets the decoder', async () => {
   const stream = streamOf(100, 189);
   const h = playerFor(stream);
   h.seek(104);
   await drawn(h, 104);
   decoderGate.hold = true;   // 解码器收了块、迟迟不出帧
   h.seek(140);
-  await until(() => decoders[0].fed.some((c) => c.segment === 2), '在途的那一次已经喂进去了');
+  await until(() => decoders[0].fed.some((c) => c.segment === 2), 'the in-flight one has already been fed');
   const resets = decoders[0].resets;
   h.seek(186);
   await flush(4);
-  assert.equal(decoders[0].resets, resets, '时限内不打断');
+  assert.equal(decoders[0].resets, resets, 'no interruption within the limit');
   now += SEEK_PATIENCE_MS + 1;
   h.seek(186);
-  assert.equal(decoders[0].resets, resets + 1, '过了时限:照样重置,换成此刻要的那一帧');
+  assert.equal(decoders[0].resets, resets + 1, 'past the limit: reset anyway, switching to the frame wanted now');
   decoderGate.hold = false;
   await drawn(h, 186);
   h.player.stop();
 });
 
-test('在途的那一次连字节都还没到(一块都没喂给解码器):不让着它,直接换成此刻要的那一帧', async () => {
+test('the in-flight one has not even received its bytes yet (no chunk fed to the decoder): do not yield to it, switch directly to the frame wanted now', async () => {
   const stream = streamOf(100, 189);
   const h = playerFor(stream);
   h.seek(104);
@@ -383,25 +383,25 @@ test('在途的那一次连字节都还没到(一块都没喂给解码器):不�
   h.player.stop();
 });
 
-test('还没有画面时,在途寻帧解出来的旧帧过了时限不当第一张(宿主等第一张出来才藏活子树)', async () => {
+test('when there is no picture yet, an old frame decoded by an in-flight seek past the limit does not count as the first one (the host waits for the first one before hiding the live subtree)', async () => {
   const stream = streamOf(100, 189);
   const h = playerFor(stream);
   decoderGate.hold = true;
   h.seek(125);
-  await until(() => decoders[0]?.fed.length > 0, '在途的那一次已经喂进去了');
+  await until(() => decoders[0]?.fed.length > 0, 'the in-flight one has already been fed');
   now += FIRST_PICTURE_LAG_MS + 5;
   h.seek(186);
   await flush(2);
-  assert.ok(h.track().deferred >= 1, '在途的那一次没有被打断');
+  assert.ok(h.track().deferred >= 1, 'the in-flight one was not interrupted');
   decoderGate.hold = false;
   await drawn(h, 186);
-  assert.ok(!h.dom.canvas.draws.some((d) => frameOfTimestamp(d.timestamp, FPS) === 125), '第 125 帧太旧,没有画');
+  assert.ok(!h.dom.canvas.draws.some((d) => frameOfTimestamp(d.timestamp, FPS) === 125), 'frame 125 is too old, not drawn');
   h.player.stop();
 });
 
 /* ---------------------------------------------------------------- 稀疏分段 */
 
-test('稀疏分段每段只有一张重复的画面:贴的是不晚于这一帧的最近一张(这一段的第一帧),只解一个样本就画上;只往回找', async () => {
+test('a sparse segment has only one repeated picture per segment: the one pasted is the nearest one not later than this frame (the first frame of this segment), drawn after decoding just one sample; only looks backward', async () => {
   const stream = streamOf(100, 189, { stride: SEGMENT_FRAMES });
   const h = playerFor(stream);
   for (const f of [137, 115, 189, 100, 129]) {
@@ -409,13 +409,13 @@ test('稀疏分段每段只有一张重复的画面:贴的是不晚于这一帧�
     h.dom.canvas.draws.length = 0;
     h.seek(f);
     const seg = Math.floor((f - 100) / 15), first = 100 + seg * 15;
-    await until(() => h.track().picture === first, `第 ${f} 帧画出第 ${first} 帧那一张`);
+    await until(() => h.track().picture === first, `frame ${f} draws the picture of frame ${first}`);
     const shot = h.dom.canvas.draws[0];
-    assert.equal(frameOfTimestamp(shot.timestamp, FPS), first, `第 ${f} 帧:先画上的是第 ${first} 帧那个样本(不用解到第 ${f} 帧)`);
+    assert.equal(frameOfTimestamp(shot.timestamp, FPS), first, `frame ${f}: what is drawn first is the sample of frame ${first} (no need to decode up to frame ${f})`);
     assert.deepEqual(shot.mark, [seg, 0, SEGMENT_FRAMES]);
-    assert.ok(h.track().picture <= f, '不拿后面的');
+    assert.ok(h.track().picture <= f, 'does not take a later one');
     assert.equal(h.track().level, 'sparse');
-    assert.equal(h.track().stale, false, '这一张就是这一帧该有的画面,不算旧');
+    assert.equal(h.track().stale, false, 'this picture is exactly what this frame should have, not stale');
     await drawn(h, f);   // 后面接着解到这一帧自己(同一张画面),再做下一处
   }
   assert.ok(h.track().standIns >= 3);
@@ -428,37 +428,37 @@ test('稀疏分段每段只有一张重复的画面:贴的是不晚于这一帧�
   h.player.stop();
 });
 
-test('稀疏分段每 3 帧一张:第 F 帧贴第 floor((F−起点)/3)×3 张;在同一张里挪动不算缺画面', async () => {
+test('sparse segment with one picture every 3 frames: frame F uses picture floor((F-start)/3)×3; moving within the same picture does not count as a missing picture', async () => {
   const stream = streamOf(100, 189, { stride: 3 });
   const h = playerFor(stream);
   h.seek(122);   // 第 1 段(115 起)的第 7 个样本 → 第 6 张(第 121 帧)
-  await until(() => h.track().picture === 121, '画出第 121 帧那一张');
+  await until(() => h.track().picture === 121, 'draw the picture of frame 121');
   assert.deepEqual(h.last().mark, [1, 6, 3]);
   await drawn(h, 122);
   h.seek(123);
   await flush();
   assert.equal(h.track().stale, false);
-  assert.equal(h.track().picture, 121, '第 123 帧和第 121、122 帧是同一张');
+  assert.equal(h.track().picture, 121, 'frame 123 is the same picture as frames 121 and 122');
   h.seek(124);
-  await until(() => h.track().picture === 124, '第 124 帧是下一张');
+  await until(() => h.track().picture === 124, 'frame 124 is the next picture');
   h.player.stop();
 });
 
-test('停在稀疏段上,这一段换成了满密度的文件:过了清单的刷新间隔自己换上这一帧的精确画面,不等用户操作', async () => {
+test('parked on a sparse segment, this segment is replaced by a full-density file: after the manifest refresh interval it swaps in the exact picture of this frame by itself, without waiting for user action', async () => {
   const stream = streamOf(100, 189, { stride: SEGMENT_FRAMES });
   const h = playerFor(stream);
   h.seek(110);                 // 先在别处停一下:刷新的定时器从这里就排上了
   await drawn(h, 110);
   await advance(MANIFEST_REFRESH_MS - 300);
   h.seek(137);
-  await until(() => h.track().picture === 130, '稀疏:第 130 帧那一张');
+  await until(() => h.track().picture === 130, 'sparse: the picture of frame 130');
   await drawn(h, 137);
-  assert.deepEqual(h.last().mark, [2, 0, SEGMENT_FRAMES], '稀疏的那份文件:这一段只有第 0 张');
+  assert.deepEqual(h.last().mark, [2, 0, SEGMENT_FRAMES], 'the sparse file: this segment has only frame 0');
   stream.densify(2);
   // 刷新的定时器是早先(拖到别的帧时)排的、到点时播放头刚停下不久:它接着排,不能就此断了
   await advance(MANIFEST_REFRESH_MS + 100);
   await advance(MANIFEST_REFRESH_MS + 100);
-  await until(() => h.last().mark[1] === 7 && h.last().mark[2] === 1, '满密度的那份文件:第 2 段的第 7 个样本');
+  await until(() => h.last().mark[1] === 7 && h.last().mark[2] === 1, 'the full-density file: sample 7 of segment 2');
   assert.equal(h.last().mark[0] === 2 && h.last().intact, true);
   assert.equal(h.track().level, 'dense');
   assert.equal(h.track().picture, 137);
@@ -467,7 +467,7 @@ test('停在稀疏段上,这一段换成了满密度的文件:过了清单的刷
 
 /* ---------------------------------------------------------------- 画布、流键 */
 
-test('画布换了一块(包裹层按片段重挂载):把刚才那张原样画回去,不等解码,画面有无不变', async () => {
+test('canvas swapped (wrapper remounted per clip): redraw the previous frame as is, without waiting for decode, so what is visible does not change', async () => {
   const stream = streamOf(100, 189);
   let calls = 0;
   const h = playerFor(stream, { onShowingChange: () => { calls++; } });
@@ -483,17 +483,17 @@ test('画布换了一块(包裹层按片段重挂载):把刚才那张原样画�
   h.dom.canvas = fresh;
   decoderGate.hold = true;   // 解码器一帧都不出:画回去靠的是手里那一份
   h.seek(150);
-  assert.ok(fresh.draws.length >= 1, '同一个任务里就画上了');
+  assert.ok(fresh.draws.length >= 1, 'drawn within the same task');
   assert.ok(fresh.draws.every((d) => frameOfTimestamp(d.timestamp, FPS) === 150));
   assert.equal(h.track().lastDrawn, 150);
   await flush();
-  assert.equal(calls, callsBefore, '一直有画面:不叫宿主');
+  assert.equal(calls, callsBefore, 'always has a picture: does not call the host');
   decoderGate.hold = false;
   h.player.stop();
   assert.equal(frames.open, 0);
 });
 
-test('同一块画布上换了流键(输入变了):旧画面当场清空,不留', async () => {
+test('stream key changed on the same canvas (input changed): the old picture is cleared immediately, not kept', async () => {
   const stream = streamOf(100, 189);
   const h = playerFor(stream);
   h.seek(150);
@@ -501,14 +501,14 @@ test('同一块画布上换了流键(输入变了):旧画面当场清空,不留'
   h.player.setPlanes([{ ...stream.plane, originFrame: 130 }], FPS);
   stream.hold('1-s1.m4s');
   h.seek(150);
-  assert.equal(h.track().lastDrawn, null, '帧号对不上的旧画面不留');
+  assert.equal(h.track().lastDrawn, null, 'an old picture with a mismatched frame number is not kept');
   stream.release('1-s1.m4s');
   h.player.stop();
 });
 
 /* ---------------------------------------------------------------- 起播 */
 
-test('暂停着把这一帧和后面几帧先解好:按下播放,头几拍当场就有,不用再等解码', async () => {
+test('while paused, decode this frame and the next few first: on play, the first few ticks have a picture immediately, with no wait for decode', async () => {
   const stream = streamOf(100, 189);
   const h = playerFor(stream);
   h.seek(143);
@@ -517,7 +517,7 @@ test('暂停着把这一帧和后面几帧先解好:按下播放,头几拍当场
   const draws = h.dom.canvas.draws.length;
   decoderGate.hold = true;   // 起播以后解码器一帧都不出
   h.seek(144);
-  assert.equal(h.track().lastDrawn, 144, '下一帧同步画上');
+  assert.equal(h.track().lastDrawn, 144, 'next frame is drawn synchronously');
   assert.equal(h.dom.canvas.draws.length, draws + 1);
   h.seek(145);
   assert.equal(h.track().lastDrawn, 145);
@@ -527,11 +527,11 @@ test('暂停着把这一帧和后面几帧先解好:按下播放,头几拍当场
 
 /* ---------------------------------------------------------------- 全部流平面共用一个 WebGL 上下文 */
 
-test('流平面共用一个 WebGL 上下文:建在离屏画布上,只建一次;平面换了一块画布也不另建', async () => {
+test('the stream plane shares one WebGL context: created on an offscreen canvas, only once; no new one when the plane switches canvas', async () => {
   const before = sharedGl.contexts;
   const stream = streamOf(100, 189);
   const h = playerFor(stream);
-  assert.equal(sharedGl.contexts, before, '还没画:不建上下文(back 角色的舞台从不画,也就从不建)');
+  assert.equal(sharedGl.contexts, before, 'not drawn yet: no context created (the stage of the back role never draws, so never creates one)');
   h.seek(150);
   await drawn(h, 150);
   assert.equal(sharedGl.contexts, before + 1);
@@ -543,14 +543,14 @@ test('流平面共用一个 WebGL 上下文:建在离屏画布上,只建一次;�
   h.seek(151);
   await drawn(h, 151);
   assert.ok(fresh.draws.length >= 1);
-  assert.equal(sharedGl.contexts, before + 1, '换了画布不另建上下文');
+  assert.equal(sharedGl.contexts, before + 1, 'switching canvas does not create a new context');
   assert.deepEqual({ state: h.player.diag().gl.state, creates: h.player.diag().gl.creates }, { state: 'ready', creates: 1 });
   h.player.stop();
-  assert.equal(sharedGl.canvases.at(-1).width, 2, '退到 back:离屏画布缩回最小,上下文留着');
+  assert.equal(sharedGl.canvases.at(-1).width, 2, 'moved to back: the offscreen canvas shrinks to the minimum, the context is kept');
   assert.equal(frames.open, 0);
 });
 
-test('共用的上下文丢了:这一拍画不上、留着上一张;浏览器还回来就把这一帧画上;迟迟不还到时另建一块', async () => {
+test('shared context lost: this tick cannot draw and keeps the previous frame; when the browser restores it, this frame is drawn; if it is not restored in time, a new one is created', async () => {
   const stream = streamOf(100, 189);
   let lost = 0;
   const dom = { canvas: fakeCanvas() };
@@ -562,22 +562,22 @@ test('共用的上下文丢了:这一拍画不上、留着上一张;浏览器还
   const track = () => player.diag().tracks[0];
   const seek = (f) => player.present(f / FPS);
   seek(150);
-  await until(() => track()?.lastDrawn === 150, '画出第 150 帧');
+  await until(() => track()?.lastDrawn === 150, 'frame 150 is drawn');
   const gl = sharedGl.canvases.at(-1);
   const contexts = sharedGl.contexts;
 
   gl.lose();
-  assert.equal(lost, 1, '告诉宿主一次(在线页面据此报「运行中出事了」)');
+  assert.equal(lost, 1, 'tell the host once (the online page reports "something went wrong while running" based on this)');
   const draws = dom.canvas.draws.length;
   seek(151);
   await flush();
-  assert.equal(track().lastDrawn, 150, '第 151 帧解出来了也画不上:留着上一张');
+  assert.equal(track().lastDrawn, 150, 'frame 151 is decoded but cannot be drawn: keeps the previous frame');
   assert.equal(dom.canvas.draws.length, draws);
   assert.equal(player.diag().gl.state, 'lost');
 
   gl.restore();
-  await until(() => track()?.lastDrawn === 151, '上下文还回来以后自己把这一帧画上(暂停着没有下一拍)');
-  assert.equal(sharedGl.contexts, contexts, '还回来的是原来那个,不另建');
+  await until(() => track()?.lastDrawn === 151, 'after the context is restored, draws this frame by itself (no next tick while paused)');
+  assert.equal(sharedGl.contexts, contexts, 'the restored one is the original, no new one is created');
   assert.equal(player.diag().gl.restores, 1);
 
   // 再丢一次,这回浏览器不还(名额被别的画布挤掉):到 GL_RETRY_MS 另建一块,这一帧自己画上
@@ -586,14 +586,14 @@ test('共用的上下文丢了:这一拍画不上、留着上一张;浏览器还
   await flush();
   assert.equal(track().lastDrawn, 151);
   await advance(GL_RETRY_MS + 60);
-  await until(() => track()?.lastDrawn === 152, '另建上下文以后把这一帧画上');
+  await until(() => track()?.lastDrawn === 152, 'after a new context is created, this frame is drawn');
   assert.equal(sharedGl.contexts, contexts + 1);
   assert.equal(player.diag().gl.creates, 2);
   player.stop();
   assert.equal(frames.open, 0);
 });
 
-test('上下文丢着的时候清单的矩形上界变了:画布的尺寸不动、上一张还在;画得上了才改尺寸', async () => {
+test('manifest rectangle upper bound changed while the context is lost: canvas size stays, the previous frame stays; the size changes only once drawing works', async () => {
   const stream = streamOf(100, 189);
   const h = playerFor(stream);
   h.seek(150);
@@ -608,23 +608,23 @@ test('上下文丢着的时候清单的矩形上界变了:画布的尺寸不动�
   const clears = h.dom.canvas.clears;
   h.seek(151);
   await flush();
-  assert.equal(h.dom.canvas.width, 64, '画不了的时候不改画布的尺寸');
-  assert.equal(h.dom.canvas.clears, clears, '也不清空');
-  assert.equal(h.track().lastDrawn, 150, '账上记的和画布上的一致:还是上一张');
+  assert.equal(h.dom.canvas.width, 64, 'canvas size is not changed when drawing is impossible');
+  assert.equal(h.dom.canvas.clears, clears, 'and not cleared either');
+  assert.equal(h.track().lastDrawn, 150, 'the recorded state matches the canvas: still the previous frame');
   gl.restore();
   await drawn(h, 151);
-  assert.equal(h.dom.canvas.width, 128, '画上了,尺寸跟着新清单');
+  assert.equal(h.dom.canvas.width, 128, 'drawn, size follows the new manifest');
   h.player.stop();
   assert.equal(frames.open, 0);
 });
 
-test('共用的上下文建不出来:暂停着也会自己再试,间隔每次加倍;建出来以后把这一帧画上', async () => {
+test('shared context cannot be created: retries by itself even while paused, with the interval doubling each time; once created, this frame is drawn', async () => {
   const stream = streamOf(100, 189);
   const attempts = sharedGl.attempts;
   sharedGl.fail = 2;
   const h = playerFor(stream);
   h.seek(150);
-  await until(() => sharedGl.attempts === attempts + 1, '头一次建上下文(没建出来)');
+  await until(() => sharedGl.attempts === attempts + 1, 'first context creation attempt (failed)');
   await flush();
   assert.equal(h.track().lastDrawn, null);
   assert.equal(h.player.diag().gl.state, 'none');
@@ -636,9 +636,9 @@ test('共用的上下文建不出来:暂停着也会自己再试,间隔每次加
   // 第二次失败以后间隔加倍:再过 GL_RETRY_MS 还不试
   await advance(GL_RETRY_MS + 60);
   await flush();
-  assert.equal(sharedGl.attempts, attempts + 2, '间隔加倍了,还没到');
+  assert.equal(sharedGl.attempts, attempts + 2, 'interval doubled, not reached yet');
   await advance(GL_RETRY_MS + 60);
-  await until(() => h.track()?.lastDrawn === 150, '第三次建出来,这一帧自己画上');
+  await until(() => h.track()?.lastDrawn === 150, 'created on the third attempt, this frame draws by itself');
   assert.equal(sharedGl.attempts, attempts + 3);
   assert.deepEqual({ creates: h.player.diag().gl.creates, failures: h.player.diag().gl.failures }, { creates: 1, failures: 2 });
   // 停了以后不再排:没有流要画就不空转
@@ -646,6 +646,6 @@ test('共用的上下文建不出来:暂停着也会自己再试,间隔每次加
   h.player.stop();
   const pending = timers.length;
   await advance(GL_RETRY_MAX_MS * 2);
-  assert.ok(timers.length <= pending, '停了以后没有新排的定时器');
+  assert.ok(timers.length <= pending, 'no newly scheduled timers after stopping');
   assert.equal(frames.open, 0);
 });

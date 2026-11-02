@@ -71,7 +71,7 @@ const servers = [startVite(ONLINE_PORT, 'online'), startVite(DESKTOP_PORT, null)
 let browser;
 try {
   for (const [s, port] of [[servers[0], ONLINE_PORT], [servers[1], DESKTOP_PORT]]) {
-    if (!(await waitHttp(port))) { report('dev-server', false, { port, log: s.getLog().slice(-600) }); throw new Error(`dev server ${port} 没起来`); }
+    if (!(await waitHttp(port))) { report('dev-server', false, { port, log: s.getLog().slice(-600) }); throw new Error(`dev server ${port} did not start`); }
   }
   browser = await puppeteer.launch({ headless: true, args: [...PROBE_CHROME_ARGS, '--window-size=1500,900'], defaultViewport: { width: 1500, height: 900 } });
 
@@ -103,11 +103,11 @@ try {
       menus: document.querySelectorAll('.pc-titlebar-menus').length,
       controls: document.querySelectorAll('.pc-titlebar-window-controls').length,
       controlBtns: document.querySelectorAll('.pc-window-control').length,
-      menuButtons: [...document.querySelectorAll('button')].filter((b) => b.classList.contains('pc-titlebar-menu-button') || b.closest('nav[aria-label="应用菜单"]')).map((b) => (b.textContent || '').trim()),
+      menuButtons: [...document.querySelectorAll('button')].filter((b) => b.classList.contains('pc-titlebar-menu-button') || b.closest('nav[aria-label="Application menu"]')).map((b) => (b.textContent || '').trim()),
       barTop: document.querySelector('.pc-bar--main')?.getBoundingClientRect().top,
     }));
-    report('O1 在线:标题栏的菜单行、窗口按钮都不在', probe.online && probe.titlebar === 0 && probe.menus === 0 && probe.controls === 0 && probe.controlBtns === 0 && probe.menuButtons.length === 0, probe);
-    report('O2 在线:顶栏贴页面最上沿,没有空占位', probe.barTop === 0, { barTop: probe.barTop });
+    report('O1 online: the title bar\'s menu row and the window buttons are all absent', probe.online && probe.titlebar === 0 && probe.menus === 0 && probe.controls === 0 && probe.controlBtns === 0 && probe.menuButtons.length === 0, probe);
+    report('O2 online: the top bar sits flush against the top edge of the page, with no empty placeholder', probe.barTop === 0, { barTop: probe.barTop });
     await page.screenshot({ path: path.join(OUT, 'online-editor.png') });
 
     // O4 另五项入口在顶栏上
@@ -116,21 +116,21 @@ try {
       redo: Boolean(document.querySelector('[data-pc="redo-btn"] button')),
       labels: [...document.querySelectorAll('.pc-bar--main .pc-btn')].map((b) => (b.textContent || '').trim()),
     }));
-    report('O4 在线:撤销、重做、首页、导出视频的入口在顶栏上', entries.undo && entries.redo && entries.labels.includes('首页') && entries.labels.includes('导出视频'), entries);
+    report('O4 online: the entries for Undo, Redo, Home and Export video are on the top bar', entries.undo && entries.redo && entries.labels.includes('home page') && entries.labels.includes('Export video'), entries);
 
     // O3 「⋯」菜单
-    await page.click('button[title="更多设置"]');
+    await page.click('button[title="More settings"]');
     await page.waitForSelector('.pc-more-menu', { timeout: 5000 });
     const items = await textOf(page, '.pc-more-menu .pc-btn');
-    report('O3a 在线:「⋯」菜单里有 皮肤…、快捷键、关于 PromptCut', ['皮肤…', '快捷键', '关于 PromptCut'].every((t) => items.includes(t)), { items });
+    report('O3a online: the "⋯" menu contains Skin…, Keyboard shortcuts, About PromptCut', ['Skin…', 'Keyboard shortcuts', 'About PromptCut'].every((t) => items.includes(t)), { items });
     await page.screenshot({ path: path.join(OUT, 'online-more-menu.png') });
     await page.click('[data-pc="more-shortcuts"]');
     await sleep(300);
-    await page.click('button[title="更多设置"]');
+    await page.click('button[title="More settings"]');
     await page.waitForSelector('[data-pc="more-about"]', { timeout: 5000 });
     await page.click('[data-pc="more-about"]');
     await sleep(300);
-    report('O3b 在线:点「快捷键」「关于 PromptCut」各弹出对应说明', dialogs.length === 2 && dialogs[0].startsWith('空格 播放/暂停') && dialogs[1].startsWith('PromptCut'), { dialogs });
+    report('O3b online: clicking "Keyboard shortcuts" and "About PromptCut" each pops up the matching description', dialogs.length === 2 && dialogs[0].startsWith('Space Play/pause') && dialogs[1].startsWith('PromptCut'), { dialogs });
     await page.close();
   }
 
@@ -143,10 +143,10 @@ try {
       controls: [...document.querySelectorAll('.pc-window-control')].map((b) => b.getAttribute('aria-label')),
       barTop: document.querySelector('.pc-bar--main')?.getBoundingClientRect().top,
     }));
-    report('D1 桌面:标题栏、菜单行(文件/编辑/视图/帮助)和三个窗口按钮都在', probe.titlebar === 1 && JSON.stringify(probe.menuButtons) === JSON.stringify(['文件', '编辑', '视图', '帮助']) && JSON.stringify(probe.controls) === JSON.stringify(['最小化', '最大化', '关闭']), probe);
+    report('D1 desktop: the title bar, the menu row (File/Edit/View/Help) and the three window buttons are all present', probe.titlebar === 1 && JSON.stringify(probe.menuButtons) === JSON.stringify(['file', 'Edit', 'View', 'Help']) && JSON.stringify(probe.controls) === JSON.stringify(['Minimize', 'Maximize', 'Close']), probe);
     await page.screenshot({ path: path.join(OUT, 'desktop-editor.png') });
 
-    await clickByText(page, '.pc-titlebar-menu-button', '文件');
+    await clickByText(page, '.pc-titlebar-menu-button', 'file');
     await page.waitForSelector('.pc-titlebar-menu', { timeout: 5000 });
     const fileItems = await textOf(page, '.pc-titlebar-menu .pc-titlebar-menu-item');
     await page.screenshot({ path: path.join(OUT, 'desktop-file-menu.png') });
@@ -155,16 +155,16 @@ try {
     await helpBtn.hover();
     await sleep(300);
     const helpItems = await textOf(page, '.pc-titlebar-menu .pc-titlebar-menu-item');
-    report('D2 桌面:「文件」菜单里有 导出视频、返回首页;「帮助」菜单里有 快捷键、关于 PromptCut',
-      fileItems.some((t) => t.startsWith('导出视频')) && fileItems.some((t) => t.startsWith('返回首页')) && helpItems.some((t) => t.startsWith('快捷键')) && helpItems.some((t) => t.startsWith('关于 PromptCut')), { fileItems, helpItems });
+    report('D2 desktop: the "File" menu contains Export video, Back to home; the "Help" menu contains Keyboard shortcuts, About PromptCut',
+      fileItems.some((t) => t.startsWith('Export video')) && fileItems.some((t) => t.startsWith('Back to home')) && helpItems.some((t) => t.startsWith('Keyboard shortcuts')) && helpItems.some((t) => t.startsWith('About PromptCut')), { fileItems, helpItems });
 
     await page.keyboard.press('Escape');
     await sleep(300);
     const stillOpen = await page.$$eval('.pc-titlebar-menu', (els) => els.length);
-    await page.click('button[title="更多设置"]');
+    await page.click('button[title="More settings"]');
     try { await page.waitForSelector('.pc-more-menu', { timeout: 5000 }); } catch (e) { await page.screenshot({ path: path.join(OUT, 'debug-d3.png') }); console.log(JSON.stringify({ debug: 'd3', stillOpen })); throw e; }
     const items = await textOf(page, '.pc-more-menu .pc-btn');
-    report('D3 桌面:「⋯」菜单里没有 快捷键、关于 PromptCut(不重复)', !items.includes('快捷键') && !items.includes('关于 PromptCut'), { items });
+    report('D3 desktop: the "⋯" menu does not contain Keyboard shortcuts or About PromptCut (no duplicates)', !items.includes('Keyboard shortcuts') && !items.includes('About PromptCut'), { items });
     await page.close();
   }
 } catch (e) {

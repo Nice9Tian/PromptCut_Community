@@ -47,7 +47,7 @@ test("M7-BT-01 the share the splitter gives the browser, input.bake → an isola
   const visible = page.tracks.filter((tr) => !tr.hidden);
   assert.deepEqual(visible.map((tr) => tr.clips.map((c) => c.id)), [["clip-a"]]);
   assert.equal(visible[0].clips[0].start, -1 / 60);
-  assert.notEqual(page, PROJECT, "换新对象,不原地改");
+  assert.notEqual(page, PROJECT, "returns a new object, does not modify in place");
   assert.equal(PROJECT.tracks[0].clips[0].start, 1.5);
 });
 

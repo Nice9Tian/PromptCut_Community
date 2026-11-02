@@ -36,7 +36,7 @@ mock.module('node:child_process', { exports: { ...realChildProcess, spawn: (exe,
   child.stdin.on('finish', () => {
     spawned.stdin = stdin;
     // 回一条最小的 result,好让 runner 正常收尾
-    child.stdout.write(JSON.stringify({ event: 'result', result: { conversation_id: 'c1', status: 'SUCCESS', response: '收到' } }) + '\n');
+    child.stdout.write(JSON.stringify({ event: 'result', result: { conversation_id: 'c1', status: 'SUCCESS', response: 'Got it' } }) + '\n');
     queueMicrotask(() => child.emit('close', 0));
   });
   spawned = { exe, args, stdin: '' };
@@ -57,38 +57,38 @@ async function run(opts) {
   return { ...spawned, events };
 }
 
-test('提示词进 stdin,不进命令行', async () => {
+test('The prompt goes into stdin, not the command line', async () => {
   const big = 'x'.repeat(49000);
-  const { args, stdin } = await run({ systemPrompt: big, prompt: '做点什么' });
+  const { args, stdin } = await run({ systemPrompt: big, prompt: 'Do something' });
 
-  assert.ok(!args.some((a) => a.includes(big)), '提示词不该出现在任何一个命令行参数里');
-  assert.ok(!args.includes('-p'), '不再用 -p 传提示词(--input-format stream-json 本身就是 print 模式)');
+  assert.ok(!args.some((a) => a.includes(big)), 'The prompt should not appear in any command-line argument');
+  assert.ok(!args.includes('-p'), 'No longer pass the prompt with -p (--input-format stream-json is itself print mode)');
   assert.ok(args.includes('--input-format') && args[args.indexOf('--input-format') + 1] === 'stream-json');
 
-  assert.ok(stdin.includes(big), '提示词该整个写进 stdin');
-  assert.ok(stdin.includes('做点什么'));
+  assert.ok(stdin.includes(big), 'The whole prompt should be written into stdin');
+  assert.ok(stdin.includes('Do something'));
 });
 
-test('命令行长度和提示词无关:提示词再大也撑不爆 32767', async () => {
+test('Command-line length is independent of the prompt: however large the prompt is, it cannot blow past 32767', async () => {
   const len = (args) => args.join(' ').length;
   const small = await run({ systemPrompt: 's'.repeat(100) });
   const huge = await run({ systemPrompt: 's'.repeat(200000) });
-  assert.equal(len(small.args), len(huge.args), '提示词大小不该影响命令行长度');
-  assert.ok(len(huge.args) < WINDOWS_CMDLINE_LIMIT / 10, `命令行只剩标志,应该远低于上限,实际 ${len(huge.args)}`);
+  assert.equal(len(small.args), len(huge.args), 'Prompt size should not affect command-line length');
+  assert.ok(len(huge.args) < WINDOWS_CMDLINE_LIMIT / 10, `The command line holds only flags, so it should be far below the limit, actual ${len(huge.args)}`);
 });
 
-test('stdin 是 agy 认的那种 NDJSON:少 event 或少 message 它都会拒', async () => {
-  const { stdin } = await run({ systemPrompt: '系统', prompt: '用户' });
+test('stdin is the kind of NDJSON that agy accepts: it rejects input missing event or message', async () => {
+  const { stdin } = await run({ systemPrompt: 'System', prompt: 'User' });
   const lines = stdin.split('\n').filter(Boolean);
-  assert.equal(lines.length, 1, '一轮就一条消息');
+  assert.equal(lines.length, 1, 'One round, one message');
   const msg = JSON.parse(lines[0]);
   // 这两个字段的名字是对着真 CLI 试出来的,写错任何一个 agy 都会当场报错
   assert.equal(msg.event, 'user');
   assert.equal(msg.message.role, 'user');
-  assert.match(msg.message.content, /系统[\s\S]*用户/);
+  assert.match(msg.message.content, /System[\s\S]*User/);
 });
 
-test('模型 / 推理档 / 会话 id 还是走命令行,没被一起挪走', async () => {
+test('Model / reasoning tier / session id still go on the command line and were not moved along with it', async () => {
   const { args } = await run({ model: 'gemini-3.8-flash', effort: 'low', sessionId: 'abc' });
   assert.equal(args[args.indexOf('--model') + 1], 'gemini-3.8-flash');
   assert.equal(args[args.indexOf('--effort') + 1], 'low');
@@ -100,20 +100,20 @@ test('模型 / 推理档 / 会话 id 还是走命令行,没被一起挪走', asy
  * 面板已经拆成「基名 + 档位」了,但后台任务、分工模式那几条路不经过面板,
  * 会话历史里也可能存着早先带后缀的名字 —— 这里是最后一道。
  */
-test('带档位后缀的模型名:剥成基名,后缀当档位,保证配得上', async () => {
+test('A model name with a tier suffix: strip it down to the base name and use the suffix as the tier, so the pair is guaranteed to be valid', async () => {
   const { args } = await run({ model: 'gemini-3.8-flash-low', effort: 'high' });
   assert.equal(args[args.indexOf('--model') + 1], 'gemini-3.8-flash');
-  assert.equal(args[args.indexOf('--effort') + 1], 'low', '名字里那档说了算,不能把对不上的 high 发出去');
+  assert.equal(args[args.indexOf('--effort') + 1], 'low', 'The tier in the name wins, and a mismatched high must not be sent');
 });
 
-test('带后缀但没给档位:也要补上,不然 agy 说 requires --effort', async () => {
+test('Suffix present but no tier given: fill one in anyway, otherwise agy says requires --effort', async () => {
   const { args } = await run({ model: 'gemini-3.1-pro-high', effort: '' });
   assert.equal(args[args.indexOf('--model') + 1], 'gemini-3.1-pro');
   assert.equal(args[args.indexOf('--effort') + 1], 'high');
 });
 
-test('不带档位后缀的模型名原样传,也不硬塞一个档位', async () => {
+test('A model name without a tier suffix is passed as is, and no tier is forced onto it', async () => {
   const { args } = await run({ model: 'claude-sonnet-4-6', effort: '' });
   assert.equal(args[args.indexOf('--model') + 1], 'claude-sonnet-4-6');
-  assert.ok(!args.includes('--effort'), 'claude-sonnet-4-6 不吃 --effort,给了会被拒');
+  assert.ok(!args.includes('--effort'), 'claude-sonnet-4-6 does not accept --effort, and passing it gets rejected');
 });

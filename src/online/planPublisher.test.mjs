@@ -21,7 +21,7 @@ test("C10-PP-01 the shape is identical field by field to the queue-side clipsPla
   assert.equal(clipsSig(["b", "a"]), backfillSig(["a", "b", "a"]));
   const t = clipsPlanTask({ projectId: "p", projectRev: 1, clips: ["x"] });
   assert.equal(t.priority, "normal");
-  assert.deepEqual(t.requires, {}, "不带 envFingerprint、preferNode");
+  assert.deepEqual(t.requires, {}, "Does not carry envFingerprint or preferNode");
 });
 
 function fakeQueue({ fail = null } = {}) {

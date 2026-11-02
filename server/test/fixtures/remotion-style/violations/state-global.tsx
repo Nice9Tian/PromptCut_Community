@@ -8,9 +8,9 @@ function C({ params, t = 0 }: CardProps<Params>) {
   return <div style={{ position: "absolute", inset: 0, opacity: tween(t, { duration: 0.4 }) }}>{params.text}{w.__frames}</div>;
 }
 export const card: CardDef<Params> = {
-  id: "rs-bad-state-global", name: "跨帧累加的状态", description: "remotion 式的规矩的违规样例", source: "user",
+  id: "rs-bad-state-global", name: "State accumulated across frames", description: "Violation example of the remotion-style rules", source: "user",
   frameMode: "direct",
   defaults: { text: "" },
-  controls: [{ key: "text", label: "文字", type: "text" }],
+  controls: [{ key: "text", label: "Text", type: "text" }],
   Component: C,
 };

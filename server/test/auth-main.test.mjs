@@ -51,7 +51,7 @@ async function listenPort(run, ms = 8000) {
       } catch { /* 不是 JSON 行 */ }
     }
     return null;
-  }, ms, `main.mjs 打出 listen 行（已有输出：${run.output().slice(0, 400)}）`);
+  }, ms, `main.mjs prints the listen line (output so far: ${run.output().slice(0, 400)})`);
 }
 
 function tmp(t) {
@@ -64,20 +64,20 @@ const killer = (t, run) => t.after(async () => { if (run.child.exitCode === null
 
 // ------------------------------------------------------------------ AU12
 
-test('AU12 独立模式绑非回环而凭证存储不可用（数据目录是个文件）→ 退出码 1、config.error { reason: auth-store }', { timeout: 20_000 }, async (t) => {
+test('AU12 standalone mode binds non-loopback while the credential store is unavailable (the data directory is a file) → exit code 1, config.error { reason: auth-store }', { timeout: 20_000 }, async (t) => {
   const dir = tmp(t);
   const notADir = path.join(dir, 'data-is-a-file');
   fs.writeFileSync(notADir, 'x');
   const run = runMain({ PROMPTCUT_DOCSERVICE_HOST: '0.0.0.0', PROMPTCUT_DOCSERVICE_PORT: '0', PROMPTCUT_DOCSERVICE_DATA: notADir, PROMPTCUT_CLUSTER_TOKEN: randomToken() });
   killer(t, run);
   const r = await exitWithin(run, 8000);
-  assert.ok(!r.timedOut, `没有退出（应当失败即关）；输出：${run.output()}`);
+  assert.ok(!r.timedOut, `did not exit (should fail closed); output: ${run.output()}`);
   assert.equal(r.code, 1, run.output());
   const lines = run.output().split('\n').map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
-  assert.ok(lines.some((l) => l.event === 'config.error' && l.reason === 'auth-store'), `输出含 config.error { reason: auth-store }：${run.output()}`);
+  assert.ok(lines.some((l) => l.event === 'config.error' && l.reason === 'auth-store'), `output contains config.error { reason: auth-store }: ${run.output()}`);
 });
 
-test('AU12 独立模式绑非回环、没设集群令牌、凭证存储可用 → 照常启动（令牌不再是启动条件）', { timeout: 20_000 }, async (t) => {
+test('AU12 standalone mode binds non-loopback, no cluster token set, credential store available → starts as usual (the token is no longer a startup condition)', { timeout: 20_000 }, async (t) => {
   const run = runMain({ PROMPTCUT_DOCSERVICE_HOST: '0.0.0.0', PROMPTCUT_DOCSERVICE_PORT: '0', PROMPTCUT_DOCSERVICE_DATA: tmp(t) });
   killer(t, run);
   const port = await listenPort(run);
@@ -94,7 +94,7 @@ test('AU12 独立模式绑非回环、没设集群令牌、凭证存储可用 �
   assert.deepEqual(await l.json(), { ok: false, error: 'no-project' });
 });
 
-test('AU12 独立模式：设了而格式不对的集群令牌仍是 bad-token-format 退出码 1', { timeout: 20_000 }, async (t) => {
+test('AU12 standalone mode: a cluster token that is set but badly formatted still gives bad-token-format and exit code 1', { timeout: 20_000 }, async (t) => {
   const bad = 'short-token!';
   const run = runMain({ PROMPTCUT_DOCSERVICE_HOST: '127.0.0.1', PROMPTCUT_DOCSERVICE_PORT: '0', PROMPTCUT_DOCSERVICE_DATA: tmp(t), PROMPTCUT_CLUSTER_TOKEN: bad });
   killer(t, run);
@@ -105,7 +105,7 @@ test('AU12 独立模式：设了而格式不对的集群令牌仍是 bad-token-f
   assert.ok(!run.output().includes(bad));
 });
 
-test('AU12 独立模式子进程：建项目、握手、凭证落在 <数据目录>/auth/，日志里没有口令与 K', { timeout: 30_000 }, async (t) => {
+test('AU12 standalone mode child process: creates a project, handshake, credentials are written to <data directory>/auth/, no passphrase or K in the logs', { timeout: 30_000 }, async (t) => {
   const data = tmp(t);
   const token = randomToken();
   const run = runMain({ PROMPTCUT_DOCSERVICE_HOST: '127.0.0.1', PROMPTCUT_DOCSERVICE_PORT: '0', PROMPTCUT_DOCSERVICE_DATA: data, PROMPTCUT_CLUSTER_TOKEN: token });
@@ -129,11 +129,11 @@ test('AU12 独立模式子进程：建项目、握手、凭证落在 <数据目�
   const p = await proofFor(env, proj, { username: 'zoe' });
   // 回环来源带证明：按证明进（至多一项鉴权，证明算一项）
   assert.equal((await env.handshake(p.protocols)).status, 101);
-  assert.equal((await env.handshake([PROTOCOL, `promptcut.token.${token}`])).status, 101, '设了令牌：管理接口可用');
+  assert.equal((await env.handshake([PROTOCOL, `promptcut.token.${token}`])).status, 101, 'token set: admin interface available');
   assert.ok(fs.existsSync(path.join(data, 'auth', 'projects', `${proj.projectId}.json`)));
   const out = run.output();
   for (const secret of ['sub-proc-pw-123', 'sub-creator-pw-456', p.key, p.fields.m, token]) {
-    assert.ok(!out.includes(secret), `子进程输出里出现了秘密：${secret.slice(0, 6)}…`);
+    assert.ok(!out.includes(secret), `secret appeared in the child process output: ${secret.slice(0, 6)}…`);
   }
 });
 
@@ -141,7 +141,7 @@ test('AU12 独立模式子进程：建项目、握手、凭证落在 <数据目�
 
 const ALLOWED_REASONS = new Set(['no-credential', 'bad-proof', 'nonce', 'banned', 'not-listed', 'no-project', 'rate-limited', 'bad-format', 'multiple']);
 
-test('AU13 一次完整流程的全部日志行与所有错误回包里，不出现口令、K、证明 m、票据原文；auth.reject 只记 { remote, reason }', async (t) => {
+test('AU13 in all log lines and all error replies of one full flow, no passphrase, K, proof m or raw ticket text appears; auth.reject records only { remote, reason }', async (t) => {
   const env = await hostFor(t, { assets: true });
   const secrets = new Set();
   const note = (...xs) => { for (const x of xs) if (typeof x === 'string' && x.length >= 8) secrets.add(x); };
@@ -171,16 +171,16 @@ test('AU13 一次完整流程的全部日志行与所有错误回包里，不出
   const wrong = await proofFor(env, free, { username: 'zoe', password: 'totally-wrong-pw', remote: '192.168.5.4' });
   note('totally-wrong-pw', wrong.key, wrong.fields.m, wrong.protocols[1]);
   assert.equal((await env.handshake(wrong.protocols, '192.168.5.4')).status, 401);
-  assert.equal((await env.handshake(ok1.protocols, '192.168.5.5')).status, 401, 'nonce 复用');
+  assert.equal((await env.handshake(ok1.protocols, '192.168.5.5')).status, 401, 'nonce reuse');
   const out = await proofFor(env, restricted, { username: 'mallory', password: 'mallory-guess', remote: '192.168.5.6' });
   note('mallory-guess', out.key, out.fields.m);
   assert.equal((await env.handshake(out.protocols, '192.168.5.6')).status, 401);
   const two = await proofFor(env, free, { username: 'zoe', remote: '192.168.5.7' });
   note(two.fields.m);
   assert.equal((await env.handshake([...two.protocols, two.protocols[1]], '192.168.5.7')).status, 401);
-  assert.equal((await env.handshake([PROTOCOL], '192.168.5.8')).status, 401, '无凭证');
-  assert.equal((await env.handshake([PROTOCOL, 'promptcut.auth.@@@'], '192.168.5.9')).status, 401, '格式错');
-  assert.equal((await env.handshake([PROTOCOL, 'promptcut.tenant.sp_aaaaaaaaaaaaaaaaaaaaaaaaaa'])).status, 401, '项目不存在');
+  assert.equal((await env.handshake([PROTOCOL], '192.168.5.8')).status, 401, 'no credentials');
+  assert.equal((await env.handshake([PROTOCOL, 'promptcut.auth.@@@'], '192.168.5.9')).status, 401, 'bad format');
+  assert.equal((await env.handshake([PROTOCOL, 'promptcut.tenant.sp_aaaaaaaaaaaaaaaaaaaaaaaaaa'])).status, 401, 'Project does not exist');
 
   // 票据与素材
   const at = await ticketOf(zoe, { kind: 'asset', access: 'r' });
@@ -207,7 +207,7 @@ test('AU13 一次完整流程的全部日志行与所有错误回包里，不出
   assert.equal(kicked.type, 'shared.admin.ok', JSON.stringify(kicked));
   const again = await proofFor(env, free, { username: 'zoe', device: dev, remote: '192.168.5.11' });
   note(again.key, again.fields.m);
-  assert.equal((await env.handshake(again.protocols, '192.168.5.11')).status, 401, '禁入');
+  assert.equal((await env.handshake(again.protocols, '192.168.5.11')).status, 401, 'banned');
 
   // HTTP 错误回包
   for (const r of [
@@ -221,19 +221,19 @@ test('AU13 一次完整流程的全部日志行与所有错误回包里，不出
   const logText = env.logs.map((l) => JSON.stringify(l)).join('\n');
   const errText = errors.join('\n');
   for (const s of secrets) {
-    assert.ok(!logText.includes(s), `日志里出现了秘密（${s.slice(0, 6)}…）`);
-    assert.ok(!errText.includes(s), `错误回包里出现了秘密（${s.slice(0, 6)}…）`);
+    assert.ok(!logText.includes(s), `secret appeared in the log (${s.slice(0, 6)}…)`);
+    assert.ok(!errText.includes(s), `secret appeared in the error reply (${s.slice(0, 6)}…)`);
   }
 
   const rejects = env.logs.filter((l) => l.event === 'auth.reject');
-  assert.ok(rejects.length >= 8, `每次握手被拒记一条 auth.reject：${JSON.stringify(rejects)}`);
+  assert.ok(rejects.length >= 8, `each rejected handshake logs one auth.reject: ${JSON.stringify(rejects)}`);
   for (const r of rejects) {
-    assert.ok('remote' in r, `auth.reject 带 remote：${JSON.stringify(r)}`);
-    assert.ok(ALLOWED_REASONS.has(r.reason), `reason 在约定集合里：${JSON.stringify(r)}`);
+    assert.ok('remote' in r, `auth.reject carries remote: ${JSON.stringify(r)}`);
+    assert.ok(ALLOWED_REASONS.has(r.reason), `reason is in the agreed set: ${JSON.stringify(r)}`);
   }
   const reasons = new Set(rejects.map((r) => r.reason));
   for (const want of ['bad-proof', 'nonce', 'multiple', 'no-credential', 'bad-format', 'no-project', 'banned']) {
-    assert.ok(reasons.has(want), `应出现 reason ${want}；实际：${[...reasons].join(', ')}`);
+    assert.ok(reasons.has(want), `reason ${want} should appear; actual: ${[...reasons].join(', ')}`);
   }
   void join; void joinStatus; void ask; void authItem;
 });

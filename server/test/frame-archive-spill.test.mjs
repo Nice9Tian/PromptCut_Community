@@ -32,41 +32,41 @@ function failFirst(file, n, code) {
   return counter;
 }
 
-test('前两次读抛 EBUSY：重试后读到内容，文件还在', () => withStore((store) => {
-  assert.equal(store.writeSpill(7, '<div>七</div>'), true);
+test('the first two reads throw EBUSY: after retrying, the content is read and the file is still there', () => withStore((store) => {
+  assert.equal(store.writeSpill(7, '<div>seven</div>'), true);
   const file = store.spillPath(7);
   const counter = failFirst(file, 2, 'EBUSY');
   try {
-    assert.equal(store.readSpill(7), '<div>七</div>');
+    assert.equal(store.readSpill(7), '<div>seven</div>');
   } finally { mock.restoreAll(); }
   assert.equal(counter.calls, 3);
-  assert.ok(fs.existsSync(file), '文件被删了');
+  assert.ok(fs.existsSync(file), 'the file was deleted');
   // 经 get() 走同一条路
   failFirst(file, 1, 'EPERM');
-  try { assert.equal(store.get(7), '<div>七</div>'); } finally { mock.restoreAll(); }
+  try { assert.equal(store.get(7), '<div>seven</div>'); } finally { mock.restoreAll(); }
   assert.ok(fs.existsSync(file));
 }));
 
 for (const code of ['EPERM', 'EACCES', 'EMFILE']) {
-  test(`${code} 一直不消失：试满次数后返回 undefined，文件还在`, () => withStore((store) => {
+  test(`${code} never goes away: after the retries are used up it returns undefined and the file is still there`, () => withStore((store) => {
     store.writeSpill(3, 'x');
     const file = store.spillPath(3);
     const counter = failFirst(file, Infinity, code);
     try { assert.equal(store.readSpill(3), undefined); } finally { mock.restoreAll(); }
     assert.equal(counter.calls, 1 + SPILL_READ_RETRIES);
-    assert.ok(fs.existsSync(file), '文件被删了');
-    assert.equal(store.readSpill(3), 'x', '占用解除后能读到');
+    assert.ok(fs.existsSync(file), 'the file was deleted');
+    assert.equal(store.readSpill(3), 'x', 'can be read once the file is no longer in use');
   }));
 }
 
-test('退避间隔在 20～200 ms 之间', () => {
+test('backoff interval is between 20 and 200 ms', () => {
   for (let i = 0; i < SPILL_READ_RETRIES; i++) {
     const ms = spillBackoffMs(i);
-    assert.ok(ms >= 20 && ms <= 200, `第 ${i} 次 ${ms} ms`);
+    assert.ok(ms >= 20 && ms <= 200, `attempt ${i}: ${ms} ms`);
   }
 });
 
-test('内容解不开：照原逻辑删掉文件、返回 undefined，不重试', () => withStore((store) => {
+test('content cannot be decoded: delete the file as in the original logic, return undefined, and do not retry', () => withStore((store) => {
   fs.mkdirSync(store.spillDir, { recursive: true });
   const file = store.spillPath(5);
   fs.writeFileSync(file, 'not gzip');
@@ -76,14 +76,14 @@ test('内容解不开：照原逻辑删掉文件、返回 undefined，不重试'
   assert.equal(fs.existsSync(file), false);
 }));
 
-test('文件不在（ENOENT）：返回 undefined，不重试', () => withStore((store) => {
+test('file is missing (ENOENT): returns undefined, no retry', () => withStore((store) => {
   const file = store.spillPath(9);
   const counter = failFirst(file, 0, 'EBUSY');
   try { assert.equal(store.readSpill(9), undefined); } finally { mock.restoreAll(); }
   assert.equal(counter.calls, 1);
 }));
 
-test('其它读错误（EISDIR）：不删、不重试', () => withStore((store) => {
+test('other read errors (EISDIR): not deleted, no retry', () => withStore((store) => {
   store.writeSpill(4, 'y');
   const file = store.spillPath(4);
   const counter = failFirst(file, Infinity, 'EISDIR');

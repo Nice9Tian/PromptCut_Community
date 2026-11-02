@@ -37,7 +37,7 @@ export { sleep, waitFor };
 /** A1 */
 export async function loadJsonOps() {
   const mod = await import('../docservice/json-ops.mjs');
-  assert.equal(typeof mod.applyOps, 'function', `json-ops.mjs 要导出 applyOps；导出：${Object.keys(mod).join(', ')}`);
+  assert.equal(typeof mod.applyOps, 'function', `json-ops.mjs must export applyOps; exports: ${Object.keys(mod).join(', ')}`);
   /**
    * 规整成 `{ ok: true, doc } | { ok: false, reason }`。传进去的就是 `doc` 本身，不替调用方复制：
    * 原子性用例要看失败后原对象有没有被改。
@@ -58,9 +58,9 @@ export async function loadJsonOps() {
     return { ok: true, doc: out === undefined ? doc : out };
   }
   /** 复制一份再应用；失败直接断言失败 */
-  function applyClone(doc, ops, what = '应用操作') {
+  function applyClone(doc, ops, what = 'applying ops') {
     const r = apply(structuredClone(doc), ops);
-    assert.ok(r.ok, `${what}失败：${r.reason}；ops=${JSON.stringify(ops).slice(0, 600)}`);
+    assert.ok(r.ok, `${what} failed: ${r.reason}; ops=${JSON.stringify(ops).slice(0, 600)}`);
     return r.doc;
   }
   return { mod, apply, applyClone };
@@ -69,14 +69,14 @@ export async function loadJsonOps() {
 /** A2 */
 export async function loadDiffProject() {
   const mod = await import('../../src/kernel/diffProject.ts');
-  assert.equal(typeof mod.diffProject, 'function', `diffProject.ts 要导出 diffProject；导出：${Object.keys(mod).join(', ')}`);
+  assert.equal(typeof mod.diffProject, 'function', `diffProject.ts must export diffProject; exports: ${Object.keys(mod).join(', ')}`);
   return mod.diffProject;
 }
 
 /** A3 */
 export async function loadProjectModule() {
   const mod = await import('../docservice/modules/project.mjs');
-  assert.equal(typeof mod.projectModule, 'function', `modules/project.mjs 要导出 projectModule；导出：${Object.keys(mod).join(', ')}`);
+  assert.equal(typeof mod.projectModule, 'function', `modules/project.mjs must export projectModule; exports: ${Object.keys(mod).join(', ')}`);
   const store = await import('../docservice/store/index.mjs');
   return { projectModule: mod.projectModule, createMemoryStore: store.createMemoryStore, createFileStore: store.createFileStore };
 }
@@ -96,7 +96,7 @@ export async function loadDocSync() {
   await import('../../src/testing/registerTs.mjs');
   const mod = await import('../../src/store/docsync.ts');
   if (typeof mod.createDocSync === 'function') return mod.createDocSync;
-  assert.equal(typeof mod.DocSync, 'function', `docsync.ts 要导出 createDocSync 或 DocSync；导出：${Object.keys(mod).join(', ')}`);
+  assert.equal(typeof mod.DocSync, 'function', `docsync.ts must export createDocSync or DocSync; exports: ${Object.keys(mod).join(', ')}`);
   return (options) => docSyncOverWebSocket(mod.DocSync, options);
 }
 
@@ -151,7 +151,7 @@ function docSyncOverWebSocket(DocSync, o) {
     resolveOffline(choice) {
       if (choice === 'replay') ds.replayOffline();
       else if (choice === 'discard') ds.discardOffline();
-      else throw new Error(`不认识的选择：${choice}`);
+      else throw new Error(`unknown choice: ${choice}`);
       return Promise.resolve();
     },
     undo: () => Promise.resolve(undoResult(ds.undo())),
@@ -205,7 +205,7 @@ export const newOpId = (tag = 'op') => `${tag}-${process.pid}-${Date.now().toStr
 /** 路径分段（JSON 指针，`~1` → `/`，`~0` → `~`） */
 export function splitPath(path) {
   if (path === '') return [];
-  assert.ok(path.startsWith('/'), `路径要以 / 开头：${path}`);
+  assert.ok(path.startsWith('/'), `path must start with /: ${path}`);
   return path.slice(1).split('/').map((s) => s.replace(/~1/g, '/').replace(/~0/g, '~'));
 }
 
@@ -238,7 +238,7 @@ function randValue(r, depth = 0) {
   }
   const o = {};
   const n = r.int(4);
-  for (let i = 0; i < n; i++) o[r.pick(['a', 'b', 'c', 'd/e', 'f~g', '中'])] = randValue(r, depth + 1);
+  for (let i = 0; i < n; i++) o[r.pick(['a', 'b', 'c', 'd/e', 'f~g', 'Medium'])] = randValue(r, depth + 1);
   return o;
 }
 
@@ -258,7 +258,7 @@ export function makeClip(r, id = freshId('c', r)) {
 }
 
 export function makeTrack(r, id = freshId('t', r), nClips = r.int(6)) {
-  return { id, name: `序列 ${id}`, clips: Array.from({ length: nClips }, () => makeClip(r)) };
+  return { id, name: `Track ${id}`, clips: Array.from({ length: nClips }, () => makeClip(r)) };
 }
 
 /** 一个 Project 形状的随机项目 */
@@ -266,18 +266,18 @@ export function makeProject(r, { tracks = 1 + r.int(4), clipsPerTrack } = {}) {
   const p = {
     version: 1,
     id: `p-${r.int(1e9).toString(36)}`,
-    name: `项目 ${r.int(100)}`,
+    name: `Project ${r.int(100)}`,
     width: 1920,
     height: 1080,
     fps: r.pick([24, 25, 30, 60]),
     duration: 10 + r.int(100),
     themeId: r.pick(['midnight', 'paper']),
-    media: Array.from({ length: r.int(4) }, () => ({ id: freshId('m', r), name: `素材${r.int(9)}.mp4`, kind: 'video', duration: r.int(60) })),
+    media: Array.from({ length: r.int(4) }, () => ({ id: freshId('m', r), name: `Media${r.int(9)}.mp4`, kind: 'video', duration: r.int(60) })),
     tracks: Array.from({ length: tracks }, () => makeTrack(r, undefined, clipsPerTrack ?? r.int(6))),
-    filters: Array.from({ length: r.int(3) }, (_, i) => ({ id: `f${i}`, name: `滤镜 ${i}`, params: { amount: r.next() } })),
+    filters: Array.from({ length: r.int(3) }, (_, i) => ({ id: `f${i}`, name: `Filter ${i}`, params: { amount: r.next() } })),
     style: { 'a/b': 1, 'x~y': 'z', nested: { k: [1, 2, 3] } },
   };
-  if (r.chance(0.5)) p.cuts = [{ id: 'cut-1', name: '剪辑 1' }, { id: 'cut-2', name: '剪辑 2', tracks: [makeTrack(r, undefined, 2)], duration: 20 }];
+  if (r.chance(0.5)) p.cuts = [{ id: 'cut-1', name: 'Cut 1' }, { id: 'cut-2', name: 'Cut 2', tracks: [makeTrack(r, undefined, 2)], duration: 20 }];
   if (r.chance(0.3)) p.camera3dFov = 45;
   return p;
 }
@@ -340,7 +340,7 @@ export function mutateProject(r, prev) {
         if (c) c.keyframes = Array.from({ length: r.int(4) }, (_, j) => ({ t: j, v: r.int(9) }));
         break;
       }
-      default: p.fps = r.pick([24, 25, 30, 60]); p.name = `项目 ${r.int(1000)}`;
+      default: p.fps = r.pick([24, 25, 30, 60]); p.name = `Project ${r.int(1000)}`;
     }
   }
   return p;
@@ -351,23 +351,23 @@ export function fixedProject({ clips = 3, tracks = 1 } = {}) {
   return {
     version: 1,
     id: 'p-fixed',
-    name: '固定项目',
+    name: 'Fixed project',
     width: 1920,
     height: 1080,
     fps: 30,
     duration: 30,
     themeId: 'midnight',
     media: [],
-    filters: [{ id: 'f1', name: '滤镜 1', params: { amount: 0.5 } }],
+    filters: [{ id: 'f1', name: 'Filter 1', params: { amount: 0.5 } }],
     tracks: Array.from({ length: tracks }, (_, ti) => ({
       id: `t${ti + 1}`,
-      name: `序列 ${ti + 1}`,
+      name: `Track ${ti + 1}`,
       clips: Array.from({ length: clips }, (_, i) => ({
         id: ti === 0 ? `c${i + 1}` : `t${ti + 1}c${i + 1}`,
         start: i * 3,
         duration: 3,
         cardId: 'title',
-        params: { text: `片段 ${i + 1}` },
+        params: { text: `clip ${i + 1}` },
         frame: { x: 10 * (i + 1), y: 0, w: 100, h: 100 },
       })),
     })),
@@ -467,7 +467,7 @@ export async function seedProject(env, projectId, project, who = { user: 'seeder
   const c = await env.connect(who);
   await openProject(c, projectId);
   const r = await submit(c, { projectId, ops: [{ op: 'set', path: '', value: project }], session: 'seed' });
-  assert.ok(isOk(r), `根替换种子应成功：${JSON.stringify(r)}`);
+  assert.ok(isOk(r), `the root replacement seed should succeed: ${JSON.stringify(r)}`);
   c.close();
   return r.rev;
 }
@@ -531,7 +531,7 @@ export async function createPage(env, { projectId, user, dev = `dev-${user}`, se
   });
   page.sync = sync;
   await sync.open();
-  await waitFor(() => page.project !== null && page.project !== undefined, 5000, `页面 ${session} 拿到项目`);
+  await waitFor(() => page.project !== null && page.project !== undefined, 5000, `page ${session} gets the project`);
 
   /** 相当于 core.ts 的 setProject(next)：本地先落地，再把差异交给 docsync */
   page.edit = (mutate, opts) => {
@@ -545,7 +545,7 @@ export async function createPage(env, { projectId, user, dev = `dev-${user}`, se
   };
   page.pending = () => sync.pendingCount();
   /** 等本地提交全部确认 */
-  page.settled = (ms = 10_000) => waitFor(() => sync.pendingCount() === 0, ms, `页面 ${session} 的提交全部确认`);
+  page.settled = (ms = 10_000) => waitFor(() => sync.pendingCount() === 0, ms, `all commits of page ${session} are acknowledged`);
   page.undo = () => sync.undo();
   page.redo = () => sync.redo();
   page.canUndo = () => sync.canUndo();
@@ -568,7 +568,7 @@ export async function createLink(env) {
     async offline(page) {
       proxy.mode = 'reject';
       proxy.cutAll();
-      if (page) await waitFor(() => page.sync.connected === false, 5000, '页面发现断线');
+      if (page) await waitFor(() => page.sync.connected === false, 5000, 'the page detects the disconnection');
       else await sleep(200);
     },
     online() { proxy.mode = 'pass'; },
@@ -589,6 +589,6 @@ export async function observer(env, projectId) {
 
 /** 三份相等：先 deepEqual（给出差在哪），再逐字节 */
 export function assertSameBytes(a, b, what) {
-  assert.deepEqual(a, b, `${what}：内容不同`);
-  assert.equal(JSON.stringify(a), JSON.stringify(b), `${what}：内容相同但序列化后字节不同（键序不一致）`);
+  assert.deepEqual(a, b, `${what}: content differs`);
+  assert.equal(JSON.stringify(a), JSON.stringify(b), `${what}: content is the same but the serialized bytes differ (key order is inconsistent)`);
 }

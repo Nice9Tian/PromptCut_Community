@@ -10,14 +10,14 @@ const G = globalThis as any;
 G.__pcOverreachLoaded = { ...(G.__pcOverreachLoaded ?? {}), "marker-jia": "PROBE-FAKE-JIA-CARD-CODE-7d1f0c" };
 
 function MarkerJia() {
-  return <div className="absolute inset-0 grid place-items-center text-white text-4xl">项目甲的记号卡</div>;
+  return <div className="absolute inset-0 grid place-items-center text-white text-4xl">Project A marker card</div>;
 }
 
 export const overreachMarkerJia: CardDef<Record<string, never>> = {
   id: "overreach-marker-jia",
-  name: "项目甲的记号卡",
-  description: "隔离验收用的测试夹具：只有项目甲才有的卡片代码",
-  tags: ["探针"],
+  name: "Project A marker card",
+  description: "Test fixture for the isolation acceptance check: card code that only project A has",
+  tags: ["probe"],
   frameMode: "stateful",
   defaults: {},
   controls: [],

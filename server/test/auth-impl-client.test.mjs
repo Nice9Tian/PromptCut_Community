@@ -25,7 +25,7 @@ import { createAssetHarness, ROOT } from './fake-asset-service.mjs';
 const harness = createAssetHarness();
 after(() => harness.cleanup());
 
-test('ws-transport：protocols() 每次（重）连前调一次；可以是 async；抛错按连不上退避重试；不能和 token 同给', async (t) => {
+test('ws-transport: protocols() is called once before each (re)connect; may be async; a throw is retried with backoff as if the connection failed; cannot be given together with token', async (t) => {
   const s = await startSharedService({ mode: 'hosted' });
   t.after(() => s.close());
   const p = await createProject(s.base, { password: 'pw' });
@@ -38,24 +38,24 @@ test('ws-transport：protocols() 每次（重）连前调一次；可以是 asyn
     backoff: { baseMs: 5, maxMs: 20, jitter: 0 },
     protocols: async () => {
       calls += 1;
-      if (fail-- > 0) throw new Error('取挑战失败');
+      if (fail-- > 0) throw new Error('failed to get the challenge');
       return buildAuthProtocols({ base: s.base, projectId: p.projectId, username: 'bob', deviceId: dev, deviceName: 'B', password: 'pw', role: 'render' });
     },
   });
   t.after(() => ep.close());
   let opens = 0;
   ep.onOpen(() => { opens += 1; });
-  await waitFor(() => opens === 1, 5000, '第一次连上');
-  assert.equal(calls, 2, '第一次取协议失败、退避后再取');
+  await waitFor(() => opens === 1, 5000, 'first connection opened');
+  assert.equal(calls, 2, 'the first protocol fetch fails, then it is fetched again after backoff');
   // 服务端踢掉：重连时再取一次新的（nonce 只能用一次）
   for (const c of s.service.describe().conns) s.service.closeConn(c.connId, 4000, 'test');
-  await waitFor(() => opens === 2, 5000, '重连');
+  await waitFor(() => opens === 2, 5000, 'reconnect');
   assert.equal(calls, 3);
   assert.throws(() => createWsEndpoint({ url: s.url, protocols: 'x' }), TypeError);
   assert.throws(() => createWsEndpoint({ url: s.url, protocols: () => [], token: crypto.randomBytes(32).toString('base64url') }), TypeError);
 });
 
-test('ticket-source：缓存到剩 1/3 才换；refresh 一律换；连不上 / 被拒回 null；并发只发一次', async () => {
+test('ticket-source: cached until 1/3 remains, then renewed; refresh always renews; unreachable / rejected returns null; concurrent calls send only once', async () => {
   const sent = [];
   let handler = null;
   let connected = true;
@@ -74,12 +74,12 @@ test('ticket-source：缓存到剩 1/3 才换；refresh 一律换；连不上 / 
   const [a, b] = await Promise.all([ticket(), ticket()]);
   assert.equal(a, 'T1');
   assert.equal(b, 'T1');
-  assert.equal(sent.length, 1, '并发只发一次');
+  assert.equal(sent.length, 1, 'concurrent calls send only once');
   assert.deepEqual({ ...sent[0], reqId: undefined }, { type: 'auth.ticket', reqId: undefined, kind: 'asset', access: 'rw' });
   now += 9 * 60_000;
-  assert.equal(await ticket(), 'T1', '还剩 6 分钟（> 1/3）：不换');
+  assert.equal(await ticket(), 'T1', '6 minutes left (> 1/3): not renewed');
   now += 2 * 60_000;
-  assert.equal(await ticket(), 'T2', '剩 4 分钟（< 1/3）：换');
+  assert.equal(await ticket(), 'T2', '4 minutes left (< 1/3): renewed');
   assert.equal(await ticket({ refresh: true }), 'T3');
   reply = (m) => ({ type: 'error', reqId: m.reqId, reason: 'forbidden' });
   assert.equal(await ticket({ refresh: true }), null);
@@ -87,13 +87,13 @@ test('ticket-source：缓存到剩 1/3 才换；refresh 一律换；连不上 / 
   assert.equal(await ticket({ refresh: true }), null);
   connected = true;
   reply = () => ({ type: 'noise' });
-  assert.equal(await ticket({ refresh: true }), null, '超时');
+  assert.equal(await ticket({ refresh: true }), null, 'timeout');
 });
 
-test('shared-config：读文件（对象或数组）、缺省设备与角色、校验出错不带口令；sharedProtocols 按名字查一次、每次新 nonce', async (t) => {
+test('shared-config: reads the file (object or array), default device and role, validation errors do not include the passphrase; sharedProtocols looks up by name once, with a new nonce each time', async (t) => {
   const dir = tempDir('pc-cfg-');
   const file = path.join(dir, 'shared.json');
-  assert.equal(loadSharedConfig({}), null, '没设就是 null');
+  assert.equal(loadSharedConfig({}), null, 'null when not set');
   fs.writeFileSync(file, JSON.stringify({ url: 'ws://h:1', projectId: `sp_${'a'.repeat(26)}`, username: 'bob', password: 'secret-pw' }));
   const env = { PROMPTCUT_SHARED_CONFIG: file, PROMPTCUT_DEVICE_ID: 'pc-fixed-device-0001', PROMPTCUT_DEVICE_NAME: 'Fixed' };
   const [e] = loadSharedConfig(env);
@@ -123,17 +123,17 @@ test('shared-config：读文件（对象或数组）、缺省设备与角色、�
   const second = await protocols();
   assert.equal(first[0], 'promptcut.v1');
   const payload = (list) => JSON.parse(Buffer.from(list[1].slice('promptcut.auth.'.length), 'base64url').toString('utf8'));
-  assert.equal(payload(first).p, p.projectId, '按名字查到的 projectId');
-  assert.equal(payload(first).r, 'page', 'role 覆盖配置');
-  assert.notEqual(payload(first).nonce, payload(second).nonce, '每次新的 nonce');
-  assert.equal(fetches, 3, 'lookup 一次 + 挑战两次');
+  assert.equal(payload(first).p, p.projectId, 'projectId found by name');
+  assert.equal(payload(first).r, 'page', 'role overrides the config');
+  assert.notEqual(payload(first).nonce, payload(second).nonce, 'new nonce each time');
+  assert.equal(fetches, 3, 'lookup once + challenge twice');
   // 用第二组协议真的能进
   const ws = new WebSocket(s.url, second);
   await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
   ws.close();
 });
 
-test('spaces：频道名加空间前缀，local 不变（@ 开头的另加 @local/）；管理身份不进空间；dropSpace 丢实例并调 dispose', () => {
+test('spaces: channel names get a space prefix, local is unchanged (names starting with @ additionally get @local/); admin identity does not enter a space; dropSpace drops the instance and calls dispose', () => {
   assert.equal(spaceChannel('local', 'project:abc'), 'project:abc');
   assert.equal(spaceChannel('local', 'project:@x'), 'project:@local/@x');
   assert.equal(spaceChannel('sp_x', 'project:abc'), 'project:@sp_x/abc');
@@ -162,31 +162,31 @@ test('spaces：频道名加空间前缀，local 不变（@ 开头的另加 @loca
     send: (id, m) => sent.push([id, m]), now: () => 0, log() {},
     subscribe: (id, ch) => subs.push([id, ch]), unsubscribe() {}, publish: (ch, m) => sent.push([ch, m]),
   };
-  assert.deepEqual(made, ['local'], 'local 在构造时就建');
+  assert.deepEqual(made, ['local'], 'local is created at construction');
   mod.connect(ctx, 'c1', { userId: 'u', tenantId: 'sp_a', scope: 'member' });
   mod.connect(ctx, 'c2', { userId: 'u', tenantId: 'local', scope: 'local' });
   mod.connect(ctx, 'c3', { userId: 'admin', tenantId: null, scope: 'admin' });
   assert.deepEqual(subs, [['c1', 'demo:@sp_a/c'], ['c2', 'demo:c']]);
   mod.handle(ctx, 'c1', { type: 'demo.x', n: 1 });
   mod.handle(ctx, 'c3', { type: 'demo.x', reqId: 'r' });
-  assert.deepEqual(sent, [['demo:@sp_a/c', { from: 'sp_a', n: 1 }], ['c3', { type: 'error', reason: 'forbidden', detail: '这条连接不在任何空间里', reqId: 'r' }]]);
+  assert.deepEqual(sent, [['demo:@sp_a/c', { from: 'sp_a', n: 1 }], ['c3', { type: 'error', reason: 'forbidden', detail: 'This connection is not in any space', reqId: 'r' }]]);
   assert.deepEqual(mod.describeConn('c1'), { demoField: 'sp_a' });
-  assert.deepEqual(mod.describeConn('nope'), { demoField: 'local' }, '不认识的连接按 local 的字段');
+  assert.deepEqual(mod.describeConn('nope'), { demoField: 'local' }, 'an unknown connection uses the fields of local');
   assert.deepEqual(mod.spaces().sort(), ['local', 'sp_a']);
-  assert.equal(mod.dropSpace('local'), false, 'local 不能丢');
+  assert.equal(mod.dropSpace('local'), false, 'local cannot be dropped');
   assert.equal(mod.dropSpace('sp_a'), true);
   assert.deepEqual(log.slice(-2), [['disconnect', 'sp_a', 'c1'], ['dispose', 'sp_a']]);
   assert.deepEqual(mod.spaces(), ['local']);
   mod.disconnect(ctx, 'c1');
-  assert.equal(log.filter((l) => l[0] === 'disconnect' && l[2] === 'c1').length, 1, '丢过的空间里的连接不再重复断开');
+  assert.equal(log.filter((l) => l[0] === 'disconnect' && l[2] === 'c1').length, 1, 'connections in a dropped space are not disconnected again');
 });
 
-test('principal 规整、写入身份、能否报到为节点', () => {
+test('principal normalization, write identity, whether it can check in as a node', () => {
   assert.deepEqual(normalizePrincipal({ userId: 'a', tenantId: 't', extra: 1 }), { userId: 'a', tenantId: 't' });
   assert.deepEqual(normalizePrincipal({ userId: 'a' }), { userId: 'a', tenantId: null });
   const full = { userId: 'u@d', tenantId: 'sp', scope: 'member', username: 'u', deviceId: 'd', deviceName: 'D', creator: false, role: 'render', conversation: null, owner: { kind: 'user' } };
   assert.deepEqual(normalizePrincipal(full), full);
-  assert.deepEqual(actorOf({ userId: 'alice', tenantId: 't' }, null), { userId: 'alice', session: null }, '旧式身份的 actor 与 M5 相同');
+  assert.deepEqual(actorOf({ userId: 'alice', tenantId: 't' }, null), { userId: 'alice', session: null }, 'actor of a legacy identity is the same as in M5');
   assert.deepEqual(actorOf({ ...full, role: 'agent', conversation: 3 }, 's'), { userId: 'u@d', deviceId: 'd', role: 'agent', conversation: 3, session: 's' });
   assert.deepEqual(actorOf({ userId: 'local', tenantId: 'local', scope: 'local', role: 'page' }, null), { userId: 'local', deviceId: null, role: 'page', conversation: null, session: null });
   assert.equal(mayRegisterNode({ userId: 'anonymous', tenantId: null }), true);
@@ -197,17 +197,17 @@ test('principal 规整、写入身份、能否报到为节点', () => {
   assert.equal(mayRegisterNode({ scope: 'admin' }), false);
 });
 
-test('本机设备信息：稳定、合法；环境变量能覆盖', () => {
+test('local device info: stable and valid; environment variables can override it', () => {
   const a = localDeviceInfo({});
   const b = localDeviceInfo({});
   assert.deepEqual(a, b);
   assert.match(a.deviceId, /^pc-[A-Za-z0-9_-]{22}$/);
   assert.ok(a.deviceName.length > 0 && a.deviceName.length <= 64);
   assert.deepEqual(localDeviceInfo({ PROMPTCUT_DEVICE_ID: 'my-device-000000001', PROMPTCUT_DEVICE_NAME: 'Mine' }), { deviceId: 'my-device-000000001', deviceName: 'Mine' });
-  assert.equal(localDeviceInfo({ PROMPTCUT_DEVICE_ID: 'bad id' }).deviceId, a.deviceId, '不合法的覆盖不认');
+  assert.equal(localDeviceInfo({ PROMPTCUT_DEVICE_ID: 'bad id' }).deviceId, a.deviceId, 'an invalid override is ignored');
 });
 
-test('预渲染进程的素材回退：别的机器的素材服务要票据，setMediaFallbackTicket 给了就带 Bearer', async (t) => {
+test('prerender process asset fallback: the asset service on another machine requires a ticket; once setMediaFallbackTicket provides one, Bearer is sent', async (t) => {
   const client = await import(harness.compileTs(path.join(ROOT, 'server', 'asset-client.ts')));
   const kit = await assetTicketKit();
   const remote = await harness.serve({ chunkSize: 1024, isTrusted: () => false, tickets: kit.tickets });
@@ -232,7 +232,7 @@ test('预渲染进程的素材回退：别的机器的素材服务要票据，se
   client.setMediaFallbackBases([remote.base]);
   t.after(() => { client.setMediaFallbackBases([]); client.setMediaFallbackTicket(null); });
   client.setMediaFallbackTicket(null);
-  assert.equal((await fetch(via)).status, 401, '不带票据：别的机器回 401');
+  assert.equal((await fetch(via)).status, 401, 'no ticket: the other machine returns 401');
   client.setMediaFallbackTicket(async () => kit.issue('r'));
   const got = await fetch(via, { headers: { Range: 'bytes=0-9' } });
   assert.equal(got.status, 206);

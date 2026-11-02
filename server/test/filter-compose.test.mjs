@@ -11,8 +11,8 @@ import { buildComposeArgs, composeLayers } from "../export-compose.mjs";
 import { extractArgs, mediaLayersAt } from "../vision-compose.mjs";
 
 const FILTERS = [
-  { id: "fx-s", name: "冷调", ops: [{ kind: "saturate", value: 0.6 }, { kind: "hue", value: -20 }, { kind: "brightness", value: 1 }] },
-  { id: "fx-a", name: "渐糊", ops: [{ kind: "blur", value: "4*p" }, { kind: "brightness", value: "1 + 0.5*t" }] },
+  { id: "fx-s", name: "Cool tone", ops: [{ kind: "saturate", value: 0.6 }, { kind: "hue", value: -20 }, { kind: "brightness", value: 1 }] },
+  { id: "fx-a", name: "Gradual blur", ops: [{ kind: "blur", value: "4*p" }, { kind: "brightness", value: "1 + 0.5*t" }] },
 ];
 
 function project() {
@@ -33,10 +33,10 @@ function compose(p, sidecarDir) {
 }
 
 // 输入编号:0 底色、1 卡片,素材从 2 起(没有毛玻璃遮罩)。c1 → 2,c2 → 3,c3 → 4
-test("导出:常量滤镜接在 format=gbrap 之后、强调 / 不透明度之前;中性步骤不上链", () => {
+test("export: constant filters go after format=gbrap and before emphasis / opacity; neutral steps are not added to the chain", () => {
   const { graph, sidecars } = compose(project(), "C:\\out dir");
   const c1 = graph.split(";").find((s) => s.startsWith("[2:v]"));
-  assert.match(c1, /format=gbrap,colorchannelmixer=rr=[^,]+,colorchannelmixer=rr=[^,]+\[m2\]$/, "saturate + hue 两步,brightness 1 是中性不上链");
+  assert.match(c1, /format=gbrap,colorchannelmixer=rr=[^,]+,colorchannelmixer=rr=[^,]+\[m2\]$/, "saturate + hue are two steps; brightness 1 is neutral and is not added to the chain");
   assert.doesNotMatch(c1, /lutrgb/);
   // 删掉了定义的滤镜:按没滤镜合成,不报错
   const c3 = graph.split(";").find((s) => s.startsWith("[4:v]"));
@@ -44,7 +44,7 @@ test("导出:常量滤镜接在 format=gbrap 之后、强调 / 不透明度之�
   assert.equal(sidecars.length, 1);
 });
 
-test("导出:随时间变化的滤镜走 sendcmd,脚本按帧一行、路径转义冒号", () => {
+test("export: time-varying filters go through sendcmd, with one script line per frame and colons escaped in the path", () => {
   const { graph, sidecars } = compose(project(), "C:\\out dir");
   const c2 = graph.split(";").find((s) => s.startsWith("[3:v]"));
   assert.match(c2, /trim=start_pts=10:end_pts=20,.*format=gbrap,sendcmd=f='C\\:\/out dir\/filter-3\.cmd',premultiply/);
@@ -53,24 +53,24 @@ test("导出:随时间变化的滤镜走 sendcmd,脚本按帧一行、路径转�
   const [side] = sidecars;
   assert.equal(side.file, "C:/out dir/filter-3.cmd");
   const lines = side.text.trim().split("\n");
-  assert.equal(lines.length, 10, "片段 1~2 秒,10fps 共 10 帧");
+  assert.equal(lines.length, 10, "clip spans 1~2 s, 10 frames in total at 10fps");
   assert.match(lines[0], /^0\.975 gblur@fx3_0 sigma 0, lutrgb@fx3_1 r val\*1\+0\.5,/);
   assert.match(lines[9], /^1\.875 gblur@fx3_0 sigma 3\.6, lutrgb@fx3_1 r val\*1\.45\+0\.5,/);
 });
 
-test("see_frames:这一刻的滤镜翻成常量,接在 rgba 之后、不透明度之前", () => {
+test("see_frames: the filters at this moment are translated into constants, placed after rgba and before opacity", () => {
   const layers = mediaLayersAt(project(), 1.5);
   assert.equal(layers.length, 1);
   assert.match(layers[0].filter, /^premultiply=inplace=1,pad=.*gblur=sigma=2:steps=6.*lutrgb=r=val\*1\.25\+0\.5/);
   const args = extractArgs({ file: "x.mp4", kind: "video", seconds: 0, width: 320, height: 180, opacity: 0.5, filter: layers[0].filter, out: "o.png" });
   const vf = args[args.indexOf("-vf") + 1];
   assert.match(vf, /format=rgba,premultiply=.*lutrgb=[^,]+,colorchannelmixer=aa=0\.5000$/);
-  assert.equal(mediaLayersAt(project(), 2.5)[0].filter, undefined, "定义被删的滤镜不上链");
+  assert.equal(mediaLayersAt(project(), 2.5)[0].filter, undefined, "a filter whose definition was deleted is not added to the chain");
 });
 
 const hasFfmpeg = spawnSync("ffmpeg", ["-hide_banner", "-version"]).status === 0;
 
-test("真跑 ffmpeg:整条导出链带逐帧滤镜能出片,sendcmd 真的改了参数", { skip: !hasFfmpeg && "没有 ffmpeg" }, () => {
+test("real ffmpeg run: the whole export chain with per-frame filters can produce a video, and sendcmd really changes the parameters", { skip: !hasFfmpeg && "No ffmpeg" }, () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pc-fx-"));
   try {
     // 素材:一段纯中灰,好量亮度;卡片层:全透明 PNG 序列
@@ -94,9 +94,9 @@ test("真跑 ffmpeg:整条导出链带逐帧滤镜能出片,sendcmd 真的改了
       return out[0];
     };
     // 片段 2(1~2 秒)亮度 1 + 0.5t:第 10 帧 t=0 → 128;第 19 帧 t=0.9 → 128×1.45 ≈ 186(中间像素离边远,模糊不影响)
-    assert.ok(Math.abs(gray(10) - 128) <= 2, `第 10 帧 ${gray(10)}`);
-    assert.ok(Math.abs(gray(19) - 186) <= 3, `第 19 帧 ${gray(19)},sendcmd 没把亮度改上去`);
-    assert.ok(gray(15) > gray(11) && gray(19) > gray(15), "亮度应当逐帧上升");
+    assert.ok(Math.abs(gray(10) - 128) <= 2, `frame 10: ${gray(10)}`);
+    assert.ok(Math.abs(gray(19) - 186) <= 3, `frame 19: ${gray(19)}, sendcmd did not raise the brightness`);
+    assert.ok(gray(15) > gray(11) && gray(19) > gray(15), "brightness should rise frame by frame");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

@@ -25,7 +25,7 @@ export async function seedSharedProject({ base, projectId, creator, name, device
   try {
     const opened = await ask({ type: 'project.open', projectId });
     const body = { version: 1, id: `seed-${projectId.slice(-8)}`, name, width: 1920, height: 1080, fps: 30, duration: 30, themeId: 'midnight', media: [],
-      tracks: [{ id: 't-1', name: '序列 1', clips: [] }, { id: 't-2', name: '序列 2', clips: [] }] };
+      tracks: [{ id: 't-1', name: 'Track 1', clips: [] }, { id: 't-2', name: 'Track 2', clips: [] }] };
     const seeded = await ask({ type: 'project.op', projectId, opId: randomBytes(16).toString('base64url'), ops: [{ op: 'set', path: '', value: body }] });
     const bad = (m) => /error|reject/i.test(String(m?.type ?? ''));
     return { ok: !bad(opened) && !bad(seeded), opened: opened?.type, seeded: seeded?.type };

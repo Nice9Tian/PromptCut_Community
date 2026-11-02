@@ -35,7 +35,7 @@ const pushed = (c, ms = 300) => c.quiet((m) => m.type === 'content.changed' || m
 
 // ------------------------------------------------------------------ AU9
 
-test('AU9 两个共享项目的成员各自发布、订阅、写内容库：对方收到 0 条；同名频道、同名键不串', async (t) => {
+test('AU9 members of two shared projects each publish, subscribe and write to the content store: the other side receives 0 messages; same-name channels and same-name keys do not leak', async (t) => {
   const env = await hostFor(t);
   const P = await createProject(env, { mode: 'free' });
   const Q = await createProject(env, { mode: 'free' });
@@ -50,13 +50,13 @@ test('AU9 两个共享项目的成员各自发布、订阅、写内容库：对�
   const quietL = pushed(local, 400);
   await write(mp, 'P');
   const gotP = await mp.next((m) => m.type === 'content.changed', 2000);
-  assert.equal(gotP.key, 'same-key', '本空间自己收得到');
-  assert.deepEqual(await quietQ, [], '另一个共享项目收到 0 条');
-  assert.deepEqual(await quietL, [], 'local 空间收到 0 条');
+  assert.equal(gotP.key, 'same-key', 'its own space receives it');
+  assert.deepEqual(await quietQ, [], 'the other shared project receives 0 messages');
+  assert.deepEqual(await quietL, [], 'local space receives 0 messages');
 
   const quietP = pushed(mp, 400);
   await write(mq, 'Q');
-  assert.deepEqual(await quietP, [], '反方向也收到 0 条');
+  assert.deepEqual(await quietP, [], 'the reverse direction also receives 0 messages');
 
   // 同名键各是各的
   const gp = await ask(mp, { type: 'content.get', kind: 'card-source', key: 'same-key' }, 'content.item');
@@ -64,8 +64,8 @@ test('AU9 两个共享项目的成员各自发布、订阅、写内容库：对�
   const gl = await ask(local, { type: 'content.get', kind: 'card-source', key: 'same-key' }, 'content.item');
   assert.deepEqual(gp.body, { tag: 'P' });
   assert.deepEqual(gq.body, { tag: 'Q' });
-  assert.equal(gl.missing, true, 'local 空间看不到共享空间写的');
-  assert.equal(gp.rev, 1, 'rev 各自从 1 起');
+  assert.equal(gl.missing, true, 'local space cannot see what the shared space wrote');
+  assert.equal(gp.rev, 1, 'rev starts from 1 in each');
   assert.equal(gq.rev, 1);
   // 同名项目各自的版本号
   const sp = await ask(mp, { type: 'project.open', projectId: 'same-project' }, 'project.state');
@@ -82,19 +82,19 @@ test('AU9 两个共享项目的成员各自发布、订阅、写内容库：对�
   assert.deepEqual(lp.items.map((x) => x.key), ['same-key']);
 });
 
-test('AU9 存储：共享项目的空间落在 tenants/<projectId>/ 下；local 空间沿用数据目录本身（独立模式）', async (t) => {
+test('AU9 storage: the space of a shared project lands under tenants/<projectId>/; the local space keeps using the data directory itself (standalone mode)', async (t) => {
   const env = await hostFor(t);
   const P = await createProject(env, { mode: 'free' });
   const mp = await join(env, P, { username: 'pam', remote: R(3) });
   await write(mp, 'P');
   const dir = path.join(env.dataDir, 'tenants', P.projectId);
-  await waitFor(() => fs.existsSync(dir), 2000, `${dir} 存在`);
+  await waitFor(() => fs.existsSync(dir), 2000, `${dir} exists`);
   const local = await env.open([PROTOCOL]);
   await write(local, 'L');
-  assert.equal(fs.existsSync(path.join(env.dataDir, 'tenants', 'local')), false, 'local 空间不在 tenants/ 下');
+  assert.equal(fs.existsSync(path.join(env.dataDir, 'tenants', 'local')), false, 'local space is not under tenants/');
 });
 
-test('AU9 渲染任务队列按空间隔离：另一个项目的节点看不到、认领不到', async (t) => {
+test('AU9 render queue is isolated per space: nodes of another project cannot see or claim', async (t) => {
   const env = await hostFor(t);
   const P = await createProject(env, { mode: 'free' });
   const Q = await createProject(env, { mode: 'free' });
@@ -109,35 +109,35 @@ test('AU9 渲染任务队列按空间隔离：另一个项目的节点看不到�
   // M6c X3：host 的 watch 'all' 只回摘要；这里要比对快照内容，改 watch 任务所在的项目（原为 'all'）
   const snap = await ask(nodeQ, { type: 'queue.watch', projects: [task.source.projectId] }, 'queue.snapshot');
   assert.equal(snap.type, 'queue.snapshot', JSON.stringify(snap));
-  assert.ok(!JSON.stringify(snap).includes(task.id), `另一个空间的快照里不该有这个任务：${JSON.stringify(snap).slice(0, 400)}`);
+  assert.ok(!JSON.stringify(snap).includes(task.id), `the snapshot of another space should not contain this task: ${JSON.stringify(snap).slice(0, 400)}`);
   const claim = await ask(nodeQ, { type: 'task.claim', id: task.id, expectVersion: 1 }, ['task.claimed', 'task.claim-rejected']);
   assert.deepEqual([claim.type, claim.reason], ['task.claim-rejected', 'gone'], JSON.stringify(claim));
 
   const local = await env.open([PROTOCOL]);
   await ask(local, { type: 'node.hello', nodeId: 'n-local', profile: 'pc' }, 'node.welcome');
   const lc = await ask(local, { type: 'task.claim', id: task.id, expectVersion: 1 }, ['task.claimed', 'task.claim-rejected']);
-  assert.deepEqual([lc.type, lc.reason], ['task.claim-rejected', 'gone'], `local 空间：${JSON.stringify(lc)}`);
+  assert.deepEqual([lc.type, lc.reason], ['task.claim-rejected', 'gone'], `local space: ${JSON.stringify(lc)}`);
 
   const nodeP = await join(env, P, { username: 'rig', role: 'render', remote: R(6) });
   await ask(nodeP, { type: 'node.hello', nodeId: 'n-p', profile: 'host' }, 'node.welcome');
   const ok = await ask(nodeP, { type: 'task.claim', id: task.id, expectVersion: 1 }, ['task.claimed', 'task.claim-rejected']);
-  assert.equal(ok.type, 'task.claimed', `本空间：${JSON.stringify(ok)}`);
+  assert.equal(ok.type, 'task.claimed', `this space: ${JSON.stringify(ok)}`);
   // 任务的 source 取自连接的 principal
   const d = env.service.describe();
   void d;
 });
 
-test('AU9 局域网主机：创建者的页面（本机声明）与成员落在同一个空间；本机声明只在回环上认、项目不存在 401', async (t) => {
+test('AU9 LAN host: the creator page (local claim) and members land in the same space; a local claim is accepted only on loopback, a nonexistent project returns 401', async (t) => {
   const env = await hostFor(t, { attached: true });
   const P = await createProject(env, { mode: 'restricted', list: [{ username: 'bob', password: 'bob-pw' }] });
   const claim = [PROTOCOL, `promptcut.tenant.${P.projectId}`];
   const hs = await env.handshake(claim);
   assert.equal(hs.status, 101);
-  assert.equal(hs.protocol, PROTOCOL, '只回显 promptcut.v1');
+  assert.equal(hs.protocol, PROTOCOL, 'echoes only promptcut.v1');
   const creatorPage = await env.open(claim);
   const creatorRender = await env.open([...claim, 'promptcut.role.render']);
-  const pr = await waitFor(() => env.principals().filter((p) => p?.userId === `local@${HOST_DEVICE.deviceId}`), 2000, '本机声明的连接');
-  await waitFor(() => env.principals().filter((p) => p?.userId === `local@${HOST_DEVICE.deviceId}`).length === 2, 2000, '两条');
+  const pr = await waitFor(() => env.principals().filter((p) => p?.userId === `local@${HOST_DEVICE.deviceId}`), 2000, 'connections made with the local claim');
+  await waitFor(() => env.principals().filter((p) => p?.userId === `local@${HOST_DEVICE.deviceId}`).length === 2, 2000, 'two');
   const all = env.principals().filter((p) => p?.userId === `local@${HOST_DEVICE.deviceId}`);
   for (const p of all) {
     assert.equal(p.tenantId, P.projectId);
@@ -152,17 +152,17 @@ test('AU9 局域网主机：创建者的页面（本机声明）与成员落在�
   await ask(creatorPage, { type: 'content.watch', kinds: ['card-source'] }, 'content.watching');
   await ask(bob, { type: 'content.put', kind: 'card-source', key: 'x', body: 1 }, 'content.stored');
   const ch = await creatorPage.next((m) => m.type === 'content.changed' && m.key === 'x', 2000);
-  assert.equal(ch.actor.userId.startsWith('bob@'), true, '创建者页面收到成员的写入');
+  assert.equal(ch.actor.userId.startsWith('bob@'), true, 'the creator page receives the write of a member');
   const list = await members(bob);
   const hostRow = list.find((d) => d.deviceId === HOST_DEVICE.deviceId);
-  assert.ok(hostRow, `成员列表里有局域网主机这台设备：${JSON.stringify(list)}`);
+  assert.ok(hostRow, `member list has the LAN host device: ${JSON.stringify(list)}`);
   assert.equal(hostRow.creator, true);
   assert.deepEqual(hostRow.tags.editing, true);
   void creatorRender;
 
-  assert.equal((await env.handshake(claim, '192.168.1.61')).status, 401, '非回环来源的本机声明 401');
-  assert.equal((await env.handshake([PROTOCOL, 'promptcut.tenant.sp_aaaaaaaaaaaaaaaaaaaaaaaaaa'])).status, 401, '项目不存在 401');
-  assert.equal((await env.handshake([PROTOCOL, `promptcut.tenant.${P.projectId}`, 'promptcut.role.admin'])).status, 401, '角色不认识');
+  assert.equal((await env.handshake(claim, '192.168.1.61')).status, 401, 'local claim from a non-loopback source returns 401');
+  assert.equal((await env.handshake([PROTOCOL, 'promptcut.tenant.sp_aaaaaaaaaaaaaaaaaaaaaaaaaa'])).status, 401, 'nonexistent project returns 401');
+  assert.equal((await env.handshake([PROTOCOL, `promptcut.tenant.${P.projectId}`, 'promptcut.role.admin'])).status, 401, 'unknown role');
 });
 
 // ------------------------------------------------------------------ AU11
@@ -189,17 +189,17 @@ const DATA_PLANE = [
   { type: 'auth.ticket', kind: 'asset', access: 'r' },
 ];
 
-test('AU11 集群令牌：带令牌的连接是管理身份；发任何数据面消息回 forbidden；service.announce 成功', async (t) => {
+test('AU11 cluster token: a connection with the token is an admin identity; sending any data-plane message returns forbidden; service.announce succeeds', async (t) => {
   const token = randomToken();
   const env = await hostFor(t, { clusterToken: token });
   const admin = await env.open([PROTOCOL, `promptcut.token.${token}`], '203.0.113.50');
-  const pr = await waitFor(() => env.principals().find((p) => p?.userId === 'admin'), 2000, '管理身份');
+  const pr = await waitFor(() => env.principals().find((p) => p?.userId === 'admin'), 2000, 'admin identity');
   assert.equal(pr.tenantId, null);
   assert.equal(pr.scope, 'admin');
   for (const msg of DATA_PLANE) {
     const r = await askOrNull(admin, msg, 1500);
-    assert.ok(r, `${msg.type}：没有回包`);
-    assert.deepEqual([r.type, r.reason], ['error', 'forbidden'], `${msg.type}：${JSON.stringify(r)}`);
+    assert.ok(r, `${msg.type}: no reply`);
+    assert.deepEqual([r.type, r.reason], ['error', 'forbidden'], `${msg.type}: ${JSON.stringify(r)}`);
   }
   const a = await ask(admin, { type: 'service.announce', announcerId: 'asset-1', kind: 'asset', urls: ['http://203.0.113.50:9000/'] }, 'service.announced');
   assert.equal(a.type, 'service.announced', JSON.stringify(a));
@@ -213,9 +213,9 @@ test('AU11 集群令牌：带令牌的连接是管理身份；发任何数据面
   assert.deepEqual([ma.type, ma.reason], ['error', 'forbidden'], JSON.stringify(ma));
   const mw = await ask(m, { type: 'service.watch' }, 'service.endpoints');
   assert.equal(mw.type, 'service.endpoints');
-  assert.ok(JSON.stringify(mw.endpoints).includes('203.0.113.50:9000'), `成员看得到登记的地址：${JSON.stringify(mw)}`);
+  assert.ok(JSON.stringify(mw.endpoints).includes('203.0.113.50:9000'), `member can see the registered address: ${JSON.stringify(mw)}`);
   const mwd = await ask(m, { type: 'service.withdraw', announcerId: 'asset-1', kind: 'asset' }, 'service.withdrawn');
-  assert.deepEqual([mwd.type, mwd.reason], ['error', 'forbidden'], `成员撤回：${JSON.stringify(mwd)}`);
+  assert.deepEqual([mwd.type, mwd.reason], ['error', 'forbidden'], `member withdraws: ${JSON.stringify(mwd)}`);
 
   // local 身份也能登记
   const local = await env.open([PROTOCOL]);
@@ -225,21 +225,21 @@ test('AU11 集群令牌：带令牌的连接是管理身份；发任何数据面
   assert.equal(wd.type, 'service.withdrawn', JSON.stringify(wd));
 });
 
-test('AU11 集群令牌：令牌错 401；令牌 + 证明 401；独立模式没设令牌时带令牌握手 401', async (t) => {
+test('AU11 cluster token: wrong token returns 401; token + proof returns 401; in standalone mode with no token set, a handshake with a token returns 401', async (t) => {
   const token = randomToken();
   const env = await hostFor(t, { clusterToken: token });
-  assert.equal((await env.handshake([PROTOCOL, `promptcut.token.${randomToken()}`], R(30))).status, 401, '令牌错');
+  assert.equal((await env.handshake([PROTOCOL, `promptcut.token.${randomToken()}`], R(30))).status, 401, 'wrong token');
   const P = await createProject(env, { mode: 'free' });
   const p = await proofFor(env, P, { username: 'zoe', remote: R(31) });
-  assert.equal((await env.handshake([...p.protocols, `promptcut.token.${token}`], R(31))).status, 401, '令牌 + 证明');
-  assert.equal((await env.handshake([PROTOCOL, `promptcut.token.${token}`, `promptcut.token.${token}`], R(32))).status, 401, '两个令牌项');
+  assert.equal((await env.handshake([...p.protocols, `promptcut.token.${token}`], R(31))).status, 401, 'token + proof');
+  assert.equal((await env.handshake([PROTOCOL, `promptcut.token.${token}`, `promptcut.token.${token}`], R(32))).status, 401, 'two token items');
 
   const bare = await hostFor(t);
-  assert.equal((await bare.handshake([PROTOCOL, `promptcut.token.${token}`], R(33))).status, 401, '没设令牌：管理接口全部 401');
-  assert.equal((await bare.handshake([PROTOCOL, `promptcut.token.${token}`])).status, 401, '没设令牌：回环带令牌也 401');
+  assert.equal((await bare.handshake([PROTOCOL, `promptcut.token.${token}`], R(33))).status, 401, 'no token set: all admin interfaces return 401');
+  assert.equal((await bare.handshake([PROTOCOL, `promptcut.token.${token}`])).status, 401, 'no token set: loopback with a token also returns 401');
 });
 
-test('AU11 挂载模式：非回环来源带集群令牌握手 401（集群令牌在挂载模式下一律不认）', async (t) => {
+test('AU11 mounted mode: a handshake from a non-loopback source with a cluster token returns 401 (the cluster token is never accepted in mounted mode)', async (t) => {
   const token = randomToken();
   const prev = process.env.PROMPTCUT_CLUSTER_TOKEN;
   process.env.PROMPTCUT_CLUSTER_TOKEN = token;

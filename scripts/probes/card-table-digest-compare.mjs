@@ -115,7 +115,7 @@ async function main() {
   let unchanged = 0;
   for (const id of ids) {
     const b = before.cards[id], a = after.cards[id];
-    if (!b || !a) { rows.push({ id, note: b ? '改后没有这张卡' : '改前没有这张卡' }); bad.push(id); continue; }
+    if (!b || !a) { rows.push({ id, note: b ? 'Card absent after the change' : 'Card absent before the change' }); bad.push(id); continue; }
     const diff = { capabilities: !same(b.capabilities, a.capabilities), registered: !same(b.registered, a.registered), sourceVersion: b.sourceVersion !== a.sourceVersion,
       keys: !same(b.keys, a.keys), keysFixedSource: !same(b.keysFixedSource, a.keysFixedSource) };
     const changed = diff.capabilities || diff.registered || diff.keys || diff.keysFixedSource || diff.sourceVersion;
@@ -125,27 +125,27 @@ async function main() {
   }
   const missed = [...EXPECT].filter(id => !rows.some(r => r.id === id && (r.keys || r.capabilities)));
 
-  console.log(`基准 ${BASE} = ${base.sha.slice(0, 12)};当前 HEAD = ${head.sha.slice(0, 12)}${head.dirty ? '(src/ 或 server/ 有未提交的改动,算的是工作区)' : ''}`);
-  console.log(`生成快照的代码指纹:改前 ${before.snapshotCode} 改后 ${after.snapshotCode}${before.snapshotCode === after.snapshotCode ? '(相同)' : '(不同!)'}`);
-  console.log(`内置卡:改前 ${Object.keys(before.cards).length} 张,改后 ${Object.keys(after.cards).length} 张;逐张相同 ${unchanged} 张,有变化 ${rows.length} 张`);
-  const yn = v => v ? '变' : '同';
+  console.log(`Baseline ${BASE} = ${base.sha.slice(0, 12)}; current HEAD = ${head.sha.slice(0, 12)}${head.dirty ? '(uncommitted changes in src/ or server/, computed from the working tree)' : ''}`);
+  console.log(`Code fingerprint for generating snapshots: before ${before.snapshotCode}, after ${after.snapshotCode} ${before.snapshotCode === after.snapshotCode ? '(same)' : '(different!)'}`);
+  console.log(`Built-in cards: ${Object.keys(before.cards).length} before the change, ${Object.keys(after.cards).length} after; ${unchanged} identical card by card, ${rows.length} changed`);
+  const yn = v => v ? 'changed' : 'same';
   if (CAPS_ONLY) {
     const count = key => rows.filter(r => r[key]).length;
-    console.log(`只核能力表这一路:能力表变 ${count('capabilities')} 张 / 注册表里的定义变 ${count('registered')} 张 / 键(定源码)变 ${count('keysFixedSource')} 张 / 源码版本变 ${count('sourceVersion')} 张 / 键变 ${count('keys')} 张`);
-    console.log(`源码版本变了的: ${rows.filter(r => r.sourceVersion).map(r => r.id).join(', ') || '(无)'}`);
+    console.log(`Checking only the capability-table path: capability table changed for ${count('capabilities')} cards / registry definition changed for ${count('registered')} cards / key (fixed source) changed for ${count('keysFixedSource')} cards / source version changed for ${count('sourceVersion')} cards / key changed for ${count('keys')} cards`);
+    console.log(`Cards with a changed source version: ${rows.filter(r => r.sourceVersion).map(r => r.id).join(', ') || '(none)'}`);
   }
   for (const r of rows) {
     if (CAPS_ONLY && !r.note && !r.capabilities && !r.registered && !r.keysFixedSource) continue;
     if (r.note) { console.log(`  ${r.id}: ${r.note}`); continue; }
-    console.log(`  ${r.id}(${r.group}): 能力表 ${yn(r.capabilities)} / 注册表里的定义 ${yn(r.registered)} / 源码版本 ${yn(r.sourceVersion)} / 键 ${yn(r.keys)} / 键(定源码) ${yn(r.keysFixedSource)}`);
-    if (r.capabilities) console.log(`      能力表  改前 ${JSON.stringify(r.before.capabilities)}\n              改后 ${JSON.stringify(r.after.capabilities)}`);
-    if (r.keys) for (const k of ['node', 'snapshot', 'cost']) console.log(`      ${k.padEnd(8)} 改前 ${String(r.before.keys[k]).slice(0, 16)}  改后 ${String(r.after.keys[k]).slice(0, 16)}`);
+    console.log(`  ${r.id} (${r.group}): capability table ${yn(r.capabilities)} / registry definition ${yn(r.registered)} / source version ${yn(r.sourceVersion)} / key ${yn(r.keys)} / key (fixed source) ${yn(r.keysFixedSource)}`);
+    if (r.capabilities) console.log(`      capability table  before ${JSON.stringify(r.before.capabilities)}\n                        after  ${JSON.stringify(r.after.capabilities)}`);
+    if (r.keys) for (const k of ['node', 'snapshot', 'cost']) console.log(`      ${k.padEnd(8)} before ${String(r.before.keys[k]).slice(0, 16)}  after ${String(r.after.keys[k]).slice(0, 16)}`);
   }
   if (JSON_OUT) { fs.mkdirSync(path.dirname(path.resolve(JSON_OUT)), { recursive: true }); fs.writeFileSync(JSON_OUT, JSON.stringify({ base: base.sha, head, before, after }, null, 1)); }
-  if (bad.length) console.log(`✖ 不在 --expect 里却变了的卡 ${bad.length} 张: ${bad.slice(0, 20).join(', ')}${bad.length > 20 ? ' …' : ''}`);
-  if (missed.length) console.log(`✖ --expect 里列了却没变的卡: ${missed.join(', ')}`);
-  if (CAPS_ONLY && !bad.length && !missed.length) console.log(`✔ 能力表、注册表里的定义、键(定源码)三栏:除 --expect 里的 ${EXPECT.size} 张外一张没变`);
-  else if (!bad.length && !missed.length) console.log(`✔ 只有 --expect 里的 ${EXPECT.size} 张变了,其余 ${unchanged} 张的能力表、源码版本、三个键逐张相同`);
+  if (bad.length) console.log(`✖ ${bad.length} cards not listed in --expect changed: ${bad.slice(0, 20).join(', ')}${bad.length > 20 ? ' …' : ''}`);
+  if (missed.length) console.log(`✖ Cards listed in --expect that did not change: ${missed.join(', ')}`);
+  if (CAPS_ONLY && !bad.length && !missed.length) console.log(`✔ Capability table, registry definition and key (fixed source), all three columns: nothing changed except the ${EXPECT.size} cards in --expect`);
+  else if (!bad.length && !missed.length) console.log(`✔ Only the ${EXPECT.size} cards in --expect changed; for the other ${unchanged} cards the capability table, source version and three keys are identical card by card`);
   return bad.length || missed.length ? 1 : 0;
 }
 

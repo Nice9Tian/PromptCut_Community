@@ -27,15 +27,15 @@ const exportDir = path.join(OUT, 'export');
 fs.mkdirSync(path.join(exportDir, 'media'), { recursive: true });
 const tone = path.join(exportDir, 'media', 'tone.wav');
 const ff = spawnSync('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=6', '-ac', '2', tone], { windowsHide: true });
-if (ff.status !== 0) throw new Error('ffmpeg 生成正弦波失败:' + ff.stderr);
+if (ff.status !== 0) throw new Error('ffmpeg failed to generate the sine wave:' + ff.stderr);
 
 const project = {
   version: 1, id: 'p-cut-audio', name: 'cut-audio', width: 640, height: 360, fps: 30, duration: 9, themeId: 'midnight',
   media: [{ id: 'm-tone', kind: 'audio', name: 'tone.wav', url: '/@media/tone.wav', duration: 6 }],
-  tracks: [{ id: 't1', name: '序列 1', clips: [{ id: 's1', cardId: '', cutId: 'cut-2', cutOffset: 1, start: 2, end: 7, fadeIn: 1, params: {} }] }],
+  tracks: [{ id: 't1', name: 'Track 1', clips: [{ id: 's1', cardId: '', cutId: 'cut-2', cutOffset: 1, start: 2, end: 7, fadeIn: 1, params: {} }] }],
   cuts: [
-    { id: 'cut-1', name: '剪辑1' },
-    { id: 'cut-2', name: '剪辑2', tracks: [{ id: 't2', name: '序列 1', clips: [{ id: 'a1', cardId: '', mediaId: 'm-tone', mediaOffset: 0, start: 0, end: 6, params: {} }] }], duration: 6, transitions: [] },
+    { id: 'cut-1', name: 'Cut 1' },
+    { id: 'cut-2', name: 'Cut 2', tracks: [{ id: 't2', name: 'Track 1', clips: [{ id: 'a1', cardId: '', mediaId: 'm-tone', mediaOffset: 0, start: 0, end: 6, params: {} }] }], duration: 6, transitions: [] },
   ],
   activeCutId: 'cut-1',
 };
@@ -63,7 +63,7 @@ try {
     });
     // 带声音的是 preview.mp4(overlay.mov 只是透明的画面层)
     const video = fs.readdirSync(out).find((f) => f === 'preview.mp4') ?? fs.readdirSync(out).find((f) => /\.mp4$/i.test(f));
-    if (code !== 0 || !video) { fails.push(`${mode}: 导出失败(退出码 ${code})`); continue; }
+    if (code !== 0 || !video) { fails.push(`${mode}: export failed (exit code ${code})`); continue; }
     const file = path.join(out, video);
     const rms = (from, to) => rmsOf(file, from, to);
     const w = { pre: rms(0.1, 1.9), fadeHead: rms(2.0, 2.5), fadeTail: rms(3.0, 3.5), body: rms(3.5, 6.9), post: rms(7.1, 8.9) };
@@ -73,7 +73,7 @@ try {
     const ok = w.pre !== null && w.pre < -60 && w.body !== null && Math.abs(w.body - ref) < 1 && Math.abs(w.fadeTail - ref) < 1
       && (w.post === null || w.post < -60) && w.fadeTail - w.fadeHead > 6;
     w.reference = ref;
-    if (!ok) fails.push(`${mode}: 声音窗口不对 ${JSON.stringify(w)}`);
+    if (!ok) fails.push(`${mode}: wrong sound window ${JSON.stringify(w)}`);
     console.log(`${ok ? 'PASS' : 'FAIL'} ${mode}`, JSON.stringify(w));
   }
 } finally {

@@ -23,7 +23,7 @@ const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =
   return /\.(ts|tsx)$/.test(e.name) && !e.name.endsWith(".d.ts") ? [p] : [];
 });
 
-test("PRUNE-01 每一处就地的 ONLINE_BUILD 都与标准写法逐字相同", () => {
+test("PRUNE-01 every in-place ONLINE_BUILD is verbatim identical to the canonical form", () => {
   const sites = [];
   const bad = [];
   // A3 之后闭源的那几摊在 cloud/ 下（公开仓库里没有这个目录）；这道检查原来就管着它们，搬走以后也要接着管
@@ -37,45 +37,45 @@ test("PRUNE-01 每一处就地的 ONLINE_BUILD 都与标准写法逐字相同", 
       if (line.trim() !== CANON) bad.push(`${where}: ${line.trim()}`);
     });
   }
-  assert.ok(sites.length >= 10, `就地常量应在十几个模块里,实际 ${sites.length}:${sites.join(", ")}`);
-  assert.deepEqual(bad, [], `写法与标准不同:\n${bad.join("\n")}`);
+  assert.ok(sites.length >= 10, `in-place constants should span a dozen or so modules, actual ${sites.length}:${sites.join(", ")}`);
+  assert.deepEqual(bad, [], `form differs from canonical:\n${bad.join("\n")}`);
 });
 
-test("PRUNE-02 Node 里这行求值为 false,不抛错", () => {
+test("PRUNE-02 this line evaluates to false in Node, without throwing", () => {
   // 与源码同一个表达式;Node 的 ESM 里 import.meta 在、import.meta.env 不在
   const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.VITE_PC_ONLINE === "1";
   assert.equal(ONLINE_BUILD, false);
 });
 
-test("PRUNE-03 在线页面云端项目不提示未保存改动(issue #16)", () => {
+test("PRUNE-03 online page cloud projects do not prompt about unsaved changes (issue #16)", () => {
   const topBar = fs.readFileSync(path.join(ROOT, "src/editor/TopBar.tsx"), "utf8");
   const statusBar = fs.readFileSync(path.join(ROOT, "src/editor/StatusBar.tsx"), "utf8");
-  assert.match(topBar, /useStore\(\(s\)\s*=>\s*!ONLINE_BUILD\s*&&\s*s\.dirty\)/, "TopBar 在在线构建下不应把云端项目标成有未保存改动");
-  assert.doesNotMatch(topBar, /切到氛围式会丢掉它们。继续？/, "TopBar 切回氛围式不应弹网页版未保存确认框");
-  assert.match(statusBar, /useStore\(\(s\)\s*=>\s*!ONLINE_BUILD\s*&&\s*s\.dirty\)/, "StatusBar 在在线构建下不应订阅本机草稿脏标记");
+  assert.match(topBar, /useStore\(\(s\)\s*=>\s*!ONLINE_BUILD\s*&&\s*s\.dirty\)/, "TopBar should not mark a cloud project as having unsaved changes in the online build");
+  assert.doesNotMatch(topBar, /Switching to Vibe mode will discard them\. Continue\?/, "TopBar switching back to Vibe mode should not show the web version's unsaved-changes confirmation");
+  assert.match(statusBar, /useStore\(\(s\)\s*=>\s*!ONLINE_BUILD\s*&&\s*s\.dirty\)/, "StatusBar should not subscribe to the local draft dirty flag in the online build");
 });
 
-test("PRUNE-04 在线页面离开编辑界面:只在改动只在本页时才问(游客那条路)", () => {
+test("PRUNE-04 online page leaving the editor: ask only when the changes exist only on this page (the guest path)", () => {
   const topBar = fs.readFileSync(path.join(ROOT, "src/editor/TopBar.tsx"), "utf8");
   assert.match(topBar, /unsentAtRisk\(v\.status,\s*v\.unconfirmed,\s*v\.offlineStore\)/,
-    "顶栏要用和浏览器离开确认同一个判断(unsentAtRisk),不要自己另写一套");
+    "the top bar must use the same check as the browser leave confirmation (unsentAtRisk), not write its own");
   assert.match(topBar, /const okToLeaveOnline = \(\) =>\s*!ONLINE_BUILD \|\| !unsentRisk \|\| confirm\(UNSENT_LEAVE_TEXT\)/,
-    "在线页面才问,且用 onlineStatus.ts 里那一句原文");
+    "ask only on the online page, and use the exact sentence from onlineStatus.ts");
   // 顶栏「氛围式」和「回首页」两条路都要过这道问话
   const goVibe = topBar.slice(topBar.indexOf("const goVibe = () =>"));
-  assert.match(goVibe, /if \(ONLINE_BUILD\) \{ if \(okToLeaveOnline\(\)\) go\(\); return; \}/, "切氛围式要先问");
+  assert.match(goVibe, /if \(ONLINE_BUILD\) \{ if \(okToLeaveOnline\(\)\) go\(\); return; \}/, "switching to Vibe mode must ask first");
   const goHome = topBar.slice(topBar.indexOf("const goHome = () =>"), topBar.indexOf("const goVibe = () =>"));
-  assert.match(goHome, /if \(!okToLeaveOnline\(\)\) return;/, "回首页要先问");
+  assert.match(goHome, /if \(!okToLeaveOnline\(\)\) return;/, "going to the home page must ask first");
 });
 
-test("PRUNE-05 手机版:系统后退要拦住,用手机版自己的确认框问", () => {
+test("PRUNE-05 mobile app: system back must be intercepted and ask with the mobile app's own confirmation dialog", () => {
   const mob = fs.readFileSync(path.join(ROOT, "src/mobile/MobileEditor.tsx"), "utf8");
   assert.match(mob, /unsentAtRisk\(v\.status,\s*v\.unconfirmed,\s*v\.offlineStore\)/,
-    "手机版要用和顶栏、浏览器离开确认同一个判断");
+    "the mobile app must use the same check as the top bar and the browser leave confirmation");
   // popstate 是后退发生之后才到的:要留住人就得把那一层压回去,再问
   assert.match(mob, /if \(riskRef\.current && !leaving\.current\) \{[\s\S]*?history\.pushState\(\{ pcm: 1, lvl: 1 \}[\s\S]*?askLeave\.current\(\);/,
-    "手机版收到 popstate 要先把这一层压回去再问,不能直接走");
+    "on popstate the mobile app must first push this layer back and then ask, not leave directly");
   assert.match(mob, /confirm\(\{ text: UNSENT_LEAVE_BODY, ok: trText\("Leave"\), danger: true, run: leaveNow \}\)/,
-    "用手机版自己的确认框(window.confirm 在手机上体验差、还可能被屏蔽)");
-  assert.doesNotMatch(mob, /window\.confirm|confirm\(["「]/, "手机版不许直接用浏览器的 confirm");
+    "use the mobile app's own confirmation dialog (window.confirm is a poor experience on phones and may be blocked)");
+  assert.doesNotMatch(mob, /window\.confirm|confirm\(["']/, "the mobile app must not use the browser's confirm directly");
 });

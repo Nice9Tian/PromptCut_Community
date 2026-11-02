@@ -57,10 +57,10 @@ const CARDS = [
   ...LOTTIE.filter((c) => lottieWant.includes(c.name)).map((c) => ({ ...c, kind: 'lottie' })),
   ...othersWant.map((id) => ({ name: id, kind: 'other', cardId: id, seconds: Math.max(2, FRAMES / FPS + 1), params: {} })),
 ];
-if (!fs.existsSync(path.join(DIST, 'stage.html'))) { console.error(`没有在线构建:${DIST}(先跑 npx vite build --mode online)`); process.exit(2); }
+if (!fs.existsSync(path.join(DIST, 'stage.html'))) { console.error(`No online build: ${DIST} (run npx vite build --mode online first)`); process.exit(2); }
 
 const projectOf = (card) => ({
-  id: `bake-${card.name}`, name: '浏览器节点生成快照探针', width: W, height: H, fps: FPS, duration: card.seconds,
+  id: `bake-${card.name}`, name: 'Browser node generate snapshots probe', width: W, height: H, fps: FPS, duration: card.seconds,
   themeId: 'dark', media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
   tracks: [{ id: 'tr', name: card.name, hidden: false, clips: [{ id: 'clip', kind: 'card', cardId: card.cardId, start: 0, end: card.seconds, params: card.params }] }],
 });
@@ -81,7 +81,7 @@ addEventListener('message', (e) => {
 window.__rpc = (method, ...args) => new Promise((res, rej) => { const id = ++seq; waiting.set(id, { res, rej }); stageWin.postMessage({ type: 'pc-rpc', id, method, args }, stageOrigin); });
 window.__timed = async (method, ...args) => { const t0 = performance.now(); const r = await window.__rpc(method, ...args); return { wall: performance.now() - t0, r }; };
 window.__setup = async (src) => { ready = null; const f = document.getElementById('bg'); f.src = src; stageWin = f.contentWindow; stageOrigin = new URL(src).origin;
-  const t0 = performance.now(); while (!ready) { if (performance.now() - t0 > 60000) throw new Error('舞台 60 秒没就绪'); await new Promise((r) => setTimeout(r, 50)); } stageWin = f.contentWindow; return ready; };
+  const t0 = performance.now(); while (!ready) { if (performance.now() - t0 > 60000) throw new Error('Stage not ready after 60 s'); await new Promise((r) => setTimeout(r, 50)); } stageWin = f.contentWindow; return ready; };
 </script>`;
 
 const TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html; charset=utf-8', '.json': 'application/json', '.wasm': 'application/wasm', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf', '.png': 'image/png', '.webp': 'image/webp' };
@@ -116,14 +116,14 @@ try {
   report.chrome = await browser.version();
   const page = await browser.newPage();
   await page.setViewport({ width: 1000, height: 640 });
-  page.on('pageerror', (e) => report.failures.push(`页面报错:${String(e.message || e).slice(0, 160)}`));
+  page.on('pageerror', (e) => report.failures.push(`Page error: ${String(e.message || e).slice(0, 160)}`));
   await page.goto(`http://127.0.0.1:${BASE}/probe-parent`, { waitUntil: 'load' });
   await page.evaluate((src) => window.__setup(src), `http://127.0.0.1:${BASE + 2}/editor/stage.html?stage=1&id=B&preview=stage&dual=1&lm=0`);
   await sleep(1000);
   const rect = { x: 0, y: 0, w: W - (W % 2), h: H - (H % 2) };
   const bake = async (card, localFrame) => {
     const { wall, r } = await page.evaluate((req) => window.__timed('bakeFrame', req), { session: 'bake', clipId: 'clip', localFrame, mode: 'seq', small: false, html: false, pixels: { rect } });
-    if (!r?.ok) { report.failures.push(`${card.name} 第 ${localFrame} 帧:${r?.reason}${r?.detail ? ` ${String(r.detail).slice(0, 100)}` : ''}`); return null; }
+    if (!r?.ok) { report.failures.push(`${card.name} frame ${localFrame}: ${r?.reason}${r?.detail ? ` ${String(r.detail).slice(0, 100)}` : ''}`); return null; }
     return { wall, ms: r.ms, pixelsMs: r.pixelsMs ?? 0, readyMs: r.readyMs, bytes: r.bytes, remounted: r.remounted };
   };
   for (const card of CARDS) {
@@ -146,7 +146,7 @@ try {
         htmlKB: { med: r2((q(jumps.map((x) => x.bytes), 0.5) ?? 0) / 1024), max: r2((q(jumps.map((x) => x.bytes), 1) ?? 0) / 1024) } };
     }
     report.cards.push(row);
-    process.stderr.write(`   顺推 ${JSON.stringify(row.seq)}\n` + (row.jump ? `   直接跳 ${JSON.stringify(row.jump)}\n` : ''));
+    process.stderr.write(`   forward ${JSON.stringify(row.seq)}\n` + (row.jump ? `   direct jump ${JSON.stringify(row.jump)}\n` : ''));
   }
   if (FIDELITY) {
     const { startIsolatedEditor } = await import('./preview-stop-lib.mjs');
@@ -160,7 +160,7 @@ try {
       for (const card of CARDS.filter((c) => c.kind === 'lottie' && c.name !== 'empty-lottie')) {
         const total = Math.floor(card.seconds * FPS);
         const frames = [Math.floor(total * 0.2), Math.floor(total * 0.5), Math.floor(total * 0.8)];
-        process.stderr.write('── 保真 ' + card.name + ' ' + frames.join(',') + '\n');
+        process.stderr.write('── Fidelity ' + card.name + ' ' + frames.join(',') + '\n');
         // 在线构建的后台舞台:当场生成快照、画成位图
         await page.evaluate(() => window.__rpc('setRole', 'back', { job: 'bake' }));
         await page.evaluate((pr) => window.__rpc('setProject', pr, { reset: true }), projectOf(card));
@@ -184,10 +184,10 @@ try {
         for (const n of frames) {
           const row = { card: card.name, frame: n };
           const exp = path.join(exportDir, 'frames', String(n).padStart(6, '0') + '.png');
-          if (!bakedPng[n] || !fs.existsSync(exp)) { row.error = !bakedPng[n] ? '没取到位图' : '没有导出的 PNG'; report.fidelity.push(row); continue; }
+          if (!bakedPng[n] || !fs.existsSync(exp)) { row.error = !bakedPng[n] ? 'No bitmap captured' : 'No exported PNG'; report.fidelity.push(row); continue; }
           const a = PNG.sync.read(Buffer.from(bakedPng[n], 'base64')), e = PNG.sync.read(fs.readFileSync(exp));
           row.size = [a.width, a.height]; row.exportSize = [e.width, e.height];
-          if (a.width !== e.width || a.height !== e.height) { row.error = '尺寸不同'; report.fidelity.push(row); continue; }
+          if (a.width !== e.width || a.height !== e.height) { row.error = 'Size mismatch'; report.fidelity.push(row); continue; }
           let differ = 0, ink = 0, maxDiff = 0, over8 = 0, alphaOnly = 0;
           for (let i = 0; i < a.data.length; i += 4) {
             const aa = a.data[i + 3], ea = e.data[i + 3];

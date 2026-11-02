@@ -46,7 +46,7 @@ function fakeClient() {
 
 const task = (streamKey) => ({ kind: 'stream', resultKey: streamKey, range: { unit: 'segment', from: 0, to: 5 }, input: { density: 'sparse' } });
 
-test('SPR1 列完清单后分段文件被删:照样推齐,推的是列清单时那份字节', async () => {
+test('SPR1 segment file deleted after the manifest was listed: still pushed in full, pushing the bytes as they were when the manifest was listed', async () => {
   const f = await fixture();
   try {
     const { result, readBlob } = await collectStreamResult({ root: f.root }, task(f.streamKey));
@@ -54,12 +54,12 @@ test('SPR1 列完清单后分段文件被删:照样推齐,推的是列清单时�
     await fs.rm(path.join(f.dir, f.segFiles[4]));
     const client = fakeClient();
     const pushed = await pushResult(client, result, readBlob);
-    assert.equal(pushed.uploaded, 7, '一个开头 + 六个分段都推了');
-    assert.ok(client.got.has(result.segments[4].hash), '被删的那一段按清单里的哈希推上去了');
+    assert.equal(pushed.uploaded, 7, 'One init + six segments were all pushed');
+    assert.ok(client.got.has(result.segments[4].hash), 'The deleted segment was pushed using the hash in the manifest');
   } finally { await fs.rm(f.root, { recursive: true, force: true }); }
 });
 
-test('SPR2 列完清单后分段文件被换了内容:推的仍是清单里那份', async () => {
+test('SPR2 segment file contents replaced after the manifest was listed: what is pushed is still the one in the manifest', async () => {
   const f = await fixture();
   try {
     const { result, readBlob } = await collectStreamResult({ root: f.root }, task(f.streamKey));

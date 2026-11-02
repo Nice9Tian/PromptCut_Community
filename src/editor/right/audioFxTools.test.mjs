@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { createServer } from "vite";
 import { tools } from "../../../server/mcp-tools.mjs";
 
-test("音频效果库:建、挂、改、删,门槛、撤销、跨剪辑清理、音画分离跟着走", async () => {
+test("Audio effects library: create, attach, edit, delete; gate, undo, cross-cut cleanup, and audio-visual separation follows along", async () => {
   const server = await createServer({ configFile: false, server: { middlewareMode: true, hmr: false, ws: false, watch: null }, appType: "custom", optimizeDeps: { noDiscovery: true, include: [] } });
   try {
     const { actions, getState } = await server.ssrLoadModule("/src/store/project.ts");
@@ -23,8 +23,8 @@ test("音频效果库:建、挂、改、删,门槛、撤销、跨剪辑清理、
       { id: "t1", name: "Video", clips: [{ id: "c1", cardId: "", params: {}, mediaId: "v", start: 0, end: 5 }, { id: "c2", cardId: "", params: {}, mediaId: "v", start: 5, end: 10 }] },
       { id: "t2", name: "Cards", clips: [{ id: "k1", cardId: "caption-track", params: {}, start: 0, end: 5 }] },
       { id: "t3", name: "Audio", muted: true, clips: [{ id: "s1", cardId: "", params: {}, mediaId: "a", start: 0, end: 5 }] },
-      { id: "t4", name: "图", clips: [{ id: "i1", cardId: "", params: {}, mediaId: "i", start: 0, end: 5 }] },
-      { id: "t5", name: "锁住的", locked: true, clips: [{ id: "c3", cardId: "", params: {}, mediaId: "v", start: 0, end: 5 }] },
+      { id: "t4", name: "Image", clips: [{ id: "i1", cardId: "", params: {}, mediaId: "i", start: 0, end: 5 }] },
+      { id: "t5", name: "Locked", locked: true, clips: [{ id: "c3", cardId: "", params: {}, mediaId: "v", start: 0, end: 5 }] },
     ];
     actions.loadProject(p);
 
@@ -35,9 +35,9 @@ test("音频效果库:建、挂、改、删,门槛、撤销、跨剪辑清理、
     assert.throws(() => at.createAudioFx({ name: "x", ops: [{ kind: "gain", db: -6 }], clipId: "k1" }), /card clips have no sound/);
     assert.throws(() => at.createAudioFx({ name: "x", ops: [{ kind: "gain", db: -6 }], clipId: "i1" }), /image with no sound/);
     assert.throws(() => at.createAudioFx({ name: "x", ops: [{ kind: "gain", db: -6 }], clipId: "c3" }), /is locked/);
-    assert.equal(getState().project.audioFx, undefined, "校验没过不能留下半个效果");
+    assert.equal(getState().project.audioFx, undefined, "A failed validation must not leave half an effect behind");
     const made = at.createAudioFx({
-      name: "压低", params: { amount: { default: -12, min: -40, max: 0 } },
+      name: "Lower", params: { amount: { default: -12, min: -40, max: 0 } },
       ops: [{ kind: "gain", db: "amount" }], clipId: "c1", clipParams: { amount: 5 },
     });
     const fid = made.fxId;
@@ -55,11 +55,11 @@ test("音频效果库:建、挂、改、删,门槛、撤销、跨剪辑清理、
     // 挂到声音段(序列静音要提醒)、换参数、摘掉
     assert.match(at.applyAudioFx({ clipId: "s1", fxId: fid }).warning, /is currently muted/);
     assert.equal(at.applyAudioFx({ clipId: "c2", fxId: fid }).fxId, fid);
-    assert.throws(() => at.applyAudioFx({ clipId: "c2", fxId: fid, params: { nope: 1 } }), /没有参数 nope/);
+    assert.throws(() => at.applyAudioFx({ clipId: "c2", fxId: fid, params: { nope: 1 } }), /no parameter nope/);
     assert.throws(() => at.applyAudioFx({ clipId: "c2", fxId: "afx-none" }), /The audio effects library has no afx-none.*压低/);
     assert.equal(at.listAudioFx().effects[0].usedBy.length, 3);
     assert.equal(at.applyAudioFx({ clipId: "c2", fxId: "" }).removed, true);
-    assert.equal("audioFx" in getState().project.tracks[0].clips[1], false, "摘掉要把字段整个拿掉");
+    assert.equal("audioFx" in getState().project.tracks[0].clips[1], false, "Detaching must remove the field entirely");
     actions.undo();
     assert.equal(getState().project.tracks[0].clips[1].audioFx.id, fid);
 
@@ -77,7 +77,7 @@ test("音频效果库:建、挂、改、删,门槛、撤销、跨剪辑清理、
     assert.throws(() => at.updateAudioFx({ fxId: fid, ops: [{ kind: "gain", db: 99 }] }), /-60~24/);
 
     // 删:挂着要 force + reason;停放剪辑里挂着的也要摘
-    const other = actions.addCut("剪辑备份", { switchTo: false });
+    const other = actions.addCut("Cut backup", { switchTo: false });
     const q = getState().project;
     actions.loadProject({
       ...q,
@@ -85,18 +85,18 @@ test("音频效果库:建、挂、改、删,门槛、撤销、跨剪辑清理、
     });
     assert.throws(() => at.removeAudioFx({ fxId: fid }), /is still attached to \d clips.*cp of 剪辑备份/);
     assert.throws(() => at.removeAudioFx({ fxId: fid, force: true }), /reason/);
-    const rm = at.removeAudioFx({ fxId: fid, force: true, reason: "用户不要了" });
+    const rm = at.removeAudioFx({ fxId: fid, force: true, reason: "The user no longer wants it" });
     assert.ok(rm.detached.length >= 4);
     const after = getState().project;
     assert.deepEqual(after.audioFx, []);
     for (const t of after.tracks) for (const c of t.clips) assert.equal(c.audioFx, undefined);
-    for (const cut of after.cuts) for (const t of cut.tracks ?? []) for (const c of t.clips) assert.equal(c.audioFx, undefined, "停放剪辑里也要摘干净");
+    for (const cut of after.cuts) for (const t of cut.tracks ?? []) for (const c of t.clips) assert.equal(c.audioFx, undefined, "Must be fully detached in parked cuts too");
   } finally {
     await server.close();
   }
 });
 
-test("音频效果工具的声明:必填项", () => {
+test("Audio effect tool declaration: required fields", () => {
   const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
   for (const n of ["list_audio_fx", "create_audio_fx", "update_audio_fx", "remove_audio_fx", "apply_audio_fx", "measure_audio"]) assert.equal(byName[n]?.side, "agent", n);
   assert.deepEqual(byName.create_audio_fx.inputSchema.required, ["name", "ops"]);

@@ -71,7 +71,7 @@ function rig(over = {}) {
     // `present` 里 `<键>:<起>-<止>` 是满密度的清单,后面多 `#sparse` 是只有稀疏版的清单;稀疏的一趟两种都认
     lookupOwn: async (task, need) => { w.lookups.push({ id: task.id, dense: need?.dense }); return has(`${task.resultKey}:${task.range.from}-${task.range.to}`, need); },
     lookupOther: async (resultKey, range, need) => has(`${resultKey}:${range.from}-${range.to}`, need),
-    readLayerMap: async () => { if (w.readFails) throw new Error("断了"); return w.layerMap; },
+    readLayerMap: async () => { if (w.readFails) throw new Error("broken"); return w.layerMap; },
     writeLayerMap: async (_project, body) => { w.layerMap = body; w.written.push(body); },
     produce: (job) => new Promise((resolve, reject) => {
       w.produced.push({ id: job.task.id, stride: job.stride });
@@ -348,7 +348,7 @@ test("PS-10 production fails: retry after backoff, give up this segment after co
   w.specs = [specOf("clip-a", "ka", 0, 8)];
   await run(PAGE_STREAM_WAIT_MS + 500);
   for (let i = 1; i <= PAGE_STREAM_ATTEMPTS; i++) {
-    assert.equal(w.produced.length, i, `第 ${i} 次`);
+    assert.equal(w.produced.length, i, `attempt ${i}`);
     const c = w.current;
     w.current = null;
     c.reject(Object.assign(new Error("The stage did not hand over the pixels of this frame"), { retryable: true }));

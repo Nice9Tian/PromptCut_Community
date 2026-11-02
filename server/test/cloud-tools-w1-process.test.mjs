@@ -32,7 +32,7 @@ export function fakeProc(t, table) {
   return root;
 }
 
-test('W1-PROC-01 僵尸按已退算', (t) => {
+test('W1-PROC-01 zombies count as exited', (t) => {
   const procRoot = fakeProc(t, {
     100: { comm: 'chrome-headless', state: 'S', pgrp: 100 },
     101: { comm: 'chrome) (evil S 1 1', state: 'Z', pgrp: 100 },   // 进程名里塞了括号和空格:从最后一个 ) 往后读
@@ -44,15 +44,15 @@ test('W1-PROC-01 僵尸按已退算', (t) => {
   assert.equal(procStat(999, { procRoot }), null);
   const alive = () => true;                                       // 「查得到」:僵尸也查得到
   assert.equal(pidLive(100, { platform: 'linux', procRoot, alive }), true);
-  assert.equal(pidLive(101, { platform: 'linux', procRoot, alive }), false, '僵尸:查得到,但不算活着');
+  assert.equal(pidLive(101, { platform: 'linux', procRoot, alive }), false, 'Zombie: can be found, but does not count as alive');
   assert.equal(pidLive(103, { platform: 'linux', procRoot, alive }), false);
   assert.equal(pidLive(102, { platform: 'linux', procRoot, alive }), true);
-  assert.equal(pidLive(100, { platform: 'linux', procRoot, alive: () => false }), false, '查不到就是没了');
-  assert.equal(pidLive(999, { platform: 'linux', procRoot, alive }), true, '查得到但读不了状态:不假称它退了');
-  assert.equal(pidLive(101, { platform: 'win32', procRoot, alive }), true, 'Windows 没有僵尸这回事');
+  assert.equal(pidLive(100, { platform: 'linux', procRoot, alive: () => false }), false, 'Not found means gone');
+  assert.equal(pidLive(999, { platform: 'linux', procRoot, alive }), true, 'Found but status unreadable: do not falsely claim it exited');
+  assert.equal(pidLive(101, { platform: 'win32', procRoot, alive }), true, 'Windows has no zombies');
 });
 
-test('W1-PROC-02 进程组:只剩僵尸算退了,还有进程表里列不出来的活进程算没退', (t) => {
+test('W1-PROC-02 process group: only zombies left counts as exited, a live process that the process table cannot list counts as not exited', (t) => {
   const zombiesOnly = fakeProc(t, {
     200: { state: 'Z', pgrp: 200 },                               // 主进程:已死,还没被收走
     201: { comm: 'chrome_zygote', state: 'Z', pgrp: 200 },
@@ -69,26 +69,26 @@ test('W1-PROC-02 进程组:只剩僵尸算退了,还有进程表里列不出来�
   assert.deepEqual(liveGroupMembers(300, { procRoot: zombiesOnly }), [300]);
   assert.equal(liveGroupMembers(200, { procRoot: path.join(zombiesOnly, 'no-such-dir') }), null);
 
-  assert.equal(browserGroupLive(200, { platform: 'linux', procRoot: zombiesOnly, group: groupThere }), false, '组还在(系统这么说),但全是僵尸:整棵树退了');
-  assert.equal(browserGroupLive(200, { platform: 'linux', procRoot: zygoteAlive, group: groupThere }), true, 'zygote 还活着:没退');
-  assert.equal(browserGroupLive(200, { platform: 'linux', procRoot: zygoteAlive, group: groupGone }), false, '系统说组已经不在:退了');
-  assert.equal(browserGroupLive(200, { platform: 'darwin', procRoot: path.join(zombiesOnly, 'no-such-dir'), group: groupThere }), true, '读不了 /proc 而组还在:不假称退干净');
-  assert.equal(browserGroupLive(200, { platform: 'win32', procRoot: zombiesOnly, group: groupThere }), null, 'Windows 没有进程组:不知道');
+  assert.equal(browserGroupLive(200, { platform: 'linux', procRoot: zombiesOnly, group: groupThere }), false, 'The group still exists (the system says so), but all are zombies: the whole tree has exited');
+  assert.equal(browserGroupLive(200, { platform: 'linux', procRoot: zygoteAlive, group: groupThere }), true, 'zygote is still alive: not exited');
+  assert.equal(browserGroupLive(200, { platform: 'linux', procRoot: zygoteAlive, group: groupGone }), false, 'The system says the group is gone: exited');
+  assert.equal(browserGroupLive(200, { platform: 'darwin', procRoot: path.join(zombiesOnly, 'no-such-dir'), group: groupThere }), true, '/proc unreadable while the group still exists: do not falsely claim a clean exit');
+  assert.equal(browserGroupLive(200, { platform: 'win32', procRoot: zombiesOnly, group: groupThere }), null, 'Windows has no process groups: unknown');
   assert.equal(browserGroupLive(0, { platform: 'linux', procRoot: zombiesOnly, group: groupThere }), null);
 });
 
-test('W1-PROC-03 认「是不是我们的浏览器」只看命令行里完整的 --user-data-dir', async (t) => {
+test('W1-PROC-03 recognizing "is this our browser" looks only at the complete --user-data-dir in the command line', async (t) => {
   const dir = '/srv/agent/web/p-1/c-1/profile';
   assert.equal(commandLineUsesProfile(`/opt/chrome-headless-shell --headless --user-data-dir=${dir} --remote-debugging-pipe`, dir, 'linux'), true);
-  assert.equal(commandLineUsesProfile(`/opt/chrome --user-data-dir=${dir}`, dir, 'linux'), true, '在最后一个参数上');
-  assert.equal(commandLineUsesProfile(`/opt/chrome --user-data-dir=${dir}-other --x`, dir, 'linux'), false, '别人的目录以它开头');
-  assert.equal(commandLineUsesProfile(`/opt/chrome --user-data-dir=${dir}/Default --x`, dir, 'linux'), false, '它的子目录');
-  assert.equal(commandLineUsesProfile(`/opt/chrome --user-data-dir=/srv/render/profile --note=${dir}`, dir, 'linux'), false, '只是碰巧含着这串字');
-  assert.equal(commandLineUsesProfile(`/opt/chrome --x=--user-data-dir=${dir} --y`, dir, 'linux'), false, '嵌在别的参数里');
+  assert.equal(commandLineUsesProfile(`/opt/chrome --user-data-dir=${dir}`, dir, 'linux'), true, 'On the last argument');
+  assert.equal(commandLineUsesProfile(`/opt/chrome --user-data-dir=${dir}-other --x`, dir, 'linux'), false, 'Someone else\'s directory starts with it');
+  assert.equal(commandLineUsesProfile(`/opt/chrome --user-data-dir=${dir}/Default --x`, dir, 'linux'), false, 'Its subdirectory');
+  assert.equal(commandLineUsesProfile(`/opt/chrome --user-data-dir=/srv/render/profile --note=${dir}`, dir, 'linux'), false, 'Merely happens to contain this string');
+  assert.equal(commandLineUsesProfile(`/opt/chrome --x=--user-data-dir=${dir} --y`, dir, 'linux'), false, 'Embedded in another argument');
   assert.equal(commandLineUsesProfile('node /srv/doc/main.mjs', dir, 'linux'), false);
   assert.equal(commandLineUsesProfile(null, dir, 'linux'), false);
-  assert.equal(commandLineUsesProfile('"C:\\x\\chrome.exe" "--user-data-dir=C:\\Data Dir\\web\\p\\c\\profile" --remote-debugging-pipe', 'c:\\data dir\\web\\p\\c\\profile', 'win32'), true, 'Windows:不分大小写,带引号');
-  assert.equal(commandLineUsesProfile(`/opt/chrome --user-data-dir=${dir.toUpperCase()}`, dir, 'linux'), false, 'Linux 分大小写');
+  assert.equal(commandLineUsesProfile('"C:\\x\\chrome.exe" "--user-data-dir=C:\\Data Dir\\web\\p\\c\\profile" --remote-debugging-pipe', 'c:\\data dir\\web\\p\\c\\profile', 'win32'), true, 'Windows: case-insensitive, with quotes');
+  assert.equal(commandLineUsesProfile(`/opt/chrome --user-data-dir=${dir.toUpperCase()}`, dir, 'linux'), false, 'Linux is case-sensitive');
 
   // 经假的 /proc 读命令行
   const procRoot = fakeProc(t, {
@@ -99,14 +99,14 @@ test('W1-PROC-03 认「是不是我们的浏览器」只看命令行里完整的
   const commandLine = (pid) => processCommandLine(pid, { platform: 'linux', procRoot });
   const alive = () => true;
   assert.equal(await browserHoldsProfile(500, dir, { commandLine, alive, platform: 'linux' }), true);
-  assert.equal(await browserHoldsProfile(501, dir, { commandLine, alive, platform: 'linux' }), false, '渲染服务自己的浏览器');
-  assert.equal(await browserHoldsProfile(502, dir, { commandLine, alive, platform: 'linux' }), false, '文档服务');
-  assert.equal(await browserHoldsProfile(999, dir, { commandLine, alive, platform: 'linux' }), false, '读不到命令行');
-  assert.equal(await browserHoldsProfile(500, dir, { commandLine, alive: () => false, platform: 'linux' }), false, '进程不在');
+  assert.equal(await browserHoldsProfile(501, dir, { commandLine, alive, platform: 'linux' }), false, 'The render service\'s own browser');
+  assert.equal(await browserHoldsProfile(502, dir, { commandLine, alive, platform: 'linux' }), false, 'Document service');
+  assert.equal(await browserHoldsProfile(999, dir, { commandLine, alive, platform: 'linux' }), false, 'Command line unreadable');
+  assert.equal(await browserHoldsProfile(500, dir, { commandLine, alive: () => false, platform: 'linux' }), false, 'Process is gone');
   assert.equal(await browserHoldsProfile(0, dir, { commandLine, alive, platform: 'linux' }), false);
 });
 
-test('W1-PROC-04 清残留不误杀别的进程', async (t) => {
+test('W1-PROC-04 cleaning up leftovers does not kill other processes by mistake', async (t) => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-w1-reap-'));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   /** 一个对话目录:带登记文件与(假的)过期锁 */
@@ -141,9 +141,9 @@ test('W1-PROC-04 清残留不误杀别的进程', async (t) => {
     const w = world({ 4242: '/opt/render/chrome --user-data-dir=/srv/render/profile', 4243: 'node /srv/doc/main.mjs' });
     const result = await reapOrphan(sessionDir, { timeoutMs: 500, deps: w.deps({ holder: () => ({ held: true, pid: 4242 }) }) });
     assert.deepEqual(result, { found: false, killed: [], stillHeld: false });
-    assert.deepEqual(w.killed, [], '渲染服务的浏览器没有被杀');
-    assert.deepEqual(w.trees, [], '也没有按进程组去杀');
-    assert.deepEqual(fs.readdirSync(profile), [], '过期的锁删掉了(不然新起的浏览器会对着那个不相干的进程号去联系「旧实例」)');
+    assert.deepEqual(w.killed, [], 'The render service\'s browser was not killed');
+    assert.deepEqual(w.trees, [], 'And it was not killed by process group either');
+    assert.deepEqual(fs.readdirSync(profile), [], 'The stale lock was removed (otherwise a newly started browser would contact the "old instance" at that unrelated process ID)');
     assert.equal(fs.existsSync(path.join(sessionDir, 'owner.json')), false);
   }
 
@@ -163,7 +163,7 @@ test('W1-PROC-04 清残留不误杀别的进程', async (t) => {
     const w = world({ 6001: `/opt/chrome-headless-shell --headless --user-data-dir=${profile} --remote-debugging-pipe`, 6002: 'node /srv/doc/main.mjs' });
     const result = await reapOrphan(sessionDir, { timeoutMs: 2_000, deps: w.deps({ holder: () => ({ held: true, pid: 6001 }) }) });
     assert.deepEqual(result, { found: true, killed: [6001], stillHeld: false });
-    assert.deepEqual(w.killed, [6001], '登记文件里的子进程号 6002(现在是文档服务)没有被直接杀');
+    assert.deepEqual(w.killed, [6001], 'Child process ID 6002 in the registry file (now the document service) was not killed directly');
     assert.deepEqual(w.trees, [6001]);
     assert.equal(fs.existsSync(path.join(sessionDir, 'owner.json')), false);
   }
@@ -199,7 +199,7 @@ test('W1-PROC-04 清残留不误杀别的进程', async (t) => {
   }
 });
 
-test('W1-PROC-05 起它的服务进程还活着的浏览器:启动清扫不动,真要在这个对话里起新浏览器时才清', async (t) => {
+test('W1-PROC-05 a browser whose launching service process is still alive: the startup sweep leaves it alone, and it is cleaned only when a new browser is really started in this chat', async (t) => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-w1-owner-'));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const make = (name, servicePid) => {
@@ -224,7 +224,7 @@ test('W1-PROC-05 起它的服务进程还活着的浏览器:启动清扫不动,�
   assert.deepEqual(overlap.killed, []);
   assert.equal(overlap.result.liveOwner, true);
   assert.equal(overlap.result.found, false);
-  assert.equal(fs.existsSync(path.join(overlap.sessionDir, 'owner.json')), true, '登记留着');
+  assert.equal(fs.existsSync(path.join(overlap.sessionDir, 'owner.json')), true, 'The registry entry stays');
   // 旧服务进程已经不在:是真的残留,清扫时杀
   assert.deepEqual((await run('dead-owner', 78, { respectLiveOwner: true })).killed, [7101]);
   // 登记的就是本进程自己(不会发生在清扫时,防一手):照杀

@@ -36,10 +36,10 @@ export function summarizeSamples(samples) {
 export function judgeAgentOrder(recent, sentAt) {
   const rows = (Array.isArray(recent) ? recent : []).filter(r => Number.isFinite(r?.at)).slice().sort((a, b) => a.at - b.at);
   const first = rows.find(r => r.kind === 'agent' && r.worker === 'agent' && r.at >= sentAt);
-  if (!first) return { ok: false, agentAt: null, agentWaitMs: null, jumped: [], reason: '调度记录里没有这次请求的 Agent 任务' };
+  if (!first) return { ok: false, agentAt: null, agentWaitMs: null, jumped: [], reason: 'No Agent task for this request in the scheduler log' };
   const jumped = rows.filter(r => r.worker === 'agent' && r.kind !== 'agent' && r.at >= sentAt && r.at < first.at);
   return { ok: jumped.length === 0, agentAt: first.at, agentWaitMs: Number.isFinite(first.waitMs) ? first.waitMs : null, jumped,
-    ...(jumped.length ? { reason: 'Agent 任务到达之后、开工之前,专用实例又接了普通预渲染' } : {}) };
+    ...(jumped.length ? { reason: 'After the Agent task arrived and before it started, the dedicated instance picked up another ordinary prerender' } : {}) };
 }
 
 /**
@@ -48,8 +48,8 @@ export function judgeAgentOrder(recent, sentAt) {
  * 改前整项 60 帧要等约 38 s)。回不满足的条目(空 = 过)。
  */
 export function judgeAgentWait(order, limitMs) {
-  if (!order || order.agentWaitMs == null) return ['没有量到 Agent 任务的等待时间'];
-  return order.agentWaitMs <= limitMs ? [] : [`Agent 任务等了 ${order.agentWaitMs} ms,超过一批加一次切换的量级(上界 ${limitMs} ms)`];
+  if (!order || order.agentWaitMs == null) return ['The Agent task wait time was not measured'];
+  return order.agentWaitMs <= limitMs ? [] : [`The Agent task waited ${order.agentWaitMs} ms, more than the order of one batch plus one switch (upper bound ${limitMs} ms)`];
 }
 
 /**
@@ -62,14 +62,14 @@ export function judgeRun({ withAgent, summary, counts }) {
   const fails = [];
   const queueAtAgent = Number(counts?.['queue@agent']) || 0;
   if (withAgent) {
-    if (!(summary.maxHeld >= 2)) fails.push(`专用实例开着:本机节点应在 maxConcurrent 之外多持有一项(见过的最大持有数 ${summary.maxHeld})`);
-    if (!summary.spareSeen) fails.push('专用实例开着:诊断里多出的那一格(queue.spare.spare)应开过');
-    if (!(queueAtAgent >= 1)) fails.push(`专用实例开着:应在专用实例上做过快照任务(queue@agent = ${queueAtAgent})`);
+    if (!(summary.maxHeld >= 2)) fails.push(`Dedicated instance on: the local node should hold one extra item beyond maxConcurrent (max held seen: ${summary.maxHeld})`);
+    if (!summary.spareSeen) fails.push('Dedicated instance on: the extra slot in the diagnostics (queue.spare.spare) should have opened');
+    if (!(queueAtAgent >= 1)) fails.push(`Dedicated instance on: snapshot tasks should have run on the dedicated instance (queue@agent = ${queueAtAgent})`);
   } else {
-    if (summary.maxHeld > 1) fails.push(`专用实例没开:本机节点不应多认领(见过的最大持有数 ${summary.maxHeld})`);
-    if (summary.spareSeen) fails.push('专用实例没开:多出的那一格不应开');
-    if (summary.agentOpenSeen) fails.push('专用实例没开:整趟不应为预渲染开专用实例');
-    if (queueAtAgent !== 0) fails.push(`专用实例没开:专用实例上不应做队列任务(queue@agent = ${queueAtAgent})`);
+    if (summary.maxHeld > 1) fails.push(`Dedicated instance off: the local node should not claim extra (max held seen: ${summary.maxHeld})`);
+    if (summary.spareSeen) fails.push('Dedicated instance off: the extra slot should not open');
+    if (summary.agentOpenSeen) fails.push('Dedicated instance off: no dedicated instance should be opened for prerender during the whole run');
+    if (queueAtAgent !== 0) fails.push(`Dedicated instance off: no queue tasks should run on the dedicated instance (queue@agent = ${queueAtAgent})`);
   }
   return fails;
 }

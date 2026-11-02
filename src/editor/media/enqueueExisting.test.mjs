@@ -11,7 +11,7 @@ const h = (c) => c.repeat(64);
 const flush = async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0)); };
 beforeEach(() => T.resetAssetTiersForTest());
 
-test("EQE-1 请求体:一个素材一项,视频两档、图片音频一档;没有哈希的不算;同一素材原尺寸只列一次", () => {
+test("EQE-1 request body: one entry per asset, two tiers for video and one tier for images and audio; assets without a hash do not count; the original size of the same asset is listed only once", () => {
   const { items } = T.existingMediaItems([
     { name: "v.mp4", hash: h("a"), tiers: { original: h("a"), small: h("b") } },
     { name: "i.png", hash: h("c") },
@@ -26,7 +26,7 @@ test("EQE-1 请求体:一个素材一项,视频两档、图片音频一档;没�
   ]);
 });
 
-test("EQE-2 等编辑器进程拿到带 rw 票据的上传目标之后才入队", async () => {
+test("EQE-2 enqueue only after the editor process has obtained an upload target carrying an rw ticket", async () => {
   const bodies = [];
   const link = { request: async () => ({ type: "auth.ticket.ok", ticket: "rw-1", exp: Date.now() + 15 * 60_000 }) };
   const pending = T.enqueueExistingMedia([{ name: "v", hash: h("a"), tiers: { original: h("a"), small: h("b") } }], {
@@ -34,7 +34,7 @@ test("EQE-2 等编辑器进程拿到带 rw 票据的上传目标之后才入队"
     timeoutMs: 5_000,
   });
   await flush();
-  assert.equal(bodies.length, 0, "上传目标还没设好:不发");
+  assert.equal(bodies.length, 0, "Upload target not set yet: do not send");
   const targets = [];
   const stop = T.startUploadTarget(link, "http://h/api/asset", { post: async (b) => { targets.push(b); }, setTimer: () => 0, clearTimer: () => {} });
   const r = await pending;
@@ -44,7 +44,7 @@ test("EQE-2 等编辑器进程拿到带 rw 票据的上传目标之后才入队"
   stop();
 });
 
-test("EQE-3 等不到上传目标(签不到 rw 票据)就不入队,回 null;没有素材直接回空", async () => {
+test("EQE-3 if the upload target never arrives (cannot get an rw ticket), do not enqueue and return null; with no assets, return empty directly", async () => {
   const bodies = [];
   const link = { request: async () => ({ type: "error", reason: "forbidden" }) };
   const stop = T.startUploadTarget(link, "http://h/api/asset", { post: async () => {}, setTimer: () => 0, clearTimer: () => {} });
@@ -52,11 +52,11 @@ test("EQE-3 等不到上传目标(签不到 rw 票据)就不入队,回 null;没�
   assert.equal(r, null);
   assert.equal(bodies.length, 0);
   assert.deepEqual(await T.enqueueExistingMedia([], { post: async () => null, timeoutMs: 50 }), { queued: [], missing: [], skipped: [] });
-  assert.equal(await T.enqueueExistingMedia([{ hash: h("a") }], { post: null }), null, "没有入队的口子(在线构建):不做");
+  assert.equal(await T.enqueueExistingMedia([{ hash: h("a") }], { post: null }), null, "No enqueue entry point (online build): do nothing");
   stop();
 });
 
-test("EQE-4 守门:没有哈希的素材不许悄悄跳过——出现在 skipped 里(还在导入的标 pending),入队结果也带着它们", async () => {
+test("EQE-4 gatekeeper: assets without a hash must not be skipped silently: they appear in skipped (those still importing are marked pending), and the enqueue result carries them too", async () => {
   const media = [
     { id: "v", name: "v.mp4", hash: h("a") },
     { id: "old", name: "voice-old.mp3", hash: "" },
@@ -71,7 +71,7 @@ test("EQE-4 守门:没有哈希的素材不许悄悄跳过——出现在 skippe
     { id: "up", name: "uploading.mp3", pending: true },
   ]);
   // 只有没哈希的:不等上传目标,直接回空队列 + skipped
-  const onlyOld = await T.enqueueExistingMedia([media[1]], { post: async () => { throw new Error("不该发"); }, timeoutMs: 50 });
+  const onlyOld = await T.enqueueExistingMedia([media[1]], { post: async () => { throw new Error("Should not be sent"); }, timeoutMs: 50 });
   assert.deepEqual(onlyOld, { queued: [], missing: [], skipped: [{ id: "old", name: "voice-old.mp3" }] });
   // 有可入队的:发完之后结果里照样带 skipped
   const link = { request: async () => ({ type: "auth.ticket.ok", ticket: "rw-1", exp: Date.now() + 15 * 60_000 }) };

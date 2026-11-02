@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 
 import { beatAt, createK6State, K6_WINDOW_MS, noteK6Beat, scheduleNextBeat } from "./beatLoop.mjs";
 
-test("拍序号按帧格算:连着走 3000 拍,sec 一直是 帧号/fps,不累积浮点误差", () => {
+test("beat index is computed on the frame grid: after 3000 consecutive beats, sec is always frame number/fps, with no accumulated floating-point error", () => {
   const fps = 30;
   for (let n = 1; n <= 3000; n++) {
     const b = beatAt(0, n, fps, 1000);
@@ -22,7 +22,7 @@ test("拍序号按帧格算:连着走 3000 拍,sec 一直是 帧号/fps,不累�
   assert.equal(c.frame - a.frame, 1);
 });
 
-test("走到片尾就是最后一拍,sec 钳在 duration 上", () => {
+test("reaching the end of the video is the last beat, with sec clamped to duration", () => {
   assert.deepEqual(beatAt(0, 299, 30, 10), { sec: 299 / 30, frame: 299, ended: false });
   assert.deepEqual(beatAt(0, 300, 30, 10), { sec: 10, frame: 300, ended: true });
   // 帧格落不到 duration 上(25 fps、时长 10.01)时,越过那一拍也钳住
@@ -31,11 +31,11 @@ test("走到片尾就是最后一拍,sec 钳在 duration 上", () => {
   assert.equal(last.sec, 10.01);
 });
 
-test("活干得快:时间轴不动,等到绝对时刻 playStart + n×period", () => {
+test("work finishes fast: the timeline does not move, waiting until the absolute time playStart + n×period", () => {
   assert.deepEqual(scheduleNextBeat(1000, 3, 40, 1100), { playStart: 1000, nextDue: 1120, late: false });
 });
 
-test("慢拍:整条时间轴后移超出量,不补拍、不往前冲", () => {
+test("slow beat: the whole timeline shifts back by the overshoot, with no catch-up beats and no rushing ahead", () => {
   const r = scheduleNextBeat(1000, 3, 40, 1150);
   assert.deepEqual(r, { playStart: 1030, nextDue: 1120, late: true });
   // 后移之后,下一拍按新的起点排,相隔仍是一整拍
@@ -45,28 +45,28 @@ test("慢拍:整条时间轴后移超出量,不补拍、不往前冲", () => {
 const plan = (heavyIds = []) => ({ segments: [{ fromSec: 0, toSec: 100, heavy: new Set(heavyIds) }] });
 const beat = (at, beatCost, costs, extra = {}) => ({ at, beatCost, byClip: new Map(Object.entries(costs)), fps: 30, sec: 1, plan: plan(), ...extra });
 
-test("K6:一拍不判;窗口里累计超时超过一拍才降,降的是实测最贵的轻卡", () => {
+test("K6: a single beat is not judged; only when accumulated overtime in the window exceeds one beat does it downgrade, and what gets downgraded is the light card with the highest measured cost", () => {
   const s = createK6State();
   // 30 fps 一拍 33.3 ms。每拍超 20 ms:第一拍不判,第二拍累计 40 > 33.3
   assert.equal(noteK6Beat(s, beat(0, 53.4, { a: 10, b: 30 })), null);
   assert.equal(noteK6Beat(s, beat(40, 53.4, { a: 10, b: 30 })), "b");
   assert.deepEqual([...s.pending], ["b"]);
-  assert.equal(s.beats.length, 0, "降一张就清空窗口");
+  assert.equal(s.beats.length, 0, "downgrading one card clears the window");
 });
 
-test("K6:每拍都在一拍之内,整秒都不降", () => {
+test("K6: every beat stays within one beat, no downgrade for the whole second", () => {
   const s = createK6State();
   for (let i = 0; i < 30; i++) assert.equal(noteK6Beat(s, beat(i * 33, 33, { a: 30 })), null);
 });
 
-test("K6:每拍只超一点,窗口里攒够一拍也降", () => {
+test("K6: each beat overshoots slightly, downgrade also when the window accumulates one beat", () => {
   const s = createK6State();
   // 每拍超 6.7 ms:前 5 拍累计 33.3 不超,第 6 拍 40 才超
   for (let i = 0; i < 5; i++) assert.equal(noteK6Beat(s, beat(i * 40, 40, { a: 30 })), null);
   assert.equal(noteK6Beat(s, beat(200, 40, { a: 30 })), "a");
 });
 
-test("K6:窗口只留最近一秒,老的超时不再算", () => {
+test("K6: the window keeps only the last second, old overruns no longer count", () => {
   const s = createK6State();
   noteK6Beat(s, beat(0, 60, { a: 30 }));             // 超 26.7
   noteK6Beat(s, beat(K6_WINDOW_MS + 1, 40, { a: 30 })); // 第一拍被挤出窗口,只剩 6.7
@@ -74,7 +74,7 @@ test("K6:窗口只留最近一秒,老的超时不再算", () => {
   assert.equal(noteK6Beat(s, beat(K6_WINDOW_MS + 30, 40, { a: 30 })), null);
 });
 
-test("K6:pending 的卡这一拍的耗时从超时里扣掉,也不当候选", () => {
+test("K6: a pending card's time for this beat is subtracted from the overrun and it is not a candidate", () => {
   const s = createK6State();
   s.pending = new Set(["slow"]);
   // 不扣的话每拍超 26.7,两拍就爆;扣掉 slow 的 30 ms 之后没超
@@ -86,23 +86,23 @@ test("K6:pending 的卡这一拍的耗时从超时里扣掉,也不当候选", ()
   assert.equal(noteK6Beat(t, beat(40, 120, { slow: 30, a: 5 })), "a");
 });
 
-test("K6:只降轻卡,重卡不当候选", () => {
+test("K6: only light cards are downgraded, heavy cards are not candidates", () => {
   const s = createK6State();
   const p = plan(["h"]);
   noteK6Beat(s, beat(0, 80, { h: 50, a: 5 }, { plan: p }));
   assert.equal(noteK6Beat(s, beat(40, 80, { h: 50, a: 5 }, { plan: p })), "a");
   const only = createK6State();
   noteK6Beat(only, beat(0, 80, { h: 50 }, { plan: p }));
-  assert.equal(noteK6Beat(only, beat(40, 80, { h: 50 }, { plan: p })), null, "只有重卡可降:不降");
+  assert.equal(noteK6Beat(only, beat(40, 80, { h: 50 }, { plan: p })), null, "Only heavy cards can be downgraded: no downgrade");
 });
 
-test("K6:同分按 clipId 定序", () => {
+test("K6: ties are ordered by clipId", () => {
   const s = createK6State();
   noteK6Beat(s, beat(0, 80, { z: 10, m: 10 }));
   assert.equal(noteK6Beat(s, beat(40, 80, { z: 10, m: 10 })), "m");
 });
 
-test("K6:窗口里存的是这一拍的副本,调用方清空自己的表不影响账", () => {
+test("K6: the window stores a copy of this beat, so the caller clearing its own table does not affect the ledger", () => {
   const s = createK6State();
   const live = new Map([["a", 30]]);
   noteK6Beat(s, { at: 0, beatCost: 60, byClip: live, fps: 30, sec: 1, plan: plan() });

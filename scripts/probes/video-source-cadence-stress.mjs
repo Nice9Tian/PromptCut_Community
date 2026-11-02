@@ -38,7 +38,7 @@ for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { stopHogs(); pro
 for (let i = 0; i < HOGS; i++) {
   hogs.push(spawn(process.execPath, ['-e', 'for(;;){}'], { stdio: 'ignore', windowsHide: true }));
 }
-log(`负载进程 ${HOGS} 个,探针 ${RUNS} 遍,并行 ${PARALLEL},端口 ${PORT} 起`);
+log(`${HOGS} load processes, ${RUNS} probe runs, ${PARALLEL} in parallel, ports starting at ${PORT}`);
 
 const runOnce = (port) => new Promise((resolve) => {
   const child = spawn(process.execPath, [PROBE, '--port', String(port)], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: process.env });
@@ -60,13 +60,13 @@ try {
     while (next < RUNS) {
       const r = next++;
       const { code, json, text, tail } = await runOnce(port);
-      const fails = json?.fails ?? [`没有结果行,退出码 ${code}:${tail}`];
+      const fails = json?.fails ?? [`No result line, exit code ${code}: ${tail}`];
       result.exportMs[r] = json?.exportMs ?? null;
       if (code !== 0 || fails.length) {
         result.failed++; result.fails.push({ run: r + 1, fails });
         if (LOGDIR) fs.writeFileSync(path.join(LOGDIR, `run-${r + 1}.log`), text);
       }
-      log(`第 ${r + 1} 遍(端口 ${port}):${code === 0 ? '过' : '挂'} exportMs=${json?.exportMs}${fails.length ? ' ' + JSON.stringify(fails).slice(0, 400) : ''}`);
+      log(`Run ${r + 1} (port ${port}): ${code === 0 ? 'pass' : 'fail'} exportMs=${json?.exportMs}${fails.length ? ' ' + JSON.stringify(fails).slice(0, 400) : ''}`);
     }
   };
   await Promise.all(Array.from({ length: PARALLEL }, (_, i) => lane(PORT + 3 * i)));

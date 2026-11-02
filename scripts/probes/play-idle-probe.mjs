@@ -41,7 +41,7 @@ const KEEP = args.includes('--keep');
 const JSON_OUT = flagArg('json', null, args);
 const RUN = Date.now().toString(36);
 const OUT = path.resolve(flagArg('out', null, args) || path.join(os.tmpdir(), `pc-play-idle-${RUN}`));
-if (!GIVEN_ORIGIN && !PORT) { console.error('要给 --origin <dev server> 或 --port <自己起一台>'); process.exit(2); }
+if (!GIVEN_ORIGIN && !PORT) { console.error('Pass --origin <dev server> or --port <start your own>'); process.exit(2); }
 
 const FPS = 30, SEG = 15;
 /** 八张卡各 6 秒(剩下的活要比播放的 20 秒长;一路满密度 40 帧每秒上下);入点按秒写,落在两帧之间(第一张是第 40～219 帧,共 12 个分段) */
@@ -70,7 +70,7 @@ async function until(label, fn, timeoutMs, everyMs = 100, soft = false) {
     let value = null;
     try { value = await fn(); } catch { value = null; }
     if (value) return value;
-    if (Date.now() > deadline) { (soft ? notes : fails).push(`超时:${label}`); say('TIMEOUT', { label, soft }); return null; }
+    if (Date.now() > deadline) { (soft ? notes : fails).push(`Timeout: ${label}`); say('TIMEOUT', { label, soft }); return null; }
     await sleep(everyMs);
   }
 }
@@ -134,11 +134,11 @@ try {
     actions.seek(args[2]);
     return ids;`, STARTS, CLIP_SECONDS, LOOP_FROM);
   out.clipIds = clipIds;
-  if (!check(clipIds.length === STARTS.length, '八张卡都加上了', clipIds)) throw new Error('卡没加全');
+  if (!check(clipIds.length === STARTS.length, 'all eight cards were added', clipIds)) throw new Error('not all cards were added');
   const A = clipIds[0];
   const project = await page.evaluate(async () => JSON.parse(JSON.stringify((await import('/src/store/project.ts')).getState().project)));
   out.project = { width: project.width, height: project.height, fps: project.fps, duration: project.duration };
-  check(project.fps === FPS, '项目是 30 帧每秒', project.fps);
+  check(project.fps === FPS, 'the project is 30 frames per second', project.fps);
 
   const pinHeavy = (persist = false) => page.evaluate(async (ids, persist) => {
     const { getState } = await import('/src/store/project.ts');
@@ -155,7 +155,7 @@ try {
     }
     return recs.map((r) => typeof r.stepMs === 'number');
   }, clipIds, persist);
-  await until('八张卡的成本记录', () => page.evaluate(async (ids) => {
+  await until('cost records of the eight cards', () => page.evaluate(async (ids) => {
     const { getState } = await import('/src/store/project.ts');
     const { clipIdentityOf } = await import('/src/editor/costIdentity.ts');
     const pd = await import('/src/editor/planDispatch.ts');
@@ -192,7 +192,7 @@ try {
     return byKind ? Object.fromEntries([...byKind].map(([k, v]) => [k, { key: v.key, ranges: v.ranges, originFrame: v.originFrame ?? null }])) : null;
   }, A);
   const startedPrerender = Date.now();
-  const readyA = await until('A 的轨道流盖满全段(稀疏的就算)', async () => {
+  const readyA = await until('A\'s track stream covers the whole span (a sparse one counts)', async () => {
     const k = await page.evaluate(async () => (await import('/src/render/dataMirror.ts')).mirrorKey());
     if (!k) return null;
     await pinHeavy(true);
@@ -201,7 +201,7 @@ try {
     if (!layers?.stream || !(layers.stream.ranges ?? []).some((r) => r[0] <= 0 && r[1] >= SEG_COUNT - 1)) return null;
     return { layers, produced: await produced() };
   }, 900000, 2000);
-  if (!readyA) throw new Error('A 的轨道流没产出来');
+  if (!readyA) throw new Error('A\'s track stream was not produced');
   out.aReadyMs = Date.now() - startedPrerender;
   say('a-ready', { ms: out.aReadyMs, produced: readyA.produced });
   out.beforePlay = await produced();
@@ -257,22 +257,22 @@ try {
 
   /* ---------------------------------------------------------------- 断言 */
   const quiet = samples.filter((s) => s.ms >= QUIET_FROM_MS && s.produced && s.head);
-  check(samples.every((s) => s.playing), '播放一直在播(页面的 playing 没有掉)', samples.filter((s) => !s.playing).slice(0, 3));
-  check(quiet.length >= 10, '起播 5 秒以后采到了足够多的样', quiet.length);
+  check(samples.every((s) => s.playing), 'Playback keeps playing (the page\'s playing never dropped)', samples.filter((s) => !s.playing).slice(0, 3));
+  check(quiet.length >= 10, 'enough samples were collected after the first 5 seconds of playback', quiet.length);
   const stale = quiet.filter((s) => !s.head.playing || s.head.age > MAX_HEAD_AGE_MS);
-  check(stale.length === 0, `a. 起播 ${QUIET_FROM_MS / 1000} 秒以后到停下之前,预渲染进程手里的播放头一直是「在播」、最近一次音讯不超过 ${MAX_HEAD_AGE_MS} 毫秒`,
+  check(stale.length === 0, `a. From ${QUIET_FROM_MS / 1000} seconds after playback starts until it stops, the playhead held by the prerender process stays "playing", and the most recent message is no more than ${MAX_HEAD_AGE_MS} milliseconds old`,
     { bad: stale.length, of: quiet.length, worst: Math.max(...quiet.map((s) => s.head.age)), first: stale.slice(0, 3).map((s) => ({ ms: s.ms, head: s.head })) });
   if (baseline && lastProduced) {
     const grew = { segments: lastProduced.segments - baseline.produced.segments, frames: lastProduced.frames - baseline.produced.frames, dense: lastProduced.dense - baseline.produced.dense };
     out.producedWhilePlaying = { from: baseline.ms, ...grew };
-    check(grew.segments === 0 && grew.frames === 0 && grew.dense === 0, `b. 起播 ${QUIET_FROM_MS / 1000} 秒以后到停下之前,预渲染进程一帧都没产`, { baseline: baseline.produced, last: lastProduced, grew });
-  } else check(false, 'b. 没有取到基线', { baseline: !!baseline, lastProduced: !!lastProduced });
-  check(resumedAfterMs !== null, `c. 停下以后 ${RESUME_MS / 1000} 秒内恢复产流(剩下的活确实在等)`, { after: afterSamples.slice(-3), lastProduced });
+    check(grew.segments === 0 && grew.frames === 0 && grew.dense === 0, `b. From ${QUIET_FROM_MS / 1000} seconds after playback starts until it stops, the prerender process produced not a single frame`, { baseline: baseline.produced, last: lastProduced, grew });
+  } else check(false, 'b. No baseline was obtained', { baseline: !!baseline, lastProduced: !!lastProduced });
+  check(resumedAfterMs !== null, `c. Within ${RESUME_MS / 1000} seconds after stopping, stream production resumes (the remaining work really was waiting)`, { after: afterSamples.slice(-3), lastProduced });
   // 页面一侧:播放中没有缺口(没有 wanted),也就是说这个场景确实是「没有缺口」的那一种
-  check(out.posts.duringPlay.withWanted === 0, '场景成立:播放中页面没有报过缺口(播放头下的层都有流盖着)', out.posts.duringPlay);
-  check(pageErrors.length === 0, '页面没有未捕获的错误', pageErrors.slice(0, 3));
+  check(out.posts.duringPlay.withWanted === 0, 'Scenario holds: the page reported no gaps during playback (every layer under the playhead is covered by a stream)', out.posts.duringPlay);
+  check(pageErrors.length === 0, 'Page has no uncaught errors', pageErrors.slice(0, 3));
 } catch (error) {
-  fails.push(`异常:${error?.stack || error}`);
+  fails.push(`Exception: ${error?.stack || error}`);
 } finally {
   try { await browser?.close(); } catch { /* 收尾 */ }
   try { await dev?.stop(); } catch { /* 收尾 */ }

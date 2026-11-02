@@ -39,7 +39,7 @@ const specOf = (over = {}) => ({
 });
 const planTask = { id: 'plan:p1@7#clips:abc', kind: 'plan', resultKey: 'p1@7#clips:abc', source: { projectId: 'p1', projectRev: 7 }, input: { clips: ['c1'], exportOnly: true } };
 
-test('EF-01 导出位图的内容键由流的内容键派生', () => {
+test('EF-01 the content key of an export bitmap is derived from the stream\'s content key', () => {
   const key = exportFramesKey(STREAM_KEY);
   assert.match(key, /^[0-9a-f]{64}$/);
   assert.notEqual(key, STREAM_KEY);
@@ -47,13 +47,13 @@ test('EF-01 导出位图的内容键由流的内容键派生', () => {
   assert.notEqual(exportFramesKey(sha256('other')), key);
   const spec = exportSpecOf(specOf(), FP);
   assert.equal(spec.exportKey, key);
-  assert.equal(spec.exportResultKey, resultKeyOf(key, FP), '结果键与切分用的 resultKeyOf 同一个算式');
-  assert.equal(exportSpecOf(specOf({ kind: 'group', clipIds: ['c1', 'c2'] }), FP), null, '组流不出导出位图');
-  assert.equal(exportSpecOf(specOf(), ''), null, '没有环境指纹不出');
-  assert.equal(exportSpecOf(specOf({ kind: 'below', plane: 'stage', belowClipIds: ['v0'] }), FP).kind, 'below', '依赖下层的流的形状照出');
+  assert.equal(spec.exportResultKey, resultKeyOf(key, FP), 'the result key uses the same formula as the resultKeyOf used for splitting');
+  assert.equal(exportSpecOf(specOf({ kind: 'group', clipIds: ['c1', 'c2'] }), FP), null, 'a group stream produces no export bitmap');
+  assert.equal(exportSpecOf(specOf(), ''), null, 'nothing is produced without an environment fingerprint');
+  assert.equal(exportSpecOf(specOf({ kind: 'below', plane: 'stage', belowClipIds: ['v0'] }), FP).kind, 'below', 'a stream that depends on the layers below is produced with its shape unchanged');
 });
 
-test('EF-02 原始像素编成 PNG,解回来相同', () => {
+test('EF-02 raw pixels are encoded as PNG and decode back identically', () => {
   const w = 5, h = 3;
   const rgba = Buffer.alloc(w * h * 4);
   for (let i = 0; i < rgba.length; i++) rgba[i] = (i * 37 + 11) & 0xff;
@@ -63,12 +63,12 @@ test('EF-02 原始像素编成 PNG,解回来相同', () => {
   assert.equal(back.height, h);
   assert.deepEqual(Buffer.from(back.data ?? back.rgba), rgba);
   assert.deepEqual(shotToPng({ rgba, width: w, height: h }), png);
-  assert.equal(shotToPng(png), png, 'PNG 原样');
+  assert.equal(shotToPng(png), png, 'PNG unchanged');
   assert.throws(() => rgbaToPng(rgba, w, h + 1));
   assert.throws(() => shotToPng(null));
 });
 
-test('EF-03 只为导出的计划只切导出位图任务', () => {
+test('EF-03 an export-only plan splits out only export bitmap tasks', () => {
   const spec = exportSpecOf(specOf(), FP);
   const base = { planTask, entryKey: 'e1', cardPlan: [{ clipId: 'c1', cardId: 'user-x', snapshotKey: 'sk', contentKey: 'ck', count: 132, tier: 'shared', capabilities: { compositing: 'independent' } }],
     prerenderSet: new Set(), streams: [], envFingerprint: FP, codeVersion: 'cv1', cardSourceVersions: { 'user-x': 'v1' } };
@@ -83,12 +83,12 @@ test('EF-03 只为导出的计划只切导出位图任务', () => {
   assert.equal(a.id, `stream:${spec.exportResultKey}:0-7`);
   assert.equal(a.input.exportFrames, true);
   assert.equal(a.input.exportKey, spec.exportKey);
-  assert.equal(a.input.contentKey, undefined, '不带内容键:不占卡片级指纹锁');
+  assert.equal(a.input.contentKey, undefined, 'no content key: does not hold a per-card fingerprint lock');
   assert.equal(lockKeyOf(a), null);
   assert.deepEqual(a.input.stream, { clipId: 'c1', kind: 'card', plane: 'local', fps: 30, originFrame: 12, lastFrame: 143, rect: spec.bound, offset: spec.offset });
   assert.equal(a.requires.envFingerprint, FP);
-  assert.equal(a.requires.transcode, false, '不要求本机转码');
-  assert.equal(a.requires.capabilities, undefined, '不要求能产流:取位图不用编码器');
+  assert.equal(a.requires.transcode, false, 'does not require transcoding on this machine');
+  assert.equal(a.requires.capabilities, undefined, 'does not require the ability to produce streams: capturing a bitmap needs no encoder');
   // 谁能认领:不带 --streams 的独立渲染主机(不能转码、不报能产流)能;纯浏览器节点不能(它只收带 input.bake 的浏览器形状的流任务)
   const node = over => ({ nodeId: 'n1', userId: 'u1', envFingerprint: FP, codeVersions: ['cv1'], cardSourceVersions: { 'user-x': ['v1'] }, ...over });
   const mine = { ...a, source: { ...a.source, userId: 'u1' } };
@@ -96,12 +96,12 @@ test('EF-03 只为导出的计划只切导出位图任务', () => {
   assert.equal(checkClaimable(mine, node({ profile: 'pc', capabilities: { transcode: true, streams: true } })).ok, true);
   assert.deepEqual(checkClaimable({ ...mine, weight: { class: 'medium' } }, node({ profile: 'browser', capabilities: { streams: true, userCards: true } })), { ok: false, rule: 7, reason: 'no-bake-input' });
   assert.equal(checkClaimable(mine, node({ profile: 'browser', capabilities: { streams: true, userCards: true } })).ok, false);
-  assert.equal(checkClaimable(mine, node({ profile: 'host', capabilities: {}, cardSourceVersions: {} })).ok, false, '手里没有这张卡的代码的节点不认领');
+  assert.equal(checkClaimable(mine, node({ profile: 'host', capabilities: {}, cardSourceVersions: {} })).ok, false, 'a node that does not hold this card\'s code does not claim it');
   assert.deepEqual(a.requires.cardSources, { 'user-x': 'v1' });
   assert.equal(a.priority, EXPORT_FRAMES_PRIORITY);
-  assert.ok(EXPORT_FRAMES_PRIORITY > 50 && EXPORT_FRAMES_PRIORITY > SPARSE_STREAM_PRIORITY, '排在锚帧、稀疏流任务前面');
+  assert.ok(EXPORT_FRAMES_PRIORITY > 50 && EXPORT_FRAMES_PRIORITY > SPARSE_STREAM_PRIORITY, 'ranks ahead of anchor frame and sparse stream tasks');
   assert.equal(a.weight.frames, 120);
-  assert.equal(b.weight.frames, 12, '末段按实际帧数');
+  assert.equal(b.weight.frames, 12, 'the last segment uses the actual frame count');
   assert.equal(a.source.derivedFrom, planTask.id);
   assert.ok(isExportFramesTask(a));
   // 队列的入站校验原样收下(队列不用改)
@@ -119,23 +119,23 @@ test('EF-03 只为导出的计划只切导出位图任务', () => {
   assert.equal(belowTasks[0].input.stream.plane, 'stage');
 });
 
-test('EF-04 清单计划的覆盖:只为导出的计划', () => {
+test('EF-04 overrides of the manifest plan: export-only plan', () => {
   const page = { ...clipsPlanTaskOf({ projectId: 'p1', projectRev: 7, clips: ['c1', 'c2'] }) };
   const resultKey = `p1@7${CLIPS_KEY_MARK}${backfillSig(['c1', 'c2'], 'export=1')}`;
   const task = { ...page, id: `plan:${resultKey}`, resultKey, input: { clips: ['c1', 'c2'], exportOnly: true } };
   const parsed = parseInbound({ type: 'task.publish', tasks: [task] });
   assert.equal(parsed.ok, true, parsed.detail);
-  assert.equal(parsed.body.tasks[0].input.exportOnly, true, '队列原样留着这一项');
+  assert.equal(parsed.body.tasks[0].input.exportOnly, true, 'the queue keeps this field unchanged');
   assert.ok(isExportOnlyPlan(parsed.body.tasks[0]));
   assert.equal(isExportOnlyPlan(page), false);
   let asked = null;
   const spec = exportStreamOf(exportSpecOf(specOf(), FP));
   const over = listPlanOverrides(task, {
-    browserStreamsFor: () => { throw new Error('只为导出的计划不该切轨道流'); },
+    browserStreamsFor: () => { throw new Error('an export-only plan must not split track streams'); },
     exportStreamsFor: clips => { asked = [...clips].sort(); return { streams: [spec], unsupported: [{ clipId: 'c2', reason: 'no-card' }] }; },
   });
   assert.deepEqual(asked, ['c1', 'c2']);
-  assert.equal(over.prerenderSet.size, 0, '不切快照');
+  assert.equal(over.prerenderSet.size, 0, 'no snapshots are split out');
   assert.deepEqual(over.streams, []);
   assert.deepEqual(over.exportStreams, [spec]);
   assert.deepEqual(over.exportUnsupported, [{ clipId: 'c2', reason: 'no-card' }]);
@@ -148,7 +148,7 @@ test('EF-04 清单计划的覆盖:只为导出的计划', () => {
   assert.deepEqual([...normal.prerenderSet].sort(), ['c1', 'c2']);
 });
 
-test('EF-05 计划完成时回给页面的索引', () => {
+test('EF-05 the index returned to the page when the plan completes', () => {
   const s1 = exportStreamOf(exportSpecOf({ ...specOf(), inputSig: 's1-abc' }, FP));
   const s2 = exportStreamOf(exportSpecOf(specOf({ clipIds: ['c2'], topClipId: 'c2', contentKey: sha256('other') }), FP));
   const base = { planTask, entryKey: 'e1', cardPlan: [], prerenderSet: new Set(), streams: [], envFingerprint: FP, codeVersion: 'cv1' };
@@ -159,13 +159,13 @@ test('EF-05 计划完成时回给页面的索引', () => {
   assert.equal(index.projectRev, 9);
   assert.equal(index.streams.length, 1);
   const { tasks: indexTasks, ...row } = index.streams[0];
-  assert.equal(indexTasks.length, 2, '每条流的任务原样带一份');
+  assert.equal(indexTasks.length, 2, 'each stream\'s tasks are carried as one unchanged copy');
   assert.deepEqual(row, { clipId: 'c1', kind: 'card', plane: 'local', resultKey: resultKeyOf(s1.exportKey, FP), envFingerprint: FP,
     originFrame: 12, lastFrame: 143, lastSegment: 8, segmentsPerTask: 8, fps: 30, rect: s1.rect, offset: s1.offset, inputSig: 's1-abc' });
   assert.deepEqual(index.unsupported, [{ clipId: 'c3', reason: 'no-card' }, { clipId: 'c2', reason: 'publish-failed' }]);
 });
 
-test('EF-06 产物库:落盘的帧 → 清单 → 推 px → 写内容库 → 删本机的帧', async () => {
+test('EF-06 artifact store: frames on disk → manifest → push px → write to the content store → delete the local frames', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-export-frames-'));
   try {
     const spec = exportSpecOf(specOf({ originFrame: 12, lastFrame: 20, lastSegment: 0 }), FP);
@@ -182,7 +182,7 @@ test('EF-06 产物库:落盘的帧 → 清单 → 推 px → 写内容库 → �
       async put(kind, key, body) { manifests.set(`${kind}|${key}`, structuredClone(body)); },
     };
     const sink = createExportFramesSink({ root, client, content });
-    assert.equal(await sink.has(ref), false, '内容库里还没有清单');
+    assert.equal(await sink.has(ref), false, 'the content store does not have the manifest yet');
     // 只落了一部分帧:不算完成,什么都不写
     const png = n => rgbaToPng(Buffer.from([n, n, n, 255]), 1, 1);
     for (let f = 12; f <= 18; f++) await storeExportFrame(root, task.resultKey, f, png(f));
@@ -200,7 +200,7 @@ test('EF-06 产物库:落盘的帧 → 清单 → 推 px → 写内容库 → �
     assert.ok(exportResultComplete(result, ref));
     const done = await sink.put(ref);
     assert.equal(done.complete, true);
-    assert.equal(done.stats.blocks, 7, '相同的帧只推一块');
+    assert.equal(done.stats.blocks, 7, 'identical frames are pushed as only one chunk');
     assert.equal(stored.size, 7);
     assert.ok([...stored.keys()].every(k => k.startsWith('px/')));
     assert.ok([...stored.values()].every(v => v.ext === 'png'));
@@ -220,17 +220,17 @@ test('EF-06 产物库:落盘的帧 → 清单 → 推 px → 写内容库 → �
   }
 });
 
-test('EF-07 导出位图任务不被当成稀疏流任务、不被当成要满密度分段的流', () => {
+test('EF-07 an export bitmap task is not treated as a sparse stream task, nor as a stream that needs full-density segments', () => {
   const spec = exportSpecOf(specOf(), FP);
   const [task] = splitPlan({ planTask, entryKey: 'e1', cardPlan: [], prerenderSet: new Set(), streams: [], envFingerprint: FP, codeVersion: 'cv1', sparseStreams: true, exportStreams: [exportStreamOf(spec)] });
   assert.equal(isSparseStreamTask(task), false);
-  assert.equal(task.input.density, undefined, '没有稀疏那一份');
+  assert.equal(task.input.density, undefined, 'no sparse part');
   // 产物库按 `isExportFramesTask` 先分走,轮不到按流的规矩查满密度
   assert.equal(isExportFramesTask(task), true);
-  assert.equal(wantsDenseStream(task), true, '它的种类仍是流任务(队列与节点过滤按流任务收)');
+  assert.equal(wantsDenseStream(task), true, 'its kind is still stream task (the queue and node filtering handle it as a stream task)');
 });
 
-test('EF-08 过期清理与显式释放:TTL 24小时清理过期位图与清单,保留期内不动', async () => {
+test('EF-08 expiry cleanup and explicit release: a 24-hour TTL cleans up expired bitmaps and manifests, and leaves them untouched within the retention period', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-export-sweep-'));
   try {
     const expiredKey = '1'.repeat(64);
@@ -274,10 +274,10 @@ test('EF-08 过期清理与显式释放:TTL 24小时清理过期位图与清单,
 
     // 运行清理
     const stats = await sweepExpiredExportFrames(root, { maxAgeMs: EXPORT_FRAMES_TTL_MS, now, content, client });
-    assert.equal(stats.cleanedDirs, 1, '清理了 1 个过期的本地目录');
-    assert.equal(stats.cleanedFrames, 1, '清理了 1 帧本地文件');
-    assert.equal(stats.cleanedManifests, 1, '清理了 1 份过期清单');
-    assert.deepEqual(droppedBlocks, ['px/hash-old'], '通知客户端释放了过期块');
+    assert.equal(stats.cleanedDirs, 1, 'cleaned up 1 expired local directory');
+    assert.equal(stats.cleanedFrames, 1, 'cleaned up 1 local frame file');
+    assert.equal(stats.cleanedManifests, 1, 'cleaned up 1 expired manifest');
+    assert.deepEqual(droppedBlocks, ['px/hash-old'], 'the client was notified to release the expired chunks');
 
     // 检查过期目录已被删除，未过期目录仍在
     await assert.rejects(fs.stat(expiredDir));

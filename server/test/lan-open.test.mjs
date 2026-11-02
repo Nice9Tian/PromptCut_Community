@@ -6,12 +6,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { LAN_HOST_COMMAND, boundToLan, lanOpenInfo, linkOnLan } from '../lan-open.mjs';
 
-test('LO1 绑没绑局域网按实际监听地址判', () => {
+test('LO1 Whether it is bound to the LAN is judged by the actual listening address', () => {
   for (const a of ['0.0.0.0', '::', '[::]', '', '192.168.1.23', '10.0.0.5', '::ffff:192.168.1.23']) {
-    assert.equal(boundToLan(a), true, `${a} 应当算可达`);
+    assert.equal(boundToLan(a), true, `${a} should count as reachable`);
   }
   for (const a of ['127.0.0.1', '127.0.0.53', '::1', '[::1]', 'localhost', '::ffff:127.0.0.1']) {
-    assert.equal(boundToLan(a), false, `${a} 应当算只绑回环`);
+    assert.equal(boundToLan(a), false, `${a} should count as bound to loopback only`);
   }
   // 判不出来按不可达算
   assert.equal(boundToLan(undefined), false);
@@ -19,46 +19,46 @@ test('LO1 绑没绑局域网按实际监听地址判', () => {
   assert.equal(boundToLan(5190), false);
 });
 
-test('LO2 只绑回环时一个地址都不给,只给起法', () => {
+test('LO2 When bound to loopback only, no address is given at all, only how to start it', () => {
   const info = lanOpenInfo({ bound: '127.0.0.1', port: 5190, nics: [{ name: 'Wi-Fi', address: '192.168.1.23' }] });
   assert.equal(info.lanHost, false);
-  assert.deepEqual(info.addresses, [], '编辑器只绑回环时手机连不上,列地址没有意义');
+  assert.deepEqual(info.addresses, [], 'When the editor is bound to loopback only, a phone cannot connect, so listing addresses is pointless');
   assert.equal(info.command, LAN_HOST_COMMAND);
 });
 
-test('LO3 绑了局域网:几块网卡给几条,用户自己挑网段', () => {
+test('LO3 Bound to the LAN: one address per network card, and the user picks the network segment', () => {
   const info = lanOpenInfo({
     bound: '0.0.0.0',
     port: 5190,
-    nics: [{ name: 'Wi-Fi', address: '192.168.1.23' }, { name: '以太网', address: '10.0.0.5' }],
+    nics: [{ name: 'Wi-Fi', address: '192.168.1.23' }, { name: 'Ethernet', address: '10.0.0.5' }],
   });
   assert.equal(info.lanHost, true);
   assert.equal(info.port, 5190);
   assert.deepEqual(info.addresses, [
     { name: 'Wi-Fi', address: '192.168.1.23' },
-    { name: '以太网', address: '10.0.0.5' },
+    { name: 'Ethernet', address: '10.0.0.5' },
   ]);
 });
 
-test('LO4 端口拿不到(服务还没监听)时不给地址', () => {
+test('LO4 No address is given when the port is unavailable (the service is not listening yet)', () => {
   const info = lanOpenInfo({ bound: '0.0.0.0', port: null, nics: [{ name: 'Wi-Fi', address: '192.168.1.23' }] });
   assert.equal(info.port, null);
   assert.deepEqual(info.addresses, []);
 });
 
-test('LO5 网卡表是空的、缺地址、或根本不是数组,都不抛', () => {
+test('LO5 Does not throw when the NIC list is empty, has missing addresses, or is not an array at all', () => {
   assert.deepEqual(lanOpenInfo({ bound: '0.0.0.0', port: 5190, nics: [] }).addresses, []);
   assert.deepEqual(lanOpenInfo({ bound: '0.0.0.0', port: 5190, nics: null }).addresses, []);
-  assert.deepEqual(lanOpenInfo({ bound: '0.0.0.0', port: 5190, nics: [{ name: '坏的' }, { address: '' }] }).addresses, []);
+  assert.deepEqual(lanOpenInfo({ bound: '0.0.0.0', port: 5190, nics: [{ name: 'bad' }, { address: '' }] }).addresses, []);
   assert.deepEqual(lanOpenInfo().addresses, []);
 });
 
-test('LO6 邀请链接落不落在本机网卡上:界面据此判断手机打不打得开', () => {
+test('LO6 Whether the invite link lands on a network card of this machine: the UI uses it to tell whether a phone can open it', () => {
   const addrs = [{ address: '192.168.1.23' }, { address: '10.0.0.5' }];
   assert.equal(linkOnLan('http://192.168.1.23:5190/editor#invite=abc', addrs), true);
   assert.equal(linkOnLan('http://10.0.0.5:5190/editor', addrs), true);
-  assert.equal(linkOnLan('192.168.1.23', addrs), true, '只给主机名也认');
-  assert.equal(linkOnLan('http://127.0.0.1:5190/editor#invite=abc', addrs), false, '回环的链接手机打不开');
+  assert.equal(linkOnLan('192.168.1.23', addrs), true, 'A bare hostname is accepted too');
+  assert.equal(linkOnLan('http://127.0.0.1:5190/editor#invite=abc', addrs), false, 'A phone cannot open a loopback link');
   assert.equal(linkOnLan('http://192.168.9.9:5190/editor', addrs), false);
   assert.equal(linkOnLan('', addrs), false);
   assert.equal(linkOnLan(null, addrs), false);

@@ -19,7 +19,7 @@ const STATE = path.join(DIR, 'skill-state.json');
 
 test.after(() => fs.rmSync(DIR, { recursive: true, force: true }));
 
-test('SG-1 状态文件在 PROMPTCUT_SKILL_DIR 下;没有文件按关着;open / close 落盘,不再写旧版的任务字段', () => {
+test('SG-1 the state file lives under PROMPTCUT_SKILL_DIR; no file counts as off; open / close are persisted to disk, and the old task fields are no longer written', () => {
   assert.equal(gate.statePath(), STATE);
   assert.equal(gate.readState().active, false);
   const on = gate.openGate();
@@ -27,37 +27,37 @@ test('SG-1 状态文件在 PROMPTCUT_SKILL_DIR 下;没有文件按关着;open / 
   assert.ok(Date.parse(on.since) > 0);
   const raw = JSON.parse(fs.readFileSync(STATE, 'utf8'));
   assert.equal(raw.active, true);
-  for (const k of ['jobId', 'jobDir', 'procPath']) assert.equal(k in raw, false, `${k} 随无头实例归档,不再写`);
+  for (const k of ['jobId', 'jobDir', 'procPath']) assert.equal(k in raw, false, `${k} is archived with the headless instance and is no longer written`);
   const off = gate.closeGate('user');
   assert.equal(off.active, false);
   assert.equal(off.closedBy, 'user');
   assert.ok(Date.parse(off.closedAt) > 0);
 });
 
-test('SG-2 按调用方类型拦:desktop 在 SKILL 关着时拒绝、开着时放行;api / cli / unknown 一律放行', () => {
+test('SG-2 gated by caller type: desktop is rejected when SKILL is off and allowed when it is on; api / cli / unknown are always allowed', () => {
   gate.closeGate('test');
   const denied = gate.checkGate('add_clip', 'desktop');
   assert.equal(denied.ok, false);
-  for (const t of ['api', 'cli', 'unknown']) assert.equal(gate.checkGate('add_clip', t).ok, true, `${t} 不受 SKILL 闸管`);
+  for (const t of ['api', 'cli', 'unknown']) assert.equal(gate.checkGate('add_clip', t).ok, true, `${t} is not governed by the SKILL gate`);
   gate.openGate();
-  assert.equal(gate.checkGate('add_clip', 'desktop').ok, true, 'SKILL 开着时桌面会话放行');
+  assert.equal(gate.checkGate('add_clip', 'desktop').ok, true, 'Desktop sessions are allowed when SKILL is on');
   gate.closeGate('test');
 });
 
-test('SG-3 拒绝时的说明:点名工具、说项目没改、别重试、告诉用户切到 SKILL', () => {
+test('SG-3 the explanation on rejection: names the tool, says the project was not changed, says not to retry, tells the user to switch to SKILL', () => {
   gate.closeGate('test');
   const { message } = gate.checkGate('update_clip', 'desktop');
-  assert.match(message, /不在 SKILL 模式/);
+  assert.match(message, /not in SKILL mode/);
   assert.match(message, /update_clip/);
-  assert.match(message, /没有\*\*任何改动/);
-  assert.match(message, /不要重试/);
-  assert.match(message, /切到 SKILL/);
+  assert.match(message, /has \*\*no changes/);
+  assert.match(message, /Do not retry/);
+  assert.match(message, /switch to SKILL/);
 });
 
-test('SG-4 状态文件坏了按关着处理(默认拒绝桌面会话)', () => {
-  fs.writeFileSync(STATE, '{ 这不是 JSON');
+test('SG-4 a corrupted state file is treated as off (desktop sessions are rejected by default)', () => {
+  fs.writeFileSync(STATE, '{ this is not JSON');
   assert.equal(gate.readState().active, false);
   assert.equal(gate.checkGate('add_clip', 'desktop').ok, false);
   fs.unlinkSync(STATE);
-  assert.equal(gate.checkGate('add_clip', 'desktop').ok, false, '文件不存在也按关着');
+  assert.equal(gate.checkGate('add_clip', 'desktop').ok, false, 'A missing file is also treated as off');
 });

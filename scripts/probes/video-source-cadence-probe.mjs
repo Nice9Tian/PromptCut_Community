@@ -59,7 +59,7 @@ function makeSource(rate) {
   const r = spawnSync(ffmpeg, ['-y', '-v', 'error', '-f', 'lavfi', '-i', `color=black:s=64x64:r=${rate}:d=${SRC_SECONDS}`,
     '-vf', "format=rgb24,geq=r='16*mod(N\\,16)':g='16*mod(N\\,16)':b='16*mod(N\\,16)',format=yuv420p",
     '-c:v', 'libx264', '-crf', '4', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', tmp], { encoding: 'utf8', windowsHide: true });
-  if (r.status !== 0) throw new Error(`合成 ${rate} fps 素材失败:${r.stderr}`);
+  if (r.status !== 0) throw new Error(`Failed to synthesize ${rate} fps media: ${r.stderr}`);
   const bytes = fs.readFileSync(tmp);
   const hash = crypto.createHash('sha256').update(bytes).digest('hex');
   fs.renameSync(tmp, path.join(MEDIA_DIR, `${hash}.mp4`));
@@ -76,15 +76,15 @@ fs.mkdirSync(path.dirname(cardFile), { recursive: true });
 fs.writeFileSync(cardFile, `import type { CardDef } from "../../kernel/types";
 import { glsl } from "../../render/cards/graphValues";
 
-/** 探针用:原样输出上游(video-source-cadence-probe.mjs 临时写进改动层) */
+/** Probe only: outputs the upstream as is (video-source-cadence-probe.mjs temporarily writes it into the overlay layer) */
 export const probeCadencePass: CardDef<Record<string, never>> = {
   id: "${CARD_ID}",
-  name: "节奏探针直通",
-  description: "原样输出输入画面",
+  name: "Cadence probe passthrough",
+  description: "Outputs the input frame unchanged",
   source: "user",
   kind: "filter",
   frameMode: "direct",
-  inputs: { source: { description: "输入画面" } },
+  inputs: { source: { description: "Input frame" } },
   defaults: {},
   controls: [],
   card: (sources, t) => glsl(
@@ -99,13 +99,13 @@ export const probeCadencePass: CardDef<Record<string, never>> = {
 
 /** kind: 'card' 走素材效果卡节点;'clip' 走时间轴视频片段 */
 const CASES = [
-  { name: '①素材效果卡 rate 0.5 offset 0', kind: 'card', media: src30, rate: 0.5, offset: 0 },
-  { name: '①素材效果卡 rate 0.5 offset 0.35', kind: 'card', media: src30, rate: 0.5, offset: 0.35 },
-  { name: '②素材效果卡 rate 1 offset 0', kind: 'card', media: src30, rate: 1, offset: 0 },
-  { name: '③时间轴片段 mediaOffset 0', kind: 'clip', media: src30, rate: 1, offset: 0 },
-  { name: '③时间轴片段 mediaOffset 0.35', kind: 'clip', media: src30, rate: 1, offset: 0.35 },
-  { name: '④素材效果卡 25 fps 素材 rate 1', kind: 'card', media: src25, rate: 1, offset: 0 },
-  { name: '④时间轴片段 25 fps 素材', kind: 'clip', media: src25, rate: 1, offset: 0 },
+  { name: '(1) media effect card rate 0.5 offset 0', kind: 'card', media: src30, rate: 0.5, offset: 0 },
+  { name: '(1) media effect card rate 0.5 offset 0.35', kind: 'card', media: src30, rate: 0.5, offset: 0.35 },
+  { name: '(2) media effect card rate 1 offset 0', kind: 'card', media: src30, rate: 1, offset: 0 },
+  { name: '(3) timeline clip mediaOffset 0', kind: 'clip', media: src30, rate: 1, offset: 0 },
+  { name: '(3) timeline clip mediaOffset 0.35', kind: 'clip', media: src30, rate: 1, offset: 0.35 },
+  { name: '(4) media effect card 25 fps media rate 1', kind: 'card', media: src25, rate: 1, offset: 0 },
+  { name: '(4) timeline clip 25 fps media', kind: 'clip', media: src25, rate: 1, offset: 0 },
 ];
 
 const cardNodes = [
@@ -127,7 +127,7 @@ CASES.forEach((c, i) => {
   }
 });
 const PROJECT = {
-  id: `cadence-${RUN}`, name: '视频取帧节奏探针', width: W, height: H, fps: FPS, duration: (CASES.length * SEG) / FPS,
+  id: `cadence-${RUN}`, name: 'Video frame-fetch cadence probe', width: W, height: H, fps: FPS, duration: (CASES.length * SEG) / FPS,
   themeId: 'dark', camera3dFov: 50, media: [src30, src25], filters: [], pixelMaps: [], audioFx: [], cardNodes, style: {}, tracks,
 };
 fs.writeFileSync(path.join(OUT_DIR, 'project.json'), JSON.stringify(PROJECT));
@@ -138,13 +138,13 @@ const env = { PROMPTCUT_EXPORT_DIR: WORK, PROMPTCUT_DATA_DIR: DATA_DIR, PROMPTCU
 let server = null;
 try {
   server = await startDevServer({ env, port: PORT, logFile: path.join(WORK, 'vite.log'), log });
-  log(`dev server ${server.origin}(舞台 ${server.stagePorts.join(' / ')})`);
+  log(`dev server ${server.origin} (stage ${server.stagePorts.join(' / ')})`);
   Object.assign(process.env, env);
   const url = `${server.origin}/?export=1&timeline=/@export/${EXPORT_ID}/project.json`;
   const t0 = Date.now();
   await exportFrames({ url, out: OUT_DIR, noVideo: true, workers: 1 });
   out.exportMs = Date.now() - t0;
-  if (server.restarts()) fails.push(`导出期间 dev server 重启了 ${server.restarts()} 次`);
+  if (server.restarts()) fails.push(`dev server restarted ${server.restarts()} times during export`);
 
   /* ---------------- 读帧、还原源帧号 ---------------- */
 
@@ -179,18 +179,18 @@ try {
     }
     const bad = want.map((w, n) => (got[n] === w ? null : { n, got: got[n], want: w })).filter(Boolean);
     out.cases.push({ name: c.name, start: c.start, maxLevelError: +maxOff.toFixed(2), missing, got: got.join(','), want: want.join(','), bad: bad.length });
-    if (missing) fails.push(`${c.name}:缺 ${missing} 帧`);
-    if (maxOff > 6) fails.push(`${c.name}:灰度离 16 的倍数太远(${maxOff.toFixed(1)}),读数不可信`);
-    if (bad.length) fails.push(`${c.name}:${bad.length} 帧源帧号不符,前几处 ${JSON.stringify(bad.slice(0, 6))}`);
+    if (missing) fails.push(`${c.name}: ${missing} frames missing`);
+    if (maxOff > 6) fails.push(`${c.name}: gray level too far from a multiple of 16 (${maxOff.toFixed(1)}), reading unreliable`);
+    if (bad.length) fails.push(`${c.name}: ${bad.length} frames have a mismatched source frame number, first few: ${JSON.stringify(bad.slice(0, 6))}`);
   });
 } catch (e) {
-  fails.push('异常:' + (e?.stack || e?.message || String(e)));
+  fails.push('Exception:' + (e?.stack || e?.message || String(e)));
 } finally {
   server?.stop();
   if (!KEEP) {
     await new Promise((r) => setTimeout(r, 1500));
-    try { fs.rmSync(WORK, { recursive: true, force: true }); } catch (e) { log(`临时目录没删掉:${e.message}`); }
-  } else log(`留下临时目录 ${WORK}`);
+    try { fs.rmSync(WORK, { recursive: true, force: true }); } catch (e) { log(`Temp directory not removed: ${e.message}`); }
+  } else log(`Leaving temp directory ${WORK}`);
 }
 
 out.fails = fails;

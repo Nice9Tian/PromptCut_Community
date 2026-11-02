@@ -59,12 +59,12 @@ const check = (name, ok, extra = {}) => {
 };
 const say = (what, extra = {}) => console.log(JSON.stringify({ at: what, ...extra }));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-async function waitFor(fn, ms = 10_000, what = '条件') {
+async function waitFor(fn, ms = 10_000, what = 'condition') {
   const t0 = Date.now();
   for (;;) {
     const v = await fn();
     if (v) return v;
-    if (Date.now() - t0 > ms) throw new Error(`等 ${what} 超时`);
+    if (Date.now() - t0 > ms) throw new Error(`Timed out waiting for ${what}`);
     await sleep(100);
   }
 }
@@ -76,10 +76,10 @@ function makeMessages() {
   for (let i = 0; i < N_MESSAGES / 2; i++) {
     // 每 7 轮隔 10 分钟:出时间分隔行
     t += i % 7 === 0 ? 10 * 60_000 : 60_000;
-    const words = '把第三段字幕往后挪半秒,再给开头加一张金句卡'.repeat(1 + (i % 4));
-    out.push({ id: String(t), role: 'user', text: `第 ${i + 1} 轮:${words}` });
-    const done = Array.from({ length: 1 + (i % 3) }, (_, k) => `第 ${i + 1} 轮完成的第 ${k + 1} 件事` + '。细节说明'.repeat(i % 5));
-    const text = `第 ${i + 1} 轮的回复正文。` + '这一段是模型说的话,打开「显示思考」才看得到。'.repeat(1 + (i % 3));
+    const words = 'Shift the third caption back by half a second, then add a punchline card at the start'.repeat(1 + (i % 4));
+    out.push({ id: String(t), role: 'user', text: `Round ${i + 1}: ${words}` });
+    const done = Array.from({ length: 1 + (i % 3) }, (_, k) => `Item ${k + 1} done in round ${i + 1}` + '. Detail notes'.repeat(i % 5));
+    const text = `Reply body for round ${i + 1}.` + 'This paragraph is what the model said, visible only when "Show thinking" is turned on.'.repeat(1 + (i % 3));
     out.push({
       id: `a-${i}`,
       role: 'assistant',
@@ -89,9 +89,9 @@ function makeMessages() {
       outcome: 'completed',
       parts: [
         { kind: 'text', text },
-        { kind: 'tool', name: 'get_editor_state', input: {}, ok: true, summary: '获取成功' },
-        ...(i % 2 ? [{ kind: 'tool', name: 'add_clip', input: { start: i, end: i + 2 }, ok: true, summary: '加好了' }] : []),
-        { kind: 'tool', name: 'report_progress', input: { final: true, done, todo: i % 4 === 0 ? ['下一步看看节奏'] : [], problems: [] }, ok: true, summary: 'ok' },
+        { kind: 'tool', name: 'get_editor_state', input: {}, ok: true, summary: 'Fetched successfully' },
+        ...(i % 2 ? [{ kind: 'tool', name: 'add_clip', input: { start: i, end: i + 2 }, ok: true, summary: 'Added' }] : []),
+        { kind: 'tool', name: 'report_progress', input: { final: true, done, todo: i % 4 === 0 ? ['Check the pacing next'] : [], problems: [] }, ok: true, summary: 'ok' },
       ],
     });
   }
@@ -117,7 +117,7 @@ async function spawnEditor() {
   const now = Date.now();
   fs.writeFileSync(
     path.join(chats, `${CHAT_ID}.json`),
-    JSON.stringify({ id: CHAT_ID, title: '窗口化探针 2000 条', createdAt: now, updatedAt: now, messages: makeMessages() }),
+    JSON.stringify({ id: CHAT_ID, title: 'Windowing probe, 2000 messages', createdAt: now, updatedAt: now, messages: makeMessages() }),
   );
   const env = {
     ...process.env,
@@ -143,9 +143,9 @@ async function spawnEditor() {
   origin = `http://127.0.0.1:${PORT}`;
   say('editor.spawn', { pid: editorProc.pid, origin, tmpDir });
   await waitFor(async () => {
-    if (editorProc.exitCode !== null) throw new Error(`编辑器进程退出了(${editorProc.exitCode}):${editorLog.join('').slice(-600)}`);
+    if (editorProc.exitCode !== null) throw new Error(`The editor process exited (${editorProc.exitCode}): ${editorLog.join('').slice(-600)}`);
     return fetch(`${origin}/`, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok, () => false);
-  }, 180_000, '编辑器起来');
+  }, 180_000, 'editor started');
 }
 
 async function stopEditor() {
@@ -210,7 +210,7 @@ try {
     const res = await fetch(`${origin}/api/chats/save`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: CHAT_ID, title: '窗口化探针 2000 条', messages: makeMessages() }),
+      body: JSON.stringify({ id: CHAT_ID, title: 'Windowing probe, 2000 messages', messages: makeMessages() }),
     });
     check('seed.via-api', res.ok, { status: res.status });
   }
@@ -224,7 +224,7 @@ try {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(String(e?.message ?? e)));
   await page.goto(`${origin}/?editor&aimock=1&nosetup=1`, { waitUntil: 'domcontentloaded' });
-  await waitFor(() => page.$('[data-pc="ai-history"]'), 120_000, 'AI 栏');
+  await waitFor(() => page.$('[data-pc="ai-history"]'), 120_000, 'AI panel');
 
   // 从历史对话抽屉打开这个会话(真实用户路径)
   // 页面刚起来时可能还盖着测量遮罩,点不到就再点
@@ -233,12 +233,12 @@ try {
     const items = await page.$$('.chat-drawer-item');
     for (const it of items) {
       const t = await it.evaluate((el) => el.textContent ?? '');
-      if (t.includes('窗口化探针')) return it;
+      if (t.includes('Windowing probe')) return it;
     }
     return null;
-  }, 60_000, '历史抽屉里的探针会话');
+  }, 60_000, 'Probe session in the history drawer');
   await item.click();
-  await waitFor(async () => ((await listState(page))?.nodes ?? 0) > 0, 20_000, '消息出现');
+  await waitFor(async () => ((await listState(page))?.nodes ?? 0) > 0, 20_000, 'Messages appear');
   await sleep(1500);
   await frames(page, 4);
 
@@ -344,7 +344,7 @@ try {
     }
     return samples;
   };
-  await sendMsg('窗口化探针:在底部发一条');
+  await sendMsg('Windowing probe: send one at the bottom');
   const bottomSamples = await sampleStream(async (s) => ({ fromBottom: s.fromBottom, lastNew: !seeded.has(s.lastId ?? '') }));
   const grew = new Set(bottomSamples.map((x) => x.scrollHeight)).size;
   // 采样本身会强制排版:content-visibility 刚把一行换成真高度、ResizeObserver 还没回调(它在同一帧绘制之前回调)时,
@@ -375,7 +375,7 @@ try {
   await frames(page, 4);
   const mid = await listState(page);
   await page.screenshot({ path: path.join(OUT, '4-middle-before.png') });
-  await sendMsg('窗口化探针:翻到中间时来的消息');
+  await sendMsg('Windowing probe: message that arrives while scrolled to the middle');
   const midSamples = await sampleStream(async (s) => ({
     fromBottom: s.fromBottom,
     scrollTop: s.scrollTop,
@@ -397,10 +397,10 @@ try {
   page.on('pageerror', (e) => pageErrors.push(String(e?.message ?? e)));
   await page.goto(`${origin}/?editor&aimock=1&nosetup=1`, { waitUntil: 'domcontentloaded' });
   // 2026-10-22 起新项目没有会话时 AI 栏是开始页(.ai-messages.pc-start),不再是空对话的示例句;从它发第一条消息就建出 Agent 1
-  await waitFor(() => page.$('.ai-messages .ai-empty-state, .ai-messages.pc-start'), 120_000, '新页面的空对话(开始页)');
+  await waitFor(() => page.$('.ai-messages .ai-empty-state, .ai-messages.pc-start'), 120_000, 'Empty chat on a new page (start page)');
   const smallSamples = [];
   for (let k = 0; k < 3; k++) {
-    await sendMsg(`短对话第 ${k + 1} 条`);
+    await sendMsg(`Short chat, message ${k + 1}`);
     smallSamples.push(...(await sampleStream(async (s) => ({ fromBottom: s.fromBottom, spacers: s.spacers, nodes: s.nodes }))));
   }
   const small = await listState(page);

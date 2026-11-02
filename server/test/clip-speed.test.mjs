@@ -28,12 +28,12 @@ const fixture = () => ({
   media: [{ id: 'v1', kind: 'video', url: '/@media/v1.mp4', hash: 'h-v1', duration: 20 }, { id: 'a1', kind: 'audio', url: '/@media/a1.mp3', duration: 30 }],
   cardNodes: [{ id: 'n1', adapter: 'card', cardId: 'fx-tint', kind: 'filter', params: {}, inputs: { source: '@clip/v-fx/source' } }],
   tracks: [
-    { id: 't1', name: '序列 1', clips: [{ id: 'c1', cardId: 'punch-pill', start: 0, end: 2, params: { text: 'a' } }] },
-    { id: 't2', name: '序列 2', clips: [
+    { id: 't1', name: 'Track 1', clips: [{ id: 'c1', cardId: 'punch-pill', start: 0, end: 2, params: { text: 'a' } }] },
+    { id: 't2', name: 'Track 2', clips: [
       { id: 'v-plain', cardId: '', mediaId: 'v1', mediaOffset: 1.5, start: 0, end: 4, params: {} },
       { id: 'v-fx', cardId: '', mediaId: 'v1', mediaOffset: 0.2, start: 4, end: 8, params: {}, nodeId: 'n1' },
     ] },
-    { id: 't3', name: '序列 3', clips: [{ id: 'a-1', cardId: '', mediaId: 'a1', mediaOffset: 3, start: 0, end: 10, params: {} }] },
+    { id: 't3', name: 'Track 3', clips: [{ id: 'a-1', cardId: '', mediaId: 'a1', mediaOffset: 3, start: 0, end: 10, params: {} }] },
   ],
 });
 const DEFS = { 'fx-tint': { id: 'fx-tint', kind: 'filter', defaults: {}, card() {} }, 'punch-pill': { id: 'punch-pill', defaults: { text: '' } } };
@@ -60,7 +60,7 @@ const GOLDEN = {
   fxInputKey: '3194e3a40b920851181c0125b3ad2de14f3703bb540815ed1138bfcb926b649b',
 };
 
-test('缺省 1:帧身份、轨道前缀、镜像哈希、输入签名、卡片图上游键与开工提交逐字相同', () => {
+test('Default 1: frame identity, track prefix, mirror hash, input signature, card graph upstream keys and the start-of-work commit are verbatim identical', () => {
   const p = fixture();
   assert.equal(frameIdentity(p, 'code'), GOLDEN.frameIdentity);
   assert.deepEqual(trackPrefixes(p, 'code').map((x) => x.key), GOLDEN.trackPrefixes);
@@ -71,17 +71,17 @@ test('缺省 1:帧身份、轨道前缀、镜像哈希、输入签名、卡片�
   const graph = graphOf(p);
   assert.equal('rate' in graph.nodes.find((n) => n.id === '@clip/v-fx/source'), false);
   const raw = projectCardGraph(p, (id) => DEFS[id]);
-  assert.equal(withMediaRates(p, raw), raw, '没有变速段时回同一个对象');
+  assert.equal(withMediaRates(p, raw), raw, 'Returns the same object when there are no speed-changed clips');
 });
 
-test('变速:层表输入签名、卡片图素材节点、接它的素材效果卡上游键都跟着变;别的片段不变', () => {
+test('Speed change: the layer table input signature, the card graph\'s media node, and the upstream key of the media effect card attached to it all change; other clips do not', () => {
   const p = fixture();
   const fast = withClip(p, 'v-fx', { speed: 2 });
-  assert.notEqual(clipInputSig(fast, 'v-fx'), clipInputSig(p, 'v-fx'), '变速段自己的签名要变');
-  assert.equal(clipInputSig(fast, 'v-plain'), clipInputSig(p, 'v-plain'), '别的片段不变');
+  assert.notEqual(clipInputSig(fast, 'v-fx'), clipInputSig(p, 'v-fx'), 'The speed-changed clip\'s own signature must change');
+  assert.equal(clipInputSig(fast, 'v-plain'), clipInputSig(p, 'v-plain'), 'Other clips are unchanged');
   const node = graphOf(fast).nodes.find((n) => n.id === '@clip/v-fx/source');
-  assert.equal(node.rate, 2, '素材节点带上倍率');
-  assert.notEqual(graphKeys(fast).inputKeys.n1.source.key, GOLDEN.fxInputKey, '接变速素材的素材效果卡上游键要变(否则命中旧快照)');
+  assert.equal(node.rate, 2, 'The media node carries the rate');
+  assert.notEqual(graphKeys(fast).inputKeys.n1.source.key, GOLDEN.fxInputKey, 'The upstream key of a media effect card attached to speed-changed media must change (otherwise it hits the old snapshot)');
   assert.notEqual(graphKeys(fast).nodeIds['@clip/v-fx/source'], graphKeys(p).nodeIds['@clip/v-fx/source']);
   // 整份序列进哈希的几处:多了一个键自然就变
   assert.notEqual(frameIdentity(fast, 'code'), GOLDEN.frameIdentity);
@@ -92,7 +92,7 @@ test('变速:层表输入签名、卡片图素材节点、接它的素材效果�
 
 /* ---------- 画面取哪一帧 ---------- */
 
-test('看画面(vision-compose):素材时刻按速度换算', () => {
+test('Frame viewing (vision-compose): media time is converted by speed', () => {
   const p = withClip(fixture(), 'v-plain', { speed: 2 });
   const layer = mediaLayersAt(p, 1).find((l) => l.clip.id === 'v-plain');
   assert.equal(layer.mediaTime, 1.5 + 1 * 2);
@@ -100,7 +100,7 @@ test('看画面(vision-compose):素材时刻按速度换算', () => {
   assert.equal(mediaLayersAt(slow, 3).find((l) => l.clip.id === 'v-plain').mediaTime, 1.5 + 3 * 0.5);
 });
 
-test('导出兼容旁路(export-compose):变速段按倍率把素材时间戳压到时间轴上,读的素材长度乘倍率', () => {
+test('Export compatibility bypass (export-compose): a speed-changed clip squeezes media timestamps onto the timeline by the rate, and the media length read is multiplied by the rate', () => {
   const media = { id: 'v1', kind: 'video', name: 'a.mp4', url: '/@media/a.mp4' };
   const frame = { x: 0, y: 0, w: 1920, h: 1080, anchor: [0, 0], scale: 1, rotate: 0 };
   const build = (speed) => buildComposeArgs({ width: 1920, height: 1080, fps: 30, startFrame: 0, endFrame: 89, cardsPattern: 'f/%06d.png', out: 'o.mp4',
@@ -108,14 +108,14 @@ test('导出兼容旁路(export-compose):变速段按倍率把素材时间戳压
   const one = build(undefined), two = build(2);
   const ssOf = (r) => r.args[r.args.indexOf('-ss') + 1], tOf = (r) => r.args[r.args.indexOf('-t') + 1];
   assert.equal(ssOf(one), '9.5');
-  assert.equal(ssOf(two), '9.5', '入点不变');
+  assert.equal(ssOf(two), '9.5', 'In point unchanged');
   assert.equal(tOf(one), '4');
-  assert.equal(tOf(two), '7', '素材要读 3 秒 × 2 + 两头余量');
-  assert.match(one.graph, /setpts=PTS\+-0\.5\/TB,fps=30/, '缺省 1 的写法不变');
-  assert.match(two.graph, /setpts=PTS\/2\+-0\.25\/TB,fps=30/, '时间戳除以倍率再平移:素材 m 秒落到 start + (m − off)/2');
+  assert.equal(tOf(two), '7', 'The media must read 3 seconds × 2 + margin at both ends');
+  assert.match(one.graph, /setpts=PTS\+-0\.5\/TB,fps=30/, 'The form for default 1 is unchanged');
+  assert.match(two.graph, /setpts=PTS\/2\+-0\.25\/TB,fps=30/, 'Timestamps are divided by the rate and then shifted: media second m lands at start + (m − off)/2');
 });
 
-test('素材效果卡的素材节点(withMediaRates):取帧时刻乘倍率,缺省不带倍率', () => {
+test('Media node of a media effect card (withMediaRates): the frame-fetch time is multiplied by the rate, no rate by default', () => {
   const p = withClip(fixture(), 'v-fx', { speed: 0.5 });
   const node = graphOf(p).nodes.find((n) => n.id === '@clip/v-fx/source');
   assert.deepEqual([node.offset, node.rate], [0.2, 0.5]);
@@ -123,12 +123,12 @@ test('素材效果卡的素材节点(withMediaRates):取帧时刻乘倍率,缺�
 
 /* ---------- 声音:变速段原声不出 ---------- */
 
-test('导出混音清单(audioPlanOf):变速的视频段不出原声,别的段原样', () => {
+test('Export mix manifest (audioPlanOf): a speed-changed video clip produces no original audio, other clips are as before', () => {
   const base = audioPlanOf(fixture());
   const p = withClip(fixture(), 'v-plain', { speed: 2 });
   const plan = audioPlanOf(p);
-  assert.equal(plan.some((e) => e.clipId === 'v-plain'), false, '变速段不在混音清单里');
-  assert.deepEqual(plan, base.filter((e) => e.clipId !== 'v-plain'), '其余条目逐字相同');
+  assert.equal(plan.some((e) => e.clipId === 'v-plain'), false, 'The speed-changed clip is not in the mix manifest');
+  assert.deepEqual(plan, base.filter((e) => e.clipId !== 'v-plain'), 'The remaining entries are verbatim identical');
   // ffmpeg 那条老路(mux-audio)用同一份清单
   const files = buildAudioPlan(p, 'out', () => true, (m) => `/x/${m.id}`);
   assert.equal(files.some((e) => e.clipId === 'v-plain'), false);
@@ -137,42 +137,42 @@ test('导出混音清单(audioPlanOf):变速的视频段不出原声,别的段�
 
 /* ---------- 剪辑段里的变速段 ---------- */
 
-test('剪辑段摊平(cutFlatten):截掉的那一截按倍率推进素材起点,速度带下去', () => {
+test('Cut segment flattening (cutFlatten): the trimmed-off portion advances the media start by the rate, and the speed is carried down', () => {
   const p = {
     id: 'p', width: 1280, height: 720, fps: 30, duration: 20, media: [{ id: 'v1', kind: 'video', url: '/@media/v1.mp4' }],
-    tracks: [{ id: 'ta', name: '序列 1', clips: [{ id: 'seg', cardId: '', cutId: 'B', cutOffset: 1, start: 2, end: 6, params: {} }] }],
-    cuts: [{ id: 'A', name: '剪辑A' }, { id: 'B', name: '剪辑B', duration: 8, transitions: [], tracks: [{ id: 'tb', name: '序列 1', clips: [{ id: 'b1', cardId: '', mediaId: 'v1', mediaOffset: 3, speed: 2, start: 0, end: 8, params: {} }] }] }],
+    tracks: [{ id: 'ta', name: 'Track 1', clips: [{ id: 'seg', cardId: '', cutId: 'B', cutOffset: 1, start: 2, end: 6, params: {} }] }],
+    cuts: [{ id: 'A', name: 'Cut A' }, { id: 'B', name: 'Cut B', duration: 8, transitions: [], tracks: [{ id: 'tb', name: 'Track 1', clips: [{ id: 'b1', cardId: '', mediaId: 'v1', mediaOffset: 3, speed: 2, start: 0, end: 8, params: {} }] }] }],
     activeCutId: 'A',
   };
   const v = flatPlanProject(p).tracks.flatMap((t) => t.clips).find((c) => c.id === 'seg~b1');
-  assert.ok(v, '摊出来的虚拟片段');
+  assert.ok(v, 'The virtual clip produced by flattening');
   assert.equal(v.speed, 2);
-  assert.equal(v.mediaOffset, 3 + 1 * 2, '截掉 1 秒时间轴 = 2 秒素材');
+  assert.equal(v.mediaOffset, 3 + 1 * 2, 'Trimming 1 second of timeline = 2 seconds of media');
 });
 
 /* ---------- 实时播放的速率 ---------- */
 
-test('预览同步(mediaSync.planSync):播放速率以片段速度为基准,纠偏在它上面浮动', async () => {
+test('Preview sync (mediaSync.planSync): the playback rate is based on the clip speed, and drift correction floats around it', async () => {
   const { planSync, MAX_RATE_SKEW } = await import(srcUrl('render/mediaSync.ts'));
   const base = { seeking: false, paused: false, playing: true, now: 10_000, lastSeekAt: 0 };
-  assert.equal(planSync({ ...base, elTime: 5, target: 5 }).rate, 1, '缺省照旧是 1');
-  assert.equal(planSync({ ...base, elTime: 5, target: 5, baseRate: 2 }).rate, 2, '对齐时按 2 倍放');
+  assert.equal(planSync({ ...base, elTime: 5, target: 5 }).rate, 1, 'The default is still 1');
+  assert.equal(planSync({ ...base, elTime: 5, target: 5, baseRate: 2 }).rate, 2, 'Plays at 2x when aligned');
   const behind = planSync({ ...base, elTime: 5, target: 5.25, baseRate: 2 }).rate;
-  assert.ok(behind > 2 && behind <= 2 * (1 + MAX_RATE_SKEW), `落后时在 2 倍上加速,实得 ${behind}`);
-  assert.equal(planSync({ ...base, playing: false, paused: true, elTime: 5, target: 5, baseRate: 0.5 }).rate, 0.5, '暂停时停在基准速率');
+  assert.ok(behind > 2 && behind <= 2 * (1 + MAX_RATE_SKEW), `When behind, speeds up above 2x, got ${behind}`);
+  assert.equal(planSync({ ...base, playing: false, paused: true, elTime: 5, target: 5, baseRate: 0.5 }).rate, 0.5, 'Stays at the base rate when paused');
 });
 
 /* ---------- 字幕、跟随轨迹 ---------- */
 
-test('字幕铺放(captions):素材秒按速度换到时间轴,句长除以倍率', async () => {
+test('Caption placement (captions): media seconds are converted to the timeline by speed, sentence length is divided by the rate', async () => {
   const { mapMediaTime, captionsFromTranscript } = await import(srcUrl('kernel/captions.ts'));
   const clips = [{ mediaId: 'v1', start: 10, end: 20, mediaOffset: 4, speed: 2 }];
-  assert.equal(mapMediaTime(clips, 'v1', 8), 12, '素材第 8 秒 = 时间轴 10 + (8 − 4)/2');
-  const plan = captionsFromTranscript(clips, 'v1', [{ start: 8, end: 10, text: '你好' }]);
+  assert.equal(mapMediaTime(clips, 'v1', 8), 12, 'Media second 8 = timeline 10 + (8 − 4)/2');
+  const plan = captionsFromTranscript(clips, 'v1', [{ start: 8, end: 10, text: 'Hello' }]);
   assert.deepEqual([plan.from, plan.to], [12, 13]);
 });
 
-test('跟随轨迹(motion):起点帧按速度换算,存的步长是时间轴上的秒', async () => {
+test('Following the trajectory (motion): the start frame is converted by speed, and the stored step is in timeline seconds', async () => {
   const { buildClipMotion } = await import(srcUrl('kernel/motion.ts'));
   const xy = Array.from({ length: 100 }, (_, i) => [i, 0]);
   const visible = xy.map(() => true);
@@ -180,37 +180,37 @@ test('跟随轨迹(motion):起点帧按速度换算,存的步长是时间轴上�
   const one = buildClipMotion({ ...common, clipOfMedia: { start: 0, mediaOffset: 1 } });
   const two = buildClipMotion({ ...common, clipOfMedia: { start: 0, mediaOffset: 1, speed: 2 } });
   assert.equal(one.motion.frameStep, 0.1);
-  assert.equal(two.motion.frameStep, 0.05, '素材 0.1 秒一点,2 倍速下时间轴 0.05 秒一点');
-  assert.equal(two.motion.offsets.length, 21, '卡片 1 秒覆盖素材 2 秒 = 20 点 + 1');
+  assert.equal(two.motion.frameStep, 0.05, 'Media has one point per 0.1 seconds, at 2x speed the timeline has one point per 0.05 seconds');
+  assert.equal(two.motion.offsets.length, 21, 'A card\'s 1 second covers 2 seconds of media = 20 points + 1');
   assert.equal(one.motion.offsets.length, 11);
 });
 
 /* ---------- store ---------- */
 
-test('store.setClipSpeed:保住入点、按新速度重算终点,改回 1 删字段;切分的后半段按倍率推进素材起点', async () => {
+test('store.setClipSpeed: keeps the in point, recomputes the end point from the new speed, changing back to 1 deletes the field; the second half of a split advances the media start by the rate', async () => {
   const { actions, getState } = await import(srcUrl('store/project.ts'));
   actions.loadProject({ version: 1, id: 'p-speed', name: 't', width: 1280, height: 720, fps: 30, duration: 20, themeId: 'midnight',
     media: [{ id: 'v1', kind: 'video', name: 'v.mp4', url: '/@media/v1.mp4', duration: 30 }, { id: 'i1', kind: 'image', name: 'i.png', url: '/@media/i.png' }],
-    tracks: [{ id: 'ta', name: '序列 1', clips: [
+    tracks: [{ id: 'ta', name: 'Track 1', clips: [
       { id: 'v', cardId: '', mediaId: 'v1', mediaOffset: 2, start: 1, end: 5, params: {} },
       { id: 'img', cardId: '', mediaId: 'i1', start: 10, end: 12, params: {} },
     ] }] });
   const clip = (id) => getState().project.tracks.flatMap((t) => t.clips).find((c) => c.id === id);
   let r = actions.setClipSpeed('v', 2);
   assert.equal(r.ok, true);
-  assert.deepEqual([clip('v').start, clip('v').end, clip('v').mediaOffset, clip('v').speed], [1, 3, 2, 2], '4 秒素材 2 倍速 = 2 秒');
+  assert.deepEqual([clip('v').start, clip('v').end, clip('v').mediaOffset, clip('v').speed], [1, 3, 2, 2], '4 seconds of media at 2x speed = 2 seconds');
   r = actions.setClipSpeed('v', 0.5);
-  assert.deepEqual([clip('v').start, clip('v').end, clip('v').speed], [1, 9, 0.5], '同一截素材 0.5 倍 = 8 秒');
+  assert.deepEqual([clip('v').start, clip('v').end, clip('v').speed], [1, 9, 0.5], 'The same portion of media at 0.5x = 8 seconds');
   r = actions.setClipSpeed('v', 0.5 * 4);
   r = actions.setClipSpeed('v', 1);
   assert.equal(r.ok, true);
-  assert.equal('speed' in clip('v'), false, '改回 1 不留 speed 字段(身份键逐字回到原样)');
+  assert.equal('speed' in clip('v'), false, 'Changing back to 1 leaves no speed field (identity keys return verbatim to the original)');
   assert.deepEqual([clip('v').start, clip('v').end], [1, 5]);
   // 变长碰到下一段:把后面的段推开(用户 2026-10-23 定),不截断
   r = actions.setClipSpeed('v', 0.25);
   assert.deepEqual(r, { ok: true, pushed: { clips: 1, by: 7 } });
-  assert.equal(clip('v').end, 17, '0.25 倍要 16 秒,不截');
-  assert.deepEqual([clip('img').start, clip('img').end], [17, 19], '后面的图片被推到 17');
+  assert.equal(clip('v').end, 17, '0.25x needs 16 seconds, no trimming');
+  assert.deepEqual([clip('img').start, clip('img').end], [17, 19], 'The image after it is pushed to 17');
   // 图片段不能变速
   assert.equal(actions.setClipSpeed('img', 2).ok, false);
   // 切分:后半段素材起点 = 2 + (5 − 1) × 0.25,带着速度
@@ -221,48 +221,48 @@ test('store.setClipSpeed:保住入点、按新速度重算终点,改回 1 删字
   const sep = actions.separateAudio('v');
   assert.equal(sep.ok, true);
   const sound = clip(sep.audioClipId);
-  assert.equal(sound.speed, 0.25, '分出来的声音段带着速度');
+  assert.equal(sound.speed, 0.25, 'The separated sound clip carries the speed');
   assert.equal(getState().project.media.find((m) => m.id === sound.mediaId).kind, 'audio');
-  assert.equal(clip('v').audioMuted, true, '视频段静音(和分离前一样)');
+  assert.equal(clip('v').audioMuted, true, 'The video clip is muted (same as before the separation)');
   // 一次改速度(连带推开的段)= 一步撤销
   actions.undo(); actions.undo(); actions.undo();
   assert.equal(clip('v').speed, undefined);
-  assert.deepEqual([clip('v').end, clip('img').start, clip('img').end], [5, 10, 12], '推开的段一起退回去');
+  assert.deepEqual([clip('v').end, clip('img').start, clip('img').end], [5, 10, 12], 'The clips that were pushed aside move back together');
 });
 
-test('store.setClipSpeed 推开:变短尾部留空;后面整体顺移(相对关系不变,先吃掉空档);转场组整组推;推不动整个拒绝、不截断', async () => {
+test('store.setClipSpeed push-aside: shortening leaves a gap at the tail; later clips shift as a whole (relative positions unchanged, gaps are absorbed first); a transition group is pushed as a whole; if it cannot be pushed, the whole change is rejected, with no truncation', async () => {
   const { actions, getState } = await import(srcUrl('store/project.ts'));
   const load = (extra = {}) => actions.loadProject({ version: 1, id: 'p-push', name: 't', width: 1280, height: 720, fps: 30, duration: 40, themeId: 'midnight',
     media: [{ id: 'v1', kind: 'video', name: 'v.mp4', url: '/@media/v1.mp4', duration: 60 }],
     tracks: [
-      { id: 'ta', name: '序列 1', clips: [
+      { id: 'ta', name: 'Track 1', clips: [
         { id: 'v', cardId: '', mediaId: 'v1', start: 0, end: 4, params: {} },
         { id: 'a', cardId: '', mediaId: 'v1', start: 5, end: 8, params: {} },
         { id: 'b', cardId: '', mediaId: 'v1', start: 10, end: 13, params: {} },
       ] },
-      { id: 'tb', name: '序列 2', clips: [{ id: 'other', cardId: '', mediaId: 'v1', start: 6, end: 9, params: {} }], ...(extra.lockB ? { locked: true } : {}) },
+      { id: 'tb', name: 'Track 2', clips: [{ id: 'other', cardId: '', mediaId: 'v1', start: 6, end: 9, params: {} }], ...(extra.lockB ? { locked: true } : {}) },
     ], ...(extra.transitions ? { transitions: extra.transitions } : {}) });
   const clip = (id) => getState().project.tracks.flatMap((t) => t.clips).find((x) => x.id === id);
   const span = (id) => [clip(id).start, clip(id).end];
 
   load();
   let r = actions.setClipSpeed('v', 2);
-  assert.deepEqual(r, { ok: true }, '变短不推');
-  assert.deepEqual([span('v'), span('a'), span('b'), span('other')], [[0, 2], [5, 8], [10, 13], [6, 9]], '尾部留空,别的不动');
+  assert.deepEqual(r, { ok: true }, 'Shortening does not push');
+  assert.deepEqual([span('v'), span('a'), span('b'), span('other')], [[0, 2], [5, 8], [10, 13], [6, 9]], 'The tail is left empty, nothing else moves');
 
   load();
   r = actions.setClipSpeed('v', 0.5); // 4 → 8 秒,和 a(5 起)重合 3 秒
   assert.deepEqual(r, { ok: true, pushed: { clips: 2, by: 3 } });
-  assert.deepEqual([span('v'), span('a'), span('b')], [[0, 8], [8, 11], [13, 16]], 'a、b 整体后移 3 秒,a 与 b 之间 2 秒的空档还在');
-  assert.deepEqual(span('other'), [6, 9], '别的序列上的段不动');
+  assert.deepEqual([span('v'), span('a'), span('b')], [[0, 8], [8, 11], [13, 16]], 'a and b shift later as a whole by 3 seconds, the 2-second gap between a and b is still there');
+  assert.deepEqual(span('other'), [6, 9], 'Clips on other tracks do not move');
   actions.undo();
-  assert.deepEqual([span('v'), span('a'), span('b')], [[0, 4], [5, 8], [10, 13]], '一步撤销全退回');
+  assert.deepEqual([span('v'), span('a'), span('b')], [[0, 4], [5, 8], [10, 13]], 'One undo step reverts everything');
 
   // 后面的 a 和别的序列上的 other 绑在交叉溶解里:整组一起推
   load({ transitions: [{ id: 'x', kind: 'crossfade', aId: 'other', bId: 'a', dur: 1 }] });
   r = actions.setClipSpeed('v', 0.5);
   assert.equal(r.ok, true);
-  assert.deepEqual([span('a'), span('b'), span('other')], [[8, 11], [13, 16], [9, 12]], '转场组整组推,组内相对关系不变');
+  assert.deepEqual([span('a'), span('b'), span('other')], [[8, 11], [13, 16], [9, 12]], 'A transition group is pushed as a whole, relative positions within the group unchanged');
   actions.undo();
   assert.deepEqual([span('a'), span('other')], [[5, 8], [6, 9]]);
 
@@ -272,34 +272,34 @@ test('store.setClipSpeed 推开:变短尾部留空;后面整体顺移(相对关�
   r = actions.setClipSpeed('v', 0.5);
   assert.equal(r.ok, false);
   assert.match(r.error, /locked track/);
-  assert.equal(getState().project, before, '拒绝时项目原样');
+  assert.equal(getState().project, before, 'The project is unchanged on rejection');
   assert.equal(clip('v').speed, undefined);
 });
 
-test('store.setClipSpeed 手动输入:0.25～4 之外拒绝并提示(不夹),小数取到百分之一', async () => {
+test('store.setClipSpeed manual input: values outside 0.25-4 are rejected with a message (no clamping), decimals are rounded to hundredths', async () => {
   const { actions, getState } = await import(srcUrl('store/project.ts'));
   actions.loadProject({ version: 1, id: 'p-range', name: 't', width: 1280, height: 720, fps: 30, duration: 20, themeId: 'midnight',
     media: [{ id: 'v1', kind: 'video', name: 'v.mp4', url: '/@media/v1.mp4', duration: 60 }],
-    tracks: [{ id: 'ta', name: '序列 1', clips: [{ id: 'v', cardId: '', mediaId: 'v1', start: 0, end: 4, params: {} }] }] });
+    tracks: [{ id: 'ta', name: 'Track 1', clips: [{ id: 'v', cardId: '', mediaId: 'v1', start: 0, end: 4, params: {} }] }] });
   const clip = () => getState().project.tracks[0].clips[0];
   for (const bad of [0.2, 4.5, -1, 0]) {
     const r = actions.setClipSpeed('v', bad);
     assert.equal(r.ok, false, String(bad));
     assert.match(r.error, /between 0\.25 and 4x/);
   }
-  assert.equal(clip().speed, undefined, '拒绝时什么都不改');
+  assert.equal(clip().speed, undefined, 'Nothing is changed on rejection');
   assert.equal(actions.setClipSpeed('v', 1.333).ok, true);
   assert.equal(clip().speed, 1.33);
-  assert.equal(actions.setClipSpeed('v', 4).ok, true, '边界值可以');
+  assert.equal(actions.setClipSpeed('v', 4).ok, true, 'Boundary values are allowed');
 });
 
-test('store.setClipSpeed 挂着转场:淡化跟着两端走;交叉溶解前一段变速时后一段跟着挪、重叠不变;装不下转场拒绝', async () => {
+test('store.setClipSpeed with a transition attached: the fade follows the two ends; when the clip before a crossfade changes speed, the next clip moves along and the overlap stays the same; reject if the transition does not fit', async () => {
   const { actions, getState } = await import(srcUrl('store/project.ts'));
   const load = () => actions.loadProject({ version: 1, id: 'p-tr', name: 't', width: 1280, height: 720, fps: 30, duration: 30, themeId: 'midnight',
     media: [{ id: 'v1', kind: 'video', name: 'v.mp4', url: '/@media/v1.mp4', duration: 60 }],
     tracks: [
-      { id: 'ta', name: '序列 1', clips: [{ id: 'a', cardId: '', mediaId: 'v1', start: 0, end: 4, fadeIn: 0.5, fadeOut: 1, params: {} }, { id: 'c', cardId: '', mediaId: 'v1', start: 9, end: 12, params: {} }] },
-      { id: 'tb', name: '序列 2', clips: [{ id: 'b', cardId: '', mediaId: 'v1', start: 3, end: 7, fadeIn: 1, params: {} }, { id: 'd', cardId: '', mediaId: 'v1', start: 8, end: 10, params: {} }] },
+      { id: 'ta', name: 'Track 1', clips: [{ id: 'a', cardId: '', mediaId: 'v1', start: 0, end: 4, fadeIn: 0.5, fadeOut: 1, params: {} }, { id: 'c', cardId: '', mediaId: 'v1', start: 9, end: 12, params: {} }] },
+      { id: 'tb', name: 'Track 2', clips: [{ id: 'b', cardId: '', mediaId: 'v1', start: 3, end: 7, fadeIn: 1, params: {} }, { id: 'd', cardId: '', mediaId: 'v1', start: 8, end: 10, params: {} }] },
     ],
     transitions: [{ id: 'x', kind: 'crossfade', aId: 'a', bId: 'b', dur: 1 }, { id: 'f', kind: 'fadeIn', aId: 'a', dur: 0.5 }] });
   const clip = (id) => getState().project.tracks.flatMap((t) => t.clips).find((x) => x.id === id);
@@ -310,9 +310,9 @@ test('store.setClipSpeed 挂着转场:淡化跟着两端走;交叉溶解前一�
   let r = actions.setClipSpeed('a', 2);
   assert.deepEqual(r, { ok: true, moved: ['b'] });
   assert.deepEqual([span('a'), span('b'), span('c'), span('d')], [[0, 2], [1, 5], [9, 12], [8, 10]]);
-  assert.deepEqual([clip('a').fadeIn, clip('a').fadeOut, clip('b').fadeIn], [0.5, 1, 1], '转场时长不变');
+  assert.deepEqual([clip('a').fadeIn, clip('a').fadeOut, clip('b').fadeIn], [0.5, 1, 1], 'The transition duration is unchanged');
   actions.undo();
-  assert.deepEqual([span('a'), span('b')], [[0, 4], [3, 7]], '一步撤销');
+  assert.deepEqual([span('a'), span('b')], [[0, 4], [3, 7]], 'One undo step');
 
   // 前一段 a 变长(4 → 8 秒):b 后移 4 秒到 7～11,撞上同序列的 d(8 起)→ d 推开;a 自己的序列上 c(9 起)和 a 新终点 8 不重合,不动
   load();
@@ -320,7 +320,7 @@ test('store.setClipSpeed 挂着转场:淡化跟着两端走;交叉溶解前一�
   assert.equal(r.ok, true);
   assert.deepEqual([span('a'), span('b'), span('d'), span('c')], [[0, 8], [7, 11], [11, 13], [9, 12]]);
   actions.undo();
-  assert.deepEqual([span('a'), span('b'), span('d')], [[0, 4], [3, 7], [8, 10]], '一步撤销全退回');
+  assert.deepEqual([span('a'), span('b'), span('d')], [[0, 4], [3, 7], [8, 10]], 'One undo step reverts everything');
 
   // 后一段 b 变速:起点不动,a 不动
   load();
@@ -335,54 +335,54 @@ test('store.setClipSpeed 挂着转场:淡化跟着两端走;交叉溶解前一�
   assert.deepEqual(r.transitions, [{ kind: 'crossfade', from: 1, to: 0.99 }]);
   assert.deepEqual(span('a'), [0, 1]);
   const near = (x, y) => Math.abs(x - y) < 1e-9;
-  assert.ok(near(clip('b').start, 0.01) && near(clip('b').end, 4.01), `b 挪到 0.01～4.01,实得 ${span('b')}`);
-  assert.deepEqual([clip('a').fadeOut, clip('b').fadeIn, clip('a').fadeIn], [0.99, 0.99, 0.5], '两头淡化跟着改,0.5 秒的淡入装得下不动');
+  assert.ok(near(clip('b').start, 0.01) && near(clip('b').end, 4.01), `b moves to 0.01-4.01, got ${span('b')}`);
+  assert.deepEqual([clip('a').fadeOut, clip('b').fadeIn, clip('a').fadeIn], [0.99, 0.99, 0.5], 'Fades at both ends change along, the 0.5-second fade-in fits and stays');
   assert.equal(getState().project.transitions.find((t) => t.id === 'x').dur, 0.99);
   const { speedChangeNotes } = await import('../../src/kernel/clipTime.mjs');
-  assert.match(speedChangeNotes(r, 'a'), /交叉溶解跟着缩短：1\.00 秒 → 0\.99 秒/);
+  assert.match(speedChangeNotes(r, 'a'), /Crossfade shortened accordingly: 1\.00 s → 0\.99 s/);
   actions.undo();
-  assert.deepEqual([span('a'), span('b'), clip('a').fadeOut, getState().project.transitions.find((t) => t.id === 'x').dur], [[0, 4], [3, 7], 1, 1], '一步撤销,转场也回来');
+  assert.deepEqual([span('a'), span('b'), clip('a').fadeOut, getState().project.transitions.find((t) => t.id === 'x').dur], [[0, 4], [3, 7], 1, 1], 'One undo step, the transition comes back too');
 
   // 后一段 b 改 4 倍只剩 1 秒:溶解缩到 0.99,靠 b 整段往后挪 0.01 秒(入点内容不变)
   load();
   r = actions.setClipSpeed('b', 4);
   assert.equal(r.ok, true);
   assert.deepEqual(r.moved, ['b']);
-  assert.ok(near(clip('b').start, 3.01) && near(clip('b').end, 4.01), `b 到 3.01～4.01,实得 ${span('b')}`);
-  assert.equal(clip('a').end - clip('b').start < 0.99 + 1e-9 && clip('a').end - clip('b').start > 0.99 - 1e-9, true, '重叠 0.99');
+  assert.ok(near(clip('b').start, 3.01) && near(clip('b').end, 4.01), `b is at 3.01-4.01, got ${span('b')}`);
+  assert.equal(clip('a').end - clip('b').start < 0.99 + 1e-9 && clip('a').end - clip('b').start > 0.99 - 1e-9, true, 'Overlap 0.99');
 });
 
-test('声音段变速(音画分离出来的):照常出声,两条混音路和测响度都用同一份 ffmpegVarispeed', () => {
+test('Speed change of a sound clip (produced by audio-visual separation): it still sounds as usual, and both mixing paths and loudness measurement use the same ffmpegVarispeed', () => {
   const p = withClip({ ...fixture(), media: [...fixture().media, { id: 's1', kind: 'audio', url: '/@media/v1.mp4', soundOf: 'v1', duration: 20 }],
-    tracks: [...fixture().tracks, { id: 't5', name: '声音', clips: [{ id: 's', cardId: '', mediaId: 's1', mediaOffset: 1, start: 0, end: 2, speed: 2, params: {} }] }] }, 'v-plain', { speed: 2 });
+    tracks: [...fixture().tracks, { id: 't5', name: 'Sound', clips: [{ id: 's', cardId: '', mediaId: 's1', mediaOffset: 1, start: 0, end: 2, speed: 2, params: {} }] }] }, 'v-plain', { speed: 2 });
   const plan = audioPlanOf(p);
   const e = plan.find((x) => x.clipId === 's');
-  assert.deepEqual([e.start, e.dur, e.offset, e.speed], [0, 2, 1, 2], '声音段在清单里,带速度');
-  assert.equal(plan.some((x) => x.clipId === 'v-plain'), false, '视频段自己不出原声');
-  assert.equal(plan.filter((x) => x.clipId !== 's').every((x) => !('speed' in x)), true, '别的条目不带 speed');
+  assert.deepEqual([e.start, e.dur, e.offset, e.speed], [0, 2, 1, 2], 'The sound clip is in the manifest, with its speed');
+  assert.equal(plan.some((x) => x.clipId === 'v-plain'), false, 'The video clip itself produces no original audio');
+  assert.equal(plan.filter((x) => x.clipId !== 's').every((x) => !('speed' in x)), true, 'Other entries carry no speed');
   assert.deepEqual(ffmpegVarispeed(2), ['aresample=48000', 'asetrate=96000', 'aresample=48000']);
   assert.deepEqual(ffmpegVarispeed(1), []);
   const files = buildAudioPlan(p, 'out', () => true, (m) => `/x/${m.id}`);
   const f = files.find((x) => x.clipId === 's');
   const args = buildFfmpegArgs('v.mp4', [f], 'o.mp4', 4);
   const i = args.indexOf('/x/s1');
-  assert.deepEqual(args.slice(i - 5, i + 1), ['-ss', '1', '-t', '4', '-i', '/x/s1'], 'ffmpeg 那条路读 2 秒 × 2 倍素材');
+  assert.deepEqual(args.slice(i - 5, i + 1), ['-ss', '1', '-t', '4', '-i', '/x/s1'], 'The ffmpeg path reads 2 seconds × 2x media');
   assert.match(args[args.indexOf('-filter_complex') + 1], /\[1:a\]aresample=48000,asetrate=96000,aresample=48000,adelay=0:all=1/);
   // 导出时两条混音路都从 playableAudioPlan 做好的那一份 wav 起(Chrome 那一路的裁段在 audio-mix.mjs,它进快照键的代码指纹,不改它)
   const rendered = [];
   const ready = playableAudioPlan(files, 'C:/ff/ffprobe.exe', () => true, (entry, ffmpegCmd) => { rendered.push([entry.clipId, entry.offset, entry.dur, entry.speed, ffmpegCmd]); return `/tmp/${entry.clipId}.wav`; });
-  assert.deepEqual(rendered, [['s', 1, 2, 2, 'C:/ff/ffmpeg.exe']], '只有变速的声音段先做成 wav');
+  assert.deepEqual(rendered, [['s', 1, 2, 2, 'C:/ff/ffmpeg.exe']], 'Only speed-changed sound clips are rendered to wav first');
   const r2 = ready.find((x) => x.clipId === 's');
-  assert.deepEqual([r2.file, r2.offset, r2.dur, 'speed' in r2, 'renderDir' in r2], ['/tmp/s.wav', 0, 2, false, false], '换成做好的 wav,从 0 读 dur 秒,不再带 speed');
-  assert.deepEqual(ready.filter((x) => x.clipId !== 's'), files.filter((x) => x.clipId !== 's'), '别的条目原样');
+  assert.deepEqual([r2.file, r2.offset, r2.dur, 'speed' in r2, 'renderDir' in r2], ['/tmp/s.wav', 0, 2, false, false], 'Replaced by the rendered wav, read dur seconds from 0, no longer carries speed');
+  assert.deepEqual(ready.filter((x) => x.clipId !== 's'), files.filter((x) => x.clipId !== 's'), 'Other entries unchanged');
   const m = timelineMixParts([{ ...f, file: '/x/s1' }], 4);
-  assert.deepEqual(m.inputs, ['-ss', '1', '-t', '4', '-i', '/x/s1'], '测响度同一份');
+  assert.deepEqual(m.inputs, ['-ss', '1', '-t', '4', '-i', '/x/s1'], 'Loudness measurement uses the same one');
   assert.match(m.filters[0], /aresample=48000,asetrate=96000,aresample=48000,adelay/);
 });
 
 /* ---------- 变速的视频段当音频素材效果卡的声音输入(2026-10-23 用户定「放开。」) ---------- */
 
-test('变速的视频段上挂的音频素材效果卡:导出清单照收(原声仍不出);卡片声音的身份 1 倍逐字不变、变速时带上倍率', async () => {
+test('Audio media effect card attached to a speed-changed video clip: the export manifest still accepts it (original audio still not output); the identity of the card sound is verbatim unchanged at 1x, and carries the rate when the speed changes', async () => {
   const withAudioCard = (speed) => {
     const p = fixture();
     p.cardNodes = [...p.cardNodes, { id: 'au', adapter: 'card', cardId: 'gain', kind: 'audio', params: {}, inputs: { source: { nodeId: '@clip/v-plain/source' } } }];
@@ -390,9 +390,9 @@ test('变速的视频段上挂的音频素材效果卡:导出清单照收(原声
   };
   for (const speed of [1, 2]) {
     const plan = buildAudioPlan(withAudioCard(speed), 'out', () => true, () => '/media/v1.mp4');
-    assert.equal(plan.filter((e) => e.clipId === 'v-plain' && !e.cardAudio).length, 0, '原声由卡接管(1 倍)/不出原声(变速),都不单独进清单');
+    assert.equal(plan.filter((e) => e.clipId === 'v-plain' && !e.cardAudio).length, 0, 'Original audio taken over by the card (1x) / no original audio (speed-changed), neither goes into the manifest on its own');
     const card = plan.filter((e) => e.cardAudio && e.clipId === 'v-plain');
-    assert.equal(card.length, 1, `${speed} 倍:音频素材效果卡那一条在清单里`);
+    assert.equal(card.length, 1, `${speed}x: the audio media effect card's entry is in the manifest`);
     assert.equal(card[0].nodeId, 'au');
   }
   const { cardAudioIdentity } = await import('../../src/kernel/cardAudioRendition.mjs');
@@ -406,7 +406,7 @@ test('变速的视频段上挂的音频素材效果卡:导出清单照收(原声
     return p;
   };
   const plain = cardAudioIdentity(projectWith(1), owner, hooks).inputs.source;
-  assert.deepEqual(plain, { media: 'h-v1', offset: 1.5, rate: 1 }, '1 倍:和以前逐字相同,没有 speed 一项');
+  assert.deepEqual(plain, { media: 'h-v1', offset: 1.5, rate: 1 }, '1x: verbatim identical to before, no speed item');
   assert.deepEqual(cardAudioIdentity(projectWith(2), owner, hooks).inputs.source, { ...plain, speed: 2 });
 });
 
@@ -427,14 +427,14 @@ async function withAvCard(speed) {
   return withClip(p, 'v-plain', { cardAudio });
 }
 
-test('导出混音清单:变速段上的声画一体卡照常进清单(已生成的 WAV 照 1 倍摆位,不带 speed);普通变速视频段仍不出原声', async () => {
+test('Export mix manifest: an audio-visual card on a speed-changed clip enters the manifest as usual (the generated WAV is placed at 1x, without speed); a plain speed-changed video clip still produces no original audio', async () => {
   const one = audioPlanOf(await withAvCard(1));
   const av1 = one.find((e) => e.clipId === 'v-plain');
-  assert.deepEqual(av1, { clipId: 'v-plain', trackId: 't2', mediaId: 'wav', start: 0, dur: 4, offset: 0, volume: 1, fadeIn: 0, fadeOut: 0, fx: null }, '1 倍:和以前同一条');
+  assert.deepEqual(av1, { clipId: 'v-plain', trackId: 't2', mediaId: 'wav', start: 0, dur: 4, offset: 0, volume: 1, fadeIn: 0, fadeOut: 0, fx: null }, '1x: the same entry as before');
   for (const speed of [2, 0.5]) {
     const plan = audioPlanOf(await withAvCard(speed));
-    assert.deepEqual(plan.find((e) => e.clipId === 'v-plain'), av1, `${speed} 倍:同样一条(WAV 已是时间轴长度,不再变速)`);
-    assert.deepEqual(plan.filter((e) => e.clipId !== 'v-plain'), one.filter((e) => e.clipId !== 'v-plain'), '别的条目不变');
+    assert.deepEqual(plan.find((e) => e.clipId === 'v-plain'), av1, `${speed}x: the same entry (the WAV is already timeline length, no further speed change)`);
+    assert.deepEqual(plan.filter((e) => e.clipId !== 'v-plain'), one.filter((e) => e.clipId !== 'v-plain'), 'Other entries are unchanged');
     // ffmpeg 那条老路(mux-audio)用同一份清单
     assert.ok(buildAudioPlan(await withAvCard(speed), 'out', () => true, (m) => `/x/${m.id}`).some((e) => e.clipId === 'v-plain' && !e.speed));
   }
@@ -442,32 +442,32 @@ test('导出混音清单:变速段上的声画一体卡照常进清单(已生成
   assert.equal(audioPlanOf(withClip(fixture(), 'v-plain', { speed: 2 })).some((e) => e.clipId === 'v-plain'), false);
 });
 
-test('声画一体卡的卡片时钟(cardClockOffset / withMediaRates / flattenOverlay):1 倍逐位不变;变速段 = mediaOffset ÷ 倍率,读素材的边补同样的差', async () => {
+test('Card clock of audio-visual cards (cardClockOffset / withMediaRates / flattenOverlay): bit-for-bit unchanged at 1x; speed-changed clip = mediaOffset ÷ rate, and the media-reading side makes up the same difference', async () => {
   const { cardClockOffset } = await import('../../src/kernel/clipTime.mjs');
   const { cardAudioSourceOffset } = await import('../../src/kernel/cardAudioRendition.mjs');
   const { flattenOverlay } = await import(srcUrl('kernel/project.ts'));
-  assert.equal(cardClockOffset({ mediaOffset: 0.1 + 0.2 }), 0.1 + 0.2, '1 倍:原值');
+  assert.equal(cardClockOffset({ mediaOffset: 0.1 + 0.2 }), 0.1 + 0.2, '1x: the original value');
   assert.equal(cardClockOffset({ mediaOffset: 3, speed: 2 }), 1.5);
-  assert.equal(cardClockOffset({ speed: 2 }), undefined, 'mediaOffset 没写:交给调用方退到节点 timeOffset');
+  assert.equal(cardClockOffset({ speed: 2 }), undefined, 'mediaOffset not written: left to the caller to fall back to the node\'s timeOffset');
   const one = await withAvCard(1);
   const raw1 = projectCardGraph(one, (id) => AV_HOOKS.getCard(id));
-  assert.equal(withMediaRates(one, raw1), raw1, '1 倍:同一个对象');
+  assert.equal(withMediaRates(one, raw1), raw1, '1x: the same object');
   assert.equal(flattenOverlay(one).clips.find((c) => c.id === 'v-plain').sourceOffset, 1.5);
   for (const speed of [2, 0.5]) {
     const p = await withAvCard(speed);
     const raw = projectCardGraph(p, (id) => AV_HOOKS.getCard(id));
     const before = raw.nodes.find((n) => n.id === 'avn'), after = withMediaRates(p, raw).nodes.find((n) => n.id === 'avn');
-    assert.equal(before.timeOffset, 1.5, 'projectCardGraph 写的是 mediaOffset(素材秒)');
-    assert.equal(after.timeOffset, 1.5 / speed, `${speed} 倍:卡片时钟 = mediaOffset ÷ 倍率`);
+    assert.equal(before.timeOffset, 1.5, 'projectCardGraph writes mediaOffset (media seconds)');
+    assert.equal(after.timeOffset, 1.5 / speed, `${speed}x: card clock = mediaOffset ÷ rate`);
     // 读自己素材的位置不变:卡片时刻 + 边的偏移 一样
     assert.ok(Math.abs((after.timeOffset + after.inputs.source.offset) - (before.timeOffset + before.inputs.source.offset)) < 1e-12);
     const clip = p.tracks[1].clips[0];
-    assert.equal(cardAudioSourceOffset(p, clip), 1.5 / speed, '已生成声音的源时钟同一个口径');
-    assert.equal(flattenOverlay(p).clips.find((c) => c.id === 'v-plain').sourceOffset, 1.5 / speed, '舞台给卡片组件的 t 同一个口径');
+    assert.equal(cardAudioSourceOffset(p, clip), 1.5 / speed, 'The source clock of the generated sound uses the same basis');
+    assert.equal(flattenOverlay(p).clips.find((c) => c.id === 'v-plain').sourceOffset, 1.5 / speed, 'The t the stage gives the card component uses the same basis');
   }
 });
 
-test('store.splitClip:变速段上的声画一体卡切开后,两半的卡片时钟接得上,已生成的声音两半都还覆盖、不判过期', async () => {
+test('store.splitClip: after splitting an audio-visual card on a speed-changed clip, the card clocks of the two halves line up, and the generated sound still covers both halves and is not judged stale', async () => {
   const { actions, getState } = await import(srcUrl('store/project.ts'));
   const { flattenOverlay } = await import(srcUrl('kernel/project.ts'));
   const { resolveCardAudioRendition } = await import('../../src/kernel/cardAudioRendition.mjs');
@@ -475,16 +475,16 @@ test('store.splitClip:变速段上的声画一体卡切开后,两半的卡片时
     const p = await withAvCard(speed);
     actions.loadProject({ version: 1, name: 't', ...p });
     const right = actions.splitClip('v-plain', 1.5);
-    assert.ok(right, `${speed} 倍:切得开`);
+    assert.ok(right, `${speed}x: it can be split`);
     const q = getState().project;
     const left = q.tracks[1].clips.find((c) => c.id === 'v-plain');
-    assert.equal(right.mediaOffset, 1.5 + 1.5 * speed, '后半段的素材起点按倍率推进');
+    assert.equal(right.mediaOffset, 1.5 + 1.5 * speed, 'The second half\'s media start advances by the rate');
     const flat = flattenOverlay(q).clips;
     const clockAt = (c, local) => flat.find((x) => x.id === c.id).sourceOffset + local;
-    assert.ok(Math.abs(clockAt(right, 0) - clockAt(left, 1.5)) < 1e-9, `${speed} 倍:切点两侧卡片时钟相同(以前后半段会跳 ${1.5 * (speed - 1)} 秒)`);
+    assert.ok(Math.abs(clockAt(right, 0) - clockAt(left, 1.5)) < 1e-9, `${speed}x: the card clocks on both sides of the cut point are the same (previously the second half would jump ${1.5 * (speed - 1)} seconds)`);
     const graph = withMediaRates(q, projectCardGraph(q, (id) => AV_HOOKS.getCard(id)));
-    assert.ok(Math.abs(graph.nodes.find((n) => n.id === right.nodeId).timeOffset - clockAt(left, 1.5)) < 1e-9, '画面、声音拿的图同一个时钟');
+    assert.ok(Math.abs(graph.nodes.find((n) => n.id === right.nodeId).timeOffset - clockAt(left, 1.5)) < 1e-9, 'The graph that picture and sound use has the same clock');
     assert.equal(resolveCardAudioRendition(q, left, AV_HOOKS).offset, 0);
-    assert.ok(Math.abs(resolveCardAudioRendition(q, right, AV_HOOKS).offset - 1.5) < 1e-9, '后半段从 WAV 第 1.5 秒放');
+    assert.ok(Math.abs(resolveCardAudioRendition(q, right, AV_HOOKS).offset - 1.5) < 1e-9, 'The second half plays from second 1.5 of the WAV');
   }
 });

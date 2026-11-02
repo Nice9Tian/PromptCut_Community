@@ -6,7 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { isPrerenderRequestAllowed, prerenderGatePlugin, PRERENDER_DENY_BODY } from "../prerender-gate.mjs";
 
-test("PRERENDER-GATE-01 拦截来自舞台端口的请求 (Origin / Referer / x-pc-stage-client)", () => {
+test("PRERENDER-GATE-01 blocks requests from the stage port (Origin / Referer / x-pc-stage-client)", () => {
   const oldPorts = process.env.PROMPTCUT_STAGE_PORTS;
   const oldCors = process.env.PROMPTCUT_CORS_ORIGINS;
   const oldTok = process.env.PROMPTCUT_INTERNAL_TOKEN;
@@ -50,7 +50,7 @@ test("PRERENDER-GATE-01 拦截来自舞台端口的请求 (Origin / Referer / x-
   }
 });
 
-test("PRERENDER-GATE-02 中间件回 403 并返回标准拒绝文案", () => {
+test("PRERENDER-GATE-02 middleware responds 403 and returns the standard rejection message", () => {
   const plugin = prerenderGatePlugin();
   let middleware = null;
   const mockServer = {

@@ -14,13 +14,13 @@ const actor = (accountId, device, session) => ({ userId: `account:${accountId}@$
 const names = new Map([[L.accountNameKey(A), "alice"], [L.accountNameKey(B), "bob"]]);
 const me = { session: "s-me", userId: `account:${A}@dev-1` };
 
-test("LBL-01 账号项目里按账号显示成员名字,不显示 account:…@设备号", () => {
+test("LBL-01 in an account project members are shown by account name, not as account:…@device id", () => {
   assert.equal(L.writerLabel({ actor: actor(B, "dev-9", "s-b"), session: "s-b" }, me, names), "bob");
-  assert.equal(L.writerLabel(actor(B, "dev-other", "s-b2"), me, names), "bob", "文档服务直接给的 actor、别的设备");
-  assert.equal(L.writerLabel({ actor: actor(A, "dev-2", "s-a2") }, me, names), "alice", "自己的账号在另一台设备上:按名字说");
+  assert.equal(L.writerLabel(actor(B, "dev-other", "s-b2"), me, names), "bob", "an actor given directly by the document service, another device");
+  assert.equal(L.writerLabel({ actor: actor(A, "dev-2", "s-a2") }, me, names), "alice", "your own account on another device: referred to by name");
 });
 
-test("LBL-02 自己的页面说法不变;名单里没有时照原来的退路", () => {
+test("LBL-02 the wording for your own page is unchanged; when not in the list, the original fallback applies", () => {
   assert.equal(L.writerLabel({ actor: actor(A, "dev-1", "s-me"), session: "s-me" }, me, names), "You on this page");
   assert.equal(L.writerLabel({ actor: actor(A, "dev-1", "s-other") }, me, names), "You on another page");
   assert.equal(L.writerLabel({ actor: actor(B, "dev-9", "s-b") }, me, new Map()), `account:${B}@dev-9`);
@@ -28,7 +28,7 @@ test("LBL-02 自己的页面说法不变;名单里没有时照原来的退路", 
   assert.equal(L.writerLabel({ actor: { userId: "alice@dev-a", role: "page", session: "s-p" } }, { session: "x", userId: "bob@d" }, new Map([["alice@dev-a", "alice"]])), "alice");
 });
 
-test("LBL-03 历史序号文字统一命名为「历史序号」", () => {
+test("LBL-03 the history sequence number text is uniformly named \"History sequence number\"", () => {
   assert.equal(L.historySeqLabel(1), "History sequence number 1");
   assert.equal(L.historySeqLabel(15), "History sequence number 15");
   assert.equal(L.historySeqLabel(null), "History sequence number -");

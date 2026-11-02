@@ -98,13 +98,13 @@ import { createHash, randomBytes } from 'node:crypto';
 import { startCoordServer, coordClient } from './probe-coord.mjs';
 import { startNoLanWatch } from './m8/no-lan.mjs';
 
-const USAGE = `用法：
+const USAGE = `Usage:
   node scripts/probes/shared-project-probe.mjs --mode internet --role creator --hosted <url> (--coord-port <n> | --coord <url>) [--tasks 6] [--transport auto|ws]
-  node scripts/probes/shared-project-probe.mjs --mode internet --role member --hosted <url> --coord <url> [--expect-tasks 1] [--transport auto|ws] [--assert-no-lan <PC 局域网地址>]
+  node scripts/probes/shared-project-probe.mjs --mode internet --role member --hosted <url> --coord <url> [--expect-tasks 1] [--transport auto|ws] [--assert-no-lan <PC LAN address>]
   node scripts/probes/shared-project-probe.mjs --role coord --port <n> [--host 127.0.0.1]
-  node scripts/probes/shared-project-probe.mjs --role inventory --hosted <url> [--asset <url>] [--seed <种子文件>] [--scan-dir <数据目录>] --out <库存文件> [--data-dir <目录>]
-  node scripts/probes/shared-project-probe.mjs --role migrate-check (--from <url> | --from-inventory <库存文件>) --to <url> [--to-asset <url>] [--seed <种子文件>] [--scan-dir <新数据目录>] [--data-dir <目录>] [--sample 100|all]
-  node scripts/probes/shared-project-probe.mjs --mode lan --role creator|member ...（见 shared-project-lan.mjs）`;
+  node scripts/probes/shared-project-probe.mjs --role inventory --hosted <url> [--asset <url>] [--seed <seed file>] [--scan-dir <data directory>] --out <inventory file> [--data-dir <directory>]
+  node scripts/probes/shared-project-probe.mjs --role migrate-check (--from <url> | --from-inventory <inventory file>) --to <url> [--to-asset <url>] [--seed <seed file>] [--scan-dir <new data directory>] [--data-dir <directory>] [--sample 100|all]
+  node scripts/probes/shared-project-probe.mjs --mode lan --role creator|member ... (see shared-project-lan.mjs)`;
 
 const argv = process.argv.slice(2);
 const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : fallback);
@@ -112,7 +112,7 @@ const intArg = (name, fallback, min = 0) => {
   const raw = arg(name, undefined);
   if (raw === undefined) return fallback;
   const n = Number(raw);
-  if (!Number.isInteger(n) || n < min) usage(`${name} 要是不小于 ${min} 的整数`);
+  if (!Number.isInteger(n) || n < min) usage(`${name} must be an integer not less than ${min}`);
   return n;
 };
 function usage(msg) {
@@ -148,7 +148,7 @@ function docUrls(url) {
   const path = u.pathname.replace(/\/+$/, '');
   if (u.protocol === 'ws:' || u.protocol === 'http:') return { http: `http://${u.host}${path}`, ws: `ws://${u.host}${path}` };
   if (u.protocol === 'wss:' || u.protocol === 'https:') return { http: `https://${u.host}${path}`, ws: `wss://${u.host}${path}` };
-  throw new Error(`不认识的地址：${url}`);
+  throw new Error(`Unrecognized address: ${url}`);
 }
 
 async function getJson(url, { headers = {}, timeoutMs = 15_000 } = {}) {
@@ -176,13 +176,13 @@ function rpcOn(ep) {
     const reqId = `sp-${++seq}-${randomBytes(3).toString('hex')}`;
     const timer = setTimeout(() => {
       waiting.delete(reqId);
-      reject(new Error(`等 ${message.type} 的回包超时`));
+      reject(new Error(`Timed out waiting for the reply to ${message.type}`));
     }, timeoutMs);
     waiting.set(reqId, { resolve, until, got: [], timer });
     if (!ep.send({ ...message, reqId })) {
       waiting.delete(reqId);
       clearTimeout(timer);
-      reject(new Error(`${message.type} 没发出去（连接不在）`));
+      reject(new Error(`${message.type} was not sent (connection is gone)`));
     }
   });
 }
@@ -198,7 +198,7 @@ function transportOption(transportOf) {
   try {
     return { transport: transportOf(raw, undefined) };
   } catch (err) {
-    usage(`--transport ${raw}：${err?.message ?? err}`);
+    usage(`--transport ${raw}: ${err?.message ?? err}`);
     return {};
   }
 }
@@ -275,7 +275,7 @@ function fineTask({ resultKey, from, to, projectId, projectRev }) {
 /** 睡 taskMs 的执行器 */
 function sleepExecutor(taskMs) {
   return {
-    plan: async () => { throw Object.assign(new Error('探针不算计划'), { retryable: false }); },
+    plan: async () => { throw Object.assign(new Error('The probe does not compute plans'), { retryable: false }); },
     render(task, { signal }) {
       return new Promise((resolve, reject) => {
         const t = setTimeout(() => resolve({ frames: task.range.to - task.range.from + 1 }), taskMs);
@@ -307,10 +307,10 @@ function assetSink(client, counters) {
 
 async function runCreator() {
   const hosted = arg('--hosted', null);
-  if (!hosted) usage('缺 --hosted');
+  if (!hosted) usage('Missing --hosted');
   const coordPort = arg('--coord-port', null);
   const coordArg = arg('--coord', null);
-  if (!coordPort && !coordArg) usage('要 --coord-port（本进程起协调口）或 --coord（已有的协调口）');
+  if (!coordPort && !coordArg) usage('Needs --coord-port (start a coordinator in this process) or --coord (an existing coordinator)');
   const taskCount = intArg('--tasks', 6, 1);
   const taskMs = intArg('--task-ms', 600, 0);
   const creatorDelayMs = intArg('--creator-delay-ms', 1000, 0);
@@ -345,7 +345,7 @@ async function runCreator() {
     try {
       coordServer = await startCoordServer({ port: Number(coordPort), host });
     } catch (err) {
-      fails.push(`起协调口失败：${err?.code ?? err?.message}`);
+      fails.push(`Failed to start the coordinator: ${err?.code ?? err?.message}`);
       return done(2);
     }
     coordUrl = coordServer.url;
@@ -360,7 +360,7 @@ async function runCreator() {
   try {
     created = await createSharedProject({ where: 'hosted', hostedUrl: urls.http, name, mode: 'free', creator, password: projectPassword });
   } catch (err) {
-    fails.push(`建项目失败：${err?.status ?? ''} ${err?.reason ?? err?.message}`);
+    fails.push(`Failed to create the project: ${err?.status ?? ''} ${err?.reason ?? err?.message}`);
     return done(err?.status ? 1 : 2);
   }
   result.projectId = created.projectId;
@@ -376,11 +376,11 @@ async function runCreator() {
   const ep = createDocEndpoint({ url: urls.ws, protocols, ...transportOption(transportOf), log: (event, fields) => log(`creator.${event}`, fields) });
   eps.push(ep);
   const rpc = rpcOn(ep);
-  if (!check(await waitOpen(ep), '创建者连上文档服务')) return done(2);
+  if (!check(await waitOpen(ep), 'Creator connected to the document service')) return done(2);
 
   const assetUrl = await waitAssetUrl(ep, watchServiceEndpoints);
   result.assetUrl = assetUrl;
-  if (!check(assetUrl, '从 service.endpoints 拿到素材服务地址')) return done();
+  if (!check(assetUrl, 'Got the asset service address from service.endpoints')) return done();
   const ticket = createTicketSource(ep, { access: 'rw' });
   const client = createAssetClient({ base: assetUrl, ticket });
 
@@ -393,10 +393,10 @@ async function runCreator() {
     check(ann.type === 'project.announced', 'project.announce', ann);
     const projectRev = ann.projectRev;
     const put = await rpc({ type: 'project.snapshot.put', projectId: localProjectId, projectRev, digest, index: 0, count: 1, data: snapshotText });
-    check(put.type === 'project.snapshot.stored' && put.complete === true, '项目快照存好', put);
+    check(put.type === 'project.snapshot.stored' && put.complete === true, 'Project snapshot stored', put);
     result.snapshot = { projectId: localProjectId, projectRev, digest, bytes: Buffer.byteLength(snapshotText) };
   } catch (err) {
-    fails.push(`项目快照：${err.message}`);
+    fails.push(`Project snapshot: ${err.message}`);
   }
   // 内容库条目
   const contentKey = `sp-probe/${runId}`;
@@ -406,17 +406,17 @@ async function runCreator() {
     check(st.type === 'content.stored', 'content.put', st);
     result.content = { kind: 'snapshot-manifest', key: contentKey, hash: st.hash ?? null };
   } catch (err) {
-    fails.push(`内容库：${err.message}`);
+    fails.push(`Content store: ${err.message}`);
   }
   // 素材
   const media = randomBytes(mediaKb * 1024);
   try {
     const r = await client.put('media', media, { ext: 'bin' });
     const hash = sha256(media);
-    check((r.hash ?? hash) === hash, '素材上传回的哈希对得上', r);
+    check((r.hash ?? hash) === hash, 'The hash returned by the asset upload matches', r);
     result.media = { hash, bytes: media.length };
   } catch (err) {
-    fails.push(`素材上传：${err.message}`);
+    fails.push(`Asset upload: ${err.message}`);
   }
   if (fails.length) return done();
 
@@ -432,7 +432,7 @@ async function runCreator() {
   });
   log('creator.member-config', { coord: coordUrl });
   const ready = await coord.take('member-ready', deadline);
-  if (!check(ready, '等到成员报 member-ready')) return done();
+  if (!check(ready, 'Waited until the member reported member-ready')) return done();
 
   // 4. 本机 PC 节点：发布细任务，晚一点才自己认领
   const counters = { artifactsWritten: 0 };
@@ -449,7 +449,7 @@ async function runCreator() {
     sink: assetSink(client, counters),
     onEvent: (e) => {
       if (e.type === 'completed' || e.type === 'dedup') result.tasks.byCreatorNode += 1;
-      if (e.type === 'failed') fails.push(`创建者节点 ${e.id} 失败：${e.error}`);
+      if (e.type === 'failed') fails.push(`Creator node ${e.id} failed: ${e.error}`);
     },
   });
   const tasks = Array.from({ length: taskCount }, (_, i) => fineTask({
@@ -478,15 +478,15 @@ async function runCreator() {
   const finished = await Promise.race([allDone, sleep(Math.max(1, deadline - Date.now())).then(() => false)]);
   clearInterval(timer);
   node.stop();
-  check(finished, `全部 task.done（${doneIds.size}/${tasks.length}）`);
-  check(result.tasks.duplicateDone === 0, '没有重复的 task.done', result.tasks.duplicateDone);
+  check(finished, `All task.done received (${doneIds.size}/${tasks.length})`);
+  check(result.tasks.duplicateDone === 0, 'No duplicate task.done', result.tasks.duplicateDone);
   result.artifactsWritten = counters.artifactsWritten;
 
   // 5. 收尾：通知成员，等它的结果
   await coord.put('creator-done', { completed: doneIds.size, published: tasks.length });
   const memberResult = await coord.take('member-result', Math.min(deadline, Date.now() + 60_000));
   result.member = memberResult;
-  check(memberResult?.ok === true, '成员结果 ok', memberResult?.fails);
+  check(memberResult?.ok === true, 'Member result ok', memberResult?.fails);
   return done();
 }
 
@@ -494,7 +494,7 @@ async function runCreator() {
 
 async function runMember() {
   const coordUrl = arg('--coord', null);
-  if (!coordUrl) usage('缺 --coord');
+  if (!coordUrl) usage('Missing --coord');
   const expectTasks = intArg('--expect-tasks', 1, 0);
   const taskMs = intArg('--task-ms', 600, 0);
   const maxConcurrent = intArg('--max-concurrent', 2, 1);
@@ -520,13 +520,13 @@ async function runMember() {
     }
     finish(result, code);
   };
-  check(result.clusterToken === 'unset', '成员不设集群令牌（PROMPTCUT_CLUSTER_TOKEN 应为空）');
+  check(result.clusterToken === 'unset', 'Member sets no cluster token (PROMPTCUT_CLUSTER_TOKEN should be empty)');
   // --assert-no-lan <PC 局域网地址>（m8-plan 第 2.3 节「异地接入」）：全程只读地数本机到这个地址、基线之外的 TCP 连接（不论状态），收尾前做一次 3 s 局域网发现
   const noLanIp = arg('--assert-no-lan', null);
   const noLan = noLanIp ? startNoLanWatch(noLanIp, { log }) : null;
 
   const handoff = await coord.take('member-config', deadline);
-  if (!check(handoff?.config, '从协调口拿到成员配置')) return done(2);
+  if (!check(handoff?.config, 'Got the member config from the coordinator')) return done(2);
   const raw = { ...handoff.config };
   const hostedArg = arg('--hosted', null);
   if (hostedArg) raw.url = docUrls(hostedArg).ws;
@@ -542,11 +542,11 @@ async function runMember() {
   const rpc = rpcOn(ep);
   const opened = await waitOpen(ep);
   result.enter = { ok: opened, ms: Date.now() - enterStart };
-  if (!check(opened, '成员凭项目凭证进入')) return done(2);
+  if (!check(opened, 'Member entered with the project credentials')) return done(2);
 
   const assetUrl = await waitAssetUrl(ep, watchServiceEndpoints);
   result.assetUrl = assetUrl;
-  if (!check(assetUrl, '从 service.endpoints 拿到素材服务地址')) return done();
+  if (!check(assetUrl, 'Got the asset service address from service.endpoints')) return done();
 
   // 项目快照
   try {
@@ -556,19 +556,19 @@ async function runMember() {
     const parts = got.filter((m) => m.type === 'project.snapshot.part' && typeof m.data === 'string').sort((a, b) => a.index - b.index);
     const text = parts.map((m) => m.data).join('');
     const ok = !got.some((m) => m.missing) && sha256(text) === expect.snapshot.digest;
-    check(ok, '项目快照取回且摘要对得上', { parts: parts.length });
+    check(ok, 'Project snapshot retrieved and digest matches', { parts: parts.length });
     result.snapshot = { ok, projectRev: expect.snapshot.projectRev, parts: parts.length, bytes: Buffer.byteLength(text) };
   } catch (err) {
-    fails.push(`项目快照：${err.message}`);
+    fails.push(`Project snapshot: ${err.message}`);
   }
   // 内容库
   try {
     const item = await rpc({ type: 'content.get', kind: expect.content.kind, key: expect.content.key });
     const ok = item.type === 'content.item' && !item.missing && sha256(JSON.stringify(item.body)) === expect.content.bodyHash;
-    check(ok, '内容库条目取回且内容对得上', item.type);
+    check(ok, 'Content store item retrieved and content matches', item.type);
     result.content = { ok };
   } catch (err) {
-    fails.push(`内容库：${err.message}`);
+    fails.push(`Content store: ${err.message}`);
   }
 
   // 票据
@@ -576,33 +576,33 @@ async function runMember() {
   const rTicket = createTicketSource(ep, { access: 'r' });
   const [rw, r] = [await rwTicket(), await rTicket()];
   result.ticket = { rw: !!rw, r: !!r };
-  check(rw && r, '经 auth.ticket 拿到 rw 与 r 两种素材票据');
+  check(rw && r, 'Got both rw and r asset tickets via auth.ticket');
   const client = createAssetClient({ base: assetUrl, ticket: rwTicket });
   const mediaUrl = `${assetUrl.replace(/\/+$/, '')}/media/${expect.media.hash}`;
   result.media = {};
   try {
     const bytes = await client.get('media', expect.media.hash);
     result.media.bearer = !!bytes && bytes.length === expect.media.bytes && sha256(bytes) === expect.media.hash;
-    check(result.media.bearer, 'Bearer 票据读素材，全件 sha256 相符');
+    check(result.media.bearer, 'Reading an asset with a Bearer ticket, whole-file sha256 matches');
   } catch (err) {
-    fails.push(`Bearer 读素材：${err.message}`);
+    fails.push(`Bearer asset read: ${err.message}`);
   }
   try {
     const res = await fetch(`${mediaUrl}?t=${encodeURIComponent(r ?? '')}`, { headers: { Range: 'bytes=0-99' }, signal: AbortSignal.timeout(15_000) });
     const body = Buffer.from(await res.arrayBuffer());
     result.media.query = res.status === 206 && body.length === 100 && res.headers.get('cache-control') === 'no-store';
-    check(result.media.query, '查询串只读票据 Range 读素材 206、no-store', { status: res.status, len: body.length });
+    check(result.media.query, 'Reading an asset with a read-only query-string ticket and Range returns 206, no-store', { status: res.status, len: body.length });
   } catch (err) {
-    fails.push(`查询串读素材：${err.message}`);
+    fails.push(`Query-string asset read: ${err.message}`);
   }
   try {
     const res = await fetch(mediaUrl, { method: 'HEAD', signal: AbortSignal.timeout(15_000) });
     result.media.noTicket = res.status;
     // 本机跑且回环被当自己人时，不带票据也能读，这一项不判（非回环来源才要票据，auth-contract 第 8 节）
     result.media.loopbackTrusted = res.status === 200;
-    if (res.status !== 200) check(res.status === 401, '不带票据读素材 401', res.status);
+    if (res.status !== 200) check(res.status === 401, 'Reading an asset without a ticket returns 401', res.status);
   } catch (err) {
-    fails.push(`不带票据读素材：${err.message}`);
+    fails.push(`Asset read without a ticket: ${err.message}`);
   }
 
   if (expectTasks === 0) return done();
@@ -619,7 +619,7 @@ async function runMember() {
     sink: assetSink(client, counters),
     onEvent: (e) => {
       if (e.type === 'completed' || e.type === 'dedup') result.taskDone += 1;
-      if (e.type === 'failed') fails.push(`成员节点 ${e.id} 失败：${e.error}`);
+      if (e.type === 'failed') fails.push(`Member node ${e.id} failed: ${e.error}`);
     },
   });
   ep.onMessage((m) => { if (m?.type === 'task.claimed') result.claims += 1; });
@@ -630,13 +630,13 @@ async function runMember() {
   clearInterval(timer);
   await node.settled().catch(() => {});
   node.stop();
-  check(creatorDone, '等到创建者报 creator-done');
+  check(creatorDone, 'Waited until the creator reported creator-done');
   result.artifactsWritten = counters.artifactsWritten;
-  check(result.taskDone >= expectTasks, `完成至少 ${expectTasks} 个任务（实际 ${result.taskDone}）`);
+  check(result.taskDone >= expectTasks, `Completed at least ${expectTasks} tasks (actual ${result.taskDone})`);
   if (noLan) {
     result.noLan = await noLan.stop();
-    check(result.noLan.tcpOk, `全程没有新的到 ${noLanIp} 的 TCP 连接（基线之外、不论状态；基线 ${result.noLan.baseline?.length ?? 0} 条，采样 ${result.noLan.samples} 次，最多 ${result.noLan.maxTcp} 条）`);
-    check(result.noLan.discoveryOk, `3 s 局域网发现 0 条（实际 ${result.noLan.discovery?.hosts ?? result.noLan.discovery?.error}）`);
+    check(result.noLan.tcpOk, `No new TCP connections to ${noLanIp} at any point (beyond the baseline, regardless of state; baseline ${result.noLan.baseline?.length ?? 0} entries, ${result.noLan.samples} samples, at most ${result.noLan.maxTcp} entries)`);
+    check(result.noLan.discoveryOk, `LAN discovery finds 0 entries in 3 s (actual ${result.noLan.discovery?.hosts ?? result.noLan.discovery?.error})`);
   }
   return done();
 }
@@ -687,7 +687,7 @@ function sampleArg() {
   if (raw === undefined) return 100;
   if (raw === 'all') return Infinity;
   const n = Number(raw);
-  if (!Number.isInteger(n) || n < 1) usage('--sample 要是 all 或不小于 1 的整数');
+  if (!Number.isInteger(n) || n < 1) usage('--sample must be all or an integer not less than 1');
   return n;
 }
 
@@ -702,20 +702,20 @@ async function liveSide(label, url, { assetArg, token, headers, eps, createWsEnd
   let doc;
   try { doc = await getJson(`${u.http}/healthz`); } catch { doc = { status: 0 }; }
   side.healthz.docservice = doc.status;
-  check(doc.status === 200 && doc.body?.ok, `${label}：文档服务 /healthz`, doc.status);
+  check(doc.status === 200 && doc.body?.ok, `${label}: document service /healthz`, doc.status);
   const ep = createWsEndpoint({ url: u.ws, ...(token ? { token } : {}), log: () => {} });
   eps.push(ep);
   if (await waitOpen(ep, 10_000)) side.registeredAsset = await waitAssetUrl(ep, watchServiceEndpoints);
   const adminBase = assetArg || side.registeredAsset;
-  if (!check(adminBase, `${label}：拿到素材服务地址（service.endpoints 登记了，或给了 --asset）`)) return side;
+  if (!check(adminBase, `${label}: got the asset service address (registered in service.endpoints, or --asset was given)`)) return side;
   side.adminOrigin = new URL(adminBase).origin;
   let asset;
   try { asset = await getJson(`${side.adminOrigin}/healthz`); } catch { asset = { status: 0 }; }
   side.healthz.asset = asset.status;
-  check(asset.status === 200 && asset.body?.ok, `${label}：素材服务 /healthz`, asset.status);
+  check(asset.status === 200 && asset.body?.ok, `${label}: asset service /healthz`, asset.status);
   let inv;
   try { inv = await getJson(`${side.adminOrigin}/admin/inventory`, { headers, timeoutMs: 60_000 }); } catch (err) { inv = { status: 0, error: err.message }; }
-  if (check(inv.status === 200 && inv.body?.ok, `${label}：GET /admin/inventory`, inv.status)) side.inv = inv.body;
+  if (check(inv.status === 200 && inv.body?.ok, `${label}: GET /admin/inventory`, inv.status)) side.inv = inv.body;
   return side;
 }
 
@@ -760,7 +760,7 @@ function scanReadyLayers(dataDir) {
 /** 读种子文件（`m8-migrate-probe.mjs --step seed` 写的，含探针自建项目的口令；不打印） */
 function readSeed(file) {
   const seed = JSON.parse(fs.readFileSync(path.resolve(file), 'utf8'));
-  if (seed?.kind !== 'promptcut-m8-seed' || !Array.isArray(seed.projects)) throw new Error(`${file} 不是种子文件`);
+  if (seed?.kind !== 'promptcut-m8-seed' || !Array.isArray(seed.projects)) throw new Error(`${file} is not a seed file`);
   return seed;
 }
 
@@ -777,7 +777,7 @@ async function seededLayers(docUrl, seed, { verifyBlobs = false, eps, labelPrefi
   const urls = docUrls(docUrl);
   const out = [];
   for (const p of seed.projects) {
-    const label = `${labelPrefix}：种子项目 ${p.name}`;
+    const label = `${labelPrefix}: seed project ${p.name}`;
     const row = { projectId: p.projectId, name: p.name, projectRev: null, digest: null, layers: {}, truncated: false, blobs: 0, assetUrl: null, verified: null };
     out.push(row);
     let key = null;
@@ -788,7 +788,7 @@ async function seededLayers(docUrl, seed, { verifyBlobs = false, eps, labelPrefi
     const ep = createDocEndpoint({ url: urls.ws, protocols, log: () => {} });
     eps.push(ep);
     const rpc = rpcOn(ep);
-    if (!check(await waitOpen(ep), `${label}：凭创建者口令进入`)) continue;
+    if (!check(await waitOpen(ep), `${label}: entered with the creator passphrase`)) continue;
     try {
       const st = await rpc({ type: 'project.open', projectId: p.projectId }, { until: (m) => m.type === 'project.state' || m.type === 'project.state.end' });
       const head = st.find((m) => m.type === 'project.state');
@@ -796,7 +796,7 @@ async function seededLayers(docUrl, seed, { verifyBlobs = false, eps, labelPrefi
       row.digest = head?.digest ?? null;
       await rpc({ type: 'project.close', projectId: p.projectId }).catch(() => {});
     } catch (err) {
-      fails.push(`${label}：project.open ${err.message}`);
+      fails.push(`${label}: project.open ${err.message}`);
     }
     const all = new Map();
     for (const kind of READY_KINDS) {
@@ -805,23 +805,23 @@ async function seededLayers(docUrl, seed, { verifyBlobs = false, eps, labelPrefi
         if (listing.truncated) row.truncated = true;
         row.layers[kind] = Object.fromEntries((listing.items ?? []).map((it) => [it.key, it.hash]));
       } catch (err) {
-        fails.push(`${label}：content.list ${kind} ${err.message}`);
+        fails.push(`${label}: content.list ${kind} ${err.message}`);
       }
       for (const k of Object.keys(row.layers[kind] ?? {})) {
         try {
           const item = await rpc({ type: 'content.get', kind, key: k });
           for (const h of blobHashesOf(item.body)) all.set(h, k);
         } catch (err) {
-          fails.push(`${label}：content.get ${kind} ${k} ${err.message}`);
+          fails.push(`${label}: content.get ${kind} ${k} ${err.message}`);
         }
       }
     }
-    check(!row.truncated, `${label}：清单没被截断（不超过 1000 条）`);
+    check(!row.truncated, `${label}: manifest was not truncated (no more than 1000 entries)`);
     row.blobs = all.size;
     if (!verifyBlobs) continue;
     const assetUrl = await waitAssetUrl(ep, watchServiceEndpoints);
     row.assetUrl = assetUrl;
-    if (!check(assetUrl, `${label}：从 service.endpoints 拿到素材服务地址`)) continue;
+    if (!check(assetUrl, `${label}: got the asset service address from service.endpoints`)) continue;
     const client = createAssetClient({ base: assetUrl, ticket: createTicketSource(ep, { access: 'r' }) });
     let ok = 0;
     const bad = [];
@@ -840,7 +840,7 @@ async function seededLayers(docUrl, seed, { verifyBlobs = false, eps, labelPrefi
       else if (!got && !bad.some((b) => b.hash === h)) bad.push({ hash: h, missing: true });
     }
     row.verified = { total: all.size, ok, ratio: all.size ? ok / all.size : 1, bad: bad.slice(0, 5) };
-    check(ok === all.size, `${label}：清单引用的块经数据面带票据全部取回、sha256 相符（${ok}/${all.size}）`, row.verified.bad);
+    check(ok === all.size, `${label}: all chunks referenced by the manifest were retrieved over the data plane with tickets, sha256 matches (${ok}/${all.size})`, row.verified.bad);
   }
   return out;
 }
@@ -850,8 +850,8 @@ async function runInventory() {
   const outFile = arg('--out', null);
   const scanDir = arg('--scan-dir', null);
   const seedFile = arg('--seed', null);
-  if (!outFile) usage('inventory 要 --out <文件>');
-  if (!hosted && !scanDir) usage('inventory 要 --hosted <文档服务地址>（在线盘点）或 --scan-dir <数据目录>（只读扫就绪层），或两个都给');
+  if (!outFile) usage('inventory needs --out <file>');
+  if (!hosted && !scanDir) usage('inventory needs --hosted <document service address> (online inventory) or --scan-dir <data directory> (read-only scan of the ready layers), or both');
   const { token, from: tokenFrom } = adminToken();
   const headers = token ? { Authorization: `Bearer ${token}` } : {};
   const [{ createWsEndpoint }, { watchServiceEndpoints }] = await Promise.all([
@@ -863,15 +863,15 @@ async function runInventory() {
   const file = { v: 1, kind: INVENTORY_KIND, takenAt: new Date().toISOString(), source: null, healthz: null, inventory: null, seeded: null, readyLayers: null };
 
   if (hosted) {
-    const side = await liveSide('源', hosted, { assetArg: arg('--asset', null), token, headers, eps, createWsEndpoint, watchServiceEndpoints });
+    const side = await liveSide('Source', hosted, { assetArg: arg('--asset', null), token, headers, eps, createWsEndpoint, watchServiceEndpoints });
     file.source = { doc: side.doc, adminOrigin: side.adminOrigin, registeredAsset: side.registeredAsset, via: 'http' };
     file.healthz = side.healthz;
     file.inventory = side.inv;
     result.source = file.source;
     if (side.inv && seedFile) {
       let seed;
-      try { seed = readSeed(seedFile); } catch (err) { fails.push(`读种子文件：${err.message}`); }
-      if (seed) file.seeded = await seededLayers(hosted, seed, { verifyBlobs: true, eps, labelPrefix: '源' });
+      try { seed = readSeed(seedFile); } catch (err) { fails.push(`Reading seed file: ${err.message}`); }
+      if (seed) file.seeded = await seededLayers(hosted, seed, { verifyBlobs: true, eps, labelPrefix: 'Source' });
     }
   }
   if (scanDir) file.readyLayers = { dataDir: path.resolve(scanDir), ...scanReadyLayers(scanDir) };
@@ -901,7 +901,7 @@ async function runInventory() {
 function compareInventories(a, b, result) {
   const shared = (inv) => JSON.stringify((inv.sharedProjects ?? []).map((p) => [p.projectId, p.name, p.mode]));
   result.sharedProjects = { from: a.sharedProjects?.length ?? null, to: b.sharedProjects?.length ?? null, equal: shared(a) === shared(b) };
-  check(result.sharedProjects.equal, '共享项目（id、名字、模式）一致', result.sharedProjects);
+  check(result.sharedProjects.equal, 'Shared projects (id, name, mode) match', result.sharedProjects);
   const spaceNames = [...new Set([...Object.keys(a.spaces ?? {}), ...Object.keys(b.spaces ?? {})])].sort();
   const revMismatch = [];
   const revs = { projects: 0, equal: 0, zeroed: 0, behind: 0, ahead: 0 };
@@ -928,15 +928,15 @@ function compareInventories(a, b, result) {
   }
   result.spaces = { count: spaceNames.length, projects: revs.projects, snapshots, contentItems, mismatches: revMismatch };
   result.revs = revs;
-  check(revs.zeroed === 0, 'projectRev 没有归零', revs);
-  check(revMismatch.length === 0, '各空间的 projectRev、快照数、内容库条目数一致', revMismatch.slice(0, 5));
+  check(revs.zeroed === 0, 'projectRev was not reset to zero', revs);
+  check(revMismatch.length === 0, 'projectRev, snapshot count, and content store item count match in each namespace', revMismatch.slice(0, 5));
   const all = [];
   for (const ns of ['media', 'snap', 'px']) {
     const x = a.assets?.[ns] ?? { count: -1, bytes: -1, hashes: [] };
     const y = b.assets?.[ns] ?? { count: -1, bytes: -1, hashes: [] };
     const equal = x.count === y.count && x.bytes === y.bytes && JSON.stringify(x.hashes) === JSON.stringify(y.hashes);
     result.assets[ns] = { from: x.count, to: y.count, bytes: [x.bytes, y.bytes], equal };
-    check(equal, `${ns}：哈希集合与字节数一致`, result.assets[ns]);
+    check(equal, `${ns}: hash set and byte count match`, result.assets[ns]);
     for (const h of y.hashes) all.push([ns, h]);
   }
   return { projects: revs.projects, all };
@@ -966,8 +966,8 @@ async function runMigrateCheck() {
   const from = arg('--from', null);
   const inventoryFile = arg('--from-inventory', null);
   const to = arg('--to', null);
-  if (!to || (!from && !inventoryFile)) usage('migrate-check 要 --to，以及 --from（两边同时在线）或 --from-inventory（迁移前的库存文件）');
-  if (from && inventoryFile) usage('--from 与 --from-inventory 只给一个');
+  if (!to || (!from && !inventoryFile)) usage('migrate-check needs --to, plus --from (both sides online at the same time) or --from-inventory (the inventory file from before the migration)');
+  if (from && inventoryFile) usage('Give only one of --from and --from-inventory');
   const sample = sampleArg();
   const { token, from: tokenFrom } = adminToken();
   const headers = token ? { Authorization: `Bearer ${token}` } : {};
@@ -990,10 +990,10 @@ async function runMigrateCheck() {
     try {
       file = JSON.parse(fs.readFileSync(path.resolve(inventoryFile), 'utf8'));
     } catch (err) {
-      fails.push(`读库存文件：${err.message}`);
+      fails.push(`Reading inventory file: ${err.message}`);
       return done(2);
     }
-    if (!check(file?.kind === INVENTORY_KIND && file.inventory?.ok, '库存文件格式对、带在线盘点')) return done(2);
+    if (!check(file?.kind === INVENTORY_KIND && file.inventory?.ok, 'Inventory file has the right format and includes the online inventory')) return done(2);
     a = file.inventory;
     result.from = file.source?.doc ?? null;
     result.inventoryTakenAt = file.takenAt ?? null;
@@ -1012,31 +1012,31 @@ async function runMigrateCheck() {
   result.assetUrls.to = toSide.inv?.assetPublicUrl ?? toSide.registeredAsset;
   result.registeredAssetTo = toSide.registeredAsset;
   if (!a || !toSide.inv) return done();
-  check(result.assetUrls.from !== result.assetUrls.to, '新实例登记的是自己的素材服务地址（与旧的不同）', result.assetUrls);
-  if (toSide.registeredAsset) check(toSide.registeredAsset === toSide.inv.assetPublicUrl, '新实例 service.endpoints 里的素材地址就是它配置的公网地址', result.assetUrls);
+  check(result.assetUrls.from !== result.assetUrls.to, 'The new instance registered its own asset service address (different from the old one)', result.assetUrls);
+  if (toSide.registeredAsset) check(toSide.registeredAsset === toSide.inv.assetPublicUrl, 'The asset address in the new instance\'s service.endpoints is the public address it is configured with', result.assetUrls);
 
   const { projects, all } = compareInventories(a, toSide.inv, result);
   result.sample = await sampleBlobs(toSide.adminOrigin, headers, all, sample);
-  check(result.sample.bad.length === 0 && result.sample.ok === result.sample.checked, `按哈希取回的全部相符（${result.sample.ok}/${result.sample.checked}）`, result.sample);
-  check(all.length > 0 || projects > 0, '有数据可比（空对空不算通过）');
+  check(result.sample.bad.length === 0 && result.sample.ok === result.sample.checked, `Everything fetched by hash matches (${result.sample.ok}/${result.sample.checked})`, result.sample);
+  check(all.length > 0 || projects > 0, 'There is data to compare (empty vs. empty does not count as a pass)');
 
   // 种子项目：进新实例，清单的键与哈希、projectRev 与库存一致；清单引用的块经数据面全部取回
   const seedFile = arg('--seed', null);
   if (seedFile) {
     let seed = null;
-    try { seed = readSeed(seedFile); } catch (err) { fails.push(`读种子文件：${err.message}`); }
+    try { seed = readSeed(seedFile); } catch (err) { fails.push(`Reading seed file: ${err.message}`); }
     if (seed) {
-      const now = await seededLayers(to, seed, { verifyBlobs: true, eps, labelPrefix: '新实例' });
+      const now = await seededLayers(to, seed, { verifyBlobs: true, eps, labelPrefix: 'New instance' });
       const before = new Map((file?.seeded ?? []).map((s) => [s.projectId, s]));
       result.seeded = now.map((s) => {
         const b = before.get(s.projectId) ?? null;
         const row = { projectId: s.projectId, projectRev: [b?.projectRev ?? null, s.projectRev], layers: Object.values(s.layers).reduce((n, m) => n + Object.keys(m).length, 0), blobs: s.blobs, verified: s.verified };
         if (b) {
-          check(b.projectRev === s.projectRev, `种子项目 ${s.name}：projectRev 与库存一致（连续、不归零）`, row.projectRev);
-          check(b.digest === s.digest, `种子项目 ${s.name}：项目摘要与库存一致`);
-          check(JSON.stringify(b.layers) === JSON.stringify(s.layers), `种子项目 ${s.name}：已就绪的层（清单的键与哈希）与库存一致`);
+          check(b.projectRev === s.projectRev, `Seed project ${s.name}: projectRev matches the inventory (continuous, not reset to zero)`, row.projectRev);
+          check(b.digest === s.digest, `Seed project ${s.name}: project digest matches the inventory`);
+          check(JSON.stringify(b.layers) === JSON.stringify(s.layers), `Seed project ${s.name}: ready layers (manifest keys and hashes) match the inventory`);
         } else if (file) {
-          fails.push(`种子项目 ${s.name}：库存文件里没有它（盘点时没给 --seed）`);
+          fails.push(`Seed project ${s.name}: not in the inventory file (--seed was not given when taking the inventory)`);
         }
         return row;
       });
@@ -1048,7 +1048,7 @@ async function runMigrateCheck() {
     const now = scanReadyLayers(scanDir);
     const was = file?.readyLayers ?? null;
     result.readyLayers = { to: now.count, from: was?.count ?? null, equal: was ? JSON.stringify(was.spaces) === JSON.stringify(now.spaces) : null };
-    if (was) check(result.readyLayers.equal, '数据目录里的就绪层（两类清单的键与哈希）与库存一致', result.readyLayers);
+    if (was) check(result.readyLayers.equal, 'Ready layers in the data directory (keys and hashes of both kinds of manifests) match the inventory', result.readyLayers);
   }
   return done();
 }
@@ -1071,4 +1071,4 @@ else if (ROLE === 'coord') await runCoord();
 else if (MODE === 'internet' && ROLE === 'creator') await runCreator();
 else if (MODE === 'internet' && ROLE === 'member') await runMember();
 else if (MODE === 'lan') await (await import('./shared-project-lan.mjs')).runLan(ROLE, argv);
-else usage(argv.length ? '参数不对' : undefined);
+else usage(argv.length ? 'Invalid arguments' : undefined);

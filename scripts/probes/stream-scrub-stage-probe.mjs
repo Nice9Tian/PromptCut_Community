@@ -57,8 +57,8 @@ const JSON_OUT = flagArg('json', null, args);
 const OUT = path.resolve(flagArg('out', null, args) || path.join(os.tmpdir(), `pc-stream-scrub-stage-${Date.now().toString(36)}`));
 const [WIDTH, HEIGHT] = String(flagArg('size', '1280x720', args)).split('x').map(Number);
 process.env.PROMPTCUT_STREAM_POOL = '1';
-if (!ORIGIN && !PORT) { console.error('要给 --origin <dev server> 或 --port <自己起一台>'); process.exit(2); }
-if (!(WIDTH > 0 && HEIGHT > 0)) { console.error('--size 写成 1280x720 这样'); process.exit(2); }
+if (!ORIGIN && !PORT) { console.error('Pass --origin <dev server> or --port <start your own>'); process.exit(2); }
+if (!(WIDTH > 0 && HEIGHT > 0)) { console.error('--size must be written like 1280x720'); process.exit(2); }
 
 const FPS = 30, DURATION = 6, SEG = STREAM_SEGMENT_FRAMES;
 const K = HEIGHT / 720;
@@ -74,11 +74,11 @@ if (TIMING) {
 }
 const TIMING_PARAMS = { particles: { color: '#30ff60', quantity: 120, links: 'yes', seed: 5 } };
 const PROJECT = TIMING ? {
-  id: 'stream-scrub-stage-probe-timing', name: '随机跳帧耗时', width: WIDTH, height: HEIGHT, fps: FPS, duration: DURATION,
+  id: 'stream-scrub-stage-probe-timing', name: 'Random frame-jump timing', width: WIDTH, height: HEIGHT, fps: FPS, duration: DURATION,
   themeId: 'dark', media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
   tracks: [{ id: 'tr-b', name: 'b', hidden: false, clips: [{ id: 'clip-b', kind: 'card', cardId: TIMING, start: CLIPS['clip-b'].start, end: CLIPS['clip-b'].end, params: TIMING_PARAMS[TIMING] ?? {}, frame: CLIPS['clip-b'].frame }] }],
 } : {
-  id: 'stream-scrub-stage-probe', name: '暂停和拖动贴流探针', width: WIDTH, height: HEIGHT, fps: FPS, duration: DURATION,
+  id: 'stream-scrub-stage-probe', name: 'Pause and scrub stream display probe', width: WIDTH, height: HEIGHT, fps: FPS, duration: DURATION,
   themeId: 'dark', media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
   tracks: [
     { id: 'tr-a', name: 'a', hidden: false, clips: [{ id: 'clip-a', kind: 'card', cardId: 'r6-stateful', start: CLIPS['clip-a'].start, end: CLIPS['clip-a'].end, params: {}, frame: CLIPS['clip-a'].frame }] },
@@ -97,7 +97,7 @@ async function until(label, fn, timeoutMs, everyMs = 250) {
     let value = null;
     try { value = await fn(); } catch { value = null; }
     if (value) return value;
-    if (Date.now() > deadline) { fails.push(`超时:${label}`); say('TIMEOUT', { label }); return null; }
+    if (Date.now() > deadline) { fails.push(`Timeout: ${label}`); say('TIMEOUT', { label }); return null; }
     await sleep(everyMs);
   }
 }
@@ -182,7 +182,7 @@ try {
   const idle = () => !producer.workers.size && !producer.encoding.size;
   const stateOf = (clipId) => [...producer.streams.values()].find((s) => s.spec.clipIds.length === 1 && s.spec.clipIds[0] === clipId) ?? null;
   const segmentsOf = (clipId) => { const s = stateOf(clipId); return s ? Array.from({ length: s.spec.lastSegment + 1 }, (_, n) => s.manifest.segments[n]?.stride ?? 0) : []; };
-  await until(TIMING ? '流全部分段满密度' : '两条流的稀疏版铺满全段', () => {
+  await until(TIMING ? 'All stream segments at full density' : 'Sparse versions of both streams cover all segments', () => {
     if (producer.streams.size < Object.keys(CLIPS).length || !idle()) return null;
     if (TIMING) return Object.keys(CLIPS).every((id) => { const st = segmentsOf(id); return st.length && st.every((s) => s === 1); }) ? true : null;
     return Object.keys(CLIPS).every((id) => { const st = segmentsOf(id); return st.length && st.every((s) => s >= 1); }) ? true : null;
@@ -191,7 +191,7 @@ try {
   out.sparse = Object.fromEntries(Object.keys(CLIPS).map((id) => [id, { originFrame: stateOf(id)?.spec.originFrame, strides: segmentsOf(id) }]));
   say('sparse-ready', { ms: out.sparseMs, ...out.sparse });
   const sparseStrides = Object.values(out.sparse).flatMap((s) => s.strides);
-  if (!TIMING && !check(sparseStrides.length > 0 && sparseStrides.every((s) => s > 1), '先只有稀疏版(每个分段的间隔都大于 1)', out.sparse)) throw new Error('没有得到只有稀疏版的状态');
+  if (!TIMING && !check(sparseStrides.length > 0 && sparseStrides.every((s) => s > 1), 'Sparse version only at first (every segment\'s stride is greater than 1)', out.sparse)) throw new Error('Did not reach a state with only the sparse version');
   if (TIMING) { const st = stateOf('clip-b'); out.timingStream = { card: TIMING, bound: st?.manifest.bound, tight: st?.manifest.tight, inits: Object.values(st?.manifest.inits ?? {}).map((i) => ({ width: i.width, height: i.height })) }; say('timing-stream', out.timingStream); }
   const layers = () => [...layerByClip.values()];
   /** 这张卡在第 f 帧贴的是哪一张画面:满密度是它自己;稀疏是不晚于它的最近一张(间隔从清单读) */
@@ -222,7 +222,7 @@ try {
 
   /* ------------------------------------------------------------ 舞台 */
   const ports = await (await fetch(origin + '/api/stage/ports')).json();
-  if (!ports.ok || !Array.isArray(ports.ports) || ports.ports.length < 2) throw new Error(`舞台端口没起来:${JSON.stringify(ports)}`);
+  if (!ports.ok || !Array.isArray(ports.ports) || ports.ports.length < 2) throw new Error(`Stage ports did not come up: ${JSON.stringify(ports)}`);
   const u = new URL(origin);
   const [originA, originB] = ports.ports.slice(0, 2).map((p) => `${u.protocol}//${u.hostname}:${p}`);
   const HOST_PATH = '/__stream-scrub-stage-probe-host';
@@ -344,13 +344,13 @@ try {
       if (f === 107 || f === 52) await fs.writeFile(path.join(OUT, `sparse-stage-${f}.png`), toPng(stage));
     }
     out.sparseScrub = { frames: rec.frames, wrongCount: rec.wrong.length, wrong: rec.wrong.slice(0, 5), notDrawn: rec.notDrawn.slice(0, 5), later: rec.later.slice(0, 5), placeholdersLeft: rec.placeholders.slice(0, 5),
-      levels: [...rec.levels], seekMs: stats(rec.seekMs), 对该贴的那一张的平均差: round2(rec.sameMean / Math.max(1, rec.n)), 没解到目标帧就先画上的次数: rec.standIns };
+      levels: [...rec.levels], seekMs: stats(rec.seekMs), meanDiffToExpectedFrame: round2(rec.sameMean / Math.max(1, rec.n)), standInDrawsBeforeTargetDecoded: rec.standIns };
     say('A-sparse', out.sparseScrub);
-    check(rec.notDrawn.length === 0 && rec.frames === LAST - FIRST + 1, `只有稀疏版:第 ${FIRST}～${LAST} 帧每一帧都贴出了画面`, { frames: rec.frames, notDrawn: rec.notDrawn.slice(0, 3) });
-    check(rec.wrong.length === 0, '只有稀疏版:每一帧贴的都是不晚于它的最近一张(和导出页那一帧最像)', { wrong: rec.wrong.length, first: rec.wrong.slice(0, 3) });
-    check(rec.later.length === 0, '只有稀疏版:只往回找,不拿后面的', rec.later.slice(0, 3));
-    check([...rec.levels].every((l) => l === 'sparse'), '只有稀疏版:舞台报的是稀疏这一级', [...rec.levels]);
-    check(rec.placeholders.length === 0, '只有稀疏版:画出来的那一刻没有占位符挂着', rec.placeholders.slice(0, 3));
+    check(rec.notDrawn.length === 0 && rec.frames === LAST - FIRST + 1, `Sparse version only: every frame from ${FIRST} to ${LAST} had a picture shown`, { frames: rec.frames, notDrawn: rec.notDrawn.slice(0, 3) });
+    check(rec.wrong.length === 0, 'Sparse version only: each frame shows the nearest picture not later than itself (the most similar to that frame on the export page)', { wrong: rec.wrong.length, first: rec.wrong.slice(0, 3) });
+    check(rec.later.length === 0, 'Sparse version only: look backward only, never take a later one', rec.later.slice(0, 3));
+    check([...rec.levels].every((l) => l === 'sparse'), 'Sparse version only: the stage reports the sparse level', [...rec.levels]);
+    check(rec.placeholders.length === 0, 'Sparse version only: no placeholder is up at the moment the picture is drawn', rec.placeholders.slice(0, 3));
   }
 
   /* ------------------------------------------------------------ B. 停在稀疏段上,满密度版产出来以后自己换上 */
@@ -358,16 +358,16 @@ try {
     // 找一帧:两张卡都在场,而且它在稀疏版里不是「自己那一张」
     let park = null;
     for (let f = 104; f <= 128 && park === null; f++) if (clipsAt(f).every((id) => pictureOf(id, f) !== f)) park = f;
-    if (check(park !== null, '有这样一帧:稀疏版里贴的不是它自己(用来看换成满密度以后变没变)')) {
+    if (check(park !== null, 'There is a frame for which the sparse version shows a picture other than its own (used to check whether it changes after switching to full density)')) {
       const { want } = await seekTo(park);
       const before = scoreBands(await shotStage(), Object.fromEntries(clipsAt(park).map((id) => [id, [want[id], park]])));
       holdDense = false;
       producer.kick();
       const t1 = Date.now();
-      await until('全部分段满密度', () => (idle() && Object.keys(CLIPS).every((id) => segmentsOf(id).every((s) => s === 1)) ? true : null), 900_000, 500);
+      await until('all segments at full density', () => (idle() && Object.keys(CLIPS).every((id) => segmentsOf(id).every((s) => s === 1)) ? true : null), 900_000, 500);
       out.denseMs = Date.now() - t1;
       // 父页一条消息都不发:舞台自己隔一会儿问一次清单,换上这一帧自己的画面
-      const swapped = await until('停在稀疏段上的那一帧自己换成了满密度', async () => {
+      const swapped = await until('The frame parked on a sparse segment swapped itself to full density', async () => {
         const d = await diagA();
         return d.tracks.length === clipsAt(park).length && d.tracks.every((t) => t.level === 'dense' && t.picture === park && !t.stale) ? d : null;
       }, 30_000, 250);
@@ -375,12 +375,12 @@ try {
       out.upgrade = { frame: park, sparsePicture: want, before: Object.fromEntries(Object.entries(before).map(([id, r]) => [id, r.best])), after: Object.fromEntries(Object.entries(after).map(([id, r]) => [id, r.best])),
         waitedMs: Date.now() - t1 - out.denseMs, ok: !!swapped };
       say('B-upgrade', out.upgrade);
-      check(Object.entries(before).every(([id, r]) => r.best === want[id]), '换之前贴的是稀疏的那一张', before);
-      check(!!swapped && Object.values(after).every((r) => r.best === park), '满密度版产出来以后,不等任何消息,自己换成了这一帧自己的画面', after);
+      check(Object.entries(before).every(([id, r]) => r.best === want[id]), 'Before the swap, the sparse picture was shown', before);
+      check(!!swapped && Object.values(after).every((r) => r.best === park), 'Once the full-density version was produced, the frame swapped itself to its own picture without waiting for any message', after);
     } else {
       holdDense = false;
       producer.kick();
-      await until('全部分段满密度', () => (idle() && Object.keys(CLIPS).every((id) => segmentsOf(id).every((s) => s === 1)) ? true : null), 900_000, 500);
+      await until('all segments at full density', () => (idle() && Object.keys(CLIPS).every((id) => segmentsOf(id).every((s) => s === 1)) ? true : null), 900_000, 500);
     }
   }
 
@@ -416,16 +416,16 @@ try {
     const worst = (label) => stats((rec.bySample[label] ?? {})[SEG - 1] ?? []);
     const tracks = (await diagA()).tracks;
     out.denseScrub = { frames: rec.frames, wrongCount: rec.wrong.length, wrong: rec.wrong.slice(0, 5), notDrawn: rec.notDrawn.slice(0, 5), placeholdersLeft: rec.placeholders.slice(0, 5),
-      对导出同一帧: round2(rec.sameMean / Math.max(1, rec.n)), 对照_第二像的那一帧: round2(rec.nextMean / Math.max(1, rec.n)),
-      随机跳帧_毫秒: { 头一遍_要取字节: stats(rec.coldMs), 再来一遍_字节在手: stats(rec.warmMs),
-        跳到分段最后一帧_头一遍: worst('cold'), 跳到分段最后一帧_再来一遍: worst('warm'),
-        跳到分段第一帧_再来一遍: stats((rec.bySample.warm ?? {})[0] ?? []) },
-      播放器自己记的最坏一次: tracks.map((t) => ({ id: t.id, seekMaxMs: t.seekMaxMs, seeks: t.seeks })) };
+      vsExportSameFrame: round2(rec.sameMean / Math.max(1, rec.n)), controlSecondMostSimilarFrame: round2(rec.nextMean / Math.max(1, rec.n)),
+      randomFrameJumpMs: { firstPassBytesToFetch: stats(rec.coldMs), secondPassBytesInHand: stats(rec.warmMs),
+        jumpToSegmentLastFrameFirstPass: worst('cold'), jumpToSegmentLastFrameSecondPass: worst('warm'),
+        jumpToSegmentFirstFrameSecondPass: stats((rec.bySample.warm ?? {})[0] ?? []) },
+      playerRecordedWorst: tracks.map((t) => ({ id: t.id, seekMaxMs: t.seekMaxMs, seeks: t.seeks })) };
     say('C-dense', out.denseScrub);
-    check(rec.notDrawn.length === 0 && rec.frames === LAST - FIRST + 1, `满密度:第 ${FIRST}～${LAST} 帧每一帧都贴出了这一帧`, { frames: rec.frames, notDrawn: rec.notDrawn.slice(0, 3) });
-    check(rec.wrong.length === 0, '满密度:暂停着跳到任意一帧,贴出来的画面最像的都是导出页的同一帧', { wrong: rec.wrong.length, first: rec.wrong.slice(0, 3) });
-    if (!TIMING) check(out.denseScrub.对导出同一帧 < 3 && out.denseScrub.对照_第二像的那一帧 > 3 * out.denseScrub.对导出同一帧, '满密度:和同一帧的差小,和第二像的那一帧差得明显更大', out.denseScrub);
-    check(rec.placeholders.length === 0, '满密度:画出来的那一刻没有占位符挂着(帧是异步到的,父页没有补发消息)', rec.placeholders.slice(0, 3));
+    check(rec.notDrawn.length === 0 && rec.frames === LAST - FIRST + 1, `Full density: every frame from ${FIRST} to ${LAST} showed its own frame`, { frames: rec.frames, notDrawn: rec.notDrawn.slice(0, 3) });
+    check(rec.wrong.length === 0, 'Full density: when paused and jumping to any frame, the picture shown is always most similar to the same frame on the export page', { wrong: rec.wrong.length, first: rec.wrong.slice(0, 3) });
+    if (!TIMING) check(out.denseScrub.vsExportSameFrame < 3 && out.denseScrub.controlSecondMostSimilarFrame > 3 * out.denseScrub.vsExportSameFrame, 'Full density: small difference to the same frame, clearly larger difference to the second-most-similar frame', out.denseScrub);
+    check(rec.placeholders.length === 0, 'Full density: no placeholder is up at the moment the picture is drawn (the frame arrives asynchronously and the parent page sends no follow-up message)', rec.placeholders.slice(0, 3));
   }
 
   /* ------------------------------------------------------------ D. 迟迟解不出来:留着上一张 → 到时占位符 → 帧到了自己换上、占位符自己撤 */
@@ -472,12 +472,12 @@ try {
     out.hold = { from: 47, target, heldRequests: held, log: seen.log, blankAtMs: blankAt, placeholderAtMs: placeholderAt, releasedAtMs: 1500, drawnAtMs: seen.doneAt, midway: { placeholders: mid.placeholders, tracks: mid.tracks.map((t) => [t.lastDrawn, t.stale]) }, best: result['clip-b'].best };
     say('D-hold', out.hold);
     const holdMs = (SEG * 1000) / FPS;
-    check(held > 0, '这一段的字节确实被压住了', slow.asked);
-    check(seen.log[0]?.drawn === 47 && seen.log[0].stale && !seen.log[0].placeholder, '这一帧解不出来:先留着上一张,不显示占位符', seen.log.slice(0, 3));
-    check(blankAt !== null && blankAt >= holdMs - 60 && blankAt <= holdMs + 400, `留着的旧画面约一个分段的时长(${holdMs} 毫秒)以后清空`, { blankAt });
-    check(placeholderAt !== null && placeholderAt >= blankAt - 5, '清空以后占位符顶上', { blankAt, placeholderAt });
-    check(seen.doneAt !== null && end.drawn === target && !end.placeholder && !end.slotShown, '字节到了:这一帧自己画上、占位符自己撤(父页一条消息都没发)', end);
-    check(result['clip-b'].best === target, '到了以后贴的是这一帧', result);
+    check(held > 0, 'This segment\'s bytes were indeed held back', slow.asked);
+    check(seen.log[0]?.drawn === 47 && seen.log[0].stale && !seen.log[0].placeholder, 'This frame cannot be decoded: keep the previous picture for now, do not show a placeholder', seen.log.slice(0, 3));
+    check(blankAt !== null && blankAt >= holdMs - 60 && blankAt <= holdMs + 400, `The retained old picture is cleared after about one segment's duration (${holdMs} ms)`, { blankAt });
+    check(placeholderAt !== null && placeholderAt >= blankAt - 5, 'After clearing, the placeholder takes over', { blankAt, placeholderAt });
+    check(seen.doneAt !== null && end.drawn === target && !end.placeholder && !end.slotShown, 'The bytes arrived: this frame draws itself and the placeholder removes itself (the parent page sent no message at all)', end);
+    check(result['clip-b'].best === target, 'After arrival, this frame is the one shown', result);
     await setBase('/cold1');
   }
 
@@ -493,8 +493,8 @@ try {
     const idleDiag = await diagA();
     // (这里的活画面不拿去比像素:测试页只是撤了抑制,没有走「停下追到精确活渲」那一步 —— 那一步连同停下以后的像素在 scrub-stream-probe 里核)
     out.prewarm = { frame: f0, dom: idleDom, tracks: idleDiag.tracks.map((t) => ({ id: t.id, lastDrawn: t.lastDrawn })) };
-    check(both.every((id) => idleDom[id] && idleDom[id].canvas === 'none' && !/pc-suppressed/.test(idleDom[id].cls)), '不抑制的时候流平面藏着(不占框)、活画面露着', idleDom);
-    check(idleDiag.tracks.length === 2 && idleDiag.tracks.every((t) => t.lastDrawn === f0), '暂停着:播放头下这一帧已经解好、画在藏着的流平面上', out.prewarm.tracks);
+    check(both.every((id) => idleDom[id] && idleDom[id].canvas === 'none' && !/pc-suppressed/.test(idleDom[id].cls)), 'When not suppressed, the stream plane is hidden (takes no frame) and the live picture is visible', idleDom);
+    check(idleDiag.tracks.length === 2 && idleDiag.tracks.every((t) => t.lastDrawn === f0), 'While paused: the frame under the playhead is already decoded and drawn on the hidden stream plane', out.prewarm.tracks);
     // 起播:流平面(没变)→ 抑制 → play;逐拍记录每张卡落在哪一级
     await frameA().evaluate(() => { window.__pcFallbackTrace = []; });
     await page.evaluate(() => { window.__frames = []; });
@@ -510,9 +510,9 @@ try {
     const bad = beats.filter((b) => both.some((id) => CLIPS[id].frames[1] >= b.frame && b.levels[id] !== 'dense'));
     out.playStart = { frame: f0, waitingAtStart: atStart.streamWaiting, suppressedAtStart: atStart.suppressed, dom: startDom, beats: beats.length, firstBeat: beats[0] ?? null, notDense: bad.slice(0, 5), stoppedAt: Math.round(stop.stoppedAt * FPS) };
     say('E-play-start', out.playStart);
-    check(atStart.streamWaiting.length === 0 && both.every((id) => atStart.suppressed.includes(id)), '起播:这一帧先解好了,一抑制就换成流,不用等', { waiting: atStart.streamWaiting, suppressed: atStart.suppressed });
-    check(both.every((id) => startDom[id]?.canvas !== 'none' && /pc-suppressed/.test(startDom[id]?.cls ?? '')), '起播:流平面露出来、活子树藏起来,同一次提交', startDom);
-    check(beats.length >= 5 && bad.length === 0, '起播:头一拍起每一拍都是流的画面(没有空拍、没有占位符)', { beats: beats.length, first: beats[0], bad: bad.slice(0, 3) });
+    check(atStart.streamWaiting.length === 0 && both.every((id) => atStart.suppressed.includes(id)), 'Playback start: this frame is decoded first, so as soon as suppression applies it switches to the stream with no wait', { waiting: atStart.streamWaiting, suppressed: atStart.suppressed });
+    check(both.every((id) => startDom[id]?.canvas !== 'none' && /pc-suppressed/.test(startDom[id]?.cls ?? '')), 'Playback start: the stream plane is revealed and the live subtree is hidden, in the same commit', startDom);
+    check(beats.length >= 5 && bad.length === 0, 'Playback start: from the first tick on, every tick shows the stream\'s picture (no empty ticks, no placeholders)', { beats: beats.length, first: beats[0], bad: bad.slice(0, 3) });
 
     // 没有先解好:流平面刚到、字节慢 180 毫秒。流的第一帧画出来之前不藏原来的画面
     await rpc('setSuppressed', []);
@@ -549,9 +549,9 @@ try {
     const firstHidden = named.find((e) => e.hidden.length === 2);
     out.coldStart = { log: coldLog, waitedMs: waitingSpan.length && firstHidden ? firstHidden.at - waitingSpan[0].at : null };
     say('E-cold-start', out.coldStart);
-    check(waitingSpan.length > 0 && named.every((e) => e.waiting.every((id) => !e.hidden.includes(id))), '流还没画出第一帧的卡:点名抑制了也先不藏原来的画面', coldLog.slice(0, 4));
-    check(!!firstHidden && firstHidden.showing.length === 2 && named.every((e) => e.hidden.every((id) => e.showing.includes(id))), '流画出来的那一刻才藏活子树(藏着的卡流都已经有画面)', firstHidden);
-    check(coldLog.every((e) => e.empty.length === 0 && e.placeholders.length === 0), '全程没有「活子树藏着、流又没画面」的时刻,也没有占位符', coldLog.filter((e) => e.empty.length || e.placeholders.length).slice(0, 3));
+    check(waitingSpan.length > 0 && named.every((e) => e.waiting.every((id) => !e.hidden.includes(id))), 'Card whose stream has not drawn its first frame yet: even when explicitly suppressed, the original picture is not hidden for now', coldLog.slice(0, 4));
+    check(!!firstHidden && firstHidden.showing.length === 2 && named.every((e) => e.hidden.every((id) => e.showing.includes(id))), 'The live subtree is hidden only at the moment the stream is drawn (every hidden card\'s stream already has a picture)', firstHidden);
+    check(coldLog.every((e) => e.empty.length === 0 && e.placeholders.length === 0), 'At no point is there a moment of "live subtree hidden and stream has no picture", and no placeholders either', coldLog.filter((e) => e.empty.length || e.placeholders.length).slice(0, 3));
 
     // 一直画不出来:到时才藏,占位符顶上
     await rpc('setSuppressed', []);
@@ -565,11 +565,11 @@ try {
     const late = await diagA();
     const lateDom = await domA();
     slow.release();
-    await until('字节放了以后流画出来、占位符撤掉', async () => { const d = await diagA(); return d.tracks.length === 2 && d.tracks.every((t) => t.lastDrawn === f0) && !d.placeholders.length ? d : null; }, 10_000, 100);
+    await until('After the bytes are released, the stream draws and the placeholder is removed', async () => { const d = await diagA(); return d.tracks.length === 2 && d.tracks.every((t) => t.lastDrawn === f0) && !d.placeholders.length ? d : null; }, 10_000, 100);
     out.waitTimeout = { early: { waiting: early.streamWaiting, suppressed: early.suppressed }, late: { waiting: late.streamWaiting, suppressed: late.suppressed, placeholders: late.placeholders }, dom: lateDom };
     say('E-wait-timeout', out.waitTimeout);
-    check(early.streamWaiting.length === 2 && early.suppressed.length === 0, '流画不出来:先等着,不藏', out.waitTimeout.early);
-    check(late.streamWaiting.length === 0 && late.suppressed.length === 2 && late.placeholders.length === 2, '等到时限还没有:藏起来,占位符顶上', out.waitTimeout.late);
+    check(early.streamWaiting.length === 2 && early.suppressed.length === 0, 'Stream cannot draw: wait for now, do not hide', out.waitTimeout.early);
+    check(late.streamWaiting.length === 0 && late.suppressed.length === 2 && late.placeholders.length === 2, 'Still nothing at the deadline: hide it and let the placeholder take over', out.waitTimeout.late);
     await setBase('/cold1');
   }
 
@@ -608,10 +608,10 @@ try {
     const result = scoreBands(stage, { 'clip-b': [last - 1, last, last + 1] });
     out.fastDrag = { ...fast, seeks: after.seeks - before.seeks, deferred: after.deferred - before.deferred, decoded: after.decoded - before.decoded, best: result['clip-b'].best, last };
     say('F-fast-drag', out.fastDrag);
-    check(fast.settleMs !== null && result['clip-b'].best === last, '拖得快:停住以后画的是最后那一帧', out.fastDrag);
-    check(out.fastDrag.seeks < path16.length, '拖得快:不是每一步都重置解码器(在途的那一次让它解完,只解最新要的)', out.fastDrag);
-    check(fast.distinctDrawn >= 5 && fast.emptySamples === 0, '拖得快:画面一路跟着走,没有空着的时刻', out.fastDrag);
-    check(fast.placeholders.length === 0, '拖得快:没有占位符', fast.placeholders);
+    check(fast.settleMs !== null && result['clip-b'].best === last, 'Fast scrub: after stopping, the last frame is the one drawn', out.fastDrag);
+    check(out.fastDrag.seeks < path16.length, 'Fast scrub: the decoder is not reset at every step (let the in-flight one finish and decode only the latest one requested)', out.fastDrag);
+    check(fast.distinctDrawn >= 5 && fast.emptySamples === 0, 'Fast scrub: the picture follows along the whole way, with no empty moments', out.fastDrag);
+    check(fast.placeholders.length === 0, 'Fast scrub: no placeholders', fast.placeholders);
   }
 
   /* ------------------------------------------------------------ G. 播放中暂停 */
@@ -624,19 +624,19 @@ try {
     await sleep(700);
     const stop = await rpc('pause');
     const stopped = Math.round(stop.stoppedAt * FPS);
-    await until('暂停的那一帧画出来', async () => { const d = await diagA(); return d.tracks.every((t) => t.lastDrawn === stopped || t.lastDrawn === null) ? d : null; }, 5000, 50);
+    await until('The paused frame is drawn', async () => { const d = await diagA(); return d.tracks.every((t) => t.lastDrawn === stopped || t.lastDrawn === null) ? d : null; }, 5000, 50);
     const frames = await page.evaluate(() => window.__frames);
     const steps = frames.slice(1).map((f, i) => +(f.sec - frames[i].sec).toFixed(6));
     const stage = await shotStage();
     const result = scoreBands(stage, Object.fromEntries(clipsAt(stopped).map((id) => [id, [stopped - 1, stopped, stopped + 1]])));
     out.playPause = { from: 95, stoppedAt: stopped, beats: frames.length, noSkip: steps.every((s) => Math.abs(s - 1 / FPS) < 1e-6), best: Object.fromEntries(Object.entries(result).map(([id, r]) => [id, r.best])) };
     say('G-play-pause', out.playPause);
-    check(out.playPause.noSkip && frames.length > 5 && stopped > 100, '播放:不跳帧,播进了两张卡都在场的一段', out.playPause);
-    check(Object.values(result).every((r) => r.best === stopped), '播放中暂停:停住的那一帧贴的是这一帧', result);
+    check(out.playPause.noSkip && frames.length > 5 && stopped > 100, 'Playback: no skipped frames, and it reached the stretch where both cards are present', out.playPause);
+    check(Object.values(result).every((r) => r.best === stopped), 'Pause during playback: the frame it stopped on shows that frame', result);
   }
   await rpc('setRole', 'back', { job: 'probe' });
 } catch (error) {
-  fails.push(`异常:${error?.stack || error}`);
+  fails.push(`Exception: ${error?.stack || error}`);
   say('ERROR', { error: String(error?.stack || error) });
 } finally {
   try { await browser?.close(); } catch { /* ignore */ }

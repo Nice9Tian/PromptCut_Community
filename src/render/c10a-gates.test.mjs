@@ -14,7 +14,7 @@ import assert from "node:assert/strict";
 import { exists, skipIf, TIER_FILE } from "../../server/test/c10a-kit.mjs";
 
 const missing = !exists(TIER_FILE);
-const skip = skipIf(missing, `${TIER_FILE}（mediaTier 的只用小尺寸分支随档位来）`);
+const skip = skipIf(missing, `${TIER_FILE} (the small-size-only branch of mediaTier follows the tier)`);
 const it = (name, fn) => test(name, { skip }, fn);
 
 const probes = [];
@@ -42,11 +42,11 @@ const onlyOriginal = { id: "o", kind: "video", ext: "mp4", url: `/@media/${h("c"
 const REMOTE = "@known:remote";
 const LOW = { smallOnly: true };
 
-it("C10A-GT-01 最低一档：两档都到齐、原尺寸能放，也给小尺寸；不去探原尺寸", () => {
+it("C10A-GT-01 lowest tier: both tiers arrived and original size can be placed, still give small size; do not probe original size", () => {
   const all = [REMOTE, ORIG, SMALL];
   assert.equal(T.playbackUrl(video, all, { ...LOW, playable: () => true }), `/@media/${SMALL}`);
   assert.equal(T.playbackUrl(video, all, { ...LOW, playable: () => undefined }), `/@media/${SMALL}`);
-  assert.equal(probes.length, 0, "可播性不知道时也不探原尺寸");
+  assert.equal(probes.length, 0, "do not probe original size even when playability is unknown");
   assert.equal(T.chooseTier(video, all, LOW).tier, "small");
   // 对照：别的档照 C6.6 换回原尺寸
   assert.equal(T.playbackUrl(video, all, { playable: () => true }), `/@media/${ORIG}`);
@@ -57,28 +57,28 @@ it("C10A-GT-01 最低一档：两档都到齐、原尺寸能放，也给小尺�
  * 这一层显示占位与「等待上传方」角标，小尺寸到齐后地址从空变成小尺寸、重新挂上；而不是先挂一个素材服务上还没有的
  * 小尺寸地址（会 404，还会被舞台记成视频解码失败）。不变的是本条要核的：一律不给原尺寸。还没问过素材服务时照旧先给小尺寸。
  */
-it("C10A-GT-02 最低一档：只有原尺寸到齐、小尺寸没到，也不给原尺寸（这一层等上传方，不挂还没到的地址）", () => {
+it("C10A-GT-02 lowest tier: only original size arrived, small size has not, still do not give original size (this layer waits for the uploader, no URL that has not arrived is attached)", () => {
   const choice = T.chooseTier(video, [REMOTE, ORIG], LOW);
   assert.notEqual(choice.tier, "original");
-  assert.equal(choice.url.includes(ORIG), false, `地址里不能有原尺寸：${choice.url}`);
-  assert.equal(choice.awaiting, true, "这一层等待上传方");
-  assert.equal(T.chooseTier(video, [], LOW).url, `/@media/${SMALL}`, "还没问过素材服务：先给小尺寸");
+  assert.equal(choice.url.includes(ORIG), false, `the URL must not contain original size: ${choice.url}`);
+  assert.equal(choice.awaiting, true, "this layer is waiting for the uploader");
+  assert.equal(T.chooseTier(video, [], LOW).url, `/@media/${SMALL}`, "asset service not queried yet: give small size first");
   const none = T.chooseTier(video, [REMOTE], LOW);
-  assert.equal(none.url.includes(ORIG), false, "一档都没到：不给原尺寸");
-  assert.equal(none.awaiting, true, "一档都没到：等待上传方");
+  assert.equal(none.url.includes(ORIG), false, "no tier arrived: do not give original size");
+  assert.equal(none.awaiting, true, "no tier arrived: wait for the uploader");
 });
 
-it("C10A-GT-03 最低一档：没有小尺寸的视频不拉原尺寸，这一层等待上传方（占位 + 角标）", () => {
+it("C10A-GT-03 lowest tier: a video without small size does not fetch original size, this layer waits for the uploader (placeholder + badge)", () => {
   for (const hashes of [[], [REMOTE], [REMOTE, h("c")]]) {
     const choice = T.chooseTier(onlyOriginal, hashes, LOW);
     assert.notEqual(choice.tier, "original", `hashes=${JSON.stringify(hashes)}`);
-    assert.equal(choice.url.includes(h("c")), false, `地址里不能有原尺寸：${choice.url}`);
-    if (hashes.length) assert.equal(choice.awaiting, true, "问过素材服务之后，这一层在等待上传方");
+    assert.equal(choice.url.includes(h("c")), false, `the URL must not contain original size: ${choice.url}`);
+    if (hashes.length) assert.equal(choice.awaiting, true, "after the asset service was queried, this layer is waiting for the uploader");
   }
   assert.equal(T.playbackUrl(onlyOriginal, [REMOTE, h("c")], LOW).includes(h("c")), false);
 });
 
-it("C10A-GT-04 最低一档 + 在线素材服务：小尺寸地址拼在素材服务的公网地址上", () => {
+it("C10A-GT-04 lowest tier + online asset service: the small-size URL is built on the public URL of the asset service", () => {
   const base = "https://203-0-113-16.sslip.io/media/api/asset";
   const url = T.playbackUrl(video, [REMOTE, ORIG, SMALL], { ...LOW, cloudBase: base, playable: () => true });
   assert.ok(url.startsWith(base), url);

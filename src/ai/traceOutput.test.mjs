@@ -9,10 +9,10 @@ const message = () => ({ id: "a", role: "assistant", text: "" });
 
 test("a tool result keeps its summary but not its output", () => {
   const output = { ok: true, project: { tracks: Array.from({ length: 50 }, (_, i) => ({ id: "t" + i, note: "x".repeat(2000) })) } };
-  const event = { type: "tool_result", name: "get_project", ok: true, callId: "c1", summary: "拿到工程", output };
+  const event = { type: "tool_result", name: "get_project", ok: true, callId: "c1", summary: "Got the project", output };
   const traced = recordTrace(message(), event);
   const stored = traced.trace[0].event;
-  assert.equal(stored.summary, "拿到工程");
+  assert.equal(stored.summary, "Got the project");
   assert.equal(stored.output, undefined);
   assert.equal(stored.outputOmitted, true);
   assert.ok(traced.traceBytes < 1000, `trace grew by ${traced.traceBytes} bytes`);

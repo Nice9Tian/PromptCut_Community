@@ -25,7 +25,7 @@ import path from 'node:path';
 import { createAssetHarness } from './fake-asset-service.mjs';
 
 const bakeryCalls = [];
-const refuse = (name) => (...args) => { bakeryCalls.push(name); void args; throw new Error(`单测不渲染（${name}）`); };
+const refuse = (name) => (...args) => { bakeryCalls.push(name); void args; throw new Error(`Unit test does not render (${name})`); };
 mock.module(new URL('../bakery/index.mjs', import.meta.url).href, {
   exports: {
     openBakery: async (...a) => refuse('openBakery')(...a),
@@ -53,15 +53,15 @@ try { transfer = await import('../artifact-transfer.mjs'); } catch (err) { trans
 let clientMod = null, clientError = null;
 try { clientMod = await import('../asset-store/client.mjs'); } catch (err) { clientError = err; }
 function T() {
-  if (transferError) throw new Error(`载不进 server/artifact-transfer.mjs：${transferError.message}`);
+  if (transferError) throw new Error(`Cannot load server/artifact-transfer.mjs: ${transferError.message}`);
   return transfer;
 }
 function newClient(base) {
-  if (clientError) throw new Error(`载不进 server/asset-store/client.mjs：${clientError.message}`);
+  if (clientError) throw new Error(`Cannot load server/asset-store/client.mjs: ${clientError.message}`);
   return clientMod.createAssetClient({ base });
 }
 function adopt(pipeline, entry, content, client) {
-  assert.equal(typeof pipeline.adoptFromManifests, 'function', 'FramePipeline 要有 adoptFromManifests(entry, content, client)');
+  assert.equal(typeof pipeline.adoptFromManifests, 'function', 'FramePipeline must have adoptFromManifests(entry, content, client)');
   return pipeline.adoptFromManifests(entry, content, client);
 }
 
@@ -121,7 +121,7 @@ async function pushTask(A, svc, task) {
 
 /* ------------------------------------------------------------------ A1 */
 
-test('A1 A 预渲染并推送完；B 用同一份 card plan 调 adoptFromManifests：帧库与 A 逐字节相同，就绪索引发布了对应的层，B 没有调任何渲染', async (t) => {
+test('A1 A finishes prerendering and pushing; B calls adoptFromManifests with the same card plan: the frame store is byte-for-byte identical to A\'s, the ready index publishes the corresponding layer, and B calls no rendering at all', async (t) => {
   const { roots, svc } = await rig(t);
   const rootA = await roots.root(), rootB = await roots.root();
   const A = roots.make(rootA), B = roots.make(rootB);
@@ -129,9 +129,9 @@ test('A1 A 预渲染并推送完；B 用同一份 card plan 调 adoptFromManifes
   const entryA = entryOf(plan);
   await prerender(A, plan);
   const tasks = tasksOf(entryA);
-  assert.deepEqual(tasks.map((x) => `${x.tier}:${x.range.from}-${x.range.to}`), ['shared:0-59', 'shared:60-119', 'shared:120-129', 'local:0-59', 'local:60-69'], '夹具：5 段');
-  assert.equal(tasks[0].resultKey, plan[0].snapshotKey, '共享档 resultKey = snapshotKey');
-  assert.equal(tasks[3].resultKey, resultKeyOf(`${ENTRY_KEY}/${plan[1].contentKey}`, FP), '本地档 resultKey 按 E.9');
+  assert.deepEqual(tasks.map((x) => `${x.tier}:${x.range.from}-${x.range.to}`), ['shared:0-59', 'shared:60-119', 'shared:120-129', 'local:0-59', 'local:60-69'], 'Fixture: 5 segments');
+  assert.equal(tasks[0].resultKey, plan[0].snapshotKey, 'Shared tier resultKey = snapshotKey');
+  assert.equal(tasks[3].resultKey, resultKeyOf(`${ENTRY_KEY}/${plan[1].contentKey}`, FP), 'Local tier resultKey follows E.9');
   let blocks = 0;
   for (const task of tasks) blocks += (await pushTask(A, svc, task)).frames.length;
   assert.equal(blocks, 200);
@@ -144,17 +144,17 @@ test('A1 A 预渲染并推送完；B 用同一份 card plan 调 adoptFromManifes
   const out = await adopt(B, entryB, contentB, asset);
   // 己二：快照已撤，adoptFromManifests 不再拉取快照清单
   assert.deepEqual({ manifests: out?.manifests, fetched: out?.fetched, written: out?.written }, { manifests: 0, fetched: 0, written: 0 },
-    `返回 { manifests, fetched, written }：${JSON.stringify(out)}`);
-  assert.equal(asset.puts.length, 0, '取用不上传');
-  assert.equal(bakeryCalls.length, before, 'B 没有调任何渲染');
+    `Returns { manifests, fetched, written }: ${JSON.stringify(out)}`);
+  assert.equal(asset.puts.length, 0, 'Adopting does not upload');
+  assert.equal(bakeryCalls.length, before, 'B called no rendering at all');
 
   // 再调一次：本机跳过
   const again = await adopt(B, entryB, await svc.another('node-b2'), countingAsset(svc.client));
-  assert.equal(again.fetched, 0, '不再拉');
+  assert.equal(again.fetched, 0, 'Nothing is fetched again');
   assert.equal(again.written, 0);
 });
 
-test('A1 流：A 推送完一条轨道流；B 调 adoptFromManifests 拉全它的分段、发布 stream 范围，不渲染', async (t) => {
+test('A1 stream: A finishes pushing a track stream; B calls adoptFromManifests to fetch all of its segments and publish the stream range, without rendering', async (t) => {
   const { roots, svc } = await rig(t);
   const rootA = await roots.root(), rootB = await roots.root();
   const A = roots.make(rootA, { interactive: true });
@@ -167,11 +167,11 @@ test('A1 流：A 推送完一条轨道流；B 调 adoptFromManifests 拉全它�
     tracks: [{ id: 't1', clips: [{ id: 'clip-s', cardId: 'demo-card', start: 0, end: 1.5 }] }] };
   const entryA = entryOf([control], project);
   const specs = planStreams(entryA, { envFingerprint: FP, codeVersion: `${STREAM_CODE_VERSION}:` });
-  assert.equal(specs.length, 1, `夹具：一条流 ${JSON.stringify(specs.map((s) => [s.streamKey?.slice(0, 8), s.firstSegment, s.lastSegment]))}`);
+  assert.equal(specs.length, 1, `Fixture: one stream ${JSON.stringify(specs.map((s) => [s.streamKey?.slice(0, 8), s.firstSegment, s.lastSegment]))}`);
   const spec = specs[0];
   const streamTasks = tasksOf(entryA, specs).filter((x) => x.kind === 'stream');
   assert.equal(streamTasks.length, 1);
-  assert.equal(streamTasks[0].resultKey, spec.streamKey, '流任务的 resultKey = streamKey');
+  assert.equal(streamTasks[0].resultKey, spec.streamKey, 'The stream task\'s resultKey = streamKey');
   const segs = range(spec.firstSegment, spec.lastSegment);
   const fx = await writeStreamFixture(rootA, { streamKey: spec.streamKey, segments: segs });
   producerOf(A);
@@ -183,23 +183,23 @@ test('A1 流：A 推送完一条轨道流；B 调 adoptFromManifests 拉全它�
   watchEntry(B, entryB);
   const before = bakeryCalls.length;
   const out = await adopt(B, entryB, await svc.another('node-b'), svc.client);
-  assert.ok(out.manifests >= 1, `查到了流的清单：${JSON.stringify(out)}`);
+  assert.ok(out.manifests >= 1, `Found the stream's manifest: ${JSON.stringify(out)}`);
   const dirB = path.join(rootB, 'streams', spec.streamKey);
   const fb = await filesOf(dirB);
-  for (const [name, buf] of Object.entries(fx.files)) assert.ok(fb[name]?.equals(buf), `B 有 ${name}，与 A 相同`);
+  for (const [name, buf] of Object.entries(fx.files)) assert.ok(fb[name]?.equals(buf), `B has ${name}, identical to A`);
   const state = prodB.streams.get(spec.streamKey);
-  assert.ok(state?.manifest, '清单合进了 B 的生产者状态');
+  assert.ok(state?.manifest, 'The manifest was merged into B\'s producer state');
   for (const n of segs) {
-    assert.equal(state.manifest.segments[n]?.adopted, true, `第 ${n} 段记 adopted`);
-    assert.notEqual(prodB.segmentState(state, n), 'stale', `第 ${n} 段在 B 上不判 stale`);
+    assert.equal(state.manifest.segments[n]?.adopted, true, `Segment ${n} is marked adopted`);
+    assert.notEqual(prodB.segmentState(state, n), 'stale', `Segment ${n} is not judged stale on B`);
   }
-  assert.deepEqual(staged(B, 'stream', spec.streamKey)?.ranges, [[spec.firstSegment, spec.lastSegment]], `就绪索引挂上了 stream：${JSON.stringify(B.ready.stagedKeys())}`);
-  assert.equal(bakeryCalls.length, before, 'B 没有调任何渲染');
+  assert.deepEqual(staged(B, 'stream', spec.streamKey)?.ranges, [[spec.firstSegment, spec.lastSegment]], `The ready index has the stream attached: ${JSON.stringify(B.ready.stagedKeys())}`);
+  assert.equal(bakeryCalls.length, before, 'B called no rendering at all');
 });
 
 /* ------------------------------------------------------------------ A2 */
 
-test('A2 部分段在内容库里没有、部分段本机已有：只拉内容库里有且本机缺的，返回的计数正确', async (t) => {
+test('A2 Some segments are not in the content store and some already exist locally: only those that are in the content store and missing locally are fetched, and the returned counts are correct', async (t) => {
   const { roots, svc } = await rig(t);
   const rootA = await roots.root(), rootB = await roots.root();
   const A = roots.make(rootA), B = roots.make(rootB);
@@ -222,16 +222,16 @@ test('A2 部分段在内容库里没有、部分段本机已有：只拉内容�
   const out = await adopt(B, entryB, await svc.another('node-b'), asset);
   // 己二：快照已撤，adoptFromManifests 不再拉取快照清单
   assert.deepEqual({ manifests: out?.manifests, fetched: out?.fetched, written: out?.written }, { manifests: 0, fetched: 0, written: 0 },
-    `返回 { manifests, fetched, written }：${JSON.stringify(out)}`);
+    `Returns { manifests, fetched, written }: ${JSON.stringify(out)}`);
   assert.equal(asset.gets.length, 0);
 
   const idxShared = await B.snapshots().snapshotIndex(targetOf(plan[0]));
-  assert.deepEqual(idxShared.frames, [[0, 59]], '共享档：仅有本机原有的 0-59，快照不再从远端拉');
+  assert.deepEqual(idxShared.frames, [[0, 59]], 'Shared tier: only the 0-59 that already existed locally, and snapshots are no longer fetched from the remote');
   const idxLocal = await B.snapshots().snapshotIndex(targetOf(plan[1]));
-  assert.deepEqual(idxLocal.frames, [], '本地档：快照不再拉取');
+  assert.deepEqual(idxLocal.frames, [], 'Local tier: snapshots are no longer fetched');
   const fa = await filesOf(snapshotDir(rootA, targetOf(plan[0]))), fb = await filesOf(snapshotDir(rootB, targetOf(plan[0])));
-  for (const n of range(0, 59)) assert.ok(fb[`${n}.html`]?.equals(fa[`${n}.html`]), `第 ${n} 帧与 A 相同`);
-  assert.equal(fb['120.html'], undefined, '快照不再拉取');
-  assert.equal(fb['60.html'], undefined, '内容库里没有的段不拉');
-  assert.equal(bakeryCalls.length, before, 'adoptFromManifests 本身不渲染');
+  for (const n of range(0, 59)) assert.ok(fb[`${n}.html`]?.equals(fa[`${n}.html`]), `Frame ${n} matches A`);
+  assert.equal(fb['120.html'], undefined, 'Snapshots are no longer fetched');
+  assert.equal(fb['60.html'], undefined, 'Segments not in the content store are not fetched');
+  assert.equal(bakeryCalls.length, before, 'adoptFromManifests itself does not render');
 });

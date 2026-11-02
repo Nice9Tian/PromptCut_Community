@@ -52,12 +52,12 @@ function queueRig(constants = {}) {
   };
 }
 
-test('D1 回收的 lease-lost 带真实原因(stalled / lease-expired);放回 open 的任务视图带 lastError', () => {
+test('D1 the reclaimed lease-lost carries the real reason (stalled / lease-expired); the view of a task put back to open carries lastError', () => {
   const r = queueRig();
   const task = fineTask('a');
   r.q.handle('pub', { type: 'task.publish', tasks: [task] });
   const opened0 = r.of('watch', 'task.opened').at(-1);
-  assert.equal('lastError' in opened0.task, false, '没失败过的任务视图不带 lastError');
+  assert.equal('lastError' in opened0.task, false, 'the view of a task that never failed has no lastError');
   r.q.handle('node', { type: 'task.claim', id: task.id, expectVersion: 1 });
   r.q.handle('node', { type: 'task.progress', id: task.id, token: 2, done: 0 });
   // 续约照发、帧数不变:严格超过 STALL_MS 按停滞回收
@@ -66,14 +66,14 @@ test('D1 回收的 lease-lost 带真实原因(stalled / lease-expired);放回 op
   const lost = r.of('node', 'task.lease-lost');
   assert.deepEqual(lost.map((m) => m.reason), ['stalled']);
   const reopened = r.of('watch', 'task.opened').at(-1);
-  assert.equal(reopened.task.lastError, 'stalled', '放回 open 的广播带 lastError');
+  assert.equal(reopened.task.lastError, 'stalled', 'the broadcast of putting it back to open carries lastError');
 
   // 再认领,不再续约:按租约回收
   r.q.handle('node', { type: 'task.claim', id: task.id, expectVersion: reopened.task.version });
   const claimed = r.of('node', 'task.claimed').at(-1);
   r.at(T0 + 120_001 + 30_001);
   assert.equal(r.of('node', 'task.lease-lost').at(-1).reason, 'lease-expired');
-  assert.equal(claimed.task.lastError, 'stalled', '认领回包里的视图也带着上一次的原因');
+  assert.equal(claimed.task.lastError, 'stalled', 'the view in the claim reply also carries the previous reason');
   assert.equal(r.of('watch', 'task.opened').at(-1).task.lastError, 'lease-expired');
 });
 
@@ -110,7 +110,7 @@ function runnerRig({ putBlocks = 3 } = {}) {
 }
 const turn = () => new Promise((resolve) => setImmediate(resolve));
 
-test('D2 推送途中丢认领:lost 事件带 phase=push、推送块数、距上次帧数变化与距认领的毫秒数', async () => {
+test('D2 claim lost during push: the lost event carries phase=push, the number of chunks pushed, the time since the last frame-count change, and the milliseconds since the claim', async () => {
   const r = runnerRig({ putBlocks: 120 });
   const task = fineTask('b');
   r.claim(task);
@@ -121,7 +121,7 @@ test('D2 推送途中丢认领:lost 事件带 phase=push、推送块数、距上
   r.gates.render.progress(60);
   r.gates.render.resolve(null);
   await turn(); await turn();
-  assert.ok(r.gates.put, '渲完进入推送');
+  assert.ok(r.gates.put, 'rendering finished, entering push');
   r.advance(1_000);
   r.gates.put.report({ blocks: 120, pushed: 40, bytes: 4_000 });
   r.advance(129_000);
@@ -131,9 +131,9 @@ test('D2 推送途中丢认领:lost 事件带 phase=push、推送块数、距上
   assert.equal(lost.reason, 'stalled');
   assert.equal(lost.phase, 'push');
   assert.equal(lost.done, 60);
-  assert.equal(lost.sinceDoneMs, 130_000, '距上次帧数变化');
-  assert.equal(lost.sinceClaimMs, 140_000, '距认领');
-  assert.equal(lost.phaseMs, 130_000, '在推送阶段多久');
+  assert.equal(lost.sinceDoneMs, 130_000, 'time since the last frame-count change');
+  assert.equal(lost.sinceClaimMs, 140_000, 'time since the claim');
+  assert.equal(lost.phaseMs, 130_000, 'how long in the push phase');
   assert.deepEqual(lost.push, { blocks: 120, pushed: 40, bytes: 4_000, ms: 130_000 });
   await r.runner.settled();
   const discarded = r.events.find((e) => e.type === 'discarded');
@@ -141,7 +141,7 @@ test('D2 推送途中丢认领:lost 事件带 phase=push、推送块数、距上
   assert.equal(discarded.reason, 'stalled');
 });
 
-test('D3 sink-incomplete 的 failed 事件带产物库给的原因与推送统计', async () => {
+test('D3 the failed event for sink-incomplete carries the reason given by the output store and the push statistics', async () => {
   const r = runnerRig({ putBlocks: 10 });
   const task = fineTask('c');
   r.claim(task);
@@ -175,7 +175,7 @@ function tinyPipeline(frames = 4) {
   };
 }
 
-test('D4 产物库 put:推送出错回 reason 与 stats 并记 sink.incomplete;每推完一块报一次;收全时带 stats', async () => {
+test('D4 output store put: a push error returns reason and stats and logs sink.incomplete; progress is reported once per chunk pushed; stats are included when everything has arrived', async () => {
   const { root, pipeline } = tinyPipeline(4);
   try {
     const ref = { kind: 'snapshot', tier: 'shared', resultKey: sha256('rk:d4'), range: { unit: 'localFrame', from: 0, to: 3 } };
@@ -184,7 +184,7 @@ test('D4 产物库 put:推送出错回 reason 与 stats 并记 sink.incomplete;�
     const flaky = {
       put: async (ns, bytes) => {
         n += 1;
-        if (n === 3) throw Object.assign(new Error('素材服务 PUT snap/x/0 超时（30000 ms 没有完成）'), { code: 'timeout' });
+        if (n === 3) throw Object.assign(new Error('Asset service PUT snap/x/0 timed out (not completed within 30000 ms)'), { code: 'timeout' });
         return { hash: sha256(bytes), uploaded: true };
       },
     };
@@ -194,12 +194,12 @@ test('D4 产物库 put:推送出错回 reason 与 stats 并记 sink.incomplete;�
     assert.equal(bad.complete, false);
     assert.equal(bad.reason, 'push-failed:timeout');
     assert.equal(bad.stats.blocks, 4);
-    assert.ok(bad.stats.pushed >= 2 && bad.stats.pushed <= 3, `推了 ${bad.stats.pushed} 块`);
+    assert.ok(bad.stats.pushed >= 2 && bad.stats.pushed <= 3, `pushed ${bad.stats.pushed} chunks`);
     const line = logs.find((l) => l.event === 'sink.incomplete');
-    assert.ok(line, '记一行 sink.incomplete');
+    assert.ok(line, 'logs one sink.incomplete line');
     assert.equal(line.fields.reason, 'push-failed:timeout');
-    assert.ok(reports.some((r) => r.stage === 'collect') && reports.some((r) => r.stage === 'push'), '报了列清单与推块两个阶段');
-    assert.ok(reports.some((r) => r.blocks === 4 && r.pushed === 0), '开推时报总块数');
+    assert.ok(reports.some((r) => r.stage === 'collect') && reports.some((r) => r.stage === 'push'), 'both the list-manifest and push-chunks stages were reported');
+    assert.ok(reports.some((r) => r.blocks === 4 && r.pushed === 0), 'the total chunk count is reported when the push starts');
 
     const ok = { put: async (ns, bytes) => ({ hash: sha256(bytes), uploaded: true }) };
     const counted = [];
@@ -208,7 +208,7 @@ test('D4 产物库 put:推送出错回 reason 与 stats 并记 sink.incomplete;�
     assert.equal(good.complete, true);
     assert.equal(good.stats.blocks, 4);
     assert.equal(good.stats.pushed, 4);
-    assert.deepEqual(counted, [0, 1, 2, 3, 4], '开推一次 + 每块一次');
+    assert.deepEqual(counted, [0, 1, 2, 3, 4], 'once when the push starts + once per chunk');
 
     // 缺帧:reason 是 range-missing
     const short = await createAssetSink({ pipeline, client: ok }).put({ ...ref, range: { unit: 'localFrame', from: 0, to: 9 }, artifacts: null, meta: { taskId: 't', nodeId: 'N', token: 1 } });
@@ -219,7 +219,7 @@ test('D4 产物库 put:推送出错回 reason 与 stats 并记 sink.incomplete;�
   }
 });
 
-test('D5 转发器放行逐任务收尾行、sink.incomplete 与去重诊断(sink.has-miss、manifest.*-failed),别的 queue-node 行不转,会话行照旧转', () => {
+test('D5 the forwarder lets through the per-task wrap-up lines, sink.incomplete and the dedup diagnostics (sink.has-miss, manifest.*-failed); other queue-node lines are not forwarded; session lines are forwarded as before', () => {
   const out = [];
   const forward = createSessionLineForwarder((line) => out.push(line));
   forward([

@@ -12,7 +12,7 @@ async function fixture(run) {
     const store = await server.ssrLoadModule("/src/store/project.ts");
     const kernel = await server.ssrLoadModule("/src/kernel/project.ts");
     const registry = await server.ssrLoadModule("/src/kernel/registry.ts");
-    registry.registerCards([{ id: "av-test", name: "有声卡", source: "native", defaults: {}, controls: [], inputs: {}, Component: () => null, audio: () => new Float32Array(2) }]);
+    registry.registerCards([{ id: "av-test", name: "Audio card", source: "native", defaults: {}, controls: [], inputs: {}, Component: () => null, audio: () => new Float32Array(2) }]);
     const p = kernel.createEmptyProject();
     p.duration = 6;
     p.media = [{ id: "v", kind: "video", name: "video.mp4", url: "/media/v.mp4", duration: 8 }];
@@ -25,7 +25,7 @@ async function fixture(run) {
   } finally { await server.close(); }
 }
 
-test("有声动效与素材均可独立静音：画面不变，撤销/重做/复制/切分/重开保留", () => fixture(async ({ actions, getState, findClip }) => {
+test("Audio motion graphics and media can each be muted independently: the picture is unchanged, and undo/redo/copy/split/reopen preserve it", () => fixture(async ({ actions, getState, findClip }) => {
   for (const id of ["av", "v1"]) {
     const before = findClip(getState().project, id).clip;
     assert.equal(actions.setClipMuted(id, true).ok, true);
@@ -53,7 +53,7 @@ test("有声动效与素材均可独立静音：画面不变，撤销/重做/复
   assert.deepEqual(buildAudioPlan(getState().project, ".", () => true).map(e => e.clipId), ["v1", "v2"]);
 }));
 
-test("内嵌卡声音分离明确失败，多选不部分执行，普通视频分离仍可一次撤销", () => fixture(async ({ actions, getState, findClip, server }) => {
+test("Separating audio from an embedded card fails explicitly, a multi-selection is not partially applied, and separating a regular video can still be undone in one step", () => fixture(async ({ actions, getState, findClip, server }) => {
   const before = getState().project;
   const failed = actions.separateAudio("av");
   assert.equal(failed.ok, false);
@@ -63,7 +63,7 @@ test("内嵌卡声音分离明确失败，多选不部分执行，普通视频�
   assert.equal(actions.canUndo(), false);
   const mixed = actions.separateAudios(["v1", "av", "v2"]);
   assert.equal(mixed.ok, false);
-  assert.strictEqual(getState().project, before, "不留空音轨或已静音的第一段");
+  assert.strictEqual(getState().project, before, "Leaves no empty audio track or muted first segment");
   const { audioHandlers } = await server.ssrLoadModule("/src/mcp/handlers/audio.ts");
   const reply = audioHandlers.separateAudio({ clipIds: ["v1", "av"] });
   assert.equal(reply.ok, false);
@@ -79,7 +79,7 @@ test("内嵌卡声音分离明确失败，多选不部分执行，普通视频�
   assert.strictEqual(getState().project, before);
 }));
 
-test("静音批次校验原子化，源码不可用但有内嵌标记的卡也不能分离", () => fixture(async ({ actions, getState }) => {
+test("Mute batch validation is atomic, and a card whose source is unavailable but has an embedded marker cannot be separated either", () => fixture(async ({ actions, getState }) => {
   const before = getState().project;
   assert.equal(actions.setClipsMuted(["av", "missing"], true).ok, false);
   assert.strictEqual(getState().project, before);
@@ -94,22 +94,22 @@ test("静音批次校验原子化，源码不可用但有内嵌标记的卡也�
   assert.equal(actions.separateAudio("av").code, "EMBEDDED_CARD_AUDIO_UNSEPARABLE");
 }));
 
-test("静音徽标常驻可访问，窄片段仍带图标与完整名称，失败会显示给人", () => fixture(async ({ server }) => {
+test("The mute badge is always present and accessible, a narrow clip still carries the icon and the full name, and failures are shown to the user", () => fixture(async ({ server }) => {
   const { clipMuteReason, ClipMuteBadge, reportClipAudioResult } = await server.ssrLoadModule("/src/editor/timeline/ClipMuteBadge.tsx");
   assert.equal(clipMuteReason({}, {}), null);
   assert.match(clipMuteReason({ audioMuted: true }, {}), /Clip muted/);
   assert.match(clipMuteReason({}, { muted: true }), /Track muted/);
   assert.match(clipMuteReason({ audioVolume: 0 }, {}), /Clip volume is 0/);
   for (const compact of [false, true]) {
-    const html = renderToStaticMarkup(React.createElement(ClipMuteBadge, { reason: "Clip muted", label: "动效", compact }));
+    const html = renderToStaticMarkup(React.createElement(ClipMuteBadge, { reason: "Clip muted", label: "Motion graphics", compact }));
     assert.match(html, /data-pc="clip-muted"/);
     assert.match(html, /aria-label="动效: Clip muted"/);
     assert.match(html, /<svg/);
     assert.match(html, /Muted/);
   }
   const messages = [];
-  assert.equal(reportClipAudioResult({ ok: false, error: "不能分离音轨" }, s => messages.push(s)), false);
-  assert.deepEqual(messages, ["不能分离音轨"]);
+  assert.equal(reportClipAudioResult({ ok: false, error: "Cannot separate the audio track" }, s => messages.push(s)), false);
+  assert.deepEqual(messages, ["Cannot separate the audio track"]);
   assert.equal(reportClipAudioResult({ ok: true }, s => messages.push(s)), true);
   assert.equal(messages.length, 1);
   assert.deepEqual(tools.find(t => t.name === "set_clip_muted").inputSchema.required, ["clipId", "muted"]);

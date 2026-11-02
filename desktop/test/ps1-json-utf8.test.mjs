@@ -10,14 +10,14 @@ import { spawnSync } from 'node:child_process';
 // 旧 Get-Content 在中文 Windows PowerShell 5.1 上会吃掉 JSON 引号；不改变系统代码页。
 const quote = (s) => "'" + s.replaceAll("'", "''") + "'";
 for (const kind of ['patch', 'extension']) {
-  test(`${kind} 真脚本在 PS 5.1 读取 UTF-8 中文清单和既有版本，不写安装目录`, { skip: process.platform !== 'win32' }, () => {
+  test(`${kind} real script reads the UTF-8 Chinese manifest and existing version in PS 5.1, without writing to the install directory`, { skip: process.platform !== 'win32' }, () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'promptcut-json-utf8-'));
     const installed = path.join(dir, 'installed');
     const script = path.join(dir, `apply-${kind}.ps1`);
     try {
       fs.mkdirSync(path.join(installed, 'runtime', 'app'), { recursive: true });
       const versions = path.join(installed, 'runtime', 'VERSIONS.json');
-      const versionsText = JSON.stringify({ app: '0.7.14', note: '依赖与基准一致' });
+      const versionsText = JSON.stringify({ app: '0.7.14', note: 'dependencies match baseline' });
       fs.writeFileSync(versions, versionsText, 'utf8');
       fs.copyFileSync(new URL(`../scripts/apply-${kind}.ps1`, import.meta.url), script);
       if (kind === 'patch') {
@@ -26,7 +26,7 @@ for (const kind of ['patch', 'extension']) {
         fs.writeFileSync(path.join(installed, 'runtime', 'app', 'package-lock.json'), lockText);
         const lockHash = createHash('sha256').update(lockText).digest('hex');
         fs.writeFileSync(path.join(dir, 'patch.json'), JSON.stringify({
-          format: 'promptcut-patch/1', appVersion: '0.7.14', depsReason: '依赖与基准一致',
+          format: 'promptcut-patch/1', appVersion: '0.7.14', depsReason: 'dependencies match baseline',
           shellGeneration: '0.2', minShellVersion: '0.2.0', includesDeps: false, lockHash,
           files: {}, removed: [],
         }), 'utf8');
@@ -53,7 +53,7 @@ for (const kind of ['patch', 'extension']) {
         },
       });
       assert.equal(result.status, 0, (result.stderr || result.stdout).slice(-2000));
-      assert.match(result.stdout, kind === 'patch' ? /检查全部通过/ : /检查通过/);
+      assert.match(result.stdout, kind === 'patch' ? /All checks passed/ : /Check passed/);
       assert.equal(fs.readFileSync(versions, 'utf8'), versionsText);
       assert.deepEqual(fs.readdirSync(path.join(installed, 'runtime')).sort(), kind === 'patch' ? ['VERSIONS.json', 'app'] : ['VERSIONS.json', 'app', 'python']);
     } finally {

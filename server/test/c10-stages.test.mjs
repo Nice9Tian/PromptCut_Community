@@ -23,7 +23,7 @@ async function parseFn() {
 }
 async function decideFn() {
   const hit = findExport(STAGE_FILES, STAGE_DECIDE_NAMES);
-  assert.ok(hit, `假设 K5：${STAGE_FILES.join('、')} 里找不到舞台取舍函数（${STAGE_DECIDE_NAMES.join(' / ')}）`);
+  assert.ok(hit, `Assumption K5: no stage selection function found in ${STAGE_FILES.join(', ')} (${STAGE_DECIDE_NAMES.join(' / ')})`);
   const mod = await importRepo(hit.file);
   return (args) => normalizeLayout(mod[hit.name](args));
 }
@@ -31,15 +31,15 @@ async function decideFn() {
 const S1 = 'https://s1.203-0-113-16.sslip.io';
 const S2 = 'https://s2.203-0-113-16.sslip.io';
 
-it('C10-ST-01 两个同站跨源的源 → A、B 各一个；本机开发的同主机不同端口也认', async () => {
+it('C10-ST-01 two origins that are same-site but cross-origin → one each for A and B; the same host on different ports in local development is accepted too', async () => {
   const parse = await parseFn();
   assert.deepEqual(parse({ stageOrigins: [S1, S2] }), { A: S1, B: S2 });
-  assert.deepEqual(parse(JSON.stringify({ stageOrigins: [S1, S2] })), { A: S1, B: S2 }, 'JSON 文本也认');
-  assert.deepEqual(parse({ stageOrigins: [`${S1}/`, `${S2}/`] }), { A: S1, B: S2 }, '末尾斜杠去掉，只留源');
+  assert.deepEqual(parse(JSON.stringify({ stageOrigins: [S1, S2] })), { A: S1, B: S2 }, 'JSON text is accepted too');
+  assert.deepEqual(parse({ stageOrigins: [`${S1}/`, `${S2}/`] }), { A: S1, B: S2 }, 'Trailing slashes are stripped, leaving only the origin');
   assert.deepEqual(parse({ stageOrigins: ['http://127.0.0.1:5431', 'http://127.0.0.1:5432'] }), { A: 'http://127.0.0.1:5431', B: 'http://127.0.0.1:5432' });
 });
 
-it('C10-ST-02 读不到或不合法 → 回空，不抛', async () => {
+it('C10-ST-02 unreadable or invalid → returns empty, does not throw', async () => {
   const parse = await parseFn();
   const bad = [
     undefined, null, '', '{', 'null', {}, { stageOrigins: null }, { stageOrigins: [] }, { stageOrigins: [S1] },
@@ -48,24 +48,24 @@ it('C10-ST-02 读不到或不合法 → 回空，不抛', async () => {
   ];
   for (const cfg of bad) {
     let r;
-    assert.doesNotThrow(() => { r = parse(cfg); }, `配置 ${JSON.stringify(cfg)} 不该抛`);
-    assert.equal(r ?? null, null, `配置 ${JSON.stringify(cfg)} 应回空，实际 ${JSON.stringify(r)}`);
+    assert.doesNotThrow(() => { r = parse(cfg); }, `Config ${JSON.stringify(cfg)} should not throw`);
+    assert.equal(r ?? null, null, `Config ${JSON.stringify(cfg)} should return empty, got ${JSON.stringify(r)}`);
   }
 });
 
-it('C10-ST-03 舞台闸门要试到第二级以上 + 配置读到 + 握手成功 → 双舞台', async () => {
+it('C10-ST-03 the stage gate is tried up to level 2 or above + the config is read + the handshake succeeds → dual stage', async () => {
   const decide = await decideFn();
   assert.equal(decide({ single: false, origins: { A: S1, B: S2 }, handshake: 'ok' }), 'dual');
 });
 
-it('C10-ST-04 读不到配置或舞台握手失败 → 同源单舞台', async () => {
+it('C10-ST-04 config unreadable or stage handshake fails → same-origin single stage', async () => {
   const decide = await decideFn();
   assert.equal(decide({ single: false, origins: null, handshake: 'ok' }), 'single');
   assert.equal(decide({ single: false, origins: { A: S1, B: S2 }, handshake: 'failed' }), 'single');
   assert.equal(decide({ single: false, origins: null, handshake: 'failed' }), 'single');
 });
 
-it('C10-ST-05 舞台闸门停在第一级恒单舞台', async () => {
+it('C10-ST-05 a stage gate that stops at level 1 always gives a single stage', async () => {
   const decide = await decideFn();
   for (const handshake of ['ok', 'failed']) {
     for (const origins of [{ A: S1, B: S2 }, null]) assert.equal(decide({ single: true, origins, handshake }), 'single');

@@ -40,7 +40,7 @@ function deps(over = {}) {
   return { d, written, notes, marked };
 }
 
-function fresh(name = "起点") {
+function fresh(name = "Starting point") {
   actions.newProject(name);
 }
 
@@ -48,22 +48,22 @@ function fresh(name = "起点") {
 let agentBusy = false;
 const agentProbe = { label: () => "Changes the Agent is making", count: () => (agentBusy ? 1 : 0) };
 
-test("本机 Agent 的工具还在跑:保存等它写完再序列化,文件里有它最后那一笔", async () => {
+test("A local Agent's tool is still running: save waits for it to finish writing before serializing, so the file contains its last write", async () => {
   fresh();
   agentBusy = true;
   setTimeout(() => {
-    actions.setProjectMeta({ name: "Agent 改的" });
+    actions.setProjectMeta({ name: "Edited by Agent" });
     agentBusy = false;
   }, 200);
   const { d, written } = deps({ probes: [agentProbe] });
   assert.equal(await saveProcFile("a.proc", d), "saved");
-  assert.equal(written[0].name, "Agent 改的");
+  assert.equal(written[0].name, "Edited by Agent");
 });
 
-test("这台设备正在导入的素材:等它传完;别的设备在传的(本机没有文件)不等", async () => {
+test("Media being imported on this device: wait for the upload to finish; media being uploaded by other devices (no local file) is not waited for", async () => {
   fresh();
-  const m = actions.addMedia({ kind: "image", name: "本机导入.png", url: "", pending: true });
-  const other = actions.addMedia({ kind: "image", name: "别人在传.png", url: "", pending: true });
+  const m = actions.addMedia({ kind: "image", name: "local-import.png", url: "", pending: true });
+  const other = actions.addMedia({ kind: "image", name: "uploaded-by-others.png", url: "", pending: true });
   const local = new Set([m.id]);
   const mediaProbe = {
     label: (n) => `Media being imported (${n})`,
@@ -72,26 +72,26 @@ test("这台设备正在导入的素材:等它传完;别的设备在传的(本�
   setTimeout(() => actions.updateMedia(m.id, { pending: undefined, url: "/@media/abc" }), 200);
   const { d, written } = deps({ probes: [mediaProbe], serialize: () => JSON.stringify({ pending: getState().project.media.filter((x) => x.pending).map((x) => x.id) }) });
   assert.equal(await saveProcFile("a.proc", d), "saved");
-  assert.deepEqual(written[0].pending, [other.id], "本机那张传完了才存;别人那张还 pending 也照存");
+  assert.deepEqual(written[0].pending, [other.id], "The local image is saved only after its upload finishes; the other device's image is saved even while still pending");
 });
 
-test("后台任务连着写:等它停下来(一段时间没有新的落地)再序列化", async () => {
+test("A background task keeps writing: wait until it stops (no new writes land for a while) before serializing", async () => {
   fresh();
   // 后台任务已经在写(第一笔在点保存之前落地),之后每 60 毫秒一笔
   let n = 1;
-  actions.setProjectMeta({ name: "后台第 1 笔" });
+  actions.setProjectMeta({ name: "Background write 1" });
   const timer = setInterval(() => {
     n += 1;
-    actions.setProjectMeta({ name: `后台第 ${n} 笔` });
+    actions.setProjectMeta({ name: `Background write ${n}` });
     if (n === 6) clearInterval(timer);
   }, 60);
   await sleep(10);
   const { d, written } = deps({ probes: [] });
   assert.equal(await saveProcFile("a.proc", d), "saved");
-  assert.equal(written[0].name, "后台第 6 笔", "存的是写完之后的样子,不是写到一半");
+  assert.equal(written[0].name, "Background write 6", "What is saved is the state after writing finished, not halfway through");
 });
 
-test("Agent 一直没写完:到时限不写文件,说清楚在等 Agent;之后恢复编辑", async () => {
+test("The Agent never finishes writing: at the time limit no file is written, the notice says it is waiting for the Agent; editing is restored afterwards", async () => {
   fresh();
   agentBusy = true;
   const { d, written, notes, marked } = deps({ probes: [agentProbe], waitTimeoutMs: 400 });
@@ -100,17 +100,17 @@ test("Agent 一直没写完:到时限不写文件,说清楚在等 Agent;之后�
   } finally {
     agentBusy = false;
   }
-  assert.equal(written.length, 0, "没写文件");
-  assert.equal(marked.length, 0, "没标已保存");
+  assert.equal(written.length, 0, "No file was written");
+  assert.equal(marked.length, 0, "Not marked as saved");
   assert.match(notes[0].m, /Agent/);
   assert.match(notes[0].m, /The original file was not changed/);
   const { isSaveLocked } = await import(srcUrl("editor/saveLock.ts"));
-  assert.equal(isSaveLocked(), false, "锁解开了");
+  assert.equal(isSaveLocked(), false, "The lock is released");
 });
 
-test("素材一直没导完:到时限不写文件,提示里有件数", async () => {
+test("Media never finishes importing: at the time limit no file is written, and the notice contains the count", async () => {
   fresh();
-  const m = actions.addMedia({ kind: "video", name: "大文件.mp4", url: "", pending: true });
+  const m = actions.addMedia({ kind: "video", name: "big-file.mp4", url: "", pending: true });
   const probe = { label: (n) => `Media being imported (${n})`, count: () => (getState().project.media.find((x) => x.id === m.id)?.pending ? 1 : 0) };
   const { d, written, notes } = deps({ probes: [probe], waitTimeoutMs: 300 });
   assert.equal(await saveProcFile("a.proc", d), "failed");
@@ -118,7 +118,7 @@ test("素材一直没导完:到时限不写文件,提示里有件数", async () 
   assert.match(notes[0].m, /Media being imported \(1\)/);
 });
 
-test("待文档服务确认的修改等不到:不写文件,沿用原来的说法", async () => {
+test("Changes awaiting document service confirmation never get it: no file is written, and the existing wording is reused", async () => {
   fresh();
   const { d, written, notes } = deps({ probes: [], settle: async () => { throw new Error("timeout"); } });
   assert.equal(await saveProcFile("a.proc", d), "failed");
@@ -126,7 +126,7 @@ test("待文档服务确认的修改等不到:不写文件,沿用原来的说法
   assert.match(notes[0].m, /not been confirmed by the document service/);
 });
 
-test("序列化之后项目又被本机改了(写盘期间 Agent 落了一笔):文件照存,但不标「已保存」,并告诉用户", async () => {
+test("The project was changed locally again after serialization (an Agent write landed during the disk write): the file is still saved but not marked \"saved\", and the user is told", async () => {
   fresh();
   const { d, written, marked, notes } = deps({
     probes: [],
@@ -134,22 +134,22 @@ test("序列化之后项目又被本机改了(写盘期间 Agent 落了一笔):�
       const text = await produce();
       // 写盘这段时间里 Agent 的工具落了一笔
       beginAgentTool();
-      actions.setProjectMeta({ name: "写盘期间改的" });
+      actions.setProjectMeta({ name: "Changed during disk write" });
       endAgentTool();
       written.push(JSON.parse(text));
       return { kind: "saved", where: fileName };
     },
   });
   assert.equal(await saveProcFile("a.proc", d), "saved");
-  assert.equal(written[0].name, "起点");
-  assert.equal(marked.length, 0, "项目已经不是文件里那一份,不能标成已保存");
+  assert.equal(written[0].name, "Starting point");
+  assert.equal(marked.length, 0, "The project is no longer the one in the file, so it cannot be marked as saved");
   assert.equal(getState().dirty, true);
   assert.equal(notes.length, 1);
   assert.equal(notes[0].tone, "info");
   assert.match(notes[0].m, /later changes are not saved yet/);
 });
 
-test("缺省的探测:Agent 工具在跑时 agentToolProbe 记 1;本机正在导入的素材才算", async () => {
+test("Default probe: agentToolProbe counts 1 while an Agent tool is running; only media being imported locally counts", async () => {
   const lw = await import(srcUrl("editor/io/localWrites.ts"));
   beginAgentTool();
   assert.equal(lw.agentToolProbe.count(), 1);
@@ -160,7 +160,7 @@ test("缺省的探测:Agent 工具在跑时 agentToolProbe 记 1;本机正在导
   assert.equal(probe.label(1), "Media being imported (1)");
 });
 
-test("序列化之后协作者的修改到了(不是本机落的):不标「已保存」,但也不另外提示", async () => {
+test("A collaborator's change arrives after serialization (not written locally): not marked \"saved\", but no extra notice either", async () => {
   fresh();
   const core = await import(srcUrl("store/core.ts"));
   const { d, written, marked, notes } = deps({
@@ -168,13 +168,13 @@ test("序列化之后协作者的修改到了(不是本机落的):不标「已�
     writeProc: async (produce, fileName) => {
       const text = await produce();
       // 别的设备的修改经文档服务到了:docsync 直接换 state.project 并标脏(src/store/docsync.ts 的 bindStore)
-      core.set({ project: { ...getState().project, name: "协作者改的" }, dirty: true });
+      core.set({ project: { ...getState().project, name: "Changed by collaborator" }, dirty: true });
       written.push(JSON.parse(text));
       return { kind: "saved", where: fileName };
     },
   });
   assert.equal(await saveProcFile("a.proc", d), "saved");
-  assert.equal(written[0].name, "起点");
-  assert.equal(marked.length, 0, "文件里没有协作者那一笔,不能标已保存");
-  assert.deepEqual(notes, [], "协作者的修改本来就随时把项目标脏,不另说");
+  assert.equal(written[0].name, "Starting point");
+  assert.equal(marked.length, 0, "The file lacks the collaborator's change, so it cannot be marked as saved");
+  assert.deepEqual(notes, [], "Collaborator changes mark the project dirty at any time anyway, so nothing more is said");
 });

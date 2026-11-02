@@ -129,10 +129,10 @@ export async function loadHostModule() {
     mod = await hostModPromise;
   } catch (error) {
     hostModPromise = null;
-    assert.fail(`载入 server/render-node/host.mjs 失败（见 render-host-kit.mjs 文件头的对账说明）：${error?.message ?? error}`);
+    assert.fail(`Failed to load server/render-node/host.mjs (see the reconciliation notes in the header of render-host-kit.mjs): ${error?.message ?? error}`);
   }
   for (const name of ['parseHostConfig', 'loadHostConfig', 'createRenderHost']) {
-    assert.equal(typeof mod[name], 'function', `主机模块要有 ${name}；实际：${Object.keys(mod).join(', ')}`);
+    assert.equal(typeof mod[name], 'function', `The host module must have ${name}; actual: ${Object.keys(mod).join(', ')}`);
   }
   return mod;
 }
@@ -188,7 +188,7 @@ export function createGateExecutor({ autoMs = null } = {}) {
     waiting,
     async plan(task) {
       stats.planCalls += 1;
-      throw Object.assign(new Error(`主机不该算 plan：${task?.id}`), { retryable: false });
+      throw Object.assign(new Error(`The host should not compute plan: ${task?.id}`), { retryable: false });
     },
     render(task, { signal }) {
       stats.running += 1;
@@ -272,14 +272,14 @@ export async function publishAs(s, project, username, tasks) {
   assert.equal(w.type, 'publisher.welcome', JSON.stringify(w));
   const r = await ask(c, { type: 'task.publish', tasks }, 'task.published');
   assert.equal(r.type, 'task.published', JSON.stringify(r));
-  for (const item of r.results ?? []) assert.equal(item.error ?? null, null, `发布失败：${JSON.stringify(item)}`);
+  for (const item of r.results ?? []) assert.equal(item.error ?? null, null, `Publish failed: ${JSON.stringify(item)}`);
   return { conn: c, published: r };
 }
 
 /** 文档服务里某个共享空间的队列 describe（M6a：`modules['render-queue'].spaces[projectId]`） */
 export function queueOf(s, projectId) {
   const d = s.service.describe().modules?.['render-queue'];
-  assert.ok(d && typeof d === 'object', `文档服务 describe 里没有 render-queue 模块：${JSON.stringify(Object.keys(s.service.describe().modules ?? {}))}`);
+  assert.ok(d && typeof d === 'object', `No render-queue module in the describe of the document service: ${JSON.stringify(Object.keys(s.service.describe().modules ?? {}))}`);
   const q = d.spaces?.[projectId];
   return q ?? { tasks: [], nodes: [], publishers: [] };
 }

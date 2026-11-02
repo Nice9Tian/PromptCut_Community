@@ -25,7 +25,7 @@ function project(clips) {
     tracks: [{ id: "tr", name: "tr", clips: clips.map((c) => ({ id: c.id, cardId: `card-${c.id}`, start: c.start, end: c.end, params: {} })) }] };
 }
 
-test("CP-01 searchLight:判轻的卡在每个位置都判轻(同时 40 张也不挤出),其余与没有身份的每个位置都判重", () => {
+test("CP-01 searchLight: cards judged light are judged light at every position (40 at once are not squeezed out either), all others and cards without identity are judged heavy at every position", () => {
   const clips = Array.from({ length: 40 }, (_, i) => ({ id: `c${String(i).padStart(2, "0")}`, start: 0, end: 5 }));
   clips.push({ id: "noid", start: 1, end: 3 });
   const identityKeys = Object.fromEntries(clips.filter((c) => c.id !== "noid").map((c) => [c.id, `key-${c.id}`]));
@@ -36,10 +36,10 @@ test("CP-01 searchLight:判轻的卡在每个位置都判轻(同时 40 张也不
     for (let t = c.start; t < c.end; t += 0.5) assert.equal(pipelineAt(plan, c.id, t), isLight ? "light" : "heavy", `${c.id} @ ${t}`);
     assert.equal(plan.prerenderSet.has(c.id), !isLight, c.id);
   }
-  assert.ok(plan.prerenderSet.has("noid"), "没有身份的卡判重");
+  assert.ok(plan.prerenderSet.has("noid"), "a card without identity is judged heavy");
 });
 
-test("CP-02 planDispatch:判定表按搜索结果;搜索完成前全部判重、searchJudged=false;最低一档显示表一直全部判重", async () => {
+test("CP-02 planDispatch: the judgment table follows the search result; before the search completes everything is judged heavy and searchJudged=false; the display table at the lowest tier is always all judged heavy", async () => {
   mock.module(srcUrl("editor/stageBridge.ts"), { exports: { frontStage: () => null, backStage: () => null } });
   mock.module(srcUrl("editor/costIdentity.ts"), { exports: { clipIdentityOf: () => ({ identityKeys: { a: "ka", b: "kb", c: "kc" }, frameModes: { a: "direct", b: "direct", c: "direct" } }) } });
   // 夹具里的卡要在注册表里有定义:两边都没有定义的「未知卡片」不进分派表(2026-09-29 起,舞台不画它们)
@@ -49,28 +49,28 @@ test("CP-02 planDispatch:判定表按搜索结果;搜索完成前全部判重、
   const settle = () => new Promise((r) => queueMicrotask(r));
   d.setPlanProject(project([{ id: "a", start: 0, end: 2 }, { id: "b", start: 0, end: 2 }, { id: "c", start: 1, end: 3 }]));
   await settle();
-  assert.equal(d.searchJudged(), true, "不按界限搜索判时恒为 true");
-  assert.equal(d.judgedPlan(), d.currentPlan(), "两样开关都关:两张表是同一张");
+  assert.equal(d.searchJudged(), true, "always true when not judging by boundary search");
+  assert.equal(d.judgedPlan(), d.currentPlan(), "both switches off: the two tables are the same one");
   d.setPlanSearch(true);
   await settle();
   assert.equal(d.planSearch(), true);
-  assert.equal(d.searchJudged(), false, "搜索还没做完");
-  assert.deepEqual([...d.judgedPlan().prerenderSet], ["a", "b", "c"], "没有结果时判定表全部判重");
+  assert.equal(d.searchJudged(), false, "search not finished yet");
+  assert.deepEqual([...d.judgedPlan().prerenderSet], ["a", "b", "c"], "with no result the judgment table is all judged heavy");
   d.setPlanSearchLight(["ka", "kc"]);
   assert.equal(d.searchJudged(), true);
-  assert.deepEqual([...d.judgedPlan().prerenderSet], ["b"], "判定表按搜索结果(同步重算)");
+  assert.deepEqual([...d.judgedPlan().prerenderSet], ["b"], "judgment table follows the search result (recomputed synchronously)");
   assert.equal(pipelineAt(d.judgedPlan(), "a", 1), "light");
   await settle();
-  assert.equal(d.currentPlan(), d.judgedPlan(), "精简模式:显示用的表就是判定的表(判轻的照常活渲)");
+  assert.equal(d.currentPlan(), d.judgedPlan(), "lean mode: the display table is the judgment table (cards judged light are still live rendered as usual)");
   d.setPlanLowest(true);
   await settle();
-  assert.deepEqual([...d.currentPlan().prerenderSet], ["a", "b", "c"], "最低一档:显示用的表全部判重");
-  assert.deepEqual([...d.judgedPlan().prerenderSet], ["b"], "判定的表不变");
+  assert.deepEqual([...d.currentPlan().prerenderSet], ["a", "b", "c"], "lowest tier: the display table is all judged heavy");
+  assert.deepEqual([...d.judgedPlan().prerenderSet], ["b"], "the judgment table is unchanged");
   assert.deepEqual([...d.planSearchLight()].sort(), ["ka", "kc"]);
   d.setPlanLowest(false);
   d.setPlanSearch(false);
   await settle();
-  assert.equal(d.planSearchLight(), null, "不按界限搜索判了:丢掉结果");
+  assert.equal(d.planSearchLight(), null, "no longer judged by boundary search: discard the result");
   assert.equal(d.judgedPlan(), d.currentPlan());
   d.resetPlanDispatch();
 });
@@ -82,7 +82,7 @@ test("CP-02 planDispatch:判定表按搜索结果;搜索完成前全部判重、
 
 const O = await import(srcUrl("export/originals.ts"));
 
-test("CP-04 导出:按判定的表只核对、只取判重卡的预渲染原尺寸;判轻的卡层表里有也本机渲", async () => {
+test("CP-04 export: by the judgment table, only check and only fetch the prerender original size of cards judged heavy; cards judged light are rendered locally even if the layer map has them", async () => {
   const H = "a".repeat(64);
   const map = { kind: "layer-map", projectId: "proj", fps: 30, v: 2, span: 4, layers: [
     { clipId: "heavyCard", kind: "html", key: "k-h", resultKey: "rk-h", firstFrame: 0, count: 4, contentKey: "ck-h", envFingerprint: "0123456789abcdef" },
@@ -95,16 +95,16 @@ test("CP-04 导出:按判定的表只核对、只取判重卡的预渲染原尺�
   };
   const deps = { request, assetBase: () => "http://x/api/asset", authHeaders: async () => ({}) };
   const normal = await O.loadOriginalsIndex("proj", deps);
-  assert.deepEqual(normal.missing, ["lightCard"], "不给判定的表:层表里的都算重卡,缺了要等");
+  assert.deepEqual(normal.missing, ["lightCard"], "no judgment table given: everything in the layer map counts as a heavy card, and missing ones must be waited for");
   const low = await O.loadOriginalsIndex("proj", deps, { onlyClips: ["heavyCard"] });
-  assert.deepEqual(low.missing, [], "按判定的表:判轻的卡不核对");
+  assert.deepEqual(low.missing, [], "by the judgment table: cards judged light are not checked");
   assert.equal(low.hashAt("heavyCard", 2), H);
-  assert.equal(low.hashAt("lightCard", 2), undefined, "判轻的卡不取原尺寸(本机渲)");
+  assert.equal(low.hashAt("lightCard", 2), undefined, "cards judged light do not fetch the original size (rendered locally)");
   const noMap = await O.loadOriginalsIndex(null, deps, { fallbackHeavy: ["heavyCard", "lightCard"], onlyClips: ["heavyCard"] });
   assert.deepEqual(noMap.missing, ["heavyCard"]);
 });
 
-test("CP-05 桌面不受影响:不给新选项时 planPipelines 的结果与原来逐字段相同(同一份输入跑两遍、对照 allHeavy 以外的路径)", () => {
+test("CP-05 desktop app unaffected: without the new options, the planPipelines result is identical field by field to before (run the same input twice, compare paths other than allHeavy)", () => {
   const clips = [{ id: "a", start: 0, end: 4 }, { id: "b", start: 1, end: 3 }, { id: "c", start: 2, end: 6 }];
   const costs = [
     { identityKey: "ka", fps: FPS, device: "d", stepMs: 3, kind: "random", catchUpMs: 0 },
@@ -115,28 +115,28 @@ test("CP-05 桌面不受影响:不给新选项时 planPipelines 的结果与原�
   const y = planPipelines(project(clips), costs, FPS, { ...opts, searchLight: null });
   const wire = (p) => JSON.stringify({ s: p.segments.map((g) => [g.fromSec, g.toSec, [...g.heavy], [...g.light]]), set: [...p.prerenderSet] });
   assert.equal(wire(x), wire(y));
-  assert.deepEqual([...x.prerenderSet], ["b", "c"], "b 实测超预算、c 没记录且声明 stateful");
+  assert.deepEqual([...x.prerenderSet], ["b", "c"], "b measured over budget, c has no record and declares stateful");
 });
 
-test("CP-06 searchLight 与 allHeavy 同时给:allHeavy 优先", () => {
+test("CP-06 searchLight and allHeavy given together: allHeavy takes priority", () => {
   const plan = planPipelines(project([{ id: "a", start: 0, end: 1 }]), [], FPS, { identityKeys: { a: "ka" }, searchLight: ["ka"], allHeavy: true });
   assert.deepEqual([...plan.prerenderSet], ["a"]);
 });
 
-test("CP-07 即时渲染闸门:测崩过的卡直接当重卡(有记录的钉死为重,没有记录的补一条),按界限搜索判时也从判轻里去掉", async () => {
+test("CP-07 on-demand render gate: a card whose measurement crashed is treated as a heavy card directly (recorded ones are pinned as heavy, unrecorded ones get an entry added), and is also removed from the judged-light set when judging by boundary search", async () => {
   const d = await import(srcUrl("editor/planDispatch.ts"));
   d.resetPlanDispatch();
   const settle = () => new Promise((r) => queueMicrotask(r));
   d.setPlanProject(project([{ id: "a", start: 0, end: 2 }, { id: "b", start: 0, end: 2 }, { id: "c", start: 1, end: 3 }]));
   await settle();
-  assert.deepEqual([...d.currentPlan().prerenderSet], [], "声明 direct 的三张都判轻");
+  assert.deepEqual([...d.currentPlan().prerenderSet], [], "all three that declare direct are judged light");
   d.setPlanForcedHeavy(["kb"]);
   await settle();
-  assert.deepEqual([...d.currentPlan().prerenderSet], ["b"], "测崩过的 b 当重卡");
+  assert.deepEqual([...d.currentPlan().prerenderSet], ["b"], "b, whose measurement crashed, is treated as a heavy card");
   d.setPlanSearch(true);
   d.setPlanSearchLight(["ka", "kb", "kc"]);
   await settle();
-  assert.deepEqual([...d.judgedPlan().prerenderSet], ["b"], "界限搜索判它轻也照样当重卡");
+  assert.deepEqual([...d.judgedPlan().prerenderSet], ["b"], "still treated as a heavy card even if boundary search judges it light");
   d.setPlanForcedHeavy([]);
   d.resetPlanDispatch();
 });

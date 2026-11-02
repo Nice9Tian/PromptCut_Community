@@ -34,11 +34,11 @@ const project = (tracks) => ({ ...BASE, tracks });
 function roundTrip(prev, next) {
   const patch = changedClips(prev, next);
   const applied = applyProjectPatch(prev, patch);
-  assert.equal(projectHash(applied), projectHash(next), `应用补丁后哈希对不上:${JSON.stringify(patch).slice(0, 200)}`);
+  assert.equal(projectHash(applied), projectHash(next), `Hash does not match after applying the patch: ${JSON.stringify(patch).slice(0, 200)}`);
   return { patch, applied };
 }
 
-test("顶层字段表和 frameClient 的签名逐字一致", () => {
+test("The top-level field list matches the frameClient signature verbatim", () => {
   /*
    * 两张表分家会悄悄坏掉:frameClient 那边新加一个字段、这边没跟上的话,
    * 那个字段就不进 `projectHash` —— 镜像的 409 校验从此看不见它,页面和服务端
@@ -46,38 +46,38 @@ test("顶层字段表和 frameClient 的签名逐字一致", () => {
    */
   const src = readFileSync(new URL("./frameClient.ts", import.meta.url), "utf8");
   const body = /const signatureFields = \(project: Project\) => JSON\.stringify\(\[([^\]]*)\]\)/.exec(src);
-  assert.ok(body, "frameClient.ts 里的 signatureFields() 长得和这条正则对不上了,改了形状就同步改这里");
+  assert.ok(body, "signatureFields() in frameClient.ts no longer matches this regex; if the shape changes, update it here too");
   const fields = body[1].split(",").map((s) => s.trim().replace(/^project\./, ""));
   assert.deepEqual([...TOP_FIELDS], fields);
 });
 
-test("没有基线、或 tracks 以外的字段变了 → 整份", () => {
+test("No baseline, or a field other than tracks changed → full", () => {
   const a = project([track("t1", 2)]);
   assert.deepEqual(changedClips(null, a), { kind: "full", project: a });
   // 改画幅 / 换主题 / 改素材 / 改卡片节点:一律整份
   for (const [k, v] of [["width", 1280], ["themeId", "light"], ["media", [{ id: "m" }]], ["cardNodes", [{ id: "d" }]], ["style", { a: 1 }]]) {
     const b = { ...a, [k]: v };
-    assert.equal(changedClips(a, b).kind, "full", `${k} 变了应该整份`);
-    assert.notEqual(projectHash(a), projectHash(b), `${k} 变了哈希应该不同`);
+    assert.equal(changedClips(a, b).kind, "full", `${k} changed, should be full`);
+    assert.notEqual(projectHash(a), projectHash(b), `${k} changed, hash should differ`);
   }
   /*
    * 不在字段表里的元信息(名字)哈希上看不见 —— 哈希只管「画出来一不一样」。
    * 所以补丁那一层必须**按全部自有键**比,不然改个名字会走增量、而增量只带轨道,
    * 镜像里的名字就永远停在旧的上(Agent 的 get_project 读的正是它)。
    */
-  const renamed = { ...a, name: "别的名字" };
+  const renamed = { ...a, name: "another name" };
   assert.equal(changedClips(a, renamed).kind, "full");
   assert.equal(projectHash(renamed), projectHash(a));
 });
 
-test("引用没变 / tracks 没变 → 空补丁", () => {
+test("references unchanged / tracks unchanged → empty patch", () => {
   const a = project([track("t1", 2)]);
   assert.ok(isEmptyPatch(changedClips(a, a)));
   assert.ok(isEmptyPatch(changedClips(a, { ...a })));
   assert.ok(!isEmptyPatch({ kind: "full", project: a }));
 });
 
-test("轨道:新增 / 删除 / 换序", () => {
+test("tracks: add / delete / reorder", () => {
   const t1 = track("t1", 2), t2 = track("t2", 2), t3 = track("t3", 1);
   const a = project([t1, t2]);
 
@@ -94,10 +94,10 @@ test("轨道:新增 / 删除 / 换序", () => {
   const reordered = roundTrip(a, project([t2, t1]));
   assert.deepEqual(reordered.patch.order, ["t2", "t1"]);
   assert.deepEqual(reordered.patch.tracks, []);
-  assert.equal(reordered.applied.tracks[0], t2, "换序不该造新对象");
+  assert.equal(reordered.applied.tracks[0], t2, "reordering should not create new objects");
 });
 
-test("轨道自身属性:hidden / muted 整组给", () => {
+test("track's own properties: hidden / muted are passed as a whole group", () => {
   const t1 = track("t1", 2), t2 = track("t2", 2);
   const a = project([t1, t2]);
 
@@ -105,9 +105,9 @@ test("轨道自身属性:hidden / muted 整组给", () => {
   assert.equal(hidden.patch.order, null);
   assert.equal(hidden.patch.tracks.length, 1);
   assert.equal(hidden.patch.tracks[0].props.hidden, true);
-  assert.equal(hidden.patch.tracks[0].clips, undefined, "只改属性不该带片段");
-  assert.equal(hidden.applied.tracks[0].clips, t1.clips, "片段数组该原样留着");
-  assert.equal(hidden.applied.tracks[1], t2, "没动的轨道该是同一个对象");
+  assert.equal(hidden.patch.tracks[0].clips, undefined, "changing only properties should not carry clips");
+  assert.equal(hidden.applied.tracks[0].clips, t1.clips, "the clip array should be left as is");
+  assert.equal(hidden.applied.tracks[1], t2, "an untouched track should be the same object");
 
   const muted = roundTrip(a, project([{ ...t1, muted: true }, t2]));
   assert.equal(muted.patch.tracks[0].props.muted, true);
@@ -118,7 +118,7 @@ test("轨道自身属性:hidden / muted 整组给", () => {
   assert.ok(!("hidden" in dropped.applied.tracks[0]));
 });
 
-test("片段:改一个 / 加一个 / 删一个 / 换序", () => {
+test("clips: change one / add one / delete one / reorder", () => {
   const t1 = track("t1", 3), t2 = track("t2", 3);
   const a = project([t1, t2]);
 
@@ -126,14 +126,14 @@ test("片段:改一个 / 加一个 / 删一个 / 换序", () => {
   const moved = { ...t1.clips[1], start: 5, end: 6 };
   const drag = roundTrip(a, project([{ ...t1, clips: [t1.clips[0], moved, t1.clips[2]] }, t2]));
   assert.equal(drag.patch.tracks.length, 1);
-  assert.equal(drag.patch.tracks[0].props, undefined, "轨道属性没动就别带 props");
+  assert.equal(drag.patch.tracks[0].props, undefined, "do not carry props if track properties did not change");
   assert.deepEqual(drag.patch.tracks[0].clips, [{ id: moved.id, clip: moved }]);
-  assert.equal(drag.patch.tracks[0].clipOrder, undefined, "顺序没变就别带 clipOrder");
+  assert.equal(drag.patch.tracks[0].clipOrder, undefined, "do not carry clipOrder if the order did not change");
   assert.equal(drag.applied.tracks[0].clips[0], t1.clips[0]);
   assert.equal(drag.applied.tracks[0].clips[2], t1.clips[2]);
   assert.equal(drag.applied.tracks[1], t2);
   // 一次拖动的补丁应该是「一段」这个量级,不是整份项目
-  assert.ok(JSON.stringify(drag.patch).length < 8 * 1024, "一段的补丁不该到 8 KB");
+  assert.ok(JSON.stringify(drag.patch).length < 8 * 1024, "the patch for a single clip should not reach 8 KB");
 
   const fresh = clip("t1-new");
   const added = roundTrip(a, project([{ ...t1, clips: [...t1.clips, fresh] }, t2]));
@@ -145,7 +145,7 @@ test("片段:改一个 / 加一个 / 删一个 / 换序", () => {
   assert.deepEqual(removed.applied.tracks[0].clips.map((c) => c.id), ["t1-0", "t1-2"]);
 
   const reordered = roundTrip(a, project([{ ...t1, clips: [t1.clips[2], t1.clips[0], t1.clips[1]] }, t2]));
-  assert.equal(reordered.patch.tracks[0].clips, undefined, "只换序不该重发片段");
+  assert.equal(reordered.patch.tracks[0].clips, undefined, "reordering only should not resend clips");
   assert.deepEqual(reordered.patch.tracks[0].clipOrder, ["t1-2", "t1-0", "t1-1"]);
   assert.equal(reordered.applied.tracks[0].clips[0], t1.clips[2]);
 
@@ -159,7 +159,7 @@ test("片段:改一个 / 加一个 / 删一个 / 换序", () => {
   assert.equal(across.applied.tracks[1].clips[3], c);
 });
 
-test("素材段和卡片段都按引用比", () => {
+test("media clips and card clips are both compared by reference", () => {
   const mediaClip = clip("m-0", { kind: "media", mediaId: "v1", mediaOffset: 0 });
   const t1 = { id: "t1", name: "t1", hidden: false, clips: [mediaClip] };
   const a = project([t1]);
@@ -168,27 +168,27 @@ test("素材段和卡片段都按引用比", () => {
   assert.equal(patch.tracks[0].clips[0].clip.mediaOffset, 1.5);
 });
 
-test("补丁对不上基线就抛(让镜像翻成 409)", () => {
+test("throw if the patch does not match the baseline (so the mirror turns it into a 409)", () => {
   const a = project([track("t1", 1)]);
-  assert.throws(() => applyProjectPatch(a, { kind: "tracks", order: null, tracks: [{ id: "nope", props: {} }] }), /不存在的轨道/);
-  assert.throws(() => applyProjectPatch(a, { kind: "tracks", order: ["nope"], tracks: [] }), /不存在的轨道/);
-  assert.throws(() => applyProjectPatch(a, { kind: "tracks", order: null, tracks: [{ id: "t1", clipOrder: ["nope"] }] }), /不存在的片段/);
-  assert.throws(() => applyProjectPatch(a, { kind: "weird" }), /未知的补丁类型/);
+  assert.throws(() => applyProjectPatch(a, { kind: "tracks", order: null, tracks: [{ id: "nope", props: {} }] }), /nonexistent track/);
+  assert.throws(() => applyProjectPatch(a, { kind: "tracks", order: ["nope"], tracks: [] }), /nonexistent track/);
+  assert.throws(() => applyProjectPatch(a, { kind: "tracks", order: null, tracks: [{ id: "t1", clipOrder: ["nope"] }] }), /nonexistent clip/);
+  assert.throws(() => applyProjectPatch(a, { kind: "weird" }), /unknown patch type/);
   assert.equal(applyProjectPatch(a, null), a);
 });
 
-test("应用补丁不改原对象(镜像要按版本号留住旧版)", () => {
+test("applying a patch does not modify the original object (the mirror must keep old versions by version number)", () => {
   const t1 = track("t1", 2);
   const a = project([t1]);
   const before = JSON.stringify(a);
   const next = project([{ ...t1, clips: [{ ...t1.clips[0], start: 9 }, t1.clips[1]] }]);
   const applied = applyProjectPatch(a, changedClips(a, next));
-  assert.equal(JSON.stringify(a), before, "基线被就地改了");
+  assert.equal(JSON.stringify(a), before, "the baseline was modified in place");
   assert.notEqual(applied, a);
   assert.notEqual(applied.tracks, a.tracks);
 });
 
-test("三级缓存:拖一个片段只重算 1 个片段 + 1 条轨道", async () => {
+test("three-level cache: dragging one clip recomputes only 1 clip + 1 track", async () => {
   const tracks = Array.from({ length: 17 }, (_, i) => track(`t${i}`, 10));
   const a = project(tracks);
 
@@ -214,10 +214,10 @@ test("三级缓存:拖一个片段只重算 1 个片段 + 1 条轨道", async ()
   const ms = performance.now() - t0;
   const warm = hashStats();
 
-  assert.equal(warm.clips, 1, `重算了 ${warm.clips} 个片段`);
-  assert.equal(warm.tracks, 1, `重算了 ${warm.tracks} 条轨道`);
-  assert.equal(warm.fields, 1, "顶层拼一次");
-  assert.equal(warm.values, 0, "非轨道字段引用没变,不该重算");
+  assert.equal(warm.clips, 1, `recomputed ${warm.clips} clips`);
+  assert.equal(warm.tracks, 1, `recomputed ${warm.tracks} tracks`);
+  assert.equal(warm.fields, 1, "top level is assembled once");
+  assert.equal(warm.values, 0, "non-track field references did not change, should not recompute");
   assert.notEqual(hash, projectHash(a));
 
   // 计时:单次 ≤ 2 ms。机器忙(几份 npm test 并行)时单次可能正好被挂起,所以不达标就再拖一次重量,
@@ -233,11 +233,11 @@ test("三级缓存:拖一个片段只重算 1 个片段 + 1 条轨道", async ()
     projectHash(bk);
     times.push(performance.now() - s0);
     const st = hashStats();
-    assert.equal(st.clips, 1, `第 ${k + 1} 次重算了 ${st.clips} 个片段`);
-    assert.equal(st.tracks, 1, `第 ${k + 1} 次重算了 ${st.tracks} 条轨道`);
+    assert.equal(st.clips, 1, `recompute #${k + 1} recomputed ${st.clips} clips`);
+    assert.equal(st.tracks, 1, `recompute #${k + 1} recomputed ${st.tracks} tracks`);
   }
   const best = Math.min(...times);
-  assert.ok(best <= 2, `17 轨 × 10 段拖一段重算,量了 ${times.length} 次,最快也用了 ${best.toFixed(3)} ms,超过 2 ms(${times.map((x) => x.toFixed(2)).join(", ")})`);
+  assert.ok(best <= 2, `recompute after dragging one clip in 17 tracks × 10 clips, measured ${times.length} times, even the fastest took ${best.toFixed(3)} ms, over 2 ms (${times.map((x) => x.toFixed(2)).join(", ")})`);
 
   // diff 也得是「一段」这个量级
   const patch = changedClips(a, b);
@@ -246,7 +246,7 @@ test("三级缓存:拖一个片段只重算 1 个片段 + 1 条轨道", async ()
   assert.equal(projectHash(applyProjectPatch(a, patch)), hash);
 });
 
-test("clips 在轨道对象里排第几个不影响哈希", () => {
+test("the position of clips inside the track object does not affect the hash", () => {
   /*
    * 服务端应用补丁时把轨道重建成 `{...props, clips}` —— `clips` 一定排在最后,
    * 而页面那份里它可能夹在中间。`trackHash` 把片段和自身属性分开算就是为了这个:
@@ -258,7 +258,7 @@ test("clips 在轨道对象里排第几个不影响哈希", () => {
   assert.equal(projectHash(b), projectHash(a));
 });
 
-test("剪辑段引用的剪辑进项目哈希;没有剪辑段的项目哈希不变;没被引用的剪辑改了不影响", () => {
+test("cuts referenced by cut segments go into the project hash; the project hash is unchanged for projects without cut segments; changing an unreferenced cut has no effect", () => {
   const seg = { id: "s1", cardId: "", cutId: "B", start: 0, end: 2, params: {} };
   const cuts = (bClips, cClips = []) => [
     { id: "A", name: "A" },
@@ -273,8 +273,8 @@ test("剪辑段引用的剪辑进项目哈希;没有剪辑段的项目哈希不�
   const a = { ...plain, tracks, cuts: cuts([clip("b1")]), activeCutId: "A" };
   const b = { ...plain, tracks, cuts: cuts([clip("b1", { start: 0.5 })]), activeCutId: "A" };
   const c = { ...plain, tracks, cuts: cuts([clip("b1")], [clip("c1")]), activeCutId: "A" };
-  assert.notEqual(projectHash(a), projectHash(b), "被引用剪辑 B 改了,哈希要变");
+  assert.notEqual(projectHash(a), projectHash(b), "referenced cut B changed, the hash must change");
   // c 和 a 只差没被引用的 C;b1 的 params 每次 clip() 都不同,所以拿 a 的 B 条目重建 c
   const c2 = { ...c, cuts: [a.cuts[0], a.cuts[1], c.cuts[2]] };
-  assert.equal(projectHash(c2), projectHash(a), "没被引用的 C 改了,哈希不变");
+  assert.equal(projectHash(c2), projectHash(a), "unreferenced C changed, the hash stays the same");
 });

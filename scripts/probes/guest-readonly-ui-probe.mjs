@@ -36,9 +36,9 @@ import { flagArg } from './probe-connect.mjs';
 import { startDevServer, viteBin, waitHttp, killTree, REPO } from '../lib/dev-server.mjs';
 
 const PORT = Number(flagArg('port', 5243));
-if (PORT < 5240 || PORT > 5249) throw new Error(`端口 ${PORT} 不在分给本探针的 5240～5249 里`);
+if (PORT < 5240 || PORT > 5249) throw new Error(`Port ${PORT} is not within 5240-5249, the range assigned to this probe`);
 const MOBILE_PORT = Number(flagArg('mobile-port', 5246));
-if (MOBILE_PORT < 5240 || MOBILE_PORT > 5247) throw new Error(`端口 ${MOBILE_PORT} 不在分给本探针的 5240～5249 里（要占连号三个）`);
+if (MOBILE_PORT < 5240 || MOBILE_PORT > 5247) throw new Error(`Port ${MOBILE_PORT} is not within 5240-5249, the range assigned to this probe (needs three consecutive ports)`);
 const OUT = path.resolve(REPO, flagArg('out', 'out/guest-readonly-ui-probe'));
 const KEEP = process.argv.includes('--keep');
 const WITH_MOBILE = process.argv.includes('--mobile');
@@ -59,7 +59,7 @@ async function waitFor(fn, ms, what) {
     let v = null;
     try { v = await fn(); } catch { v = null; }
     if (v) return v;
-    if (Date.now() - t0 > ms) throw new Error(`等 ${what} 超时`);
+    if (Date.now() - t0 > ms) throw new Error(`Timed out waiting for ${what}`);
     await sleep(150);
   }
 }
@@ -101,7 +101,7 @@ try {
     let calm = 0;
     const t0 = Date.now();
     while (calm < 7000 && Date.now() - t0 < 120_000) {
-      const measuring = await page.evaluate(() => document.body.innerText.includes('正在测量卡片')).catch(() => true);
+      const measuring = await page.evaluate(() => document.body.innerText.includes('Measuring cards')).catch(() => true);
       calm = measuring ? 0 : calm + 500;
       await sleep(500);
     }
@@ -137,7 +137,7 @@ try {
       el.click();
       return true;
     }, sel);
-    if (!ok) throw new Error(`点不到 ${sel}`);
+    if (!ok) throw new Error(`Cannot click ${sel}`);
   };
   // prefix:在线模式的开发服务把页面放在 /editor/ 下(vite.config.ts 的 base),模块路径跟着带上
   const setAccess = async (page, access, prefix = '') => {
@@ -199,10 +199,10 @@ try {
   /* ── R1 切成只读 ── */
   await setAccess(page, 'r');
   const why = await WHY(page);
-  await waitFor(() => page.evaluate(() => document.documentElement.dataset.pcReadonly === 'member'), 5000, 'html 只读标记');
+  await waitFor(() => page.evaluate(() => document.documentElement.dataset.pcReadonly === 'member'), 5000, 'html read-only flag');
   const badge = await stateOf(page, '[data-pc="viewonly-badge"]');
   check('R1.html-marker', (await page.evaluate(() => document.documentElement.dataset.pcReadonlyWhy)) === why && why.length > 5, { why });
-  check('R1.badge', badge.found && badge.text === '只能查看' && badge.title === why, { badge });
+  check('R1.badge', badge.found && badge.text === 'View only' && badge.title === why, { badge });
 
   /* ── R2 时间轴 ── */
   const before = await projectJson(page);
@@ -232,7 +232,7 @@ try {
   await page.mouse.click(box.x, box.y, { button: 'right' });
   await sleep(300);
   const menu = await page.evaluate(() => [...document.querySelectorAll('[data-pc="tl-ctxmenu"] .pc-tl-ctxmenu-item')].map((n) => ({ text: n.textContent.trim(), off: n.getAttribute('aria-disabled') === 'true' })));
-  check('R2.context-menu-only-explains', menu.length >= 1 && menu.every((m) => m.off || m.text.startsWith('查看字幕') || m.text === '引用到输入框') && menu.some((m) => m.text === why), { menu });
+  check('R2.context-menu-only-explains', menu.length >= 1 && menu.every((m) => m.off || m.text.startsWith('View captions') || m.text === 'Quote into input box') && menu.some((m) => m.text === why), { menu });
   await shot(page, 'ro-timeline.png');
   await page.keyboard.press('Escape');
   await page.mouse.click(5, 5);
@@ -296,7 +296,7 @@ try {
   const playing = await page.evaluate(() => window.__pcStore.getState().playing);
   await page.evaluate(() => window.__pcStore.actions.pause());
   check('R5.playback-still-works', playing === true);
-  const exportBtn = await page.evaluate(() => { const b = [...document.querySelectorAll('.pc-btn--primary')].find((x) => x.textContent.includes('导出视频')); return b ? { off: b.disabled } : null; });
+  const exportBtn = await page.evaluate(() => { const b = [...document.querySelectorAll('.pc-btn--primary')].find((x) => x.textContent.includes('Export video')); return b ? { off: b.disabled } : null; });
   check('R5.export-still-enabled', exportBtn && exportBtn.off === false, { exportBtn });
 
   /* ── R6 右栏 Agent ── */
@@ -324,10 +324,10 @@ try {
   await sleep(300);
   const menuItems = await page.evaluate(() => [...document.querySelectorAll('.pc-proj-item')].map((b) => ({ t: b.querySelector('b')?.textContent, d: b.disabled, title: b.title })));
   const byName = (n) => menuItems.find((m) => m.t === n);
-  check('R7.save-items-off', byName('保存项目')?.d && byName('保存项目').title === why && byName('打包保存…')?.d && byName('打包保存…').title === why, { menuItems });
-  check('R7.settings-openable', byName('项目设置…') && !byName('项目设置…').d, { menuItems });
+  check('R7.save-items-off', byName('Save project')?.d && byName('Save project').title === why && byName('Save as package…')?.d && byName('Save as package…').title === why, { menuItems });
+  check('R7.settings-openable', byName('Project settings…') && !byName('Project settings…').d, { menuItems });
   await shot(page, 'ro-project-menu.png');
-  await page.evaluate(() => [...document.querySelectorAll('.pc-proj-item')].find((b) => b.querySelector('b')?.textContent === '项目设置…').click());
+  await page.evaluate(() => [...document.querySelectorAll('.pc-proj-item')].find((b) => b.querySelector('b')?.textContent === 'Project settings…').click());
   await sleep(500);
   const dlg = await page.evaluate(() => {
     const d = document.querySelector('.pc-dialog');
@@ -335,13 +335,13 @@ try {
     const confirmBtn = d.querySelector('.pc-btn--primary');
     return { note: d.querySelector('[data-pc="settings-readonly-note"]')?.textContent ?? null, fields: fields.length, off: fields.filter((e) => e.disabled || e.closest('fieldset:disabled')).length, confirmDisabled: confirmBtn.disabled, confirmTitle: confirmBtn.title, cancel: [...d.querySelectorAll('.pc-dialog-foot .pc-btn')][0].textContent };
   });
-  check('R7.settings-dialog-readonly', dlg.note === why && dlg.fields >= 5 && dlg.off === dlg.fields && dlg.confirmDisabled && dlg.confirmTitle === why && dlg.cancel === '关闭', { dlg });
+  check('R7.settings-dialog-readonly', dlg.note === why && dlg.fields >= 5 && dlg.off === dlg.fields && dlg.confirmDisabled && dlg.confirmTitle === why && dlg.cancel === 'Close', { dlg });
   await shot(page, 'ro-settings.png');
   await page.keyboard.press('Escape');
   await sleep(300);
   // 桌面版标题栏菜单(这个构建里也画出来):编辑 → 撤销 / 重做、文件 → 保存项目 置灰,说明是那一句
   const titlebar = {};
-  for (const [menu, cmds] of [['编辑', ['undo', 'redo']], ['文件', ['save-project', 'export-video']]]) {
+  for (const [menu, cmds] of [['Edit', ['undo', 'redo']], ['file', ['save-project', 'export-video']]]) {
     await page.evaluate((menu) => [...document.querySelectorAll('.pc-titlebar-menu-button')].find((b) => b.textContent.trim() === menu).click(), menu);
     await sleep(250);
     for (const c of cmds) titlebar[c] = await page.evaluate((c) => { const b = document.querySelector(`[data-pc="titlebar-${c}"]`); return b ? { d: b.getAttribute('aria-disabled') === 'true', t: b.title } : null; }, c);
@@ -383,8 +383,8 @@ try {
   await ob.evaluate(() => document.querySelector('.pc-proj-btn').click());
   await sleep(300);
   const obMenu = await ob.evaluate(() => [...document.querySelectorAll('.pc-proj-item')].map((b) => ({ t: b.querySelector('b')?.textContent, d: b.disabled })));
-  check('R8.observe-badge-unchanged', obState.badge.found && obState.badge.text === '只读查看' && obState.badge.title.includes('?observe=1'), { badge: obState.badge });
-  check('R8.observe-save-off', obMenu.find((m) => m.t === '保存项目')?.d === true, { obMenu });
+  check('R8.observe-badge-unchanged', obState.badge.found && obState.badge.text === 'Read-only view' && obState.badge.title.includes('?observe=1'), { badge: obState.badge });
+  check('R8.observe-save-off', obMenu.find((m) => m.t === 'Save project')?.d === true, { obMenu });
   check('R8.observe-has-no-new-locks', obState.marker === null && !obState.addTrack.off && !obState.composer.off && !obState.media.off && obState.tools.every((d) => !d) && obState.fences === 0 && obState.trim > 0, obState);
   await shot(ob, 'observe-full.png');
   await ob.close();
@@ -396,9 +396,9 @@ try {
       cwd: REPO, env: { ...process.env, BROWSER: 'none', ...serverEnv() }, stdio: ['ignore', fs.openSync(logFile, 'a'), fs.openSync(logFile, 'a')], windowsHide: true,
     });
     mobileServer = { stop: () => killTree(child.pid) };
-    await waitHttp(`http://127.0.0.1:${MOBILE_PORT}/`, () => true, 120_000, '在线模式开发服务').catch(() => {});
+    await waitHttp(`http://127.0.0.1:${MOBILE_PORT}/`, () => true, 120_000, 'online-mode dev server').catch(() => {});
     const mob = await openEditor(`http://127.0.0.1:${MOBILE_PORT}/editor`, '?editor&layout=mobile', { width: 390, height: 844 });
-    await waitFor(() => mob.evaluate(() => !!document.querySelector('[data-pcm="editor"]')), 60_000, '手机版编辑页');
+    await waitFor(() => mob.evaluate(() => !!document.querySelector('[data-pcm="editor"]')), 60_000, 'mobile app editor page');
     await setAccess(mob, 'r', '/editor');
     const mWhy = await WHY(mob, '/editor');
     const m = await mob.evaluate(() => ({

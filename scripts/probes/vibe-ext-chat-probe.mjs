@@ -39,7 +39,7 @@ const arg = (name, dflt) => { const i = argv.indexOf(name); return i >= 0 ? argv
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const OUT = path.resolve(arg('--out', path.join(os.tmpdir(), 'vibe-ext-chat-shots')));
 const PORT = Number(arg('--port', 5952));
-if (PORT < 5950 || PORT > 5959) throw new Error(`端口 ${PORT} 不在分给本探针的 5950～5959 里`);
+if (PORT < 5950 || PORT > 5959) throw new Error(`Port ${PORT} is not within 5950-5959, the range assigned to this probe`);
 fs.mkdirSync(OUT, { recursive: true });
 
 const fails = [];
@@ -48,7 +48,7 @@ const check = (cond, label, extra) => { if (!cond) fails.push(label + (extra ===
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const portOpen = (port) => new Promise((resolve) => { const s = net.connect(port, '127.0.0.1'); s.once('connect', () => { s.destroy(); resolve(true); }); s.once('error', () => resolve(false)); });
-if (await portOpen(PORT)) throw new Error(`端口 ${PORT} 已被占用`);
+if (await portOpen(PORT)) throw new Error(`Port ${PORT} is already in use`);
 
 const vite = await createViteServer({
   configFile: false, root: ROOT, plugins: [react()], appType: 'custom', logLevel: 'error',
@@ -72,15 +72,15 @@ const now = Date.now();
 const tool = (name, input = {}, ok) => ({ kind: 'tool', name: `mcp__promptcut__${name}`, input, ...(ok === undefined ? {} : { ok }) });
 const say = (text) => tool('send_message', { to: 'user', text }, true);
 const MSGS = [
-  { id: 'u1', role: 'user', text: '用代码做一支60秒一镜到底动画：桌上一张户型图照片>扫描拉正>墙从线里长出来、门窗家具落位镜头穿过阳台门进客厅，画面用路径追踪从噪点收敛成照片级>依次按照户型解说。' },
+  { id: 'u1', role: 'user', text: 'Make a 60-second single-take animation with code: a floor plan photo on a desk > scan and straighten > walls grow out of the lines, doors, windows and furniture settle into place, the camera passes through the balcony door into the living room, and the picture uses path tracing to converge from noise to photorealistic quality > narrate in turn following the floor plan.' },
   { id: 'a1', role: 'assistant', text: '', startedAt: now, finishedAt: now, outcome: 'completed', parts: [
-    say('好的。我先把这支片子拆成 6 段：桌面静物、扫描拉正、墙体生长、门窗家具落位、穿门入厅、路径追踪收敛。先把项目建起来，前两段的卡片也一并排好，你看一眼节奏对不对。'),
-    tool('add_clip', { name: '户型图照片' }, true),
-    tool('add_clip', { name: '扫描拉正' }, true),
+    say('OK. I\'ll first split this video into 6 parts: desktop still life; scan and straighten; wall growth; doors, windows and furniture settling into place; walking through the door into the hall; path tracing convergence. First I\'ll set up the project and lay out the cards for the first two parts as well, so you can take a look and see whether the pacing is right.'),
+    tool('add_clip', { name: 'Floor plan photo' }, true),
+    tool('add_clip', { name: 'Scan and straighten' }, true),
   ] },
-  { id: 'u2', role: 'user', text: '慢一点' },
+  { id: 'u2', role: 'user', text: 'A bit slower' },
   { id: 'a2', role: 'assistant', text: '', startedAt: now, finishedAt: now, outcome: 'completed', parts: [
-    say('已经把「墙体生长」从 5 秒拉到 8 秒，后面几段顺延。现在整支是 62 秒，要不要把最后那段解说压到 6 秒、收回 60 秒整？'),
+    say('I have stretched "Wall growth" from 5 to 8 seconds, and the following parts are pushed back. The whole piece is now 62 seconds. Should I squeeze the last narration part down to 6 seconds to bring it back to exactly 60 seconds?'),
     tool('set_clip_param', { id: 'c2' }, true),
   ] },
 ];
@@ -125,28 +125,28 @@ try {
   {
     const rows = await readRows();
     out.V1 = rows.map((r) => ({ from: r.from, folded: r.folded, more: r.more, head: r.head }));
-    check(rows.length === 4, 'V1 四条消息都画出来了', rows.length);
-    check(rows.slice(0, 3).every((r) => r.folded === true), 'V1 旧的 Agent 回复和用户气泡都收起来了', rows.map((r) => r.folded));
-    check(rows[3]?.folded === false || rows[3]?.folded === null, 'V1 最新那一条 Agent 回复留全文', rows[3]);
+    check(rows.length === 4, 'V1 all four messages were rendered', rows.length);
+    check(rows.slice(0, 3).every((r) => r.folded === true), 'V1 the old Agent replies and user bubbles are all collapsed', rows.map((r) => r.folded));
+    check(rows[3]?.folded === false || rows[3]?.folded === null, 'V1 the latest Agent reply keeps its full text', rows[3]);
     const latestTag = await page.$eval('.ps-xlatest', (e) => e.textContent).catch(() => null);
-    check(latestTag === '最新一条回复', 'V1 全文那条上方标「最新一条回复」', latestTag);
+    check(latestTag === 'Latest reply', 'V1 the full-text one is tagged "Latest reply" above it', latestTag);
 
     const long = rows[0];
     out.V2 = long;
-    check(long.textH !== null && long.lineH !== null && Math.abs(long.textH - long.lineH * 2) <= 2, 'V2 收起来的文字正好两行', long);
-    check(long.scrollH - long.textH > 2, 'V2 确实被截掉了一截(不是刚好两行)', long);
+    check(long.textH !== null && long.lineH !== null && Math.abs(long.textH - long.lineH * 2) <= 2, 'V2 the collapsed text is exactly two lines', long);
+    check(long.scrollH - long.textH > 2, 'V2 it was indeed truncated (it is not just exactly two lines)', long);
 
     const foldedAgent = rows[1];
     out.V3 = foldedAgent;
-    check(foldedAgent.from === 'agent' && !foldedAgent.opsVisible, 'V3 收起来的那一轮「Agent 操作」折起来了', foldedAgent);
-    check(foldedAgent.more_text === `… 还有 ${foldedAgent.opsCount} 条操作` && foldedAgent.opsCount === 2, 'V3 标了还有几条操作、条数对得上', foldedAgent);
-    check(rows[3].opsVisible === true, 'V3 最新那条的操作照常显示', rows[3]);
+    check(foldedAgent.from === 'agent' && !foldedAgent.opsVisible, 'V3 the "Agent operations" of the collapsed round are folded', foldedAgent);
+    check(foldedAgent.more_text === `… ${foldedAgent.opsCount} more operations` && foldedAgent.opsCount === 2, 'V3 it states how many more operations there are, and the count matches', foldedAgent);
+    check(rows[3].opsVisible === true, 'V3 the latest one\'s operations are shown as usual', rows[3]);
 
     const short = rows[2];
     out.V6 = short;
-    check(short.folded === true && short.more === false, 'V6 一行说完的短句收着但不摆出能点开的样子', short);
-    check(short.cursor !== 'zoom-in', 'V6 短句上没有 zoom-in 光标', short);
-    check(rows[0].more === true && rows[0].cursor === 'zoom-in', 'V6 真被截到的那条才给 zoom-in', rows[0]);
+    check(short.folded === true && short.more === false, 'V6 a short sentence that fits on one line stays collapsed but does not look expandable', short);
+    check(short.cursor !== 'zoom-in', 'V6 no zoom-in cursor on the short sentence', short);
+    check(rows[0].more === true && rows[0].cursor === 'zoom-in', 'V6 only the one that is actually truncated gets zoom-in', rows[0]);
   }
 
   /* ================================================================ V4 点开一条 */
@@ -156,9 +156,9 @@ try {
     await shot('ext-chat-expanded');
     const rows = await readRows();
     out.V4 = rows.map((r) => ({ from: r.from, folded: r.folded, opsVisible: r.opsVisible }));
-    check(rows[1].folded === false, 'V4 点过的那条展开了', rows[1]);
-    check(rows[1].opsVisible === true, 'V4 展开之后操作卡出来了', rows[1]);
-    check(rows[0].folded === true && rows[2].folded === true, 'V4 别的仍然收着', out.V4);
+    check(rows[1].folded === false, 'V4 the row that was clicked is expanded', rows[1]);
+    check(rows[1].opsVisible === true, 'V4 the operations card appears after expanding', rows[1]);
+    check(rows[0].folded === true && rows[2].folded === true, 'V4 the other rows stay collapsed', out.V4);
   }
 
   /* ================================================================ V5 高度分配(「甲」) */
@@ -172,10 +172,10 @@ try {
       return { ext: r('[data-pc="start-ext"]'), chat: r('[data-pc="start-ext-chat"]'), list: r('[data-pc="start-ext-chat-list"]'), foot: r('.ps-ext-chat-foot'), input: r('.ps-ext-chat-foot [data-pc="start-chat-input"]'), secs, pad };
     });
     out.V5 = box;
-    check(box.secs.length === 2 && box.secs.every((s) => s.bodyShown && s.h > 40), 'V5 上面两段照常摊开', box.secs);
-    check(Math.abs(box.chat.bottom - (box.ext.bottom - box.pad)) <= 1, 'V5 聊天面板吃掉剩下的高度,底边贴着栏的下内边距', box);
-    check(box.chat.h > box.secs[0].h, 'V5 聊天面板比上面那一段高', box);
-    check(box.foot.bottom <= box.chat.bottom && box.foot.top >= box.list.bottom - 1, 'V5 输入框钉在面板自己的底部、就在面板里面', box);
+    check(box.secs.length === 2 && box.secs.every((s) => s.bodyShown && s.h > 40), 'V5 the two sections above stay expanded as usual', box.secs);
+    check(Math.abs(box.chat.bottom - (box.ext.bottom - box.pad)) <= 1, 'V5 the chat panel takes up the remaining height, with its bottom edge flush against the side panel\'s bottom padding', box);
+    check(box.chat.h > box.secs[0].h, 'V5 the chat panel is taller than the section above it', box);
+    check(box.foot.bottom <= box.chat.bottom && box.foot.top >= box.list.bottom - 1, 'V5 the input box is pinned to the panel\'s own bottom, inside the panel', box);
   }
 
   /* ================================================================ V7 最窄 250 */
@@ -193,9 +193,9 @@ try {
       };
     });
     out.V7 = { ...narrow, errors };
-    check(narrow.extW === 250, 'V7 这条栏就是 250 宽', narrow);
-    check(narrow.overflowX <= 0 && narrow.listOverflowX <= 0, 'V7 250 宽下不横向溢出', narrow);
-    check(errors.length === 0, 'V7 页面没有报错', errors.slice(0, 3));
+    check(narrow.extW === 250, 'V7 this side panel is exactly 250 wide', narrow);
+    check(narrow.overflowX <= 0 && narrow.listOverflowX <= 0, 'V7 no horizontal overflow at 250 wide', narrow);
+    check(errors.length === 0, 'V7 the page has no errors', errors.slice(0, 3));
   }
 } finally {
   await browser.close().catch(() => {});

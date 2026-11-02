@@ -43,7 +43,7 @@ const ORIGIN = flagArg('origin', null, args);
 const PORT = Number(flagArg('port', '0', args));
 const KEEP = args.includes('--keep');
 const JSON_OUT = flagArg('json', null, args);
-if (!ORIGIN && !PORT) { console.error('要给 --origin <dev server> 或 --port <自己起一台>'); process.exit(2); }
+if (!ORIGIN && !PORT) { console.error('Pass --origin <dev server> or --port <start your own>'); process.exit(2); }
 const pillStart = Number(flagArg('pill-start', '1', args));
 const pillText = String(flagArg('pill-text', '对照卡', args));
 const OUT = path.resolve(flagArg('out', null, args) || path.join(os.tmpdir(), `pc-below-late-lower-${Date.now().toString(36)}`));
@@ -55,7 +55,7 @@ const say = (step, fields = {}) => process.stderr.write(`${JSON.stringify({ step
 const fails = [];
 const check = (cond, label, extra) => { if (!cond) { fails.push(label + (extra === undefined ? '' : ' :: ' + JSON.stringify(extra).slice(0, 700))); say('FAIL', { label, extra }); } return !!cond; };
 
-const project = { id: `below-late-lower-${pillStart}-${pillText.length}`, name: '下层中途进场', width: W, height: H, fps: FPS, duration: SECONDS,
+const project = { id: `below-late-lower-${pillStart}-${pillText.length}`, name: 'Layer below enters midway', width: W, height: H, fps: FPS, duration: SECONDS,
   themeId: 'dark', media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
   tracks: [
     { id: 'tr-t', name: 't', hidden: false, clips: [{ id: TARGET, kind: 'card', cardId: 'odometer', start: 0.2, end: SECONDS, params: { position: 'left', value: 86420, label: 'x' },
@@ -106,10 +106,10 @@ try {
   const state = stateNow();
   out.sparse = { result: sparse, strides: strides(), below: state?.below ? { failed: state.below.failed, checks: state.below.checks, last: state.below.last } : null };
   say('sparse', out.sparse);
-  if (!check(sparse === 'ok' && out.sparse.strides.every((x) => x > 1), '稀疏那一趟产完,差分取层没有判死', out.sparse)) throw new Error('稀疏那一趟没产完');
+  if (!check(sparse === 'ok' && out.sparse.strides.every((x) => x > 1), 'The sparse pass finished producing and diff-based layer extraction was not declared dead', out.sparse)) throw new Error('The sparse pass did not finish producing');
   const { spec } = state;
   out.stream = { originFrame: spec.originFrame, lastSegment: spec.lastSegment, mountFrame: spec.mountFrame, replay: spec.replay, belowClipIds: spec.belowClipIds };
-  check(spec.replay === true && spec.belowClipIds.includes('clip-p'), '这条流要回放(下层是 motion 式的卡)', out.stream);
+  check(spec.replay === true && spec.belowClipIds.includes('clip-p'), 'This stream must be replayed (the layer below is a motion-style card)', out.stream);
 
   /** 把第 n 段解出来:每帧一块(上半预乘色、下半不透明度),和它用的矩形 */
   const decodeOf = async (n, tag) => {
@@ -130,7 +130,7 @@ try {
   const dense = await wait((st) => st.every((x) => x === 1));
   out.dense = { result: dense, strides: strides(), below: { failed: stateNow().below.failed, checks: stateNow().below.checks, last: stateNow().below.last }, capture: stateNow().capture ?? null };
   say('dense', out.dense);
-  if (!check(dense === 'ok', '满密度那一趟产完,差分取层没有判死', out.dense)) throw new Error('满密度那一趟没产完');
+  if (!check(dense === 'ok', 'The full-density pass finished producing and diff-based layer extraction was not declared dead', out.dense)) throw new Error('The full-density pass did not finish producing');
   const denseDecoded = [];
   for (let n = 0; n <= spec.lastSegment; n++) denseDecoded.push(await decodeOf(n, 'dense'));
 
@@ -161,11 +161,11 @@ try {
     }
     const worst = rows.reduce((a, b) => (b.same > a.same ? b : a));
     const entering = rows.filter((r) => r.f >= PILL_FIRST + LAG && r.f < PILL_FIRST + 14);
-    out.denseCheck = { frames: rows.length, 平均: round2(rows.reduce((s, r) => s + r.same, 0) / rows.length), 最差的一帧: worst,
-      药丸入场那一段_对同一帧: round2(entering.reduce((s, r) => s + r.same, 0) / Math.max(1, entering.length)), 对照_对六帧以前: round2(entering.reduce((s, r) => s + r.lagged, 0) / Math.max(1, entering.length)) };
+    out.denseCheck = { frames: rows.length, average: round2(rows.reduce((s, r) => s + r.same, 0) / rows.length), worstFrame: worst,
+      pillEntranceVsSameFrame: round2(entering.reduce((s, r) => s + r.same, 0) / Math.max(1, entering.length)), controlVsSixFramesEarlier: round2(entering.reduce((s, r) => s + r.lagged, 0) / Math.max(1, entering.length)) };
     say('2-dense', out.denseCheck);
-    check(rows.length === spec.lastFrame - spec.originFrame + 1 && worst.same < 3, '满密度:每一帧盖回去和导出页同一帧的差都在编码误差的量级(平均差小于 3)', out.denseCheck);
-    check(out.denseCheck.对照_对六帧以前 > out.denseCheck.药丸入场那一段_对同一帧 * 1.5 + 0.3, '对照:药丸入场那一段拿六帧以前的导出画面比明显更差(量得出落后几帧)', out.denseCheck);
+    check(rows.length === spec.lastFrame - spec.originFrame + 1 && worst.same < 3, 'Full density: for every frame, the composited-back result differs from the export page\'s same frame only on the order of encoding error (mean difference under 3)', out.denseCheck);
+    check(out.denseCheck.controlVsSixFramesEarlier > out.denseCheck.pillEntranceVsSameFrame * 1.5 + 0.3, 'Control: during the pill entrance, comparing against the export frame from six frames earlier is clearly worse (the lag in frames can be measured)', out.denseCheck);
   }
 
   /* ---------- 3. 稀疏版:每个分段的那一张 */
@@ -177,7 +177,7 @@ try {
     }
     out.sparseCheck = rows;
     say('3-sparse', { rows });
-    check(rows.every((r) => r.same < 3), '稀疏版:每个分段的那一张盖回它那一帧的下层,和导出页同一帧对得上(平均差小于 3)', rows.filter((r) => r.same >= 3));
+    check(rows.every((r) => r.same < 3), 'Sparse version: the one image of each segment, composited back onto the layer below at its frame, matches the export page\'s same frame (mean difference under 3)', rows.filter((r) => r.same >= 3));
   }
 
   /* ---------- 4. 断租约重产:倒着一个一个来 */
@@ -191,7 +191,7 @@ try {
       stateNow().failures?.delete?.(n);
       producer.kick();
       const again = await wait((st) => st.every((x) => x === 1));
-      if (!check(again === 'ok', `第 ${n} 段作废以后重产出来了`, { again, failed: stateNow().below.failed })) break;
+      if (!check(again === 'ok', `Segment ${n} was produced again after being invalidated`, { again, failed: stateNow().below.failed })) break;
       const redo = await decodeOf(n, 'redo');
       const first = streamSegmentFirstFrame(n, spec.originFrame);
       let diff = 0, same = 0;
@@ -202,16 +202,16 @@ try {
         diff = Math.max(diff, sum / picture.length);
         same = Math.max(same, meanOf(picture, redo.rect, first + k, first + k));
       });
-      rows.push({ segment: n, firstFrame: first, 对接着租约产的_逐帧最大平均差: round2(diff), 盖回去对导出页同一帧_最差: round2(same) });
+      rows.push({ segment: n, firstFrame: first, maxPerFrameMeanDiffVsLeaseContinued: round2(diff), worstCompositedBackVsExportSameFrame: round2(same) });
     }
     out.redo = { segments: rows, replayedFrames: (stateNow().replayedFrames ?? 0) - before, capture: stateNow().capture ?? null };
     say('4-redo', out.redo);
-    check(rows.length === picks.length && out.redo.replayedFrames > 0, '重产的分段是断了租约、从挂载帧回放过来的', out.redo);
-    check(rows.every((r) => r.对接着租约产的_逐帧最大平均差 < 0.5), '重产出来的和接着租约产的逐帧相同', rows);
-    check(rows.every((r) => r.盖回去对导出页同一帧_最差 < 3), '重产出来的盖回去和导出页同一帧对得上', rows);
+    check(rows.length === picks.length && out.redo.replayedFrames > 0, 'Re-produced segments had their lease broken and were replayed from the mount frame', out.redo);
+    check(rows.every((r) => r.maxPerFrameMeanDiffVsLeaseContinued < 0.5), 'The re-produced output matches the lease-continued output frame by frame', rows);
+    check(rows.every((r) => r.worstCompositedBackVsExportSameFrame < 3), 'The re-produced output composited back matches the export page\'s same frame', rows);
   }
 } catch (error) {
-  fails.push(`异常:${error?.stack || error}`);
+  fails.push(`Exception: ${error?.stack || error}`);
   say('ERROR', { error: String(error?.stack || error) });
 } finally {
   try { await pipeline?.close(); } catch { /* ignore */ }

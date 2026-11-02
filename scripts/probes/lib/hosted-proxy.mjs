@@ -63,7 +63,7 @@ export function proxyOrigins(basePort, host = 'pc.localhost') {
  */
 export async function startHostedProxy({ dist, basePort, docPort, assetPort, policy = 'full', host = 'pc.localhost', onlineCardExec, runtimeConfig: withRuntimeConfig = true, intercept, responseHeaders }) {
   const DIST = path.resolve(dist);
-  if (!fs.existsSync(path.join(DIST, 'index.html'))) throw new Error(`在线构建目录里没有 index.html:${DIST}`);
+  if (!fs.existsSync(path.join(DIST, 'index.html'))) throw new Error(`No index.html in the online build directory: ${DIST}`);
   const origins = proxyOrigins(basePort, host);
   const runtimeConfig = JSON.stringify({ v: 1, stageOrigins: origins.stages, ...(onlineCardExec === false ? { onlineCardExec: false } : {}) });
   /** 交接过来的票据(只留在内存里给探针比对,不打印) */

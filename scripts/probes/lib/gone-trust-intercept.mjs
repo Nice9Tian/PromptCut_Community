@@ -18,7 +18,7 @@ export async function interceptGoneTrust(page, authorities) {
     if (!MODULE.test(request.url())) { request.continue().catch(() => {}); return; }
     try {
       const original = await (await fetch(request.url())).text();
-      if (!original.includes(ANCHOR)) throw new Error('信任表的写法变了，探针的拦截要跟着改');
+      if (!original.includes(ANCHOR)) throw new Error('The trust table\'s form changed, the probe\'s intercept must be updated to match');
       const body = original.replace(ANCHOR, `${ANCHOR}...${JSON.stringify(authorities)},`);
       state.served++;
       await request.respond({ status: 200, contentType: 'text/javascript', headers: { 'cache-control': 'no-store' }, body });

@@ -170,7 +170,7 @@ try {
   report.chrome = await browser.version();
   const page = await browser.newPage();
   await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
-  page.on('pageerror', (e) => report.failures.push(`页面报错:${String(e.message || e).slice(0, 160)}`));
+  page.on('pageerror', (e) => report.failures.push(`Page error: ${String(e.message || e).slice(0, 160)}`));
   await page.goto(base + '/');
   if (CORES > 0) report.affinity = limitCores(browser.process().pid, CORES);
   if (THROTTLE > 1) { const cdp = await page.createCDPSession(); await cdp.send('Emulation.setCPUThrottlingRate', { rate: THROTTLE }); }
@@ -188,18 +188,18 @@ try {
 }
 
 if (JSON_OUT) fs.writeFileSync(JSON_OUT, JSON.stringify(report, null, 2));
-console.log(`机器:${report.host.cpu},${report.host.logicalCores} 个逻辑核;${report.chrome};lottie-web ${report.lottieWeb}`);
-console.log(`条件:${SOFTWARE ? '关显卡' : '缺省'}${CORES ? `,限 ${CORES} 核(进程 ${report.affinity})` : ''}${THROTTLE > 1 ? `,主线程放慢 ${THROTTLE} 倍` : ''};每个素材量前 ${FRAMES} 帧;画进 1920×1080 的框`);
-const x = (a, b) => (b > 0 ? `${(a / b).toFixed(1)} 倍` : '—');
+console.log(`Machine: ${report.host.cpu}, ${report.host.logicalCores} logical cores; ${report.chrome}; lottie-web ${report.lottieWeb}`);
+console.log(`Conditions: ${SOFTWARE ? 'GPU off' : 'default'}${CORES ? `, limited to ${CORES} cores (process ${report.affinity})` : ''}${THROTTLE > 1 ? `, main thread slowed ${THROTTLE}x` : ''}; measure the first ${FRAMES} frames of each asset; drawn into a 1920×1080 box`);
+const x = (a, b) => (b > 0 ? `${(a / b).toFixed(1)}x` : '—');
 for (const r of report.results) {
-  console.log(`素材 ${r.name}(${r.w}×${r.h},${r.total} 帧,${r.layers} 层;SVG 画法 ${r.svg.nodes} 个节点、序列化 ${r.svg.svgKB} KB)`);
-  console.log(`   算一帧(同步)      SVG ${r.svg.syncMs} 毫秒   画布 ${r.canvas.syncMs} 毫秒`);
-  console.log(`   出一帧画面        SVG ${r.svg.frameMs} 毫秒   画布 ${r.canvas.frameMs} 毫秒   SVG 是画布的 ${x(r.svg.frameMs, r.canvas.frameMs)}`);
-  console.log(`   拿到像素          SVG ${r.svg.pixelsMs} 毫秒   画布 ${r.canvas.pixelsMs} 毫秒   SVG 是画布的 ${x(r.svg.pixelsMs, r.canvas.pixelsMs)}`);
-  console.log(`   建好              SVG ${r.svg.buildMs} 毫秒   画布 ${r.canvas.buildMs} 毫秒`);
-  console.log(`   画面差(帧号:平均差/差超过16的像素占比/透明度平均差)  ${r.diff.map((d) => `${d.frame}:${d.mean}/${d.bigPct}%/${d.alphaMean}`).join('  ')}`);
-  const ra = (maxKey, pctKey) => { const m = Math.max(...r.diff.map((d) => d[maxKey])), p = Math.max(...r.diff.map((d) => d[pctKey])); return m === 0 ? '逐字节相同' : `最多差 ${m}(满分 255),不同的像素最多占 ${p}%`; };
-  console.log(`   跳着做和顺着做比(5 帧里最差的)  画布:${ra('raMax', 'raPct')}   SVG:${ra('svgRaMax', 'svgRaPct')}`);
+  console.log(`Asset ${r.name} (${r.w}×${r.h}, ${r.total} frames, ${r.layers} layers; SVG rendering ${r.svg.nodes} nodes, serialized ${r.svg.svgKB} KB)`);
+  console.log(`   Compute one frame (sync)  SVG ${r.svg.syncMs} ms   canvas ${r.canvas.syncMs} ms`);
+  console.log(`   Render one frame          SVG ${r.svg.frameMs} ms   canvas ${r.canvas.frameMs} ms   SVG is ${x(r.svg.frameMs, r.canvas.frameMs)} canvas`);
+  console.log(`   Get pixels                SVG ${r.svg.pixelsMs} ms   canvas ${r.canvas.pixelsMs} ms   SVG is ${x(r.svg.pixelsMs, r.canvas.pixelsMs)} canvas`);
+  console.log(`   Built                     SVG ${r.svg.buildMs} ms   canvas ${r.canvas.buildMs} ms`);
+  console.log(`   Image diff (frame: mean diff/share of pixels differing by more than 16/mean opacity diff)  ${r.diff.map((d) => `${d.frame}:${d.mean}/${d.bigPct}%/${d.alphaMean}`).join('  ')}`);
+  const ra = (maxKey, pctKey) => { const m = Math.max(...r.diff.map((d) => d[maxKey])), p = Math.max(...r.diff.map((d) => d[pctKey])); return m === 0 ? 'byte-for-byte identical' : `max diff ${m} (out of 255), differing pixels up to ${p}%`; };
+  console.log(`   Random access vs sequential (worst of 5 frames)  canvas: ${ra('raMax', 'raPct')}   SVG: ${ra('svgRaMax', 'svgRaPct')}`);
 }
-if (report.failures.length) { console.log(`失败:\n  ${report.failures.join('\n  ')}`); process.exit(1); }
-console.log('全部跑完(只记录)');
+if (report.failures.length) { console.log(`Failed:\n  ${report.failures.join('\n  ')}`); process.exit(1); }
+console.log('All runs finished (record only)');

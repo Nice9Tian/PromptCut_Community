@@ -20,23 +20,23 @@ const assoc = await import(srcUrl('editor/sync/recoveryAssociation.ts'));
 
 const sha = (buf) => createHash('sha256').update(buf).digest('hex');
 
-test('ACC018-OLD-1 矩阵里每个样本都能被现有读取代码读懂:关联、素材引用、剧本', async (t) => {
+test('ACC018-OLD-1 every sample in the matrix can be understood by the existing reading code: association, media references, script', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-accept-018-old-')); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const m = await buildOldProcMatrix(dir);
   for (const key of ['hostedPlain', 'lanPlain', 'barePlain', 'bareLegacyJson']) {
     const warn = console.warn; console.warn = () => {};
     let p; try { p = proc.loadProc(fs.readFileSync(m.files[key], 'utf8')); } finally { console.warn = warn; }
     assert.equal(p.name, key);
-    assert.deepEqual(p.media.map(x => x.hash), MEDIA.map(x => x.hash), `${key}:素材引用(哈希)原样`);
+    assert.deepEqual(p.media.map(x => x.hash), MEDIA.map(x => x.hash), `${key}: media references (hashes) unchanged`);
     const taken = assoc.takeLoadedAssociation(p);
     const want = m.expect[key].association;
-    if (want === null) assert.equal(taken, null, `${key}:没有关联`);
-    else assert.deepEqual(taken, { version: 1, roomId: OLD_ROOM_ID, service: OLD_SERVICE, where: want }, `${key}:关联被解析`);
+    if (want === null) assert.equal(taken, null, `${key}: no association`);
+    else assert.deepEqual(taken, { version: 1, roomId: OLD_ROOM_ID, service: OLD_SERVICE, where: want }, `${key}: association parsed`);
     assoc.setAssociation(null);
   }
 });
 
-test('ACC018-OLD-2 .procp 三个样本:拆包落库的哈希恰好是包里带的那些;缺的素材引用仍在编排里(不被丢掉)', async (t) => {
+test('ACC018-OLD-2 the three .procp samples: the hashes stored after unpacking are exactly those carried in the package; missing media references remain in the arrangement (not dropped)', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-accept-018-old-')); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const m = await buildOldProcMatrix(dir);
   const store = new Map();
@@ -57,10 +57,10 @@ test('ACC018-OLD-2 .procp 三个样本:拆包落库的哈希恰好是包里带�
     const bytes = fs.readFileSync(m.files[key]);
     const { procText, landed } = await procp.unpackProcp(new Blob([bytes]));
     const want = m.expect[key];
-    assert.deepEqual([...landed].sort(), [...want.packedHashes].sort(), `${key}:落库的哈希 = 包里带的`);
-    for (const h of want.absentHashes ?? []) assert.equal(store.has(h), false, `${key}:不在包里的 ${h.slice(0, 8)} 不会凭空出现`);
+    assert.deepEqual([...landed].sort(), [...want.packedHashes].sort(), `${key}: stored hashes = those carried in the package`);
+    for (const h of want.absentHashes ?? []) assert.equal(store.has(h), false, `${key}: ${h.slice(0, 8)}, which is not in the package, does not appear out of thin air`);
     const p = proc.loadProc(procText);
-    assert.deepEqual(p.media.map(x => x.hash), MEDIA.map(x => x.hash), `${key}:编排里的素材引用(含缺的)一条不少`);
+    assert.deepEqual(p.media.map(x => x.hash), MEDIA.map(x => x.hash), `${key}: every media reference in the arrangement (missing ones included) is still there`);
     assoc.setAssociation(null);
   }
 });

@@ -80,7 +80,7 @@ function stopRetry() {
 
 export async function globalSetup() {
   for (const { key, value } of scrubUserDirEnv(process.env)) {
-    console.error(`[global-setup] 不继承外部的 ${key}=${value}（测试不写用户目录，见 scripts/lib/user-dirs.mjs）`);
+    console.error(`[global-setup] not inheriting external ${key}=${value} (tests do not write to the user directory, see scripts/lib/user-dirs.mjs)`);
   }
   // 测试起的编辑器不写公共的 %TEMP%\promptcut\port.json（scripts/lib/user-dirs.mjs 的 markNoPortFile；守门 port-file.test.mjs）
   markNoPortFile(process.env);

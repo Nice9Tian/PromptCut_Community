@@ -32,7 +32,7 @@ const ffmpeg = await findFfmpeg();
 const ffprobe = ffmpeg.replace(/ffmpeg(\.exe)?$/i, (m) => (m.toLowerCase().endsWith('.exe') ? 'ffprobe.exe' : 'ffprobe'));
 function run(cmd, a) {
   const r = spawnSync(cmd, a, { encoding: 'buffer', windowsHide: true, maxBuffer: 2 * 1024 * 1024 * 1024 });
-  if (r.status !== 0) throw new Error(`${path.basename(cmd)} 退出码 ${r.status}:${String(r.stderr).slice(-600)}`);
+  if (r.status !== 0) throw new Error(`${path.basename(cmd)} exit code ${r.status}: ${String(r.stderr).slice(-600)}`);
   return r.stdout;
 }
 const probeInfo = (file) => JSON.parse(String(run(ffprobe, ['-v', 'error', '-count_frames', '-show_entries', 'stream=codec_type,codec_name,width,height,nb_read_frames,duration', '-of', 'json', file])));
@@ -99,9 +99,9 @@ try {
   out.browser.ffprobe = bi.streams;
   out.desktop.ffprobe = di.streams;
   const bv = bi.streams.find((s) => s.codec_type === 'video'), dv = di.streams.find((s) => s.codec_type === 'video');
-  check(bv?.codec_name === 'h264' && Number(bv.nb_read_frames) === FRAMES, '浏览器导出:h264、帧数', bv);
-  check(!!bi.streams.find((s) => s.codec_type === 'audio' && s.codec_name === 'aac'), '浏览器导出:有 AAC 音轨', bi.streams);
-  check(dv && Number(dv.nb_read_frames) >= FRAMES, '桌面导出:帧数', dv);
+  check(bv?.codec_name === 'h264' && Number(bv.nb_read_frames) === FRAMES, 'Browser export: h264, frame count', bv);
+  check(!!bi.streams.find((s) => s.codec_type === 'audio' && s.codec_name === 'aac'), 'Browser export: has an AAC audio track', bi.streams);
+  check(dv && Number(dv.nb_read_frames) >= FRAMES, 'Desktop export: frame count', dv);
 
   // 逐帧误差(两边都缩到 960×540、RGB24,避开色度抽样的格子差)
   const W = 960, H = 540, N = FRAMES;
@@ -122,9 +122,9 @@ try {
   for (const [name, file] of [['browser', browserMp4], ['desktop', desktopMp4]]) {
     run(ffmpeg, ['-y', '-v', 'error', '-i', file, '-vf', `select=eq(n\\,${worst.i})`, '-frames:v', '1', path.join(OUT, `${name}-f${worst.i}.png`)]);
   }
-  check(per.length === FRAMES, '逐帧比完了', per.length);
+  check(per.length === FRAMES, 'Frame-by-frame comparison finished', per.length);
 } catch (e) {
-  fails.push('探针异常:' + (e?.stack || e));
+  fails.push('Probe exception:' + (e?.stack || e));
 } finally {
   await browser.close().catch(() => {});
 }

@@ -16,74 +16,74 @@ const CONFIG = {
 // 正式默认 60 万轮,测试里没必要每次都烧;轮数写在密文头里,解密照样认
 const FAST = { iterations: 20_000 };
 
-test("加密再解密拿回原样的配置", async () => {
+test("Encrypting then decrypting returns the original config", async () => {
   const blob = await encryptConfig(CONFIG, CODE, FAST);
   assert.ok(looksLikeShareBlob(blob));
   assert.deepEqual(await decryptConfig(blob, CODE), CONFIG);
 });
 
-test("密文里不出现明文 Key", async () => {
+test("The plaintext key does not appear in the ciphertext", async () => {
   const blob = await encryptConfig(CONFIG, CODE, FAST);
   assert.ok(!blob.includes("sk-test"));
   assert.ok(!blob.includes(CONFIG.baseUrl));
 });
 
-test("同一份配置每次加密结果都不同(salt / iv 是随机的)", async () => {
+test("The same config encrypts differently every time (salt / iv are random)", async () => {
   const a = await encryptConfig(CONFIG, CODE, FAST);
   const b = await encryptConfig(CONFIG, CODE, FAST);
   assert.notEqual(a, b);
 });
 
-test("换一台机器解不开", async () => {
+test("Cannot be decrypted on another machine", async () => {
   const blob = await encryptConfig(CONFIG, CODE, FAST);
   await assert.rejects(() => decryptConfig(blob, machineCode("win:another-machine")), /Can.t decrypt/);
 });
 
-test("抄码时的大小写、分隔符、形近字都能容错", async () => {
+test("Case, separators and look-alike characters are tolerated when copying the code", async () => {
   const blob = await encryptConfig(CONFIG, CODE, FAST);
   for (const variant of [CODE.toLowerCase(), CODE.replace(/-/g, ""), CODE.replace(/0/g, "O"), ` ${CODE} `]) {
-    assert.equal((await decryptConfig(blob, variant)).apiKey, CONFIG.apiKey, `变体解不开:${variant}`);
+    assert.equal((await decryptConfig(blob, variant)).apiKey, CONFIG.apiKey, `Variant cannot be decrypted: ${variant}`);
   }
 });
 
-test("聊天软件插进来的换行不影响解密", async () => {
+test("Line breaks inserted by chat apps do not affect decryption", async () => {
   const blob = await encryptConfig(CONFIG, CODE, FAST);
   assert.equal((await decryptConfig(blob.replace(/(.{40})/g, "$1\n"), CODE)).model, CONFIG.model);
 });
 
-test("改一个字节就解不开(GCM 校验)", async () => {
+test("Changing a single byte makes it undecryptable (GCM check)", async () => {
   const blob = await encryptConfig(CONFIG, CODE, FAST);
   const flipped = blob.slice(0, -6) + (blob.at(-6) === "A" ? "B" : "A") + blob.slice(-5);
   await assert.rejects(() => decryptConfig(flipped, CODE), /Can.t decrypt/);
 });
 
-test("粘贴不全给出的是「截断」而不是「口令不对」", async () => {
+test("An incomplete paste reports \"truncated\" rather than \"wrong passphrase\"", async () => {
   const blob = await encryptConfig(CONFIG, CODE, FAST);
   await assert.rejects(() => decryptConfig(blob.slice(0, 30), CODE), /truncated/);
 });
 
-test("不是我们的密文时直接说清楚", async () => {
-  await assert.rejects(() => decryptConfig("这是一段普通文本", CODE), /not a PromptCut config string/);
-  assert.equal(looksLikeShareBlob("这是一段普通文本"), false);
+test("When it is not our ciphertext, say so clearly", async () => {
+  await assert.rejects(() => decryptConfig("This is some ordinary text", CODE), /not a PromptCut config string/);
+  assert.equal(looksLikeShareBlob("This is some ordinary text"), false);
 });
 
-test("过期的配置拒绝导入", async () => {
+test("Expired config is rejected on import", async () => {
   const blob = await encryptConfig({ ...CONFIG, expiresAt: Date.now() - 1000 }, CODE, FAST);
   await assert.rejects(() => decryptConfig(blob, CODE), /expired/);
 });
 
-test("没到期的配置正常导入", async () => {
+test("Unexpired config imports normally", async () => {
   const expiresAt = Date.now() + 86_400_000;
   const blob = await encryptConfig({ ...CONFIG, expiresAt }, CODE, FAST);
   assert.equal((await decryptConfig(blob, CODE)).expiresAt, expiresAt);
 });
 
-test("空 Key 和空口令都当场拦下", async () => {
+test("Empty key and empty passphrase are both blocked on the spot", async () => {
   await assert.rejects(() => encryptConfig({ ...CONFIG, apiKey: "" }, CODE, FAST), /API key/);
   await assert.rejects(() => encryptConfig(CONFIG, "", FAST), /encryption passphrase/);
 });
 
-test("密文头里的轮数被限制在合理范围,不给拿来卡死浏览器", async () => {
+test("Round count in the ciphertext header is capped to a sane range, so it can't be used to freeze the browser", async () => {
   const blob = await encryptConfig(CONFIG, CODE, FAST);
   // 头 4 字节是大端轮数,把它改成 20 亿
   const body = Buffer.from(blob.slice("PCAI1.".length).replace(/-/g, "+").replace(/_/g, "/"), "base64");

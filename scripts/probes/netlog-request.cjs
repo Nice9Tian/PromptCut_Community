@@ -10,7 +10,7 @@
 const fs = require('fs');
 
 const [file, pattern, ...flags] = process.argv.slice(2);
-if (!file || !pattern) { console.error('用法: node scripts/probes/netlog-request.cjs <网络日志> <URL 片段> [--all] [--events]'); process.exit(2); }
+if (!file || !pattern) { console.error('Usage: node scripts/probes/netlog-request.cjs <netlog> <URL substring> [--all] [--events]'); process.exit(2); }
 const lines = fs.readFileSync(file, 'utf8').split('\n');
 let consts = null;
 const evs = [];
@@ -22,7 +22,7 @@ for (const l of lines) {
   if (!t.startsWith('{')) continue;
   try { evs.push(JSON.parse(t)); } catch { /* 收尾的半行 */ }
 }
-if (!consts) { console.error('不是 Chrome 网络日志(第一行没有 constants)'); process.exit(2); }
+if (!consts) { console.error('Not a Chrome netlog (the first line has no constants)'); process.exit(2); }
 const typeName = Object.fromEntries(Object.entries(consts.logEventTypes).map(([k, v]) => [v, k]));
 const srcName = Object.fromEntries(Object.entries(consts.logSourceType).map(([k, v]) => [v, k]));
 const bySrc = new Map();
@@ -39,9 +39,9 @@ function summary(id, es) {
   const end = alive.find((e) => e.phase === 2);
   const status = es.find((e) => typeName[e.type] === 'HTTP_TRANSACTION_READ_RESPONSE_HEADERS')?.params?.headers?.[0] ?? null;
   const len = (es.find((e) => typeName[e.type] === 'HTTP_TRANSACTION_READ_RESPONSE_HEADERS')?.params?.headers ?? []).find((h) => /^content-length:/i.test(h)) ?? null;
-  return { id, url, start: es[0].time, status, len, bytes, lastReadMs: lastRead, aliveMs: end ? Number(end.time) - t0 : `>${lastT - t0}(日志结束时还活着)` };
+  return { id, url, start: es[0].time, status, len, bytes, lastReadMs: lastRead, aliveMs: end ? Number(end.time) - t0 : `>${lastT - t0} (still alive when the log ended)` };
 }
-console.log(`匹配的请求 ${reqs.length} 个;日志 ${evs.length} 条事件`);
+console.log(`Matching requests: ${reqs.length}; log events: ${evs.length}`);
 const pick = flags.includes('--all') ? reqs : reqs.slice(-1);
 for (const [id, es] of pick) {
   console.log(JSON.stringify(summary(id, es)));

@@ -53,16 +53,16 @@ function fixture() {
     cardNodes: [{ id: 'n1', adapter: 'card', cardId: 'fx-tint', kind: 'filter', params: {}, inputs: { source: '@clip/v-fx/source' } }],
     transitions: [{ id: 'tr1', kind: 'crossfade', aId: 'v-a', bId: 'v-b', dur: 1 }],
     tracks: [
-      { id: 't1', name: '序列 1', clips: [{ id: 'c1', cardId: 'punch-pill', start: 0, end: 2, params: { text: 'a' } }] },
-      { id: 't2', name: '序列 2', clips: [
+      { id: 't1', name: 'Track 1', clips: [{ id: 'c1', cardId: 'punch-pill', start: 0, end: 2, params: { text: 'a' } }] },
+      { id: 't2', name: 'Track 2', clips: [
         { id: 'v-a', cardId: '', mediaId: 'v1', mediaOffset: 1.5, start: 0, end: 4.5, fadeOut: 1, params: {}, frame },
         { id: 'v-b', cardId: '', mediaId: 'v2', mediaOffset: 0.1, start: 3.5, end: 8, fadeIn: 1, params: {}, frame },
         { id: 'v-fx', cardId: '', mediaId: 'v1', mediaOffset: 0.2, start: 8, end: 12, params: {}, nodeId: 'n1', frame },
       ] },
-      { id: 't3', name: '序列 3', clips: [{ id: 'seg', cardId: '', cutId: 'B', cutOffset: 1, start: 12, end: 16, params: {} }] },
-      { id: 't4', name: '序列 4', clips: [{ id: 'a-1', cardId: '', mediaId: 'a1', mediaOffset: 3, start: 0, end: 10, params: {} }] },
+      { id: 't3', name: 'Track 3', clips: [{ id: 'seg', cardId: '', cutId: 'B', cutOffset: 1, start: 12, end: 16, params: {} }] },
+      { id: 't4', name: 'Track 4', clips: [{ id: 'a-1', cardId: '', mediaId: 'a1', mediaOffset: 3, start: 0, end: 10, params: {} }] },
     ],
-    cuts: [{ id: 'A', name: '剪辑A' }, { id: 'B', name: '剪辑B', duration: 8, transitions: [], tracks: [{ id: 'tb', name: '序列 1', clips: [
+    cuts: [{ id: 'A', name: 'Cut A' }, { id: 'B', name: 'Cut B', duration: 8, transitions: [], tracks: [{ id: 'tb', name: 'Track 1', clips: [
       { id: 'b1', cardId: '', mediaId: 'v2', mediaOffset: 2.3, start: 0, end: 8, params: {}, frame },
     ] }] }],
     activeCutId: 'A',
@@ -117,18 +117,18 @@ try { base = checkoutBase(BASE_REF); } catch (error) { console.error(error); pro
 const plain = fixture();
 const sped = withClips(plain, { 'v-fx': { speed: 2 }, b1: { speed: 0.5 } });
 const [bPlain, cPlain, bSped, cSped] = [await measure(base.dir, plain), await measure(HERE, plain), await measure(base.dir, sped), await measure(HERE, sped)];
-console.log(`基准 ${BASE_REF} = ${base.sha.slice(0, 12)};当前 HEAD = ${git('rev-parse', 'HEAD').slice(0, 12)}${git('status', '--porcelain', '--', 'src', 'server') ? '(src/ 或 server/ 有未提交的改动,算的是工作区)' : ''}`);
+console.log(`Baseline ${BASE_REF} = ${base.sha.slice(0, 12)}; current HEAD = ${git('rev-parse', 'HEAD').slice(0, 12)}${git('status', '--porcelain', '--', 'src', 'server') ? '(uncommitted changes in src/ or server/, computed from the working tree)' : ''}`);
 
 let bad = 0;
-console.log('\n== 1. 不带 speed:基准与当前逐字相同 ==');
+console.log('\n== 1. Without speed: baseline and current are verbatim identical ==');
 const keys = Object.keys(cPlain);
 const same = keys.filter((k) => bPlain[k] === cPlain[k]);
 const diff = keys.filter((k) => bPlain[k] !== cPlain[k]);
-if (Object.keys(bPlain).length !== keys.length) { bad++; console.log(`✖ 两边的条目数不同:基准 ${Object.keys(bPlain).length},当前 ${keys.length}`); }
-for (const k of diff) { bad++; console.log(`✖ ${k}\n    基准 ${String(bPlain[k]).slice(0, 160)}\n    当前 ${String(cPlain[k]).slice(0, 160)}`); }
-console.log(`${diff.length ? '✖' : '✔'} ${same.length}/${keys.length} 项逐字相同`);
+if (Object.keys(bPlain).length !== keys.length) { bad++; console.log(`✖ The entry counts differ: baseline ${Object.keys(bPlain).length}, current ${keys.length}`); }
+for (const k of diff) { bad++; console.log(`✖ ${k}\n    baseline ${String(bPlain[k]).slice(0, 160)}\n    current  ${String(cPlain[k]).slice(0, 160)}`); }
+console.log(`${diff.length ? '✖' : '✔'} ${same.length}/${keys.length} entries verbatim identical`);
 
-console.log('\n== 2. v-fx 改 2 倍、剪辑段里的 b1 改 0.5 倍 ==');
+console.log('\n== 2. v-fx set to 2×, b1 in the cut segment set to 0.5× ==');
 // 当前工作区里必须变的
 const mustChange = ['frameIdentity', 'projectHash', 'audioPlan', 'vision@9', 'compose.args', 'compose.graph', 'sig v-fx', 'sig seg~b1', 'plan v-fx.contentKey', 'plan v-fx.snapshotKey', 'plan v-fx.streamMemberKey', 'plan seg~b1.contentKey'];
 // 不碰的片段必须不变
@@ -136,17 +136,17 @@ const mustStay = ['sig c1', 'sig v-a', 'sig v-b', 'sig a-1', 'vision@1', 'vision
 for (const k of mustChange) {
   const ok = cSped[k] !== undefined && cSped[k] !== cPlain[k];
   if (!ok) bad++;
-  console.log(`${ok ? '✔' : '✖'} 当前:${k} 变了${ok ? '' : '(没变!)'}`);
+  console.log(`${ok ? '✔' : '✖'} Current: ${k} changed${ok ? '' : '(not changed!)'}`);
 }
 for (const k of mustStay) {
   const ok = cSped[k] === cPlain[k];
   if (!ok) bad++;
-  if (!ok) console.log(`✖ 当前:${k} 不该变却变了`);
+  if (!ok) console.log(`✖ Current: ${k} should not have changed but did`);
 }
-console.log(`✔ 当前:没碰的片段 ${mustStay.length} 项不变`);
+console.log(`✔ Current: ${mustStay.length} entries of untouched clips unchanged`);
 const blind = ['sig v-fx', 'sig seg~b1', 'plan v-fx.contentKey', 'plan v-fx.streamMemberKey', 'vision@9', 'compose.graph'].filter((k) => bSped[k] === bPlain[k]);
-console.log(`基准(改前)不认 speed:${blind.length} 项改了速度却没变 —— ${blind.join('、')}`);
-console.log(`\n当前:变速段的取帧时刻 vision@9 = ${cSped['vision@9']}(不变速是 ${cPlain['vision@9']})`);
-console.log(`当前:混音清单里 ${JSON.parse(cSped.audioPlan).map((e) => e.clipId).join('、')}(不变速时 ${JSON.parse(cPlain.audioPlan).map((e) => e.clipId).join('、')})`);
-console.log(bad ? `\n✖ ${bad} 处不符` : '\n✔ 全部相符');
+console.log(`Baseline (before the change) does not recognize speed. ${blind.length} entries changed speed but stayed the same: ${blind.join(', ')}`);
+console.log(`\nCurrent: frame-fetch time of the speed-changed clip vision@9 = ${cSped['vision@9']} (at normal speed: ${cPlain['vision@9']})`);
+console.log(`Current: the mix manifest has ${JSON.parse(cSped.audioPlan).map((e) => e.clipId).join(', ')} (at normal speed: ${JSON.parse(cPlain.audioPlan).map((e) => e.clipId).join(', ')})`);
+console.log(bad ? `\n✖ ${bad} mismatches` : '\n✔ All match');
 process.exit(bad ? 1 : 0);

@@ -58,17 +58,17 @@ const planOf = () => F.exportPlanTask({ projectId: "p1", projectRev: 7, clips: [
 /** 计划做完、索引随 `task.done` 到 */
 const finishPlan = (svc, index = indexOf()) => { const plan = planOf(); svc.states.set(plan.id, "done"); svc.emit({ type: "task.done", id: plan.id, result: { exportIndex: index } }); };
 
-test("XR-01 计划已经失败:报失败,不当「没有渲染节点在线」", async () => {
+test("XR-01 The plan has already failed: report the failure, do not treat it as \"no render node online\"", async () => {
   F.resetExportRetry();
   const svc = service();
   svc.states.set(planOf().id, "failed");
   const statuses = [];
   await assert.rejects(request(svc, { onStatus: (s) => statuses.push(s.phase) }), (e) => e.message === T.ONLINE_EXPORT_TEXT.nodeFailed("plan-failed"));
-  assert.deepEqual(statuses, ["publishing"], "没有显示过「没有渲染节点在线」");
-  assert.ok(F.exportRetrySalt(), "下一次带新的标识");
+  assert.deepEqual(statuses, ["publishing"], "\"No render node online\" was never shown");
+  assert.ok(F.exportRetrySalt(), "The next one carries a new identifier");
 });
 
-test("XR-02 计划做完了却不带索引:等过一轮就报失败", async () => {
+test("XR-02 The plan finished but carries no index: report failure after waiting one round", async () => {
   F.resetExportRetry();
   const svc = service();
   svc.states.set(planOf().id, "done");
@@ -76,16 +76,16 @@ test("XR-02 计划做完了却不带索引:等过一轮就报失败", async () =
   assert.equal(svc.published.length, 2);
 });
 
-test("XR-03 等清单时任务已经失败、页面没收到过通知:核对任务时报失败", async () => {
+test("XR-03 The task had already failed while waiting for the manifest and the page never received a notice: report the failure when checking the task", async () => {
   F.resetExportRetry();
   const svc = service();
   svc.states.set(`stream:${RK}:0-0`, "failed");
   svc.hooks.onSleep = async () => { if (svc.published.length === 1) finishPlan(svc); };
   await assert.rejects(request(svc), (e) => e.message === T.ONLINE_EXPORT_TEXT.nodeFailed("task-failed"));
-  assert.deepEqual(svc.published.at(-1), [`stream:${RK}:0-0`], "把还没到的任务原样再发布了一次");
+  assert.deepEqual(svc.published.at(-1), [`stream:${RK}:0-0`], "Republished the task that had not arrived, unchanged");
 });
 
-test("XR-04 等清单时任务不在了:原样再发布(队列重建),之后照常到齐", async () => {
+test("XR-04 The task is gone while waiting for the manifest: republish it unchanged (queue rebuilt), after which everything arrives as usual", async () => {
   F.resetExportRetry();
   const svc = service();
   let rounds = 0;
@@ -100,11 +100,11 @@ test("XR-04 等清单时任务不在了:原样再发布(队列重建),之后照�
   const reposts = svc.published.filter((ids) => ids[0] === `stream:${RK}:0-0`);
   assert.ok(reposts.length >= 1);
   const sent = parseInbound({ type: "task.publish", tasks: [derived(0, 0)] });
-  assert.equal(sent.ok, true, "索引里带的任务原样发得出去(队列的入站校验收它)");
-  assert.equal(F.exportRetrySalt(), null, "没失败过不带标识");
+  assert.equal(sent.ok, true, "The task carried in the index can be sent out unchanged (the queue's inbound validation accepts it)");
+  assert.equal(F.exportRetrySalt(), null, "No identifier if it never failed");
 });
 
-test("XR-05 节点退出了:没有进展满时限报失败;有节点认领着不算", async () => {
+test("XR-05 The node has exited: report failure once the no-progress time limit is reached; it does not count while a node has claimed it", async () => {
   F.resetExportRetry();
   // 任务一直是 open(没人接):每睡一次走 1 秒,时限 5 秒
   const svc = service({ tick: 1000 });
@@ -112,7 +112,7 @@ test("XR-05 节点退出了:没有进展满时限报失败;有节点认领着不
   const statuses = [];
   await assert.rejects(request({ ...svc, deps: { ...svc.deps, stallMs: 5000, taskCheckMs: 2000 } }, { onStatus: (s) => statuses.push(s.phase) }),
     (e) => e.message === T.ONLINE_EXPORT_TEXT.nodeStalled(5000) && /no progress for 5 s/.test(e.message));
-  assert.ok(statuses.filter((p) => p === "rendering").length >= 4, "到时限之前照常显示在渲");
+  assert.ok(statuses.filter((p) => p === "rendering").length >= 4, "Until the time limit, it keeps showing as rendering");
   assert.match(T.ONLINE_EXPORT_TEXT.nodeStalled(F.EXPORT_STALL_MS), /no progress for 3 min/);
   // 有节点认领着:走过两倍时限也不报,清单到了就到齐
   F.resetExportRetry();
@@ -124,7 +124,7 @@ test("XR-05 节点退出了:没有进展满时限报失败;有节点认领着不
   assert.equal(got.coverage.get("s").frames.size, 9);
 });
 
-test("XR-06 失败之后再点导出:计划带新的标识", async () => {
+test("XR-06 Clicking export again after a failure: the plan carries a new identifier", async () => {
   F.resetExportRetry();
   const plain = F.exportPlanTask({ projectId: "p1", projectRev: 7, clips: ["s"] });
   assert.equal(plain.input.exportSalt, undefined);
@@ -144,10 +144,10 @@ test("XR-06 失败之后再点导出:计划带新的标识", async () => {
   assert.equal(retry.input.exportSalt, salt);
   assert.equal(parseInbound({ type: "task.publish", tasks: [retry] }).ok, true);
   assert.equal(parseInbound({ type: "task.publish", tasks: [retry] }).body.tasks[0].input.exportSalt, salt);
-  assert.equal(F.exportPlanTask({ projectId: "p1", projectRev: 7, clips: ["s"], salt: "Bad Salt!" }).id, plain.id, "形状不对的标识当没带");
+  assert.equal(F.exportPlanTask({ projectId: "p1", projectRev: 7, clips: ["s"], salt: "Bad Salt!" }).id, plain.id, "a malformed identifier is treated as not provided");
 });
 
-test("XR-07 不带输入签名的不用", async () => {
+test("XR-07 Those without an input signature are not used", async () => {
   F.resetExportRetry();
   const svc = service();
   svc.hooks.onSleep = async () => { if (svc.published.length === 1) finishPlan(svc, indexOf({ inputSig: undefined })); };
@@ -163,19 +163,19 @@ test("XR-07 不带输入签名的不用", async () => {
       return { type: "content.item", missing: true };
     },
   });
-  assert.equal((await S.loadReadableStreams("proj", {}, deps([row({})]))).length, 0, "没带签名:不取");
+  assert.equal((await S.loadReadableStreams("proj", {}, deps([row({})]))).length, 0, "No signature: not fetched");
   const signed = await S.loadReadableStreams("proj", {}, deps([row({ inputSig: "s1-abc" })]));
   assert.equal(signed.length, 1);
   assert.equal(signed[0].dense.get(0), 9);
 });
 
-test("XR-08 解出来的宽度和清单里的矩形对不上:报错,不裁", () => {
+test("XR-08 The decoded width does not match the rectangle in the manifest: report an error, do not crop", () => {
   assert.equal(S.frameWidthOf(64, { x: 0, y: 0, w: 64, h: 32 }, 12), 64);
   assert.throws(() => S.frameWidthOf(48, { x: 0, y: 0, w: 64, h: 32 }, 12), /does not match the segment/);
   assert.throws(() => S.frameWidthOf(80, { x: 0, y: 0, w: 64, h: 32 }, 12), /does not match the segment/);
 });
 
-test("XR-09 只为导出的计划并发与限流: 同一项目同一发布方进行中拒绝并发", async () => {
+test("XR-09 Concurrency and throttling for export-only plans: concurrent runs from the same publisher on the same project are rejected while one is in progress", async () => {
   F.resetExportRetry();
   const svc = service();
   let release = null;
@@ -201,6 +201,6 @@ test("XR-09 只为导出的计划并发与限流: 同一项目同一发布方进
   // resetExportRetry 后限流状态清空
   F.resetExportRetry();
   const state = F.exportPlanThrottleState("p1", svc.deps.publisherId);
-  assert.equal(state, null, "resetExportRetry 清空节流状态");
+  assert.equal(state, null, "resetExportRetry clears the throttle state");
 });
 

@@ -19,7 +19,7 @@ import {
 } from './c10a-kit.mjs';
 
 const support = await inviteSupport();
-const skip = skipIf(!support.ok, `邀请码端点 shared/invite/*（${support.detail}）`);
+const skip = skipIf(!support.ok, `Invite code endpoints shared/invite/* (${support.detail})`);
 const it = (name, fn) => test(name, { skip }, fn);
 
 const INVALID = Object.freeze({ ok: false, error: 'invite-invalid' });
@@ -31,7 +31,7 @@ async function setup(t, { mode = 'free', fields = {}, host = {} } = {}) {
   const proj = await createProject(env, { mode });
   const creator = await join(env, proj, { username: proj.creator.username, as: 'creator' });
   const r = await adminOp(creator, proj, 'invite-create', fields);
-  assert.equal(r.type, 'shared.admin.ok', `invite-create：${JSON.stringify(r)}`);
+  assert.equal(r.type, 'shared.admin.ok', `invite-create: ${JSON.stringify(r)}`);
   return { env, proj, creator, invite: r, code: r.code };
 }
 
@@ -39,31 +39,31 @@ const status = async (creator, proj) => inviteStatusOf(await adminOp(creator, pr
 
 // ------------------------------------------------------------------ 签发、解析
 
-it('C10A-IV-01 签发：43 位 base64url；缺省 7 天、次数不限；原文只在签发回包里；resolve 回项目名与模式、不扣次数', async (t) => {
+it('C10A-IV-01 issuing: 43-character base64url; default 7 days, unlimited uses; the plaintext appears only in the issue response; resolve returns the project name and mode and does not consume a use', async (t) => {
   const { env, proj, creator, invite, code } = await setup(t);
   assert.equal(invite.op, 'invite-create');
-  assert.match(code, INVITE_CODE_RE, '邀请码是 32 字节的 base64url（43 个字符，不带填充）');
-  assert.equal(invite.maxUses, null, '缺省次数不限');
-  assert.ok(Math.abs(invite.expiresAt - (env.clock.now() + INVITE_DEFAULT_TTL_MS)) < 10_000, `缺省有效期 7 天：expiresAt=${invite.expiresAt}`);
+  assert.match(code, INVITE_CODE_RE, 'The invite code is a 32-byte base64url (43 characters, no padding)');
+  assert.equal(invite.maxUses, null, 'Uses are unlimited by default');
+  assert.ok(Math.abs(invite.expiresAt - (env.clock.now() + INVITE_DEFAULT_TTL_MS)) < 10_000, `Default validity is 7 days: expiresAt=${invite.expiresAt}`);
 
   for (let i = 0; i < 3; i++) {
     const r = await resolveInvite(env, code);
     assert.equal(r.status, 200, r.text);
     assert.deepEqual({ ok: r.json.ok, projectId: r.json.projectId, name: r.json.name, mode: r.json.mode },
       { ok: true, projectId: proj.projectId, name: proj.name, mode: 'free' });
-    assert.equal(r.text.includes(code), false, 'resolve 回包不带原文');
+    assert.equal(r.text.includes(code), false, 'The resolve response does not carry the plaintext');
     assert.match(r.headers.get('cache-control') ?? '', /no-store/);
   }
   const st = await status(creator, proj);
-  assert.equal(st.used, 0, 'resolve 不扣次数');
+  assert.equal(st.used, 0, 'resolve does not consume a use');
   assert.equal(st.active, true);
   assert.equal(st.maxUses, null);
   assert.equal(st.revokedAt ?? null, null);
   assert.ok(Math.abs(st.expiresAt - invite.expiresAt) < 1000);
-  assert.equal(JSON.stringify(st).includes(code), false, 'invite-status 不含原文');
+  assert.equal(JSON.stringify(st).includes(code), false, 'invite-status does not contain the plaintext');
 });
 
-it('C10A-IV-02 签发时可改有效期与次数；再签发同时作废旧的（只有一个有效邀请码）', async (t) => {
+it('C10A-IV-02 validity and uses can be set when issuing; issuing again revokes the old one at the same time (only one valid invite code)', async (t) => {
   const { env, proj, creator, code: first } = await setup(t, { fields: { expiresInSec: 3600, maxUses: 5 } });
   let st = await status(creator, proj);
   assert.equal(st.maxUses, 5);
@@ -73,14 +73,14 @@ it('C10A-IV-02 签发时可改有效期与次数；再签发同时作废旧的�
   assert.notEqual(again.code, first);
   const oldR = await resolveInvite(env, first);
   assert.equal(oldR.status, 404);
-  assert.deepEqual(oldR.json, INVALID, '旧的作废');
-  assert.equal((await resolveInvite(env, again.code)).status, 200, '新的有效');
+  assert.deepEqual(oldR.json, INVALID, 'The old one is revoked');
+  assert.equal((await resolveInvite(env, again.code)).status, 200, 'The new one is valid');
   st = await status(creator, proj);
-  assert.equal(st.maxUses, null, '新签发的回到缺省');
+  assert.equal(st.maxUses, null, 'A newly issued one goes back to the defaults');
   assert.equal(st.used, 0);
 });
 
-it('C10A-IV-03 作废：resolve 与 redeem 一律 invite-invalid；invite-status 不再有效、带 revokedAt；已经进来的人不受影响', async (t) => {
+it('C10A-IV-03 revoke: resolve and redeem always give invite-invalid; invite-status is no longer valid and carries revokedAt; people who already joined are unaffected', async (t) => {
   const { env, proj, creator, code } = await setup(t);
   const dev = newDevice('Phone');
   const got = await redeemInvite(env, { code, username: 'zoe', deviceId: dev.deviceId });
@@ -98,49 +98,49 @@ it('C10A-IV-03 作废：resolve 与 redeem 一律 invite-invalid；invite-status
   assert.equal(await joinStatus(env, proj, { username: 'zoe', device: dev, key: got.json.project.key }), 101);
 });
 
-it('C10A-IV-04 限时：到期前能用，过期后 resolve / redeem 都是 invite-invalid，状态不再有效', async (t) => {
+it('C10A-IV-04 time limit: usable until it expires; after expiry resolve / redeem both give invite-invalid, and the status is no longer valid', async (t) => {
   const { env, proj, creator, code } = await setup(t, { fields: { expiresInSec: 60 } });
   assert.equal((await resolveInvite(env, code)).status, 200);
   env.clock.advance(30_000);
-  assert.equal((await redeemInvite(env, { code, username: 'zoe', deviceId: newDevice().deviceId })).status, 200, '30 s 时还有效');
+  assert.equal((await redeemInvite(env, { code, username: 'zoe', deviceId: newDevice().deviceId })).status, 200, 'Still valid at 30 s');
   env.clock.advance(31_000);
-  assert.deepEqual((await resolveInvite(env, code)).json, INVALID, '61 s 后过期');
+  assert.deepEqual((await resolveInvite(env, code)).json, INVALID, 'expired after 61 s');
   const r = await redeemInvite(env, { code, username: 'yan', deviceId: newDevice().deviceId });
   assert.equal(r.status, 404);
   assert.deepEqual(r.json, INVALID);
   assert.equal((await status(creator, proj)).active, false);
 });
 
-it('C10A-IV-05 限量：maxUses 2 → 两台设备兑换成功，第三台 invite-invalid；用满后 resolve 也 invite-invalid', async (t) => {
+it('C10A-IV-05 use limit: maxUses 2 → two devices redeem successfully, the third gets invite-invalid; once used up, resolve also gives invite-invalid', async (t) => {
   const { env, proj, creator, code } = await setup(t, { fields: { maxUses: 2 } });
   for (const name of ['u1', 'u2']) {
     const r = await redeemInvite(env, { code, username: name, deviceId: newDevice().deviceId });
-    assert.equal(r.status, 200, `${name}：${r.text}`);
+    assert.equal(r.status, 200, `${name}: ${r.text}`);
   }
   const third = await redeemInvite(env, { code, username: 'u3', deviceId: newDevice().deviceId });
   assert.equal(third.status, 404);
   assert.deepEqual(third.json, INVALID);
-  assert.deepEqual((await resolveInvite(env, code)).json, INVALID, '次数用完：resolve 同一口径');
+  assert.deepEqual((await resolveInvite(env, code)).json, INVALID, 'Uses exhausted: resolve follows the same rule');
   const st = await status(creator, proj);
   assert.equal(st.used, 2);
   assert.equal(st.maxUses, 2);
   assert.equal(st.active, false);
 });
 
-it('C10A-IV-06 同一 userId（用户名 + 设备）再兑换不重复扣次；换用户名或换设备算新的 userId', async (t) => {
+it('C10A-IV-06 redeeming again with the same userId (username + device) does not consume another use; a different username or device counts as a new userId', async (t) => {
   const { env, proj, creator, code } = await setup(t, { fields: { maxUses: 1 } });
   const dev = newDevice('Pad');
   for (let i = 0; i < 3; i++) {
     const r = await redeemInvite(env, { code, username: 'zoe', deviceId: dev.deviceId });
-    assert.equal(r.status, 200, `第 ${i + 1} 次：${r.text}`);
+    assert.equal(r.status, 200, `Attempt ${i + 1}: ${r.text}`);
   }
-  assert.equal((await status(creator, proj)).used, 1, '同一 userId 只扣一次');
-  assert.deepEqual((await redeemInvite(env, { code, username: 'zoe2', deviceId: dev.deviceId })).json, INVALID, '同设备换用户名是另一个 userId');
-  assert.deepEqual((await redeemInvite(env, { code, username: 'zoe', deviceId: newDevice().deviceId })).json, INVALID, '同用户名换设备是另一个 userId');
+  assert.equal((await status(creator, proj)).used, 1, 'The same userId consumes only one use');
+  assert.deepEqual((await redeemInvite(env, { code, username: 'zoe2', deviceId: dev.deviceId })).json, INVALID, 'same device with a different username is a different userId');
+  assert.deepEqual((await redeemInvite(env, { code, username: 'zoe', deviceId: newDevice().deviceId })).json, INVALID, 'same username on a different device is a different userId');
   assert.equal((await status(creator, proj)).used, 1);
 });
 
-it('C10A-IV-07 invite-invalid 一个口径：未知、已作废、已过期、次数用完，状态码与回包逐字节相同', async (t) => {
+it('C10A-IV-07 invite-invalid has one uniform shape: unknown, revoked, expired and used-up codes give byte-identical status codes and response bodies', async (t) => {
   const env = await hostFor(t);
   const proj = await createProject(env, { mode: 'free' });
   const creator = await join(env, proj, { username: proj.creator.username, as: 'creator' });
@@ -151,19 +151,19 @@ it('C10A-IV-07 invite-invalid 一个口径：未知、已作废、已过期、�
     bodies.resolve.set(label, `${a.status} ${a.text}`);
     bodies.redeem.set(label, `${b.status} ${b.text}`);
   };
-  await record('未知', newInviteCode());
+  await record('unknown', newInviteCode());
   const revoked = (await adminOp(creator, proj, 'invite-create')).code;
   await adminOp(creator, proj, 'invite-revoke');
-  await record('已作废', revoked);
+  await record('revoked', revoked);
   const expired = (await adminOp(creator, proj, 'invite-create', { expiresInSec: 10 })).code;
   env.clock.advance(11_000);
-  await record('已过期', expired);
+  await record('expired', expired);
   const used = (await adminOp(creator, proj, 'invite-create', { maxUses: 1 })).code;
   assert.equal((await redeemInvite(env, { code: used, username: 'first', deviceId: newDevice().deviceId })).status, 200);
-  await record('次数用完', used);
+  await record('used up', used);
   for (const [ep, map] of Object.entries(bodies)) {
     const values = [...map.values()];
-    assert.equal(new Set(values).size, 1, `${ep} 四种情况应完全一样：${JSON.stringify(Object.fromEntries(map))}`);
+    assert.equal(new Set(values).size, 1, `${ep} all four cases should be identical: ${JSON.stringify(Object.fromEntries(map))}`);
     const [code, ...rest] = values[0].split(' ');
     assert.equal(code, '404');
     assert.deepEqual(JSON.parse(rest.join(' ')), INVALID);
@@ -172,48 +172,48 @@ it('C10A-IV-07 invite-invalid 一个口径：未知、已作废、已过期、�
 
 // ------------------------------------------------------------------ 兑换：K、禁入
 
-it('C10A-IV-08 自由进入回 K：K 等于项目密码派生的 K，拿它照常握手；resolve 不给 K', async (t) => {
+it('C10A-IV-08 open entry returns K: K equals the K derived from the project password, the normal handshake works with it; resolve does not return K', async (t) => {
   const { env, proj, code } = await setup(t);
   const dev = newDevice('Phone');
   const r = await redeemInvite(env, { code, username: 'zoe', deviceId: dev.deviceId });
   assert.equal(r.status, 200, r.text);
   const j = r.json;
   assert.deepEqual({ ok: j.ok, projectId: j.projectId, name: j.name, mode: j.mode }, { ok: true, projectId: proj.projectId, name: proj.name, mode: 'free' });
-  assert.deepEqual(j.kdf, KDF, 'kdf 原样给出');
+  assert.deepEqual(j.kdf, KDF, 'kdf is returned as is');
   assert.equal(typeof j.project?.salt, 'string');
-  assert.equal(j.project.key, derive(proj.password, j.project.salt, j.kdf), 'K = KDF(项目密码, 盐)');
-  assert.equal(await joinStatus(env, proj, { username: 'zoe', device: dev, key: j.project.key }), 101, '凭 K 握手');
+  assert.equal(j.project.key, derive(proj.password, j.project.salt, j.kdf), 'K = KDF(project password, salt)');
+  assert.equal(await joinStatus(env, proj, { username: 'zoe', device: dev, key: j.project.key }), 101, 'handshake with K');
   const res = await resolveInvite(env, code);
-  assert.equal(res.json.project, undefined, 'resolve 不给 K');
+  assert.equal(res.json.project, undefined, 'resolve does not return K');
   assert.equal(res.text.includes(j.project.key), false);
 });
 
-it('C10A-IV-09 限定进入不回 K：只回 { ok, projectId, name, mode }，兑换即扣次；之后按名单口令进入', async (t) => {
+it('C10A-IV-09 restricted entry does not return K: only { ok, projectId, name, mode } is returned, and redeeming consumes a use immediately; afterwards entry is by the passphrase in the list', async (t) => {
   const { env, proj, creator, code } = await setup(t, { mode: 'restricted' });
   const dev = newDevice('Phone');
   const r = await redeemInvite(env, { code, username: 'bob', deviceId: dev.deviceId });
   assert.equal(r.status, 200, r.text);
   assert.deepEqual(r.json, { ok: true, projectId: proj.projectId, name: proj.name, mode: 'restricted' });
-  assert.equal((await status(creator, proj)).used, 1, '限定进入在兑换时就扣');
-  assert.equal(await joinStatus(env, proj, { username: 'bob', device: dev }), 101, '名单里的口令照常进入');
+  assert.equal((await status(creator, proj)).used, 1, 'restricted entry consumes a use at redeem time');
+  assert.equal(await joinStatus(env, proj, { username: 'bob', device: dev }), 101, 'the passphrase in the list still gets in as usual');
 });
 
-it('C10A-IV-10 改项目密码不动邀请码：旧码照常可用，兑换回新 K，旧 K 不能再进', async (t) => {
+it('C10A-IV-10 changing the project password leaves invite codes alone: the old code still works, redeeming returns the new K, and the old K can no longer get in', async (t) => {
   const { env, proj, creator, code } = await setup(t);
   const dev = newDevice();
   const before = (await redeemInvite(env, { code, username: 'zoe', deviceId: dev.deviceId })).json.project;
   const r = await adminOp(creator, proj, 'set-password', { project: credential('pw-2') });
   assert.equal(r.type, 'shared.admin.ok', JSON.stringify(r));
-  assert.equal((await resolveInvite(env, code)).status, 200, '邀请码不受影响');
+  assert.equal((await resolveInvite(env, code)).status, 200, 'invite code is unaffected');
   const after = await redeemInvite(env, { code, username: 'zoe', deviceId: dev.deviceId });
   assert.equal(after.status, 200, after.text);
-  assert.equal(after.json.project.key, derive('pw-2', after.json.project.salt, after.json.kdf), '回的是新密码的 K');
+  assert.equal(after.json.project.key, derive('pw-2', after.json.project.salt, after.json.kdf), 'returns the K of the new password');
   assert.notEqual(after.json.project.key, before.key);
-  assert.equal(await joinStatus(env, proj, { username: 'zoe', device: dev, key: before.key }), 401, '旧 K 失效');
+  assert.equal(await joinStatus(env, proj, { username: 'zoe', device: dev, key: before.key }), 401, 'old K is invalid');
   assert.equal(await joinStatus(env, proj, { username: 'zoe', device: dev, key: after.json.project.key }), 101);
 });
 
-it('C10A-IV-11 禁入：被踢的 (用户名, 设备) 兑换回 401 banned；同用户名换设备不受影响；unban 后能兑换', async (t) => {
+it('C10A-IV-11 ban: redeeming for a kicked (username, device) returns 401 banned; the same username on another device is unaffected; redeeming works again after unban', async (t) => {
   const { env, proj, creator, code } = await setup(t);
   const dev = newDevice('Laptop');
   const zoe = await join(env, proj, { username: 'zoe', device: dev });
@@ -223,33 +223,33 @@ it('C10A-IV-11 禁入：被踢的 (用户名, 设备) 兑换回 401 banned；同
   const r = await redeemInvite(env, { code, username: 'zoe', deviceId: dev.deviceId });
   assert.equal(r.status, 401);
   assert.deepEqual(r.json, { ok: false, error: 'banned' });
-  assert.equal((await redeemInvite(env, { code, username: 'zoe', deviceId: newDevice().deviceId })).status, 200, '禁入按 (用户名, 设备)');
+  assert.equal((await redeemInvite(env, { code, username: 'zoe', deviceId: newDevice().deviceId })).status, 200, 'bans apply per (username, device)');
   await adminOp(creator, proj, 'unban', { username: 'zoe', deviceId: dev.deviceId });
-  assert.equal((await redeemInvite(env, { code, username: 'zoe', deviceId: dev.deviceId })).status, 200, 'unban 之后');
+  assert.equal((await redeemInvite(env, { code, username: 'zoe', deviceId: dev.deviceId })).status, 200, 'after unban');
 });
 
 // ------------------------------------------------------------------ 限速
 
 for (const ep of ['resolve', 'redeem']) {
-  it(`C10A-IV-12 限速（${ep}）：同一来源失败 5 次后 60 s 内一律 429 rate-limited（码对也拒），另一来源不受影响，61 s 后恢复`, async (t) => {
+  it(`C10A-IV-12 rate limit (${ep}): after 5 failures from the same source, everything within 60 s gets 429 rate-limited (even a correct code is rejected), another source is unaffected, and it recovers after 61 s`, async (t) => {
     const { env, code } = await setup(t);
     const call = (c, remote) => (ep === 'resolve'
       ? resolveInvite(env, c, { remote })
       : redeemInvite(env, { code: c, username: 'zoe', deviceId: 'rate-device-000001' }, { remote }));
     for (let i = 0; i < 5; i++) await call(newInviteCode(), R(1));
     const blocked = await call(code, R(1));
-    assert.equal(blocked.status, 429, `冷却中码对也拒：${blocked.status} ${blocked.text}`);
+    assert.equal(blocked.status, 429, `a correct code is also rejected during cooldown: ${blocked.status} ${blocked.text}`);
     assert.equal(blocked.json?.error, 'rate-limited');
     const other = ep === 'resolve' ? 'redeem' : 'resolve';
     const cross = other === 'resolve' ? await resolveInvite(env, code, { remote: R(1) }) : await redeemInvite(env, { code, username: 'zoe', deviceId: 'rate-device-000001' }, { remote: R(1) });
-    assert.equal(cross.status, 429, `同一来源的 ${other} 也在冷却`);
-    assert.equal((await call(code, R(2))).status, 200, '另一来源不受影响');
+    assert.equal(cross.status, 429, `${other} from the same source is also cooling down`);
+    assert.equal((await call(code, R(2))).status, 200, 'another source is unaffected');
     env.clock.advance(61_000);
-    assert.equal((await call(code, R(1))).status, 200, '61 s 后恢复');
+    assert.equal((await call(code, R(1))).status, 200, 'recovers after 61 s');
   });
 }
 
-it('C10A-IV-13 回环来源的失败不计入限速', async (t) => {
+it('C10A-IV-13 failures from a loopback source do not count toward the rate limit', async (t) => {
   const { env, code } = await setup(t);
   for (let i = 0; i < 8; i++) assert.equal((await resolveInvite(env, newInviteCode())).status, 404);
   assert.equal((await resolveInvite(env, code)).status, 200);
@@ -257,20 +257,20 @@ it('C10A-IV-13 回环来源的失败不计入限速', async (t) => {
 
 // ------------------------------------------------------------------ 创建者操作、存储、日志
 
-it('C10A-IV-14 三个 op 都要创建者证明：成员、不带证明、证明错一律 forbidden，且都不生效', async (t) => {
+it('C10A-IV-14 all three ops need creator proof: a member, no proof, or wrong proof is always forbidden, and none takes effect', async (t) => {
   const { env, proj, creator, code } = await setup(t);
   const member = await join(env, proj, { username: 'zoe' });
   for (const op of ['invite-create', 'invite-revoke', 'invite-status']) {
     const asMember = await adminOp(member, proj, op, {}, { password: proj.password, username: 'zoe' });
-    assert.equal(asMember.reason, 'forbidden', `${op} 成员：${JSON.stringify(asMember)}`);
-    assert.equal((await adminOp(creator, proj, op, {}, { noProof: true })).reason, 'forbidden', `${op} 不带证明`);
-    assert.equal((await adminOp(creator, proj, op, {}, { badProof: true })).reason, 'forbidden', `${op} 证明错`);
+    assert.equal(asMember.reason, 'forbidden', `${op} member: ${JSON.stringify(asMember)}`);
+    assert.equal((await adminOp(creator, proj, op, {}, { noProof: true })).reason, 'forbidden', `${op} without proof`);
+    assert.equal((await adminOp(creator, proj, op, {}, { badProof: true })).reason, 'forbidden', `${op} with wrong proof`);
     assert.equal(JSON.stringify(asMember).includes(code), false);
   }
-  assert.equal((await resolveInvite(env, code)).status, 200, '原码仍有效：没被作废也没被换掉');
+  assert.equal((await resolveInvite(env, code)).status, 200, 'the original code is still valid: neither revoked nor replaced');
 });
 
-it('C10A-IV-15 原文不落盘、不进日志：数据目录里任何文件都不含邀请码原文，日志行也不含', async (t) => {
+it('C10A-IV-15 plaintext never reaches disk or logs: no file in the data directory contains the invite code in plaintext, and no log line does either', async (t) => {
   const { env, proj, creator, code } = await setup(t, { fields: { maxUses: 3 } });
   await resolveInvite(env, code);
   await redeemInvite(env, { code, username: 'zoe', deviceId: newDevice().deviceId });
@@ -280,12 +280,12 @@ it('C10A-IV-15 原文不落盘、不进日志：数据目录里任何文件都�
   // 再签发一个，确保旧记录被改写之后同样不含原文
   const second = (await adminOp(creator, proj, 'invite-create')).code;
   for (const c of [code, second]) {
-    assert.deepEqual(filesContaining(env.dataDir, c), [], `数据目录里出现了原文 ${c.slice(0, 6)}…`);
-    assert.equal(logText(env).includes(c), false, '日志里出现了原文');
+    assert.deepEqual(filesContaining(env.dataDir, c), [], `the data directory contains the plaintext ${c.slice(0, 6)}…`);
+    assert.equal(logText(env).includes(c), false, 'the log contains the plaintext');
   }
 });
 
-it('C10A-IV-16 删项目：邀请码一并删除，resolve 回 invite-invalid', async (t) => {
+it('C10A-IV-16 deleting a project: its invite codes are deleted with it, and resolve returns invite-invalid', async (t) => {
   const { env, proj, creator, code } = await setup(t);
   const r = await adminOp(creator, proj, 'delete');
   assert.equal(r.type, 'shared.admin.ok', JSON.stringify(r));
@@ -294,11 +294,11 @@ it('C10A-IV-16 删项目：邀请码一并删除，resolve 回 invite-invalid', 
   assert.deepEqual(res.json, INVALID);
 });
 
-it('C10A-IV-17 HTTP 形状：no-store、Access-Control-Allow-Origin *、答 OPTIONS 预检', async (t) => {
+it('C10A-IV-17 HTTP shape: no-store, Access-Control-Allow-Origin *, answers the OPTIONS preflight', async (t) => {
   const { env, code } = await setup(t);
   for (const rel of ['shared/invite/resolve', 'shared/invite/redeem']) {
     const pre = await env.http(rel, { method: 'OPTIONS', headers: { Origin: 'https://example.test', 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'content-type' } });
-    assert.ok(pre.status >= 200 && pre.status < 300, `${rel} OPTIONS：${pre.status}`);
+    assert.ok(pre.status >= 200 && pre.status < 300, `${rel} OPTIONS: ${pre.status}`);
     assert.equal(pre.headers.get('access-control-allow-origin'), '*');
   }
   const r = await resolveInvite(env, code);
@@ -308,7 +308,7 @@ it('C10A-IV-17 HTTP 形状：no-store、Access-Control-Allow-Origin *、答 OPTI
   assert.match(bad.headers.get('cache-control') ?? '', /no-store/);
 });
 
-it('C10A-IV-18 挂载模式（局域网主机）实现同一组端点与 op：<WS 路径>/shared/invite/…', async (t) => {
+it('C10A-IV-18 mount mode (LAN host) implements the same set of endpoints and ops: <WS path>/shared/invite/…', async (t) => {
   const { env, proj, code } = await setup(t, { host: { attached: true } });
   assert.equal(env.attached, true);
   const r = await resolveInvite(env, code, { remote: '192.168.1.50' });
@@ -320,7 +320,7 @@ it('C10A-IV-18 挂载模式（局域网主机）实现同一组端点与 op：<W
   assert.equal(await joinStatus(env, proj, { username: 'zoe', device: dev, key: red.json.project.key, remote: '192.168.1.50' }), 101);
 });
 
-it('C10A-IV-19 两个项目的邀请码互不相干：各自解析到自己的项目，作废一个不影响另一个', async (t) => {
+it('C10A-IV-19 invite codes of two projects are independent: each resolves to its own project, and revoking one does not affect the other', async (t) => {
   const env = await hostFor(t);
   const a = await createProject(env, { mode: 'free', name: uniqueName('inv-a') });
   const b = await createProject(env, { mode: 'restricted', name: uniqueName('inv-b') });

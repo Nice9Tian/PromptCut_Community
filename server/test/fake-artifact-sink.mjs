@@ -36,10 +36,10 @@ const clone = value => (value === undefined ? undefined : structuredClone(value)
 const sparseRef = args => args?.kind === 'stream' && args?.input?.density === 'sparse';
 
 function badArgs(what, args) {
-  if (!args || typeof args !== 'object') return `${what}：参数不是对象`;
-  if (typeof args.resultKey !== 'string' || args.resultKey === '') return `${what}：resultKey 必须是非空字符串`;
+  if (!args || typeof args !== 'object') return `${what}: args is not an object`;
+  if (typeof args.resultKey !== 'string' || args.resultKey === '') return `${what}: resultKey must be a non-empty string`;
   const r = args.range;
-  if (!r || typeof r !== 'object' || !Number.isInteger(r.from) || !Number.isInteger(r.to)) return `${what}：range 必须带整数 from / to`;
+  if (!r || typeof r !== 'object' || !Number.isInteger(r.from) || !Number.isInteger(r.to)) return `${what}: range must have integer from / to`;
   return null;
 }
 
@@ -90,7 +90,7 @@ export function createArtifactSink() {
     const { resultKey, kind, tier, range, artifacts, meta } = args;
     // D.1：meta = { taskId, nodeId, token }，供记账（设计第 7 节「节点信任」）
     if (!meta || typeof meta.taskId !== 'string' || typeof meta.nodeId !== 'string' || !Number.isInteger(meta.token)) {
-      misuse.push(`put：meta 必须是 { taskId: string, nodeId: string, token: int }，实际 ${JSON.stringify(meta)}`);
+      misuse.push(`put: meta must be { taskId: string, nodeId: string, token: int }, got ${JSON.stringify(meta)}`);
     }
     let complete = true;
     if (failing > 0) {
@@ -129,7 +129,7 @@ export function createArtifactSink() {
       cover(resultKey, range, false);
     },
     failNextPut(n = 1) {
-      if (!Number.isInteger(n) || n < 0) throw new TypeError('failNextPut：n 必须是非负整数');
+      if (!Number.isInteger(n) || n < 0) throw new TypeError('failNextPut: n must be a non-negative integer');
       failing += n;
     },
     putCount: resultKey => putLog.filter(p => p.resultKey === resultKey).length,

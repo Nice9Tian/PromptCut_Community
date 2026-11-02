@@ -36,7 +36,7 @@ function stalledRead(f, project, url) {
   });
 }
 
-test('真实HTTP：小尺寸补转、上传队列、预取、原尺寸检查、带扩展名的旧读口都不越项目', async t => {
+test('real HTTP: small-size backfill transcode, upload queue, prefetch, original-size check and legacy read endpoints with extensions all stay within the project', async t => {
   const f = await startAssetProjectFixture(); t.after(() => f.close());
   await upload(f, 'A', 'media');
   assert.equal(await status(f, 'A', `/@media/${hash}.wav`), 200);
@@ -49,12 +49,12 @@ test('真实HTTP：小尺寸补转、上传队列、预取、原尺寸检查、�
   const queue = await request(f, 'B', '/api/media/upload-queue'); assert.equal(queue.status, 200); assert.ok(!(await queue.text()).includes(hash));
   assert.equal(await status(f, 'B', '/api/media/upload-queue/target', post({ base: `${f.base}/api/asset`, ticket: 'A-rw' })), 403);
   assert.equal((await (await request(f, 'B', '/api/media/prefetch', post({ items: [{ hash, name: 'x.wav' }] }))).json()).queued, 0);
-  assert.equal(await status(f, 'B', `/@media/${hash}`), 404, '预取之后仍读不到');
+  assert.equal(await status(f, 'B', `/@media/${hash}`), 404, 'still unreadable after prefetch');
   const originals = await (await request(f, 'B', '/api/media/originals', post({ hashes: [hash] }))).json();
   assert.equal(originals.remote, null); assert.deepEqual(originals.missing, [hash]);
 });
 
-test('真实HTTP：A 传了一片没收尾的，B 看不到也收不了尾；只读票据与查询串票据不能写', async t => {
+test('real HTTP: A uploaded one chunk without finalizing; B can neither see it nor finalize it; read-only tickets and query-string tickets cannot write', async t => {
   const f = await startAssetProjectFixture(); t.after(() => f.close());
   for (const ns of ['media', 'snap', 'px']) {
     const url = `/api/asset/${ns}/${hash}`;
@@ -71,7 +71,7 @@ test('真实HTTP：A 传了一片没收尾的，B 看不到也收不了尾；只
   }
 });
 
-test('真实HTTP：撤销后 A 在 /api/asset 三命名空间与 /@media 上正在读的流都被关，B 同哈希的流读完整件', { timeout: 60000 }, async t => {
+test('real HTTP: after revocation, A\'s streams being read on the three /api/asset namespaces and on /@media are all closed, while B\'s streams of the same hash read the whole file', { timeout: 60000 }, async t => {
   const f = await startAssetProjectFixture(); t.after(() => f.close());
   const big = Buffer.alloc(20 * 1024 * 1024); for (let i = 0; i < big.length; i += 4096) big.writeUInt32LE((i * 2654435761) >>> 0, i);
   let key;
@@ -84,7 +84,7 @@ test('真实HTTP：撤销后 A 在 /api/asset 三命名空间与 /@media 上正�
   await f.revoke('A'); // 夹具等每个订阅者的回调返回：回调要等服务端那条流真的关掉
   for (const [n, read] of reads.entries()) {
     read.resume(); const end = await read.closed;
-    assert.equal(end.complete, false, `${routes[n]} 没有被关`); assert.ok(end.bytes < big.length);
+    assert.equal(end.complete, false, `${routes[n]} was not closed`); assert.ok(end.bytes < big.length);
   }
   for (const url of routes) assert.equal(await status(f, 'A', url, { headers: { Range: 'bytes=0-1' } }), 403);
   other.resume(); assert.deepEqual(await other.closed, { complete: true, bytes: big.length });

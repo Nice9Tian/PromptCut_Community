@@ -14,7 +14,7 @@ function world() {
   const fetches = [];
   const deps = {
     async request(msg) {
-      if (msg.type !== "content.get") throw new Error("只认 content.get");
+      if (msg.type !== "content.get") throw new Error("only content.get is recognized");
       if (!content.has(msg.key)) return { type: "content.item", kind: msg.kind, key: msg.key, missing: true };
       return { type: "content.item", kind: msg.kind, key: msg.key, body: structuredClone(content.get(msg.key)) };
     },
@@ -45,7 +45,7 @@ async function settle(src) {
   for (let i = 0; i < 6; i++) { await src.tickNow(); await src.idle(); await new Promise((r) => setTimeout(r, 5)); }
 }
 
-test("M7-AS-01 没认定时用第一个候选;浏览器那份 task.done 之后整层换成它;切分方那份 superseded 也换过去", async () => {
+test("M7-AS-01 With none designated, use the first candidate; after the browser's copy is task.done the whole layer switches to it; when the splitter's copy is superseded it also switches over", async () => {
   const w = world();
   const src = new OnlineSnapshotSource(w.deps, { tier: "original" });
   const index = new Map();
@@ -53,13 +53,13 @@ test("M7-AS-01 没认定时用第一个候选;浏览器那份 task.done 之后�
   src.setProject("p1");
   src.focus(0, 30);
   await settle(src);
-  assert.equal(layerOf(index, "a", "html")?.key, "R-host", "默认第一个候选(切分方自己的)");
+  assert.equal(layerOf(index, "a", "html")?.key, "R-host", "Default is the first candidate (the splitter's own)");
   src.noteQueueEvent({ type: "task.done", id: "snapshot:R-page:0-59", resultKey: "R-page" });
   await settle(src);
-  assert.equal(layerOf(index, "a", "html")?.key, "R-page", "浏览器那份活着:整层换键");
-  assert.equal(w.fetches.length, 0, "撤快照后不自动预取每张卡快照块");
+  assert.equal(layerOf(index, "a", "html")?.key, "R-page", "Browser's copy is alive: whole layer switches key");
+  assert.equal(w.fetches.length, 0, "After a snapshot is revoked, per-card snapshot chunks are not prefetched automatically");
   await src.fetchSnapshot("html", "R-page", 0);
-  assert.ok(w.fetches.some((f) => f === `snap/${H(5000)}`), "按活着那一份的清单取块");
+  assert.ok(w.fetches.some((f) => f === `snap/${H(5000)}`), "Fetch chunks according to the manifest of the live copy");
   assert.equal(src.debug().layers[0].envFingerprint, "fp-page");
   src.stop();
 
@@ -73,7 +73,7 @@ test("M7-AS-01 没认定时用第一个候选;浏览器那份 task.done 之后�
   // 只有 id 的 task.failed(队列作废时不带 resultKey):从 id 里取结果键
   s2.noteQueueEvent({ type: "task.failed", id: "snapshot:R-host:0-59", error: "superseded" });
   await settle(s2);
-  assert.equal(layerOf(idx2, "a", "html")?.key, "R-page", "切分方那份作废 = 另一份活着");
+  assert.equal(layerOf(idx2, "a", "html")?.key, "R-page", "Splitter's copy invalidated = the other copy is alive");
   // 别的失败不算作废
   s2.noteQueueEvent({ type: "task.failed", id: "snapshot:R-page:0-59", error: "sink-incomplete" });
   await settle(s2);

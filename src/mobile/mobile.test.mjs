@@ -7,18 +7,18 @@ import { mainTrackOf, mainClipsOf, boundaryTransition, planReorder, timeAtCardPo
 import { clampPx, fitPx, rulerStep, zoomAround, playheadX, PX_MIN, PX_MAX, TL_PAD } from './zoom.ts';
 
 const media = [
-  { id: 'mv', kind: 'video', name: '海浪.mp4', url: 'x' },
-  { id: 'mi', kind: 'image', name: '合照.jpg', url: 'y' },
-  { id: 'ma', kind: 'audio', name: '吉他.mp3', url: 'z' },
+  { id: 'mv', kind: 'video', name: 'Waves.mp4', url: 'x' },
+  { id: 'mi', kind: 'image', name: 'Group photo.jpg', url: 'y' },
+  { id: 'ma', kind: 'audio', name: 'Guitar.mp3', url: 'z' },
 ];
-const project = (tracks, transitions = []) => ({ version: 1, name: 'p', width: 1920, height: 1080, fps: 30, duration: 30, themeId: 'm', media, tracks, transitions, cuts: [{ id: 'k1', name: '片头' }] });
+const project = (tracks, transitions = []) => ({ version: 1, name: 'p', width: 1920, height: 1080, fps: 30, duration: 30, themeId: 'm', media, tracks, transitions, cuts: [{ id: 'k1', name: 'Intro' }] });
 const clip = (id, start, end, extra = {}) => ({ id, cardId: '', start, end, params: {}, ...extra });
 
 test('MC1 main track = the bottom-most track holding video/image/cut segments; cards and audio do not count as main content', () => {
   const p = project([
-    { id: 't1', name: '上', clips: [clip('card', 0, 3, { cardId: 'title' })] },
+    { id: 't1', name: 'Upper', clips: [clip('card', 0, 3, { cardId: 'title' })] },
     { id: 't2', name: 'Medium', clips: [clip('v1', 0, 4, { mediaId: 'mv' }), clip('i1', 4, 6, { mediaId: 'mi' }), clip('k', 6, 9, { cutId: 'k1' })] },
-    { id: 't3', name: '下', clips: [clip('a1', 0, 9, { mediaId: 'ma' })] },
+    { id: 't3', name: 'Lower', clips: [clip('a1', 0, 9, { mediaId: 'ma' })] },
   ]);
   assert.equal(mainTrackOf(p).id, 't2');
   assert.deepEqual(mainClipsOf(p).map((c) => c.id), ['v1', 'i1', 'k']);
@@ -27,7 +27,7 @@ test('MC1 main track = the bottom-most track holding video/image/cut segments; c
 });
 
 test('MC2 with no video/image/cut segments: the main track is the bottom-most one, and card clips fill in as main content (user decision, 2026-10-23); empty when there are no clips at all', () => {
-  const p = project([{ id: 't1', name: '上', clips: [clip('card', 0, 3, { cardId: 'title' })] }, { id: 't2', name: '下', clips: [] }]);
+  const p = project([{ id: 't1', name: 'Upper', clips: [clip('card', 0, 3, { cardId: 'title' })] }, { id: 't2', name: 'Lower', clips: [] }]);
   assert.equal(mainTrackOf(p).id, 't2');
   assert.deepEqual(mainClipsOf(p).map((c) => c.id), ['card']);
   assert.deepEqual(mainClipsOf(project([{ id: 't', name: 's', clips: [] }])), []);
@@ -36,8 +36,8 @@ test('MC2 with no video/image/cut segments: the main track is the bottom-most on
 test('MC3 the clip after a crossfade moved to another track still counts as main content; boundary transitions are recognized in the order dissolve → fade out → fade in', () => {
   const tr = { id: 'x1', kind: 'crossfade', aId: 'v1', bId: 'v2', dur: 0.5 };
   const p = project([
-    { id: 't1', name: '上', clips: [clip('v2', 3.5, 7, { mediaId: 'mv' })] },
-    { id: 't2', name: '下', clips: [clip('v1', 0, 4, { mediaId: 'mv' }), clip('v3', 7, 9, { mediaId: 'mi' })] },
+    { id: 't1', name: 'Upper', clips: [clip('v2', 3.5, 7, { mediaId: 'mv' })] },
+    { id: 't2', name: 'Lower', clips: [clip('v1', 0, 4, { mediaId: 'mv' }), clip('v3', 7, 9, { mediaId: 'mi' })] },
   ], [tr, { id: 'f1', kind: 'fadeIn', aId: 'v3', dur: 0.6 }]);
   const m = mainClipsOf(p);
   assert.deepEqual(m.map((c) => c.id), ['v1', 'v2', 'v3']);

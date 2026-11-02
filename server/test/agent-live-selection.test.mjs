@@ -13,7 +13,7 @@ import { wsClient, waitFor } from './fake-ws-kit.mjs';
 
 const ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
 const projectId = 'selection-project';
-const script = steps => `按脚本做。\n\`\`\`mock-script\n${JSON.stringify(steps)}\n\`\`\``;
+const script = steps => `Follow the script.\n\`\`\`mock-script\n${JSON.stringify(steps)}\n\`\`\``;
 
 test('account get_selection uses the active Agent data connection for all live members and doc-owned offline snapshot',
   { timeout: 30000 }, async t => {
@@ -103,7 +103,7 @@ test('account get_selection uses the active Agent data connection for all live m
     assert.equal(state.ok, true, JSON.stringify({ state, events: events.map(event => event.type), logs }));
     assert.equal(state.projectId, projectId);
     assert.deepEqual(state.members.map(member => member.accountId), ['alice', 'bob', 'carol']);
-    assert.equal(state.members[0].displayName, 'alice-trusted（当前用户）');
+    assert.equal(state.members[0].displayName, 'alice-trusted (current user)');
     assert.deepEqual(state.members[0].pages.map(page => page.pageId), ['a1', 'a2']);
     assert.deepEqual(state.members[0].pages[0].items.map(item => [item.id, !!item.missing]),
       [['c1', false], ['gone', true]]);
@@ -116,7 +116,7 @@ test('account get_selection uses the active Agent data connection for all live m
     const offline = await inst.callTool('get_selection', {}, 'conv1');
     assert.equal(offline.ok, true);
     assert.deepEqual(offline.members[0].pages.map(page => [page.live, page.source, page.note]),
-      [[false, 'sent-snapshot', '发消息时的选区，非实时']]);
+      [[false, 'sent-snapshot', 'Selection at the time the message was sent, not live']]);
     assert.equal(offline.members.some(member => member.accountId === 'bob'), true);
     grantEnabled = false;
     const revoked = await inst.callTool('get_selection', {}, 'conv1');

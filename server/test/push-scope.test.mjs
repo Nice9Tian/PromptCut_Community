@@ -48,7 +48,7 @@ const queueOf = (pipeline, dir, scope) => createPushQueue({ pipeline, client: fa
 const ids = queue => queue.stats().items.map(i => i.id).sort();
 const fileIds = dir => JSON.parse(fs.readFileSync(path.join(dir, PUSH_QUEUE_FILE), 'utf8')).items.map(i => `${i.unit.kind}:${i.unit.resultKey}`).sort();
 
-test('PS-01 两个项目的帧同时进帧库:只有绑定项目的进推送队列与队列文件', async () => {
+test('PS-01 frames of two projects enter the frame store at the same time: only those of the bound project go into the push queue and the queue file', async () => {
   const world = twoProjects();
   const u = units(world);
   const dir = tmp();
@@ -58,7 +58,7 @@ test('PS-01 两个项目的帧同时进帧库:只有绑定项目的进推送队�
   assert.deepEqual(ids(queue), [
     'snapshot:kA:0-29', 'snapshot:kAB:0-29', 'snapshot:rlA:0-29', `stream:${world.SA}:0-3`, `stream:${world.SX}:0-3`,
   ].sort());
-  assert.equal(queue.stats().outOfScope, 4, 'B 的共享档、本地档、流,加上找不到 entry 的那一段');
+  assert.equal(queue.stats().outOfScope, 4, 'the shared tier, local tier and stream of B, plus the segment with no entry found');
   assert.deepEqual(fileIds(dir), ['snapshot:kA', 'snapshot:kAB', 'snapshot:rlA', `stream:${world.SA}`, `stream:${world.SX}`].sort());
   // 层表:只写绑定项目的
   assert.equal(queue.putLayerMap('docA', { layers: [] }), true);
@@ -67,7 +67,7 @@ test('PS-01 两个项目的帧同时进帧库:只有绑定项目的进推送队�
   await queue.stop();
 });
 
-test('PS-02 不限(ALL)与不给 scope:行为与原来相同,全进队', async () => {
+test('PS-02 unrestricted (ALL) and no scope given: same behavior as before, everything is queued', async () => {
   const world = twoProjects();
   const u = units(world);
   for (const scope of [null, createPushScope({ pipeline: world.pipeline, contentIds: () => ALL })]) {
@@ -80,7 +80,7 @@ test('PS-02 不限(ALL)与不给 scope:行为与原来相同,全进队', async (
   }
 });
 
-test('PS-03 绑定项目的文档 id 还没到:先扣着不进队也不落盘;到了 rescope 只放行绑定项目的', async () => {
+test('PS-03 the document id of the bound project has not arrived yet: hold items back, neither queued nor written to disk; once it arrives, rescope releases only those of the bound project', async () => {
   const world = twoProjects();
   const u = units(world);
   const dir = tmp();
@@ -92,18 +92,18 @@ test('PS-03 绑定项目的文档 id 还没到:先扣着不进队也不落盘;�
   await queue.enqueue(u.localA);
   assert.equal(queue.stats().items.length, 0);
   assert.equal(queue.stats().deferred, 3);
-  assert.equal(queue.putLayerMap('docA', { layers: [] }), false, '判不了的层表不写');
+  assert.equal(queue.putLayerMap('docA', { layers: [] }), false, 'a layer table that cannot be judged is not written');
   assert.equal(fs.existsSync(path.join(dir, PUSH_QUEUE_FILE)), false);
-  assert.deepEqual(queue.rescope(), { queued: 0, dropped: 0, held: 3 }, '还不知道就继续扣着');
+  assert.deepEqual(queue.rescope(), { queued: 0, dropped: 0, held: 3 }, 'keep holding while it is still unknown');
   bound = 'docA';
   assert.deepEqual(queue.rescope(), { queued: 2, dropped: 1, held: 0 });
   assert.deepEqual(ids(queue), ['snapshot:kA:0-29', 'snapshot:rlA:0-29']);
-  assert.equal(queue.stats().items.find(i => i.id === 'snapshot:kA:0-29').priority, 'low', '扣着时的优先级带过去');
+  assert.equal(queue.stats().items.find(i => i.id === 'snapshot:kA:0-29').priority, 'low', 'the priority from when it was held is carried over');
   await queue.stop();
   assert.deepEqual(fileIds(dir), ['snapshot:kA', 'snapshot:rlA']);
 });
 
-test('PS-04 换绑定、撤绑定:队列文件按项目分目录,旧项目没推完的留在旧目录,新项目只收自己的', async () => {
+test('PS-04 rebinding and unbinding: queue files are split into directories by project, what the old project has not finished pushing stays in the old directory, and the new project takes only its own', async () => {
   const world = twoProjects();
   const u = units(world);
   const root = tmp();
@@ -114,13 +114,13 @@ test('PS-04 换绑定、撤绑定:队列文件按项目分目录,旧项目没推
   await qA.stop();   // 换绑定:撤掉 A 的队列(没推完的留在 dirA)
   // 换绑 B
   const qB = queueOf(world.pipeline, dirB, createPushScope({ pipeline: world.pipeline, contentIds: () => ['docB'] }));
-  assert.equal(qB.stats().restored, 0, 'B 的目录里没有 A 的段');
+  assert.equal(qB.stats().restored, 0, 'the directory of B has no segment of A');
   await qB.enqueue(u.sharedA); await qB.enqueue(u.sharedB); await qB.enqueue(u.localB);
   assert.deepEqual(ids(qB), ['snapshot:kB:0-29', 'snapshot:rlB:0-29']);
   await qB.stop();   // 撤绑定
   assert.deepEqual(fileIds(dirA), ['snapshot:kA']);
   assert.deepEqual(fileIds(dirB), ['snapshot:kB', 'snapshot:rlB']);
-  assert.equal(fs.existsSync(path.join(root, PUSH_QUEUE_FILE)), false, '帧库根的老队列文件不写');
+  assert.equal(fs.existsSync(path.join(root, PUSH_QUEUE_FILE)), false, 'the old queue file at the frame store root is not written');
   // 再绑回 A:接着推 A 留下的,读回的不再判范围(文件里只有 A 的)
   const qA2 = queueOf(world.pipeline, dirA, createPushScope({ pipeline: world.pipeline, contentIds: () => ['docA'] }));
   assert.equal(qA2.stats().restored, 1);
@@ -128,7 +128,7 @@ test('PS-04 换绑定、撤绑定:队列文件按项目分目录,旧项目没推
   await qA2.stop();
 });
 
-test('PS-05 老路径的共享配置可以写 contentId(可选,不合格报错)', () => {
+test('PS-05 the shared config on the legacy path may set contentId (optional; an invalid value throws an error)', () => {
   const base = { url: 'ws://127.0.0.1:1/docservice', projectId: 'sp_' + 'a'.repeat(26), username: 'u1', password: 'x', deviceId: 'd'.repeat(16), deviceName: 'dev' };
   assert.equal(normalizeEntry(base).contentId, null);
   assert.equal(normalizeEntry({ ...base, contentId: 'doc-1' }).contentId, 'doc-1');
@@ -148,14 +148,14 @@ function assetWorld() {
 const common = w => ({ node: w.node, endpoint: {}, origin: 'http://127.0.0.1:5670', ticket: null, createAssetClient: w.createAssetClient, owner: 'push', self: 'asset:me' });
 const FOREIGN = [{ kind: 'asset', announcerId: 'asset:pc', urls: ['http://10.0.0.2:5460/api/asset'] }];
 
-test('AS-01 没有显式基址:第一次推送等到登记才发,直接去登记的素材服务(不先落本机)', async () => {
+test('AS-01 no explicit base URL: the first push waits until registration arrives before sending, and goes straight to the registered asset service (without going to local first)', async () => {
   const w = assetWorld();
   const log = [];
   const sel = selectAssetClient({ ...common(w), envBase: '', settleMs: 60_000, log: (e, f) => log.push([e, f]) });
   assert.equal(sel.settled(), false);
   const pushed = sel.client.put('snap', Buffer.from('x'));   // 队列文件里上次没推完的段:起步就推
   await new Promise(r => setTimeout(r, 20));
-  assert.equal(w.calls.length, 0, '登记没到之前不推');
+  assert.equal(w.calls.length, 0, 'no push before registration arrives');
   w.deliver(FOREIGN);
   await pushed;
   assert.deepEqual(w.calls.map(c => c.base), ['http://10.0.0.2:5460/api/asset']);
@@ -168,7 +168,7 @@ test('AS-01 没有显式基址:第一次推送等到登记才发,直接去登记
   sel.stop();
 });
 
-test('AS-02 登记是空的:本机;连不上文档服务:等满 settleMs 落本机;环境变量:立即用它,不等', async () => {
+test('AS-02 registration is empty: local; document service unreachable: wait out the full settleMs, then local; environment variable: use it immediately, no waiting', async () => {
   {
     const w = assetWorld();
     const sel = selectAssetClient({ ...common(w), envBase: '', settleMs: 60_000 });
@@ -195,7 +195,7 @@ test('AS-02 登记是空的:本机;连不上文档服务:等满 settleMs 落本�
   }
 });
 
-test('AS-03 页面给了素材基址:立即用它;页面晚给的也在登记之前被选上', async () => {
+test('AS-03 the page gave an asset base URL: use it immediately; one the page gives late is also picked ahead of the registration', async () => {
   const w = assetWorld();
   let page = null;
   const sel = selectAssetClient({ ...common(w), envBase: '', settleMs: 60_000, preferred: () => page });

@@ -53,7 +53,7 @@ test('fetchSnapshot caches by kind/key/frame, dedupes in-flight, and evicts LRU 
     const first = await source.fetchSnapshot('html', 'K', 0);
     assert.equal(first, '<i>http://127.0.0.1:1234/api/frames/snapshot/html/K/0</i>');
     await source.fetchSnapshot('html', 'K', 0);
-    assert.equal(calls.length, 1, '命中缓存就不再飞');
+    assert.equal(calls.length, 1, 'a cache hit does not fetch again');
     // 同一帧同时被两处要到时只飞一次
     calls.length = 0;
     await Promise.all([source.fetchSnapshot('html', 'K', 1), source.fetchSnapshot('html', 'K', 1)]);
@@ -63,10 +63,10 @@ test('fetchSnapshot caches by kind/key/frame, dedupes in-flight, and evicts LRU 
     assert.equal(source.cacheSize, SNAPSHOT_CACHE_MAX);
     calls.length = 0;
     await source.fetchSnapshot('local', 'E/K', 0);
-    assert.equal(calls.length, 1, '被淘汰的那一条要重新取');
+    assert.equal(calls.length, 1, 'the evicted entry must be fetched again');
     // 缺帧抛,不是回空串 —— 那一层按缺料处理
     globalThis.fetch = async () => ({ ok: false, status: 404, text: async () => '' });
-    await assert.rejects(source.fetchSnapshot('html', 'MISSING', 0), /还没就绪/);
+    await assert.rejects(source.fetchSnapshot('html', 'MISSING', 0), /not ready yet/);
   } finally {
     globalThis.fetch = realFetch;
   }

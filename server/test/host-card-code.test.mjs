@@ -46,12 +46,12 @@ const FP = 'fedcba9876543210';
 const CV = 'c0de-host-cards';
 const sha = (text) => createHash('sha256').update(text).digest('hex');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-async function waitFor(fn, ms = 5000, what = '条件') {
+async function waitFor(fn, ms = 5000, what = 'condition') {
   const t0 = Date.now();
   for (;;) {
     const v = await fn();
     if (v) return v;
-    if (Date.now() - t0 > ms) throw new Error(`等 ${what} 超时(${ms} ms)`);
+    if (Date.now() - t0 > ms) throw new Error(`Timed out waiting for ${what} (${ms} ms)`);
     await sleep(20);
   }
 }
@@ -77,10 +77,10 @@ function C({ params }: CardProps<Params>) {
   return <motion.div animate={{ opacity: 1 }}>{params.text}</motion.div>;
 }
 export const priceTag: CardDef<Params> = {
-  id: "price-tag", name: "价格", description: "d", source: "user",
+  id: "price-tag", name: "Price", description: "d", source: "user",
   frameMode: "stateful",
   defaults: { text: "${text}" },
-  controls: [{ key: "text", label: "文字", type: "text" }],
+  controls: [{ key: "text", label: "Text", type: "text" }],
   Component: C,
 };
 `;
@@ -107,7 +107,7 @@ function checkout(prefix, extra = {}) {
 
 /* ================================================================== HC1 */
 
-test('HC1 用户卡不同的两台节点仍在同一池:frameCode 不含 src/cards/user(装载入口除外),换行统一', () => {
+test('HC1 two nodes with different user cards are still in the same pool: frameCode does not include src/cards/user (except the loader entry), and line endings are normalized', () => {
   const a = checkout('pc-hc1-a-', { [USER_KEY]: cardSource('v1'), 'src/cards/user/_scopes.json': '{"price-tag":{"scope":"project"}}' });
   const b = checkout('pc-hc1-b-');
   const c = checkout('pc-hc1-c-', { [USER_KEY]: cardSource('another'), 'src/cards/user/lib/helper.ts': 'export const h = 2;\n' });
@@ -118,17 +118,17 @@ test('HC1 用户卡不同的两台节点仍在同一池:frameCode 不含 src/car
   }
   const code = frameCode(b);
   assert.match(code, /^[0-9a-f]{64}$/);
-  assert.equal(frameCode(a), code, '多一张用户卡(和归属表)不换代码版本');
-  assert.equal(frameCode(c), code, '用户卡不同、多一个用户卡依赖文件也不换');
-  assert.equal(frameCode(d), code, 'CRLF 检出与 LF 检出同一个代码版本');
+  assert.equal(frameCode(a), code, 'an extra user card (and the ownership table) does not change the code version');
+  assert.equal(frameCode(c), code, 'different user cards, or an extra user-card dependency file, also do not change the code version');
+  assert.equal(frameCode(d), code, 'a CRLF checkout and an LF checkout give the same code version');
 
   // 装载入口、内置卡、别的源码仍在代码版本里
   const e = checkout('pc-hc1-e-', { 'src/kernel/a.ts': 'export const a = 2;\n' });
-  assert.notEqual(frameCode(e), code, '改了内核源码换代码版本');
+  assert.notEqual(frameCode(e), code, 'changing the kernel source changes the code version');
   const f = checkout('pc-hc1-f-', { 'src/cards/user/index.ts': 'export const userCards = [1];\n' });
-  assert.notEqual(frameCode(f), code, '用户卡装载入口是渲染器代码,改了换版本');
+  assert.notEqual(frameCode(f), code, 'the user-card loader entry is renderer code, so changing it changes the version');
   const g = checkout('pc-hc1-g-', { 'src/cards/native/glass.tsx': GLASS.replace('n: 1', 'n: 2') });
-  assert.notEqual(frameCode(g), code, '改了内置卡换版本');
+  assert.notEqual(frameCode(g), code, 'changing a built-in card changes the version');
 
   assert.equal(isUserCardSource('src/cards/user/x.tsx'), true);
   assert.equal(isUserCardSource('src/cards/user/_scopes.json'), true);
@@ -195,7 +195,7 @@ function queueWithHost({ view, executor, sink }) {
       for (let i = 0; i < 3; i++) await new Promise((resolve) => setImmediate(resolve));
       if (lb.pending() === 0) return;
     }
-    throw new Error('消息往返不收敛');
+    throw new Error('message round trips do not converge');
   };
   const step = async (n = 1) => {
     for (let i = 0; i < n; i++) { await settle(); host.tick(); await settle(); queue.tick(); await settle(); clock.advance(250); }
@@ -210,7 +210,7 @@ function queueWithHost({ view, executor, sink }) {
 
 function fakeExecutor() {
   const calls = [];
-  return { calls, async plan() { throw new Error('host 不认领 plan'); }, async render(task) { calls.push(task.id); return { fake: task.id }; } };
+  return { calls, async plan() { throw new Error('host does not claim plan'); }, async render(task) { calls.push(task.id); return { fake: task.id }; } };
 }
 const fakeSink = () => ({ async has() { return false; }, async put() { return { complete: true, result: {} }; } });
 
@@ -231,7 +231,7 @@ function splitFor({ entryKey, versions, userSnapshotKey = 'sk-user' }) {
 
 /* ================================================================== HC2 + HC3 */
 
-test('HC2/HC3 任务要的卡本机没有就不认领;经 card-source 同步装进改动层后能认领(检出目录不写);改过的新版也装进改动层', { timeout: 30000 }, async (t) => {
+test('HC2/HC3 a task whose card is missing on this machine is not claimed; after the card is synced into the overlay layer via card-source it can be claimed (the checkout directory is not written); a changed newer version is also installed into the overlay layer', { timeout: 30000 }, async (t) => {
   const doc = await startDoc(t);
 
   // ---- 创建者:本检出里有用户卡 v1,传上内容库;这一版的切分
@@ -240,14 +240,14 @@ test('HC2/HC3 任务要的卡本机没有就不认领;经 card-source 同步装�
   const project = { tracks: [{ clips: [{ cardId: 'price-tag' }, { cardId: 'glass' }] }] };
   assert.deepEqual(projectCardIds(project), ['glass', 'price-tag']);
   const v1 = creatorIndex.projectVersions(project);
-  assert.deepEqual(Object.keys(v1), ['price-tag'], '只有用户卡是定制卡;没改过的内置卡由全局代码版本覆盖');
+  assert.deepEqual(Object.keys(v1), ['price-tag'], 'only user cards are custom cards; unmodified built-in cards are covered by the global code version');
   assert.match(v1['price-tag'], /^[0-9a-f]{32}$/);
   const stored = await putCard(doc, USER_KEY, cardSource('v1'));
   assert.equal(stored.type, 'content.stored');
   const entryKey1 = frameIdentity(project, cardEntryCode(CV, v1));
   const tasks1 = splitFor({ entryKey: entryKey1, versions: v1 });
   assert.equal(tasks1.length, 2);
-  for (const task of tasks1) assert.deepEqual(task.requires.cardSources, v1, `${task.tier} 档要 price-tag 的代码(共享档是自己那张,本地档是整个场景)`);
+  for (const task of tasks1) assert.deepEqual(task.requires.cardSources, v1, `${task.tier} tier needs the price-tag code (the shared tier is its own card, the local tier is the whole scene)`);
 
   // ---- 主机:检出里没有这张卡,有自己的改动层
   const hostRoot = checkout('pc-hc2-host-');
@@ -256,7 +256,7 @@ test('HC2/HC3 任务要的卡本机没有就不认领;经 card-source 同步装�
   const hostIndex = createCardCodeIndex({ identityOf: (id) => withOverlay(overlay, () => cards.cardCodeIdentity(hostRoot, id)), settleMs: 0 });
   const node = { profile: 'host', envFingerprint: FP, codeVersions: [CV], capabilities: HOST_CAPABILITIES, cardSourceVersions: hostIndex.view };
   for (const task of tasks1) {
-    assert.deepEqual(checkClaimable(task, node), { ok: false, rule: 1, reason: 'card-source' }, '本机没有这张卡:不认领,不抛错');
+    assert.deepEqual(checkClaimable(task, node), { ok: false, rule: 1, reason: 'card-source' }, 'this machine does not have the card: not claimed, no error thrown');
   }
   // 真队列:看得见、认领 0 次
   const executor = fakeExecutor();
@@ -264,8 +264,8 @@ test('HC2/HC3 任务要的卡本机没有就不认领;经 card-source 同步装�
   env.host.start();
   env.publish(tasks1);
   await env.step(12);
-  assert.equal(env.host.nodes()[0].seen, 2, '两个任务都看得见');
-  assert.deepEqual(env.claims(), [], '一条认领都没发');
+  assert.equal(env.host.nodes()[0].seen, 2, 'both tasks are visible');
+  assert.deepEqual(env.claims(), [], 'no claim was sent at all');
 
   // ---- 主机的卡片同步(只读,真 WebSocket 连文档服务的内容库):装上 v1
   process.env.PROMPTCUT_CARD_OVERRIDES = overlay;
@@ -277,52 +277,52 @@ test('HC2/HC3 任务要的卡本机没有就不认领;经 card-source 同步装�
   t.after(() => sync.close());
   const overlayFile = path.join(overlay, USER_KEY);
   const userDirBefore = fs.readdirSync(path.join(hostRoot, 'src', 'cards', 'user')).sort();
-  await waitFor(() => fs.existsSync(overlayFile), 5000, '主机装上 price-tag');
+  await waitFor(() => fs.existsSync(overlayFile), 5000, 'host installs price-tag');
   await sync.idle();
-  assert.equal(touched, 1, '装卡之前重新计稳定期');
-  assert.equal(fs.readFileSync(overlayFile, 'utf8'), cardSource('v1'), '本机原来没有的用户卡装进主机自己的改动层');
-  assert.equal(fs.existsSync(path.join(hostRoot, USER_KEY)), false, '检出目录不写');
+  assert.equal(touched, 1, 'the stabilization period restarts before the card is installed');
+  assert.equal(fs.readFileSync(overlayFile, 'utf8'), cardSource('v1'), 'the user card that was missing on this machine is installed into the host\'s own overlay layer');
+  assert.equal(fs.existsSync(path.join(hostRoot, USER_KEY)), false, 'checkout directory is not written');
   assert.deepEqual(fs.readdirSync(path.join(hostRoot, 'src', 'cards', 'user')).sort(), userDirBefore);
   assert.equal(sync.status().records[USER_KEY].rev, 1);
   // Vite 的文件监听作废模块之后才发变更通知;这里直接清(onCardSourceChange 的订阅方做的就是这件事)
   hostIndex.invalidate();
-  assert.deepEqual(hostIndex.projectVersions(project), v1, '装上之后主机算出和创建者一样的身份');
+  assert.deepEqual(hostIndex.projectVersions(project), v1, 'after installation the host computes the same identity as the creator');
   for (const task of tasks1) assert.deepEqual(checkClaimable(task, node), { ok: true });
   await env.step(12);
-  assert.deepEqual(env.claims().sort(), tasks1.map((x) => x.id).sort(), '装上之后下一拍就认领');
-  for (const task of tasks1) assert.equal(env.done(task.id), 1, `${task.id} 恰好一次 task.done`);
+  assert.deepEqual(env.claims().sort(), tasks1.map((x) => x.id).sort(), 'after installation it is claimed on the next tick');
+  for (const task of tasks1) assert.equal(env.done(task.id), 1, `${task.id} has exactly one task.done`);
 
   // ---- HC3:创建者改卡 v2;主机按 content.watch 当场装进改动层,检出目录照旧不写
   await putCard(doc, USER_KEY, cardSource('v2'));
-  await waitFor(() => fs.existsSync(overlayFile) && fs.readFileSync(overlayFile, 'utf8') === cardSource('v2'), 5000, '主机把 v2 装进改动层');
+  await waitFor(() => fs.existsSync(overlayFile) && fs.readFileSync(overlayFile, 'utf8') === cardSource('v2'), 5000, 'host installs v2 into the overlay layer');
   await sync.idle();
-  assert.equal(fs.existsSync(path.join(hostRoot, USER_KEY)), false, '检出目录照旧不写');
+  assert.equal(fs.existsSync(path.join(hostRoot, USER_KEY)), false, 'checkout directory is still not written');
   assert.equal(sync.status().records[USER_KEY].rev, 2);
   hostIndex.invalidate();
   put(creator, USER_KEY, cardSource('v2'));
   creatorIndex.invalidate();
   const v2 = creatorIndex.projectVersions(project);
   assert.notEqual(v2['price-tag'], v1['price-tag']);
-  assert.deepEqual(hostIndex.projectVersions(project), v2, '主机的身份跟着变成 v2');
+  assert.deepEqual(hostIndex.projectVersions(project), v2, 'the host\'s identity changes to v2 accordingly');
   const tasks2 = splitFor({ entryKey: frameIdentity(project, cardEntryCode(CV, v2)), versions: v2, userSnapshotKey: 'sk-user-v2' });
-  for (const task of tasks1) assert.deepEqual(checkClaimable(task, node), { ok: false, rule: 1, reason: 'card-source' }, 'v1 的任务不再认领');
-  for (const task of tasks2) assert.deepEqual(checkClaimable(task, node), { ok: true }, 'v2 的任务能认领');
+  for (const task of tasks1) assert.deepEqual(checkClaimable(task, node), { ok: false, rule: 1, reason: 'card-source' }, 'v1 tasks are no longer claimed');
+  for (const task of tasks2) assert.deepEqual(checkClaimable(task, node), { ok: true }, 'v2 tasks can be claimed');
   env.publish(tasks2);
   await env.step(12);
-  for (const task of tasks2) assert.equal(env.done(task.id), 1, `${task.id} 恰好一次 task.done`);
+  for (const task of tasks2) assert.equal(env.done(task.id), 1, `${task.id} has exactly one task.done`);
   env.host.shutdown();
 });
 
 /* ================================================================== HC4 */
 
-test('HC4 同一张卡代码不同,产物不混用:整场景键、本地档与共享档的结果键都不同;执行器上下文按卡片代码版次重算', async () => {
+test('HC4 the same card with different code does not mix outputs: the whole-scene key and the result keys of the local tier and the shared tier all differ; the executor context is recomputed per card code epoch', async () => {
   const project = { id: 'hc4', fps: 30, width: 1920, height: 1080, duration: 2, style: {}, media: [], tracks: [{ id: 't', clips: [{ id: 'c', cardId: 'price-tag', start: 0, end: 2, params: {} }] }] };
   const v1 = { 'price-tag': 'a'.repeat(32) };
   const v2 = { 'price-tag': 'b'.repeat(32) };
   // 整场景键
-  assert.equal(cardEntryCode(CV, {}), CV, '没有定制卡时就是全局代码版本');
+  assert.equal(cardEntryCode(CV, {}), CV, 'without custom cards it is just the global code version');
   assert.notEqual(cardEntryCode(CV, v1), cardEntryCode(CV, v2));
-  assert.equal(cardEntryCode(CV, { b: '2', a: '1' }), cardEntryCode(CV, { a: '1', b: '2' }), '与键的顺序无关');
+  assert.equal(cardEntryCode(CV, { b: '2', a: '1' }), cardEntryCode(CV, { a: '1', b: '2' }), 'independent of key order');
   const e1 = frameIdentity(project, cardEntryCode(CV, v1));
   const e2 = frameIdentity(project, cardEntryCode(CV, v2));
   assert.notEqual(e1, e2);
@@ -337,7 +337,7 @@ test('HC4 同一张卡代码不同,产物不混用:整场景键、本地档与�
     assert.deepEqual(a.cardSources, v1);
     versions = v2;
     const b = await pipeline.entry(project);
-    assert.equal(b.key, e2, '同一版项目、卡片代码不同 → 不同的整场景条目');
+    assert.equal(b.key, e2, 'same project version, different card code → different whole-scene entry');
     assert.notEqual(a.dir, b.dir);
     versions = {};
     assert.equal((await pipeline.entry(project)).key, frameIdentity(project, CV));
@@ -370,15 +370,15 @@ test('HC4 同一张卡代码不同,产物不混用:整场景键、本地档与�
   const planTask = { id: 'plan:p@1', kind: 'plan', source: { projectId: 'p', projectRev: 1 } };
   await executor.plan(planTask);
   await executor.plan(planTask);
-  assert.equal(planned, 1, '版次没变:复用');
+  assert.equal(planned, 1, 'epoch unchanged: reuse');
   stamp = 1;
   await executor.plan(planTask);
-  assert.equal(planned, 2, '卡片代码变了:重算');
+  assert.equal(planned, 2, 'card code changed: recompute');
 });
 
 /* ================================================================== HC5 */
 
-test('HC5 卡片代码身份的索引:刚变过的一段时间不报;算法没注入时不缓存;按需现算', () => {
+test('HC5 index of card code identities: nothing is reported for a while after a change; not cached when the algorithm is not injected; computed on demand', () => {
   let now = 1000;
   let ready = false;
   let calls = 0;
@@ -386,32 +386,32 @@ test('HC5 卡片代码身份的索引:刚变过的一段时间不报;算法没�
     identityOf: (id) => { calls++; if (!ready) return undefined; return id === 'x' ? { version: 'vx', custom: true } : id === 'b' ? { version: 'vb', custom: false } : null; },
     now: () => now, settleMs: 1500,
   });
-  assert.deepEqual(index.view.x, [], '算法没注入');
+  assert.deepEqual(index.view.x, [], 'algorithm not injected');
   assert.deepEqual(index.projectVersions({ tracks: [{ clips: [{ cardId: 'x' }] }] }), {});
   ready = true;
-  assert.deepEqual(index.view.x, ['vx'], '没缓存上次的「没有」');
-  assert.deepEqual(index.view.b, ['vb'], '没改过的内置卡也报身份(节点那一侧不分)');
+  assert.deepEqual(index.view.x, ['vx'], 'the previous "none" was not cached');
+  assert.deepEqual(index.view.b, ['vb'], 'unmodified built-in cards also report an identity (the node side makes no distinction)');
   assert.deepEqual(index.view.nope, []);
-  assert.deepEqual(index.projectVersions({ tracks: [{ clips: [{ cardId: 'x' }, { cardId: 'b' }] }], cardNodes: [{ cardId: 'x' }] }), { x: 'vx' }, '只列定制卡');
+  assert.deepEqual(index.projectVersions({ tracks: [{ clips: [{ cardId: 'x' }, { cardId: 'b' }] }], cardNodes: [{ cardId: 'x' }] }), { x: 'vx' }, 'lists custom cards only');
   const before = calls;
   void index.view.x;
-  assert.equal(calls, before, '按卡缓存');
+  assert.equal(calls, before, 'cached per card');
   index.invalidate();
   assert.equal(index.epoch, 1);
-  assert.deepEqual(index.view.x, [], '刚变过:不报');
+  assert.deepEqual(index.view.x, [], 'just changed: not reported');
   now += 1499;
   assert.deepEqual(index.view.x, []);
   now += 1;
-  assert.deepEqual(index.view.x, ['vx'], '稳下来之后照常');
+  assert.deepEqual(index.view.x, ['vx'], 'back to normal once stable');
   index.touch();
-  assert.deepEqual(index.view.x, [], '要装卡了:重新计时');
-  assert.equal(index.epoch, 1, 'touch 不换版次');
+  assert.deepEqual(index.view.x, [], 'about to install a card: restart the timer');
+  assert.equal(index.epoch, 1, 'touch does not change the epoch');
   assert.deepEqual(projectCardIds({ tracks: [{ clips: [{ cardId: 'b' }] }], cuts: [{ tracks: [{ clips: [{ cardId: 'a' }] }] }], cardNodes: { n1: { cardId: 'c' } } }), ['a', 'b', 'c']);
 });
 
 /* ================================================================== HC6 */
 
-test('HC6 主机的卡片同步只读:本机那份和服务上不同,装服务上的、从不往项目里写', { timeout: 20000 }, async (t) => {
+test('HC6 the host\'s card sync is read-only: when the local copy differs from the one on the service, the service\'s is installed and nothing is ever written into the project', { timeout: 20000 }, async (t) => {
   const doc = await startDoc(t);
   await putCard(doc, USER_KEY, cardSource('server'));
   // 主机检出里已有一份不同的(例如别的项目装进来的)
@@ -427,18 +427,18 @@ test('HC6 主机的卡片同步只读:本机那份和服务上不同,装服务�
   const sync = cards.createHostCardSync({ root: hostRoot, dataDir: hostData, projectId: 'proj-hc6', url: doc.url('renderbox', 'render'), endpoint: spy });
   t.after(() => sync.close());
   const overlayFile = path.join(overlay, USER_KEY);
-  await waitFor(() => fs.existsSync(overlayFile), 5000, '装进改动层');
+  await waitFor(() => fs.existsSync(overlayFile), 5000, 'installed into the overlay layer');
   await sync.idle();
   assert.equal(fs.readFileSync(overlayFile, 'utf8'), cardSource('server'));
-  assert.equal(fs.readFileSync(path.join(hostRoot, USER_KEY), 'utf8'), cardSource('local'), '底版不动');
-  assert.ok(!sent.includes('content.put'), `只读:没发过 content.put(发过 ${[...new Set(sent)].join(', ')})`);
+  assert.equal(fs.readFileSync(path.join(hostRoot, USER_KEY), 'utf8'), cardSource('local'), 'the base copy is untouched');
+  assert.ok(!sent.includes('content.put'), `read-only: content.put was not sent (sent ${[...new Set(sent)].join(', ')})`);
   const got = await rpc(doc, { type: 'content.get', kind: 'card-source', key: USER_KEY });
-  assert.equal(got.rev, 1, '项目里的 cardRev 没被主机推高');
+  assert.equal(got.rev, 1, 'cardRev in the project was not raised by the host');
   assert.equal(got.body, cardSource('server'));
   // 本机再改一份:仍不上传
   put(overlay, USER_KEY, cardSource('local-again'));
   assert.equal(sync.status().pending?.length ?? 0, 0);
   // 备份在主机自己的数据目录里,不在检出的 out/ 下
-  assert.ok(!fs.existsSync(path.join(hostRoot, 'out')), '检出里没有 out/card-edits');
+  assert.ok(!fs.existsSync(path.join(hostRoot, 'out')), 'there is no out/card-edits in the checkout');
   void sha;
 });

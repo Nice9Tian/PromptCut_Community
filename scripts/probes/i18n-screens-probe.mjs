@@ -115,7 +115,7 @@ async function walk(locale) {
     return true;
   };
   const closeDialog = () => page.evaluate(() => {
-    for (const b of document.querySelectorAll('button')) if (['Close', '关闭', '閉じる'].includes(b.textContent.trim())) { b.click(); return; }
+    for (const b of document.querySelectorAll('button')) if (['Close', 'Close', '閉じる'].includes(b.textContent.trim())) { b.click(); return; }
   });
 
   await page.goto(`${editor}/?ui=vibe&lang=${locale}`, { waitUntil: 'domcontentloaded', timeout: 60_000 });

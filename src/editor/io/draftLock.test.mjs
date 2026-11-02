@@ -51,7 +51,7 @@ globalThis.fetch = async (url, init = {}) => {
     const { draftId } = JSON.parse(init.body);
     calls.push(`${m[1]}:${draftId}`);
     if (m[1] === "acquire") {
-      if (serverLocks.has(draftId)) return reply(409, { ok: false, error: "被占着" });
+      if (serverLocks.has(draftId)) return reply(409, { ok: false, error: "Already in use" });
       serverLocks.add(draftId);
       return reply(200, { ok: true, file: `D:/drafts/${draftId}.proc.lock` });
     }
@@ -59,7 +59,7 @@ globalThis.fetch = async (url, init = {}) => {
     return reply(200, { ok: true });
   }
   if (/^\/api\/projects\//.test(url)) return reply(200, { format: "promptcut-proc" });
-  throw new Error(`没料到的请求 ${url}`);
+  throw new Error(`Unexpected request ${url}`);
 };
 
 const { openDraft, setActiveDraftId, getActiveDraftId, newDraftId } = await import(srcUrl("editor/io/drafts.ts"));
@@ -90,17 +90,17 @@ beforeEach(async () => {
   calls.length = 0;
 });
 
-test("startNew 设过 activeDraftId → 开草稿 D:D 的锁仍被持有", async () => {
+test("startNew has set activeDraftId → opening draft D: the lock on D is still held", async () => {
   await startNew();
   await startPageOpen("D");
   assert.equal(getActiveDraftId(), "D");
   assert.equal(lockedDraftId(), "D");
-  assert.ok(serverLocks.has("D"), "服务端那半的锁还在");
-  assert.ok(shellLocks.has("D:/drafts/D.proc.lock"), "外壳那半的锁还在");
-  assert.ok(!calls.includes("release:D"), `不该对 D 发 release,实际调用:${calls.join(", ")}`);
+  assert.ok(serverLocks.has("D"), "The server-side half of the lock is still there");
+  assert.ok(shellLocks.has("D:/drafts/D.proc.lock"), "The shell-side half of the lock is still there");
+  assert.ok(!calls.includes("release:D"), `Should not send release for D, actual calls: ${calls.join(", ")}`);
 });
 
-test("开 A → 开 B:B 持有,A 已放", async () => {
+test("Open A → open B: B holds it, A is released", async () => {
   await startPageOpen("A");
   assert.equal(lockedDraftId(), "A");
   await startPageOpen("B");
@@ -109,10 +109,10 @@ test("开 A → 开 B:B 持有,A 已放", async () => {
   assert.deepEqual([...serverLocks], ["B"]);
   assert.deepEqual([...shellLocks], ["D:/drafts/B.proc.lock"]);
   assert.ok(calls.includes("release:A"));
-  assert.ok(!calls.includes("release:B"), `不该对 B 发 release,实际调用:${calls.join(", ")}`);
+  assert.ok(!calls.includes("release:B"), `Should not send release for B, actual calls: ${calls.join(", ")}`);
 });
 
-test("Shell 的 ?draft= 路径(openDraft 再 setActiveDraftId),之前有 activeDraftId 也保住锁", async () => {
+test("Shell's ?draft= path (openDraft then setActiveDraftId) keeps the lock even if an activeDraftId existed before", async () => {
   await startNew();
   await openDraft("S");
   setActiveDraftId("S");
@@ -121,7 +121,7 @@ test("Shell 的 ?draft= 路径(openDraft 再 setActiveDraftId),之前有 activeD
   assert.ok(serverLocks.has("S"));
 });
 
-test("同一份草稿打开两次:不出错,锁一直在,只抢了一次", async () => {
+test("Opening the same draft twice: no error, the lock stays held, acquired only once", async () => {
   await startPageOpen("A");
   await startPageOpen("A");
   assert.equal(lockedDraftId(), "A");
@@ -130,7 +130,7 @@ test("同一份草稿打开两次:不出错,锁一直在,只抢了一次", async
   assert.ok(!calls.includes("release:A"));
 });
 
-test("开着 A 时新建项目 / 从文件打开(设成 null):A 的锁放掉", async () => {
+test("While A is open, new project / open from file (set to null): A's lock is released", async () => {
   await startPageOpen("A");
   setActiveDraftId(null);
   await settle();
@@ -140,7 +140,7 @@ test("开着 A 时新建项目 / 从文件打开(设成 null):A 的锁放掉", a
   assert.ok(calls.includes("release:A"));
 });
 
-test("开着 A 时 startNew(设成新 id):A 的锁放掉", async () => {
+test("While A is open, startNew (set to a new id): A's lock is released", async () => {
   await startPageOpen("A");
   await startNew();
   assert.equal(lockedDraftId(), null);
@@ -148,7 +148,7 @@ test("开着 A 时 startNew(设成新 id):A 的锁放掉", async () => {
   assert.equal(shellLocks.size, 0);
 });
 
-test("没开过草稿时设 null / 新 id:不发多余的 release", async () => {
+test("When no draft was ever open, setting null / a new id: no redundant release is sent", async () => {
   await startNew();
   setActiveDraftId(null);
   await settle();

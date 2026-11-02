@@ -108,11 +108,11 @@ test('ORGM-06 chat entries are matched by "project + chat": the same chat id in 
 
 test('ORGM-07 reply lost, resent as is: the cloud copy is exactly what I just wrote, so the merge result is unchanged; the input is not modified in place', () => {
   const base = org({ groups: [{ id: 'g1', name: 'Original' }] });
-  const mine = org({ groups: [{ id: 'g1', name: '改了' }, { id: 'g2', name: 'New one' }], projects: [{ id: 'p', groupId: 'g2', pinned: true }], chats: [{ id: 'c', projectId: 'p', archived: true }] });
+  const mine = org({ groups: [{ id: 'g1', name: 'changed' }, { id: 'g2', name: 'New one' }], projects: [{ id: 'p', groupId: 'g2', pinned: true }], chats: [{ id: 'c', projectId: 'p', archived: true }] });
   deepFreeze(base); deepFreeze(mine);
   const out = mergeOrg(base, mine, mine);
   assert.deepEqual(out, mine);
   // 没有任何改动:合出来就是对方的
-  const theirs = deepFreeze(org({ groups: [{ id: 'g9', name: '别人的' }] }));
+  const theirs = deepFreeze(org({ groups: [{ id: 'g9', name: 'Someone else\'s' }] }));
   assert.deepEqual(mergeOrg(theirs, theirs, theirs), theirs);
 });

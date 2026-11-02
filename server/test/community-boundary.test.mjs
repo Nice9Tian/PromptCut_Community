@@ -59,7 +59,7 @@ function sharedProductionFiles() {
   return listCodeFiles(ROOT).filter((rel) => !isCloud(rel) && !isTest(rel));
 }
 
-test('G1 公开的产品文件不许加载 cloud/ 下的东西（注释里提到不算）', () => {
+test('G1 public product files must not load anything under cloud/ (mentions in comments do not count)', () => {
   // 扩展入口真的会去加载它；边界工具只是把 `cloud/` 这个名字写成数据（两者的区别见归属表里的注释）
   const whitelist = new Set([...LOADER_WHITELIST, ...BOUNDARY_TOOLING]);
   const offenders = [];
@@ -113,19 +113,25 @@ test('G1 公开的产品文件不许加载 cloud/ 下的东西（注释里提到
   assert.deepEqual(
     offenders,
     [],
-    `这些公开文件在代码里（不是注释里）碰了 cloud/。\n` +
-      `公开仓库里没有 cloud/，所以这些行在社区版里会指向不存在的文件。\n` +
-      `该走接缝：把云端那部分交给加载表（样板见 server/docservice/extensions.mjs）。\n` +
-      `确实是新的扩展入口的话，在 server/test/community-ownership.mjs 的 LOADER_WHITELIST 里加，\n` +
-      `并在 docs/plan/community-boundary.md 里写清依据。\n\n` +
+    `These public files touch cloud/ in code (not in comments).
+` +
+      `The public repository has no cloud/, so these lines would point to nonexistent files in the community edition.
+` +
+      `Use the seam instead: hand the cloud part to the loader table (see server/docservice/extensions.mjs for a template).
+` +
+      `If it really is a new extension entry, add it to LOADER_WHITELIST in server/test/community-ownership.mjs,
+` +
+      `and state the rationale in docs/plan/community-boundary.md.
+
+` +
       offenders.join('\n'),
   );
 });
 
-test('G2 扩展入口只许在云端目录变量下面找加载表', () => {
+test('G2 extension entries may only look for the loader table under the cloud directory variable', () => {
   for (const rel of LOADER_WHITELIST) {
     const file = path.join(ROOT, rel);
-    assert.ok(fs.existsSync(file), `白名单里的扩展入口不存在：${rel}（白名单该跟着改）`);
+    assert.ok(fs.existsSync(file), `Extension entry in the whitelist does not exist: ${rel} (the whitelist should be updated accordingly)`);
     const src = fs.readFileSync(file, 'utf8');
 
     // 整词匹配是故意的：子串匹配挡不住改名，`PROMPTCUT_CLOUD_DIR_OLD` 也含这个子串。
@@ -139,8 +145,8 @@ test('G2 扩展入口只许在云端目录变量下面找加载表', () => {
     const readsEnvByIndex = src.includes('process.env?.[') || src.includes('process.env[');
     assert.ok(
       /env[.]PROMPTCUT_CLOUD_DIR[^A-Za-z0-9_]/.test(src) || (namedAsLiteral && readsEnvByIndex),
-      `${rel} 没读 PROMPTCUT_CLOUD_DIR。子模块布局下云端目录不在仓库根的 cloud/，` +
-        `入口必须认这个环境变量，否则私有仓库那边一个扩展都挂不上（而且是静默的）。`,
+      `${rel} does not read PROMPTCUT_CLOUD_DIR. In the submodule layout the cloud directory is not the cloud/ at the repository root,` +
+        `The entry must honor this environment variable, otherwise not a single extension can be attached on the private repository side (and silently so).`,
     );
 
     // 入口里出现的每一处 'cloud/...' 字面量都必须是「缺省位置」那一处，不许写死别的相对路径
@@ -155,7 +161,7 @@ test('G2 扩展入口只许在云端目录变量下面找加载表', () => {
         // 不加这个限制的话展开运算符会误报：`path.join(cloudDirOf(), ...sub)` 里的 `...` 也含两个点
         // （2026-10-27 给浏览器侧别名插件登记白名单时当场撞到）。
         !/cloud[^'"]*['"]\.\./.test(text),
-        `${rel}:${line} 在云端目录后面又往上跳了一级，会逃出云端目录：${text.trim()}`,
+        `${rel}:${line} goes up one more level after the cloud directory and would escape it: ${text.trim()}`,
       );
     }
 
@@ -163,25 +169,27 @@ test('G2 扩展入口只许在云端目录变量下面找加载表', () => {
     // 真正的行为由 server/test/docservice-extensions.test.mjs 的 EXT3 钉住。
     assert.ok(
       /existsSync|try\s*\{/.test(src),
-      `${rel} 既没查文件在不在、也没 try —— 社区版没有 cloud/，这里会直接抛。`,
+      `${rel} neither checks whether the file exists nor uses try: the community edition has no cloud/, so this throws right away.`,
     );
   }
 });
 
-test('G3 棘轮：公开侧还在 import 闭源的产品文件数只许降不许升', () => {
+test('G3 ratchet: the number of product files on the public side that still import closed-source code may only go down, never up', () => {
   const offenders = [];
   for (const rel of sharedProductionFiles()) {
     const cloudHits = importsOf(ROOT, rel).filter(isCloud);
-    if (cloudHits.length) offenders.push(`${rel} → ${cloudHits.join('、')}`);
+    if (cloudHits.length) offenders.push(`${rel} → ${cloudHits.join(', ')}`);
   }
 
   assert.ok(
     offenders.length <= SEAM_CEILING,
-    `公开侧还在 import 闭源的产品文件有 ${offenders.length} 个，超过上限 ${SEAM_CEILING}。\n` +
-      `新代码不要在公开侧引闭源目录（${CLOUD_DIRS.join('、')}）。\n` +
-      `拆完一份活就把 SEAM_CEILING 改小，这个数字是只降不升的棘轮。\n\n` +
+    `${offenders.length} product files on the public side still import closed-source code, over the ceiling of ${SEAM_CEILING}.\n` +
+      `New code must not reference closed-source directories on the public side (${CLOUD_DIRS.join(', ')}).\n` +
+      `After finishing a piece of work, lower SEAM_CEILING: this number is a ratchet that only goes down.
+
+` +
       offenders.slice(0, 20).join('\n') +
-      (offenders.length > 20 ? `\n…（还有 ${offenders.length - 20} 个，完整清单跑 node scripts/dev/community-seams.mjs . --md）` : ''),
+      (offenders.length > 20 ? `\n… (${offenders.length - 20} more, for the full list run node scripts/dev/community-seams.mjs . --md)` : ''),
   );
 
   // 降得太多就提醒把上限跟着降，否则棘轮会松掉。
@@ -192,13 +200,13 @@ test('G3 棘轮：公开侧还在 import 闭源的产品文件数只许降不许
   // 忽略这条测试。卡在 20 上，单份活的改进不会误报，而「拆完了却忘了收紧上限」还是会红。
   assert.ok(
     offenders.length >= SEAM_CEILING - 20,
-    `接缝只剩 ${offenders.length} 个，比上限 ${SEAM_CEILING} 低了 20 个以上。\n` +
-      `把这个文件里的 SEAM_CEILING 改成 ${offenders.length}，否则棘轮松着，` +
-      `以后有人加回一批也不会红。`,
+    `Only ${offenders.length} seams remain, more than 20 below the ceiling of ${SEAM_CEILING}.\n` +
+      `Change SEAM_CEILING in this file to ${offenders.length}, otherwise the ratchet stays loose,` +
+      `and it will not go red if someone adds a batch back later.`,
   );
 });
 
-test('G4 每张云端加载表都必须能被同步 require 进来', () => {
+test('G4 every cloud loader table must be loadable with a synchronous require', () => {
   // 为什么要这一条：加载点有两种写法，而其中一种对加载表有硬要求。
   //
   // `server/docservice/extensions.mjs` 用的是顶层 `await import()`。那块的依赖图无环，所以成立。
@@ -241,23 +249,27 @@ test('G4 每张云端加载表都必须能被同步 require 进来', () => {
     try {
       const mod = require_(file);
       const table = mod?.default ?? mod?.manifest;
-      if (table === undefined) broken.push(`${rel}：require 进来了，但既没有 default 也没有 manifest 导出`);
+      if (table === undefined) broken.push(`${rel}: required successfully, but it has neither a default nor a manifest export`);
     } catch (e) {
-      broken.push(`${rel}：${e.code === 'ERR_REQUIRE_ASYNC_MODULE' ? 'ERR_REQUIRE_ASYNC_MODULE —— 它或它的静态依赖图里有顶层 await' : e.code || e.message}`);
+      broken.push(`${rel}: ${e.code === 'ERR_REQUIRE_ASYNC_MODULE' ? 'ERR_REQUIRE_ASYNC_MODULE: it or its static dependency graph has a top-level await' : e.code || e.message}`);
     }
   }
 
   assert.deepEqual(
     broken,
     [],
-    `这些云端加载表不能被同步 require 进来：\n` +
-      `用 createRequire 的加载点（如 server/agent/service/extensions.mjs）会直接抛。\n` +
-      `顶层 await 要挪进函数里，或者把那个加载点改回顶层 await import（仅当那块依赖图无环）。\n\n` +
+    `These cloud loader tables cannot be loaded with a synchronous require:
+` +
+      `Loader points that use createRequire (such as server/agent/service/extensions.mjs) will throw directly.
+` +
+      `Move the top-level await into a function, or change that loader point back to a top-level await import (only if that part of the dependency graph has no cycles).
+
+` +
       broken.join('\n'),
   );
 });
 
-test('G5 所有权表与白名单里的每一项都必须真的存在', () => {
+test('G5 every entry in the ownership table and the whitelist must really exist', () => {
   // 死条目不报错，坏处是**将来谁在那个路径上新建一个公开文件，会被归属表默默判成闭源、
   // 被 G1/G3 豁免**。2026-10-28 审查查出 CLOUD_FILES 里有四条指向 `src/online/` 的条目，
   // 而那四个文件早就搬进了 `cloud/online/`。
@@ -280,18 +292,18 @@ test('G5 所有权表与白名单里的每一项都必须真的存在', () => {
   ]) {
     for (const rel of list) {
       if (rel.startsWith('cloud/') && !hasCloud) continue;
-      if (!fs.existsSync(path.join(ROOT, rel))) dead.push(name + ' 里的 ' + rel);
+      if (!fs.existsSync(path.join(ROOT, rel))) dead.push(name + ' entry ' + rel);
     }
   }
   assert.deepEqual(
     dead,
     [],
-    '这些条目指向不存在的文件（搬过家就要跟着改，否则同名新文件会被默默豁免）：' +
+    'These entries point to nonexistent files (if a file was moved, update the entry, otherwise a new file with the same name would be silently exempted):' +
       String.fromCharCode(10) + dead.join(String.fromCharCode(10)),
   );
 });
 
-test('G6 公开树里不许有我们自己的线上地址', () => {
+test('G6 the public tree must not contain our own online addresses', () => {
   // 2026-10-30：托管地址写在 server/auth/hosted-default.mjs 里，文件归公开，地址就跟着公开了，社区版还真的去连它。
   // 地址只许写在闭源的产品声明里（server/auth/product.mjs）。这里扫的是导出社区版时会带走的全部文本文件，
   // 测试、探针、文档都算：退役地址当样本也不行，样本用 example 域名和文档保留网段（203.0.113.0/24）。
@@ -309,10 +321,10 @@ test('G6 公开树里不许有我们自己的线上地址', () => {
     try { text = fs.readFileSync(path.join(ROOT, rel), 'utf8'); } catch { continue; }
     if (needles.some((re) => re.test(text))) hits.push(rel);
   }
-  assert.deepEqual(hits, [], '这些公开文件里有线上地址：' + String.fromCharCode(10) + hits.join(String.fromCharCode(10)));
+  assert.deepEqual(hits, [], 'These public files contain online addresses:' + String.fromCharCode(10) + hits.join(String.fromCharCode(10)));
 });
 
-test('G7 公开探针不许用 cloud/ 下的东西（注释里提到不算）', () => {
+test('G7 public probes must not use anything under cloud/ (mentions in comments do not count)', () => {
   // 2026-10-31：G1 只管产品文件，探针不在里面；闭源路径写成字符串（spawn、fork、拼路径）G3 的 import 图也看不见。
   // 只测闭源功能的探针放 cloud/scripts/probes/，手机探针接 scripts/probes/lib/probe-services.mjs。
   const NEEDLE = /(?:cloud\/(?:server|scripts|src)\/)|(?:['"`]cloud['"`]\s*,\s*['"`](?:server|scripts|src)['"`])/g;
@@ -325,5 +337,5 @@ test('G7 公开探针不许用 cloud/ 下的东西（注释里提到不算）', 
       if (!inComment(comments, m.index)) hits.push(`${rel}: ${m[0]}`);
     }
   }
-  assert.deepEqual(hits, [], '这些公开探针用了闭源的东西：' + String.fromCharCode(10) + hits.join(String.fromCharCode(10)));
+  assert.deepEqual(hits, [], 'These public probes use closed-source things:' + String.fromCharCode(10) + hits.join(String.fromCharCode(10)));
 });

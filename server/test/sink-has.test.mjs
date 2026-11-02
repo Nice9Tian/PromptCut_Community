@@ -59,7 +59,7 @@ function assetStore({ hangAfter = null, failAll = false } = {}) {
     async put(ns, bytes) {
       calls.put += 1;
       const hash = sha256(bytes);
-      if (failAll) throw Object.assign(new Error('素材服务 PUT 超时'), { code: 'timeout' });
+      if (failAll) throw Object.assign(new Error('Asset service PUT timed out'), { code: 'timeout' });
       if (blocks.has(hash)) return { hash, size: bytes.length, uploaded: false };
       if (hanging && calls.uploaded >= hangAfter) return new Promise(() => {});
       calls.uploaded += 1;
@@ -79,7 +79,7 @@ const RESULT_KEY = sha256('rk:sink-has');
 const refOf = (from, to) => ({ kind: 'snapshot', tier: 'shared', resultKey: RESULT_KEY, range: { unit: 'localFrame', from, to } });
 const frameBytes = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => Buffer.from(`<div>frame ${from + i}</div>`));
 
-test('H1 本机帧库有、素材服务上缺一半块:has 补推缺的块(已有的跳过)后回 true,清单写进内容库', async () => {
+test('H1 local frame store has it, asset service is missing half the chunks: has pushes the missing chunks (skipping existing ones) then returns true, and the manifest is written to the content store', async () => {
   const lib = frameLibrary();
   try {
     lib.write(0, 7);
@@ -88,15 +88,15 @@ test('H1 本机帧库有、素材服务上缺一半块:has 补推缺的块(已�
     const content = contentStore();
     const sink = createAssetSink({ pipeline: lib.pipeline, client: store, content });
     assert.equal(await sink.has(refOf(0, 7)), true);
-    for (const b of frameBytes(0, 7)) assert.ok(store.blocks.has(sha256(b)), '素材服务上这一段的块齐了');
-    assert.equal(store.calls.uploaded, 4, '只推缺的 4 块');
-    assert.equal(content.items.size, 1, '清单写进内容库');
+    for (const b of frameBytes(0, 7)) assert.ok(store.blocks.has(sha256(b)), 'All chunks of this segment are on the asset service');
+    assert.equal(store.calls.uploaded, 4, 'Only the 4 missing chunks are pushed');
+    assert.equal(content.items.size, 1, 'The manifest is written to the content store');
     const manifest = await sink.resultFor(refOf(0, 7));
-    assert.equal(manifest.frames.length, 8, 'resultFor 回这一段的清单');
+    assert.equal(manifest.frames.length, 8, 'resultFor returns the manifest of this segment');
   } finally { lib.cleanup(); }
 });
 
-test('H2 本机帧库有、素材服务上块齐:has 回 true,一块都不推', async () => {
+test('H2 local frame store has it, asset service has all chunks: has returns true, no chunk is pushed', async () => {
   const lib = frameLibrary();
   try {
     lib.write(0, 7);
@@ -108,7 +108,7 @@ test('H2 本机帧库有、素材服务上块齐:has 回 true,一块都不推', 
   } finally { lib.cleanup(); }
 });
 
-test('H3 补推失败:has 回 false,记一行 sink.has-push-failed', async () => {
+test('H3 backfill push failed: has returns false and logs a sink.has-push-failed line', async () => {
   const lib = frameLibrary();
   try {
     lib.write(0, 7);
@@ -117,14 +117,14 @@ test('H3 补推失败:has 回 false,记一行 sink.has-push-failed', async () =>
     const sink = createAssetSink({ pipeline: lib.pipeline, client: store, log: (event, fields) => logs.push({ event, fields }) });
     assert.equal(await sink.has(refOf(0, 7)), false);
     const line = logs.find((l) => l.event === 'sink.has-push-failed');
-    assert.ok(line, `记一行 sink.has-push-failed:${JSON.stringify(logs)}`);
+    assert.ok(line, `Logs a sink.has-push-failed line: ${JSON.stringify(logs)}`);
     assert.equal(line.fields.code, 'timeout');
   } finally { lib.cleanup(); }
 });
 
 /* ================================================================== H4 */
 
-test('H4 推到一半丢认领、同一节点重新认领:以去重完成、执行器没再渲,素材服务上块齐', async () => {
+test('H4 claim lost halfway through pushing, same node claims again: completes via dedup, the executor does not render again, and the asset service has all chunks', async () => {
   const lib = frameLibrary();
   try {
     const clock = createTimerClock();
@@ -171,7 +171,7 @@ test('H4 推到一半丢认领、同一节点重新认领:以去重完成、执�
         for (let k = 0; k < 3; k++) await new Promise((r) => setImmediate(r));
         if (lb.pending() === 0) return;
       }
-      throw new Error('不收敛');
+      throw new Error('Did not converge');
     };
     const done = () => inbox.some((m) => m.type === 'task.done' && m.id === task.id);
     for (let i = 0; i < 2000 && !done(); i++) {
@@ -182,15 +182,15 @@ test('H4 推到一半丢认领、同一节点重新认领:以去重完成、执�
       clock.advance(500);
     }
     const lost = events.filter((e) => e.type === 'lost');
-    assert.equal(lost.length, 1, `推到一半卡住、按停滞收回一次:${JSON.stringify(lost.map((e) => [e.reason, e.phase]))}`);
+    assert.equal(lost.length, 1, `Stalled halfway through pushing, reclaimed once due to the stall: ${JSON.stringify(lost.map((e) => [e.reason, e.phase]))}`);
     assert.equal(lost[0].phase, 'push');
-    assert.ok(done(), '重新认领后完成');
+    assert.ok(done(), 'Completed after re-claim');
     const claims = lb.log().filter((e) => e.dir === 'out' && e.message.type === 'task.claimed' && e.message.id === task.id);
-    assert.equal(claims.length, 2, '同一节点认领了两次');
-    assert.deepEqual(renders, [task.id], '第二次没有再渲(走去重)');
-    assert.ok(events.some((e) => e.type === 'dedup' && e.id === task.id), '第二次以去重完成');
+    assert.equal(claims.length, 2, 'The same node claimed twice');
+    assert.deepEqual(renders, [task.id], 'The second time did not render again (went through dedup)');
+    assert.ok(events.some((e) => e.type === 'dedup' && e.id === task.id), 'The second time completed via dedup');
     const missing = frameBytes(0, 59).filter((b) => !store.blocks.has(sha256(b))).length;
-    assert.equal(missing, 0, `素材服务上这一段的块应全齐,缺 ${missing} 块`);
+    assert.equal(missing, 0, `All chunks of this segment should be on the asset service, ${missing} chunks missing`);
     await local.stop();
   } finally { lib.cleanup(); }
 });

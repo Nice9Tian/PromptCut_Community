@@ -3,19 +3,19 @@ import assert from 'node:assert/strict';
 
 // 可执行反例：断言的是错误方案确实违反尺子，不把这些桩当正确实现的证明。
 const evidence = (caseId, value) => console.log(JSON.stringify({ counterexample: caseId, ...value }));
-test('password-order counterexample: 独立 UTC 时钟把密码之后的接受误归密码之前', () => {
+test('password-order counterexample: an independent UTC clock misattributes an acceptance after the password to before the password', () => {
   const password = { utc: 100, order: 1 };
   const operation = { utc: 90, order: 2 };
   assert.notEqual(operation.utc > password.utc, operation.order > password.order);
   evidence('utc-reversal', { naiveSelected: false, actualAfterPassword: true });
 });
-test('password-order counterexample: reserve 先于改密不代表 seal 先于改密', () => {
+test('password-order counterexample: reserve preceding the password change does not mean seal precedes the password change', () => {
   const trace = ['reserve', 'password', 'seal'];
   assert.equal(trace.indexOf('reserve') > trace.indexOf('password'), false);
   assert.equal(trace.indexOf('seal') > trace.indexOf('password'), true);
   evidence('reservation-is-not-acceptance', { trace, naiveSelected: false, correctSelected: true });
 });
-test('password-order counterexample: sealed ACK 丢失后的盲重试产生两个外部效果', () => {
+test('password-order counterexample: a blind retry after a lost sealed ACK produces two external effects', () => {
   let effects = 0;
   const ledger = [];
   const naiveSubmit = (loseAck) => { effects++; ledger.push('sealed'); if (loseAck) throw new Error('ACK lost'); };
@@ -25,7 +25,7 @@ test('password-order counterexample: sealed ACK 丢失后的盲重试产生两�
   assert.equal(ledger[0], 'sealed');
   evidence('lost-seal-ack', { effects, firstState: ledger[0], incorrectlyTreatAsCancelled: true });
 });
-test('password-order counterexample: 未核 fence 的 prepared 重放穿过 stop/private', () => {
+test('password-order counterexample: a replay of prepared without a fence check passes through stop/private', () => {
   for (const kind of ['stop', 'private']) {
     const state = { prepared: { next: 1 }, fence: kind, visible: 0 };
     state.visible = state.prepared.next;
@@ -33,7 +33,7 @@ test('password-order counterexample: 未核 fence 的 prepared 重放穿过 stop
     evidence('prepared-crosses-fence', { kind, accepted: false, wronglyVisible: state.visible });
   }
 });
-test('password-order counterexample: 改密前等待离线 doc 违反先成功后选择流程', async () => {
+test('password-order counterexample: waiting for an offline doc before the password change violates the succeed-first, choose-later flow', async () => {
   let passwordWritten = false;
   const naiveChange = async () => { await Promise.reject(new Error('doc 503')); passwordWritten = true; };
   await assert.rejects(naiveChange, /doc 503/);

@@ -57,7 +57,7 @@ async function setup(t, { tools, limits } = {}) {
   const st = {
     fetches: [], status: null, tamper: false,
     project: {
-      version: 1, id: 'p-aud', name: '量', width: 1920, height: 1080, fps: 30, duration: 8, themeId: 'midnight',
+      version: 1, id: 'p-aud', name: 'Amount', width: 1920, height: 1080, fps: 30, duration: 8, themeId: 'midnight',
       media: [
         { id: 'm-loud', kind: 'audio', name: '响.wav', url: `/@media/${sha256(loud)}`, hash: sha256(loud), ext: 'wav', duration: 2 },
         { id: 'm-quiet', kind: 'audio', name: '轻.wav', url: `/@media/${sha256(quiet)}`, hash: sha256(quiet), ext: 'wav', duration: 3 },
@@ -66,8 +66,8 @@ async function setup(t, { tools, limits } = {}) {
         { id: 'm-legacy', kind: 'audio', name: '旧.wav', url: '/@media/old-name.wav', duration: 1 },
       ],
       tracks: [
-        { id: 't1', name: '序列 1', clips: [{ id: 'a1', cardId: '', mediaId: 'm-loud', start: 0, end: 2, params: {}, label: '响' }] },
-        { id: 't2', name: '序列 2', clips: [{ id: 'a2', cardId: '', mediaId: 'm-quiet', start: 4, end: 6, mediaOffset: 0.5, params: {}, label: '轻' }, { id: 'k1', cardId: 'title', start: 6, end: 8, params: {}, label: '卡' }] },
+        { id: 't1', name: 'Track 1', clips: [{ id: 'a1', cardId: '', mediaId: 'm-loud', start: 0, end: 2, params: {}, label: '响' }] },
+        { id: 't2', name: 'Track 2', clips: [{ id: 'a2', cardId: '', mediaId: 'm-quiet', start: 4, end: 6, mediaOffset: 0.5, params: {}, label: '轻' }, { id: 'k1', cardId: 'title', start: 6, end: 8, params: {}, label: 'Card' }] },
       ],
       transitions: [],
     },
@@ -89,9 +89,9 @@ async function setup(t, { tools, limits } = {}) {
 }
 
 const HAVE = findAudioTools();
-if (!HAVE) console.log('CA-AUD 这台机器没有 ffmpeg / ffprobe:用到它的断言跳过');
+if (!HAVE) console.log('CA-AUD this machine has no ffmpeg / ffprobe: assertions that use it are skipped');
 
-test('CA-AUD-01 素材、片段、时间轴三档;素材取到对话的工作目录里量,量完删掉;子进程收紧', { timeout: 120_000, skip: !HAVE }, async (t) => {
+test('CA-AUD-01 three tiers: media, clip, timeline; the media is fetched into the chat\'s working directory to be measured and deleted after measuring; the subprocess is locked down', { timeout: 120_000, skip: !HAVE }, async (t) => {
   const { audio, st, ws, spawned, sha, dataDir } = await setup(t);
   const media = await audio.measure_audio({ mediaId: 'm-loud' });
   assert.equal(media.ok, true, JSON.stringify(media));
@@ -99,15 +99,15 @@ test('CA-AUD-01 素材、片段、时间轴三档;素材取到对话的工作目
   // 0.5 幅度的 1 kHz 正弦:峰值约 -6 dBFS,响度约 -9 LUFS
   assert.ok(Math.abs(media.truePeak - -6.02) < 0.3, `truePeak ${media.truePeak}`);
   assert.ok(Math.abs(media.integrated - -9.0) < 1, `integrated ${media.integrated}`);
-  assert.equal(media.series, undefined, '没要逐秒曲线就不给');
+  assert.equal(media.series, undefined, 'The per-second curve is not returned unless requested');
   const quiet = await audio.measure_audio({ mediaId: 'm-quiet', series: true });
-  assert.ok(Math.abs((media.integrated - quiet.integrated) - 20) < 0.5, '幅度差十倍,响度差 20 LU');
+  assert.ok(Math.abs((media.integrated - quiet.integrated) - 20) < 0.5, 'A tenfold difference in amplitude gives a 20 LU difference in loudness');
   assert.ok(Array.isArray(quiet.series) && quiet.series.length >= 2);
 
   const clip = await audio.measure_audio({ clipId: 'a2' });
   assert.equal(clip.scope, 'clip');
   assert.ok(Math.abs(clip.integrated - quiet.integrated) < 0.5);
-  assert.ok(clip.notes.some((n) => /原声/.test(n)));
+  assert.ok(clip.notes.some((n) => /original audio/.test(n)));
 
   const tl = await audio.measure_audio({ scope: 'timeline' });
   assert.equal(tl.scope, 'timeline');
@@ -115,7 +115,7 @@ test('CA-AUD-01 素材、片段、时间轴三档;素材取到对话的工作目
   assert.ok(tl.series.length >= 5);
   assert.deepEqual(tl.series.find((s) => s.t >= 0.9 && s.t <= 1.1)?.sounding, ['a1'], JSON.stringify(tl.series.slice(0, 3)));
   assert.deepEqual(tl.series.find((s) => s.t >= 4.9 && s.t <= 5.1)?.sounding, ['a2']);
-  assert.deepEqual([...new Set(st.fetches)].sort(), [sha.loud, sha.quiet].sort(), '只取了项目素材表里这两份');
+  assert.deepEqual([...new Set(st.fetches)].sort(), [sha.loud, sha.quiet].sort(), 'Only these two from the project\'s media table were fetched');
 
   // 量完工作目录里不留取来的素材
   assert.deepEqual(ws.list().filter((f) => f.path.startsWith('measure/')), []);
@@ -132,26 +132,26 @@ test('CA-AUD-01 素材、片段、时间轴三档;素材取到对话的工作目
     assert.ok(inputs.length >= 1);
     for (const i of inputs) {
       assert.deepEqual(s.args.slice(i - 2, i), ['-protocol_whitelist', 'file'], s.args.join(' '));
-      assert.ok(path.resolve(s.args[i + 1]).startsWith(path.join(dataDir, 'work') + path.sep), '输入只有对话工作目录里的文件');
+      assert.ok(path.resolve(s.args[i + 1]).startsWith(path.join(dataDir, 'work') + path.sep), 'The inputs are only files inside the chat\'s working directory');
     }
   }
   assert.deepEqual(localOnlyArgs(['-ss', '1', '-i', 'a', '-i', 'b', '-f', 'null']), ['-ss', '1', '-protocol_whitelist', 'file', '-i', 'a', '-protocol_whitelist', 'file', '-i', 'b', '-f', 'null']);
 });
 
-test('CA-AUD-02 读不到与不该读的各回明确的原因,不留文件;播放列表不会让 ffmpeg 连出去', { timeout: 120_000, skip: !HAVE }, async (t) => {
+test('CA-AUD-02 unreadable and not-allowed-to-read cases each return a clear reason and leave no files; a playlist cannot make ffmpeg connect outward', { timeout: 120_000, skip: !HAVE }, async (t) => {
   const { audio, st, ws, assets, dataDir } = await setup(t);
   const left = () => ws.list().filter((f) => f.path.startsWith('measure/'));
-  await assert.rejects(audio.measure_audio({ mediaId: 'm-gone' }), /素材文件不存在/);
-  await assert.rejects(audio.measure_audio({ mediaId: 'm-legacy' }), /素材文件不存在/, '不是按内容哈希登记的素材云端读不到');
-  await assert.rejects(audio.measure_audio({ mediaId: 'm-img' }), /是图片,没有声音/);
-  await assert.rejects(audio.measure_audio({ mediaId: 'no-such' }), /找不到素材/);
-  await assert.rejects(audio.measure_audio({ clipId: 'k1' }), /卡片没有声音/);
-  await assert.rejects(audio.measure_audio({ mediaId: '../../etc/passwd' }), /找不到素材/, '只认项目素材表里的素材 id');
+  await assert.rejects(audio.measure_audio({ mediaId: 'm-gone' }), /asset file does not exist/);
+  await assert.rejects(audio.measure_audio({ mediaId: 'm-legacy' }), /asset file does not exist/, 'Media not registered by content hash cannot be read in the cloud');
+  await assert.rejects(audio.measure_audio({ mediaId: 'm-img' }), /is an image with no sound/);
+  await assert.rejects(audio.measure_audio({ mediaId: 'no-such' }), /Cannot find media/);
+  await assert.rejects(audio.measure_audio({ clipId: 'k1' }), /card has no sound/);
+  await assert.rejects(audio.measure_audio({ mediaId: '../../etc/passwd' }), /Cannot find media/, 'Only media ids from the project\'s media table are recognized');
   st.status = 403;
-  await assert.rejects(audio.measure_audio({ mediaId: 'm-loud' }), (err) => err.code === 'forbidden' && /拒绝了读取/.test(err.message));
+  await assert.rejects(audio.measure_audio({ mediaId: 'm-loud' }), (err) => err.code === 'forbidden' && /denied reading/.test(err.message));
   st.status = null;
   st.tamper = true;
-  await assert.rejects(audio.measure_audio({ mediaId: 'm-loud' }), /内容哈希不符/);
+  await assert.rejects(audio.measure_audio({ mediaId: 'm-loud' }), /content hash mismatch/);
   st.tamper = false;
   assert.deepEqual(left(), []);
 
@@ -171,16 +171,16 @@ test('CA-AUD-02 读不到与不该读的各回明确的原因,不留文件;播�
   assets.set(ph, playlist);
   st.project = { ...st.project, media: [...st.project.media, { id: 'm-pl', kind: 'audio', name: '列表.wav', url: `/@media/${ph}`, hash: ph, ext: 'wav', duration: 2 }] };
   const err = await audio.measure_audio({ mediaId: 'm-pl' }).then(() => null, (e) => e);
-  assert.ok(err, '播放列表量不出来');
-  assert.equal(hits, 0, 'ffmpeg / ffprobe 没有连到播放列表指的地址');
-  assert.equal(String(err.message).includes(dataDir), false, '报错里不带工作目录的磁盘路径');
+  assert.ok(err, 'The playlist cannot be measured');
+  assert.equal(hits, 0, 'ffmpeg / ffprobe did not connect to the address the playlist points to');
+  assert.equal(String(err.message).includes(dataDir), false, 'The error does not include the working directory\'s disk path');
   assert.deepEqual(left(), []);
 });
 
-test('CA-AUD-03 没有 ffmpeg 时回明确的原因;进程里同时只跑一个测量', { timeout: 120_000 }, async (t) => {
+test('CA-AUD-03 returns a clear reason when ffmpeg is missing; only one measurement runs at a time in the process', { timeout: 120_000 }, async (t) => {
   const none = await setup(t, { tools: () => null });
-  await assert.rejects(none.audio.measure_audio({ mediaId: 'm-loud' }), (err) => err.code === 'no-ffmpeg' && /没有装 ffmpeg/.test(err.message));
-  assert.deepEqual(none.st.fetches, [], '没有 ffmpeg 就不取素材');
+  await assert.rejects(none.audio.measure_audio({ mediaId: 'm-loud' }), (err) => err.code === 'no-ffmpeg' && /ffmpeg is not installed/.test(err.message));
+  assert.deepEqual(none.st.fetches, [], 'Without ffmpeg, no media is fetched');
   // 没有会出声的片段:不取素材、不起子进程
   none.st.project = { ...none.st.project, tracks: [] };
   const fake = await setup(t, { tools: () => ({ ffmpeg: 'no-such-ffmpeg-bin', ffprobe: 'no-such-ffprobe-bin' }) });
@@ -196,5 +196,5 @@ test('CA-AUD-03 没有 ffmpeg 时回明确的原因;进程里同时只跑一个�
   const b = audio.measure_audio({ mediaId: 'm-quiet' }).then(() => order.push(['b', spawned.length]));
   await Promise.all([a, b]);
   assert.deepEqual(order.map((o) => o[0]), ['a', 'b']);
-  assert.equal(order[0][1], 2, '甲量完时只起过甲的两个子进程(ffprobe、ffmpeg)');
+  assert.equal(order[0][1], 2, 'When A finishes measuring, only A\'s two subprocesses (ffprobe, ffmpeg) have been started');
 });

@@ -13,15 +13,15 @@ import { createMediaStamper, exportMediaFile, mediaHashOf, MEDIA_STAMP_TTL_MS } 
 
 const H = 'ab'.repeat(32);
 
-test('有内容哈希的素材:戳就是哈希,不发任何请求', async () => {
-  const stamper = createMediaStamper({ mediaUrl: () => { throw new Error('不该问地址'); }, fetch: () => { throw new Error('不该发请求'); } });
+test('An asset with a content hash: the stamp is the hash, and no request is sent', async () => {
+  const stamper = createMediaStamper({ mediaUrl: () => { throw new Error('Should not ask for the address'); }, fetch: () => { throw new Error('Should not send a request'); } });
   assert.equal(await stamper.stamp({ hash: H.toUpperCase(), url: '/@media/whatever.mp4' }), H);
   assert.equal(await stamper.stamp({ url: `/@media/${H}.mp4` }), H);
   assert.equal(mediaHashOf({ url: `/@media/${H}?x=1` }), H);
   assert.equal(mediaHashOf({ url: '/@media/clip.mp4' }), null);
 });
 
-test('没有哈希的素材:HEAD 素材服务,戳 = Content-Length:Last-Modified;按 URL 缓存,TTL 过了再问', async () => {
+test('An asset without a hash: HEAD the asset service, stamp = Content-Length:Last-Modified; cached by URL, asked again after the TTL expires', async () => {
   const calls = [];
   let t = 1000;
   const fakeFetch = async (url, init) => {
@@ -39,10 +39,10 @@ test('没有哈希的素材:HEAD 素材服务,戳 = Content-Length:Last-Modified
   assert.deepEqual(calls[0], ['http://asset.test/@media/clip%20one.mp4', 'HEAD']);
   t += 2;
   await stamper.stamp(legacy);
-  assert.equal(calls.length, 2, 'TTL 过了重新问');
+  assert.equal(calls.length, 2, 'Asked again after the TTL expires');
 });
 
-test('素材服务不可达 / HEAD 失败 → missing;不该打戳的地址不打', async () => {
+test('Asset service unreachable / HEAD failed → missing; addresses that should not be stamped are not stamped', async () => {
   const unreachable = createMediaStamper({ mediaUrl: () => null });
   assert.equal(await unreachable.stamp({ url: '/api/media/file?path=C%3A%2Fa.mp4' }), 'missing');
   assert.equal(await unreachable.stamp({ path: 'C:/a.mp4', url: '' }), 'missing');
@@ -56,14 +56,14 @@ test('素材服务不可达 / HEAD 失败 → missing;不该打戳的地址不�
   }
 });
 
-test('/@export/<id>/media/:导出自己的产物目录,照旧本地 stat;越界的地址不认', async () => {
+test('/@export/<id>/media/: the output directory of the export itself, still a local stat as before; out-of-bounds addresses are not recognized', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-media-stamp-'));
   try {
     const file = path.join(root, 'export-job-7', 'media', 'replaced.png');
     await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(file, 'png');
     const stat = await fs.stat(file);
-    const stamper = createMediaStamper({ exportRoot: () => root, fetch: () => { throw new Error('不该发请求'); } });
+    const stamper = createMediaStamper({ exportRoot: () => root, fetch: () => { throw new Error('Should not send a request'); } });
     assert.equal(await stamper.stamp({ url: '/@export/job-7/media/replaced.png' }), `${stat.size}:${stat.mtimeMs}`);
     assert.equal(await stamper.stamp({ url: '/@export/job-7/media/absent.png' }), 'missing');
     assert.equal(exportMediaFile('/@export/job-7/media/../escape.png', root), null);
@@ -71,7 +71,7 @@ test('/@export/<id>/media/:导出自己的产物目录,照旧本地 stat;越界�
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
-test('真 HTTP:对一个答 HEAD 的素材服务打戳,内容变了戳跟着变', async () => {
+test('Real HTTP: stamping against an asset service that answers HEAD, the stamp changes when the content changes', async () => {
   let body = Buffer.from('first');
   let mtime = new Date('2026-09-23T10:00:00Z');
   const heads = [];
@@ -95,7 +95,7 @@ test('真 HTTP:对一个答 HEAD 的素材服务打戳,内容变了戳跟着变'
   } finally { await new Promise(resolve => server.close(resolve)); }
 });
 
-test('frame-pipeline 不再 import card-media-path,也不直接 stat 素材目录', async () => {
+test('frame-pipeline no longer imports card-media-path and no longer stats the asset catalog directly', async () => {
   const src = await fs.readFile(new URL('../frame-pipeline.mjs', import.meta.url), 'utf8');
   assert.ok(!/card-media-path|cardMediaPath/.test(src));
   assert.ok(/createMediaStamper/.test(src));

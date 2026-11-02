@@ -44,10 +44,10 @@ const LAST = SECONDS * FPS - 1;
 const TARGETS = flagArg('targets', '30,60,120,240,480,599').split(',').map(Number).filter((n) => Number.isInteger(n) && n > 0 && n <= LAST);
 const SEQ_FRAMES = 30;
 const VERIFY = (flagArg('verify', '') || '').split(',').map(Number).filter((n) => Number.isInteger(n) && n > 0 && n <= LAST).sort((a, b) => a - b);
-if (!fs.existsSync(path.join(DIST, 'stage.html'))) { console.error(`没有在线构建:${DIST}(先跑 npx vite build --mode online)`); process.exit(2); }
+if (!fs.existsSync(path.join(DIST, 'stage.html'))) { console.error(`No online build: ${DIST} (run npx vite build --mode online first)`); process.exit(2); }
 
 const projectOf = (cardId) => ({
-  id: `seek-${cardId}`, name: '跳帧代价探针', width: 1920, height: 1080, fps: FPS, duration: SECONDS,
+  id: `seek-${cardId}`, name: 'Frame jump cost probe', width: 1920, height: 1080, fps: FPS, duration: SECONDS,
   themeId: 'dark', media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
   tracks: [{ id: 'tr', name: cardId, hidden: false, clips: [{ id: 'clip', kind: 'card', cardId, start: 0, end: SECONDS, params: {} }] }],
 });
@@ -68,7 +68,7 @@ addEventListener('message', (e) => {
 window.__rpc = (method, ...args) => new Promise((res, rej) => { const id = ++seq; waiting.set(id, { res, rej }); stageWin.postMessage({ type: 'pc-rpc', id, method, args }, stageOrigin); });
 window.__timed = async (method, ...args) => { const t0 = performance.now(); const r = await window.__rpc(method, ...args); return { wall: performance.now() - t0, r }; };
 window.__setup = async (src) => { ready = null; const f = document.getElementById('bg'); f.src = src; stageWin = f.contentWindow; stageOrigin = new URL(src).origin;
-  const t0 = performance.now(); while (!ready) { if (performance.now() - t0 > 60000) throw new Error('舞台 60 秒没就绪'); await new Promise((r) => setTimeout(r, 50)); } stageWin = f.contentWindow; return ready; };
+  const t0 = performance.now(); while (!ready) { if (performance.now() - t0 > 60000) throw new Error('stage not ready within 60 seconds'); await new Promise((r) => setTimeout(r, 50)); } stageWin = f.contentWindow; return ready; };
 </script>`;
 
 const TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html; charset=utf-8', '.json': 'application/json', '.wasm': 'application/wasm', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf', '.png': 'image/png', '.webp': 'image/webp' };
@@ -101,7 +101,7 @@ try {
   report.chrome = await browser.version();
   const page = await browser.newPage();
   await page.setViewport({ width: 1000, height: 640 });
-  page.on('pageerror', (e) => report.failures.push(`页面报错:${String(e.message || e).slice(0, 160)}`));
+  page.on('pageerror', (e) => report.failures.push(`Page error: ${String(e.message || e).slice(0, 160)}`));
   await page.goto(`http://127.0.0.1:${BASE}/probe-parent`, { waitUntil: 'load' });
   await page.evaluate((src) => window.__setup(src), `http://127.0.0.1:${BASE + 2}/editor/stage.html?stage=1&id=B&preview=stage&dual=1&lm=0`);
   await sleep(1000);
@@ -111,7 +111,7 @@ try {
   }
   const bake = async (clipId, localFrame) => {
     const { wall, r } = await page.evaluate((req) => window.__timed('bakeFrame', req), { session: 'seek', clipId, localFrame, mode: 'seq', small: false });
-    if (!r?.ok) { report.failures.push(`${clipId} 第 ${localFrame} 帧:${r?.reason}${r?.detail ? ` ${String(r.detail).slice(0, 80)}` : ''}`); return null; }
+    if (!r?.ok) { report.failures.push(`${clipId} frame ${localFrame}: ${r?.reason}${r?.detail ? ` ${String(r.detail).slice(0, 80)}` : ''}`); return null; }
     return { wall, ms: r.ms, readyMs: r.readyMs, remounted: r.remounted, bytes: r.bytes, hash: r.hash };
   };
   for (const cardId of CARDS) {
@@ -124,7 +124,7 @@ try {
       const want = new Map();
       await page.evaluate(() => window.__rpc('bakeCancel'));
       const htmlAt = (n) => page.evaluate((k) => window.__html(k), n);
-      const diff = (a, b) => { if (a === null || b === null) return '没拿到快照'; const r = compareSnapshotHtml(a, b); if (r.same) return null; const decl = (t) => new Map(String(t ?? '').split(';').map((x) => { const i = x.indexOf(':'); return [x.slice(0, i).trim(), x.slice(i + 1).trim()]; })); const x = decl(r.expected), y = decl(r.actual); const ds = [...new Set([...x.keys(), ...y.keys()])].filter((k) => x.get(k) !== y.get(k)).slice(0, 3).map((k) => `${k}: ${String(x.get(k)).slice(0, 48)} → ${String(y.get(k)).slice(0, 48)}`); return `${r.reason ?? '不同'}${ds.length ? ' | ' + ds.join(' ; ') : `:${String(r.expected ?? '').slice(0, 40)} / ${String(r.actual ?? '').slice(0, 40)}`}`; };
+      const diff = (a, b) => { if (a === null || b === null) return 'No snapshot obtained'; const r = compareSnapshotHtml(a, b); if (r.same) return null; const decl = (t) => new Map(String(t ?? '').split(';').map((x) => { const i = x.indexOf(':'); return [x.slice(0, i).trim(), x.slice(i + 1).trim()]; })); const x = decl(r.expected), y = decl(r.actual); const ds = [...new Set([...x.keys(), ...y.keys()])].filter((k) => x.get(k) !== y.get(k)).slice(0, 3).map((k) => `${k}: ${String(x.get(k)).slice(0, 48)} → ${String(y.get(k)).slice(0, 48)}`); return `${r.reason ?? 'different'}${ds.length ? ' | ' + ds.join(' ; ') : `:${String(r.expected ?? '').slice(0, 40)} / ${String(r.actual ?? '').slice(0, 40)}`}`; };
       for (let n = 0; n <= VERIFY.at(-1); n++) { const b = await bake('clip', n); if (!b) break; if (VERIFY.includes(n)) want.set(n, await htmlAt(n)); else await htmlAt(n); }
       for (const n of VERIFY) {
         await page.evaluate(() => window.__rpc('bakeCancel'));
@@ -162,12 +162,12 @@ try {
 }
 
 if (JSON_OUT) fs.writeFileSync(JSON_OUT, JSON.stringify(report, null, 2));
-console.log(`机器:${report.host.cpu},${report.host.logicalCores} 个逻辑核;${report.chrome}${THROTTLE > 1 ? `;主线程放慢 ${THROTTLE} 倍` : ''}`);
-console.log(`每张卡一个 ${SECONDS} 秒的片段(${FPS} 帧/秒,共 ${LAST + 1} 帧);每个数取 ${ROUNDS} 次的中位数;时间是父页从发出请求到收到回复`);
+console.log(`Machine: ${report.host.cpu}, ${report.host.logicalCores} logical cores; ${report.chrome}${THROTTLE > 1 ? `; main thread slowed down ${THROTTLE}x` : ''}`);
+console.log(`One ${SECONDS}-second clip per card (${FPS} fps, ${LAST + 1} frames in total); each number is the median of ${ROUNDS} runs; the time is measured in the parent page from sending the request to receiving the reply`);
 for (const c of report.cards) {
-  if (c.verify.length) { console.log(`卡 ${c.cardId}:` + c.verify.map((v) => `第 ${v.frame} 帧(${(v.frame / FPS).toFixed(1)} 秒)${v.same ? ' 相同' : (v.jumpStable ? ' 不同' : ' 不同(两次跳也互不相同)') + `〔${v.why}〕`}`).join(';')); continue; }
-  console.log(`卡 ${c.cardId}:顺着做每帧 ${c.seq.wallMs} 毫秒(${c.seq.continued}/${c.seq.frames} 帧是接着推的,快照 ${c.seq.htmlKB} KB);只挂载不推 ${c.mount.wallMs} 毫秒`);
-  for (const j of c.jumps) console.log(`   跳到第 ${String(j.frame).padStart(3)} 帧(${String(j.sec).padStart(4)} 秒)  ${String(j.wallMs).padStart(8)} 毫秒   平均每推一步 ${j.perStepMs} 毫秒${j.remounted ? '' : '   (没有重新挂载,数字不可比)'}`);
+  if (c.verify.length) { console.log(`Card ${c.cardId}:` + c.verify.map((v) => `Frame ${v.frame} (${(v.frame / FPS).toFixed(1)} s)${v.same ? ' identical' : (v.jumpStable ? ' different' : ' different (two jumps also differ from each other)') + `[${v.why}]`}`).join(';')); continue; }
+  console.log(`Card ${c.cardId}: running in order takes ${c.seq.wallMs} ms per frame (${c.seq.continued}/${c.seq.frames} frames continued from the previous frame, snapshot ${c.seq.htmlKB} KB); mounting without stepping takes ${c.mount.wallMs} ms`);
+  for (const j of c.jumps) console.log(`   Jump to frame ${String(j.frame).padStart(3)} (${String(j.sec).padStart(4)} s)  ${String(j.wallMs).padStart(8)} ms   average ${j.perStepMs} ms per step${j.remounted ? '' : '   (not remounted, the numbers are not comparable)'}`);
 }
-if (report.failures.length) { console.log(`失败:\n  ${report.failures.join('\n  ')}`); process.exit(1); }
-console.log('全部跑完(只记录耗时)');
+if (report.failures.length) { console.log(`Failed:\n  ${report.failures.join('\n  ')}`); process.exit(1); }
+console.log('All finished (timings are only recorded)');

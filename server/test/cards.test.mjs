@@ -12,7 +12,7 @@ const require_ = createRequire(import.meta.url);
 const ts = require_('typescript');
 
 /** assert.throws 不把错误还给你,但这里要断言报错文案本身 */
-const caught = (fn) => { try { fn(); } catch (e) { return e; } throw new Error('本该抛错却没有'); };
+const caught = (fn) => { try { fn(); } catch (e) { return e; } throw new Error('Should have thrown but did not'); };
 
 const ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..');
 const OUT = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-cards-test-'));
@@ -50,59 +50,59 @@ const { checkCardSource, checkSourceEdit, applyCardPatch, translateCardSource, r
 
 // 一张最小的假卡,形状和真卡一致
 registerCards([{
-  id: 'demo-card', name: '演示', description: 'd', source: 'native',
+  id: 'demo-card', name: 'Demo', description: 'd', source: 'native',
   defaults: { lines: '', mode: 'a', size: 10, accent: '#fff' },
   controls: [
-    { key: 'lines', label: '内容', type: 'text', required: true, hint: '一行一条。' },
-    { key: 'mode', label: '模式', type: 'select', options: [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }] },
-    { key: 'size', label: '字号', type: 'number' },
-    { key: 'accent', label: '主色', type: 'color' },
+    { key: 'lines', label: 'Content', type: 'text', required: true, hint: 'One per line.' },
+    { key: 'mode', label: 'Mode', type: 'select', options: [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }] },
+    { key: 'size', label: 'Font size', type: 'number' },
+    { key: 'accent', label: 'Primary color', type: 'color' },
   ],
   Component: () => null,
 }]);
 
 // ── validateCardParams ────────────────────────────────────────────
-test('必填项为空 → 拒绝,并带上 hint', () => {
+test('Required field empty → reject, and include the hint', () => {
   const e = caught(() => validateCardParams('demo-card', { size: 20 }));
   assert.match(e.message, /lines/);
-  assert.match(e.message, /必填/);
-  assert.match(e.message, /一行一条/);      // hint 要透出去
+  assert.match(e.message, /required/);
+  assert.match(e.message, /One per line/);      // hint 要透出去
 });
 
-test('必填项只有空白 → 仍然算没填', () => {
-  assert.throws(() => validateCardParams('demo-card', { lines: '   ' }), /必填/);
+test('Required field with only whitespace → still counts as not filled', () => {
+  assert.throws(() => validateCardParams('demo-card', { lines: '   ' }), /required/);
 });
 
-test('必填项填了 → 通过,并返回合并结果', () => {
-  const merged = validateCardParams('demo-card', { lines: '0|1|你好|' });
-  assert.equal(merged.lines, '0|1|你好|');
+test('Required field filled → pass, and return the merged result', () => {
+  const merged = validateCardParams('demo-card', { lines: '0|1|Hello|' });
+  assert.equal(merged.lines, '0|1|Hello|');
   assert.equal(merged.mode, 'a');          // 没传的用 defaults
   assert.equal(merged.size, 10);
 });
 
-test('键名写错 → 拒绝,并列出真正的参数名', () => {
+test('Wrong key name → reject, and list the real parameter names', () => {
   const e = caught(() => validateCardParams('demo-card', { lines: 'x', linez: 'y' }));
   assert.match(e.message, /linez/);
-  assert.match(e.message, /不是 demo-card 的参数/);
+  assert.match(e.message, /is not a parameter of demo-card/);
   assert.match(e.message, /mode/);          // 要告诉它有哪些合法参数
 });
 
-test('select 取值不在选项里 → 拒绝并列出可选值', () => {
+test('select value not among the options → reject and list the allowed values', () => {
   const e = caught(() => validateCardParams('demo-card', { lines: 'x', mode: 'c' }));
   assert.match(e.message, /a \/ b/);
 });
 
-test('number 收到字符串 → 拒绝', () => {
-  assert.throws(() => validateCardParams('demo-card', { lines: 'x', size: '20' }), /要数字/);
+test('number received a string → reject', () => {
+  assert.throws(() => validateCardParams('demo-card', { lines: 'x', size: '20' }), /must be a number/);
 });
 
-test('改已有 clip 的次要参数,不该因为本次没带必填项而被拒', () => {
-  const merged = validateCardParams('demo-card', { size: 30 }, { lines: '0|1|已经填过了|' });
+test('Changing a secondary parameter of an existing clip must not be rejected just because this call omitted the required field', () => {
+  const merged = validateCardParams('demo-card', { size: 30 }, { lines: '0|1|Already filled in|' });
   assert.equal(merged.size, 30);
-  assert.equal(merged.lines, '0|1|已经填过了|');
+  assert.equal(merged.lines, '0|1|Already filled in|');
 });
 
-test('卡片不存在 → 报错并列出可用 id', () => {
+test('Card does not exist → error and list the available ids', () => {
   const e = caught(() => findCard('no-such-card'));
   assert.match(e.message, /demo-card/);
 });
@@ -116,67 +116,67 @@ function C({ params }: CardProps<Params>) {
   return <motion.div animate={{ opacity: 1 }}>{params.text}</motion.div>;
 }
 export const priceTag: CardDef<Params> = {
-  id: "price-tag", name: "价格", description: "d", source: "user",
+  id: "price-tag", name: "Price", description: "d", source: "user",
   frameMode: "stateful",
   defaults: { text: "¥1" },
-  controls: [{ key: "text", label: "文字", type: "text" }],
+  controls: [{ key: "text", label: "Text", type: "text" }],
   Component: C,
 };
 `;
 
-test('合格源码 → 通过', () => {
+test('Valid source → pass', () => {
   const r = checkCardSource('price-tag', GOOD, ['odometer'], { mode: 'author' });
   assert.equal(r.ok, true, r.errors.join('\n'));
 });
 
-test('id 不是 kebab-case → 拒绝', () => {
+test('id is not kebab-case → reject', () => {
   assert.match(checkCardSource('PriceTag', GOOD, [], { mode: 'author' }).errors.join('\n'), /kebab-case/);
 });
 
-test('id 和源码里的 id 不一致 → 拒绝', () => {
+test('id does not match the id in the source → reject', () => {
   const r = checkCardSource('other-id', GOOD, [], { mode: 'author' });
-  assert.match(r.errors.join('\n'), /price-tag.*不一致|不一致/s);
+  assert.match(r.errors.join('\n'), /price-tag.*does not match|does not match/s);
 });
 
-test('id 撞车 → 拒绝', () => {
-  assert.match(checkCardSource('price-tag', GOOD, ['price-tag'], { mode: 'author' }).errors.join('\n'), /已经有 id/);
+test('id collision → reject', () => {
+  assert.match(checkCardSource('price-tag', GOOD, ['price-tag'], { mode: 'author' }).errors.join('\n'), /already exists/);
 });
 
-test('mu- 前缀 → 拒绝', () => {
+test('mu- prefix → reject', () => {
   const src = GOOD.replace('id: "price-tag"', 'id: "mu-thing"');
-  assert.match(checkCardSource('mu-thing', src, [], { mode: 'author' }).errors.join('\n'), /mu- 前缀/);
+  assert.match(checkCardSource('mu-thing', src, [], { mode: 'author' }).errors.join('\n'), /mu- prefix/);
 });
 
-test('没有 CardDef 具名导出 → 拒绝', () => {
+test('No CardDef named export → reject', () => {
   const src = GOOD.replace('export const priceTag: CardDef<Params>', 'const priceTag: any');
-  assert.match(checkCardSource('price-tag', src, [], { mode: 'author' }).errors.join('\n'), /具名导出/);
+  assert.match(checkCardSource('price-tag', src, [], { mode: 'author' }).errors.join('\n'), /named export/);
 });
 
-test('用了 Date.now → 拒绝', () => {
+test('Uses Date.now → reject', () => {
   const src = GOOD.replace('params.text', 'params.text + Date.now()');
   assert.match(checkCardSource('price-tag', src, [], { mode: 'author' }).errors.join('\n'), /Date\.now/);
 });
 
-test('用了 setInterval → 拒绝', () => {
+test('Uses setInterval → reject', () => {
   const src = GOOD.replace('return <motion', 'setInterval(() => {}, 16);\n  return <motion');
   assert.match(checkCardSource('price-tag', src, [], { mode: 'author' }).errors.join('\n'), /setTimeout \/ setInterval/);
 });
 
-test('用了 IntersectionObserver → 拒绝', () => {
+test('Uses IntersectionObserver → reject', () => {
   const src = GOOD.replace('return <motion', 'new IntersectionObserver(() => {});\n  return <motion');
   assert.match(checkCardSource('price-tag', src, [], { mode: 'author' }).errors.join('\n'), /IntersectionObserver/);
 });
 
-test('语法错误 → 拒绝并给出行号', () => {
+test('Syntax error → reject and give the line number', () => {
   const src = GOOD.replace('defaults: { text: "¥1" },', 'defaults: { text: "¥1" ,');
   const r = checkCardSource('price-tag', src, [], { mode: 'author' });
   assert.equal(r.ok, false);
-  assert.match(r.errors.join('\n'), /语法错误/);
+  assert.match(r.errors.join('\n'), /Syntax error/);
 });
 
-test('缺 controls 字段 → 拒绝', () => {
-  const src = GOOD.replace('  controls: [{ key: "text", label: "文字", type: "text" }],\n', '');
-  assert.match(checkCardSource('price-tag', src, [], { mode: 'author' }).errors.join('\n'), /缺少 controls/);
+test('Missing controls field → reject', () => {
+  const src = GOOD.replace('  controls: [{ key: "text", label: "Text", type: "text" }],\n', '');
+  assert.match(checkCardSource('price-tag', src, [], { mode: 'author' }).errors.join('\n'), /Missing controls/);
 });
 
 // ── A0:审阅表是 independent 的唯一权威 + frameMode 必填 ──────────────
@@ -184,55 +184,55 @@ test('缺 controls 字段 → 拒绝', () => {
 // 换个下层就糊着别人的画面。所以三条路(内置卡 edit、用户卡 edit、create)各钉一条。
 const INDEPENDENT = '  compositing: "independent",\n';
 
-test("A0:用户卡 edit_card 新增 compositing: independent → 拒绝", () => {
+test("A0: user card edit_card adds compositing: independent → reject", () => {
   const after = GOOD.replace('  defaults:', INDEPENDENT + '  defaults:');
   const r = checkCardSource('price-tag', after, [], { mode: 'author', before: GOOD });
   assert.equal(r.ok, false);
-  assert.match(r.errors.join('\n'), /审阅表/);
+  assert.match(r.errors.join('\n'), /review table/);
 });
 
-test("A0:用户卡 edit_card 只改文案 → 通过", () => {
-  const after = GOOD.replace('name: "价格"', 'name: "价钱"');
+test("A0: user card edit_card changes copy only → pass", () => {
+  const after = GOOD.replace('name: "Price"', 'name: "Cost"');
   const r = checkCardSource('price-tag', after, [], { mode: 'author', before: GOOD });
   assert.equal(r.ok, true, r.errors.join('\n'));
 });
 
-test("A0:用户卡本来就写了 independent、这次没新增 → 不追究(差量口径)", () => {
+test("A0: user card already had independent and this edit adds none → not pursued (delta-based rule)", () => {
   const withIt = GOOD.replace('  defaults:', INDEPENDENT + '  defaults:');
-  const after = withIt.replace('name: "价格"', 'name: "价钱"');
+  const after = withIt.replace('name: "Price"', 'name: "Cost"');
   const r = checkCardSource('price-tag', after, [], { mode: 'author', before: withIt });
   assert.equal(r.ok, true, r.errors.join('\n'));
 });
 
-test("A0:create_card 源码里带 compositing: independent → 拒绝(before 是空串,出现即拒)", () => {
+test("A0: create_card source contains compositing: independent → reject (before is an empty string, so any occurrence is rejected)", () => {
   const src = GOOD.replace('  defaults:', INDEPENDENT + '  defaults:');
   const r = checkCardSource('price-tag', src, [], { mode: 'author', before: '' });
   assert.equal(r.ok, false);
   assert.match(r.errors.join('\n'), /capabilities\.json/);
 });
 
-test("A0:内置卡 edit_card(checkSourceEdit)新增 independent → 拒绝", () => {
+test("A0: built-in card edit_card (checkSourceEdit) adds independent → reject", () => {
   const after = GOOD.replace('  defaults:', INDEPENDENT + '  defaults:');
   const r = checkSourceEdit('src/cards/native/price-tag.tsx', GOOD, after);
   assert.equal(r.ok, false);
   assert.match(r.errors.join('\n'), /capabilities\.json/);
 });
 
-test("A0:author 模式缺 frameMode → 拒绝;install 模式照收", () => {
+test("A0: author mode missing frameMode → reject; install mode accepts it as is", () => {
   const src = GOOD.replace('  frameMode: "stateful",\n', '');
-  assert.match(checkCardSource('price-tag', src, [], { mode: 'author' }).errors.join('\n'), /缺少 frameMode/);
+  assert.match(checkCardSource('price-tag', src, [], { mode: 'author' }).errors.join('\n'), /Missing frameMode/);
   const installed = checkCardSource('price-tag', src, [], { mode: 'install' });
   assert.equal(installed.ok, true, installed.errors.join('\n'));
 });
 
-test("A0:内置 CardDef 文件改完丢了 frameMode → 拒绝", () => {
+test("A0: built-in CardDef file loses frameMode after the edit → reject", () => {
   const after = GOOD.replace('  frameMode: "stateful",\n', '');
   const r = checkSourceEdit('src/cards/native/price-tag.tsx', GOOD, after);
   assert.equal(r.ok, false);
-  assert.match(r.errors.join('\n'), /缺少 frameMode/);
+  assert.match(r.errors.join('\n'), /Missing frameMode/);
 });
 
-test("A0:CardDef<any>[] 聚合文件没有 frameMode 也能改", () => {
+test("A0: a CardDef<any>[] aggregate file can be edited even without frameMode", () => {
   const before = 'import type { CardDef } from "../../kernel/types";\nimport { a } from "./a";\nexport const nativeCards: CardDef<any>[] = [a];\n';
   const after = before.replace('[a]', '[a, a]');
   const r = checkSourceEdit('src/cards/native/index.ts', before, after);
@@ -243,14 +243,14 @@ test("A0:CardDef<any>[] 聚合文件没有 frameMode 也能改", () => {
 // 审查的分档来自 11 张卡在导出管线上的逐字节比对;这里钉住的是「哪一类代码会被
 // 挡在哪一档」,别让以后放宽规则的人不知不觉把接不住的机制放进来。
 
-test('translate:去掉 use client、@/lib/utils 指到本地,并报告改了什么', () => {
+test('translate: strip use client, point @/lib/utils to the local copy, and report what changed', () => {
   const r = translateCardSource('"use client"\nimport { cn } from "@/lib/utils"\nexport const x = 1');
   assert.equal(/use client/.test(r.source), false);
   assert.match(r.source, /from "\.\.\/magicui\/vendor\/cn"/);
   assert.equal(r.rewrites.length, 2);
 });
 
-test('review 第二档:拦的是自带帧循环,不再拦 WebGL / three 本身', () => {
+test('review tier 2: blocks the card\'s own frame loop, and no longer blocks WebGL / three itself', () => {
   const tiers = (src) => reviewCardSource(src).map((f) => f.tier);
   // 导出页把 Math.random 钉成带种子的、截图期间关脚本 —— 粒子卡实测逐字节一致,所以这两条不再拒
   assert.deepEqual(tiers('const c = ref.current.getContext("2d")'), []);
@@ -268,8 +268,8 @@ test('review 第二档:拦的是自带帧循环,不再拦 WebGL / three 本身',
   assert.deepEqual(tiers('import * as THREE from "three"\nconst fn = "setAnimationLoop"; renderer[fn](cb)'), [2]);
   // 注释里提到不算用了:这条规则的报错文案让人「照 scene-3d.tsx 的写法」,
   // 而那张卡的注释里正好在解释为什么不能用 setAnimationLoop —— 连注释一起匹配就成了自相矛盾
-  assert.deepEqual(tiers('// 不要用 setAnimationLoop,它按 delta 累积\nimport * as THREE from "three"\nrenderer.render(s, c)'), []);
-  assert.deepEqual(tiers('/* three 的 setAnimationLoop 在这条管线上接不住 */\nconst x = 1'), []);
+  assert.deepEqual(tiers('// Do not use setAnimationLoop, it accumulates by delta\nimport * as THREE from "three"\nrenderer.render(s, c)'), []);
+  assert.deepEqual(tiers('/* three\'s setAnimationLoop cannot be supported on this pipeline */\nconst x = 1'), []);
   // 字符串里的 // 不该被当成注释,后面的代码照样要看得见
   assert.deepEqual(tiers('const url = "http://x"; renderer.setAnimationLoop(cb)'), [2]);
   // 但**不能**见 rAF 就拦:二维卡用 rAF 是这条管线上验证过的,一刀切会误伤一大片
@@ -280,14 +280,14 @@ test('review 第二档:拦的是自带帧循环,不再拦 WebGL / three 本身',
   assert.deepEqual(tiers('import { tsParticles } from "@tsparticles/engine"\nimport lottie from "lottie-web"'), []);
 });
 
-test('review 第三档:鼠标 / hover / 滚动', () => {
+test('review tier 3: mouse / hover / scroll', () => {
   const tiers = (src) => reviewCardSource(src).map((f) => f.tier);
   assert.deepEqual(tiers('window.addEventListener("mousemove", h)'), [3]);
   assert.deepEqual(tiers('<motion.div whileHover={{ scale: 1.1 }} />'), [3]);
   assert.deepEqual(tiers('const { scrollY } = useScroll()'), [3]);
 });
 
-test('review 依赖:没装的库拒绝,允许的放行', () => {
+test('review dependencies: libraries that are not installed are rejected, allowed ones pass', () => {
   assert.equal(reviewCardSource('import { Sparkles } from "lucide-react"')[0].tier, 'deps');
   assert.deepEqual(
     reviewCardSource('import { motion } from "motion/react"\nimport { cn } from "../magicui/vendor/cn"\nimport type { CardDef } from "../../kernel/types"'),
@@ -295,7 +295,7 @@ test('review 依赖:没装的库拒绝,允许的放行', () => {
   );
 });
 
-test('review 动画 class:MagicUI 那 22 组已 vendor 放行,没定义的拒绝', () => {
+test('review animation classes: the 22 MagicUI groups are vendored and pass, undefined ones are rejected', () => {
   assert.deepEqual(reviewCardSource('<span className="animate-shiny-text animate-spin" />'), []);
   const f = reviewCardSource('<span className="animate-wobble" />');
   assert.equal(f.length, 1);
@@ -303,35 +303,35 @@ test('review 动画 class:MagicUI 那 22 组已 vendor 放行,没定义的拒绝
   assert.match(f[0].detail, /magicui-animations\.css/);
 });
 
-test('review 来源/许可证:搬来的没声明 → 拒绝;Commons Clause → 拒绝;MIT → 放行', () => {
+test('review source/license: copied-in code with no declaration → reject; Commons Clause → reject; MIT → pass', () => {
   const body = 'export const A = () => null';
   // 直接把 MagicUI 代码贴过来:有 @/lib/utils 的痕迹但没写来源
   const undeclared = reviewCardSource('import { cn } from "@/lib/utils"\n' + body).filter((f) => f.tier === 'license');
   assert.equal(undeclared.length, 1);
-  assert.match(undeclared[0].rule, /未声明/);
+  assert.match(undeclared[0].rule, /not declared/);
   // 翻译器已经改掉了 @/lib/utils 这个痕迹,靠 hints.vendored 仍然要求声明
   assert.equal(reviewCardSource(body, { vendored: true }).filter((f) => f.tier === 'license').length, 1);
-  const bad = reviewCardSource('/**\n * 来源: https://reactbits.dev/x\n * MIT + Commons Clause\n */\n' + body);
-  assert.match(bad.find((f) => f.tier === 'license').rule, /不允许分发/);
-  const ok = reviewCardSource('/**\n * 来源: https://magicui.design/docs/components/x\n * MIT License\n */\n' + body);
+  const bad = reviewCardSource('/**\n * Source: https://reactbits.dev/x\n * MIT + Commons Clause\n */\n' + body);
+  assert.match(bad.find((f) => f.tier === 'license').rule, /does not allow distribution/);
+  const ok = reviewCardSource('/**\n * Source: https://magicui.design/docs/components/x\n * MIT License\n */\n' + body);
   assert.deepEqual(ok, []);
 });
 
-test('checkCardSource 把审查发现并进 errors,带档位标签', () => {
+test('checkCardSource merges review findings into errors, with tier labels', () => {
   const src = GOOD.replace('return <motion', 'renderer.setAnimationLoop((ms) => draw(ms));\n  return <motion');
   const r = checkCardSource('price-tag', src, [], { mode: 'author' });
   assert.equal(r.ok, false);
-  assert.match(r.errors.join('\n'), /\[第二档·管线暂不支持\] 自带帧循环/);
+  assert.match(r.errors.join('\n'), /\[Tier 2 · not yet supported by the pipeline\] own frame loop/);
   assert.equal(r.findings.length, 1);
 });
 
-test('mu- 前缀:文件头声明来源 magicui 的可以用', () => {
-  const src = '/**\n * 来源: https://magicui.design/docs/components/thing\n * MIT License\n */\n' + GOOD.replace('id: "price-tag"', 'id: "mu-thing"');
+test('mu- prefix: allowed when the file header declares magicui as the source', () => {
+  const src = '/**\n * Source: https://magicui.design/docs/components/thing\n * MIT License\n */\n' + GOOD.replace('id: "price-tag"', 'id: "mu-thing"');
   const r = checkCardSource('mu-thing', src, [], { mode: 'author' });
   assert.equal(r.ok, true, r.errors.join('\n'));
 });
 
-test('suggestControls:从 *Props 接口推 controls,跳过 className/children', () => {
+test('suggestControls: infer controls from the *Props interface, skipping className/children', () => {
   const s = suggestControls(`
     interface ShinyProps extends React.HTMLAttributes<HTMLSpanElement> {
       text: string; shimmerWidth?: number; loop?: boolean; mode: "fast" | "slow"; words: string[]; className?: string; children?: React.ReactNode;
@@ -345,53 +345,53 @@ test('suggestControls:从 *Props 接口推 controls,跳过 className/children', 
 // 下面这几种情形出错时都不会报错,只会静静地把文件改成别的样子 ——
 // 而「改卡时别处莫名其妙也变了」正是这个功能要根治的毛病,所以逐条钉住。
 
-test('唯一命中时只换那一处', () => {
+test('When there is exactly one match, replace only that one', () => {
   const r = applyCardPatch('a\nsize: 120\nb', 'size: 120', 'size: 64');
   assert.equal(r.ok, true);
   assert.equal(r.after, 'a\nsize: 64\nb');
   assert.equal(r.replaced, 1);
 });
 
-test('replace 里的 $& 不该被当成替换记号展开', () => {
+test('$& in replace must not be expanded as a replacement token', () => {
   // String.replace(str, str) 会把 $& 换成刚匹配到的内容;split/join 不会。
   // 这里的 replace 是模型逐字写好的源码,必须原样落盘。
   const r = applyCardPatch('x AAA y', 'AAA', 'cost = "$&"');
   assert.equal(r.after, 'x cost = "$&" y');
 });
 
-test('replace 里的 $1 和 $` 一样原样落盘', () => {
+test('$1 and $` in replace are likewise written to disk as is', () => {
   assert.equal(applyCardPatch('[T]', 'T', '.replace(/x/, "$1")').after, '[.replace(/x/, "$1")]');
   assert.equal(applyCardPatch('[T]', 'T', 'a$`b').after, '[a$`b]');
 });
 
-test('find 里带正则元字符按字面处理,不当成模式', () => {
+test('Regex metacharacters in find are treated literally, not as a pattern', () => {
   const r = applyCardPatch('const a = arr.map(x => x)', 'arr.map(x => x)', 'arr');
   assert.equal(r.after, 'const a = arr');
 });
 
-test('一次都没命中 → 报错并指路 get_card_source', () => {
+test('No match at all → error pointing to get_card_source', () => {
   const r = applyCardPatch('abc', 'xyz', 'q');
   assert.equal(r.ok, false);
   assert.match(r.error, /get_card_source/);
 });
 
-test('命中多处又没说 replaceAll → 报错并说清命中几处', () => {
+test('Multiple matches without replaceAll → error stating how many occurrences matched', () => {
   const r = applyCardPatch('p p p', 'p', 'q');
   assert.equal(r.ok, false);
-  assert.match(r.error, /匹配到 3 处/);
+  assert.match(r.error, /matched 3 occurrences/);
 });
 
-test('replaceAll 时全换掉,并如实回报换了几处', () => {
+test('With replaceAll, replace all and report truthfully how many occurrences were replaced', () => {
   const r = applyCardPatch('p p p', 'p', 'q', true);
   assert.equal(r.after, 'q q q');
   assert.equal(r.replaced, 3);
 });
 
-test('replace 与 find 相同 → 报错,不留一次什么都没干的「成功」', () => {
+test('replace identical to find → error, do not leave a "success" that did nothing', () => {
   assert.equal(applyCardPatch('abc', 'b', 'b').ok, false);
 });
 
-test('空 find → 报错(否则会匹配到每一个位置)', () => {
+test('Empty find → error (otherwise it would match every position)', () => {
   assert.equal(applyCardPatch('abc', '', 'x').ok, false);
 });
 
@@ -402,14 +402,14 @@ function tmpRoot() {
 }
 const V2 = GOOD.replace('"¥1"', '"¥2"');
 
-test('install:本机没有 → 写进 src/cards/user/', () => {
+test('install: not present on this machine → write into src/cards/user/', () => {
   const { root, history, user } = tmpRoot();
   const [r] = installBundledCards({ root, historyDir: history, cards: [{ id: 'price-tag', source: GOOD }], existingIds: ['odometer'] });
   assert.equal(r.status, 'written', r.error);
   assert.equal(fs.readFileSync(path.join(user, 'price-tag.tsx'), 'utf8'), translateCardSource(GOOD).source);
 });
 
-test('install:本机一样 → 不动;不一样 → 以项目为准,旧版按内容备份且只备一次', () => {
+test('install: same on this machine → leave alone; different → the project wins, the old version is backed up by content and only once', () => {
   const { root, history, user } = tmpRoot();
   installBundledCards({ root, historyDir: history, cards: [{ id: 'price-tag', source: GOOD }], existingIds: [] });
   assert.equal(installBundledCards({ root, historyDir: history, cards: [{ id: 'price-tag', source: GOOD }], existingIds: [] })[0].status, 'unchanged');
@@ -417,7 +417,7 @@ test('install:本机一样 → 不动;不一样 → 以项目为准,旧版按内
   const [r] = installBundledCards({ root, historyDir: history, cards: [{ id: 'price-tag', source: V2 }], existingIds: [] });
   assert.equal(r.status, 'updated');
   assert.match(fs.readFileSync(path.join(user, 'price-tag.tsx'), 'utf8'), /¥2/);
-  assert.match(fs.readFileSync(path.join(root, r.backup), 'utf8'), /¥1/, '备份里是被换掉的本机旧版');
+  assert.match(fs.readFileSync(path.join(root, r.backup), 'utf8'), /¥1/, 'The backup holds the replaced old local version');
 
   // 两个项目来回打开:同一份旧版只备一次,不会越积越多
   installBundledCards({ root, historyDir: history, cards: [{ id: 'price-tag', source: GOOD }], existingIds: [] });
@@ -425,7 +425,7 @@ test('install:本机一样 → 不动;不一样 → 以项目为准,旧版按内
   assert.equal(fs.readdirSync(history).length, 2);
 });
 
-test('install:过不了审查的不装,本机已有的原样留着', () => {
+test('install: anything that fails review is not installed, what this machine already has is left as is', () => {
   const { root, history, user } = tmpRoot();
   installBundledCards({ root, historyDir: history, cards: [{ id: 'price-tag', source: GOOD }], existingIds: [] });
   const bad = GOOD.replace('return <motion.div', 'setTimeout(() => {}, 1);\n  return <motion.div');
@@ -435,7 +435,7 @@ test('install:过不了审查的不装,本机已有的原样留着', () => {
   assert.doesNotMatch(fs.readFileSync(path.join(user, 'price-tag.tsx'), 'utf8'), /setTimeout/);
 });
 
-test('install:id 挡住路径穿越、不许顶替内置卡', () => {
+test('install: id blocks path traversal and must not replace a built-in card', () => {
   const { root, history } = tmpRoot();
   const rs = installBundledCards({
     root, historyDir: history, existingIds: ['price-tag'],
@@ -443,10 +443,10 @@ test('install:id 挡住路径穿越、不许顶替内置卡', () => {
   });
   assert.deepEqual(rs.map((r) => r.status), ['rejected', 'rejected', 'rejected']);
   assert.equal(fs.existsSync(path.join(root, 'src', 'evil.tsx')), false);
-  assert.match(rs[1].error, /已经有 id/);
+  assert.match(rs[1].error, /already exists/);
 });
 
-test('install:有改动层时比对和写入都走改动层,底版不动', () => {
+test('install: when an overlay layer exists, both comparison and writes go through the overlay layer, the base version is untouched', () => {
   const { root, history, user } = tmpRoot();
   const layer = path.join(root, 'layer');
   fs.mkdirSync(user, { recursive: true });
@@ -456,8 +456,8 @@ test('install:有改动层时比对和写入都走改动层,底版不动', () =>
     const [r] = installBundledCards({ root, historyDir: history, cards: [{ id: 'price-tag', source: V2 }], existingIds: [] });
     assert.equal(r.status, 'updated');
     assert.match(fs.readFileSync(path.join(layer, 'src', 'cards', 'user', 'price-tag.tsx'), 'utf8'), /¥2/);
-    assert.match(fs.readFileSync(path.join(user, 'price-tag.tsx'), 'utf8'), /¥1/, '底版是只读的,补丁只换它');
-    assert.equal(installBundledCards({ root, historyDir: history, cards: [{ id: 'price-tag', source: V2 }], existingIds: [] })[0].status, 'unchanged', '比对的是生效的那一份');
+    assert.match(fs.readFileSync(path.join(user, 'price-tag.tsx'), 'utf8'), /¥1/, 'The base version is read-only, the patch replaces only the overlay layer');
+    assert.equal(installBundledCards({ root, historyDir: history, cards: [{ id: 'price-tag', source: V2 }], existingIds: [] })[0].status, 'unchanged', 'The comparison is against the effective copy');
   } finally {
     delete process.env.PROMPTCUT_CARD_OVERRIDES;
   }

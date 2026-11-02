@@ -41,7 +41,7 @@ const BEFORE = !args.includes('--no-before');
 const ONLY_PLAY = args.includes('--only-play');
 const JSON_OUT = flagArg('json', null, args);
 const OUT = path.resolve(flagArg('out', null, args) || path.join(os.tmpdir(), `pc-stream-budget-${Date.now().toString(36)}`));
-if (!PORT) { console.error('要给 --port <自己起一台 dev server 的端口>'); process.exit(2); }
+if (!PORT) { console.error('pass --port <port of a dev server you started yourself>'); process.exit(2); }
 
 const ROOT = path.resolve(fileURLToPath(import.meta.url), '../../..');
 const WIDTH = 1920, HEIGHT = 1080, SEG = 15, DURATION = 4;
@@ -61,7 +61,7 @@ async function bytesFor(bound, fps) {
     const packed = { width: bound.w, height: 2 * bound.h + 16 };
     const t0 = Date.now();
     const s = await makeStream({ width: packed.width, height: packed.height, frames: DURATION * fps, fps });
-    if (!s.ok) throw new Error(`造流失败 ${id}:${s.error}`);
+    if (!s.ok) throw new Error(`failed to create stream ${id}: ${s.error}`);
     say('stream-made', { id, packed, segments: s.segments.length, bytes: s.bytes, ms: Date.now() - t0 });
     made.set(id, { ...s, packed });
   }
@@ -212,7 +212,7 @@ try {
   const origin = dev.origin.replace(/\/+$/, '');
   say('spawn', { pid: dev.pid, port: PORT });
   const ports = await (await fetch(origin + '/api/stage/ports')).json();
-  if (!ports.ok || !Array.isArray(ports.ports) || ports.ports.length < 2) throw new Error(`舞台端口没起来:${JSON.stringify(ports)}`);
+  if (!ports.ok || !Array.isArray(ports.ports) || ports.ports.length < 2) throw new Error(`Stage ports did not come up: ${JSON.stringify(ports)}`);
   const u = new URL(origin);
   const [originA, originB] = ports.ports.slice(0, 2).map((p) => `${u.protocol}//${u.hostname}:${p}`);
 
@@ -308,13 +308,13 @@ try {
     const fps = 30, clips = smallClips(30);
     const { within, over } = await mountScenario('small30', fps, clips, () => () => ({ x: 0, y: 0, w: 640, h: 360 }));
     const row = { fps, cards: clips.length, coded: '704x864', within: within.length, over: over.length, frames: [] };
-    check(within.length === 30 && over.length === 0, '小卡 30 张:30 条都在预算里', { within: within.length, over: over.length });
+    check(within.length === 30 && over.length === 0, '30 small cards: all 30 streams within budget', { within: within.length, over: over.length });
     for (const f of [0, 7, 22, 44, 59, 100]) {
       const { state, ms } = await seekAndWait(f, fps, 30);
       const drawn = state.tracks.filter((t) => t.lastDrawn === f).length;
       row.frames.push({ frame: f, tracks: state.tracks.length, drawn, painted: state.painted, planes: state.planes, ms });
-      check(state.tracks.length === 30 && drawn === 30, `小卡 30 张:第 ${f} 帧 30 条流都画出了这一帧`, { tracks: state.tracks.length, drawn, late: state.tracks.filter((t) => t.lastDrawn !== f).slice(0, 4) });
-      check(state.painted === 30, `小卡 30 张:第 ${f} 帧 30 块流平面上都有画面`, { planes: state.planes, painted: state.painted });
+      check(state.tracks.length === 30 && drawn === 30, `30 small cards: at frame ${f}, all 30 streams drew that frame`, { tracks: state.tracks.length, drawn, late: state.tracks.filter((t) => t.lastDrawn !== f).slice(0, 4) });
+      check(state.painted === 30, `30 small cards: at frame ${f}, all 30 stream planes have a picture`, { planes: state.planes, painted: state.painted });
     }
     await sleep(400);   // 占位符要满 120 毫秒才显示:等过了再看
     const state = await stageState();
@@ -323,9 +323,9 @@ try {
     row.heldMB = round2(state.heldBytes / 1048576);
     row.decoders = state.tracks.filter((t) => t.decoder === 'configured').length;
     row.errors = state.tracks.reduce((s, t) => s + t.errors, 0);
-    check(state.placeholders.length === 0, '小卡 30 张:没有占位符', state.placeholders.slice(0, 4));
-    check(state.gl?.creates === 1 && state.gl?.state === 'ready' && state.gl?.losses === 0, '小卡 30 张:流平面只建了一个 WebGL 上下文,没丢', state.gl);
-    check(row.errors === 0, '小卡 30 张:没有解码错误', state.tracks.filter((t) => t.errors).slice(0, 3));
+    check(state.placeholders.length === 0, '30 small cards: no placeholders', state.placeholders.slice(0, 4));
+    check(state.gl?.creates === 1 && state.gl?.state === 'ready' && state.gl?.losses === 0, '30 small cards: the stream planes created only one WebGL context, and it was not lost', state.gl);
+    check(row.errors === 0, '30 small cards: no decode errors', state.tracks.filter((t) => t.errors).slice(0, 3));
     await page.screenshot({ path: path.join(OUT, 'small30.png') });
     out.small30 = row;
     say('small30', row);
@@ -337,7 +337,7 @@ try {
     const { within, over } = await mountScenario('full8', fps, clips, fullBox);
     const overIds = over.map((p) => p.clipIds[0]);
     const row = { fps, cards: clips.length, coded: '1920x2176', within: within.length, over: overIds, frames: [] };
-    check(within.length === 6 && over.length === 2, '满屏卡 8 张(60 帧每秒):6 条在预算里、2 条超出', { within: within.length, over: overIds });
+    check(within.length === 6 && over.length === 2, '8 full-screen cards (60 fps): 6 within budget, 2 over', { within: within.length, over: overIds });
     // 第 7 帧在第 0 段,第 37 帧在第 2 段,第 100 帧在第 6 段
     for (const f of [7, 37, 100]) {
       const { state, ms } = await seekAndWait(f, fps, 6);
@@ -348,24 +348,24 @@ try {
       const got = s2.placeholders.map((p) => ({ clip: p.clip, x: p.x, y: p.y, w: p.w, h: p.h })).sort((a, b) => a.clip.localeCompare(b.clip));
       const drawn = state.tracks.filter((t) => t.lastDrawn === f).length;
       row.frames.push({ frame: f, segment: n, tracks: s2.tracks.length, drawn, painted: s2.painted, placeholders: s2.placeholders, want, ms });
-      check(s2.tracks.length === 6 && drawn === 6, `满屏卡 8 张:第 ${f} 帧预算里的 6 条都画出了这一帧,超出的 2 层没有建解码器`, { tracks: s2.tracks.length, drawn });
-      check(JSON.stringify(got) === JSON.stringify(want), `满屏卡 8 张:第 ${f} 帧(第 ${n} 段)超出的 2 层显示占位符,位置是清单里这一段的位置矩形`, { got, want });
-      check(s2.placeholders.every((p) => p.kind === 'solid'), `满屏卡 8 张:第 ${f} 帧占位符是按矩形铺的那一种`, s2.placeholders.map((p) => p.kind));
-      check(s2.over.length === 2, `满屏卡 8 张:第 ${f} 帧播放器记着 2 条超出预算的流`, s2.over);
+      check(s2.tracks.length === 6 && drawn === 6, `8 full-screen cards: at frame ${f}, all 6 streams within budget drew that frame, and the 2 layers over budget created no decoder`, { tracks: s2.tracks.length, drawn });
+      check(JSON.stringify(got) === JSON.stringify(want), `8 full-screen cards: at frame ${f} (segment ${n}), the 2 layers over budget show placeholders, positioned at the position rectangle of this segment in the manifest`, { got, want });
+      check(s2.placeholders.every((p) => p.kind === 'solid'), `8 full-screen cards: at frame ${f}, the placeholders are the kind filled by rectangle`, s2.placeholders.map((p) => p.kind));
+      check(s2.over.length === 2, `8 full-screen cards: at frame ${f}, the player has recorded 2 streams over budget`, s2.over);
       if (f === 37) await page.screenshot({ path: path.join(OUT, 'full8.png') });
     }
     const state = await stageState();
     row.gl = state.gl;
     row.heldMB = round2(state.heldBytes / 1048576);
     row.errors = state.tracks.reduce((s, t) => s + t.errors, 0);
-    check(state.gl?.losses === 0, '满屏卡 8 张:共用的上下文没丢', state.gl);
+    check(state.gl?.losses === 0, '8 full-screen cards: the shared context was not lost', state.gl);
     // 父页不再标 over(少了两张卡同屏):占位符撤掉
     await rpc('setStreamPlanes', within);
     await rpc('setSuppressed', within.map((p) => p.clipIds[0]));
     await sleep(300);
     const after = await stageState();
     row.afterUnmark = { placeholders: after.placeholders.length, over: after.over.length };
-    check(after.over.length === 0 && after.placeholders.length === 0, '满屏卡 8 张:不再超预算以后占位符撤掉', row.afterUnmark);
+    check(after.over.length === 0 && after.placeholders.length === 0, '8 full-screen cards: placeholders are removed once no longer over budget', row.afterUnmark);
     out.full8 = row;
     say('full8', { ...row, frames: row.frames.map((r) => ({ frame: r.frame, drawn: r.drawn, placeholders: r.placeholders.length, ms: r.ms })) });
   }
@@ -382,7 +382,7 @@ try {
       // main 上的版本(每块平面一个 WebGL 上下文);条数预算临时放开到 64,否则只会建 6 条
       fsSync.writeFileSync(BEFORE_FILE, show.stdout.replace('export const DECODER_BUDGET = 6;', 'export const DECODER_BUDGET = 64;'));
       variants.unshift({ name: 'per-plane', moduleUrl: `${origin}/src/render/${path.basename(BEFORE_FILE)}` });
-    } else say('before-skipped', { status: show.status, why: 'main 上的 streamPlayer.ts 取不到或不是每块平面一个上下文的那一版' });
+    } else say('before-skipped', { status: show.status, why: 'streamPlayer.ts on main is unavailable or is not the one-context-per-plane version' });
   }
   const fps = 30;
   const smallBound = localPlacement(cardClip('x', { x: 0, y: 0, w: 640, h: 360 }), STAGE).bound;
@@ -403,11 +403,11 @@ try {
     if (row.shared && row['per-plane'] && row.shared.hash != null && row['per-plane'].hash != null && !row['per-plane'].blank) row.samePixels = row.shared.hash === row['per-plane'].hash;
     out.play.rows.push(row);
     say('play', row);
-    check(row.shared && !row.shared.error && row.shared.tracks === n && row.shared.blank === 0 && row.shared.gl?.creates === 1, `播放器:同屏 ${n} 条小卡流都在画,只建一个上下文`, row.shared);
-    if (row.samePixels === false) check(false, `播放器:同屏 ${n} 条,共用上下文画出来的和每块平面一个上下文的逐像素相同`, { shared: row.shared.hash, before: row['per-plane'].hash });
+    check(row.shared && !row.shared.error && row.shared.tracks === n && row.shared.blank === 0 && row.shared.gl?.creates === 1, `player: all ${n} small-card streams on screen are drawing, with only one context created`, row.shared);
+    if (row.samePixels === false) check(false, `player: with ${n} streams on screen, the output drawn with the shared context is pixel-identical to the one-context-per-plane output`, { shared: row.shared.hash, before: row['per-plane'].hash });
   }
 } catch (e) {
-  fails.push(`探针异常:${e?.stack || e}`);
+  fails.push(`Probe error: ${e?.stack || e}`);
   say('ERROR', { error: String(e?.stack || e).slice(0, 1200) });
 } finally {
   try { await browser?.close(); } catch { /* 已经关了 */ }

@@ -37,7 +37,7 @@ function fakeEndpoint({ connected = true, reply = 'published' } = {}) {
     if (reply === 'published') {
       queueMicrotask(() => ep.emit({ type: 'task.published', reqId, results: [{ id: task?.id, state: 'open', created: true }] }));
     } else if (reply === 'error') {
-      queueMicrotask(() => ep.emit({ type: 'error', reqId, reason: 'no-node', detail: '没有节点' }));
+      queueMicrotask(() => ep.emit({ type: 'error', reqId, reason: 'no-node', detail: 'No node' }));
     }
     return true;
   };
@@ -50,11 +50,11 @@ function fakeEndpoint({ connected = true, reply = 'published' } = {}) {
 async function makePublisher(endpoint) {
   const mod = await importRepo(gate.file);
   const pub = mod[gate.name](planFactoryDeps({ endpoint }));
-  assert.ok(pub && typeof pub === 'object', `假设 K6：${gate.name}() 应回对象`);
+  assert.ok(pub && typeof pub === 'object', `Assumption K6: ${gate.name}() should return an object`);
   const m = {};
   for (const [k, names] of Object.entries(PLAN_METHODS)) {
     m[k] = pickMethod(pub, names);
-    assert.ok(m[k], `假设 K6：发布器上找不到 ${k}（候选 ${names.join(' / ')}）；有的：${Object.keys(pub).join(', ')}`);
+    assert.ok(m[k], `Assumption K6: ${k} not found on the publisher (candidates ${names.join(' / ')}); available: ${Object.keys(pub).join(', ')}`);
   }
   return {
     measured: (v) => pub[m.measured](v),
@@ -72,7 +72,7 @@ const rev = (n) => ({ projectId: P, projectRev: n });
 
 function assertPlan(msg, n) {
   const parsed = parseInbound(msg);
-  assert.ok(parsed.ok, `渲染任务队列不认这条消息：${parsed.detail}；${JSON.stringify(msg)}`);
+  assert.ok(parsed.ok, `The render queue does not accept this message: ${parsed.detail}; ${JSON.stringify(msg)}`);
   assert.equal(parsed.type, 'task.publish');
   const task = parsed.body.tasks?.[0] ?? msg.tasks[0];
   assert.equal(msg.tasks[0].kind, 'plan');
@@ -80,7 +80,7 @@ function assertPlan(msg, n) {
   assert.equal(task.source?.projectRev ?? msg.tasks[0].source.projectRev, n);
 }
 
-it('C10-PP-01 测量落定之前不发', async () => {
+it('C10-PP-01 nothing is published before the measurement settles', async () => {
   mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
   const ep = fakeEndpoint();
   const pub = await makePublisher(ep);
@@ -91,20 +91,20 @@ it('C10-PP-01 测量落定之前不发', async () => {
   pub.dispose();
 });
 
-it('C10-PP-02 测量落定后防抖发一个 plan，队列认得', async () => {
+it('C10-PP-02 after the measurement settles, one plan is published with debounce, and the queue recognizes it', async () => {
   mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
   const ep = fakeEndpoint();
   const pub = await makePublisher(ep);
   pub.measured(rev(5));
   await Promise.resolve();
-  assert.equal(ep.publishes().length, 0, '不是当场发（防抖）');
+  assert.equal(ep.publishes().length, 0, 'Not published immediately (debounced)');
   await flush();
   assert.equal(ep.publishes().length, 1);
   assertPlan(ep.publishes()[0], 5);
   pub.dispose();
 });
 
-it('C10-PP-03 防抖：连续几次改动只发一次，带最后那一版', async () => {
+it('C10-PP-03 debounce: several consecutive changes publish only once, carrying the last version', async () => {
   mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
   const ep = fakeEndpoint();
   const pub = await makePublisher(ep);
@@ -115,12 +115,12 @@ it('C10-PP-03 防抖：连续几次改动只发一次，带最后那一版', asy
     mock.timers.tick(1);
   }
   await flush();
-  assert.equal(ep.publishes().length, 2, `一次测量落定 + 一次防抖后的改动，实际 ${ep.publishes().length}`);
+  assert.equal(ep.publishes().length, 2, `One publish for the measurement settling + one for the change after the debounce, got ${ep.publishes().length}`);
   assertPlan(ep.publishes()[1], 8);
   pub.dispose();
 });
 
-it('C10-PP-04 发过之后再改：重发', async () => {
+it('C10-PP-04 a change after a publish: republish', async () => {
   mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
   const ep = fakeEndpoint();
   const pub = await makePublisher(ep);
@@ -134,7 +134,7 @@ it('C10-PP-04 发过之后再改：重发', async () => {
   pub.dispose();
 });
 
-it('C10-PP-05 没人认领不报错：不抛、没有未处理的拒绝，之后照常重发', async () => {
+it('C10-PP-05 no claimer is not an error: no throw, no unhandled rejection, and republishing continues as usual afterwards', async () => {
   mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
   const before = unhandled.length;
   for (const opts of [{ reply: 'published' }, { reply: 'error' }, { reply: 'silent' }, { connected: false }]) {
@@ -145,15 +145,15 @@ it('C10-PP-05 没人认领不报错：不抛、没有未处理的拒绝，之后
     ep.connected = true;
     assert.doesNotThrow(() => pub.changed(rev(2)));
     await flush(600_000);
-    assert.ok(ep.publishes().some((m) => planKeyBase(m.tasks[0].resultKey) === `${P}@2`), `${JSON.stringify(opts)}：之后的改动照常发`);
+    assert.ok(ep.publishes().some((m) => planKeyBase(m.tasks[0].resultKey) === `${P}@2`), `${JSON.stringify(opts)}: later changes are published as usual`);
     pub.dispose();
   }
   mock.timers.reset();
   await new Promise((r) => setImmediate(r));
-  assert.equal(unhandled.length, before, `出现了未处理的拒绝：${unhandled.slice(before).map(String).join('; ')}`);
+  assert.equal(unhandled.length, before, `Unhandled rejection occurred: ${unhandled.slice(before).map(String).join('; ')}`);
 });
 
-it('C10-PP-06 dispose() 之后不再发', async () => {
+it('C10-PP-06 nothing is published after dispose()', async () => {
   mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
   const ep = fakeEndpoint();
   const pub = await makePublisher(ep);

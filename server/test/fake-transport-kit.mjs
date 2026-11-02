@@ -67,7 +67,7 @@ export function transportClient(kind, url, protocols) {
   });
   const opened = new Promise((resolve, reject) => {
     ws.addEventListener('open', resolve, { once: true });
-    ws.addEventListener('error', () => reject(new Error(`${kind} 连接失败`)), { once: true });
+    ws.addEventListener('error', () => reject(new Error(`${kind} connection failed`)), { once: true });
   });
   opened.catch(() => {});
   const closed = new Promise((resolve) => ws.addEventListener('close', (e) => resolve(e), { once: true }));
@@ -82,7 +82,7 @@ export function transportClient(kind, url, protocols) {
         waiters.push(w);
         setTimeout(() => {
           const k = waiters.indexOf(w);
-          if (k >= 0) { waiters.splice(k, 1); reject(new Error(`[${kind}] 等消息超时；已收到：${JSON.stringify(all).slice(0, 800)}`)); }
+          if (k >= 0) { waiters.splice(k, 1); reject(new Error(`[${kind}] timed out waiting for a message; received so far: ${JSON.stringify(all).slice(0, 800)}`)); }
         }, ms);
       });
     },
@@ -148,5 +148,5 @@ export async function recvUntil(client, sid, match, { ack = 0, ms = 3000, wait =
     }
     if (r.body.closed || got.some(match)) return { frames: got, ack: last, closed: r.body.closed };
   }
-  throw new Error(`等帧超时；已收到：${JSON.stringify(got).slice(0, 800)}`);
+  throw new Error(`timed out waiting for a frame; received so far: ${JSON.stringify(got).slice(0, 800)}`);
 }

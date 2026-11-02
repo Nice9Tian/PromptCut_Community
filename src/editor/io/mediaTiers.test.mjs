@@ -29,8 +29,8 @@ function assertNoSyncFields(obj, where) {
   walk(obj, "");
 }
 
-test("T2-page 导入回包写进项目:tiers 只有 original / small 两个哈希;素材小尺寸后到时补上 small;项目与 .proc 里没有同步字段", async () => {
-  actions.newProject("两档");
+test("T2-page The import response is written into the project: tiers has only two hashes, original / small; when the small-size asset arrives later, small is filled in; the project and .proc contain no sync fields", async () => {
+  actions.newProject("Two tiers");
   const m = actions.addMedia({ kind: "video", name: "clip.mp4", url: "", pending: true });
   const realFetch = globalThis.fetch;
   let asked = 0;
@@ -65,11 +65,11 @@ test("T2-page 导入回包写进项目:tiers 只有 original / small 两个哈�
   }
 });
 
-test("T1-page 不是视频(回包没有 tiers)就不写 tiers、不去问素材小尺寸", () => {
+test("T1-page Not a video (the response has no tiers): do not write tiers, do not ask about the small-size asset", () => {
   actions.newProject("Images");
   const m = actions.addMedia({ kind: "image", name: "a.png", url: "", pending: true });
   const realFetch = globalThis.fetch;
-  globalThis.fetch = async () => { throw new Error("不该问素材小尺寸"); };
+  globalThis.fetch = async () => { throw new Error("Should not have asked about the small-size asset"); };
   try {
     applyUploadedMedia(m.id, { hash: SMALL, ext: "png", name: "a.png", url: `/@media/${SMALL}`, bytes: 10 });
     const media = getState().project.media.find((x) => x.id === m.id);

@@ -25,7 +25,7 @@ export async function runRecoveryMatrix(o) {
   const mergeAll = async (button) => {
     await member.evaluate(() => { for (const i of document.querySelectorAll('[data-pc="merge-thing-check"]')) if (!i.checked) i.click(); });
     await member.evaluate((b) => document.querySelector(`[data-pc="${b}"]`)?.click(), button);
-    await member.waitForFunction(() => document.querySelector('[data-pc="merge-close"]')?.textContent?.trim() === '完成', { timeout: 10000 });
+    await member.waitForFunction(() => document.querySelector('[data-pc="merge-close"]')?.textContent?.trim() === 'done', { timeout: 10000 });
     await member.evaluate(() => document.querySelector('[data-pc="merge-close"]')?.click());
   };
   const screenshot = async (p, file) => {
@@ -34,9 +34,9 @@ export async function runRecoveryMatrix(o) {
   };
   const authenticate = async () => {
     await member.locator('[data-pc="recovery-auth-open"]').click();
-    await member.waitForSelector('form[aria-label="恢复原协作身份"]');
+    await member.waitForSelector('form[aria-label="Restore original collaboration identity"]');
     await member.type('#pc-recovery-username', 'member'); await member.type('#pc-recovery-password', password);
-    await member.click('form[aria-label="恢复原协作身份"] button[type="submit"]'); await connected(member, roomId, 'member');
+    await member.click('form[aria-label="Restore original collaboration identity"] button[type="submit"]'); await connected(member, roomId, 'member');
   };
   // Several deliberately invalid identities share this probe's source address. Preserve the
   // production limiter and allow its advertised 60 s cooldown before judging authentication.
@@ -50,7 +50,7 @@ export async function runRecoveryMatrix(o) {
     await clickText(host, '[data-pc="members-pop"] button', text);
     await host.waitForSelector('[data-pc="creator-verify"]');
     await host.type('#pc-cv-pw', creatorPassword);
-    await clickText(host, '[data-pc="creator-verify"] button', '验证');
+    await clickText(host, '[data-pc="creator-verify"] button', 'Verify');
   };
 
   phase('existing collaboration settings never generate replacement passwords');
@@ -59,7 +59,7 @@ export async function runRecoveryMatrix(o) {
   try {
     await host.waitForSelector('[data-pc="collab-section"]');
     await host.waitForFunction(() => document.querySelector('[data-pc="collab-project-name"]'));
-  } finally { await clickText(host, '.pc-dialog button', '取消'); }
+  } finally { await clickText(host, '.pc-dialog button', 'Cancel'); }
   assert.equal(await host.evaluate(() => window.recoveryPasswordGenerations), generations);
   evidence.recoveredSettingsDoNotGeneratePasswords = true;
 
@@ -150,7 +150,7 @@ export async function runRecoveryMatrix(o) {
     await member.waitForSelector('[data-pc="collab-section"]');
     await member.click('[data-pc="collab-toggle"]');
     await member.waitForFunction(() => document.querySelector('#pc-collab-cpw')?.value.length === 16 && document.querySelector('#pc-collab-ppw')?.value.length === 16);
-  } finally { await clickText(member, '.pc-dialog button', '取消'); }
+  } finally { await clickText(member, '.pc-dialog button', 'Cancel'); }
   assert.equal(await member.evaluate(() => window.recoveryPasswordGenerations > 0), true);
   assert.equal(await member.evaluate(n => window.recoveryPasswordGenerations > n, localGenerations), true);
   evidence.newCollaborationDefaultPasswordsPreserved = true;
@@ -159,14 +159,14 @@ export async function runRecoveryMatrix(o) {
 
   phase('actual Home UI clears the old browser recovery entry');
   member.on('dialog', d => void d.accept());
-  await member.click('button[title="首页"]');
+  await member.click('button[title="Home"]');
   await member.waitForFunction(() => !window.probe.sync.getSyncView().shared && !sessionStorage.getItem('pc.shared.resume'));
   assert.equal(new URL(member.url()).searchParams.has('editor'), false);
   await member.reload({ waitUntil: 'domcontentloaded' }); await member.waitForSelector('[data-pc="start-join"]');
   await member.close(); member = await page(memberRuntime.base); await open(member, memberFile); await connected(member, roomId, 'member');
   const pathFile = path.join(root, 'matrix-home.proc'); fs.writeFileSync(pathFile, memberFile);
   const pathPage = await page(memberRuntime.base, pathFile); await connected(pathPage, roomId, 'member');
-  pathPage.on('dialog', d => void d.accept()); await pathPage.click('button[title="首页"]');
+  pathPage.on('dialog', d => void d.accept()); await pathPage.click('button[title="Home"]');
   await pathPage.waitForSelector('[data-pc="start-join"]'); assert.equal(new URL(pathPage.url()).searchParams.has('open'), false);
   await pathPage.reload({ waitUntil: 'domcontentloaded' }); await pathPage.waitForSelector('[data-pc="start-join"]'); await pathPage.close();
   evidence.homeUiClearsResume = true; evidence.homeAfterSystemPathRefreshStaysHome = true;
@@ -201,7 +201,7 @@ export async function runRecoveryMatrix(o) {
       try {
         await legacyPage.waitForSelector('[data-pc="collab-project-password"]');
         assert.equal(await legacyPage.evaluate(pw => document.querySelector('[data-pc="collab-project-password"] code')?.textContent === pw, password), true);
-      } finally { await clickText(legacyPage, '.pc-dialog button', '取消'); }
+      } finally { await clickText(legacyPage, '.pc-dialog button', 'Cancel'); }
       evidence.legacyPasswordViewPreserved = true;
     }
   } finally { await legacyPage.close(); await stop(legacyRuntime.child); }
@@ -258,13 +258,13 @@ export async function runRecoveryMatrix(o) {
     const button = row?.querySelector('.pc-members-kick'); if (!button) throw new Error('No current member kick UI'); button.click();
   });
   await host.waitForSelector('[data-pc="creator-verify"]'); await host.type('#pc-cv-pw', creatorPassword);
-  await clickText(host, '[data-pc="creator-verify"] button', '验证'); await host.waitForSelector('[data-pc="kick-dialog"]');
-  await clickText(host, '[data-pc="kick-dialog"] button', '踢出');
+  await clickText(host, '[data-pc="creator-verify"] button', 'Verify'); await host.waitForSelector('[data-pc="kick-dialog"]');
+  await clickText(host, '[data-pc="kick-dialog"] button', 'Kick');
   await member.waitForFunction(() => window.probe.sync.getSyncView().reopenState === 'rejected');
   await screenshot(member, 'matrix-kicked');
   await open(member, memberFile); await member.waitForFunction(() => window.probe.sync.getSyncView().reopenState === 'rejected');
-  await adminFlow('已禁入的设备'); await host.waitForSelector('[data-pc="bans-dialog"]');
-  await clickText(host, '[data-pc="bans-dialog"] button', '撤销'); await clickText(host, '[data-pc="bans-dialog"] button', '返回');
+  await adminFlow('Banned devices'); await host.waitForSelector('[data-pc="bans-dialog"]');
+  await clickText(host, '[data-pc="bans-dialog"] button', 'Revoke'); await clickText(host, '[data-pc="bans-dialog"] button', 'Back');
   await open(member, memberFile); await connected(member, roomId, 'member');
   evidence.kickAndUnbanUi = true;
 
@@ -273,9 +273,9 @@ export async function runRecoveryMatrix(o) {
     // Change and restore the isolated password; the first reopen must reject the cached K.
     const temporaryPassword = 'isolated-matrix-password-' + Date.now();
     for (const next of [temporaryPassword, password]) {
-      await adminFlow('改项目密码'); await host.waitForSelector('[data-pc="project-password"]');
+      await adminFlow('Change project password'); await host.waitForSelector('[data-pc="project-password"]');
       await host.type('#pc-pw-a', next); await host.type('#pc-pw-b', next);
-      await clickText(host, '[data-pc="project-password"] button', '确认修改');
+      await clickText(host, '[data-pc="project-password"] button', 'Confirm change');
       await host.waitForFunction(() => !document.querySelector('[data-pc="project-password"]'));
       if (next === temporaryPassword) {
         await open(member, memberFile); await needsAuth();
@@ -285,9 +285,9 @@ export async function runRecoveryMatrix(o) {
     await open(member, memberFile); await needsAuth();
     await authenticate(); evidence.projectPasswordUi = true;
   } else {
-    await adminFlow('改名单'); await host.waitForSelector('[data-pc="list-dialog"]');
-    await host.click('[data-pc="list-dialog"] button[aria-label="删除 member"]');
-    await clickText(host, '[data-pc="list-dialog"] button', '确认修改');
+    await adminFlow('Edit list'); await host.waitForSelector('[data-pc="list-dialog"]');
+    await host.click('[data-pc="list-dialog"] button[aria-label="Delete member"]');
+    await clickText(host, '[data-pc="list-dialog"] button', 'Confirm change');
     await member.waitForFunction(() => window.probe.sync.getSyncView().reopenState === 'rejected');
     await open(member, memberFile); await member.waitForFunction(() => ['needs-auth', 'rejected'].includes(window.probe.sync.getSyncView().reopenState));
     const added = await host.evaluate(async pw => {

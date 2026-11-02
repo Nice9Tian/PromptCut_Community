@@ -12,9 +12,9 @@ function C({ params }: CardProps<Params>) {
   );
 }
 export const card: CardDef<Params> = {
-  id: "rs-bad-motion", name: "Motion 的动画与弹簧", description: "remotion 式的规矩的违规样例", source: "user",
+  id: "rs-bad-motion", name: "Motion animations and springs", description: "Violation example of the remotion-style rules", source: "user",
   frameMode: "direct",
   defaults: { text: "" },
-  controls: [{ key: "text", label: "文字", type: "text" }],
+  controls: [{ key: "text", label: "Text", type: "text" }],
   Component: C,
 };

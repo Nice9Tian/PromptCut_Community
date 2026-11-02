@@ -12,22 +12,22 @@ const { tools } = await import('../mcp-tools.mjs');
 
 const wait = tools.find((t) => t.name === 'wait');
 
-test('工具清单里有 wait,而且标成服务端执行(不走浏览器桥)', () => {
-  assert.ok(wait, 'wait 工具不在清单里');
+test('The tool manifest has wait, and it is marked as server-side execution (not through the browser bridge)', () => {
+  assert.ok(wait, 'The wait tool is not in the manifest');
   assert.equal(wait.side, 'server');
   assert.equal(wait.inputSchema.properties.seconds.type, 'number');
-  assert.ok(!wait.inputSchema.required, 'seconds 该是可选的,不填就用默认 3 秒');
+  assert.ok(!wait.inputSchema.required, 'seconds should be optional, defaulting to 3 seconds when omitted');
 });
 
-test('说明里明确劝阻「自己想办法睡」—— 这正是把整轮搞废的那条路', () => {
-  assert.match(wait.description, /shell/, '要点名 shell,模型才知道说的是哪条路');
-  assert.match(wait.description, /拒绝|中断/, '要说清后果,不然它不会当回事');
+test('The description explicitly discourages "finding your own way to sleep": that is exactly the path that wrecks the whole round', () => {
+  assert.match(wait.description, /shell/, 'It must name shell so the model knows which path is meant');
+  assert.match(wait.description, /reject|interrupt/, 'The consequences must be spelled out, otherwise it will not take it seriously');
 });
 
-test('那些让人轮询的工具,说明里要指向 wait', () => {
+test('Tools that make the caller poll must point to wait in their description', () => {
   const dl = tools.find((t) => t.name === 'collect_download');
-  assert.ok(dl, 'collect_download 不在清单里');
-  assert.match(dl.description, /wait/, 'collect_download 让人隔 3 秒问一次,得说清用什么等');
+  assert.ok(dl, 'collect_download is not in the manifest');
+  assert.match(dl.description, /wait/, 'collect_download makes the caller ask every 3 seconds, so it must say what to wait with');
 });
 
 /*
@@ -40,16 +40,16 @@ function waitSeconds(args) {
   return typeof raw === 'number' && Number.isFinite(raw) ? Math.min(30, Math.max(1, raw)) : 3;
 }
 
-test('秒数:默认 3,夹在 1~30 之间', () => {
+test('Seconds: default 3, clamped to 1~30', () => {
   assert.equal(waitSeconds(undefined), 3);
   assert.equal(waitSeconds({}), 3);
   assert.equal(waitSeconds({ seconds: 5 }), 5);
-  assert.equal(waitSeconds({ seconds: 0 }), 1, '0 秒等于没等,抬到 1');
+  assert.equal(waitSeconds({ seconds: 0 }), 1, '0 seconds is the same as not waiting, raised to 1');
   assert.equal(waitSeconds({ seconds: -10 }), 1);
-  assert.equal(waitSeconds({ seconds: 9999 }), 30, '别让它一睡不醒');
+  assert.equal(waitSeconds({ seconds: 9999 }), 30, 'Do not let it sleep forever');
 });
 
-test('秒数:乱填的东西不能变成 NaN 睡死', () => {
+test('Seconds: garbage input must not turn into NaN and sleep forever', () => {
   assert.equal(waitSeconds({ seconds: 'abc' }), 3);
   assert.equal(waitSeconds({ seconds: null }), 3);
   assert.equal(waitSeconds({ seconds: {} }), 3);

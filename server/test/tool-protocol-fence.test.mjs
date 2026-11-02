@@ -16,61 +16,61 @@ function feed(text, chunkSize) {
 
 const CALL = '```promptcut-tool\n{"name":"list_media","input":{}}\n```';
 
-test("没有围栏就原样放行", () => {
-  const text = "我先确认视频素材，再根据内容添加字幕。";
+test("Without a fence it passes through unchanged", () => {
+  const text = "First I will check the video media, then add captions based on its content.";
   for (const n of [1, 3, 7, 1000]) assert.equal(feed(text, n), text);
 });
 
-test("围栏整段摘掉,前后的话都留着", () => {
-  const text = `我先确认视频素材。\n\n${CALL}\n\n好了。`;
-  const want = "我先确认视频素材。\n\n\n\n好了。";
+test("The whole fence is stripped, and the text before and after it stays", () => {
+  const text = `First I will check the video media.\n\n${CALL}\n\nDone.`;
+  const want = "First I will check the video media.\n\n\n\nDone.";
   for (const n of [1, 2, 5, 13, 1000]) {
-    assert.equal(feed(text, n), want, `分块大小 ${n} 时没摘干净`);
+    assert.equal(feed(text, n), want, `Not stripped cleanly at chunk size ${n}`);
   }
 });
 
-test("逐字符喂也不会漏出 JSON 或反引号", () => {
-  const seen = feed(`说一句。${CALL}`, 1);
-  assert.ok(!seen.includes("list_media"), `漏出了工具名: ${JSON.stringify(seen)}`);
-  assert.ok(!seen.includes("`"), `漏出了反引号: ${JSON.stringify(seen)}`);
-  assert.ok(!seen.includes("promptcut-tool"), "漏出了围栏标记");
-  assert.ok(seen.startsWith("说一句。"), "把正文也吞了");
+test("Feeding one character at a time does not leak JSON or backticks either", () => {
+  const seen = feed(`Say something.${CALL}`, 1);
+  assert.ok(!seen.includes("list_media"), `Leaked the tool name: ${JSON.stringify(seen)}`);
+  assert.ok(!seen.includes("`"), `Leaked backticks: ${JSON.stringify(seen)}`);
+  assert.ok(!seen.includes("promptcut-tool"), "Leaked the fence marker");
+  assert.ok(seen.startsWith("Say something."), "Swallowed the body text as well");
 });
 
-test("连着几个围栏都摘掉", () => {
-  const text = `一。${CALL}二。${CALL}三。`;
-  assert.equal(feed(text, 4), "一。二。三。");
+test("Several fences in a row are all stripped", () => {
+  const text = `One.${CALL}Two.${CALL}Three.`;
+  assert.equal(feed(text, 4), "One.Two.Three.");
 });
 
-test("普通 ``` 代码块不受影响 —— 起始标记拼不出来就得放行", () => {
-  const text = "看这段:\n```js\nconst a = 1;\n```\n就这样。";
+test("An ordinary ``` code block is unaffected: if the start marker cannot be assembled, it must pass through", () => {
+  const text = "Look at this:\n```js\nconst a = 1;\n```\nThat is all.";
   for (const n of [1, 3, 9, 1000]) assert.equal(feed(text, n), text);
 });
 
-test("只是提到 promptcut 两个字,不该被当成围栏", () => {
-  const text = "promptcut-tool 这个名字是我们自己起的。";
+test("Merely mentioning the word promptcut must not be treated as a fence", () => {
+  const text = "We came up with the name promptcut-tool ourselves.";
   assert.equal(feed(text, 2), text);
 });
 
-test("围栏没收尾就整段丢掉,不把半截 JSON 甩给用户", () => {
-  const seen = feed('说一句。```promptcut-tool\n{"name":"list_me', 3);
-  assert.equal(seen, "说一句。");
+test("A fence that never closes is dropped entirely, rather than dumping partial JSON on the user", () => {
+  const seen = feed('Say something.```promptcut-tool\n{"name":"list_me', 3);
+  assert.equal(seen, "Say something.");
 });
 
-test("扣住的半截标记如果最终没拼成围栏,要在 flush 时放出来", () => {
+test("A held-back partial marker that never ends up forming a fence must be released on flush", () => {
   const f = createFenceFilter();
-  let out = f.push("结尾有个反引号 `");
+  let out = f.push("Ends with a backtick `");
   out += f.flush();
-  assert.equal(out, "结尾有个反引号 `");
+  assert.equal(out, "Ends with a backtick `");
 });
 
-test("围栏之后的正文照常流出来", () => {
+test("Text after the fence flows out as usual", () => {
   const f = createFenceFilter();
   let out = f.push(CALL);
-  out += f.push("工具跑完了，");
-  out += f.push("接着说。");
+  out += f.push("The tool finished running,");
+  out += f.push("continuing.");
   out += f.flush();
-  assert.equal(out, "工具跑完了，接着说。");
+  assert.equal(out, "The tool finished running,continuing.");
 });
 
 /*
@@ -82,13 +82,13 @@ test("围栏之后的正文照常流出来", () => {
  */
 import { runTextProtocolLoop } from "../harness/tool-protocol.mjs";
 
-test("端到端:围栏和裸 JSON 不会流到界面上", async () => {
+test("End-to-end: fences and bare JSON do not stream into the UI", async () => {
   // 故意在围栏标记中间断开,模拟流式分块
   const chunks = [
-    "我先确认视频素材。\n\n``",
+    "First I will check the video media.\n\n``",
     '`promptcut-tool\n{"name":"li',
     'st_media","input":{}}\n```\n\n',
-    "好了。",
+    "Done.",
   ];
   let round = 0;
   const startRun = ({ onEvent }) => {
@@ -96,7 +96,7 @@ test("端到端:围栏和裸 JSON 不会流到界面上", async () => {
     const mine = round;
     const done = (async () => {
       if (mine === 1) for (const c of chunks) onEvent({ type: "text", delta: c });
-      else onEvent({ type: "text", delta: "都排好了。" });
+      else onEvent({ type: "text", delta: "Everything is arranged." });
       onEvent({ type: "done" });
     })();
     return { abort() {}, done };
@@ -107,19 +107,19 @@ test("端到端:围栏和裸 JSON 不会流到界面上", async () => {
     startRun,
     opts: {
       systemPrompt: "sys",
-      prompt: "给视频加字幕",
+      prompt: "Add captions to the video",
       callTool: async () => ({ media: [] }),
     },
     onEvent: (ev) => seen.push(ev),
   }).done;
 
   const shown = seen.filter((e) => e.type === "text").map((e) => e.delta).join("");
-  assert.ok(!shown.includes("promptcut-tool"), `围栏标记漏出来了: ${JSON.stringify(shown)}`);
-  assert.ok(!shown.includes("list_media"), `工具名漏出来了: ${JSON.stringify(shown)}`);
-  assert.ok(!shown.includes("```"), `反引号漏出来了: ${JSON.stringify(shown)}`);
-  assert.ok(shown.includes("我先确认视频素材。"), "把正文吞了");
-  assert.ok(shown.includes("好了。"), "围栏后面的正文丢了");
+  assert.ok(!shown.includes("promptcut-tool"), `The fence marker leaked out: ${JSON.stringify(shown)}`);
+  assert.ok(!shown.includes("list_media"), `The tool name leaked out: ${JSON.stringify(shown)}`);
+  assert.ok(!shown.includes("```"), `Backticks leaked out: ${JSON.stringify(shown)}`);
+  assert.ok(shown.includes("First I will check the video media."), "Swallowed the body text");
+  assert.ok(shown.includes("Done."), "The text after the fence was lost");
 
   // 工具本身仍然要被识别、被调用 —— 摘围栏不能把功能一起摘掉
-  assert.ok(seen.some((e) => e.type === "tool_call" && e.name === "list_media"), "没有识别出工具调用");
+  assert.ok(seen.some((e) => e.type === "tool_call" && e.name === "list_media"), "No tool call was recognized");
 });

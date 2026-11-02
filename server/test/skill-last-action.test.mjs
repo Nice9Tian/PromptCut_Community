@@ -36,7 +36,7 @@ function handlerOf() {
     middlewares: { use(p, f) { handlers.set(typeof p === 'string' ? p : '*', f ?? p); } },
   });
   const fn = handlers.get('/api/skill-mode');
-  assert.ok(fn, '插件没有挂 /api/skill-mode');
+  assert.ok(fn, 'The plugin does not mount /api/skill-mode');
   return fn;
 }
 
@@ -64,7 +64,7 @@ const PNG_1x1 = Buffer.from(
 
 const gate = await import(gateUrl);
 
-test('SKILL-LA-1 SKILL 模式开着时上报:png 和 json 都落到 skillRoot,json 带工具名 / 时间点 / 时刻', async () => {
+test('SKILL-LA-1 report while SKILL mode is on: both the png and the json land in skillRoot, and the json carries the tool name / time point / moment', async () => {
   gate.openGate();
   try {
     const fn = handlerOf();
@@ -76,7 +76,7 @@ test('SKILL-LA-1 SKILL 模式开着时上报:png 和 json 都落到 skillRoot,js
     assert.equal(r.json.bytes, PNG_1x1.length);
 
     const png = fs.readFileSync(path.join(SKILL_DIR, 'last-action.png'));
-    assert.ok(png.equals(PNG_1x1), 'png 原样落盘');
+    assert.ok(png.equals(PNG_1x1), 'The png is written to disk as is');
     const meta = JSON.parse(fs.readFileSync(path.join(SKILL_DIR, 'last-action.json'), 'utf8'));
     assert.equal(meta.tool, 'add_clip');
     assert.equal(meta.clipId, 'c-1');
@@ -90,7 +90,7 @@ test('SKILL-LA-1 SKILL 模式开着时上报:png 和 json 都落到 skillRoot,js
   }
 });
 
-test('SKILL-LA-2 不是 png 的内容拒收', async () => {
+test('SKILL-LA-2 content that is not a png is rejected', async () => {
   gate.openGate();
   try {
     const fn = handlerOf();
@@ -102,7 +102,7 @@ test('SKILL-LA-2 不是 png 的内容拒收', async () => {
   }
 });
 
-test('SKILL-LA-3 SKILL 模式关着时上报被跳过,不写文件', async () => {
+test('SKILL-LA-3 report is skipped while SKILL mode is off, no file is written', async () => {
   fs.rmSync(SKILL_DIR, { recursive: true, force: true });
   const fn = handlerOf();
   const r = await call(fn, 'POST', '/last-action', { tool: 'add_clip', base64: PNG_1x1.toString('base64') });
@@ -111,7 +111,7 @@ test('SKILL-LA-3 SKILL 模式关着时上报被跳过,不写文件', async () =>
   assert.ok(!fs.existsSync(path.join(SKILL_DIR, 'last-action.png')));
 });
 
-test('SKILL-LA-4 close 路由:返回 ok 和关掉之后的状态,closedBy 记的是谁关的', async () => {
+test('SKILL-LA-4 close route: returns ok and the state after closing, closedBy records who closed it', async () => {
   const fn = handlerOf();
   const r = await call(fn, 'POST', '/close', { by: 'user' });
   assert.equal(r.status, 200);

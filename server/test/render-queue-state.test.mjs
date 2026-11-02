@@ -38,7 +38,7 @@ const claimOk = (h, conn, id, v) => {
   return m;
 };
 
-test('可重试失败后先让另一节点接手，原节点仍能在退避后重试', () => {
+test('After a retryable failure another node takes over first, and the original node can still retry after the backoff', () => {
   const { h, id } = setup();
   claimOk(h, 'a', id, 1);
   h.fail('a', id, 2, { error: 'sink-incomplete', retryable: true });
@@ -58,7 +58,7 @@ test('可重试失败后先让另一节点接手，原节点仍能在退避后�
 
 /* ============================================================ S-1 合法转移全集 */
 
-test('S-1 合法转移全集：open→claimed、claimed→open（release / 超时 / 停滞 / 宽限 / 可重试 fail / 没接续）、claimed→done、claimed→failed；其余转移一律不发生', () => {
+test('S-1 The full set of legal transitions: open→claimed, claimed→open (release / timeout / stall / grace period / retryable fail / not resumed), claimed→done, claimed→failed; all other transitions never occur', () => {
   // open → claimed
   {
     const { h, id } = setup();
@@ -72,7 +72,7 @@ test('S-1 合法转移全集：open→claimed、claimed→open（release / 超�
     ['stall', (h, id) => { h.progress('a', id, 2, 1); for (let s = 10; s <= 120; s += 10) { h.clock.set(T0 + s * 1000); h.progress('a', id, 2, 1); h.tick(); } h.at(T0 + STALL + 1); }, 1, 'stalled'],
     ['grace', h => { h.disconnect('a'); h.at(T0 + GRACE + 1); }, 1, 'disconnected'],
     ['fail', (h, id) => h.fail('a', id, 2, { error: 'oops' }), 1, 'oops'],
-    ['fail 没带 error', (h, id) => h.fail('a', id, 2), 1, 'failed'],
+    ['fail without error', (h, id) => h.fail('a', id, 2), 1, 'failed'],
     ['not-resumed', h => { h.disconnect('a'); h.node('a2', 'node-A', { resume: [], watch: null }); }, 1, 'not-resumed'],
   ];
   for (const [why, act, attempts, lastError] of reopen) {
@@ -146,7 +146,7 @@ test('S-1 合法转移全集：open→claimed、claimed→open（release / 超�
       const before = h.describe();
       const out = act();
       assert.equal(out.one('a', 'task.lease-lost').reason, 'token', what);
-      assert.deepEqual(h.describe(), before, `open 上的 ${what} 不改状态`);
+      assert.deepEqual(h.describe(), before, `${what} on an open task does not change the state`);
     }
     // claimed 上别人认领：taken；续约不改 version
     claimOk(h, 'a', id, 1);
@@ -174,13 +174,13 @@ test('S-1 合法转移全集：open→claimed、claimed→open（release / 超�
     }
     h.publish('p', [T_IN]);
     h.at(h.task(id).finishedAt + TTL);
-    assert.deepEqual(h.describe(), before, `${terminal} 不再转移`);
+    assert.deepEqual(h.describe(), before, `${terminal} no longer transitions`);
   }
 });
 
 /* ============================================================ S-2 version 与 token 的单调性 */
 
-test('S-2 version 严格单调：每次状态变化恰好加一，续约不加；token 等于认领那一刻的 version', () => {
+test('S-2 version is strictly monotonic: each state change adds exactly one, lease renewal adds nothing; token equals the version at the moment of the claim', () => {
   const { h, id } = setup();
   const seen = [];     // [步骤, state, version]
   const tokens = [];
@@ -190,7 +190,7 @@ test('S-2 version 严格单调：每次状态变化恰好加一，续约不加�
     const v = h.task(id).version;
     const m = claimOk(h, conn, id, v);
     assert.equal(m.token, m.version);
-    assert.equal(h.task(id).claim.token, h.task(id).version, 'describe 里的 token 等于认领后的 version');
+    assert.equal(h.task(id).claim.token, h.task(id).version, 'The token in describe equals the version after the claim');
     tokens.push(m.token);
     snap(what);
     return m.token;
@@ -208,16 +208,16 @@ test('S-2 version 严格单调：每次状态变化恰好加一，续约不加�
   for (let i = 1; i < seen.length; i++) {
     const [what, state, version] = seen[i];
     const [, pState, pVersion] = seen[i - 1];
-    if (state === pState) assert.equal(version, pVersion, `${what}：状态没变，version 不变`);
-    else assert.equal(version, pVersion + 1, `${what}：状态变化恰好加一`);
+    if (state === pState) assert.equal(version, pVersion, `${what}: state unchanged, version unchanged`);
+    else assert.equal(version, pVersion + 1, `${what}: a state change adds exactly one`);
   }
   assert.deepEqual(tokens, [2, 4, 6, 8]);
-  for (let i = 1; i < tokens.length; i++) assert.ok(tokens[i] > tokens[i - 1], '同一任务的令牌单调递增');
+  for (let i = 1; i < tokens.length; i++) assert.ok(tokens[i] > tokens[i - 1], 'Tokens of the same task increase monotonically');
 
   // watch 者看到的 version 同样单调（opened / taken 带的 version）
   const vs = h.bus.of('w').filter(m => m.type === 'task.opened' || m.type === 'task.taken')
     .map(m => (m.type === 'task.opened' ? m.task.version : m.version));
-  for (let i = 1; i < vs.length; i++) assert.ok(vs[i] > vs[i - 1], `watch 者看到的 version 单调：${vs}`);
+  for (let i = 1; i < vs.length; i++) assert.ok(vs[i] > vs[i - 1], `The version seen by watchers is monotonic: ${vs}`);
 
   // 走到 failed 的一条：attempts 与 version 一起走
   const { h: g, id: gid } = setup();
@@ -234,7 +234,7 @@ test('S-2 version 严格单调：每次状态变化恰好加一，续约不加�
 
 /* ============================================================ S-3 describe() 与状态一致 */
 
-test('S-3 describe() 与状态逐字段一致：形状、排序、与消息对得上、深拷贝', () => {
+test('S-3 describe() matches the state field by field: shape, ordering, consistency with messages, deep copy', () => {
   const h = createQueueHarness(createRenderQueue, { epoch: 'ep-s3' });
   h.publisher('pz', 'pub-z');
   h.publisher('pa', 'pub-a', { userId: 'u2' });
@@ -249,9 +249,9 @@ test('S-3 describe() 与状态逐字段一致：形状、排序、与消息对�
 
   let d = h.describe();
   assert.equal(d.epoch, 'ep-s3');
-  assert.deepEqual(d.tasks.map(t => t.id), tasks.map(t => t.id).sort(), 'tasks 按 id 升序');
+  assert.deepEqual(d.tasks.map(t => t.id), tasks.map(t => t.id).sort(), 'tasks are sorted by id in ascending order');
   const z = d.tasks.find(t => t.id === tasks[0].id);
-  assert.deepEqual(z.subscribers, ['pub-a', 'pub-z'], 'subscribers 升序');
+  assert.deepEqual(z.subscribers, ['pub-a', 'pub-z'], 'subscribers are sorted in ascending order');
   for (const t of d.tasks) {
     for (const k of ['id', 'projectId', 'state', 'version', 'attempts', 'lastError', 'claim', 'subscribers', 'finishedAt']) assert.ok(k in t, `task.${k}`);
     assert.deepEqual([t.state, t.version, t.attempts, t.claim, t.finishedAt, t.lastError], ['open', 1, 0, null, null, null]);
@@ -311,7 +311,7 @@ function mulberry32(seed) {
   };
 }
 
-test('S-4 随机操作序列（固定种子、3000 步）下的不变量：至多一个有效令牌、done 只通知一次、claimed 的租约晚于认领时刻、纯浏览器只收本人任务', () => {
+test('S-4 Invariants under a random operation sequence (fixed seed, 3000 steps): at most one valid token, done is notified only once, the lease of a claimed task is later than the claim time, a browser-only node receives only the user\'s own tasks', () => {
   const SEED = 20260924;
   const STEPS = 3000;
   const rnd = mulberry32(SEED);
@@ -384,7 +384,7 @@ test('S-4 随机操作序列（固定种子、3000 步）下的不变量：至�
     const now = h.now();
     const cur = h.describe();
     const C = new Map(cur.tasks.map(t => [t.id, t]));
-    const where = `第 ${step} 步 ${op.kind}${op.conn ? `@${op.conn}` : ''}${op.id ? ` ${op.id}` : ''}`;
+    const where = `Step ${step} ${op.kind}${op.conn ? `@${op.conn}` : ''}${op.id ? ` ${op.id}` : ''}`;
 
     // 发布：新建（含过期后重建）的任务记下创建者
     const pubReply = op.kind === 'publish' ? out.of(op.conn, 'task.published')[0] : null;
@@ -392,18 +392,18 @@ test('S-4 随机操作序列（固定种子、3000 步）下的不变量：至�
 
     // ---- 出站消息：都带 epoch，只发给在线连接
     for (const e of out.entries) {
-      assert.equal(e.message.epoch, 'ep-s4', `${where}：${e.message.type} 缺 epoch`);
-      assert.ok(conns.has(e.connId), `${where}：给不在线（或被取代）的连接 ${e.connId} 发了 ${e.message.type}`);
+      assert.equal(e.message.epoch, 'ep-s4', `${where}: ${e.message.type} is missing epoch`);
+      assert.ok(conns.has(e.connId), `${where}: sent ${e.message.type} to connection ${e.connId}, which is offline (or superseded)`);
     }
 
     // ---- describe 形状
-    assert.deepEqual(cur.tasks.map(t => t.id), [...cur.tasks.map(t => t.id)].sort(), `${where}：tasks 未按 id 排序`);
+    assert.deepEqual(cur.tasks.map(t => t.id), [...cur.tasks.map(t => t.id)].sort(), `${where}: tasks are not sorted by id`);
     for (const t of cur.tasks) {
-      assert.deepEqual(t.subscribers, [...t.subscribers].sort(), `${where}：subscribers 未排序`);
-      assert.equal(t.claim !== null, t.state === 'claimed', `${where}：${t.id} claim 与 state 不一致`);
-      assert.equal(t.finishedAt !== null, t.state === 'done' || t.state === 'failed', `${where}：${t.id} finishedAt 与 state 不一致`);
-      assert.ok(t.attempts <= MAX_ATTEMPTS, `${where}：attempts 超上限`);
-      if (t.state === 'claimed') assert.ok(cur.nodes.some(n => n.nodeId === t.claim.nodeId), `${where}：认领者 ${t.claim.nodeId} 没有节点记录`);
+      assert.deepEqual(t.subscribers, [...t.subscribers].sort(), `${where}: subscribers are not sorted`);
+      assert.equal(t.claim !== null, t.state === 'claimed', `${where}: claim and state of ${t.id} are inconsistent`);
+      assert.equal(t.finishedAt !== null, t.state === 'done' || t.state === 'failed', `${where}: finishedAt and state of ${t.id} are inconsistent`);
+      assert.ok(t.attempts <= MAX_ATTEMPTS, `${where}: attempts exceeds the limit`);
+      if (t.state === 'claimed') assert.ok(cur.nodes.some(n => n.nodeId === t.claim.nodeId), `${where}: claimant ${t.claim.nodeId} has no node record`);
     }
 
     // ---- 状态转移
@@ -413,59 +413,59 @@ test('S-4 随机操作序列（固定种子、3000 步）下的不变量：至�
       const p = P.get(id);
       const c = C.get(id);
       if (p && c && c.version < p.version) {
-        assert.equal(op.kind, 'publish', `${where}：${id} 版本倒退`);
-        assert.ok((p.state === 'done' || p.state === 'failed') && now - p.finishedAt > TTL, `${where}：${id} 未过 TTL 就重建`);
-        assert.deepEqual([c.state, c.version, c.attempts], ['open', 1, 0], `${where}：${id} 重建`);
+        assert.equal(op.kind, 'publish', `${where}: version of ${id} went backwards`);
+        assert.ok((p.state === 'done' || p.state === 'failed') && now - p.finishedAt > TTL, `${where}: ${id} was recreated before the TTL elapsed`);
+        assert.deepEqual([c.state, c.version, c.attempts], ['open', 1, 0], `${where}: ${id} recreated`);
         events.push({ id, kind: 'created', c });
         continue;
       }
       if (p && c) {
         if (p.state === c.state) {
-          assert.equal(c.version, p.version, `${where}：${id} 状态没变 version 却变了`);
-          assert.equal(c.attempts, p.attempts, `${where}：${id} 状态没变 attempts 却变了`);
-          if (c.state === 'claimed') assert.deepEqual([c.claim.nodeId, c.claim.token], [p.claim.nodeId, p.claim.token], `${where}：${id} 令牌不该变`);
+          assert.equal(c.version, p.version, `${where}: version of ${id} changed although the state did not`);
+          assert.equal(c.attempts, p.attempts, `${where}: attempts of ${id} changed although the state did not`);
+          if (c.state === 'claimed') assert.deepEqual([c.claim.nodeId, c.claim.token], [p.claim.nodeId, p.claim.token], `${where}: token of ${id} should not change`);
           continue;
         }
-        assert.equal(c.version, p.version + 1, `${where}：${id} ${p.state}→${c.state} version 应恰好加一`);
+        assert.equal(c.version, p.version + 1, `${where}: ${id} ${p.state}→${c.state} version should increase by exactly one`);
         const pair = `${p.state}>${c.state}`;
-        assert.ok(['open>claimed', 'claimed>open', 'claimed>done', 'claimed>failed'].includes(pair), `${where}：${id} 非法转移 ${pair}`);
-        bump(`转移 ${pair}`);
+        assert.ok(['open>claimed', 'claimed>open', 'claimed>done', 'claimed>failed'].includes(pair), `${where}: ${id} illegal transition ${pair}`);
+        bump(`transition ${pair}`);
         if (pair === 'open>claimed') {
           assert.equal(c.attempts, p.attempts);
           assert.equal(op.kind, 'claim', where);
-          assert.equal(c.claim.token, c.version, `${where}：token 应等于认领时的 version`);
+          assert.equal(c.claim.token, c.version, `${where}: token should equal the version at claim time`);
           events.push({ id, kind: 'claim', c });
         } else if (pair === 'claimed>done') {
           assert.equal(c.attempts, p.attempts);
           assert.ok(op.kind === 'complete' && accepted, where);
           events.push({ id, kind: 'done', p, c });
         } else if (pair === 'claimed>failed') {
-          assert.equal(c.attempts, p.attempts + 1, `${where}：进 failed 时 attempts 加一`);
-          assert.ok(c.attempts >= MAX_ATTEMPTS || (op.kind === 'fail' && op.retryable === false), `${where}：未到上限就进了 failed`);
+          assert.equal(c.attempts, p.attempts + 1, `${where}: attempts is incremented by one when entering failed`);
+          assert.ok(c.attempts >= MAX_ATTEMPTS || (op.kind === 'fail' && op.retryable === false), `${where}: entered failed before reaching the limit`);
           assert.equal(typeof c.lastError, 'string');
           events.push({ id, kind: 'failed', p, c });
         } else {
           const released = op.kind === 'release' && accepted && op.id === id;
-          assert.equal(c.attempts, p.attempts + (released ? 0 : 1), `${where}：${id} 回 open 的 attempts（release 不加）`);
+          assert.equal(c.attempts, p.attempts + (released ? 0 : 1), `${where}: attempts of ${id} on returning to open (release adds none)`);
           events.push({ id, kind: 'reopen', p, c });
         }
       } else if (p && !c) {
         if (p.state === 'open') {
-          assert.ok(['unsubscribe', 'tick'].includes(op.kind), `${where}：open 的 ${id} 被 ${op.kind} 删掉`);
+          assert.ok(['unsubscribe', 'tick'].includes(op.kind), `${where}: open ${id} was deleted by ${op.kind}`);
           events.push({ id, kind: 'removed', p });
         } else if (p.state === 'claimed') {
-          assert.ok(['release', 'fail', 'tick', 'hello'].includes(op.kind), `${where}：claimed 的 ${id} 被 ${op.kind} 删掉`);
-          if (op.kind !== 'tick') assert.equal(p.subscribers.length, 0, `${where}：还有订阅者的 ${id} 被删`);
+          assert.ok(['release', 'fail', 'tick', 'hello'].includes(op.kind), `${where}: claimed ${id} was deleted by ${op.kind}`);
+          if (op.kind !== 'tick') assert.equal(p.subscribers.length, 0, `${where}: ${id}, which still has subscribers, was deleted`);
           events.push({ id, kind: 'removed', p });
         } else {
-          assert.equal(op.kind, 'tick', `${where}：${p.state} 的 ${id} 被 ${op.kind} 删掉`);
-          assert.ok(now - p.finishedAt > TTL, `${where}：${id} 未过 TTL 就删`);
-          bump('TTL 删除');
+          assert.equal(op.kind, 'tick', `${where}: ${id} in state ${p.state} was deleted by ${op.kind}`);
+          assert.ok(now - p.finishedAt > TTL, `${where}: ${id} was deleted before the TTL elapsed`);
+          bump('TTL delete');
         }
-        bump(`删除 ${p.state}`);
+        bump(`delete ${p.state}`);
       } else if (!p && c) {
-        assert.equal(op.kind, 'publish', `${where}：${id} 凭空出现`);
-        assert.deepEqual([c.state, c.version, c.attempts, c.claim, c.lastError, c.finishedAt], ['open', 1, 0, null, null, null], `${where}：新建的 ${id}`);
+        assert.equal(op.kind, 'publish', `${where}: ${id} appeared out of nowhere`);
+        assert.deepEqual([c.state, c.version, c.attempts, c.claim, c.lastError, c.finishedAt], ['open', 1, 0, null, null, null], `${where}: newly created ${id}`);
         events.push({ id, kind: 'created', c });
       }
     }
@@ -510,7 +510,7 @@ test('S-4 随机操作序列（固定种子、3000 步）下的不变量：至�
     for (const cid of new Set([...expected.keys(), ...out.conns()])) {
       let actual = out.of(cid).map(sigOf);
       for (const s of optional.get(cid) ?? []) { const i = actual.indexOf(s); if (i >= 0) actual.splice(i, 1); }
-      assert.deepEqual(actual.sort(), [...(expected.get(cid) ?? [])].sort(), `${where}：发给 ${cid} 的消息不对`);
+      assert.deepEqual(actual.sort(), [...(expected.get(cid) ?? [])].sort(), `${where}: wrong messages sent to ${cid}`);
     }
     checkReplies(out, P, C, now);
 
@@ -523,7 +523,7 @@ test('S-4 随机操作序列（固定种子、3000 步）下的不变量：至�
       // 队列主动推的回收通知（reason 是回收原因 lease-expired / stalled / disconnected）才算「别人任务的消息」
       if (m.type === 'task.claim-rejected' || (m.type === 'task.lease-lost' && !['lease-expired', 'stalled', 'disconnected'].includes(m.reason))) continue;
       const ids = m.type === 'queue.snapshot' ? m.tasks.map(t => t.id) : m.type === 'task.opened' ? [m.task.id] : m.id ? [m.id] : [];
-      for (const id of ids) assert.equal(owner[id], cm.actor.userId, `${where}：纯浏览器 ${e.connId} 收到别人任务 ${id} 的 ${m.type}`);
+      for (const id of ids) assert.equal(owner[id], cm.actor.userId, `${where}: browser-only ${e.connId} received ${m.type} of another user's task ${id}`);
       if (m.type === 'task.opened') assert.equal(m.task.source.userId, cm.actor.userId);
     }
 
@@ -536,22 +536,22 @@ test('S-4 随机操作序列（固定种子、3000 步）下的不变量：至�
         cm.actor.held.set(m.id, m.token);
         claimTime[m.id] = now;
         lastToken[m.id] = m.token;
-        bump('认领成功');
+        bump('claim succeeded');
       } else if (m.type === 'task.lease-lost' && cm.actor.held.get(m.id) === m.token) {
         cm.actor.held.delete(m.id);
       }
     }
     if (accepted && ['complete', 'release', 'fail'].includes(op.kind)) op.actor.held.delete(op.id);
     if (accepted) {
-      assert.equal(op.token, lastToken[op.id], `${where}：被接受的令牌不是最近发出的那个（出现了两个有效令牌）`);
-      bump(`接受 ${op.kind}`);
-    } else if (['progress', 'complete', 'release', 'fail'].includes(op.kind)) bump(`拒绝 ${op.kind}`);
+      assert.equal(op.token, lastToken[op.id], `${where}: the accepted token is not the most recently issued one (two valid tokens appeared)`);
+      bump(`accept ${op.kind}`);
+    } else if (['progress', 'complete', 'release', 'fail'].includes(op.kind)) bump(`reject ${op.kind}`);
 
     // ---- 模型更新：宽限到期删记录
     if (op.kind === 'tick') {
       for (const a of [...NODES, ...PUBS]) {
         if (a.exists && a.conn === null && a.disconnectedAt !== null && now - a.disconnectedAt > GRACE) {
-          a.exists = false; a.disconnectedAt = null; bump('宽限删记录');
+          a.exists = false; a.disconnectedAt = null; bump('grace period record delete');
         }
       }
     }
@@ -561,36 +561,36 @@ test('S-4 随机操作序列（固定种子、3000 步）下的不变量：至�
     for (const t of cur.tasks) {
       if (t.state !== 'claimed') continue;
       byNode.get(t.claim.nodeId)?.set(t.id, t.claim.token);
-      assert.ok(t.claim.leaseUntil > claimTime[t.id], `${where}：${t.id} 的 leaseUntil 不晚于认领时刻`);
-      if (op.kind === 'tick') assert.ok(t.claim.leaseUntil >= now, `${where}：tick 之后还留着过期的租约`);
+      assert.ok(t.claim.leaseUntil > claimTime[t.id], `${where}: leaseUntil of ${t.id} is not later than the claim time`);
+      if (op.kind === 'tick') assert.ok(t.claim.leaseUntil >= now, `${where}: an expired lease is still there after tick`);
     }
     for (const n of NODES) {
       const truth = byNode.get(n.id);
       if (n.conn) {
-        assert.deepEqual([...n.held].sort(), [...truth].sort(), `${where}：在线节点 ${n.id} 以为持有的与队列不一致`);
+        assert.deepEqual([...n.held].sort(), [...truth].sort(), `${where}: what online node ${n.id} believes it holds does not match the queue`);
       } else {
-        for (const [id, token] of truth) assert.equal(n.held.get(id), token, `${where}：离线节点 ${n.id} 名下的 ${id} 不在它的持有里`);
+        for (const [id, token] of truth) assert.equal(n.held.get(id), token, `${where}: ${id} under offline node ${n.id} is not among the tasks it holds`);
       }
     }
     const nodeRows = Object.fromEntries(cur.nodes.map(n => [n.nodeId, n]));
     for (const n of NODES) {
-      if (!n.exists) { assert.equal(nodeRows[n.id], undefined, `${where}：${n.id} 应已删掉记录`); continue; }
-      assert.ok(nodeRows[n.id], `${where}：${n.id} 应有记录`);
-      assert.deepEqual([nodeRows[n.id].connected, nodeRows[n.id].disconnectedAt, nodeRows[n.id].profile], [n.conn !== null, n.disconnectedAt, n.profile], `${where}：${n.id} 的 describe`);
+      if (!n.exists) { assert.equal(nodeRows[n.id], undefined, `${where}: the record of ${n.id} should have been deleted`); continue; }
+      assert.ok(nodeRows[n.id], `${where}: ${n.id} should have a record`);
+      assert.deepEqual([nodeRows[n.id].connected, nodeRows[n.id].disconnectedAt, nodeRows[n.id].profile], [n.conn !== null, n.disconnectedAt, n.profile], `${where}: describe of ${n.id}`);
     }
     // 订阅者只能是还有记录的发布方（宽限到期删记录时一并从所有任务里移除，契约 A.8 第 3 项）
     for (const t of cur.tasks) {
-      for (const s of t.subscribers) assert.ok(pubById[s]?.exists, `${where}：${t.id} 的订阅者 ${s} 已没有发布方记录`);
+      for (const s of t.subscribers) assert.ok(pubById[s]?.exists, `${where}: subscriber ${s} of ${t.id} no longer has a publisher record`);
     }
     const pubRows = Object.fromEntries(cur.publishers.map(p => [p.publisherId, p]));
     for (const p of PUBS) {
-      if (!p.exists) { assert.equal(pubRows[p.id], undefined, `${where}：${p.id} 应已删掉记录`); continue; }
-      assert.deepEqual([pubRows[p.id]?.connected, pubRows[p.id]?.disconnectedAt], [p.conn !== null, p.disconnectedAt], `${where}：${p.id} 的 describe`);
+      if (!p.exists) { assert.equal(pubRows[p.id], undefined, `${where}: the record of ${p.id} should have been deleted`); continue; }
+      assert.deepEqual([pubRows[p.id]?.connected, pubRows[p.id]?.disconnectedAt], [p.conn !== null, p.disconnectedAt], `${where}: describe of ${p.id}`);
     }
 
     prev = cur;
     step += 1;
-    bump(`操作 ${op.kind}`);
+    bump(`operation ${op.kind}`);
     return out;
   }
 
@@ -611,8 +611,8 @@ test('S-4 随机操作序列（固定种子、3000 步）下的不变量：至�
     assert.deepEqual([...w.resumed].sort(), resumed.sort());
     assert.deepEqual([...w.lost].sort(), resume.map(r => r.id).filter(id => !resumed.includes(id)).sort());
     n.held = new Map(resume.filter(r => resumed.includes(r.id)).map(r => [r.id, r.token]));
-    if (resumed.length) bump('接续');
-    if (w.lost.length) bump('resume 丢失');
+    if (resumed.length) bump('resumed');
+    if (w.lost.length) bump('resume lost');
   };
 
   function nodeConnect(n, { supersede = false } = {}) {
@@ -646,7 +646,7 @@ test('S-4 随机操作序列（固定种子、3000 步）下的不变量：至�
       const snap = out.one(conn, 'queue.snapshot');
       const cm = conns.get(conn);
       const want = [...C.values()].filter(t => t.state === 'open' && visible(cm, t.id)).map(t => `${t.id}@${t.version}`).sort();
-      assert.deepEqual(snap.tasks.map(t => `${t.id}@${t.version}`).sort(), want, `第 ${step} 步：${conn} 的 snapshot`);
+      assert.deepEqual(snap.tasks.map(t => `${t.id}@${t.version}`).sort(), want, `Step ${step}: snapshot of ${conn}`);
     });
   }
 
@@ -743,8 +743,8 @@ test('S-4 随机操作序列（固定种子、3000 步）下的不变量：至�
           if (!x || expired) assert.deepEqual(res[i], { id: t.id, state: 'open', version: 1, created: true });
           else assert.deepEqual(res[i], { id: t.id, state: x.state, version: x.version, created: false });
           const c = C.get(t.id);
-          if (!x || expired || x.state === 'open' || x.state === 'claimed') assert.ok(c.subscribers.includes(p.id), '发布方成为订阅者');
-          else assert.deepEqual(c.subscribers, x.subscribers, 'done / failed 的重复发布不改订阅者');
+          if (!x || expired || x.state === 'open' || x.state === 'claimed') assert.ok(c.subscribers.includes(p.id), 'The publisher becomes a subscriber');
+          else assert.deepEqual(c.subscribers, x.subscribers, 'A repeated publish of a done / failed task does not change the subscribers');
         });
       });
     } else if (r < 0.34) {                                             // 认领
@@ -761,7 +761,7 @@ test('S-4 随机操作序列（固定种子、3000 步）下的不变量：至�
         else if (x.state !== 'open') reason = 'taken';
         else if (expectVersion !== x.version) reason = 'stale';
         else return [`claimed|${id}|${x.version + 1}`];
-        bump(`认领被拒 ${reason}`);
+        bump(`claim rejected ${reason}`);
         return [`rejected|${id}|${reason}`];
       }, (out, P, C, now) => {
         const x = P.get(id);
@@ -789,7 +789,7 @@ test('S-4 随机操作序列（固定种子、3000 步）下的不变量：至�
       const victim = prev.tasks.filter(t => t.state === 'claimed' && t.claim.nodeId !== n.id);
       if (!victim.length) continue;
       const t = pick(victim);
-      bump('冒用令牌');
+      bump('token spoofing');
       if (chance(0.5)) tokenOp('complete', n, t.id, t.claim.token, { result: { ranges: [[0, 1]] } });
       else tokenOp('progress', n, t.id, t.claim.token, { done: 99 });
     } else if (r < 0.58) {                                             // 放回
@@ -833,11 +833,11 @@ test('S-4 随机操作序列（固定种子、3000 步）下的不变量：至�
     }
   }
 
-  assert.ok(step >= 2000, `至少 2000 步，实际 ${step}`);
+  assert.ok(step >= 2000, `At least 2000 steps, actual ${step}`);
   // 覆盖面：这些情形在这个种子下都出现过，否则随机序列没测到点子上
-  for (const k of ['转移 open>claimed', '转移 claimed>open', '转移 claimed>done', '转移 claimed>failed', 'TTL 删除', '删除 open',
-    '认领被拒 taken', '认领被拒 stale', '认领被拒 gone', '认领被拒 forbidden', '接续', 'resume 丢失', '宽限删记录',
-    '接受 progress', '接受 complete', '接受 release', '接受 fail', '拒绝 complete', '冒用令牌', '删除 claimed']) {
-    assert.ok((stats[k] ?? 0) > 0, `随机序列没覆盖到「${k}」；统计：${JSON.stringify(stats)}`);
+  for (const k of ['transition open>claimed', 'transition claimed>open', 'transition claimed>done', 'transition claimed>failed', 'TTL delete', 'delete open',
+    'claim rejected taken', 'claim rejected stale', 'claim rejected gone', 'claim rejected forbidden', 'resumed', 'resume lost', 'grace period record delete',
+    'accept progress', 'accept complete', 'accept release', 'accept fail', 'Reject complete', 'token spoofing', 'Delete claimed']) {
+    assert.ok((stats[k] ?? 0) > 0, `Random sequence did not cover "${k}"; stats: ${JSON.stringify(stats)}`);
   }
 });

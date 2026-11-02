@@ -144,7 +144,7 @@ export function flipSignature(ticket) {
 export async function loadClient() {
   const mod = await import('../auth/client.mjs');
   for (const name of ['deriveKey', 'buildAuthProtocols', 'ticketExpiry']) {
-    assert.equal(typeof mod[name], 'function', `server/auth/client.mjs 要导出 ${name}（契约第 11 节）；实际导出：${Object.keys(mod).join(', ')}`);
+    assert.equal(typeof mod[name], 'function', `server/auth/client.mjs must export ${name} (contract section 11); actual exports: ${Object.keys(mod).join(', ')}`);
   }
   return mod;
 }
@@ -360,7 +360,7 @@ export async function startHost({ attached = false, clusterToken, clock = testCl
 
     /** 素材服务 */
     async asset(rel, { method = 'GET', headers = {}, body, remote } = {}) {
-      assert.ok(assetPort, 'startHost 要带 assets: true');
+      assert.ok(assetPort, 'startHost needs assets: true');
       const r = await fetch(`http://127.0.0.1:${assetPort}${withRemote(`/api/asset/${rel}`, remote)}`, { method, headers, body });
       const buf = Buffer.from(await r.arrayBuffer());
       let json = null;
@@ -414,7 +414,7 @@ export async function createProject(env, {
   if (mode === 'free') body.project = credential(password);
   else body.list = list.map((e) => credential(e.password, e.username));
   const r = await env.http('shared/create', { method: 'POST', body, remote });
-  assert.equal(r.status, 201, `shared/create 应 201：${r.status} ${r.text}`);
+  assert.equal(r.status, 201, `shared/create should be 201: ${r.status} ${r.text}`);
   assert.equal(r.json.ok, true);
   return { projectId: r.json.projectId, name, mode, creator, password, list };
 }
@@ -435,7 +435,7 @@ export async function proofFor(env, proj, {
   username, password, key, device = newDevice(), as = 'member', role = 'page', c, o, remote, mutate,
 }) {
   const ch = await challenge(env, { projectId: proj.projectId, username, deviceId: device.deviceId, as, remote });
-  assert.equal(ch.status, 200, `挑战应 200：${ch.status} ${ch.text}`);
+  assert.equal(ch.status, 200, `challenge should be 200: ${ch.status} ${ch.text}`);
   const { nonce, salt } = ch.json;
   let pw = password;
   if (pw === undefined && key === undefined) {
@@ -496,7 +496,7 @@ export async function askOrNull(c, message, ms = 400) {
 /** 成员列表 */
 export async function members(c) {
   const r = await ask(c, { type: 'shared.members' }, 'shared.members.list');
-  assert.equal(r.type, 'shared.members.list', `shared.members 回包：${JSON.stringify(r)}`);
+  assert.equal(r.type, 'shared.members.list', `shared.members reply: ${JSON.stringify(r)}`);
   return r.devices;
 }
 
@@ -516,7 +516,7 @@ export async function adminOp(c, proj, op, fields = {}, { password = proj.creato
 /** 要一张票据 */
 export async function ticketOf(c, body) {
   const r = await ask(c, { type: 'auth.ticket', ...body }, 'auth.ticket.ok');
-  assert.equal(r.type, 'auth.ticket.ok', `auth.ticket 回包：${JSON.stringify(r)}`);
+  assert.equal(r.type, 'auth.ticket.ok', `auth.ticket reply: ${JSON.stringify(r)}`);
   assert.equal(typeof r.ticket, 'string');
   return r;
 }
@@ -529,9 +529,9 @@ const sha256hex = (buf) => createHash('sha256').update(buf).digest('hex');
 export async function uploadLocal(env, bytes = randomBytes(1000)) {
   const hash = sha256hex(bytes);
   const put = await env.asset(`media/${hash}/0`, { method: 'PUT', body: bytes, headers: { 'Content-Type': 'application/octet-stream', 'X-Media-Size': String(bytes.length) } });
-  assert.equal(put.status, 200, `回环上传分片：${put.status} ${put.buf.toString()}`);
+  assert.equal(put.status, 200, `loopback chunk upload: ${put.status} ${put.buf.toString()}`);
   const done = await env.asset(`media/${hash}/complete`, { method: 'POST' });
-  assert.equal(done.status, 200, `回环 complete：${done.status} ${done.buf.toString()}`);
+  assert.equal(done.status, 200, `loopback complete: ${done.status} ${done.buf.toString()}`);
   return { hash, bytes };
 }
 

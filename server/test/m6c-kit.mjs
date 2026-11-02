@@ -22,24 +22,24 @@ export const FP = 'aaaaaaaaaaaaaaaa';
 /* ================================================================== 假设清单（报告里照抄） */
 
 export const ASSUMPTIONS = Object.freeze({
-  'A-X1-1': '执行器的流路径仍经 createPrerenderExecutor({ pipeline, projects, prepareProject, log }).render(task, { signal, progress })；'
-    + '流任务不再以 code "stream-not-supported" 拒绝。烟测只断言这一点（真产流要 ffmpeg，归 queue-mode-probe / stream-produce-probe）',
-  'A-X1-2': '流任务的 StreamResult 经 sink.put 回的 { complete: true, result } 进 task.complete（C6.2 / J.3 的既有路径），'
-    + 'local-node 不改签名',
-  'A-X2-1': 'filter.mjs 的 checkClaimable(task, node) 从 node.nodeId 取本节点 id 比对 requires.localMedia'
-    + '（会话层用例另走 createNodeSession({ nodeId })，不依赖这一条）',
-  'A-X3-1': 'X3 的判定可以落在队列（onWatch）或文档服务的队列模块（modules/render-queue.mjs）任一层；'
-    + '用例经 createRouter + renderQueueModule + createRenderQueue 的组合驱动，两层都覆盖',
-  'A-X3-2': 'host 发 queue.watch { projects: "all" }（不带 mode 或 mode: "full"）也按摘要处理，至少收到一条 queue.summary',
-  'A-X3-3': 'browser 的 watch all 回 { type: "error", reason: "forbidden" }（与 H.3 摘要订阅的拒绝同形）',
-  'A-X4-1': 'QUEUE_DEFAULTS.PLAN_PREFER_MS 缺省 5000，可经 createRenderQueue({ constants: { PLAN_PREFER_MS } }) 覆盖；窗口从发布时刻起算',
-  'A-X4-2': 'planTaskOf({ projectId, projectRev, preferNode }) 把 preferNode 写进 requires.preferNode',
-  'A-X4-3': '窗口内非 preferNode 认领、以及 host / browser 认领 plan 回 task.claim-rejected（原因名不限），任务保持 open',
-  'A-X5-1': '「preload 未 ready」用 FramePipeline 内部的 generations / entries 模拟：一个未中止的代际指向 status 为 "html" 的 entry',
-  'A-X5-2': '「交互帧请求（拖动、播放）」用构造 FramePipeline 时注入的 playhead() 模拟：拖动 = { at: 最近一次, playing: false }，'
-    + '播放 = { at, playing: true }；Date 由 mock.timers 接管，实现读 Date.now() 或用传入的 now 都一致',
-  'A-X5-3': '〔集成对账改〕本机队列节点的闲时门槛是 queue-idle.mjs 的 createQueueIdleGate({ pipeline, lastInteractionAt }).idle(now)'
-    + '（vite-plugin-frames 里 isIdle: () => idleGate.idle()）；执行器不再有 isIdle。用例传管线本身',
+  'A-X1-1': 'The executor\'s stream path still goes through createPrerenderExecutor({ pipeline, projects, prepareProject, log }).render(task, { signal, progress });'
+    + 'Stream tasks are no longer rejected with code "stream-not-supported". The smoke test asserts only this (actually producing a stream needs ffmpeg, which is covered by queue-mode-probe / stream-produce-probe)',
+  'A-X1-2': 'The StreamResult of a stream task goes into task.complete via the { complete: true, result } returned by sink.put (the existing path of C6.2 / J.3),'
+    + 'local-node does not change its signature',
+  'A-X2-1': 'checkClaimable(task, node) in filter.mjs takes this node\'s id from node.nodeId and compares it with requires.localMedia'
+    + '(session-level cases go through createNodeSession({ nodeId }) separately and do not depend on this one)',
+  'A-X3-1': 'The X3 decision can be made in either layer: the queue (onWatch) or the document service\'s queue module (modules/render-queue.mjs);'
+    + 'The cases are driven through the combination of createRouter + renderQueueModule + createRenderQueue, covering both layers',
+  'A-X3-2': 'host sending queue.watch { projects: "all" } (without mode, or with mode: "full") is also handled as a summary and receives at least one queue.summary',
+  'A-X3-3': 'browser\'s watch all returns { type: "error", reason: "forbidden" } (same shape as the rejection of the H.3 summary subscription)',
+  'A-X4-1': 'QUEUE_DEFAULTS.PLAN_PREFER_MS defaults to 5000 and can be overridden via createRenderQueue({ constants: { PLAN_PREFER_MS } }); the window is counted from the publish time',
+  'A-X4-2': 'planTaskOf({ projectId, projectRev, preferNode }) writes preferNode into requires.preferNode',
+  'A-X4-3': 'Within the window, a claim by a non-preferNode and a claim of the plan by host / browser both return task.claim-rejected (any reason name), and the task stays open',
+  'A-X5-1': '"preload not ready" is simulated with FramePipeline\'s internal generations / entries: a non-aborted generation pointing to an entry whose status is "html"',
+  'A-X5-2': '"Interactive frame request (drag, playback)" is simulated with the playhead() injected when FramePipeline is constructed: drag = { at: most recent, playing: false },'
+    + 'playback = { at, playing: true }; Date is taken over by mock.timers, so it is consistent whether the implementation reads Date.now() or uses the passed-in now',
+  'A-X5-3': '[changed in integration reconciliation] The idle gate of this machine\'s queue node is createQueueIdleGate({ pipeline, lastInteractionAt }).idle(now) in queue-idle.mjs'
+    + '(isIdle: () => idleGate.idle() in vite-plugin-frames); the executor no longer has isIdle. The cases pass the pipeline itself',
 });
 
 /* ================================================================== 任务 */

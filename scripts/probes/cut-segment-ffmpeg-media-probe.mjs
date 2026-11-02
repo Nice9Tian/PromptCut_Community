@@ -28,19 +28,19 @@ const exportDir = path.join(OUT, 'export');
 fs.mkdirSync(path.join(exportDir, 'media'), { recursive: true });
 const red = path.join(exportDir, 'media', 'red.mp4');
 const ff = spawnSync('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=red:s=320x180:r=30:d=4', '-pix_fmt', 'yuv420p', red], { windowsHide: true });
-if (ff.status !== 0) throw new Error('ffmpeg 生成红色视频失败:' + ff.stderr);
+if (ff.status !== 0) throw new Error('ffmpeg failed to generate the red video:' + ff.stderr);
 
 const W = 640, H = 360;
 const project = {
   version: 1, id: 'p-cut-ffmpeg-media', name: 'cut-ffmpeg-media', width: W, height: H, fps: 30, duration: 5, themeId: 'midnight',
   media: [{ id: 'm-red', kind: 'video', name: 'red.mp4', url: '/@media/red.mp4', duration: 4, width: 320, height: 180 }],
   tracks: [
-    { id: 't1', name: '序列 1', clips: [{ id: 's1', cardId: '', cutId: 'cut-2', start: 1, end: 4, frame: { x: 0, y: 0, scale: 0.5 }, params: {} }] },
-    { id: 't0', name: '序列 2', clips: [{ id: 'k1', cardId: 'punch-pill', start: 0, end: 5, params: { text: '底下的卡' } }] },
+    { id: 't1', name: 'Track 1', clips: [{ id: 's1', cardId: '', cutId: 'cut-2', start: 1, end: 4, frame: { x: 0, y: 0, scale: 0.5 }, params: {} }] },
+    { id: 't0', name: 'Track 2', clips: [{ id: 'k1', cardId: 'punch-pill', start: 0, end: 5, params: { text: '底下的卡' } }] },
   ],
   cuts: [
-    { id: 'cut-1', name: '剪辑1' },
-    { id: 'cut-2', name: '剪辑2', tracks: [{ id: 't2', name: '序列 1', clips: [{ id: 'v1', cardId: '', mediaId: 'm-red', mediaOffset: 0, start: 0, end: 4, params: {} }] }], duration: 4, transitions: [] },
+    { id: 'cut-1', name: 'Cut 1' },
+    { id: 'cut-2', name: 'Cut 2', tracks: [{ id: 't2', name: 'Track 1', clips: [{ id: 'v1', cardId: '', mediaId: 'm-red', mediaOffset: 0, start: 0, end: 4, params: {} }] }], duration: 4, transitions: [] },
   ],
   activeCutId: 'cut-1',
 };
@@ -77,12 +77,12 @@ try {
     });
     fs.writeFileSync(path.join(OUT, `${mode}.log`), log);
     const file = path.join(out, 'preview.mp4');
-    check(`${mode}-export`, code === 0 && fs.existsSync(file), `${mode} 导出成功(退出码 ${code})`);
+    check(`${mode}-export`, code === 0 && fs.existsSync(file), `${mode} export succeeded (exit code ${code})`);
     if (!fs.existsSync(file)) continue;
-    if (mode === 'ffmpeg') check('F1', /剪辑段里有视频或图片/.test(log), '--media ffmpeg:日志写明改走完整整帧路线');
+    if (mode === 'ffmpeg') check('F1', /cut segment contains video or images/.test(log), '--media ffmpeg: the log states that it switches to the full whole-frame route');
     const inSeg = pixelAt(file, 2, W / 4, H / 4), outside = pixelAt(file, 2, (3 * W) / 4, (3 * H) / 4), before = pixelAt(file, 0.5, W / 4, H / 4);
-    check(`F2-${mode}`, isRed(inSeg) && !isRed(outside), `${mode}:2 秒处左上四分之一是剪辑段里的红色视频,右下不是`, { inSeg, outside });
-    check(`F3-${mode}`, !!before && !isRed(before), `${mode}:0.5 秒(剪辑段之前)左上不是红色`, { before });
+    check(`F2-${mode}`, isRed(inSeg) && !isRed(outside), `${mode}: at 2 seconds the top-left quarter is the red video in the cut segment, the bottom-right is not`, { inSeg, outside });
+    check(`F3-${mode}`, !!before && !isRed(before), `${mode}: at 0.5 seconds (before the cut segment) the top-left is not red`, { before });
     spawnSync('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-ss', '2', '-i', file, '-frames:v', '1', path.join(OUT, `${mode}-2s.png`)], { windowsHide: true });
   }
 } finally {

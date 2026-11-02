@@ -16,7 +16,7 @@ import { createMultiQueue, orderByPolicy, createRotation, MULTI_QUEUE_CLASSES } 
 
 const fmt = (items) => items.map((x) => `${x.kind}:${x.projectId}#${x.id}`).join(' → ');
 
-test('MPQ1 看画面先于产流：先来的产流请求也排在后来的看画面请求后面', () => {
+test('MPQ1 frame views go before stream production: a stream request that came earlier is also queued behind a frame-view request that came later', () => {
   assert.deepEqual([...MULTI_QUEUE_CLASSES], ['look', 'stream']);
   const q = createMultiQueue();
   q.add({ id: 's1', projectId: 'A', kind: 'stream' });
@@ -25,41 +25,41 @@ test('MPQ1 看画面先于产流：先来的产流请求也排在后来的看画
   q.add({ id: 's3', projectId: 'A', kind: 'stream' });
   q.add({ id: 'l2', projectId: 'A', kind: 'look' });
   const order = q.order();
-  console.log('[MPQ1] 出队次序', fmt(order));
+  console.log('[MPQ1] dequeue order', fmt(order));
   assert.deepEqual(order.map((x) => x.id), ['l1', 'l2', 's1', 's2', 's3']);
 });
 
-test('MPQ2 同一类里各项目轮流；MPQ3 同一项目内先来先做', () => {
+test('MPQ2 projects take turns within the same class; MPQ3 within the same project, first come first served', () => {
   const q = createMultiQueue();
   // A 一口气来了 4 个，B 来了 2 个，C 最后来 1 个
   for (const [id, p] of [['a1', 'A'], ['a2', 'A'], ['a3', 'A'], ['a4', 'A'], ['b1', 'B'], ['b2', 'B'], ['c1', 'C']]) q.add({ id, projectId: p, kind: 'look' });
   const planned = q.order();
-  console.log('[MPQ2] 排出来的次序', fmt(planned));
-  assert.deepEqual(planned.map((x) => x.id), ['a1', 'b1', 'c1', 'a2', 'b2', 'a3', 'a4'], 'A 先来，但出一个就轮到 B、C；同一项目内按来的先后');
+  console.log('[MPQ2] planned order', fmt(planned));
+  assert.deepEqual(planned.map((x) => x.id), ['a1', 'b1', 'c1', 'a2', 'b2', 'a3', 'a4'], 'A came first, but after one item it is B\'s and C\'s turn; within the same project, by order of arrival');
   // 逐个取走，实际出队的次序与排出来的一致
   const taken = [];
   for (let x = q.take(); x; x = q.take()) taken.push(x);
-  console.log('[MPQ2] 实际出队次序', fmt(taken));
+  console.log('[MPQ2] actual dequeue order', fmt(taken));
   assert.deepEqual(taken.map((x) => x.id), planned.map((x) => x.id));
 });
 
-test('MPQ2 后来的项目不必等先来的项目做完：A 正在一个个出，B 中途来了，下一个就轮到 B', () => {
+test('MPQ2 a later project need not wait for an earlier project to finish: A is being dequeued one by one, B arrives midway, and the next turn goes to B', () => {
   const q = createMultiQueue();
   for (const id of ['a1', 'a2', 'a3']) q.add({ id, projectId: 'A', kind: 'stream' });
   const out = [q.take()];
   q.add({ id: 'b1', projectId: 'B', kind: 'stream' });
   for (let x = q.take(); x; x = q.take()) out.push(x);
-  console.log('[MPQ2b] 实际出队次序', fmt(out));
+  console.log('[MPQ2b] actual dequeue order', fmt(out));
   assert.deepEqual(out.map((x) => x.id), ['a1', 'b1', 'a2', 'a3']);
 });
 
-test('MPQ4 取下一个：做不了的不挡后面；取走的项目排到最后', () => {
+test('MPQ4 taking the next one: an item that cannot be done does not block those behind it; the project just taken goes to the end', () => {
   const q = createMultiQueue();
   for (const [id, p] of [['a1', 'A'], ['b1', 'B'], ['a2', 'A'], ['c1', 'C']]) q.add({ id, projectId: p, kind: 'look' });
   // B 此刻做不了（例如它的环境还在装）：先出 A，再出 C；B 留着
   const first = q.take((x) => x.projectId !== 'B');
   const second = q.take((x) => x.projectId !== 'B');
-  console.log('[MPQ4] B 做不了时', fmt([first, second]), '｜剩下', fmt(q.order()));
+  console.log('[MPQ4] when B cannot be done', fmt([first, second]), '| remaining', fmt(q.order()));
   assert.deepEqual([first.id, second.id], ['a1', 'c1']);
   // 现在 B 做得了：它最久没轮到，排第一
   assert.deepEqual(q.order().map((x) => x.id), ['b1', 'a2']);
@@ -68,7 +68,7 @@ test('MPQ4 取下一个：做不了的不挡后面；取走的项目排到最后
   assert.equal(q.take(), null);
 });
 
-test('MPQ5 轮流按类分开记账；纯函数不改入参', () => {
+test('MPQ5 turn-taking is accounted for separately per class; the pure function does not mutate its input', () => {
   const rotation = createRotation();
   rotation.served('look', 'A'); // A 刚在看画面那一类出过
   const items = [
@@ -79,10 +79,10 @@ test('MPQ5 轮流按类分开记账；纯函数不改入参', () => {
   ];
   const copy = structuredClone(items);
   const order = orderByPolicy(items, rotation);
-  console.log('[MPQ5] 出队次序', fmt(order));
+  console.log('[MPQ5] dequeue order', fmt(order));
   // 看画面：A 刚轮到过，B 先；产流：两边都没轮到过，按来的先后 A 先
   assert.deepEqual(order.map((x) => x.id), ['l-b', 'l-a', 's-a', 's-b']);
   assert.deepEqual(items, copy);
   rotation.forget('A');
-  assert.deepEqual(orderByPolicy(items, rotation).map((x) => x.id), ['l-a', 'l-b', 's-a', 's-b'], '忘掉 A 的记账后按来的先后');
+  assert.deepEqual(orderByPolicy(items, rotation).map((x) => x.id), ['l-a', 'l-b', 's-a', 's-b'], 'after forgetting A\'s accounting, by order of arrival');
 });

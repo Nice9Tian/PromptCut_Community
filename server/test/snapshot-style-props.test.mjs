@@ -52,31 +52,31 @@ const CHROME_NOT_INHERITED = [
   'vertical-align', 'view-transition-name', 'will-change', 'z-index', 'zoom',
 ];
 
-test('表里的每一项都不是 Chrome 实测的「不继承」', () => {
+test('No entry in the table is one that Chrome measures as "not inherited"', () => {
   const wrong = CHROME_NOT_INHERITED.filter((p) => INHERITED_PROPS.has(p));
-  assert.deepEqual(wrong, [], `这些属性 Chrome 说不继承,写进 INHERITED_PROPS 会拿它们和父值比:${wrong.join(', ')}`);
+  assert.deepEqual(wrong, [], `Chrome says these properties are not inherited; putting them in INHERITED_PROPS would compare them with the parent value: ${wrong.join(', ')}`);
 });
 
-test('Chrome 实测继承的属性一个不缺 —— 缺了顶层元素就漏内联', () => {
+test('No property that Chrome measures as inherited is missing: if one is missing, the top-level element misses inlining', () => {
   const missing = CHROME_INHERITED.filter((p) => !INHERITED_PROPS.has(p));
-  assert.deepEqual(missing, [], `快照顶层元素靠这张表决定内联哪些继承属性,缺一项重放时就会从别人那里继承:${missing.join(', ')}`);
+  assert.deepEqual(missing, [], `The snapshot top-level element uses this table to decide which inherited properties to inline; if one is missing, on replay it will inherit from someone else: ${missing.join(', ')}`);
 });
 
-test('两张表不重叠:布局解析值属性一律全内联,不该同时按继承属性判', () => {
+test('The two tables do not overlap: layout-resolved-value properties are always fully inlined, and must not also be judged as inherited properties', () => {
   const both = [...LAYOUT_USED_VALUE_PROPS].filter((p) => INHERITED_PROPS.has(p));
   assert.deepEqual(both, []);
 });
 
-test('表里没有简写、没有大写、没有重复', () => {
+test('The table has no shorthands, no uppercase, no duplicates', () => {
   const list = [...INHERITED_PROPS];
   assert.equal(new Set(list).size, list.length);
-  for (const prop of list) assert.equal(prop, prop.toLowerCase(), `${prop} 要写成 getComputedStyle 给的小写连字符形式`);
+  for (const prop of list) assert.equal(prop, prop.toLowerCase(), `${prop} must be written in the lowercase hyphenated form that getComputedStyle gives`);
   // 常见简写一律不写进表:getComputedStyle 枚举的是 longhand,写简写永远命不中
   for (const shorthand of ['font', 'list-style', 'text-emphasis', 'border', 'margin', 'padding', 'background'])
-    assert.equal(INHERITED_PROPS.has(shorthand), false, `${shorthand} 是简写`);
+    assert.equal(INHERITED_PROPS.has(shorthand), false, `${shorthand} is a shorthand`);
 });
 
-test('自定义属性按继承处理', () => {
+test('Custom properties are treated as inherited', () => {
   assert.equal(isInheritedProp('--pc-accent'), true);
   assert.equal(isInheritedProp('color'), true);
   assert.equal(isInheritedProp('display'), false);
@@ -87,7 +87,7 @@ test('自定义属性按继承处理', () => {
  * 第二轮 §12、第三轮 §13):几何按 1/64 px 对齐、动画撑起的合成层补 will-change、变换全精度写回。
  */
 
-test('1/64 对齐:6 位有效数字丢掉的那一点补回原值', () => {
+test('1/64 alignment: the bit lost by 6 significant digits is restored to the original value', () => {
   // 实测的三个宽度:316.15625 / 484.65625 / 381.3125,getComputedStyle 分别给 316.156 / 484.656 / 381.312
   assert.equal(snapLayoutUnits('316.156px'), '316.15625px');
   assert.equal(snapLayoutUnits('484.656px'), '484.65625px');
@@ -98,7 +98,7 @@ test('1/64 对齐:6 位有效数字丢掉的那一点补回原值', () => {
   assert.equal(snapLayoutUnits('-16.0625px'), '-16.0625px');
 });
 
-test('1/64 对齐:10000 px 以内每一格都能从 6 位有效数字还原回来', () => {
+test('1/64 alignment: within 10000 px every step can be recovered from 6 significant digits', () => {
   const sig6 = (v) => String(Number(v.toPrecision(6)));
   for (let n = 0; n < 64 * 10000; n += 997) {
     const exact = n / 64;
@@ -107,7 +107,7 @@ test('1/64 对齐:10000 px 以内每一格都能从 6 位有效数字还原回�
   }
 });
 
-test('1/64 对齐:只改 px 数,别的原样', () => {
+test('1/64 snapping: only the px values change, everything else stays as is', () => {
   assert.equal(snapLayoutUnits('auto'), 'auto');
   assert.equal(snapLayoutUnits('none'), 'none');
   assert.equal(snapLayoutUnits('50%'), '50%');
@@ -117,9 +117,9 @@ test('1/64 对齐:只改 px 数,别的原样', () => {
   assert.equal(snapLayoutUnits('-0.001px'), '0px');
 });
 
-test('对齐的属性都是布局解析值,不含浮点的 transform 一族', () => {
+test('Snapped properties are all layout-resolved values and exclude the floating-point transform family', () => {
   for (const prop of ['transform', 'transform-origin', 'perspective-origin'])
-    assert.equal(LAYOUT_UNIT_PROPS.has(prop), false, `${prop} 是浮点,不在 LayoutUnit 网格上`);
+    assert.equal(LAYOUT_UNIT_PROPS.has(prop), false, `${prop} is floating point, not on the LayoutUnit grid`);
   // 物理写法全在 LAYOUT_USED_VALUE_PROPS 里(逻辑写法是额外补的)
   const physical = [...LAYOUT_UNIT_PROPS].filter((p) => !/-(block|inline)(-|$)/.test(p));
   for (const prop of physical) assert.ok(LAYOUT_USED_VALUE_PROPS.has(prop), `${prop}`);
@@ -127,14 +127,14 @@ test('对齐的属性都是布局解析值,不含浮点的 transform 一族', ()
   assert.deepEqual([...LAYOUT_UNIT_PROPS].filter((p) => INHERITED_PROPS.has(p)), []);
 });
 
-test('会提合成层的动画属性:透明度、变换一族、滤镜', () => {
+test('Animated properties that promote a compositing layer: opacity, the transform family, filter', () => {
   for (const prop of ['opacity', 'transform', 'translate', 'rotate', 'scale', 'filter', 'backdrop-filter'])
     assert.ok(COMPOSITED_ANIMATION_PROPS.has(prop), prop);
   for (const prop of ['color', 'width', 'background-color', 'clip-path'])
     assert.equal(COMPOSITED_ANIMATION_PROPS.has(prop), false, prop);
 });
 
-test('current 动画:活跃段里(暂停的也算)是,放完的不是', () => {
+test('current animation: true within the active phase (paused ones count too), false once finished', () => {
   const t = (localTime, extra = {}) => ({ localTime, endTime: 1000, delay: 0, activeDuration: 1000, ...extra });
   // __pcSyncAnims 钉住的动画:暂停在活跃段中间
   assert.equal(isCurrentAnimation(t(500), 1, 'paused'), true);
@@ -149,7 +149,7 @@ test('current 动画:活跃段里(暂停的也算)是,放完的不是', () => {
   assert.equal(isCurrentAnimation(t(null), 1, 'idle'), false);
 });
 
-test('current 动画:delay 里看播放方向,无限循环一直是', () => {
+test('current animation: during the delay phase it depends on the playback direction, an infinite loop is always current', () => {
   const delayed = { localTime: 100, endTime: 1500, delay: 500, activeDuration: 1000 };
   assert.equal(isCurrentAnimation(delayed, 1, 'paused'), true);   // 正向、还没开始:current
   assert.equal(isCurrentAnimation(delayed, -1, 'paused'), false); // 反向、在开始前:不是
@@ -175,7 +175,7 @@ class CSSSkewX { constructor(ax) { this.ax = ax; this.is2D = true; } }
 class CSSPerspective { constructor(length) { this.length = length; this.is2D = false; } }
 class CSSMatrixComponent { constructor(matrix) { this.matrix = matrix; this.is2D = matrix.is2D; } }
 
-test('变换:数值全精度写回,不再折成 6 位有效数字的矩阵', () => {
+test('Transform: values are written back at full precision, no longer folded into a matrix of 6 significant digits', () => {
   // odometer 第 9 帧:getComputedStyle 给 matrix(1, 0, 0, 1, 0, -2156.5),真实值是 -2156.501953125
   assert.equal(serializeTransformList([new CSSTranslate(px(0), px(-2156.501953125))]), 'translate(0px, -2156.501953125px)');
   // punch-pill 第 5 帧的弹簧值
@@ -186,7 +186,7 @@ test('变换:数值全精度写回,不再折成 6 位有效数字的矩阵', () 
     'translate(-50%, -50%) scale(0.8, 0.8)');
 });
 
-test('变换:保留函数形式 —— 90° 的整数倍、绕坐标轴的旋转不折成矩阵', () => {
+test('Transform: keep the function form. Rotations by integer multiples of 90° and around a coordinate axis are not folded into a matrix', () => {
   // 折成矩阵是 matrix(6.12323e-17, -1, 1, 6.12323e-17, 0, 0):残下 1e-17,不再是轴对齐变换
   assert.equal(serializeTransformList([new CSSRotate(deg(-90))]), 'rotate(-90deg)');
   // terminal-3d 的 rotateY(-8deg):折成矩阵是 cos / sin 的 6 位有效数字
@@ -201,7 +201,7 @@ test('变换:保留函数形式 —— 90° 的整数倍、绕坐标轴的旋转
   assert.equal(serializeTransformList([new CSSPerspective(px(800)), new CSSRotate(num(0), num(1), num(0), deg(45))]), 'perspective(800px) rotateY(45deg)');
 });
 
-test('变换:矩阵分量按 2D / 3D 写', () => {
+test('Transform: matrix components are written as 2D / 3D', () => {
   const m2 = { is2D: true, a: 1, b: 0.5, c: -0.5, d: 1, e: 10.25, f: -3.125 };
   assert.equal(serializeTransformList([new CSSMatrixComponent(m2)]), 'matrix(1, 0.5, -0.5, 1, 10.25, -3.125)');
   const m3 = { is2D: false };
@@ -210,7 +210,7 @@ test('变换:矩阵分量按 2D / 3D 写', () => {
   assert.equal(serializeTransformList([new CSSMatrixComponent(m3)]), 'matrix3d(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, -0.00125, 0, 0, 0, 1)');
 });
 
-test('变换:认不出的分量或数值一律返回 null,调用方退回计算值', () => {
+test('Transform: any unrecognized component or value returns null and the caller falls back to the computed value', () => {
   // calc() 这类不是单一数值
   assert.equal(serializeTransformList([new CSSTranslate(new CSSMathSum(px(10), new CSSUnitValue(50, 'percent')), px(0))]), null);
   // 不认识的分量
@@ -223,7 +223,7 @@ test('变换:认不出的分量或数值一律返回 null,调用方退回计算�
   assert.equal(serializeTransformList([]), null);
 });
 
-test('relevant 动画(Blink 提合成层的判据):照 Chrome 152 实测表,current 或 in effect 都算', () => {
+test('relevant animation (Blink\'s criterion for promoting a compositing layer): per the Chrome 152 measured table, current or in effect both count', () => {
   // delay 400 / duration 800 的透明度动画暂停在各个时刻;progress 是 getComputedTiming() 在各种 fill 下给的值
   const t = (localTime, progress) => ({ localTime, endTime: 1200.0000000000002, delay: 400, activeDuration: 800, progress });
   const end = 1200.0000000000002;

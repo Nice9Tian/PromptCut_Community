@@ -46,54 +46,54 @@ function simulate({ seconds, keepaliveUntil, wanted }) {
   return { rows, store };
 }
 
-test('每 2 秒一条保活:30 秒的播放里 streamBusy 与 interactionReason 一直为忙', () => {
+test('One keepalive every 2 seconds: during 30 seconds of playback, streamBusy and interactionReason stay busy throughout', () => {
   const { rows } = simulate({ seconds: 30, keepaliveUntil: 30_000 });
   const notBusy = rows.filter((r) => !r.busy);
   const notPlaying = rows.filter((r) => r.reason !== 'playing');
-  assert.deepEqual(notBusy.map((r) => r.elapsed), [], 'streamBusy 一直为真');
-  assert.deepEqual(notPlaying.map((r) => r.elapsed), [], 'interactionReason 一直是 playing');
+  assert.deepEqual(notBusy.map((r) => r.elapsed), [], 'streamBusy stays true throughout');
+  assert.deepEqual(notPlaying.map((r) => r.elapsed), [], 'interactionReason stays playing throughout');
   assert.equal(rows.length, 30 * 4 + 1);
 });
 
-test('对照:没有保活时,5 秒以后转闲(这就是毛病本身)', () => {
+test('Control: without keepalive, it goes idle after 5 seconds (this is the bug itself)', () => {
   const { rows } = simulate({ seconds: 30, keepaliveUntil: -1 });
   assert.equal(rows.find((r) => r.elapsed === 4750).busy, true);
-  assert.equal(rows.find((r) => r.elapsed === 5000).busy, false, '5 秒窗口到了');
+  assert.equal(rows.find((r) => r.elapsed === 5000).busy, false, 'The 5-second window has elapsed');
   assert.equal(rows.find((r) => r.elapsed === 5000).reason, null);
   assert.ok(rows.filter((r) => r.elapsed >= 5000).every((r) => !r.busy && r.reason === null));
 });
 
-test('保活停了 5 秒以后转闲;停之前一直忙', () => {
+test('Goes idle 5 seconds after keepalive stops; busy the whole time before that', () => {
   // 最后一条保活在 20 秒整
   const { rows } = simulate({ seconds: 30, keepaliveUntil: 20_000 });
-  assert.ok(rows.filter((r) => r.elapsed <= 24_750).every((r) => r.busy && r.reason === 'playing'), '最后一条保活之后 5 秒内仍忙');
+  assert.ok(rows.filter((r) => r.elapsed <= 24_750).every((r) => r.busy && r.reason === 'playing'), 'Still busy within 5 seconds after the last keepalive');
   assert.equal(rows.find((r) => r.elapsed === 20_000 + PLAYING_STALE_MS).busy, false);
-  assert.ok(rows.filter((r) => r.elapsed >= 20_000 + PLAYING_STALE_MS).every((r) => !r.busy && r.reason === null), '之后一直闲');
+  assert.ok(rows.filter((r) => r.elapsed >= 20_000 + PLAYING_STALE_MS).every((r) => !r.busy && r.reason === null), 'Idle throughout afterwards');
 });
 
-test('保活丢一拍(4 秒没音讯)也不过期;连丢两拍以上才会', () => {
+test('Missing one keepalive tick (4 seconds of silence) does not expire it either; only two or more consecutive misses do', () => {
   mock.timers.enable({ apis: ['Date'], now: 5_000_000 });
   const store = createMirrorStore();
   const pipeline = fakePipeline(store);
   const start = Date.now();
   store.setPlayhead('s1', 0, true);
   mock.timers.setTime(start + 4_000);
-  assert.equal(pipeline.streamBusy(Date.now()), true, '丢了一拍保活(间隔 4 秒)');
+  assert.equal(pipeline.streamBusy(Date.now()), true, 'One keepalive tick missed (4-second gap)');
   store.setPlayhead('s1', 4, true);
   mock.timers.setTime(start + 9_000);
-  assert.equal(pipeline.streamBusy(Date.now()), false, '5 秒没音讯');
+  assert.equal(pipeline.streamBusy(Date.now()), false, '5 seconds of silence');
 });
 
-test('保活不带 wanted:沿用上一次的缺口提示,既不刷新也不清掉(与停下那一条一样)', () => {
+test('Keepalive without wanted: reuses the previous gap hint, neither refreshing nor clearing it (same as the stop message)', () => {
   const wanted = [{ clipId: 'a', frame: 45 }];
   const { store } = simulate({ seconds: 10, keepaliveUntil: 10_000, wanted });
   const head = store.latestPlayhead();
   assert.deepEqual(head.wanted, wanted);
   assert.equal(head.playing, true);
-  assert.ok(head.t > 0, 't 跟着保活走');
+  assert.ok(head.t > 0, 't follows the keepalive');
 });
 
-test('停下推一次(playing:false)仍然立刻转成「刚动过」(streamBusy 800 毫秒、队列门槛 500 毫秒),之后转闲', () => {
+test('A stop push (playing:false) still turns into "just moved" immediately (streamBusy 800 ms, queue gate 500 ms), then goes idle', () => {
   mock.timers.enable({ apis: ['Date'], now: 5_000_000 });
   const store = createMirrorStore();
   const pipeline = fakePipeline(store);
@@ -102,7 +102,7 @@ test('停下推一次(playing:false)仍然立刻转成「刚动过」(streamBusy
   mock.timers.setTime(start + 10_000);
   store.setPlayhead('s1', 10, false);
   mock.timers.setTime(start + 10_000 + 499);
-  assert.equal(interactionReason(pipeline, Date.now()), 'scrub', '队列节点的门槛是 500 毫秒');
+  assert.equal(interactionReason(pipeline, Date.now()), 'scrub', 'The queue node gate is 500 ms');
   mock.timers.setTime(start + 10_000 + 799);
   assert.equal(pipeline.streamBusy(Date.now()), true);
   mock.timers.setTime(start + 10_000 + 800);

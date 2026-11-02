@@ -25,12 +25,12 @@ const { emitCardSourceChange, onCardSourceChange } = await import('../card-overr
 const cards = await import('../vite-plugin-cards.ts');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-async function waitFor(fn, ms = 5000, what = '条件') {
+async function waitFor(fn, ms = 5000, what = 'condition') {
   const t0 = Date.now();
   for (;;) {
     const v = await fn();
     if (v) return v;
-    if (Date.now() - t0 > ms) throw new Error(`等 ${what} 超时(${ms} ms)`);
+    if (Date.now() - t0 > ms) throw new Error(`Timed out waiting for ${what} (${ms} ms)`);
     await sleep(20);
   }
 }
@@ -42,10 +42,10 @@ function C({ params }: CardProps<Params>) {
   return <motion.div animate={{ opacity: 1 }}>{params.text}</motion.div>;
 }
 export const priceTag: CardDef<Params> = {
-  id: "price-tag", name: "价格", description: "d", source: "user",
+  id: "price-tag", name: "Price", description: "d", source: "user",
   frameMode: "stateful",
   defaults: { text: "${text}" },
-  controls: [{ key: "text", label: "文字", type: "text" }],
+  controls: [{ key: "text", label: "Text", type: "text" }],
   Component: C,
 };
 `;
@@ -139,7 +139,7 @@ async function peek(doc, kind, key) {
   return reply;
 }
 
-test('T8-0 范围:只认卡片 / 部件目录下的源码与样式,测试文件、路径穿越不认', () => {
+test('T8-0 scope: only source and styles under the card / part directories are recognized; test files and path traversal are not', () => {
   assert.equal(isSyncablePath(USER_KEY), true);
   assert.equal(isSyncablePath('src/parts/a/b.css'), true);
   assert.equal(isSyncablePath('src/cards/user/_scopes.json'), false);
@@ -151,20 +151,20 @@ test('T8-0 范围:只认卡片 / 部件目录下的源码与样式,测试文件�
   assert.equal(sourceHash('a\r\nb'), sourceHash('a\nb'));
 });
 
-test('T8-1 A 改了一张用户卡,B 5 s 内装上新版并重测(发变更通知);B 第一次打开就装上 A 带来的卡', async (t) => {
+test('T8-1 A edits a user card, B installs the new version within 5 s and re-tests it (a change notification is emitted); on first open B installs the cards brought by A', async (t) => {
   const doc = await startDoc(t);
   const A = editor(t, 'a');
   const B = editor(t, 'b');
   A.write(USER_KEY, cardSource('¥1'));
   A.bindShared(doc, 'p1', [USER_KEY]);
-  await waitFor(() => A.sync.status().connected, 3000, 'A 连上');
+  await waitFor(() => A.sync.status().connected, 3000, 'A connected');
   await A.sync.idle();
   const first = await peek(doc, 'card-source', USER_KEY);
-  assert.equal(first.rev, 1, 'A 打开共享项目时把项目用到的用户卡传上去');
+  assert.equal(first.rev, 1, 'when A opens a shared project, it uploads the user cards used by the project');
 
   // B 打开同一个共享项目:本机没有这张卡 → 装上
   B.bindShared(doc, 'p1');
-  await waitFor(() => B.read(USER_KEY) !== null, 5000, 'B 装上 A 的卡');
+  await waitFor(() => B.read(USER_KEY) !== null, 5000, 'B installs the card of A');
   assert.match(B.read(USER_KEY), /¥1/);
   await B.sync.idle();
   assert.equal(B.sync.status().records[USER_KEY].rev, 1);
@@ -173,33 +173,33 @@ test('T8-1 A 改了一张用户卡,B 5 s 内装上新版并重测(发变更通�
   const changesBefore = B.changes.length;
   const t0 = Date.now();
   A.save(USER_KEY, cardSource('¥2'));
-  await waitFor(() => /¥2/.test(B.read(USER_KEY) ?? ''), 5000, 'B 装上新版');
+  await waitFor(() => /¥2/.test(B.read(USER_KEY) ?? ''), 5000, 'B installs the new version');
   const installedMs = Date.now() - t0;
-  const change = await waitFor(() => B.changes.slice(changesBefore).find((c) => c.rel === USER_KEY), 5000, 'B 的变更通知');
-  assert.ok(installedMs <= 5000, `B 装上新版用了 ${installedMs} ms`);
+  const change = await waitFor(() => B.changes.slice(changesBefore).find((c) => c.rel === USER_KEY), 5000, 'change notification of B');
+  assert.ok(installedMs <= 5000, `B took ${installedMs} ms to install the new version`);
   assert.ok(change.at - t0 <= 5000);
   await B.sync.idle();
   assert.equal(B.sync.status().records[USER_KEY].rev, 2);
   const inst = B.notices.find((n) => n.type === 'installed' && n.rev === 2);
-  assert.ok(inst, 'B 有「已装上」的通知');
-  assert.equal(inst.backup, undefined, 'B 本机没改过:直接换,不备份');
-  assert.equal(inst.actor.userId, 'a', '通知里带写入者');
+  assert.ok(inst, 'B has an "installed" notification');
+  assert.equal(inst.backup, undefined, 'B had no local edits: replace directly, no backup');
+  assert.equal(inst.actor.userId, 'a', 'the notification carries the writer');
   assert.equal(B.notices.some((n) => n.type === 'overwritten'), false);
   // A 自己那份不被自己的回声打扰
   assert.equal(A.notices.filter((n) => n.type === 'installed').length, 0);
   console.log(JSON.stringify({ case: 'T8-1', installedMs, changeMs: change.at - t0 }));
 });
 
-test('T8-2 两端同时改同一张卡:后写的赢,先写的一方有备份与提示,后写的一方知道自己覆盖了谁', async (t) => {
+test('T8-2 both ends edit the same card at the same time: the last write wins, the earlier writer gets a backup and a notice, and the later writer knows who it overwrote', async (t) => {
   const doc = await startDoc(t);
   const A = editor(t, 'a');
   const B = editor(t, 'b');
   A.write(USER_KEY, cardSource('v1'));
   A.bindShared(doc, 'p2', [USER_KEY]);
-  await waitFor(() => A.sync.status().connected, 3000, 'A 连上');
+  await waitFor(() => A.sync.status().connected, 3000, 'A connected');
   await A.sync.idle();
   B.bindShared(doc, 'p2');
-  await waitFor(() => /v1/.test(B.read(USER_KEY) ?? ''), 5000, 'B 同步到 v1');
+  await waitFor(() => /v1/.test(B.read(USER_KEY) ?? ''), 5000, 'B syncs to v1');
   await B.sync.idle();
 
   // 同时改:两边几乎同一时刻落盘、上传
@@ -208,7 +208,7 @@ test('T8-2 两端同时改同一张卡:后写的赢,先写的一方有备份与�
   await waitFor(async () => {
     const it = await peek(doc, 'card-source', USER_KEY);
     return it.rev === 3;
-  }, 5000, '两次上传都落地');
+  }, 5000, 'both uploads landed');
   const final = await peek(doc, 'card-source', USER_KEY);
   const winner = /from-A/.test(final.body) ? A : B;
   const loser = winner === A ? B : A;
@@ -216,7 +216,7 @@ test('T8-2 两端同时改同一张卡:后写的赢,先写的一方有备份与�
   const loseText = winner === A ? 'from-B' : 'from-A';
 
   // 两端最后都是后写的那一版
-  await waitFor(() => new RegExp(winText).test(loser.read(USER_KEY) ?? ''), 5000, '先写方换成后写的版本');
+  await waitFor(() => new RegExp(winText).test(loser.read(USER_KEY) ?? ''), 5000, 'the earlier writer switches to the version of the later writer');
   await A.sync.idle();
   await B.sync.idle();
   assert.match(winner.read(USER_KEY), new RegExp(winText));
@@ -224,18 +224,18 @@ test('T8-2 两端同时改同一张卡:后写的赢,先写的一方有备份与�
 
   // 先写方:覆盖提示 + 备份里是自己那份
   const ow = loser.notices.find((n) => n.type === 'overwritten');
-  assert.ok(ow, `先写方(${loser.name})有覆盖提示;通知:${JSON.stringify(loser.notices)}`);
-  assert.equal(ow.actor.userId, winner.name, '提示里是覆盖方');
-  assert.ok(ow.backup && fs.existsSync(path.join(loser.root, ow.backup)), '备份文件在');
-  assert.match(fs.readFileSync(path.join(loser.root, ow.backup), 'utf8'), new RegExp(loseText), '备份里是先写方自己那份');
+  assert.ok(ow, `First writer (${loser.name}) has an overwrite notice; notices: ${JSON.stringify(loser.notices)}`);
+  assert.equal(ow.actor.userId, winner.name, 'The notice names the overwriter');
+  assert.ok(ow.backup && fs.existsSync(path.join(loser.root, ow.backup)), 'Backup file exists');
+  assert.match(fs.readFileSync(path.join(loser.root, ow.backup), 'utf8'), new RegExp(loseText), 'The backup holds the first writer\'s own copy');
   // 后写方:没被覆盖,知道自己覆盖了谁
   assert.equal(winner.notices.some((n) => n.type === 'overwritten'), false);
-  const wrote = await waitFor(() => winner.notices.find((n) => n.type === 'overwrote' && n.rev === 3), 3000, '覆盖方的回执');
+  const wrote = await waitFor(() => winner.notices.find((n) => n.type === 'overwrote' && n.rev === 3), 3000, 'Overwriter\'s receipt');
   assert.equal(wrote.previousActor.userId, loser.name);
   console.log(JSON.stringify({ case: 'T8-2', winner: winner.name, backup: ow.backup }));
 });
 
-test('T8-3 未改的内置卡不同步;改过的内置卡与用户卡同步', async (t) => {
+test('T8-3 unmodified built-in cards are not synced; modified built-in cards and user cards are synced', async (t) => {
   const doc = await startDoc(t);
   const A = editor(t, 'a');
   const B = editor(t, 'b');
@@ -246,37 +246,37 @@ test('T8-3 未改的内置卡不同步;改过的内置卡与用户卡同步', as
   assert.deepEqual(keys, [USER_KEY]);
   A.bindShared(doc, 'p3', keys);
   B.bindShared(doc, 'p3', cards.cardSyncKeys(B.root, ['odo'], (rel) => rel.startsWith('src/cards/user/')));
-  await waitFor(() => A.sync.status().connected && B.sync.status().connected, 3000, '连上');
+  await waitFor(() => A.sync.status().connected && B.sync.status().connected, 3000, 'Connected');
   await A.sync.idle();
   await B.sync.idle();
   let listing = await peek(doc, 'card-source');
-  assert.deepEqual(listing.items.map((i) => i.key), [USER_KEY], '内容库里只有用户卡,两端都没传未改的内置卡');
+  assert.deepEqual(listing.items.map((i) => i.key), [USER_KEY], 'Only the user card is in the content store; neither side uploaded the unmodified built-in card');
 
   // A 改了内置卡(edit_card 改内置文件)→ 同步;B 本机的是未改的底版,直接换,不备份不提示
   const edited = BUILTIN.replace('n: 1', 'n: 2');
   A.save(BUILTIN_KEY, edited);
-  await waitFor(() => /n: 2/.test(B.read(BUILTIN_KEY) ?? ''), 5000, 'B 装上改过的内置卡');
+  await waitFor(() => /n: 2/.test(B.read(BUILTIN_KEY) ?? ''), 5000, 'B installs the modified built-in card');
   await B.sync.idle();
   listing = await peek(doc, 'card-source');
   assert.deepEqual(listing.items.map((i) => i.key).sort(), [BUILTIN_KEY, USER_KEY].sort());
   assert.equal(B.notices.some((n) => n.type === 'overwritten'), false);
-  assert.equal(fs.existsSync(path.join(B.root, 'out', 'card-edits')), false, '未改的底版不算本机的改动,不备份');
+  assert.equal(fs.existsSync(path.join(B.root, 'out', 'card-edits')), false, 'The unmodified base version does not count as a local change, no backup');
   // 改过之后它就算「改过的内置卡」:再算一次要带上的文件,它在里面
   assert.deepEqual(cards.cardSyncKeys(A.root, ['odo', 'price-tag'], changed), [BUILTIN_KEY, USER_KEY].sort());
 });
 
-test('T8-4 本机项目(local 空间):只上传,cardRev 照常自增;同步那一半是空操作', async (t) => {
+test('T8-4 local project (local space): upload only, cardRev still increments as usual; the sync half is a no-op', async (t) => {
   const doc = await startDoc(t);
   const A = editor(t, 'a');
   A.write(USER_KEY, cardSource('¥1'));
   A.sync.bind({ local: true, url: doc.url('a'), protocols: () => ['promptcut.v1'] });
-  await waitFor(() => A.sync.status().connected, 3000, '连上');
+  await waitFor(() => A.sync.status().connected, 3000, 'Connected');
   A.save(USER_KEY, cardSource('¥2'));
   await A.sync.idle();
   A.save(USER_KEY, cardSource('¥3'));
   await A.sync.idle();
   const it = await peek(doc, 'card-source', USER_KEY);
-  assert.equal(it.rev, 2, '每次保存 cardRev 加一');
+  assert.equal(it.rev, 2, 'cardRev increments by one on every save');
   assert.match(it.body, /¥3/);
   assert.equal(A.sync.status().records[USER_KEY].rev, 2);
   assert.equal(A.sync.status().spaceId, 'local');
@@ -291,14 +291,14 @@ test('T8-4 本机项目(local 空间):只上传,cardRev 照常自增;同步那�
   assert.equal(A.notices.length, 0);
 });
 
-test('T8-5 断线期间的保存留在待上传里,重连后补传;本机在同步之后又改过而服务没变,打开时传上去', async (t) => {
+test('T8-5 saves made while disconnected stay in the pending uploads and are sent as a catch-up upload after reconnecting; if this machine changed a card after the last sync while the service copy stayed the same, upload it on open', async (t) => {
   const doc = await startDoc(t);
   const A = editor(t, 'a');
   // 还没连上就保存:记成待上传
   A.write(USER_KEY, cardSource('¥1'));
   A.bindShared(doc, 'p5', []);
   A.save(USER_KEY, cardSource('offline'));
-  await waitFor(() => A.sync.status().connected, 3000, '连上');
+  await waitFor(() => A.sync.status().connected, 3000, 'Connected');
   await A.sync.idle();
   let it = await peek(doc, 'card-source', USER_KEY);
   assert.match(it.body, /offline/);
@@ -308,105 +308,105 @@ test('T8-5 断线期间的保存留在待上传里,重连后补传;本机在同�
   A.sync.unbind();
   A.write(USER_KEY, cardSource('edited-while-away'));
   A.bindShared(doc, 'p5', []);
-  await waitFor(async () => /edited-while-away/.test((await peek(doc, 'card-source', USER_KEY)).body), 5000, '补传');
+  await waitFor(async () => /edited-while-away/.test((await peek(doc, 'card-source', USER_KEY)).body), 5000, 'Catch-up upload');
   it = await peek(doc, 'card-source', USER_KEY);
   assert.equal(it.rev, 2);
 });
 
-test('T8-6 装不上的版本(审查不过)不装,本机原样,给提示;同一版不反复重试', async (t) => {
+test('T8-6 a version that cannot be installed (fails review) is not installed, the local copy stays as is, a notice is shown; the same version is not retried repeatedly', async (t) => {
   const doc = await startDoc(t);
   const A = editor(t, 'a');
   const B = editor(t, 'b');
   A.write(USER_KEY, cardSource('ok'));
   A.bindShared(doc, 'p6', [USER_KEY]);
   B.bindShared(doc, 'p6');
-  await waitFor(() => /ok/.test(B.read(USER_KEY) ?? ''), 5000, 'B 装上');
+  await waitFor(() => /ok/.test(B.read(USER_KEY) ?? ''), 5000, 'B installs it');
   await B.sync.idle();
   // A 把卡改坏(id 变了:用户卡的审查不收)
   A.save(USER_KEY, cardSource('bad').replace('id: "price-tag"', 'id: "other-id"'));
-  const rej = await waitFor(() => B.notices.find((n) => n.type === 'rejected'), 5000, 'B 的拒绝提示');
+  const rej = await waitFor(() => B.notices.find((n) => n.type === 'rejected'), 5000, 'B\'s rejection notice');
   assert.ok(rej.error);
-  assert.match(B.read(USER_KEY), /ok/, 'B 本机原样');
+  assert.match(B.read(USER_KEY), /ok/, 'B\'s local copy unchanged');
   await B.sync.idle();
   assert.equal(B.sync.status().records[USER_KEY].rejected, true);
 });
 
-test('T8-7 本机写过的那一版被别人随后改掉(不是同时改):装别人的新版前也先备份本机那份并提示;本机从没写过的直接装', async (t) => {
+test('T8-7 the version written on this machine is later changed by someone else (not edited at the same time): before installing their new version, first back up the local copy and show a notice; if this machine never wrote it, install directly', async (t) => {
   const doc = await startDoc(t);
   const A = editor(t, 'a');
   const B = editor(t, 'b');
   const C = editor(t, 'c');
   A.write(USER_KEY, cardSource('v1'));
   A.bindShared(doc, 'p7', [USER_KEY]);
-  await waitFor(() => A.sync.status().connected, 3000, 'A 连上');
+  await waitFor(() => A.sync.status().connected, 3000, 'A connected');
   await A.sync.idle();
   B.bindShared(doc, 'p7');
   C.bindShared(doc, 'p7');
-  await waitFor(() => /v1/.test(B.read(USER_KEY) ?? '') && /v1/.test(C.read(USER_KEY) ?? ''), 5000, 'B、C 同步到 v1');
+  await waitFor(() => /v1/.test(B.read(USER_KEY) ?? '') && /v1/.test(C.read(USER_KEY) ?? ''), 5000, 'B and C sync to v1');
   await B.sync.idle();
   await C.sync.idle();
 
   // A 写 v2,等 B、C 都装上(先后分明,不是同时改)
   A.save(USER_KEY, cardSource('v2-from-A'));
-  await waitFor(() => /v2-from-A/.test(B.read(USER_KEY) ?? '') && /v2-from-A/.test(C.read(USER_KEY) ?? ''), 5000, 'B、C 装上 v2');
+  await waitFor(() => /v2-from-A/.test(B.read(USER_KEY) ?? '') && /v2-from-A/.test(C.read(USER_KEY) ?? ''), 5000, 'B and C install v2');
   await B.sync.idle();
   await C.sync.idle();
   assert.equal(A.sync.status().records[USER_KEY].mine, true);
 
   // B 接着改成 v3:最后一次写入者是 A 的那一版被覆盖 → A 先备份 v2-from-A 再装 v3,并提示;C 从没写过这张卡,直接装
   B.save(USER_KEY, cardSource('v3-from-B'));
-  await waitFor(() => /v3-from-B/.test(A.read(USER_KEY) ?? '') && /v3-from-B/.test(C.read(USER_KEY) ?? ''), 5000, 'A、C 装上 v3');
+  await waitFor(() => /v3-from-B/.test(A.read(USER_KEY) ?? '') && /v3-from-B/.test(C.read(USER_KEY) ?? ''), 5000, 'A and C install v3');
   await A.sync.idle();
   await C.sync.idle();
   const ow = A.notices.find((n) => n.type === 'overwritten');
-  assert.ok(ow, `A 有覆盖提示;通知:${JSON.stringify(A.notices)}`);
+  assert.ok(ow, `A has an overwrite notice; notices: ${JSON.stringify(A.notices)}`);
   assert.equal(ow.actor.userId, 'b');
-  assert.match(fs.readFileSync(path.join(A.root, ow.backup), 'utf8'), /v2-from-A/, '备份里是 A 写过的那一版');
-  assert.equal(C.notices.some((n) => n.type === 'overwritten'), false, 'C 从没写过:直接装,不提示');
-  assert.equal(fs.existsSync(path.join(C.root, 'out', 'card-edits')), false, 'C 不备份');
+  assert.match(fs.readFileSync(path.join(A.root, ow.backup), 'utf8'), /v2-from-A/, 'The backup holds the version A wrote');
+  assert.equal(C.notices.some((n) => n.type === 'overwritten'), false, 'C never wrote it: install directly, no notice');
+  assert.equal(fs.existsSync(path.join(C.root, 'out', 'card-edits')), false, 'C makes no backup');
   // A 这时手上是 B 的版本(不再是自己写的):再被 C 改掉就直接装
   assert.equal(A.sync.status().records[USER_KEY].mine, false);
   const before = A.notices.length;
   C.save(USER_KEY, cardSource('v4-from-C'));
-  await waitFor(() => /v4-from-C/.test(A.read(USER_KEY) ?? ''), 5000, 'A 装上 v4');
+  await waitFor(() => /v4-from-C/.test(A.read(USER_KEY) ?? ''), 5000, 'A installs v4');
   await A.sync.idle();
   assert.equal(A.notices.slice(before).some((n) => n.type === 'overwritten'), false);
   // B 的 v3 被 C 覆盖 → B 备份并提示
-  await waitFor(() => B.notices.find((n) => n.type === 'overwritten'), 5000, 'B 的覆盖提示');
+  await waitFor(() => B.notices.find((n) => n.type === 'overwritten'), 5000, 'B\'s overwrite notice');
 });
 
-test('T8-8 断网期间改过、云端也被别人改过的卡:不按最后写的赢,发 conflict(带两份源码)交给冲突合并;「合并」照我这边写回、传上去', async (t) => {
+test('T8-8 a card edited while offline and also edited by someone else in the cloud: no last-write-wins, emit a conflict (carrying both sources) and hand it to conflict merge; "Merge" writes back my version and uploads it', async (t) => {
   const doc = await startDoc(t);
   const A = editor(t, 'a');
   const B = editor(t, 'b');
   A.write(USER_KEY, cardSource('v1'));
   A.bindShared(doc, 'p8', [USER_KEY]);
-  await waitFor(() => A.sync.status().connected, 3000, 'A 连上');
+  await waitFor(() => A.sync.status().connected, 3000, 'A connected');
   await A.sync.idle();
   B.bindShared(doc, 'p8');
-  await waitFor(() => /v1/.test(B.read(USER_KEY) ?? ''), 5000, 'B 同步到 v1');
+  await waitFor(() => /v1/.test(B.read(USER_KEY) ?? ''), 5000, 'B syncs to v1');
   await B.sync.idle();
   // A 断开期间改了这张卡;B 同时在线改了它
   A.sync.unbind('offline');
   A.write(USER_KEY, cardSource('A-offline'));
   B.save(USER_KEY, cardSource('B-online'));
-  await waitFor(async () => /B-online/.test((await peek(doc, 'card-source', USER_KEY)).body), 5000, 'B 的版本落地');
+  await waitFor(async () => /B-online/.test((await peek(doc, 'card-source', USER_KEY)).body), 5000, 'B\'s version lands');
   // A 连回
   A.bindShared(doc, 'p8', [USER_KEY]);
-  const c = await waitFor(() => A.notices.find((n) => n.type === 'conflict'), 5000, 'A 收到 conflict');
+  const c = await waitFor(() => A.notices.find((n) => n.type === 'conflict'), 5000, 'A received conflict');
   await A.sync.idle();
   assert.equal(c.key, USER_KEY);
-  assert.match(c.mine, /A-offline/, '带我这边的源码');
-  assert.match(c.cloud, /B-online/, '带云端的源码');
-  assert.ok(c.backup && fs.existsSync(path.join(A.root, c.backup)), '本机那份另有备份');
-  assert.equal(A.notices.some((n) => n.type === 'overwritten'), false, '不再按最后写的赢说「被覆盖」');
-  assert.match(A.read(USER_KEY), /B-online/, '本机先换成云端的版本(我的在冲突合并里)');
-  assert.match((await peek(doc, 'card-source', USER_KEY)).body, /B-online/, '我的没被悄悄传上去');
+  assert.match(c.mine, /A-offline/, 'Carries my side\'s source');
+  assert.match(c.cloud, /B-online/, 'Carries the cloud\'s source');
+  assert.ok(c.backup && fs.existsSync(path.join(A.root, c.backup)), 'The local copy also has a backup');
+  assert.equal(A.notices.some((n) => n.type === 'overwritten'), false, 'No longer says "overwritten" under last-write-wins');
+  assert.match(A.read(USER_KEY), /B-online/, 'This machine first switches to the cloud version (mine is in the conflict merge)');
+  assert.match((await peek(doc, 'card-source', USER_KEY)).body, /B-online/, 'Mine was not silently uploaded');
   // 「合并」:照我这边写回、传上去,B 装上
   const r = await A.sync.takeMine(USER_KEY, c.mine);
   assert.equal(r.ok, true, JSON.stringify(r));
-  await waitFor(async () => /A-offline/.test((await peek(doc, 'card-source', USER_KEY)).body), 5000, '我的版本传上去');
-  await waitFor(() => /A-offline/.test(B.read(USER_KEY) ?? ''), 5000, 'B 装上我的版本');
+  await waitFor(async () => /A-offline/.test((await peek(doc, 'card-source', USER_KEY)).body), 5000, 'My version is uploaded');
+  await waitFor(() => /A-offline/.test(B.read(USER_KEY) ?? ''), 5000, 'B installs my version');
   // 审查不过的源码:不写、不传
   const bad = await A.sync.takeMine(USER_KEY, 'not a card');
   assert.equal(bad.ok, false);

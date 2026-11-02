@@ -22,12 +22,12 @@ export const randomToken = () => randomBytes(32).toString('base64url');
 export const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 /** 轮询等 pred() 返回真值；超时抛错（带 what 说明）。 */
-export async function waitFor(pred, ms = 3000, what = '条件') {
+export async function waitFor(pred, ms = 3000, what = 'condition') {
   const until = Date.now() + ms;
   for (;;) {
     const v = await pred();
     if (v) return v;
-    if (Date.now() > until) throw new Error(`等${what}超时（${ms} ms）`);
+    if (Date.now() > until) throw new Error(`timed out waiting for ${what} (${ms} ms)`);
     await sleep(5);
   }
 }
@@ -48,7 +48,7 @@ export function wsClient(url, protocols) {
   });
   const opened = new Promise((resolve, reject) => {
     ws.addEventListener('open', resolve, { once: true });
-    ws.addEventListener('error', () => reject(new Error('连接失败')), { once: true });
+    ws.addEventListener('error', () => reject(new Error('Connection failed')), { once: true });
   });
   opened.catch(() => {});
   const closed = new Promise((resolve) => ws.addEventListener('close', (e) => resolve(e), { once: true }));
@@ -67,7 +67,7 @@ export function wsClient(url, protocols) {
         waiters.push(w);
         setTimeout(() => {
           const k = waiters.indexOf(w);
-          if (k >= 0) { waiters.splice(k, 1); reject(new Error(`等消息超时；已收到：${JSON.stringify(all).slice(0, 800)}`)); }
+          if (k >= 0) { waiters.splice(k, 1); reject(new Error(`timed out waiting for a message; received so far: ${JSON.stringify(all).slice(0, 800)}`)); }
         }, ms);
       });
     },
@@ -101,7 +101,7 @@ export async function rawHandshake(port, { protocols, path = '/', host = '127.0.
   if (protocols !== undefined) lines.push(`Sec-WebSocket-Protocol: ${[].concat(protocols).join(', ')}`);
   sock.write(`${lines.join('\r\n')}\r\n\r\n`);
   const head = await new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error('等握手响应超时')), 3000);
+    const t = setTimeout(() => reject(new Error('timed out waiting for the handshake response')), 3000);
     const onData = (d) => {
       buf = Buffer.concat([buf, d]);
       const end = buf.indexOf('\r\n\r\n');
@@ -214,7 +214,7 @@ export function createSleepExecutor({ taskMs = 50 } = {}) {
   const calls = [];
   return {
     calls,
-    plan: async () => { throw Object.assign(new Error('sleep-executor 不算计划'), { retryable: false }); },
+    plan: async () => { throw Object.assign(new Error('sleep-executor does not count as a plan'), { retryable: false }); },
     render(task, { signal, progress }) {
       calls.push(task.id);
       return new Promise((resolve, reject) => {

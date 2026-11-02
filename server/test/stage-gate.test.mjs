@@ -27,7 +27,7 @@ const HMR = { upgrade: true, headers: { 'sec-websocket-protocol': 'vite-hmr' } }
 
 /* ------------------------------------------------------------------ 1. 判据 */
 
-test('白名单里的:舞台页面与脚本、素材、动效素材目录、两条只读接口、热更新的升级', () => {
+test('On the allowlist: stage pages and scripts, media, the motion graphics asset catalog, two read-only endpoints, hot-reload upgrades', () => {
   const allowed = [
     ['GET', '/?stage=1&id=A&preview=stage&dual=1'],
     ['GET', '/'],
@@ -50,18 +50,18 @@ test('白名单里的:舞台页面与脚本、素材、动效素材目录、两�
     ['GET', '/api/cards/scopes'],
     ['GET', '/api/prerender/info'],
   ];
-  for (const [m, u] of allowed) assert.equal(stageRequestAllowed(m, u), true, `${m} ${u} 应该放行`);
-  assert.equal(stageRequestAllowed('GET', '/?token=abc', HMR), true, '热更新的 WebSocket');
+  for (const [m, u] of allowed) assert.equal(stageRequestAllowed(m, u), true, `${m} ${u} should be allowed`);
+  assert.equal(stageRequestAllowed('GET', '/?token=abc', HMR), true, 'hot-reload WebSocket');
   assert.equal(stageRequestAllowed('GET', '/', { upgrade: true, headers: { 'sec-websocket-protocol': 'vite-ping' } }), true);
 });
 
-test('白名单每一条都写了谁用、为什么要,而且全部只读', () => {
+test('every allowlist entry says who uses it and why it is needed, and all of them are read-only', () => {
   assert.ok(STAGE_ALLOW.length > 0);
   for (const rule of STAGE_ALLOW) {
-    assert.ok(typeof rule.who === 'string' && rule.who && typeof rule.why === 'string' && rule.why, `缺说明:${JSON.stringify(rule)}`);
-    assert.ok((rule.exact === undefined) !== (rule.prefix === undefined), `exact / prefix 二选一:${JSON.stringify(rule)}`);
-    if (rule.prefix !== undefined) assert.ok(rule.prefix.startsWith('/') && rule.prefix.endsWith('/') && rule.prefix.length > 1, `前缀要写到斜杠为止,不能是整个根:${rule.prefix}`);
-    assert.ok(rule.methods.every((m) => m === 'GET' || m === 'HEAD'), `白名单里不许有写方法:${JSON.stringify(rule)}`);
+    assert.ok(typeof rule.who === 'string' && rule.who && typeof rule.why === 'string' && rule.why, `missing explanation: ${JSON.stringify(rule)}`);
+    assert.ok((rule.exact === undefined) !== (rule.prefix === undefined), `exactly one of exact / prefix: ${JSON.stringify(rule)}`);
+    if (rule.prefix !== undefined) assert.ok(rule.prefix.startsWith('/') && rule.prefix.endsWith('/') && rule.prefix.length > 1, `a prefix must end at a slash and cannot be the entire root: ${rule.prefix}`);
+    assert.ok(rule.methods.every((m) => m === 'GET' || m === 'HEAD'), `write methods are not allowed in the allowlist: ${JSON.stringify(rule)}`);
   }
 });
 
@@ -114,11 +114,11 @@ const DENIED = [
   ['POST', '/'], ['POST', '/src/main.tsx'], ['PUT', '/server/stage-gate.mjs'], ['DELETE', '/node_modules/x'], ['POST', '/catalog/lottie/x.json'], ['OPTIONS', '/api/cards/scopes'], ['PATCH', '/api/prerender/info'],
 ];
 
-test('有代表性的一批本机接口从舞台端口来一律不放行', () => {
-  for (const [m, u] of DENIED) assert.equal(stageRequestAllowed(m, u), false, `${m} ${u} 不该放行`);
+test('A representative set of local endpoints is never allowed from a stage port', () => {
+  for (const [m, u] of DENIED) assert.equal(stageRequestAllowed(m, u), false, `${m} ${u} should not be allowed`);
 });
 
-test('大小写、重复斜杠、点段、编码过的点和斜杠:都绕不过去', () => {
+test('Case changes, repeated slashes, dot segments, and encoded dots and slashes: none of them get past it', () => {
   const sneaky = [
     ['POST', '/aPi/agent/bind'], ['POST', '/API/AGENT/BIND'], ['POST', '//api/agent/bind'], ['POST', '/api//agent/bind'],
     ['GET', '/src/../package.json'], ['GET', '/src/../out/cookies/bilibili.txt'], ['GET', '/src/..'], ['GET', '/@media/../../docs/local.md'], ['GET', '/catalog/../api/agent/status'],
@@ -127,12 +127,12 @@ test('大小写、重复斜杠、点段、编码过的点和斜杠:都绕不过�
     ['GET', '/src/a.ts%00.png'], ['GET', 'http://127.0.0.1:5190/api/agent/status'], ['GET', 'src/main.tsx'],
     ['GET', '/api/cards/scopes/'], ['GET', '/api/prerender/info/x'], ['GET', '/api/media/files'], ['GET', '/srcx/main.tsx'], ['GET', '/@react-refreshx'],
   ];
-  for (const [m, u] of sneaky) assert.equal(stageRequestAllowed(m, u), false, `${m} ${JSON.stringify(u)} 不该放行`);
+  for (const [m, u] of sneaky) assert.equal(stageRequestAllowed(m, u), false, `${m} ${JSON.stringify(u)} should not be allowed`);
   // 空地址 Node 会当成 "/":那是舞台文档,GET 放行、别的方法不放行
   assert.equal(stageRequestAllowed('POST', undefined), false);
 });
 
-test('WebSocket 升级:只认热更新那一条;文档服务等别的升级不放行;普通请求的白名单不适用于升级', () => {
+test('WebSocket upgrade: only the hot-reload one is recognized; other upgrades such as the document service are not allowed; the allowlist for ordinary requests does not apply to upgrades', () => {
   const proto = (p) => ({ upgrade: true, headers: p === null ? {} : { 'sec-websocket-protocol': p } });
   assert.equal(stageRequestAllowed('GET', '/docservice', proto('promptcut.v1')), false);
   assert.equal(stageRequestAllowed('GET', '/docservice', proto('vite-hmr')), false);
@@ -140,17 +140,17 @@ test('WebSocket 升级:只认热更新那一条;文档服务等别的升级不�
   assert.equal(stageRequestAllowed('GET', '/', proto('promptcut.v1')), false);
   assert.equal(stageRequestAllowed('GET', '/', proto('xvite-hmr')), false);
   assert.equal(stageRequestAllowed('GET', '/src/main.tsx', proto('vite-hmr')), false);
-  assert.equal(stageRequestAllowed('GET', '/', proto('promptcut.v1, vite-hmr')), true, '子协议表里带着热更新那一个');
+  assert.equal(stageRequestAllowed('GET', '/', proto('promptcut.v1, vite-hmr')), true, 'the hot-reload one is in the subprotocol list');
   // 反过来:热更新那条规则不让普通的 POST 混进来
   assert.equal(stageRequestAllowed('POST', '/', HMR), false);
 });
 
-test('服务端源码里写着的每一条 /api 路由,除白名单点名的以外,从舞台端口来都不放行', () => {
+test('Every /api route written in the server source, except those named in the allowlist, is not allowed from a stage port', () => {
   const files = [...fs.readdirSync(path.join(ROOT, 'server')).filter((f) => /^vite-plugin-.*\.ts$/.test(f) || f === 'asset-service.ts' || f === 'asset-client.ts').map((f) => path.join(ROOT, 'server', f)),
     path.join(ROOT, 'server', 'vision', 'routes.ts')];
   const routes = new Set();
   for (const file of files) for (const m of fs.readFileSync(file, 'utf8').matchAll(/["'`](\/api\/[A-Za-z0-9/_-]+)/g)) routes.add(m[1]);
-  assert.ok(routes.size > 100, `扫到的路由太少(${routes.size}),扫描的写法多半失效了`);
+  assert.ok(routes.size > 100, `too few routes found (${routes.size}), the scanning pattern has probably stopped working`);
   const readable = new Set(['/api/media/file', '/api/cards/scopes', '/api/prerender/info']);
   const leaked = [];
   for (const route of routes) {
@@ -160,7 +160,7 @@ test('服务端源码里写着的每一条 /api 路由,除白名单点名的以�
       if (ok !== expected) leaked.push(`${method} ${route} → ${ok}`);
     }
   }
-  assert.deepEqual(leaked, [], '白名单之外的接口被放行了,或者白名单里的被拒了');
+  assert.deepEqual(leaked, [], 'an endpoint outside the allowlist was allowed, or one on the allowlist was rejected');
 });
 
 /* ------------------------------------------------------------------ 2、3. 真的代理 */
@@ -207,7 +207,7 @@ function upgrade(port, p, protocol) {
   });
 }
 
-test('真的起两个舞台端口:白名单外的当场 403、编辑器进程没收到;白名单里的照转;编辑器端口直连不变', { timeout: 60_000 }, async (t) => {
+test('Start two real stage ports: anything outside the allowlist gets 403 on the spot and the editor process never receives it; anything on the allowlist is forwarded as usual; direct connections to the editor port are unchanged', { timeout: 60_000 }, async (t) => {
   const { stagePortsPlugin, dir } = await loadPlugin();
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const base = await freePortRange(3);
@@ -250,7 +250,7 @@ test('真的起两个舞台端口:白名单外的当场 403、编辑器进程没
   t.after(async () => { await viteServer.close(); await new Promise((resolve) => { editor.close(resolve); editor.closeAllConnections?.(); }); });
   // 等两个舞台端口的代理起来(插件在编辑器开始监听之后才起)
   const ports = JSON.parse((await send(base, { path: '/api/stage/ports' })).body);
-  assert.deepEqual(ports.ports, [base + 1, base + 2], '两个舞台端口都起来了');
+  assert.deepEqual(ports.ports, [base + 1, base + 2], 'both stage ports are up');
   seen.length = 0;
   const J = { 'content-type': 'application/json' };
 
@@ -261,28 +261,28 @@ test('真的起两个舞台端口:白名单外的当场 403、编辑器进程没
       ['POST', '/api/media/upload/x.txt'], ['POST', '/api/frames/preload'], ['POST', '/api/export'], ['POST', '/api/mcp/call'], ['POST', '/api/skill/open-path'],
       ['POST', '/api/cards/sync/bind'], ['POST', '/api/render-node/bind'], ['GET', '/api/stage/ports'], ['GET', '/package.json'], ['GET', '/@fs/C:/Windows/win.ini'], ['POST', '/aPi/agent/bind']]) {
       const r = await send(stage, { method, path: url, headers: method === 'GET' ? {} : J, body: method === 'GET' ? undefined : '{"x":1}' });
-      assert.equal(r.status, 403, `${method} ${url} 经舞台端口 ${stage} 应该 403`);
-      assert.equal(r.headers['origin-agent-cluster'], '?1', '被拒的响应也带进程隔离的头(这个头要在这个源的每一个响应上)');
+      assert.equal(r.status, 403, `${method} ${url} via stage port ${stage} should get 403`);
+      assert.equal(r.headers['origin-agent-cluster'], '?1', 'rejected responses also carry the process isolation header (this header must be on every response from this origin)');
       assert.equal(JSON.parse(r.body).ok, false);
     }
-    assert.equal(seen.length, before, '被拒的请求编辑器进程一个都没收到');
+    assert.equal(seen.length, before, 'the editor process received none of the rejected requests');
 
     // 白名单里:照转,带着代理写的头(请求自己伪造的同名头被盖掉)
     for (const url of ['/?stage=1&id=A', '/src/main.tsx', '/api/cards/scopes', '/api/prerender/info', `/@media/${'b'.repeat(64)}`, '/catalog/lottie/bodymovin.json']) {
       const r = await send(stage, { path: url, headers: { [STAGE_CLIENT_HEADER]: '8.8.8.8' } });
-      assert.equal(r.status, 200, `GET ${url} 经舞台端口应该照转`);
+      assert.equal(r.status, 200, `GET ${url} via the stage port should be forwarded as usual`);
       assert.equal(r.headers['origin-agent-cluster'], '?1');
       const got = seen.at(-1);
       assert.equal(got.url, url);
-      assert.equal(got.stage, '127.0.0.1', '编辑器进程看到的是代理写的真实对端');
-      assert.equal(got.host, `127.0.0.1:${stage}`, 'Host 原样转过去');
+      assert.equal(got.stage, '127.0.0.1', 'the editor process sees the real peer written by the proxy');
+      assert.equal(got.host, `127.0.0.1:${stage}`, 'Host is forwarded unchanged');
     }
 
     // 升级:热更新的接上,别的 403、编辑器进程没收到
     const upBefore = upgrades.length;
     assert.equal(await upgrade(stage, '/docservice', 'promptcut.v1'), 403);
     assert.equal(await upgrade(stage, '/', null), 403);
-    assert.equal(upgrades.length, upBefore, '被拒的升级编辑器进程没收到');
+    assert.equal(upgrades.length, upBefore, 'the editor process did not receive the rejected upgrade');
     assert.equal(await upgrade(stage, '/?token=t', 'vite-hmr'), 101);
     assert.equal(upgrades.at(-1).url, '/?token=t');
   }
@@ -290,13 +290,13 @@ test('真的起两个舞台端口:白名单外的当场 403、编辑器进程没
   // 编辑器端口直连:不带那个头,这道闸不管,原样到业务(包括上面被拒的那些)
   for (const [method, url] of [['POST', '/api/agent/bind'], ['PUT', '/api/data/project'], ['POST', '/api/mcp/call'], ['GET', '/package.json'], ['GET', '/api/cards/scopes']]) {
     const r = await send(base, { method, path: url, headers: method === 'GET' ? {} : J, body: method === 'GET' ? undefined : '{"x":1}' });
-    assert.equal(r.status, 200, `${method} ${url} 直连编辑器端口照常`);
+    assert.equal(r.status, 200, `${method} ${url} directly to the editor port works as usual`);
     assert.equal(seen.at(-1).url, url);
     assert.equal(seen.at(-1).stage, null);
-    if (method !== 'GET') assert.equal(seen.at(-1).body, '{"x":1}', '请求体原样');
+    if (method !== 'GET') assert.equal(seen.at(-1).body, '{"x":1}', 'request body unchanged');
     assert.equal(r.headers['origin-agent-cluster'], undefined);
   }
-  assert.equal(await upgrade(base, '/docservice', 'promptcut.v1'), 101, '编辑器端口上的文档服务升级照常');
+  assert.equal(await upgrade(base, '/docservice', 'promptcut.v1'), 101, 'document service upgrades on the editor port work as usual');
 
   // 第二道:带着舞台端口那个头直连编辑器端口,白名单外的编辑器进程自己拒,白名单里的放过
   const before = seen.length;
@@ -306,7 +306,7 @@ test('真的起两个舞台端口:白名单外的当场 403、编辑器进程没
   assert.equal((await send(base, { path: '/src/main.tsx', headers: { [STAGE_CLIENT_HEADER]: '127.0.0.1' } })).status, 200);
 });
 
-test('桌面版舞台锁死：来自舞台的按哈希读素材只放行当前项目 project.media 里的素材，非当前项目回 403', () => {
+test('Desktop app stage lockdown: reading media by hash from the stage is allowed only for media listed in the current project\'s project.media, and media outside the current project gets 403', () => {
   const hashInProject = '1'.repeat(64);
   const hashNotInProject = '2'.repeat(64);
   const hashes = new Set([hashInProject]);
@@ -321,12 +321,12 @@ test('桌面版舞台锁死：来自舞台的按哈希读素材只放行当前�
   assert.equal(stageRequestAllowed('GET', `/@media/${hashNotInProject}/pcm`, { projectMediaHashes: hashes }), false);
 });
 
-test('registerStageAllow:构建清单多给的规则算数,清掉就回到缺省', () => {
+test('registerStageAllow: extra rules supplied by the build manifest count, and clearing them returns to the default', () => {
   const url = '/extra/mod.ts';
   assert.equal(stageRequestAllowed('GET', url), false);
   registerStageAllow([{ methods: ['GET'], prefix: '/extra/', who: '测试', why: '测试' }]);
   assert.equal(stageRequestAllowed('GET', url), true);
-  assert.equal(stageRequestAllowed('POST', url), false, '方法照规则判');
+  assert.equal(stageRequestAllowed('POST', url), false, 'the method is judged by the rule');
   registerStageAllow([]);
   assert.equal(stageRequestAllowed('GET', url), false);
 });

@@ -152,8 +152,8 @@ function clipsProject() {
   return {
     version: 1, id: "p", name: "p", width: 1920, height: 1080, fps: 30, duration: 30, themeId: "midnight", media: [],
     tracks: [{ id: "t1", name: "Track 1", clips: [
-      { id: "c1", cardId: "title", start: 0, end: 2, params: { text: "一" } },
-      { id: "c2", cardId: "title", start: 3, end: 5, params: { text: "二" } },
+      { id: "c1", cardId: "title", start: 0, end: 2, params: { text: "One" } },
+      { id: "c2", cardId: "title", start: 3, end: 5, params: { text: "Two" } },
     ] }],
   };
 }
@@ -178,7 +178,7 @@ test("V5-A edits clips 1 and 2, then B edits clip 2; A undoes: clip 1 reverts, c
   const res = A.ds.undo();
   assert.equal(res.done, true);
   assert.deepEqual(res.skipped.map((s) => [s.entity, s.by.session]), [["/tracks/@t1/clips/@c2", "B"]]);
-  assert.equal(textOf(A.ds.project, "c1"), "一");
+  assert.equal(textOf(A.ds.project, "c1"), "One");
   assert.equal(textOf(A.ds.project, "c2"), "B2");
   svc.drain();
   assertSame(svc, A, B);
@@ -186,7 +186,7 @@ test("V5-A edits clips 1 and 2, then B edits clip 2; A undoes: clip 1 reverts, c
   const last = svc.log[svc.log.length - 1];
   assert.equal(last.session, "A");
   assert.equal(last.undoOf, svc.log[svc.log.length - 3].opId);
-  assert.equal(textOf(B.ds.project, "c1"), "一");
+  assert.equal(textOf(B.ds.project, "c1"), "One");
   // 重做:把撤掉的那一处(片段 1)再做回来
   assert.equal(A.ds.canRedo(), true);
   const redo = A.ds.redo();
@@ -262,7 +262,7 @@ test("V5-an unconfirmed step can also be undone; a new operation after undo clea
   const { svc, A, B } = setupClips();
   A.ds.commit(withText(A.ds.project, "c1", "x"));
   A.ds.undo();
-  assert.equal(textOf(A.ds.project, "c1"), "一");
+  assert.equal(textOf(A.ds.project, "c1"), "One");
   assert.equal(A.ds.canRedo(), true);
   A.ds.commit(withText(A.ds.project, "c2", "y"));
   assert.equal(A.ds.canRedo(), false);
@@ -306,7 +306,7 @@ test("V5-someone else's undo: the picture changes directly, without entering my 
   svc.drain();
   A.ds.undo();
   svc.drain();
-  assert.equal(textOf(B.ds.project, "c1"), "一");
+  assert.equal(textOf(B.ds.project, "c1"), "One");
   assert.equal(B.ds.canUndo(), false);
   assertSame(svc, A, B);
 });
@@ -335,7 +335,7 @@ test("V6-20 edits made while disconnected, applied in order after recovery, only
   const rev0 = svc.rev;
   A.down();
   assert.equal(A.ds.status, "offline");
-  for (let i = 0; i < 20; i++) A.ds.commit(withText(A.ds.project, "c1", `离线 ${i}`));
+  for (let i = 0; i < 20; i++) A.ds.commit(withText(A.ds.project, "c1", `Offline ${i}`));
   assert.equal(svc.rev, rev0);
   A.sent.length = 0;
   A.up();
@@ -346,7 +346,7 @@ test("V6-20 edits made while disconnected, applied in order after recovery, only
   assert.ok(ops.slice(1).every((m) => m.expectRev === undefined));
   assert.equal(svc.rev, rev0 + 20);
   assert.deepEqual(svc.log.slice(-20).map((e) => e.opId), ops.map((m) => m.opId));
-  assert.equal(textOf(svc.project, "c1"), "离线 19");
+  assert.equal(textOf(svc.project, "c1"), "Offline 19");
   assert.equal(A.ds.status, "online");
   assertSame(svc, A, B);
 });
@@ -355,7 +355,7 @@ function offlineConflict() {
   const ctx = setupClips();
   const { svc, A, B } = ctx;
   A.down();
-  for (let i = 0; i < 20; i++) A.ds.commit(withText(A.ds.project, "c1", `离线 ${i}`));
+  for (let i = 0; i < 20; i++) A.ds.commit(withText(A.ds.project, "c1", `Offline ${i}`));
   B.ds.commit(withText(B.ds.project, "c2", "Edited by B while A was offline"));
   svc.drain();
   A.sent.length = 0;
@@ -373,7 +373,7 @@ test("V6-others also edited during the offline period: the first is rejected, th
   assert.equal(info.since[0].session, "B");
   assert.equal(A.sent.filter((m) => m.type === "project.op").length, 1); // 其余 19 条没发
   assert.equal(svc.log.filter((e) => e.session === "A").length, 0);
-  assert.equal(textOf(A.ds.project, "c1"), "离线 19"); // 本地仍是离线时的样子
+  assert.equal(textOf(A.ds.project, "c1"), "Offline 19"); // 本地仍是离线时的样子
 });
 
 test("V6-choose \"replay\": drop the expected revision and commit in order, all three copies match, others' changes are included too", async () => {
@@ -384,7 +384,7 @@ test("V6-choose \"replay\": drop the expected revision and commit in order, all 
   const sessions = svc.log.slice(-21).map((e) => e.session);
   assert.deepEqual(sessions, ["B", ...Array(20).fill("A")]);
   assert.ok(svc.log.slice(-20).every((e) => e.expectRev === undefined));
-  assert.equal(textOf(svc.project, "c1"), "离线 19");
+  assert.equal(textOf(svc.project, "c1"), "Offline 19");
   assert.equal(textOf(svc.project, "c2"), "Edited by B while A was offline");
   assertSame(svc, A, B);
   const settled = await A.ds.whenSettled({ timeoutMs: 100 });
@@ -400,11 +400,11 @@ test("V6-choose \"discard\": first save this batch as a local backup, local reve
   const b = A.backups[0];
   assert.equal(b.kind, "offline-discard");
   assert.equal(b.batch.length, 20);
-  assert.equal(textOf(b.project, "c1"), "离线 19");
+  assert.equal(textOf(b.project, "c1"), "Offline 19");
   assert.equal(A.ds.canUndo(), false);
   svc.drain();
   assert.equal(svc.rev, revBefore);
-  assert.equal(textOf(A.ds.project, "c1"), "一");
+  assert.equal(textOf(A.ds.project, "c1"), "One");
   assertSame(svc, A, B);
 });
 

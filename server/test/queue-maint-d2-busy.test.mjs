@@ -66,16 +66,16 @@ function lockOnBrowser(h, before = []) {
   return { br0, br1 };
 }
 
-test('QM-D-01 node.welcome 带 activeIntervalMs（新队列认 node.active）；间隔远小于接手门槛 30 s', () => {
+test('QM-D-01 node.welcome carries activeIntervalMs (the new queue recognizes node.active); the interval is far smaller than the takeover gate of 30 s', () => {
   const h = createQueueHarness(createRenderQueue);
   const out = h.node('bw', 'node-bw', { profile: 'browser', watch: null, hello: { envFingerprint: B } });
   const w = out.one('bw', 'node.welcome');
   assert.equal(w.activeIntervalMs, NODE_ACTIVE_INTERVAL_MS);
-  assert.ok(NODE_ACTIVE_INTERVAL_MS * 2 < LOCK_IDLE_TAKEOVER_MS, '两次报忙之间锁的闲置远到不了接手门槛');
-  assert.ok(NODE_TYPES.has('node.active'), 'node.active 是节点连接的消息（文档服务按这张表路由给队列）');
+  assert.ok(NODE_ACTIVE_INTERVAL_MS * 2 < LOCK_IDLE_TAKEOVER_MS, 'the idle time of the lock between two busy reports is nowhere near the takeover gate');
+  assert.ok(NODE_TYPES.has('node.active'), 'node.active is a node connection message (the document service routes messages to the queue by this table)');
 });
 
-test('QM-D-02 页面忙：锁着 ck1、手里在做别的（每 10 s 报一次 node.active），60 s 没为 ck1 产出 —— 闲置不涨，切分方不接手', () => {
+test('QM-D-02 page busy: holds the lock on ck1 while working on something else (reports node.active every 10 s), and produces nothing for ck1 for 60 s: the idle time does not grow, and the splitter does not take over', () => {
   const h = setup();
   const own1 = snap('ck1', P, 60);   // 切分方那份在上锁之前就发过（不带 dual，上锁后留着、被锁挡住）
   lockOnBrowser(h, [own1]);
@@ -84,23 +84,23 @@ test('QM-D-02 页面忙：锁着 ck1、手里在做别的（每 10 s 报一次 n
   const r = probe(h);
   assert.equal(r.error, 'card-locked');
   assert.equal(r.lockedBy, B);
-  assert.equal(r.lockIdleMs, 4_000, '从最后一次报忙起算');
-  assert.equal(r.lockUndone, 1, '第二段还没做');
-  assert.equal(takes(r), false, '切分方判不接手');
+  assert.equal(r.lockIdleMs, 4_000, 'counted from the last busy report');
+  assert.equal(r.lockUndone, 1, 'the second segment is not done yet');
+  assert.equal(takes(r), false, 'the splitter decides not to take over');
   // 认领回包那条路（切分方拿着旧视图来认领被锁的卡）同样按报忙算
   const rej = h.claim('pc', own1.id, 1).one('pc', 'task.claim-rejected');
   assert.deepEqual([rej.reason, rej.lockIdleMs], ['card-locked', 4_000]);
-  assert.equal(h.describe().locks.find((l) => l.lockKey === 'snapshot:ck1').envFingerprint, B, '锁仍在浏览器上');
+  assert.equal(h.describe().locks.find((l) => l.lockKey === 'snapshot:ck1').envFingerprint, B, 'The lock is still on the browser');
 });
 
-test('QM-D-03 页面断开：报过的忙立即不作数，闲置按最后一次产出算，超 30 s 照旧接手', () => {
+test('QM-D-03 page disconnects: busy reports already made stop counting immediately, idle time is counted from the last output, and takeover still happens after 30 s', () => {
   const h = setup();
   lockOnBrowser(h);
   for (let i = 0; i < 4; i++) { h.advance(NODE_ACTIVE_INTERVAL_MS); active(h, 'bw'); }
   h.disconnect('bw');
   const r = probe(h);
-  assert.equal(r.lockIdleMs, 4 * NODE_ACTIVE_INTERVAL_MS, '断开之后只看产出（40 s 前完成的那一段）');
-  assert.equal(takes(r), true, '照旧接手');
+  assert.equal(r.lockIdleMs, 4 * NODE_ACTIVE_INTERVAL_MS, 'after the disconnect only output counts (the segment completed 40 s ago)');
+  assert.equal(takes(r), true, 'takes over as before');
   // 宽限期内重连回来又报忙：重新作数（页面没走）
   h.node('bw2', 'node-bw', { profile: 'browser', watch: ['p1'], hello: { envFingerprint: B } });
   active(h, 'bw2');
@@ -108,7 +108,7 @@ test('QM-D-03 页面断开：报过的忙立即不作数，闲置按最后一次
   assert.equal(probe(h).lockIdleMs, 1_000);
 });
 
-test('QM-D-04 页面连着但不再报忙（闲着、隐藏、只是在播放）：从最后一次报忙起算，超 30 s 照旧接手', () => {
+test('QM-D-04 page connected but no longer reports busy (idle, hidden, or just playing): counted from the last busy report, and takeover still happens after 30 s', () => {
   const h = setup();
   lockOnBrowser(h);
   h.advance(NODE_ACTIVE_INTERVAL_MS);
@@ -116,20 +116,20 @@ test('QM-D-04 页面连着但不再报忙（闲着、隐藏、只是在播放）
   h.advance(30_000);
   const at30 = probe(h);
   assert.equal(at30.lockIdleMs, 30_000);
-  assert.equal(takes(at30), false, '严格超过 30 s 才接手');
+  assert.equal(takes(at30), false, 'takes over only when strictly over 30 s');
   h.advance(1);
   const r = probe(h);
   assert.equal(r.lockIdleMs, 30_001);
   assert.equal(takes(r), true);
 });
 
-test('QM-D-05 页面忙完回来接着做 ck1：锁续上（仍在 B 上、闲置归零、记的节点仍是它），之后再忙照样不被接手', () => {
+test('QM-D-05 the page finishes being busy and comes back to continue ck1: the lock continues (still on B, idle reset to zero, the recorded node is still it), and being busy again afterwards still does not get it taken over', () => {
   const h = setup();
   const { br1 } = lockOnBrowser(h);
   for (let i = 0; i < 5; i++) { h.advance(NODE_ACTIVE_INTERVAL_MS); active(h, 'bw'); }
   h.advance(2_000);
   const c = h.claim('bw', br1.id, 1).one('bw', 'task.claimed');
-  assert.ok(c, '浏览器照常认领到第二段');
+  assert.ok(c, 'the browser claims the second segment as usual');
   const r0 = probe(h);
   assert.deepEqual([r0.lockedBy, r0.lockIdleMs], [B, 0]);
   h.advance(25_000);
@@ -137,13 +137,13 @@ test('QM-D-05 页面忙完回来接着做 ck1：锁续上（仍在 B 上、闲�
   h.advance(20_000);
   active(h, 'bw', 'stage');
   h.advance(3_000);
-  assert.equal(probe(h).lockIdleMs, 3_000, '续约记下了节点，之后的报忙照样作数');
+  assert.equal(probe(h).lockIdleMs, 3_000, 'the renewal recorded the node, so later busy reports still count');
   h.complete('bw', br1.id, c.token, {});
   const done = probe(h);
   assert.deepEqual([done.lockIdleMs, done.lockUndone], [0, 0]);
 });
 
-test('QM-D-06 旧页面（不报 node.active）：回包与改动前的算法（此刻减最后一次产出）一致，连着也照旧接手', () => {
+test('QM-D-06 old page (does not report node.active): the reply matches the algorithm from before the change (now minus the last output), and takeover still happens even while connected', () => {
   const h = setup();
   lockOnBrowser(h);
   const seen = [];
@@ -151,21 +151,21 @@ test('QM-D-06 旧页面（不报 node.active）：回包与改动前的算法（
     h.advance(step);
     const r = probe(h);
     seen.push(r.lockIdleMs);
-    assert.equal(r.lockIdleMs, h.now() - T0, '最后一次产出在 T0（完成第一段）');
+    assert.equal(r.lockIdleMs, h.now() - T0, 'the last output was at T0 (the first segment completed)');
   }
   assert.deepEqual(seen, [5_000, 15_000, 30_000, 30_001, 60_001]);
-  assert.equal(h.nodeInfo('node-bw').connected, true, '旧页面一直连着');
-  assert.equal(takes(probe(h)), true, '连着也照旧接手（行为同改动之前）');
+  assert.equal(h.nodeInfo('node-bw').connected, true, 'the old page stays connected');
+  assert.equal(takes(probe(h)), true, 'takes over as before even while connected (same behavior as before the change)');
   assert.equal('activeAt' in h.nodeInfo('node-bw'), false);
 });
 
-test('QM-D-07 别的节点报忙不作数：同指纹、同用户的另一个页面；换了指纹重新报到的原节点', () => {
+test('QM-D-07 busy reports from other nodes do not count: another page with the same fingerprint and the same user; the original node that checked in again with a changed fingerprint', () => {
   const h = setup();
   lockOnBrowser(h);
   h.node('bw2', 'node-bw2', { profile: 'browser', watch: ['p1'], hello: { envFingerprint: B } });
   h.node('bw3', 'node-bw3', { profile: 'browser', userId: 'u2', watch: ['p1'], hello: { envFingerprint: B } });
   for (let i = 0; i < 4; i++) { h.advance(NODE_ACTIVE_INTERVAL_MS); active(h, 'bw2'); active(h, 'bw3'); }
-  assert.equal(probe(h).lockIdleMs, 40_000, '锁记的是 node-bw，别的节点报忙不算');
+  assert.equal(probe(h).lockIdleMs, 40_000, 'the lock is recorded for node-bw; busy reports from other nodes do not count');
   // node-bw 换了指纹重新报到：它再报忙也不作数（锁在 B 上，它已不是 B 的环境）
   h.hello('bw', 'node-bw', { profile: 'browser', envFingerprint: X });
   active(h, 'bw');
@@ -173,12 +173,12 @@ test('QM-D-07 别的节点报忙不作数：同指纹、同用户的另一个页
   assert.equal(probe(h).lockIdleMs, 41_000);
 });
 
-test('QM-D-08 node.active 的格式：busy 不是字符串或超过 32 字回 bad-message；没报到的连接回 not-registered；成功不回包', () => {
+test('QM-D-08 format of node.active: busy that is not a string or is over 32 characters returns bad-message; a connection that has not checked in returns not-registered; success sends no reply', () => {
   const h = setup();
   const ok = active(h, 'bw', 'bake');
-  assert.deepEqual(ok.types('bw'), [], '成功不回包');
+  assert.deepEqual(ok.types('bw'), [], 'success sends no reply');
   const none = h.handle('bw', { type: 'node.active', reqId: 'r1' });
-  assert.deepEqual(none.types('bw'), [], '不带 busy 也收；带了 reqId 也不回');
+  assert.deepEqual(none.types('bw'), [], 'accepted without busy too; no reply even with a reqId');
   for (const busy of [1, true, {}, 'x'.repeat(33)]) {
     const out = h.handle('bw', { type: 'node.active', busy, reqId: 'r2' });
     const e = out.one('bw', 'error');
@@ -189,7 +189,7 @@ test('QM-D-08 node.active 的格式：busy 不是字符串或超过 32 字回 ba
   assert.equal(out.one('p2', 'error').reason, 'not-registered');
 });
 
-test('QM-D-09 describe：报过忙的节点多 activeAt / activeBusy，别的节点形状不变', () => {
+test('QM-D-09 describe: a node that has reported busy gets extra activeAt / activeBusy, other nodes keep the same shape', () => {
   const h = setup();
   h.advance(1_234);
   active(h, 'bw', 'stage');
@@ -236,7 +236,7 @@ function pcSplitter(env, cardPlan) {
   return local;
 }
 
-test('QM-D-10 进程内：浏览器锁着卡、手里忙别的 60 s（报忙、不产出）—— 新一版计划不被 pc 接手；浏览器断开后再下一版被 pc 接手', async () => {
+test('QM-D-10 in-process: the browser holds the lock on a card and is busy with something else for 60 s (reports busy, produces no output): the new plan version is not taken over by pc; after the browser disconnects, the version after that is taken over by pc', async () => {
   const env = inproc();
   const a = control('a', 'ck-a', 120);
   const pc = pcSplitter(env, [a]);
@@ -265,13 +265,13 @@ test('QM-D-10 进程内：浏览器锁着卡、手里忙别的 60 s（报忙、�
   page.send({ type: 'task.publish', tasks: [plan2] });
   pc.tick();
   await flush();
-  assert.ok(env.of('pc', 'task.claimed').some((m) => m.id === plan2.id), '第二版计划由 pc 认领、切分过');
+  assert.ok(env.of('pc', 'task.claimed').some((m) => m.id === plan2.id), 'The second version of the plan was claimed and split by pc');
   let d = env.q.describe();
-  assert.equal(d.locks.find((l) => l.lockKey === 'snapshot:ck-a').envFingerprint, B, '页面只是忙：锁仍在浏览器上');
-  assert.equal(d.tasks.find((t) => t.id === brTasks[1].id).state, 'open', '浏览器那份第二段还在，等它回来做');
-  assert.equal(d.tasks.find((t) => t.id === brTasks[0].id).state, 'done', '已做的那段不白费');
+  assert.equal(d.locks.find((l) => l.lockKey === 'snapshot:ck-a').envFingerprint, B, 'the page is merely busy: the lock stays with the browser');
+  assert.equal(d.tasks.find((t) => t.id === brTasks[1].id).state, 'open', 'the second segment copy of the browser is still open, waiting for it to come back and do it');
+  assert.equal(d.tasks.find((t) => t.id === brTasks[0].id).state, 'done', 'the segment already done is not wasted');
   assert.ok(!env.log.slice(mark).some((e) => e.connId === 'pc' && e.m.type === 'task.published' && e.m.results.some((r) => r.created && r.id.includes(rk('ck-a', P)))),
-    'pc 没按自己的指纹另起一套键');
+    'pc did not start a separate set of keys under its own fingerprint');
 
   // 浏览器走了：断开，宽限期过后下一版计划由 pc 接手整张卡
   env.q.disconnect('br');
@@ -282,7 +282,7 @@ test('QM-D-10 进程内：浏览器锁着卡、手里忙别的 60 s（报忙、�
   pc.tick();
   await flush();
   d = env.q.describe();
-  assert.equal(d.locks.find((l) => l.lockKey === 'snapshot:ck-a').envFingerprint, P, '页面走了：锁转给 pc');
+  assert.equal(d.locks.find((l) => l.lockKey === 'snapshot:ck-a').envFingerprint, P, 'the page is gone: the lock is handed to pc');
   assert.equal(d.tasks.find((t) => t.id === brTasks[1].id).lastError, 'superseded');
   pc.stop();
   await pc.settled();

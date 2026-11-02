@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 
-test("LANBOOT-1 那两个面板里不许再有顶层注册", () => {
+test("LANBOOT-1 those two panels must no longer contain a top-level registration", () => {
   // 原来的写法是文件顶层 `if (!ONLINE) { setDefaultLanMemberSource(...) }`，谁 import 到就注册。
   // 它靠巧合生效：2026-10-28 的审查算过 import 闭包 —— 从 `src/mobile/MobileApp.tsx` 出发这两个
   // 面板**都不在闭包里**，而 `src/mobile/useMembers.ts` 就在调 `getMemberSource()`。
@@ -31,34 +31,34 @@ test("LANBOOT-1 那两个面板里不许再有顶层注册", () => {
     const src = read(rel);
     assert.ok(
       !src.includes(fn + "("),
-      rel + " 里又出现了 " + fn + "(…)。局域网缺省实现要在入口注册" +
-        "（src/editor/sync/lanBoot.ts），不许放在模块顶层顺带注册。",
+      rel + " again contains " + fn + "(…). The LAN default implementation must be registered at the entry point" +
+        " (src/editor/sync/lanBoot.ts), never at module top level as a side effect.",
     );
   }
 });
 
-test("LANBOOT-2 入口里确实注册了，而且带在线判据", () => {
+test("LANBOOT-2 the entry point does register it, and with the online condition", () => {
   const main = read("src/main.tsx");
-  assert.ok(main.includes("registerLanDefaults"), "src/main.tsx 里没有调 registerLanDefaults()");
+  assert.ok(main.includes("registerLanDefaults"), "registerLanDefaults() is not called in src/main.tsx");
   assert.ok(
     main.includes("if (!ONLINE) registerLanDefaults()"),
-    "入口那一行要带 ONLINE 判据：在线浏览器模式里没有局域网，" +
-      "成员与加入由云端那张表注册的真实现负责",
+    "The entry line must carry the ONLINE condition: there is no LAN in online browser mode, " +
+      "members and joining are handled by the real implementation registered by the cloud table",
   );
 });
 
-test("LANBOOT-3 lanBoot 自己：两个源都注册、而且幂等", () => {
+test("LANBOOT-3 lanBoot itself: both sources are registered, and idempotently", () => {
   const src = read("src/editor/sync/lanBoot.ts");
   for (const fn of ["setDefaultLanMemberSource", "setDefaultLanJoinSource"]) {
-    assert.ok(src.includes(fn + "("), "lanBoot.ts 没有注册 " + fn + " —— 少一个，那一侧就退回不可用的缺省");
+    assert.ok(src.includes(fn + "("), "lanBoot.ts does not register " + fn + ": if one is missing, that side falls back to the unusable default");
   }
   assert.ok(
     src.includes("if (registered) return;"),
-    "lanBoot.ts 少了幂等守卫：入口之外要是有人再调一次，会把已经注册好的实现换成新构造的一份",
+    "lanBoot.ts is missing the idempotency guard: if anyone calls it again outside the entry point, it would replace the already registered implementations with a newly constructed one",
   );
 });
 
-test("LANBOOT-4 core → lan 只许有入口那一条边", () => {
+test("LANBOOT-4 core → lan may have only the one edge from the entry point", () => {
   // Lite 版（只有本地、没有局域网）要从社区版裁出来、不另开仓库，所以方向规则是 core 不许 import lan。
   // **这一轮不立闸门**（用户说 Lite 构建与检查等拆完两仓之后再加），但入口那一条边是故意留的、
   // 也是 Lite 要剪的那一刀，所以至少钉住「它确实只在入口」。
@@ -83,8 +83,8 @@ test("LANBOOT-4 core → lan 只许有入口那一条边", () => {
   assert.deepEqual(
     lanBootImporters.sort(),
     ["src/editor/sync/lanBoot.ts", "src/main.tsx"],
-    "lanBoot 只该被入口 src/main.tsx 引（它自己不算）。多出来的那些是新的 core → lan 边，" +
-      "Lite 要剪的刀会变多 —— 要用局域网的东西，从这里注册进去的接缝拿。",
+    "lanBoot should be imported only by the entry point src/main.tsx (itself excluded). The extra ones are new core → lan edges, " +
+      "and Lite would have more cuts to make: to use LAN features, go through the seam registered from here.",
   );
 });
 

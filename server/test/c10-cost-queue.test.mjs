@@ -44,7 +44,7 @@ function rig() {
   };
 }
 
-test('CQ-01 已被认领的 backfill 遇到 normal 发布升为 normal;租约过期回到 open 时按 normal 排在别的 backfill 前面', () => {
+test('CQ-01 a claimed backfill that meets a normal publish is promoted to normal; when the lease expires and it returns to open, it is queued as normal ahead of other backfills', () => {
   const r = rig();
   r.publish([fineTask('b-old', 'backfill')]);
   r.tick(10);
@@ -61,13 +61,13 @@ test('CQ-01 已被认领的 backfill 遇到 normal 发布升为 normal;租约过
   r.tick(31_000);
   const reopened = r.take('node').filter((m) => m.type === 'task.opened').map((m) => m.task);
   const again = reopened.find((t) => t.id === b1.id);
-  assert.ok(again, `租约过期回到 open:${JSON.stringify(r.q.describe().tasks.map((t) => [t.id, t.state]))}`);
+  assert.ok(again, `Lease expired, returned to open:${JSON.stringify(r.q.describe().tasks.map((t) => [t.id, t.state]))}`);
   assert.equal(priorityBand(again.priority), 'normal');
   const view = [opened.find((t) => t.resultKey === 'b-old'), again];
   assert.deepEqual(rankCandidates(view).map((t) => t.resultKey), ['b1', 'b-old']);
 });
 
-test('CQ-02 已完成的 backfill 遇到 normal 发布:不另起任务,发布方收到 task.done', () => {
+test('CQ-02 a completed backfill that meets a normal publish: no new task is started, and the publisher receives task.done', () => {
   const r = rig();
   r.publish([fineTask('d1', 'backfill')]);
   const t = r.take('node').find((m) => m.type === 'task.opened').task;
@@ -77,18 +77,18 @@ test('CQ-02 已完成的 backfill 遇到 normal 发布:不另起任务,发布方
   const doneState = r.q.describe().tasks.find((x) => x.id === t.id)?.state;
   if (doneState !== 'done') {
     // complete 的字段名随队列契约;没完成就把回包打出来
-    assert.fail(`没完成:${JSON.stringify(r.take('node'))}`);
+    assert.fail(`Not completed:${JSON.stringify(r.take('node'))}`);
   }
   r.take('pub');
   r.q.handle('pub', { type: 'task.publish', tasks: [fineTask('d1', 'normal')], reqId: 'again' });
   const msgs = r.take('pub');
   assert.equal(msgs.find((m) => m.type === 'task.published').results[0].created, false);
-  assert.ok(msgs.some((m) => m.type === 'task.done' && m.id === t.id), '发布方收到 task.done');
-  assert.equal(r.take('node').filter((m) => m.type === 'task.opened').length, 0, '没有重新开放');
+  assert.ok(msgs.some((m) => m.type === 'task.done' && m.id === t.id), 'The publisher receives task.done');
+  assert.equal(r.take('node').filter((m) => m.type === 'task.opened').length, 0, 'Not reopened');
   assert.equal(r.q.describe().tasks.filter((x) => x.id === t.id).length, 1);
 });
 
-test('CQ-03 normal 档内整数名次高的先认;normal 字符串与缺省算名次 0;backfill 在所有 normal 之后', () => {
+test('CQ-03 within the normal tier, the higher integer rank is claimed first; the normal string and the default count as rank 0; backfill comes after all normal', () => {
   const r = rig();
   r.publish([fineTask('bf', 'backfill')]); r.tick(1);
   r.publish([fineTask('n0')]); r.tick(1);

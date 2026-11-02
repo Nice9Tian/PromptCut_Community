@@ -63,7 +63,7 @@ async function run(opts = {}) {
  * 以前任何一次被拒都触发文本协议重试:整轮已经做完、答复也写好了,又吞掉 done 从头重跑 ——
  * 诊断报告 对话诊断-20260910-234339 的 #7 #13 #15 都是这么在最后一步报错的。
  */
-test('只有自带工具被拒:照常结束,不重跑', async () => {
+test('Only the built-in tools were denied: finish normally, no rerun', async () => {
   script = [];
   resultExtra = { permission_denials: [
     { tool_name: 'Grep', tool_use_id: 't1', tool_input: {} },
@@ -72,66 +72,66 @@ test('只有自带工具被拒:照常结束,不重跑', async () => {
   try {
     const { events, spawnCount } = await run();
     assert.equal(spawnCount, 1);
-    assert.ok(!events.some((e) => e.type === 'status' && /文本协议/.test(e.text)));
+    assert.ok(!events.some((e) => e.type === 'status' && /text protocol/.test(e.text)));
     assert.equal(events.filter((e) => e.type === 'done').length, 1);
   } finally { resultExtra = {}; }
 });
 
-test('PromptCut 自己的工具被拒:改走文本协议重试', async () => {
+test('PromptCut\'s own tools were denied: retry via the text protocol', async () => {
   script = [];
   resultExtra = { permission_denials: [{ tool_name: 'mcp__promptcut__get_project', tool_use_id: 't1', tool_input: {} }] };
   try {
     const { events, spawnCount } = await run();
     assert.equal(spawnCount, 2);
-    assert.ok(events.some((e) => e.type === 'status' && /改用文本协议重试/.test(e.text)));
-    assert.equal(events.filter((e) => e.type === 'done').length, 1, '第一轮的 done 被吞掉,只剩重试那一轮的');
+    assert.ok(events.some((e) => e.type === 'status' && /retrying with the text protocol/.test(e.text)));
+    assert.equal(events.filter((e) => e.type === 'done').length, 1, 'The first round\'s done is swallowed, only the retry round\'s remains');
   } finally { resultExtra = {}; }
 });
 
-test('系统提示词进文件,不进命令行;命令行长度和提示词大小无关', async () => {
+test('The system prompt goes into a file, not the command line; command line length is independent of prompt size', async () => {
   script = [];
   const big = 'x'.repeat(49000);
   const { args, promptText } = await run({ systemPrompt: big });
-  assert.ok(!args.includes('--append-system-prompt'), '不该再用把整段塞进参数的那个标志');
-  assert.ok(!args.some((a) => a.includes(big)), '提示词不该出现在任何命令行参数里');
-  assert.ok(promptText && promptText.includes(big), 'CLI 启动时文件里就该是整段系统提示词');
-  assert.ok(args.join(' ').length < WINDOWS_CMDLINE_LIMIT / 2, '命令行只剩标志和工具白名单');
+  assert.ok(!args.includes('--append-system-prompt'), 'Must no longer use the flag that stuffs the whole text into an argument');
+  assert.ok(!args.some((a) => a.includes(big)), 'The prompt must not appear in any command line argument');
+  assert.ok(promptText && promptText.includes(big), 'When the CLI starts, the file must already hold the whole system prompt');
+  assert.ok(args.join(' ').length < WINDOWS_CMDLINE_LIMIT / 2, 'The command line holds only flags and the tool allowlist');
 });
 
-test('系统提示词后面带着自带工具的对照表', async () => {
+test('The system prompt is followed by a mapping table for the built-in tools', async () => {
   script = [];
-  const { promptText } = await run({ systemPrompt: '主提示词' });
-  assert.match(promptText, /^主提示词/);
-  assert.match(promptText, /自带的那套工具/);
+  const { promptText } = await run({ systemPrompt: 'Main prompt' });
+  assert.match(promptText, /^Main prompt/);
+  assert.match(promptText, /built-in tools/);
   assert.match(promptText, /cardUrl/);
   assert.match(promptText, /collect_search/);
 });
 
-test('跑完把临时文件删掉', async () => {
+test('Delete the temp file after the run', async () => {
   script = [];
   const { promptFile } = await run();
   assert.ok(promptFile);
-  assert.ok(!fs.existsSync(promptFile), `临时文件该删掉了:${promptFile}`);
+  assert.ok(!fs.existsSync(promptFile), `The temp file should have been deleted: ${promptFile}`);
 });
 
 /*
  * 并行调用同名工具时,结果要按 tool_use_id 对回去。以前不带 callId,界面按名字配对,
  * 四个并行的 see_frames 结果全错位(诊断报告 7939–7979 行:传 A 的调用下面挂着 D 的结果)。
  */
-test('tool_call / tool_result 带 callId', async () => {
+test('tool_call / tool_result carry callId', async () => {
   script = [
     { type: 'assistant', message: { content: [
       { type: 'tool_use', id: 'tu_1', name: 'mcp__promptcut__see_frames', input: { mediaId: 'a' } },
       { type: 'tool_use', id: 'tu_2', name: 'mcp__promptcut__see_frames', input: { mediaId: 'b' } },
     ] } },
     { type: 'user', message: { content: [
-      { type: 'tool_result', tool_use_id: 'tu_2', content: 'B 的结果' },
-      { type: 'tool_result', tool_use_id: 'tu_1', content: 'A 的结果' },
+      { type: 'tool_result', tool_use_id: 'tu_2', content: 'B\'s result' },
+      { type: 'tool_result', tool_use_id: 'tu_1', content: 'A\'s result' },
     ] } },
   ];
   const { events } = await run();
   const calls = events.filter((e) => e.type === 'tool_call');
   const results = events.filter((e) => e.type === 'tool_result');
   assert.deepEqual(calls.map((c) => c.callId), ['tu_1', 'tu_2']);
-  assert.deepEqual(results.map((r) => [r.callId, r.summary]), [['tu_2', 'B 的结果'], ['tu_1', 'A 的结果']]);
+  assert.deepEqual(results.map((r) => [r.callId, r.summary]), [['tu_2', 'B\'s result'], ['tu_1', 'A\'s result']]);
 });

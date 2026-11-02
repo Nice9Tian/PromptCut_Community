@@ -7,9 +7,9 @@ function C({ params, t = 0 }: CardProps<Params>) {
   return <div style={{ position: "absolute", inset: 0, opacity: tween(t, { duration: 0.4 }) }}>{params.text}{typeof lottie}</div>;
 }
 export const card: CardDef<Params> = {
-  id: "rs-bad-import", name: "名单之外的模块", description: "remotion 式的规矩的违规样例", source: "user",
+  id: "rs-bad-import", name: "Module outside the list", description: "Violation example of the remotion-style rules", source: "user",
   frameMode: "direct",
   defaults: { text: "" },
-  controls: [{ key: "text", label: "文字", type: "text" }],
+  controls: [{ key: "text", label: "Text", type: "text" }],
   Component: C,
 };

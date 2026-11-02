@@ -17,15 +17,15 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "../../..");
 
-test("EVL-01 syncManager.ts 里每一条 events.list 消息都带 projectId", () => {
+test("EVL-01 every events.list message in syncManager.ts carries projectId", () => {
   const src = fs.readFileSync(path.join(here, "syncManager.ts"), "utf8");
   // 找出所有 `{ type: 'events.list' ... }` 对象字面量(到同一层的右花括号为止)
   const sends = [...src.matchAll(/\{\s*type:\s*["']events\.list["'][^}]*\}/g)].map((m) => m[0]);
-  assert.ok(sends.length >= 4, `找到的 events.list 消息太少(${sends.length}),源码改了写法就更新这条测试`);
-  for (const s of sends) assert.match(s, /projectId\s*:/, `这条 events.list 没带 projectId:${s}`);
+  assert.ok(sends.length >= 4, `too few events.list messages found (${sends.length}); if the source's style changed, update this test`);
+  for (const s of sends) assert.match(s, /projectId\s*:/, `this events.list does not carry projectId: ${s}`);
 });
 
-test("EVL-02 文档服务的 events.list:不带 projectId 回 bad-message,带了回 events.listing", async () => {
+test("EVL-02 the document service's events.list: without projectId it returns bad-message, with it returns events.listing", async () => {
   const { eventsModule } = await import(pathToFileURL(path.join(root, "server/docservice/modules/events.mjs")).href);
   const m = eventsModule({ project: { publishToProject: () => {} } });
   const sent = [];

@@ -59,7 +59,7 @@ const HOST_PORT = Number(flagArg('host-port', '0', args)) || 0;
 const OUT = path.resolve(flagArg('out', null, args) || path.join(os.tmpdir(), `pc-stream-origin-probe-${Date.now().toString(36)}`));
 if (GROUP) process.env.PROMPTCUT_STREAM_DECODERS = '1';
 process.env.PROMPTCUT_STREAM_POOL = '1';
-if (!ORIGIN && !PORT) { console.error('要给 --origin <dev server> 或 --port <自己起一台>'); process.exit(2); }
+if (!ORIGIN && !PORT) { console.error('Pass --origin <dev server> or --port <start your own>'); process.exit(2); }
 
 const FPS = 30, WIDTH = 1280, HEIGHT = 720, DURATION = 6;
 /** 两张卡在时间轴上的帧(闭区间)。入点、出点按秒写,落在两帧之间(帧号除以 30 多数不是有限小数,直接换成秒会差一帧) */
@@ -68,7 +68,7 @@ const CLIPS = {
   'clip-a': { frames: [100, 149], start: 3.32, end: 4.99, frame: { x: 0, y: 40, w: WIDTH, h: 300 } },
 };
 const PROJECT = {
-  id: 'stream-origin-probe', name: '流的分段起点探针', width: WIDTH, height: HEIGHT, fps: FPS, duration: DURATION,
+  id: 'stream-origin-probe', name: 'Stream segment origin probe', width: WIDTH, height: HEIGHT, fps: FPS, duration: DURATION,
   themeId: 'dark', media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
   // 第一条序列在最上面;两条相邻,中间没有别的层(组流只合并相邻的)
   tracks: [
@@ -87,7 +87,7 @@ async function until(label, fn, timeoutMs, everyMs = 500) {
     let value = null;
     try { value = await fn(); } catch { value = null; }
     if (value) return value;
-    if (Date.now() > deadline) { fails.push(`超时:${label}`); return null; }
+    if (Date.now() > deadline) { fails.push(`Timeout: ${label}`); return null; }
     await sleep(everyMs);
   }
 }
@@ -102,7 +102,7 @@ function frameStore() {
     rgba(frame) {
       if (cache.has(frame)) return cache.get(frame);
       const data = decodePngRgba(png.get(frame))?.data;
-      if (!data) throw new Error(`解不开第 ${frame} 帧的参照`);
+      if (!data) throw new Error(`Could not resolve the reference for frame ${frame}`);
       cache.set(frame, data);
       if (cache.size > 48) cache.delete(cache.keys().next().value);
       return data;
@@ -197,13 +197,13 @@ try {
   pipeline.readyIndex.subscribe((message) => { if (message.type === 'layer' && message.kind === 'stream') layerLog.push(message); });
   const t0 = Date.now();
   await pipeline.preload(PROJECT);
-  const status = await until('全部分段满密度', () => {
+  const status = await until('all segments at full density', () => {
     const s = producer.status();
     if (!s.streams.length) return null;
     for (const row of s.streams) for (let n = row.firstSegment; n <= row.lastSegment; n++) if (row.segments[n]?.stride !== 1) return null;
     return !producer.workers.size && !producer.encoding.size ? s : null;
   }, 900_000, 500);
-  if (!status) throw new Error(`生产没做完:${JSON.stringify(producer.status().log.slice(-8))}`);
+  if (!status) throw new Error(`production did not finish: ${JSON.stringify(producer.status().log.slice(-8))}`);
   out.produceMs = Date.now() - t0;
   out.encoder = status.encoder;
   const states = [...producer.streams.values()];
@@ -213,7 +213,7 @@ try {
   const expectStreams = GROUP
     ? [{ kind: 'group', clipIds: ['clip-b', 'clip-a'], origin: 40, last: 149 }]
     : [{ kind: 'card', clipIds: ['clip-a'], origin: 100, last: 149 }, { kind: 'card', clipIds: ['clip-b'], origin: 40, last: 129 }];
-  check(states.length === expectStreams.length, `有 ${expectStreams.length} 条流`, states.map((s) => `${s.spec.kind}:${s.spec.clipIds.join('+')}`));
+  check(states.length === expectStreams.length, `has ${expectStreams.length} streams`, states.map((s) => `${s.spec.kind}:${s.spec.clipIds.join('+')}`));
   const byClip = new Map();
   for (const m of layerLog) byClip.set(m.clipId, m);
   const layers = [...byClip.values()];
@@ -226,16 +226,16 @@ try {
   for (const want of expectStreams) {
     const state = states.find((s) => s.spec.kind === want.kind && [...s.spec.clipIds].sort().join() === [...want.clipIds].sort().join());
     const tag = `${want.kind}:${want.clipIds.join('+')}`;
-    if (!check(!!state, `${tag}:有这条流`)) continue;
+    if (!check(!!state, `${tag}: has this stream`)) continue;
     const { spec, manifest } = state;
     const lastSegment = Math.floor((want.last - want.origin) / STREAM_SEGMENT_FRAMES);
     check(spec.originFrame === want.origin && spec.firstFrame === want.origin && spec.lastFrame === want.last && spec.firstSegment === 0 && spec.lastSegment === lastSegment,
-      `${tag}:第一帧 ${want.origin}、最后一帧 ${want.last}、分段 0～${lastSegment}`, { originFrame: spec.originFrame, firstFrame: spec.firstFrame, lastFrame: spec.lastFrame, firstSegment: spec.firstSegment, lastSegment: spec.lastSegment });
-    check(want.origin % STREAM_SEGMENT_FRAMES !== 0, `${tag}:第一帧不是 15 的倍数(这支探针要的就是这个)`, want.origin);
-    check(manifest.originFrame === want.origin, `${tag}:清单记着这条流的第一帧`, manifest.originFrame);
+      `${tag}: first frame ${want.origin}, last frame ${want.last}, segments 0-${lastSegment}`, { originFrame: spec.originFrame, firstFrame: spec.firstFrame, lastFrame: spec.lastFrame, firstSegment: spec.firstSegment, lastSegment: spec.lastSegment });
+    check(want.origin % STREAM_SEGMENT_FRAMES !== 0, `${tag}: the first frame is not a multiple of 15 (which is what this probe needs)`, want.origin);
+    check(manifest.originFrame === want.origin, `${tag}: the manifest records this stream's first frame`, manifest.originFrame);
     const layer = byClip.get(spec.topClipId);
     check(!!layer && layer.key === spec.streamKey && layer.originFrame === want.origin && JSON.stringify(layer.ranges) === JSON.stringify([[0, lastSegment]]),
-      `${tag}:就绪消息带着第一帧,区间是全部分段`, layer && { originFrame: layer.originFrame, ranges: layer.ranges });
+      `${tag}: the ready message carries the first frame, and the ranges cover all segments`, layer && { originFrame: layer.originFrame, ranges: layer.ranges });
 
     const dir = path.join(OUT, `ref-${want.clipIds.join('+')}`);
     await fs.mkdir(dir, { recursive: true });
@@ -245,17 +245,17 @@ try {
     let frames = 0, wrong = [], minMargin = Infinity, oldCompared = 0;
     for (let n = 0; n <= lastSegment; n++) {
       const seg = manifest.segments[n];
-      if (!check(seg?.stride === 1, `${tag}#${n}:满密度`, seg)) continue;
+      if (!check(seg?.stride === 1, `${tag}#${n}: full density`, seg)) continue;
       const count = streamSegmentFrameCount(n, want.origin, want.last);
       record.samples.push(seg.samples);
-      check(seg.samples === count && (n === lastSegment || count === STREAM_SEGMENT_FRAMES), `${tag}#${n}:样本数 = 这一段盖住的帧数(只有末段可以不满)`, { samples: seg.samples, count });
+      check(seg.samples === count && (n === lastSegment || count === STREAM_SEGMENT_FRAMES), `${tag}#${n}: sample count = number of frames this segment covers (only the last segment may be short)`, { samples: seg.samples, count });
       const meta = manifest.inits[seg.init];
       const rect = { x: meta.rect.x + spec.offset.x, y: meta.rect.y + spec.offset.y, w: meta.rect.w, h: meta.rect.h };
       const init = await fs.readFile(producer.store.initFile(spec.streamKey, seg.init));
       const bytes = await fs.readFile(path.join(producer.store.dir(spec.streamKey), seg.file));
       const decoded = await decodeSegment(ffmpeg, init, bytes, dir, `seg-${n}`);
       const frameBytes = rect.w * 2 * (rect.h + 8) * 3;
-      if (!check(decoded.length === seg.samples * frameBytes, `${tag}#${n}:解出 ${seg.samples} 帧`, decoded.length / frameBytes)) continue;
+      if (!check(decoded.length === seg.samples * frameBytes, `${tag}#${n}: decoded ${seg.samples} frames`, decoded.length / frameBytes)) continue;
       // 参照的底:同一批真画面裁到同一个矩形,原样过一遍同一个编码器
       const first = streamSegmentFirstFrame(n, want.origin);
       const plain = openStreamSegmentEncoder(ffmpeg, { encoder: status.encoder, fps: FPS, raw: { width: rect.w, height: rect.h } });
@@ -284,18 +284,18 @@ try {
       }
     }
     record.frames = frames;
-    record.error = { 对它自己那一帧: errorSummary(got), 参照_同一幅画面原样过一遍编码器: errorSummary(floor), 对照_下一帧: errorSummary(next), 对照_按项目帧号数的那一帧: { ...errorSummary(old), frames: oldCompared } };
+    record.error = { vsItsOwnFrame: errorSummary(got), referenceSamePictureThroughEncoderAsIs: errorSummary(floor), controlNextFrame: errorSummary(next), controlFrameByProjectFrameNumber: { ...errorSummary(old), frames: oldCompared } };
     record.wrongFrames = wrong.slice(0, 6);
     record.minMargin = Number.isFinite(minMargin) ? round2(minMargin) : null;
     out.streams.push(record);
     say('produce-compare', { tag, frames, wrong: wrong.length, minMargin: record.minMargin, ...record.error });
-    const g = record.error.对它自己那一帧, ref = record.error.参照_同一幅画面原样过一遍编码器, nx = record.error.对照_下一帧, od = record.error.对照_按项目帧号数的那一帧;
-    check(frames === want.last - want.origin + 1, `${tag}:从第 ${want.origin} 帧到第 ${want.last} 帧每一帧都比过了`, frames);
-    check(wrong.length === 0, `${tag}:产流逐帧 —— 每个样本最像的都是它该是的那一帧(第 originFrame + n × 15 + k 帧)`, { wrong: wrong.length, first: wrong.slice(0, 3) });
-    check(g.mean <= ref.mean + 0.5 && g.bad <= ref.bad * 1.25 + g.pixels * 0.001, `${tag}:和它自己那一帧的差在编码误差以内`, { got: g, ref });
+    const g = record.error.vsItsOwnFrame, ref = record.error.referenceSamePictureThroughEncoderAsIs, nx = record.error.controlNextFrame, od = record.error.controlFrameByProjectFrameNumber;
+    check(frames === want.last - want.origin + 1, `${tag}: every frame from frame ${want.origin} to frame ${want.last} was compared`, frames);
+    check(wrong.length === 0, `${tag}: frame-by-frame stream production, each sample is most similar to the frame it should be (frame originFrame + n × 15 + k)`, { wrong: wrong.length, first: wrong.slice(0, 3) });
+    check(g.mean <= ref.mean + 0.5 && g.bad <= ref.bad * 1.25 + g.pixels * 0.001, `${tag}: the difference from its own frame is within encoding error`, { got: g, ref });
     // 这张卡的字边缘编码以后本来就有不少差超过 16 的像素(参照那一行也一样多),所以「明显更大」主要看平均差,坏像素数只要求翻倍
-    check(nx.mean > 3 * g.mean && nx.bad > 2 * (g.bad + 1), `${tag}:对照(下一帧)明显更大`, { got: g, next: nx });
-    check(oldCompared > 0 && od.mean > 3 * g.mean && od.bad > 2 * (g.bad + 1), `${tag}:对照(按项目帧号数分段会对上的那一帧)明显更大`, { got: g, old: od });
+    check(nx.mean > 3 * g.mean && nx.bad > 2 * (g.bad + 1), `${tag}: the control (next frame) is clearly larger`, { got: g, next: nx });
+    check(oldCompared > 0 && od.mean > 3 * g.mean && od.bad > 2 * (g.bad + 1), `${tag}: the control (the frame that would match if segments were counted by project frame number) is clearly larger`, { got: g, old: od });
     if (!KEEP) await fs.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 
@@ -307,7 +307,7 @@ try {
   const exportOf = (f) => { if (!exportRgb.has(f)) { exportRgb.set(f, rgbOver(exported.png(f))); if (exportRgb.size > 16) exportRgb.delete(exportRgb.keys().next().value); } return exportRgb.get(f); };
 
   const ports = await (await fetch(origin + '/api/stage/ports')).json();
-  if (!ports.ok || !Array.isArray(ports.ports) || ports.ports.length < 2) throw new Error(`舞台端口没起来:${JSON.stringify(ports)}`);
+  if (!ports.ok || !Array.isArray(ports.ports) || ports.ports.length < 2) throw new Error(`Stage ports did not come up: ${JSON.stringify(ports)}`);
   const u = new URL(origin);
   const [originA, originB] = ports.ports.slice(0, 2).map((p) => `${u.protocol}//${u.hostname}:${p}`);
   const HOST_PATH = '/__stream-origin-probe-host';
@@ -425,15 +425,15 @@ try {
     seekMsMax: scrub.seekMs.length ? Math.max(...scrub.seekMs) : null,
     minMargin: Number.isFinite(scrub.minMargin) ? round2(scrub.minMargin) : null,
     seekMsMedian: scrub.seekMs.length ? [...scrub.seekMs].sort((a, b) => a - b)[scrub.seekMs.length >> 1] : null,
-    对导出同一帧: { mean: round2(scrub.same.mean / n), bad: Math.round(scrub.same.bad / n) }, 对照_导出下一帧: { mean: round2(scrub.next.mean / n), bad: Math.round(scrub.next.bad / n) } };
+    vsExportSameFrame: { mean: round2(scrub.same.mean / n), bad: Math.round(scrub.same.bad / n) }, controlExportNextFrame: { mean: round2(scrub.next.mean / n), bad: Math.round(scrub.next.bad / n) } };
   say('scrub', out.scrub);
-  check(scrub.notDrawn.length === 0, '拖动:每一帧流平面都画出了这一帧', out.scrub.notDrawn);
-  check(scrub.placeholders.length === 0, '拖动:流的帧画出来的那一刻占位符已经自己撤了(父页没有补发任何消息)', out.scrub.placeholdersLeft);
-  check(scrub.retried.length === 0, '拖动:没有哪一帧要重截才对得上', scrub.retried.slice(0, 3));
-  check(scrub.frames === LAST - FIRST + 1, `拖动:第 ${FIRST}～${LAST} 帧每一帧都比过了`, scrub.frames);
-  check(scrub.wrong.length === 0, '拖动逐帧 —— 舞台上贴出来的画面最像的都是导出页的同一帧(不是前一帧、后一帧)', { wrong: scrub.wrong.length, first: scrub.wrong.slice(0, 3) });
-  check(out.scrub.对导出同一帧.mean < 3, '拖动:舞台(贴流)与导出同一帧的平均差 < 3/255', out.scrub.对导出同一帧);
-  check(out.scrub.对照_导出下一帧.bad > 5 * (out.scrub.对导出同一帧.bad + 1), '拖动:对照(导出的下一帧)明显更大', out.scrub);
+  check(scrub.notDrawn.length === 0, 'drag: for every frame the stream plane drew that frame', out.scrub.notDrawn);
+  check(scrub.placeholders.length === 0, 'drag: at the moment the stream\'s frame is drawn, the placeholder has already removed itself (the parent page sent no extra message)', out.scrub.placeholdersLeft);
+  check(scrub.retried.length === 0, 'drag: no frame needed a re-capture to match', scrub.retried.slice(0, 3));
+  check(scrub.frames === LAST - FIRST + 1, `drag: all frames ${FIRST}-${LAST} were compared`, scrub.frames);
+  check(scrub.wrong.length === 0, 'frame-by-frame drag, the picture pasted on the stage is most similar to the same frame of the export page (not the previous or next frame)', { wrong: scrub.wrong.length, first: scrub.wrong.slice(0, 3) });
+  check(out.scrub.vsExportSameFrame.mean < 3, 'drag: mean difference between the stage (stream paste) and the same export frame < 3/255', out.scrub.vsExportSameFrame);
+  check(out.scrub.controlExportNextFrame.bad > 5 * (out.scrub.vsExportSameFrame.bad + 1), 'drag: the control (the next export frame) is clearly larger', out.scrub);
 
   // 早于流的第一帧:没有分段,流平面什么都不画
   {
@@ -453,8 +453,8 @@ try {
     await sleep(300);
     const d = await diagA();
     out.early = { byParent: early, forcedAt39: d.streams.tracks.map((t) => ({ id: t.id.slice(0, 14), lastDrawn: t.lastDrawn })) };
-    check(early.every((e) => e.planes === 0), '早于第一帧:父页不出流平面', early);
-    check(d.streams.tracks.every((t) => t.lastDrawn === null), '早于第一帧:硬给流平面,舞台也什么都不画(没有这一段)', out.early.forcedAt39);
+    check(early.every((e) => e.planes === 0), 'before the first frame: the parent page produces no stream plane', early);
+    check(d.streams.tracks.every((t) => t.lastDrawn === null), 'before the first frame: even if a stream plane is forced in, the stage draws nothing (there is no such segment)', out.early.forcedAt39);
   }
 
   // ---------- 4. 真的播放:从 clip-a 入场之前(第 95 帧)起播,播过它的头两个分段,暂停
@@ -479,15 +479,15 @@ try {
       tracks: d.streams.tracks.map((t) => ({ id: t.id.slice(0, 14), lastDrawn: t.lastDrawn, drawn: t.drawn, errors: t.errors, seeks: t.seeks })),
       scores: scores.map(([c, x]) => [c, round2(x.mean), x.bad]), best };
     say('play', out.play);
-    check(out.play.noSkip && frames.length > 5, '播放:不跳帧(frame 的 sec 差恒为 1/fps)', { beats: frames.length, steps: [...new Set(steps)] });
-    check(stopped > 100 && stopped <= LAST, '播放:播进了 clip-a(第 100 帧以后)', stopped);
-    check(d.streams.tracks.length > 0 && d.streams.tracks.every((t) => t.errors === 0 && t.drawn > 3), '播放:流平面一路画着,解码器没报错', out.play.tracks);
-    check(d.streams.tracks.every((t) => t.lastDrawn === stopped || t.lastDrawn === null), '播放:暂停时流平面停在暂停的那一帧', out.play.tracks);
-    check(best === stopped && scores[1][1].mean < 3, '播放:暂停的那一帧,舞台(贴流)最像导出页的同一帧', out.play.scores);
+    check(out.play.noSkip && frames.length > 5, 'playback: no frame skipping (the sec difference between frames is always 1/fps)', { beats: frames.length, steps: [...new Set(steps)] });
+    check(stopped > 100 && stopped <= LAST, 'playback: reached clip-a (after frame 100)', stopped);
+    check(d.streams.tracks.length > 0 && d.streams.tracks.every((t) => t.errors === 0 && t.drawn > 3), 'playback: the stream plane kept drawing all the way, and the decoder reported no errors', out.play.tracks);
+    check(d.streams.tracks.every((t) => t.lastDrawn === stopped || t.lastDrawn === null), 'playback: when paused, the stream plane stops on the paused frame', out.play.tracks);
+    check(best === stopped && scores[1][1].mean < 3, 'playback: at the paused frame, the stage (stream paste) is most similar to the same frame of the export page', out.play.scores);
   }
   await rpc('setRole', 'back', { job: 'probe' });
 } catch (error) {
-  fails.push(`异常:${error?.stack || error}`);
+  fails.push(`Exception: ${error?.stack || error}`);
   say('ERROR', { error: String(error?.stack || error) });
 } finally {
   try { await browser?.close(); } catch { /* ignore */ }

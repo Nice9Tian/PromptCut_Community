@@ -19,36 +19,36 @@ const proj = (fps = 30) => ({
 });
 const onGrid = (v, fps) => Math.abs(v * fps - Math.round(v * fps)) < 1e-9;
 
-test("吸附结果永远落在帧格上 —— 包括按住 alt 绕开吸附的时候", () => {
+test("Snap results always land on the frame grid, including when alt is held to bypass snapping", () => {
   for (const fps of [24, 25, 30, 60]) {
     const p = proj(fps);
     for (const raw of [0, 0.0071, 1.4999, 4.041, 4.017, 9.99991, 12.5, 17.3333]) {
       for (const alt of [false, true]) {
         const v = snapTime(raw, alt, p, 3, undefined, 100);
-        assert.ok(onGrid(v, fps), `fps=${fps} raw=${raw} alt=${alt} 吸到了 ${v},不在帧格上`);
-        assert.ok(v >= 0, `fps=${fps} raw=${raw} 吸出了负数 ${v}`);
+        assert.ok(onGrid(v, fps), `fps=${fps} raw=${raw} alt=${alt} snapped to ${v}, not on the frame grid`);
+        assert.ok(v >= 0, `fps=${fps} raw=${raw} snapped to negative number ${v}`);
       }
     }
   }
 });
 
-test("附近有吸附点时仍然吸过去 —— 量化不该把吸附本身吃掉", () => {
+test("Still snaps to a nearby snap point; quantization must not swallow the snapping itself", () => {
   const p = proj(30);
   // 片段边缘在 2 和 6,整秒也是吸附点;10px 阈值 / 100pxPerSec = 0.1s
-  assert.equal(snapTime(2.05, false, p, -1, undefined, 100), 2, "该吸到片段起点 2");
-  assert.equal(snapTime(5.95, false, p, -1, undefined, 100), 6, "该吸到片段末尾 6");
-  assert.equal(snapTime(3.02, false, p, -1, undefined, 100), 3, "该吸到整秒 3");
+  assert.equal(snapTime(2.05, false, p, -1, undefined, 100), 2, "Should snap to clip start 2");
+  assert.equal(snapTime(5.95, false, p, -1, undefined, 100), 6, "Should snap to clip end 6");
+  assert.equal(snapTime(3.02, false, p, -1, undefined, 100), 3, "Should snap to whole second 3");
 });
 
-test("离吸附点远就按原值量化,不会被拽走", () => {
+test("Far from a snap point, quantize the raw value; it does not get pulled away", () => {
   const p = proj(30);
   // 4.5 离 4、5、片段边缘都超过 0.1s
-  assert.ok(Math.abs(snapTime(4.51, false, p, -1, undefined, 100) - 4.5) < 1e-9, "4.51 该落到第 135 帧 = 4.5");
-  assert.ok(Math.abs(snapTime(4.56, false, p, -1, undefined, 100) - 4.5333333333333) < 1e-9, "4.56 落到第 136 帧");
+  assert.ok(Math.abs(snapTime(4.51, false, p, -1, undefined, 100) - 4.5) < 1e-9, "4.51 should land on frame 135 = 4.5");
+  assert.ok(Math.abs(snapTime(4.56, false, p, -1, undefined, 100) - 4.5333333333333) < 1e-9, "4.56 lands on frame 136");
 });
 
-test("fps 缺失时按 30 处理,不能除出 NaN", () => {
+test("When fps is missing, treat it as 30; division must not produce NaN", () => {
   const p = { ...proj(30), fps: undefined };
   const v = snapTime(4.041, true, p, -1, undefined, 100);
-  assert.ok(Number.isFinite(v) && onGrid(v, 30), `实得 ${v}`);
+  assert.ok(Number.isFinite(v) && onGrid(v, 30), `Got ${v}`);
 });

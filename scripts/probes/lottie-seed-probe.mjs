@@ -85,7 +85,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const arg = (name, dflt) => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : dflt; };
 const flag = (name) => process.argv.includes(name);
 const PORT = Number(arg('--port', '27601'));
-if (!Number.isInteger(PORT) || PORT < 20000 || PORT > 65000) throw new Error('--port 要用 20000 以上的端口(这台机器的临时端口段在 15000 以下,低的端口会被碰巧占住)');
+if (!Number.isInteger(PORT) || PORT < 20000 || PORT > 65000) throw new Error('--port needs a port of 20000 or above (this machine\'s ephemeral port range is below 15000, and lower ports can get taken by chance)');
 /** 核对过的播放库版本。升级以后重跑本探针和 lottie-seed-extra-probe.mjs,通过了再改这个数 */
 const LOTTIE_WEB_VERIFIED = '5.13.0';
 const ORIGIN = `http://127.0.0.1:${PORT}`;
@@ -112,7 +112,7 @@ const FIXTURE_LAYERS = ['random-pos', 'wiggle-pos', 'seeded-opacity', 'wiggle-op
   'twice', 'math-random', 'shadowed', 'wiggle-only', 'seed-timeless', 'seed-timed', 'forms', 'pv-static', 'pv-keyed',
   'text-keyed-30', 'text-keyed-40', 'text-static', 'twin-a', 'twin-b', 'twin-random', 'twin-wiggle', 'seeded-wiggle'];
 const MODES = ['off', 'seed', 'both', 'expr', 'exprboth'];
-const MODE_NAME = { off: '关', seed: '种子', both: '种子+不留旧数', expr: '替换', exprboth: '替换+不留旧数', exprbare: '替换、不包外层', exprframe: '替换、外层不单独固定文字' };
+const MODE_NAME = { off: 'off', seed: 'seed', both: 'seed+no stale values', expr: 'replace', exprboth: 'replace+no stale values', exprbare: 'replace, no outer wrapper', exprframe: 'replace, outer layer does not pin text separately' };
 /** 只为对照的开法:只有带随机顺序文字的那份测试素材做,只报告 */
 const CONTRAST = ['exprbare', 'exprframe'];
 const isExpr = (mode) => mode === 'expr' || mode === 'exprboth';
@@ -339,7 +339,7 @@ function describeDiff(a, b, layerNames) {
   const from = Math.max(0, i - 50);
   const out = { at: i, a: a.slice(from, i + 70), b: b.slice(from, i + 70) };
   if (layerNames) {
-    const ta = a.split('<'), tb = b.split('<'); const layers = new Set(); let cur = '(根)';
+    const ta = a.split('<'), tb = b.split('<'); const layers = new Set(); let cur = '(root)';
     for (let k = 0; k < Math.max(ta.length, tb.length); k++) {
       const m = /^g[^>]*\bid="([^"]+)"/.exec(ta[k] ?? '');
       if (m && layerNames.includes(m[1])) cur = m[1];
@@ -372,7 +372,7 @@ try {
   browser = await puppeteer.launch({ headless: true, protocolTimeout: 900000, args: [...PROBE_CHROME_ARGS, '--no-first-run', '--hide-scrollbars', '--force-device-scale-factor=1'] });
   report.chrome = await browser.version();
   report.lottieWeb = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.resolve('lottie-web'))), '..', '..', 'package.json'), 'utf8')).version;
-  if (report.lottieWeb !== LOTTIE_WEB_VERIFIED) fail(`播放库是 ${report.lottieWeb},核对过的是 ${LOTTIE_WEB_VERIFIED}:下面各项都过了再把 LOTTIE_WEB_VERIFIED 改成新版本号`);
+  if (report.lottieWeb !== LOTTIE_WEB_VERIFIED) fail(`The playback library is ${report.lottieWeb}, the verified one is ${LOTTIE_WEB_VERIFIED}: once every item below passes, change LOTTIE_WEB_VERIFIED to the new version number`);
   // 跳帧一律走 loadLottie 给的入口:src/ 里除了卡片自己,不许别处引播放库或直接调它的跳帧
   {
     // 这两个不是在放 Lottie:前一个把播放库交给在线页面里用户自己写的卡(用户卡直接引播放库的只能声明成 motion 式,见建卡指南第 3 节),
@@ -382,8 +382,8 @@ try {
     const walk = (dir) => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) { const full = path.join(dir, e.name); if (e.isDirectory()) { if (e.name !== 'node_modules') walk(full); continue; } if (!/\.(ts|tsx|mjs|js|jsx)$/.test(e.name) || /\.test\./.test(e.name)) continue; const rel = path.relative(ROOT, full).split(path.sep).join('/'); if (rel === 'src/cards/native/lottie.tsx' || ALLOWED_IMPORTERS.includes(rel)) continue; const text = fs.readFileSync(full, 'utf8'); if (/from\s+["']lottie-web["']|import\(\s*["']lottie-web["']\s*\)|\.goToAndStop\s*\(|\.goToAndPlay\s*\(/.test(text)) offenders.push(rel); } };
     walk(path.join(ROOT, 'src'));
     report.bypassers = offenders;
-    if (offenders.length) fail(`src/ 里除 src/cards/native/lottie.tsx 外还有文件引播放库或直接调它的跳帧:${offenders.join('、')}(要走 LottieView / loadLottie)`);
-    console.log(`跳帧入口 / src/ 里除卡片自己外引播放库或直接调跳帧的文件:${offenders.length} 个`);
+    if (offenders.length) fail(`Besides src/cards/native/lottie.tsx, other files in src/ import the playback library or call its frame jump directly: ${offenders.join(', ')} (go through LottieView / loadLottie)`);
+    console.log(`Frame-jump entry / files in src/ other than the card itself that import the playback library or call the frame jump directly: ${offenders.length}`);
   }
 
   /** 每个用例一个新页面:全页那一串随机数、播放库内部那一串、节点 id 计数器都从头来 */
@@ -421,7 +421,7 @@ try {
     const expressions = expressionsOf(data);
     const entry = { total, fr: Number(data.fr) || 30, picks, expressions, modes: {} };
     report.assets[name] = entry;
-    console.log(`── ${name}:${total} 帧;表达式 ${expressions.all} 个,其中用到随机的 ${expressions.random} 个;随机顺序的文字动画器 ${expressions.textOrder} 个;取 N = ${picks.join(',')}`);
+    console.log(`── ${name}: ${total} frames; ${expressions.all} expressions, ${expressions.random} of them using random; ${expressions.textOrder} text animators with random order; picked N = ${picks.join(',')}`);
     const noRandom = expressions.random === 0 && expressions.textOrder === 0;
 
     for (const mode of [...MODES, ...(expressions.textOrder ? CONTRAST : [])]) {
@@ -438,35 +438,35 @@ try {
       // 顺推、回跳、同页新建、连建两次
       const p1 = await open();
       const first = await call(p1, 'make', name, mode);
-      shots['顺推'] = await call(p1, 'seq', first.id, frames, picks);
+      shots['sequential'] = await call(p1, 'seq', first.id, frames, picks);
       await call(p1, 'seq', first.id, all, []);
-      shots['回跳'] = {};
-      for (const n of picks) { await call(p1, 'goTo', first.id, 0); shots['回跳'][n] = await call(p1, 'jump', first.id, n); }
+      shots['jump back'] = {};
+      for (const n of picks) { await call(p1, 'goTo', first.id, 0); shots['jump back'][n] = await call(p1, 'jump', first.id, n); }
       await call(p1, 'hide', first.id);
-      shots['同页新建'] = {};
-      for (const n of picks) { const m = await call(p1, 'make', name, mode); shots['同页新建'][n] = await call(p1, 'jump', m.id, n); await call(p1, 'destroy', m.id); }
+      shots['new in same page'] = {};
+      for (const n of picks) { const m = await call(p1, 'make', name, mode); shots['new in same page'][n] = await call(p1, 'jump', m.id, n); await call(p1, 'destroy', m.id); }
       const twiceN = few[1];
       const twice = [];
       for (let k = 0; k < 2; k++) { const m = await call(p1, 'make', name, mode); twice.push(await call(p1, 'jump', m.id, twiceN)); await call(p1, 'hide', m.id); }
       await p1.close();
       // 新页新建
-      shots['新页新建'] = {};
-      for (const n of picks) { const p = await open(); const m = await call(p, 'make', name, mode); shots['新页新建'][n] = await call(p, 'jump', m.id, n); await p.close(); }
+      shots['new in new page'] = {};
+      for (const n of picks) { const p = await open(); const m = await call(p, 'make', name, mode); shots['new in new page'][n] = await call(p, 'jump', m.id, n); await p.close(); }
       // 别的卡在前、别的 Lottie 在前
-      shots['别的卡在前'] = {}; shots['别的 Lottie 在前'] = {};
+      shots['other card first'] = {}; shots['other Lottie first'] = {};
       for (const n of few) {
         let p = await open(); await call(p, 'burn', 13);
-        let m = await call(p, 'make', name, mode); shots['别的卡在前'][n] = await call(p, 'jump', m.id, n); await p.close();
+        let m = await call(p, 'make', name, mode); shots['other card first'][n] = await call(p, 'jump', m.id, n); await p.close();
         p = await open();
         const other = await call(p, 'make', 'fixture', 'off'); await call(p, 'seq', other.id, [0, 1, 2, 3, 22, 23, 45], []); await call(p, 'hide', other.id);
-        m = await call(p, 'make', name, mode); shots['别的 Lottie 在前'][n] = await call(p, 'jump', m.id, n); await p.close();
+        m = await call(p, 'make', name, mode); shots['other Lottie first'][n] = await call(p, 'jump', m.id, n); await p.close();
       }
 
       // 逐个 N 判:以「顺推」为准,别的各份和它比
-      const perN = {}; const kinds = Object.keys(shots).filter((k) => k !== '顺推');
+      const perN = {}; const kinds = Object.keys(shots).filter((k) => k !== 'sequential');
       const tally = { rawSame: 0, same: 0 };
       for (const n of picks) {
-        const base = shots['顺推'][n]; const row = { hash: sha(base.v), jumpHash: sha(shots['新页新建'][n].v), rawSame: true, same: true, differ: {} };
+        const base = shots['sequential'][n]; const row = { hash: sha(base.v), jumpHash: sha(shots['new in new page'][n].v), rawSame: true, same: true, differ: {} };
         for (const kind of kinds) {
           const other = shots[kind][n]; if (other === undefined || other.r === base.r) continue;
           row.rawSame = false;
@@ -475,14 +475,14 @@ try {
           row.same = false;
           const d = describeDiff(base.v, other.v, layerNames);
           row.differ[kind] = { visibleSame: other.v === base.v, pixels, layers: d.layers, at: d.at, a: d.a, b: d.b };
-          fs.writeFileSync(path.join(OUT, `${name}-${mode}-${n}-顺推.svg`), base.r); fs.writeFileSync(path.join(OUT, `${name}-${mode}-${n}-${kind}.svg`), other.r);
+          fs.writeFileSync(path.join(OUT, `${name}-${mode}-${n}-sequential.svg`), base.r); fs.writeFileSync(path.join(OUT, `${name}-${mode}-${n}-${kind}.svg`), other.r);
         }
         if (row.rawSame) tally.rawSame++; if (row.same) tally.same++;
         perN[n] = row;
       }
       // 给人看的图
       const showN = name === 'fixture' && ['off', 'seed', 'expr'].includes(mode) ? 21 : name === 'textrandom' && ['off', 'exprframe', 'expr'].includes(mode) ? 45 : name === 'happy2016' && mode === 'both' ? picks[picks.length - 1] : null;
-      if (showN !== null) for (const kind of ['顺推', '新页新建']) fs.writeFileSync(path.join(OUT, `看-${name}-${MODE_NAME[mode]}-第${showN}帧-${kind}.png`), Buffer.from(await call(tool, 'png', shots[kind][showN].r), 'base64'));
+      if (showN !== null) for (const kind of ['sequential', 'new in new page']) fs.writeFileSync(path.join(OUT, `view-${name}-${MODE_NAME[mode]}-frame${showN}-${kind}.png`), Buffer.from(await call(tool, 'png', shots[kind][showN].r), 'base64'));
       let twiceSame = twice[0].r === twice[1].r;
       if (!twiceSame) twiceSame = twice[0].v === twice[1].v && (await pixelDiff(twice[0].r, twice[1].r)).pixels === 0;
       const result = {
@@ -494,22 +494,22 @@ try {
       };
       entry.modes[mode] = result;
       const label = `${name}/${MODE_NAME[mode]}`;
-      if (first.built !== first.layers) fail(`${label}:建好后只建了 ${first.built}/${first.layers} 个图层`);
-      if (!isExpr(mode) && !contrast && first.rewritten !== null) fail(`${label}:没开开关三却改写了表达式`);
-      if (first.asyncLoad !== (name === 'fixtureasync')) fail(`${label}:建实例那一下${first.asyncLoad ? '还没装载完' : '已经装载完'},和预期相反`);
+      if (first.built !== first.layers) fail(`${label}: only ${first.built} of ${first.layers} layers were built after the build`);
+      if (!isExpr(mode) && !contrast && first.rewritten !== null) fail(`${label}: expressions were rewritten although switch 3 is off`);
+      if (first.asyncLoad !== (name === 'fixtureasync')) fail(`${label}: right after instance creation it was ${first.asyncLoad ? 'not loaded yet' : 'already loaded'}, the opposite of what was expected`);
       const worst = (n) => Object.entries(perN[n].differ).map(([k, d]) => `${k}:${d.pixels.pct}%/${d.pixels.max}${d.layers ? `(${d.layers.join(',')})` : ''}`).join(' ');
       const bad = picks.filter((n) => !perN[n].same);
       const mustMatch = !contrast && (mode === 'both' || mode === 'exprboth' || ((mode === 'seed' || mode === 'expr') && isFixture));
-      if (mustMatch) for (const n of bad) fail(`${label}:第 ${n} 帧和「顺推」不同 —— ${worst(n)}`);
+      if (mustMatch) for (const n of bad) fail(`${label}: frame ${n} differs from "sequential": ${worst(n)}`);
       if (mode !== 'off' && !contrast) {
-        if (!twiceSame) fail(`${label}:连建两次,第 ${twiceN} 帧不同`);
-        if (result.globalDraws !== 0) fail(`${label}:全页那一串被吃掉 ${result.globalDraws} 个(应为 0)`);
-        if (first.seed === null) fail(`${label}:素材种子没算出来`);
-        if ((mode === 'both' || mode === 'exprboth') && first.exact !== true) fail(`${label}:开关二没生效`);
-        if (isExpr(mode) && !(first.rewritten >= expressions.all)) fail(`${label}:改写了 ${first.rewritten} 处表达式,素材里有 ${expressions.all} 个`);
+        if (!twiceSame) fail(`${label}: building twice in a row, frame ${twiceN} differs`);
+        if (result.globalDraws !== 0) fail(`${label}: ${result.globalDraws} values of the page-wide sequence were consumed (should be 0)`);
+        if (first.seed === null) fail(`${label}: the asset seed was not computed`);
+        if ((mode === 'both' || mode === 'exprboth') && first.exact !== true) fail(`${label}: switch 2 did not take effect`);
+        if (isExpr(mode) && !(first.rewritten >= expressions.all)) fail(`${label}: ${first.rewritten} expressions were rewritten, the asset has ${expressions.all}`);
       }
-      console.log(`${label}:${picks.length} 个 N 里 ${tally.same} 个各份画面相同(原文也逐字节相同的 ${tally.rawSame} 个);连建两次${twiceSame ? '相同' : '不同'};全页那一串被吃掉 ${result.globalDraws} 个;图层 ${first.built}/${first.layers};建一份 ${first.buildMs} 毫秒,跳一帧 ${frameMs} 毫秒${first.seed === null ? '' : `;种子 ${first.seed}`}`);
-      for (const n of bad) console.log(`     第 ${n} 帧不同(画面名:不同的像素占比/最大差(哪些图层)) ${worst(n)}`);
+      console.log(`${label}: out of ${picks.length} N values ${tally.same} have the same image across all copies (${tally.rawSame} of them also byte-for-byte identical in raw text); building twice in a row: ${twiceSame ? 'same' : 'different'}; ${result.globalDraws} values of the page-wide sequence consumed; layers ${first.built}/${first.layers}; build one ${first.buildMs} ms, jump one frame ${frameMs} ms${first.seed === null ? '' : `; seed ${first.seed}`}`);
+      for (const n of bad) console.log(`     frame ${n} differs (image name: share of differing pixels/max diff (which layers)) ${worst(n)}`);
     }
 
     // 不带随机表达式的素材:加上开关二以后的画面,是不是就是现在(关着)新开页面直接跳拿到的那一份
@@ -518,7 +518,7 @@ try {
       for (const mode of ['both', 'exprboth']) {
         const same = picks.filter((n) => entry.modes[mode].perN[n].hash === entry.modes.off.perN[n].jumpHash).length;
         entry.equalsOffJump[mode] = { same, of: picks.length };
-        console.log(`${name} /「${MODE_NAME[mode]}」的画面和「关」下新页新建直接跳的画面比:${picks.length} 个 N 里 ${same} 个看得见的文本逐字节相同`);
+        console.log(`${name} / "${MODE_NAME[mode]}" images vs the direct jump in a new page under "off": out of ${picks.length} N values, ${same} have byte-for-byte identical visible text`);
       }
     }
 
@@ -537,9 +537,9 @@ try {
           for (const f of sample) pixels[f] = await pixelDiff(got.off[f].r, got[mode][f].r);
         }
         entry.sweep[mode] = { frames: total, changed: changed.length, changedFrames: changed, pixels };
-        const px = Object.entries(pixels).map(([f, d]) => `第 ${f} 帧 ${d.pixels} 个像素(${d.pct}%,最多差 ${d.max})`).join(';');
-        console.log(`${name} / 全长 ${total} 帧,「${MODE_NAME[mode]}」和「关」比:${changed.length ? `${changed.length} 帧变了(${changed.length > 14 ? `${changed.slice(0, 14).join(',')}…` : changed.join(',')})${px ? `;${px}` : ''}` : '逐帧相同'}`);
-        if ((mode === 'seed' || mode === 'expr') && noRandom && changed.length) fail(`${name}:不带随机表达式,「${MODE_NAME[mode]}」却让 ${changed.length} 帧变了`);
+        const px = Object.entries(pixels).map(([f, d]) => `frame ${f}: ${d.pixels} pixels (${d.pct}%, max diff ${d.max})`).join(';');
+        console.log(`${name} / full length ${total} frames, "${MODE_NAME[mode]}" vs "off": ${changed.length ? `${changed.length} frames changed (${changed.length > 14 ? `${changed.slice(0, 14).join(',')}…` : changed.join(',')})${px ? `;${px}` : ''}` : 'identical frame by frame'}`);
+        if ((mode === 'seed' || mode === 'expr') && noRandom && changed.length) fail(`${name}: has no random expressions, yet "${MODE_NAME[mode]}" changed ${changed.length} frames`);
       }
     }
   }
@@ -549,7 +549,7 @@ try {
     const name = 'happy2016'; const { picks } = report.assets[name];
     const frames = Array.from({ length: Math.max(...picks) + 1 }, (_, i) => i);
     const rows = [];
-    for (const [label, mode, cold] of [['只开种子', 'seed', false], ['种子,另外每帧清插值缓存', 'seed', true], ['种子+不留旧数(开关二)', 'both', false]]) {
+    for (const [label, mode, cold] of [['seed only', 'seed', false], ['seed, plus clearing the interpolation cache every frame', 'seed', true], ['seed+no stale values (switch 2)', 'both', false]]) {
       const p = await open();
       const a = await call(p, 'make', name, mode); const props = await call(p, 'findKeyframed', a.id);
       const pushed = await call(p, cold ? 'seqCold' : 'seq', a.id, frames, picks); await call(p, 'hide', a.id);
@@ -562,7 +562,7 @@ try {
       }
       await p.close();
       rows.push({ label, keyframedProps: props, visibleSame: same, of: picks.length, worstPixels: pixelsMax, worstPct: pctMax, worstDiff: diffMax });
-      console.log(`happy2016 / 为什么还差一点 /「${label}」:${picks.length} 个 N 里顺推和直接跳看得见的文本相同的 ${same} 个;像素最多 ${pixelsMax} 个不同(${pctMax}%,最多差 ${diffMax});带关键帧的属性 ${props} 个`);
+      console.log(`happy2016 / why it is still slightly off / "${label}": out of ${picks.length} N values ${same} have the same visible text for sequential push and direct jump; at most ${pixelsMax} pixels differ (${pctMax}%, max diff ${diffMax}); ${props} properties with keyframes`);
     }
     report.floatExperiment = rows;
   }
@@ -597,36 +597,36 @@ try {
         pv, runtime, gauss,
       };
       section.modes[mode] = row;
-      const label = `表达式用例/${MODE_NAME[mode]}`;
+      const label = `Expression cases/${MODE_NAME[mode]}`;
       const r3 = (xs) => xs.slice(2, 13).map((x) => x.toFixed(1)).join(' ');
       const twinApart = (pair) => frames.filter((f, i) => pair[0][i] !== pair[1][i]).length;
-      console.log(`${label}:两遍${row.repeat ? '相同' : '不同'};wiggle-only 第 30～40 帧的 x:${r3(wx)};相邻帧最多差 ${row.wiggle.maxStep};先 seedRandom 再 wiggle 的那一层相邻帧最多差 ${row.seededWiggle.maxStep}`);
-      console.log(`${label}:连调两次 random 的两个数(第 30 帧)${row.twice.x[2].toFixed(2)} / ${row.twice.y[2].toFixed(2)};Math.random 的 x 第 30～32 帧 ${row.mathRandom.slice(2, 5).map((x) => x.toFixed(2)).join(' ')};同名变量那一层 x 都是 ${[...new Set(row.shadowed)].join(',')}`);
-      console.log(`${label}:seedRandom(7, true) 的透明度${varies(row.seedTimeless) ? '随时间变' : '不随时间变'}(第 30 帧 ${row.seedTimeless[2].toFixed(4)});seedRandom(7) 的透明度${varies(row.seedTimed) ? '随时间变' : '不随时间变'}(第 30～32 帧 ${row.seedTimed.slice(2, 5).map((x) => x.toFixed(4)).join(' ')})`);
-      console.log(`${label}:同一个合成放两份,${frames.length} 帧里两份不同的帧数——random 那层 ${twinApart(row.twin.random)},wiggle 那层 ${twinApart(row.twin.wiggle)}(第 30 帧 random ${row.twin.random[0][2].toFixed(1)} / ${row.twin.random[1][2].toFixed(1)});表达式里用 gaussRandom:${gauss ?? '没报错'}`);
+      console.log(`${label}: two passes: ${row.repeat ? 'same' : 'different'}; x of wiggle-only at frames 30-40: ${r3(wx)}; max diff between adjacent frames ${row.wiggle.maxStep}; max diff between adjacent frames for the layer with seedRandom before wiggle ${row.seededWiggle.maxStep}`);
+      console.log(`${label}: the two numbers from calling random twice in a row (frame 30) ${row.twice.x[2].toFixed(2)} / ${row.twice.y[2].toFixed(2)}; x of Math.random at frames 30-32 ${row.mathRandom.slice(2, 5).map((x) => x.toFixed(2)).join(' ')}; x of the layer with same-named variables is ${[...new Set(row.shadowed)].join(',')} throughout`);
+      console.log(`${label}: opacity of seedRandom(7, true): ${varies(row.seedTimeless) ? 'varies over time' : 'does not vary over time'} (frame 30: ${row.seedTimeless[2].toFixed(4)}); opacity of seedRandom(7): ${varies(row.seedTimed) ? 'varies over time' : 'does not vary over time'} (frames 30-32: ${row.seedTimed.slice(2, 5).map((x) => x.toFixed(4)).join(' ')})`);
+      console.log(`${label}: the same composition placed in two copies; across ${frames.length} frames the two copies differ in: random layer ${twinApart(row.twin.random)}, wiggle layer ${twinApart(row.twin.wiggle)} (frame 30 random ${row.twin.random[0][2].toFixed(1)} / ${row.twin.random[1][2].toFixed(1)}); gaussRandom in an expression: ${gauss ?? 'no error'}`);
       // 三种开法下都该成立的
-      if (!row.shadowed.every((x) => x === 600)) fail(`${label}:表达式里自己声明了同名的 random、wiggle,x 应恒为 600,读到 ${[...new Set(row.shadowed)].join(',')}`);
-      if (!pv.static || pv.static.maxDiff !== 0 || pv.static.same !== false) fail(`${label}:不带关键帧的多维属性,this.pv 应当是 value 取单精度(且不是同一个对象),读到 ${JSON.stringify(pv.static)}`);
-      if (!pv.keyed || pv.keyed.same !== true) fail(`${label}:带关键帧的属性,this.pv 和 value 应当是同一个对象,读到 ${JSON.stringify(pv.keyed)}`);
-      if (runtime.installed !== (mode === 'expr')) fail(`${label}:卡片自己的随机函数${runtime.installed ? '装上了' : '没装上'},和预期相反`);
-      if (!gauss || !/gaussRandom/.test(gauss)) fail(`${label}:表达式里用 gaussRandom 应当照播放库的方式失败(报它没定义),读到 ${gauss}`);
+      if (!row.shadowed.every((x) => x === 600)) fail(`${label}: the expression declares its own random and wiggle with the same names, x should stay 600, got ${[...new Set(row.shadowed)].join(',')}`);
+      if (!pv.static || pv.static.maxDiff !== 0 || pv.static.same !== false) fail(`${label}: for a multi-dimensional property without keyframes, this.pv should be value at single precision (and not the same object), got ${JSON.stringify(pv.static)}`);
+      if (!pv.keyed || pv.keyed.same !== true) fail(`${label}: for a property with keyframes, this.pv and value should be the same object, got ${JSON.stringify(pv.keyed)}`);
+      if (runtime.installed !== (mode === 'expr')) fail(`${label}: the card's own random function is ${runtime.installed ? 'installed' : 'not installed'}, the opposite of what was expected`);
+      if (!gauss || !/gaussRandom/.test(gauss)) fail(`${label}: using gaussRandom in an expression should fail the way the playback library does (reporting it as undefined), got ${gauss}`);
       if (mode === 'off') continue;
       // 开着时:两遍相同
-      if (!row.repeat) fail(`${label}:两个新页面读到的数不同`);
+      if (!row.repeat) fail(`${label}: the two new pages read different numbers`);
       if (mode !== 'expr') continue;
       // 「替换」要守的:数固定,观感和播放库现在的一样
-      if (gauss !== section.modes.off.gauss) fail(`${label}:表达式里用 gaussRandom,开着报「${gauss}」,关着报「${section.modes.off.gauss}」,应当一样`);
-      if (!frames.every((f, i) => row.twice.x[i] !== row.twice.y[i])) fail(`${label}:一个表达式里连调两次 random,有的帧两个数相同`);
-      if (!varies(row.twice.x) || !varies(row.mathRandom)) fail(`${label}:random / Math.random 的数不随帧变`);
-      if (!row.mathRandom.every((x) => x >= 300 && x < 1300)) fail(`${label}:Math.random 的 x 出了 300～1300`);
+      if (gauss !== section.modes.off.gauss) fail(`${label}: gaussRandom in an expression reports "${gauss}" with the switches on and "${section.modes.off.gauss}" with them off, should be the same`);
+      if (!frames.every((f, i) => row.twice.x[i] !== row.twice.y[i])) fail(`${label}: calling random twice in a row in one expression gives the same two numbers on some frames`);
+      if (!varies(row.twice.x) || !varies(row.mathRandom)) fail(`${label}: the numbers from random / Math.random do not vary with the frame`);
+      if (!row.mathRandom.every((x) => x >= 300 && x < 1300)) fail(`${label}: x of Math.random went outside 300-1300`);
       // wiggle 照旧逐帧跳:相邻帧的差应当远超过「连续」时的上限(幅度的六分之一),和关着时一个量级
-      if (!(row.wiggle.maxStep > AMP)) fail(`${label}:wiggle 相邻帧最多只差 ${row.wiggle.maxStep},不像逐帧各取各的(关着时 ${section.modes.off.wiggle.maxStep})`);
+      if (!(row.wiggle.maxStep > AMP)) fail(`${label}: wiggle differs by at most ${row.wiggle.maxStep} between adjacent frames, not like picking independently on each frame (with the switches off: ${section.modes.off.wiggle.maxStep})`);
       // 同一个表达式里先 seedRandom 再 wiggle:照播放库现在的,接着不带时间的那一串取,随时间连续(每帧最多走幅度的六分之一)
-      if (!(row.seededWiggle.maxStep <= 100 / 6 + 0.001)) fail(`${label}:先 seedRandom 再 wiggle(5, 100) 的那一层相邻帧差 ${row.seededWiggle.maxStep},超过 ${(100 / 6).toFixed(2)};播放库现在是连续的(关着时 ${section.modes.off.seededWiggle.maxStep})`);
-      if (varies(row.seedTimeless)) fail(`${label}:seedRandom(7, true) 的值随时间变了`);
-      if (varies(row.seedTimed)) fail(`${label}:seedRandom(7) 的值随时间变了(播放库现在不看第二个参数,不变)`);
-      if (twinApart(row.twin.random) !== frames.length || twinApart(row.twin.wiggle) < frames.length - 1) fail(`${label}:同一个合成放两份,两份应当各动各的;不同的帧数 random ${twinApart(row.twin.random)}、wiggle ${twinApart(row.twin.wiggle)}(共 ${frames.length} 帧)`);
-      if (!(runtime.gives === 4 && runtime.repeatable && runtime.mathKeepsRest)) fail(`${label}:卡片自己的随机函数直接调的结果不对 ${JSON.stringify(runtime)}`);
+      if (!(row.seededWiggle.maxStep <= 100 / 6 + 0.001)) fail(`${label}: for the layer with seedRandom before wiggle(5, 100), the difference between adjacent frames is ${row.seededWiggle.maxStep}, above ${(100 / 6).toFixed(2)}; the playback library is continuous now (with the switches off: ${section.modes.off.seededWiggle.maxStep})`);
+      if (varies(row.seedTimeless)) fail(`${label}: the value of seedRandom(7, true) varied over time`);
+      if (varies(row.seedTimed)) fail(`${label}: the value of seedRandom(7) varied over time (the playback library now ignores the second argument, so it should not change)`);
+      if (twinApart(row.twin.random) !== frames.length || twinApart(row.twin.wiggle) < frames.length - 1) fail(`${label}: the same composition placed twice, the two copies should move independently; frames where they differ: random ${twinApart(row.twin.random)}, wiggle ${twinApart(row.twin.wiggle)} (of ${frames.length} frames)`);
+      if (!(runtime.gives === 4 && runtime.repeatable && runtime.mathKeepsRest)) fail(`${label}: calling the card's own random function directly gave a wrong result ${JSON.stringify(runtime)}`);
     }
     // 只有 wiggle 的表达式跟在别的表达式的 seedRandom 后面求值时(fixture 的 wiggle-pos 就是):播放库现在让它接着那一串取,
     // 看起来是连续的(每帧最多走幅度的六分之一)。「替换」下也得是这样
@@ -634,16 +634,16 @@ try {
       const late = Array.from({ length: 15 }, (_, i) => 42 + i); const steps = {};
       for (const mode of ['off', 'seed', 'expr']) { const p = await open(); const m = await call(p, 'make', 'fixture', mode); const rows = await call(p, 'readLayers', m.id, late); await p.close(); const xs = late.map((f) => rows[f]['wiggle-pos'][X]); steps[mode] = +Math.max(...xs.slice(1).map((x, i) => Math.abs(x - xs[i]))).toFixed(2); }
       section.wiggleAfterSeeded = steps;
-      if (!(steps.expr <= AMP / 6 + 0.001)) fail(`表达式用例/替换:fixture 的 wiggle-pos 排在别的表达式的 seedRandom 后面求值,播放库现在是连续的(相邻帧最多差 ${steps.off}),开着却差 ${steps.expr}`);
-      console.log(`表达式用例 / fixture 的 wiggle-pos(每帧排在一个 seedRandom(7, true) 的表达式后面求值)第 42～56 帧相邻帧最多差:关 ${steps.off},种子 ${steps.seed},替换 ${steps.expr}`);
+      if (!(steps.expr <= AMP / 6 + 0.001)) fail(`Expression cases/replace: the fixture's wiggle-pos is evaluated after another expression's seedRandom, the playback library is continuous now (max diff between adjacent frames ${steps.off}), but with the switch on it differs by ${steps.expr}`);
+      console.log(`Expression cases / the fixture's wiggle-pos (evaluated every frame after an expression with seedRandom(7, true)), max diff between adjacent frames at frames 42-56: off ${steps.off}, seed ${steps.seed}, replace ${steps.expr}`);
     }
     // 开关一和开关三叠着开(再加开关二):表达式已经不用播放库那一串了,画面应当和只开开关三(加开关二)一样
     if (ASSETS.includes('fixture')) {
       const ns = [9, 21, 41]; let same = 0;
       for (const n of ns) { const p = await open(); const m = await call(p, 'make', 'fixture', 'all'); const shot = await call(p, 'jump', m.id, n); await p.close(); if (sha(shot.v) === report.assets.fixture.modes.exprboth.perN[n].hash) same++; }
       section.stacked = { same, of: ns.length };
-      if (same !== ns.length) fail(`表达式用例:三个开关都开,fixture ${ns.length} 个 N 里只有 ${same} 个和「替换+不留旧数」相同`);
-      console.log(`表达式用例 / 三个开关都开:fixture 第 ${ns.join('、')} 帧,${same}/${ns.length} 和「替换+不留旧数」的画面相同`);
+      if (same !== ns.length) fail(`Expression cases: with all three switches on, out of ${ns.length} N values of the fixture only ${same} match "replace+no stale values"`);
+      console.log(`Expression cases / all three switches on: fixture frames ${ns.join(', ')}, ${same}/${ns.length} match the image of "replace+no stale values"`);
     }
     // 交替画帧:三份开着正式那一组的实例(其中两份是同一个素材、错开 11 帧)加一份关着的,轮流各跳一帧
     if (ASSETS.includes('fixture')) {
@@ -655,18 +655,18 @@ try {
         p = await open(); const [alone] = await call(p, 'alternate', [specs[i]], steps); await p.close();
         const same = steps.filter((f, k) => alone[k] === together[i][k]).length;
         rows.push({ name: specs[i].name, offset: specs[i].offset, same, of: steps.length });
-        if (same !== steps.length) fail(`交替画帧:${specs[i].name}(错开 ${specs[i].offset} 帧)${steps.length} 步里只有 ${same} 步和单独画时相同`);
+        if (same !== steps.length) fail(`Alternate drawing: ${specs[i].name} (offset by ${specs[i].offset} frames), out of ${steps.length} steps only ${same} match the standalone drawing`);
       }
       section.alternate = rows;
-      console.log(`交替画帧 / 三份「替换+不留旧数」的实例加一份关着的轮流各跳一帧(${steps.length} 步):和单独画时相同的步数 ${rows.map((r) => `${r.name}+${r.offset} ${r.same}/${r.of}`).join(',')}`);
+      console.log(`Alternate drawing / three "replace+no stale values" instances plus one with the switches off, each jumping one frame in turn (${steps.length} steps): steps matching the standalone drawing ${rows.map((r) => `${r.name}+${r.offset} ${r.same}/${r.of}`).join(',')}`);
       // 绕过去:直接调播放库的 goToAndStop,表达式不在卡片包住的那一段里求值
       const late = Array.from({ length: 15 }, (_, i) => 42 + i); const runs = [];
       for (let k = 0; k < 2; k++) { p = await open(); const m = await call(p, 'make', 'fixture', 'expr'); runs.push(await call(p, 'bypass', m.id, late)); await p.close(); }
       p = await open(); const normal = await call(p, 'make', 'fixture', 'expr'); const shots = await call(p, 'seq', normal.id, late, late); await p.close();
       const repeat = runs[0].every((v, k) => v === runs[1][k]); const differ = late.filter((f, k) => runs[0][k] !== shots[f].v).length;
       section.bypass = { repeat, differFromNormal: differ, of: late.length };
-      if (!repeat) fail('绕过去:直接调播放库的 goToAndStop,两个新页面读到的画面不同');
-      console.log(`绕过去 / fixture 开着「替换」但直接调播放库的 goToAndStop(第 42～56 帧):两个新页面${repeat ? '相同' : '不同'};和正常跳帧比 ${differ}/${late.length} 帧不同`);
+      if (!repeat) fail('Bypass: calling the playback library\'s goToAndStop directly, the two new pages read different images');
+      console.log(`Bypass / fixture with "replace" on but calling the playback library's goToAndStop directly (frames 42-56): two new pages: ${repeat ? 'same' : 'different'}; compared with normal frame jumps, ${differ}/${late.length} frames differ`);
     }
     report.exprCases = section;
   }
@@ -687,51 +687,51 @@ try {
         // 不同在哪:再用 loadLottie 建一份直接跳,和「直接挂」的那一份比
         p = await open(); const m = await call(p, 'make', asset, mode); const ref = await call(p, 'jump', m.id, n); await p.close();
         row.diff = { ...describeDiff(ref.v, directShot.v, asset.startsWith('fixture') ? FIXTURE_LAYERS : null), pixels: await pixelDiff(ref.r, directShot.r) };
-        fail(`真卡片/${label}:第 ${n} 帧 直接挂 ${row.direct}、推过来 ${row.pushed}、别的卡在前 ${row.afterOther},应为 ${want}(开关读到 ${JSON.stringify(row.switches)});直接挂和 loadLottie 直接跳比:${row.diff.pixels.pct}% 的像素不同${row.diff.layers ? `,图层 ${row.diff.layers.join(',')}` : ''};${row.diff.a} ‖ ${row.diff.b}`);
+        fail(`Real card/${label}: frame ${n}: mounted directly ${row.direct}, pushed over ${row.pushed}, other card first ${row.afterOther}, expected ${want} (switches read ${JSON.stringify(row.switches)}); mounted directly vs loadLottie direct jump: ${row.diff.pixels.pct}% of pixels differ${row.diff.layers ? `, layers ${row.diff.layers.join(',')}` : ''}; ${row.diff.a} ‖ ${row.diff.b}`);
       }
       rows.push(row);
     }
-    console.log(`真卡片 / ${label}(地址带 ${query || '(什么都不带)'}):第 ${ns.join('、')} 帧,直接挂、从第 0 帧推过来、别的卡在前 —— ${rows.every((r) => r.same) ? '都和 loadLottie 直接跳的那一份相同' : '有不同'}`);
+    console.log(`Real card / ${label} (URL with ${query || '(nothing)'}): frames ${ns.join(', ')}: mounted directly, pushed from frame 0, other card first: ${rows.every((r) => r.same) ? 'all identical to the one from loadLottie\'s direct jump' : 'some differ'}`);
     return rows;
   };
-  if (ASSETS.includes('fixture')) report.card.seed = await cardOn('种子,fixture(内联 JSON)', '?lottieSeed=1&lottieExpr=0&lottieExact=0', { seed: true, exact: false }, inlineParams, 30, [9, 21, 41, 59], 'fixture', 'seed');
+  if (ASSETS.includes('fixture')) report.card.seed = await cardOn('seed, fixture (inline JSON)', '?lottieSeed=1&lottieExpr=0&lottieExact=0', { seed: true, exact: false }, inlineParams, 30, [9, 21, 41, 59], 'fixture', 'seed');
   // 装载是异步的那一份:卡片在装载完成之前就调过一次跳帧,播放库装完那一下画的就是那一帧
-  if (ASSETS.includes('fixtureasync')) report.card.seedAsync = await cardOn('种子,fixtureasync(内联 JSON,装载是异步的)', '?lottieSeed=1&lottieExpr=0&lottieExact=0', { seed: true, exact: false }, { ...inlineParams, json: dataText('fixtureasync') }, 30, [21, 41], 'fixtureasync', 'seed');
-  if (ASSETS.includes('fixtureip')) report.card.seedIp = await cardOn('种子,fixtureip(内联 JSON,起点不在第 0 帧)', '?lottieSeed=1&lottieExpr=0&lottieExact=0', { seed: true, exact: false }, { ...inlineParams, json: dataText('fixtureip') }, 30, [0, 2, 17], 'fixtureip', 'seed');
+  if (ASSETS.includes('fixtureasync')) report.card.seedAsync = await cardOn('seed, fixtureasync (inline JSON, loading is async)', '?lottieSeed=1&lottieExpr=0&lottieExact=0', { seed: true, exact: false }, { ...inlineParams, json: dataText('fixtureasync') }, 30, [21, 41], 'fixtureasync', 'seed');
+  if (ASSETS.includes('fixtureip')) report.card.seedIp = await cardOn('seed, fixtureip (inline JSON, start is not at frame 0)', '?lottieSeed=1&lottieExpr=0&lottieExact=0', { seed: true, exact: false }, { ...inlineParams, json: dataText('fixtureip') }, 30, [0, 2, 17], 'fixtureip', 'seed');
   // 开关三:同样三份
-  if (ASSETS.includes('fixture')) report.card.expr = await cardOn('替换,fixture(内联 JSON)', '?lottieExpr=1&lottieExact=0', { seed: false, exact: false, expr: true }, inlineParams, 30, [9, 21, 41, 59], 'fixture', 'expr');
-  if (ASSETS.includes('fixtureasync')) report.card.exprAsync = await cardOn('替换,fixtureasync(内联 JSON,装载是异步的)', '?lottieExpr=1&lottieExact=0', { seed: false, exact: false, expr: true }, { ...inlineParams, json: dataText('fixtureasync') }, 30, [21, 41], 'fixtureasync', 'expr');
-  if (ASSETS.includes('fixtureip')) report.card.exprIp = await cardOn('替换,fixtureip(内联 JSON,起点不在第 0 帧)', '?lottieExpr=1&lottieExact=0', { seed: false, exact: false, expr: true }, { ...inlineParams, json: dataText('fixtureip') }, 30, [0, 2, 17], 'fixtureip', 'expr');
+  if (ASSETS.includes('fixture')) report.card.expr = await cardOn('replace, fixture (inline JSON)', '?lottieExpr=1&lottieExact=0', { seed: false, exact: false, expr: true }, inlineParams, 30, [9, 21, 41, 59], 'fixture', 'expr');
+  if (ASSETS.includes('fixtureasync')) report.card.exprAsync = await cardOn('replace, fixtureasync (inline JSON, loading is async)', '?lottieExpr=1&lottieExact=0', { seed: false, exact: false, expr: true }, { ...inlineParams, json: dataText('fixtureasync') }, 30, [21, 41], 'fixtureasync', 'expr');
+  if (ASSETS.includes('fixtureip')) report.card.exprIp = await cardOn('replace, fixtureip (inline JSON, start is not at frame 0)', '?lottieExpr=1&lottieExact=0', { seed: false, exact: false, expr: true }, { ...inlineParams, json: dataText('fixtureip') }, 30, [0, 2, 17], 'fixtureip', 'expr');
   if (ASSETS.includes('textrandom')) {
-    report.card.exprText = await cardOn('替换,textrandom(内联 JSON,随机顺序的文字)', '?lottieExpr=1&lottieExact=0', { seed: false, exact: false, expr: true }, { ...inlineParams, json: dataText('textrandom') }, 30, [15, 31, 45], 'textrandom', 'expr');
-    report.card.seedText = await cardOn('种子,textrandom(内联 JSON,随机顺序的文字)', '?lottieSeed=1&lottieExpr=0&lottieExact=0', { seed: true, exact: false }, { ...inlineParams, json: dataText('textrandom') }, 30, [15, 31, 45], 'textrandom', 'seed');
+    report.card.exprText = await cardOn('replace, textrandom (inline JSON, text in random order)', '?lottieExpr=1&lottieExact=0', { seed: false, exact: false, expr: true }, { ...inlineParams, json: dataText('textrandom') }, 30, [15, 31, 45], 'textrandom', 'expr');
+    report.card.seedText = await cardOn('seed, textrandom (inline JSON, text in random order)', '?lottieSeed=1&lottieExpr=0&lottieExact=0', { seed: true, exact: false }, { ...inlineParams, json: dataText('textrandom') }, 30, [15, 31, 45], 'textrandom', 'seed');
   }
   if (ASSETS.includes('happy2016')) {
     const a = report.assets.happy2016;
-    report.card.exprBoth = await cardOn('替换+不留旧数,happy2016(src 加载)', '?lottieExpr=1&lottieExact=1', { seed: false, exact: true, expr: true }, srcParams('happy2016'), a.fr, [a.picks[4], a.picks[a.picks.length - 1]], 'happy2016', 'exprboth');
-    report.card.both = await cardOn('种子+不留旧数,happy2016(src 加载)', '?lottieSeed=1&lottieExact=1&lottieExpr=0', { seed: true, exact: true }, srcParams('happy2016'), a.fr, [a.picks[4], a.picks[a.picks.length - 1]], 'happy2016', 'both');
+    report.card.exprBoth = await cardOn('replace+no stale values, happy2016 (loaded via src)', '?lottieExpr=1&lottieExact=1', { seed: false, exact: true, expr: true }, srcParams('happy2016'), a.fr, [a.picks[4], a.picks[a.picks.length - 1]], 'happy2016', 'exprboth');
+    report.card.both = await cardOn('seed+no stale values, happy2016 (loaded via src)', '?lottieSeed=1&lottieExact=1&lottieExpr=0', { seed: true, exact: true }, srcParams('happy2016'), a.fr, [a.picks[4], a.picks[a.picks.length - 1]], 'happy2016', 'both');
   }
   // 缺省(地址上什么都不带):就是正式的一组「替换+不留旧数」
   {
     const dflt = { seed: false, exact: true, expr: true };
-    if (ASSETS.includes('fixture')) report.card.dflt = await cardOn('缺省,fixture(内联 JSON)', '', dflt, inlineParams, 30, [9, 21, 41, 59], 'fixture', 'exprboth');
-    if (ASSETS.includes('fixtureasync')) report.card.dfltAsync = await cardOn('缺省,fixtureasync(内联 JSON,装载是异步的)', '', dflt, { ...inlineParams, json: dataText('fixtureasync') }, 30, [21, 41], 'fixtureasync', 'exprboth');
-    if (ASSETS.includes('fixtureip')) report.card.dfltIp = await cardOn('缺省,fixtureip(内联 JSON,起点不在第 0 帧)', '', dflt, { ...inlineParams, json: dataText('fixtureip') }, 30, [0, 2, 17], 'fixtureip', 'exprboth');
-    if (ASSETS.includes('textrandom')) report.card.dfltText = await cardOn('缺省,textrandom(内联 JSON,随机顺序的文字)', '', dflt, { ...inlineParams, json: dataText('textrandom') }, 30, [15, 31, 45], 'textrandom', 'exprboth');
-    if (ASSETS.includes('happy2016')) { const a = report.assets.happy2016; report.card.dfltHappy = await cardOn('缺省,happy2016(src 加载)', '', dflt, srcParams('happy2016'), a.fr, [a.picks[4], a.picks[a.picks.length - 1]], 'happy2016', 'exprboth'); }
+    if (ASSETS.includes('fixture')) report.card.dflt = await cardOn('default, fixture (inline JSON)', '', dflt, inlineParams, 30, [9, 21, 41, 59], 'fixture', 'exprboth');
+    if (ASSETS.includes('fixtureasync')) report.card.dfltAsync = await cardOn('default, fixtureasync (inline JSON, loading is async)', '', dflt, { ...inlineParams, json: dataText('fixtureasync') }, 30, [21, 41], 'fixtureasync', 'exprboth');
+    if (ASSETS.includes('fixtureip')) report.card.dfltIp = await cardOn('default, fixtureip (inline JSON, start is not at frame 0)', '', dflt, { ...inlineParams, json: dataText('fixtureip') }, 30, [0, 2, 17], 'fixtureip', 'exprboth');
+    if (ASSETS.includes('textrandom')) report.card.dfltText = await cardOn('default, textrandom (inline JSON, text in random order)', '', dflt, { ...inlineParams, json: dataText('textrandom') }, 30, [15, 31, 45], 'textrandom', 'exprboth');
+    if (ASSETS.includes('happy2016')) { const a = report.assets.happy2016; report.card.dfltHappy = await cardOn('default, happy2016 (loaded via src)', '', dflt, srcParams('happy2016'), a.fr, [a.picks[4], a.picks[a.picks.length - 1]], 'happy2016', 'exprboth'); }
   }
   // 关着(地址带 lottieExpr=0&lottieExact=0):和 --before 那个提交的卡片逐帧原文相同(内联 JSON 的 fixture,和走 src 加载的 navidad)
   {
     const cases = [];
-    if (ASSETS.includes('fixture')) cases.push(['fixture(内联 JSON)', inlineParams, 30, 30]);
-    if (ASSETS.includes('exprcases')) cases.push(['exprcases(内联 JSON)', { ...inlineParams, json: dataText('exprcases') }, 20, 30]);
-    if (ASSETS.includes('textrandom')) cases.push(['textrandom(内联 JSON)', { ...inlineParams, json: dataText('textrandom') }, 45, 30]);
-    if (ASSETS.includes('navidad')) cases.push(['navidad(src 加载)', srcParams('navidad'), 12, 25]);
+    if (ASSETS.includes('fixture')) cases.push(['fixture (inline JSON)', inlineParams, 30, 30]);
+    if (ASSETS.includes('exprcases')) cases.push(['exprcases (inline JSON)', { ...inlineParams, json: dataText('exprcases') }, 20, 30]);
+    if (ASSETS.includes('textrandom')) cases.push(['textrandom (inline JSON)', { ...inlineParams, json: dataText('textrandom') }, 45, 30]);
+    if (ASSETS.includes('navidad')) cases.push(['navidad (loaded via src)', srcParams('navidad'), 12, 25]);
     report.card.off = [];
     for (const [label, params, count, rate] of cases) {
       const seqs = {};
       for (const which of ['before', 'current']) {
-        const p = await open('?lottieExpr=0&lottieExact=0'); const switches = await call(p, 'switches'); if (switches.seed || switches.exact || switches.expr) fail(`真卡片/关:地址带 lottieExpr=0&lottieExact=0 时读到 ${JSON.stringify(switches)}`);
+        const p = await open('?lottieExpr=0&lottieExact=0'); const switches = await call(p, 'switches'); if (switches.seed || switches.exact || switches.expr) fail(`Real card/off: with lottieExpr=0&lottieExact=0 in the URL, read ${JSON.stringify(switches)}`);
         // 关着比的是原文:连看不见的图层上留着的旧属性也要一样
         const out = [sha((await call(p, 'mountCard', which, params, 0, 0)).r)];
         for (let f = 1; f < count; f++) out.push(sha((await call(p, 'cardFrame', f / rate)).r));
@@ -741,20 +741,20 @@ try {
       }
       const equal = seqs.before.filter((h, i) => h === seqs.current[i]).length;
       report.card.off.push({ label, frames: seqs.before.length, equal });
-      if (equal !== seqs.before.length) fail(`真卡片/关:${label} 和 ${BEFORE} 的卡片 ${seqs.before.length} 帧里只有 ${equal} 帧相同`);
-      console.log(`真卡片 / 关:${label} 和 ${BEFORE} 的卡片比,${seqs.before.length} 帧里 ${equal} 帧原文逐字节相同`);
+      if (equal !== seqs.before.length) fail(`Real card/off: ${label} and the ${BEFORE} card, only ${equal} of ${seqs.before.length} frames are the same`);
+      console.log(`Real card / off: ${label} compared with the ${BEFORE} card, ${equal} of ${seqs.before.length} frames have byte-for-byte identical raw text`);
     }
   }
   await tool.close();
-  if (report.pageErrors.length) fail(`页面报错或警告 ${report.pageErrors.length} 条:${report.pageErrors.slice(0, 3).join(' | ')}`);
+  if (report.pageErrors.length) fail(`${report.pageErrors.length} page errors or warnings: ${report.pageErrors.slice(0, 3).join(' | ')}`);
 } catch (e) {
-  fail(`探针自己出错:${String(e?.stack ?? e).slice(0, 600)}`);
+  fail(`Probe itself failed: ${String(e?.stack ?? e).slice(0, 600)}`);
 } finally {
   if (browser) await browser.close().catch(() => {});
   await vite.close().catch(() => {});
 }
 report.ms = Date.now() - t0;
 fs.writeFileSync(path.join(OUT, 'result.json'), JSON.stringify(report, null, 2));
-console.log(`机器:${report.host.cpu},${report.host.logicalCores} 个逻辑核;${report.chrome};lottie-web ${report.lottieWeb};用时 ${(report.ms / 1000).toFixed(1)} 秒;结果 ${path.join(OUT, 'result.json')}`);
+console.log(`Machine: ${report.host.cpu}, ${report.host.logicalCores} logical cores; ${report.chrome}; lottie-web ${report.lottieWeb}; took ${(report.ms / 1000).toFixed(1)} s; result ${path.join(OUT, 'result.json')}`);
 console.log(JSON.stringify({ ok: report.fails.length === 0, fails: report.fails }));
 process.exitCode = report.fails.length ? 1 : 0;

@@ -34,7 +34,7 @@ function pushPatch(store, session, prev, next, fromLocalRev, toLocalRev) {
   return store.pushDiff({ session, fromLocalRev, toLocalRev, hash: projectHash(next), patch: changedClips(prev, next) });
 }
 
-test("整份推送:按 {session, localRev} 取得到", () => {
+test("Full push: retrievable by {session, localRev}", () => {
   const store = createMirrorStore();
   const p = project([track("t1", 2)]);
   const out = store.pushFull({ session: "s1", localRev: 1, project: p });
@@ -43,38 +43,38 @@ test("整份推送:按 {session, localRev} 取得到", () => {
   assert.equal(out.hash, projectHash(p));
 
   assert.equal(store.getMirror("s1", 1).project, p);
-  assert.equal(store.getMirror("s1").localRev, 1, "不给号 = 最新一版");
-  assert.equal(store.getMirror("s1", "1").project, p, "号从 query string 来的时候是字符串");
+  assert.equal(store.getMirror("s1").localRev, 1, "No number given = latest version");
+  assert.equal(store.getMirror("s1", "1").project, p, "The number is a string when it comes from the query string");
   assert.equal(store.getMirror("s1", 2), null);
-  assert.equal(store.getMirror("别的会话"), null);
+  assert.equal(store.getMirror("another session"), null);
   assert.equal(store.latestMirror().project, p);
 });
 
-test("缺 session / 缺 project 就抛", () => {
+test("Throws when session / project is missing", () => {
   const store = createMirrorStore();
-  assert.throws(() => store.pushFull({ session: "", localRev: 1, project: project([]) }), /缺少 session/);
-  assert.throws(() => store.pushFull({ session: "s1", localRev: 1, project: null }), /缺少 project/);
-  assert.throws(() => store.pushFull({ session: "s1", localRev: 1, project: { tracks: "nope" } }), /缺少 project/);
-  assert.throws(() => store.pushDiff({ session: "", toLocalRev: 2 }), /缺少 session/);
+  assert.throws(() => store.pushFull({ session: "", localRev: 1, project: project([]) }), /Missing session/);
+  assert.throws(() => store.pushFull({ session: "s1", localRev: 1, project: null }), /Missing project/);
+  assert.throws(() => store.pushFull({ session: "s1", localRev: 1, project: { tracks: "nope" } }), /Missing project/);
+  assert.throws(() => store.pushDiff({ session: "", toLocalRev: 2 }), /Missing session/);
 });
 
-test("8 版窗口:只留最近 8 版,更旧的取不到", () => {
+test("8-version window: only the latest 8 versions are kept, and older ones cannot be retrieved", () => {
   const store = createMirrorStore();
   assert.equal(MAX_VERSIONS, 8);
   let p = project([track("t1", 3)]);
   store.pushFull({ session: "s1", localRev: 1, project: p });
   for (let rev = 2; rev <= 12; rev++) {
     const next = drag(p, 0, 0, rev);
-    assert.equal(pushPatch(store, "s1", p, next, rev - 1, rev).status, "ok", `第 ${rev} 版该收下`);
+    assert.equal(pushPatch(store, "s1", p, next, rev - 1, rev).status, "ok", `Version ${rev} should be accepted`);
     p = next;
   }
   assert.deepEqual(store.revsOf("s1"), [5, 6, 7, 8, 9, 10, 11, 12]);
   assert.ok(store.getMirror("s1", 5));
-  assert.equal(store.getMirror("s1", 4), null, "滑出窗口的取不到");
+  assert.equal(store.getMirror("s1", 4), null, "Those that slid out of the window cannot be retrieved");
   assert.equal(store.latestMirror().localRev, 12);
 });
 
-test("stale:同 session 里号不大于已存最大号,回 stale 而不是错", () => {
+test("stale: a number in the same session that is not greater than the largest stored number answers stale rather than an error", () => {
   const store = createMirrorStore();
   const a = project([track("t1", 1)]);
   const b = drag(a, 0, 0, 5);
@@ -82,17 +82,17 @@ test("stale:同 session 里号不大于已存最大号,回 stale 而不是错", 
 
   for (const rev of [3, 2, 0]) {
     const out = store.pushFull({ session: "s1", localRev: rev, project: b });
-    assert.equal(out.status, "stale", `第 ${rev} 版该被当成乱序到达`);
+    assert.equal(out.status, "stale", `Version ${rev} should be treated as arriving out of order`);
     assert.equal(out.localRev, 3);
   }
-  assert.equal(store.getMirror("s1", 3).project, a, "旧的没把新的盖掉");
+  assert.equal(store.getMirror("s1", 3).project, a, "The old one did not overwrite the new one");
 
   // 补丁那一路同一个判据
   const late = pushPatch(store, "s1", a, b, 2, 3);
   assert.equal(late.status, "stale");
 });
 
-test("两个编辑页标签互不覆盖", () => {
+test("Two editor tabs do not overwrite each other", () => {
   const store = createMirrorStore();
   const a = project([track("a", 1)]);
   const b = project([track("b", 2)]);
@@ -102,11 +102,11 @@ test("两个编辑页标签互不覆盖", () => {
   // B 的号比 A 小得多,但它是另一个 session —— 不该被当成 stale
   assert.equal(store.getMirror("tab-A", 7).project, a);
   assert.equal(store.getMirror("tab-B", 1).project, b);
-  assert.equal(store.latestMirror().session, "tab-B", "Agent 取的是最后推的那个页面");
+  assert.equal(store.latestMirror().session, "tab-B", "The Agent gets the page that pushed last");
   assert.deepEqual(store.allLatest().map((v) => v.session).sort(), ["tab-A", "tab-B"]);
 });
 
-test("两层 diff:应用完和页面手里那份逐字相等", () => {
+test("Two-level diff: after applying it is identical to the copy held by the page", () => {
   const store = createMirrorStore();
   const a = project([track("t1", 3), track("t2", 2)]);
   store.pushFull({ session: "s1", localRev: 1, project: a });
@@ -139,7 +139,7 @@ test("两层 diff:应用完和页面手里那份逐字相等", () => {
   assert.deepEqual(store.getMirror("s1", 1).project, a);
 });
 
-test("resync(409):哈希对不上", () => {
+test("resync(409): hash mismatch", () => {
   const store = createMirrorStore();
   const a = project([track("t1", 2)]);
   store.pushFull({ session: "s1", localRev: 1, project: a });
@@ -150,17 +150,17 @@ test("resync(409):哈希对不上", () => {
   assert.equal(out.reason, "hash");
   assert.equal(out.localRev, 1);
   assert.equal(out.hash, projectHash(b));
-  assert.equal(store.getMirror("s1", 2), null, "对不上的那一版不能进来");
+  assert.equal(store.getMirror("s1", 2), null, "The mismatched version must not be accepted");
 
   // 页面收到 409 就整份重推,同一个号照样收
   assert.equal(store.pushFull({ session: "s1", localRev: 2, project: b }).status, "ok");
   assert.deepEqual(store.getMirror("s1", 2).project, b);
 });
 
-test("resync(409):基线滑出窗口 / 这个 session 一版都没有", () => {
+test("resync(409): the baseline slid out of the window / this session has no version at all", () => {
   const store = createMirrorStore();
   const a = project([track("t1", 2)]);
-  assert.equal(store.pushDiff({ session: "新页面", fromLocalRev: 0, toLocalRev: 1, patch: changedClips(a, a) }).reason, "session");
+  assert.equal(store.pushDiff({ session: "new page", fromLocalRev: 0, toLocalRev: 1, patch: changedClips(a, a) }).reason, "session");
 
   let p = a;
   store.pushFull({ session: "s1", localRev: 1, project: p });
@@ -173,16 +173,16 @@ test("resync(409):基线滑出窗口 / 这个 session 一版都没有", () => {
   assert.equal(out.localRev, 12);
 });
 
-test("resync(409):补丁引用了不存在的轨道 / 片段", () => {
+test("resync(409): the patch references a track / clip that does not exist", () => {
   const store = createMirrorStore();
   store.pushFull({ session: "s1", localRev: 1, project: project([track("t1", 1)]) });
-  const out = store.pushDiff({ session: "s1", fromLocalRev: 1, toLocalRev: 2, patch: { kind: "tracks", order: null, tracks: [{ id: "幽灵轨道", props: {} }] } });
+  const out = store.pushDiff({ session: "s1", fromLocalRev: 1, toLocalRev: 2, patch: { kind: "tracks", order: null, tracks: [{ id: "ghost track", props: {} }] } });
   assert.equal(out.status, "resync");
   assert.equal(out.reason, "apply");
-  assert.match(out.error, /不存在的轨道/);
+  assert.match(out.error, /nonexistent track/);
 });
 
-test("不给哈希也收(迁移期 / 脚本),但给了就一定校验", () => {
+test("Accepted even without a hash (migration period / scripts), but verified whenever one is given", () => {
   const store = createMirrorStore();
   const a = project([track("t1", 1)]);
   const b = drag(a, 0, 0, 2);
@@ -190,7 +190,7 @@ test("不给哈希也收(迁移期 / 脚本),但给了就一定校验", () => {
   assert.equal(store.pushDiff({ session: "s1", fromLocalRev: 1, toLocalRev: 2, patch: changedClips(a, b) }).status, "ok");
 });
 
-test("回拉补一版(insert):不走 stale 闸", () => {
+test("Pull-back fills in a version (insert): it does not go through the stale gate", () => {
   const store = createMirrorStore();
   let p = project([track("t1", 2)]);
   const v = [null, p];
@@ -208,7 +208,7 @@ test("回拉补一版(insert):不走 stale 闸", () => {
   const out = store.insert({ session: "s1", localRev: 5, project: five });
   assert.equal(out.status, "ok");
   assert.deepEqual(store.getMirror("s1", 5).project, five);
-  assert.equal(store.latestMirror().localRev, 6, "补旧版不该动『最新一版』");
+  assert.equal(store.latestMirror().localRev, 6, "Filling in an old version should not touch \"the latest version\"");
   assert.deepEqual(store.revsOf("s1"), [1, 2, 3, 4, 5, 6]);
 
   // 已经有的原样返回,不重复存
@@ -222,14 +222,14 @@ test("回拉补一版(insert):不走 stale 闸", () => {
   assert.equal(store.insert({ session: "s1", localRev: 2, project: v[2] }).status, "resync");
 });
 
-test("播放头:和项目分开存,跟着当前编辑页走", () => {
+test("Playhead: stored separately from the project and follows the current editor page", () => {
   const store = createMirrorStore();
   assert.equal(store.latestPlayhead(), null);
 
   const head = store.setPlayhead("s1", 3.5, false);
   assert.equal(head.t, 3.5);
   assert.equal(head.playing, false);
-  assert.equal(store.latestPlayhead().t, 3.5, "还没推过项目也读得到(退回最近报过的那个)");
+  assert.equal(store.latestPlayhead().t, 3.5, "Readable even if no project has been pushed yet (falls back to the one reported most recently)");
 
   store.pushFull({ session: "s1", localRev: 1, project: project([track("t1", 1)]) });
   assert.equal(store.latestPlayhead().t, 3.5);
@@ -246,11 +246,11 @@ test("播放头:和项目分开存,跟着当前编辑页走", () => {
   assert.equal(store.latestPlayhead().t, 1.25);
   assert.equal(store.latestPlayhead().session, "s2");
 
-  assert.throws(() => store.setPlayhead("", 1, false), /缺少 session/);
-  assert.equal(store.setPlayhead("s1", "坏数", false).t, 0, "报了个非数就当 0,别把 NaN 传给渲染");
+  assert.throws(() => store.setPlayhead("", 1, false), /Missing session/);
+  assert.equal(store.setPlayhead("s1", "bad number", false).t, 0, "A reported non-number is treated as 0; do not pass NaN to rendering");
 });
 
-test("clear:把两张表都清干净", () => {
+test("clear: wipe both tables clean", () => {
   const store = createMirrorStore();
   store.pushFull({ session: "s1", localRev: 1, project: project([track("t1", 1)]) });
   store.setPlayhead("s1", 2, false);
@@ -260,7 +260,7 @@ test("clear:把两张表都清干净", () => {
   assert.deepEqual(store.allLatest(), []);
 });
 
-test("拖动 2 秒:每一次推送都远小于 8 KB", () => {
+test("Dragging for 2 seconds: every push is far smaller than 8 KB", () => {
   const store = createMirrorStore();
   // 17 轨 × 10 段,和编辑台里一个中等项目差不多
   let p = project(Array.from({ length: 17 }, (_, i) => track(`t${i}`, 10)));
@@ -276,6 +276,6 @@ test("拖动 2 秒:每一次推送都远小于 8 KB", () => {
     assert.equal(pushPatch(store, "s1", p, next, rev - 1, rev).status, "ok");
     p = next;
   }
-  assert.ok(worst < 8 * 1024, `拖动时最大的一次推送 ${worst} 字节,超过 8 KB`);
-  assert.ok(worst * 20 < full, `增量 ${worst} 字节对整份 ${full} 字节,省得不够多`);
+  assert.ok(worst < 8 * 1024, `The largest push while dragging was ${worst} bytes, over 8 KB`);
+  assert.ok(worst * 20 < full, `Delta of ${worst} bytes versus ${full} bytes for the full copy, not enough savings`);
 });

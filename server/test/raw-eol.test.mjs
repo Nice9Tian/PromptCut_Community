@@ -5,25 +5,25 @@ import os from 'node:os';
 import path from 'node:path';
 import { rawEolPlugin, rawEolTarget, rawModuleCode } from '../raw-eol.mjs';
 
-test('raw-eol: 只接项目 src/ 下带 ?raw 的绝对路径', () => {
+test('raw-eol: only accepts absolute paths under the project\'s src/ that have ?raw', () => {
   const root = path.resolve('/proj');
   const inSrc = path.join(root, 'src', 'cards', 'a.tsx');
   assert.equal(rawEolTarget(root, `${inSrc}?raw`), inSrc);
   assert.equal(rawEolTarget(root, `${inSrc}?import&raw`), inSrc);
-  assert.equal(rawEolTarget(root, inSrc), null, '不带 ?raw');
+  assert.equal(rawEolTarget(root, inSrc), null, 'without ?raw');
   assert.equal(rawEolTarget(root, `${inSrc}?rawx`), null);
-  assert.equal(rawEolTarget(root, `${path.join(root, 'node_modules', 'x.js')}?raw`), null, 'src 外');
+  assert.equal(rawEolTarget(root, `${path.join(root, 'node_modules', 'x.js')}?raw`), null, 'outside src');
   assert.equal(rawEolTarget(root, `${path.join(root, 'srcx', 'x.ts')}?raw`), null);
-  assert.equal(rawEolTarget(root, 'src/a.ts?raw'), null, '相对路径');
+  assert.equal(rawEolTarget(root, 'src/a.ts?raw'), null, 'relative path');
 });
 
-test('raw-eol: CRLF 与 LF 的原文交出同一段模块代码', () => {
+test('raw-eol: CRLF and LF sources yield the same module code', () => {
   const lf = 'const a = 1;\nconst b = `x\ny`;\n';
   assert.equal(rawModuleCode(lf.replace(/\n/g, '\r\n')), rawModuleCode(lf));
   assert.equal(rawModuleCode(lf), `export default ${JSON.stringify(lf)}`);
 });
 
-test('raw-eol: 插件 load 读盘并统一换行、登记监听', () => {
+test('raw-eol: the plugin\'s load reads from disk, normalizes line endings and registers a watch', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'raw-eol-'));
   try {
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });

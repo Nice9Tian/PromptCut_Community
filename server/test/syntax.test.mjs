@@ -45,37 +45,37 @@ function collect(ext) {
 
 const rel = (p) => path.relative(ROOT, p).replace(/\\/g, "/");
 
-test(".mjs 脚本全部能解析", () => {
+test("All .mjs scripts parse", () => {
   const files = collect(".mjs");
-  assert.ok(files.length > 15, `只找到 ${files.length} 个 .mjs,目录清单大概写错了`);
+  assert.ok(files.length > 15, `Only ${files.length} .mjs files found, the directory list is probably wrong`);
   const broken = [];
   for (const f of files) {
     const r = spawnSync(process.execPath, ["--check", f], { encoding: "utf8" });
     if (r.status !== 0) broken.push(`${rel(f)}\n${(r.stderr || "").split("\n").slice(0, 4).join("\n")}`);
   }
-  assert.equal(broken.length, 0, `下面这些解析不了:\n\n${broken.join("\n\n")}`);
+  assert.equal(broken.length, 0, `These cannot be parsed:\n\n${broken.join("\n\n")}`);
 });
 
-test("server/ 下的 .ts 全部能解析(tsc --noEmit 不看这个目录)", () => {
+test("All .ts files under server/ parse (tsc --noEmit does not look at this directory)", () => {
   const files = collect(".ts");
-  assert.ok(files.length > 8, `只找到 ${files.length} 个 .ts,目录清单大概写错了`);
+  assert.ok(files.length > 8, `Only ${files.length} .ts files found, the directory list is probably wrong`);
   const broken = [];
   for (const f of files) {
     const src = ts.createSourceFile(f, fs.readFileSync(f, "utf8"), ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS);
     // parseDiagnostics 不是公开 API,但它是拿到「纯语法错误」最直接的一条路;
     // 真哪天没了,下面这句断言会因为 undefined 而失败,不会假装通过
     const diags = src.parseDiagnostics;
-    assert.ok(Array.isArray(diags), `拿不到 ${rel(f)} 的解析诊断,这条测试得换实现了`);
+    assert.ok(Array.isArray(diags), `Cannot get the parse diagnostics for ${rel(f)}, this test needs a different implementation`);
     if (diags.length) {
       const first = diags[0];
       const { line } = src.getLineAndCharacterOfPosition(first.start ?? 0);
       broken.push(`${rel(f)}:${line + 1} ${ts.flattenDiagnosticMessageText(first.messageText, " ")}`);
     }
   }
-  assert.equal(broken.length, 0, `下面这些解析不了:\n${broken.join("\n")}`);
+  assert.equal(broken.length, 0, `These cannot be parsed:\n${broken.join("\n")}`);
 });
 
-test("块注释里没有会把自己关掉的路径", () => {
+test("Block comments contain no paths that would close the comment early", () => {
   /*
    * 上面两条抓「已经坏了」,这一条抓「写法危险」—— 注释被提前关掉之后,剩下的内容
    * 有时正好还能凑成合法代码,那样前两条就漏了。
@@ -101,5 +101,5 @@ test("块注释里没有会把自己关掉的路径", () => {
       if (trimmed.slice(idx + 2).trim() !== "") bad.push(`${rel(f)}:${i + 1}  ${trimmed.slice(0, 80)}`);
     });
   }
-  assert.equal(bad.length, 0, `注释里的这些位置会把块注释提前关掉(路径通配请写成 <id> 或加反引号断开):\n${bad.join("\n")}`);
+  assert.equal(bad.length, 0, `These places in comments close the block comment early (write path wildcards as <id> or break them up with backticks):\n${bad.join("\n")}`);
 });

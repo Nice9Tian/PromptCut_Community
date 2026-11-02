@@ -47,7 +47,7 @@ async function scannedFiles() {
 
 const scanned = await scannedFiles();
 
-test("Tailwind 扫描到的 src/、server/ 文件只有代码与样式", () => {
+test("Files under src/ and server/ scanned by Tailwind are only code and styles", () => {
   const bad = scanned
     .filter((f) => GUARDED.some((d) => f.startsWith(d)))
     .filter((f) => !CODE_OR_STYLE.has(path.extname(f).toLowerCase()))
@@ -56,23 +56,23 @@ test("Tailwind 扫描到的 src/、server/ 文件只有代码与样式", () => {
     bad,
     [],
     [
-      `Tailwind 会扫描下面 ${bad.length} 个非代码文件，开发服务里改它们会让所有打开的页面静默整页重载：`,
+      `Tailwind will scan the following ${bad.length} non-code files; editing them in the dev server makes every open page silently reload in full:`,
       ...bad.map((f) => `  ${f}`),
-      "处理（二选一）：",
-      "  1. 挪走：放到 src/、server/ 以外（文档进 docs/，测试夹具进 server/test/，运行时产物进被 git 忽略的 out/ 或 data/）；",
-      '  2. 排除：在 src/index.css 的排除表里加一行 @source not "../<路径或 glob>";（路径相对于 src/index.css）。',
-      "  不要为此排除 src/、server/ 下的 .ts/.tsx/.mjs 等源码：界面类名在里面（见本文件下一条检查）。",
+      "To fix (pick one):",
+      "  1. Move: put it outside src/ and server/ (docs go in docs/, test fixtures in server/test/, runtime output in the git-ignored out/ or data/);",
+      '  2. Exclude: add a line @source not "../<path or glob>"; to the exclusion list in src/index.css (the path is relative to src/index.css).',
+      "  Do not exclude source such as .ts/.tsx/.mjs under src/ and server/ for this: the UI class names live in it (see the next check in this file).",
     ].join("\n"),
   );
 });
 
-test("界面类名所在的源码仍在扫描里（排除表没有排过头）", () => {
+test("The source containing UI class names is still scanned (the exclusion list has not gone too far)", () => {
   const set = new Set(scanned);
-  assert.ok(set.has("index.html"), "index.html 不在扫描里");
+  assert.ok(set.has("index.html"), "index.html is not in the scan");
   const tracked = execFileSync("git", ["ls-files", "-z", "--", "src", "server"], { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 })
     .split("\0")
     .filter((f) => f.endsWith(".tsx") && !f.startsWith("server/test/"));
-  assert.ok(tracked.some((f) => f.startsWith("server/catalog/magicui/")), "没找到 server/catalog/magicui 下的卡片源码，检查本测试的前提");
+  assert.ok(tracked.some((f) => f.startsWith("server/catalog/magicui/")), "No card source found under server/catalog/magicui, check the premise of this test");
   const missing = tracked.filter((f) => !set.has(f));
-  assert.deepEqual(missing, [], `这些 .tsx 被 src/index.css 的 @source not 排除了，里面的 Tailwind 类名不会生成样式：\n${missing.join("\n")}`);
+  assert.deepEqual(missing, [], `These .tsx files are excluded by @source not in src/index.css, so the Tailwind class names in them will not generate styles:\n${missing.join("\n")}`);
 });

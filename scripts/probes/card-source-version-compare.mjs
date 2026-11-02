@@ -75,11 +75,11 @@ let result = { ok: false };
 try {
   const tar = path.join(tmp, 'base.tar');
   const archive = spawnSync('git', ['archive', '--format=tar', '-o', tar, BASE, 'src'], { cwd: ROOT, windowsHide: true, encoding: 'utf8' });
-  if (archive.status !== 0) throw new Error(`git archive ${BASE} 失败：${archive.stderr}`);
+  if (archive.status !== 0) throw new Error(`git archive ${BASE} failed: ${archive.stderr}`);
   const baseRoot = path.join(tmp, 'base');
   fs.mkdirSync(baseRoot);
   const untar = spawnSync('tar', ['-xf', 'base.tar', '-C', 'base'], { cwd: tmp, windowsHide: true, encoding: 'utf8' });
-  if (untar.status !== 0) throw new Error(`解包失败：${untar.stderr}`);
+  if (untar.status !== 0) throw new Error(`Unpack failed: ${untar.stderr}`);
   const baseCommit = spawnSync('git', ['rev-parse', '--short', BASE], { cwd: ROOT, windowsHide: true, encoding: 'utf8' }).stdout.trim();
   say('base', { ref: BASE, commit: baseCommit });
 

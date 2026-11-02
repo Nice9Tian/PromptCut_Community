@@ -16,7 +16,7 @@ import assert from "node:assert/strict";
 import { exists, skipIf, TIER_FILE, singleStageSwapHost } from "../../server/test/c10a-kit.mjs";
 
 const missing = !exists(TIER_FILE);
-const skip = skipIf(missing, `${TIER_FILE}（stageSwap 的单舞台闸随它来）`);
+const skip = skipIf(missing, `${TIER_FILE} (the single-stage gate of stageSwap comes with it)`);
 const it = (name, fn) => test(name, { skip }, fn);
 
 globalThis.window = globalThis;
@@ -110,21 +110,21 @@ beforeEach(() => {
 /** 双舞台下这两个场面一定会走补跑（与 stageSwap.test.mjs 的「暂停态互换」「播放态互换」同一组数据） */
 const TOUCHES_BACK = (e) => e[0] === "runBackJob" || e[0] === "swapRoles" || (e[0] === "pushProject" && e[1] === "back") || (e[0] === "B" && (e[1] === "render" || e[1] === "setMediaT"));
 
-it("C10A-GT-05 暂停后不追活渲：判重、vtOk = false 的卡在场，只有一个舞台时 runSettleSwap 什么都不做", async () => {
+it("C10A-GT-05 After a pause, no catch-up to live render: when heavy cards and cards with vtOk = false are present and there is only one stage, runSettleSwap does nothing", async () => {
   Object.assign(state, { project: project([card("h", 0, 10)]), t: 1, playing: false });
   plan = { segments: [{ fromSec: 0, toSec: 1000, heavy: new Set(["h"]) }] };
   withRecord("h", { vtOk: false });
   assert.equal(await swap.runSettleSwap(1), false);
-  assert.deepEqual(log.filter(TOUCHES_BACK), [], `不该碰后台舞台：${JSON.stringify(log)}`);
-  assert.equal(front.name, "A", "没有互换");
+  assert.deepEqual(log.filter(TOUCHES_BACK), [], `The background stage must not be touched: ${JSON.stringify(log)}`);
+  assert.equal(front.name, "A", "No swap");
   assert.equal(swap.swapInFlight(), false);
 });
 
-it("C10A-GT-06 播放中也不追：判轻、(b) 档的卡在场，只有一个舞台时 runPlayingSwap 什么都不做", async () => {
+it("C10A-GT-06 No catch-up during playback either: when cards classified as light and tier (b) cards are present and there is only one stage, runPlayingSwap does nothing", async () => {
   Object.assign(state, { project: project([card("b", 0, 10)]), t: 1, playing: true });
   plan = { segments: [{ fromSec: 0, toSec: 1000, heavy: new Set() }] };
   withRecord("b", { vtOk: false, stepMs: 2, stepMaxMs: 3, catchUpMs: 200 });
   assert.equal(await swap.runPlayingSwap(["b"]), false);
-  assert.deepEqual(log.filter(TOUCHES_BACK), [], `不该碰后台舞台：${JSON.stringify(log)}`);
+  assert.deepEqual(log.filter(TOUCHES_BACK), [], `The background stage must not be touched: ${JSON.stringify(log)}`);
   assert.equal(front.name, "A");
 });

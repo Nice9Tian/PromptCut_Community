@@ -64,7 +64,7 @@ const framesAt = async (mod, fps, times) => {
 };
 const range = (n) => Array.from({ length: n }, (_, i) => i);
 
-test("VC-01 假视频元素复现缺陷:原样 seek 到帧边界 k/30 时 k ≡ 2 (mod 3) 取到前一帧", () => {
+test("VC-01 fake video element reproduces the defect: seeking as is to frame boundary k/30 with k ≡ 2 (mod 3) fetches the previous frame", () => {
   assert.equal(shownFrame(2 / 30, 30, 3), 1);
   assert.equal(shownFrame(5 / 30, 30, 3), 4);
   assert.equal(shownFrame(1 / 30, 30, 3), 1);
@@ -74,14 +74,14 @@ test("VC-01 假视频元素复现缺陷:原样 seek 到帧边界 k/30 时 k ≡ 
   assert.equal(shownFrame(123 / 30 - 4, 30, 3), 2);
 });
 
-test("VC-02 目标正好等于 k/30 时取第 k 帧(k = 0…89)", async () => {
+test("VC-02 when the target is exactly k/30, fetch frame k (k = 0…89)", async () => {
   await withSource(async (mod) => {
     const ks = range(90);
     assert.deepEqual(await framesAt(mod, 30, ks.map((k) => k / 30)), ks);
   });
 });
 
-test("VC-03 0.5 倍慢放:time = 0.5 × n / 30 取 0,0,1,1,2,2…;片段起点不在 0 时同样", async () => {
+test("VC-03 0.5x slow motion: time = 0.5 × n / 30 fetches 0,0,1,1,2,2…; same when the clip start is not at 0", async () => {
   await withSource(async (mod) => {
     const n = range(120);
     const want = n.map((i) => Math.floor(i / 2));
@@ -93,7 +93,7 @@ test("VC-03 0.5 倍慢放:time = 0.5 × n / 30 取 0,0,1,1,2,2…;片段起点�
   });
 });
 
-test("VC-04 偏移 0.35 s(10.5 帧)与 25 fps 素材:m(n) = floor((offset + rate × n / 30) × 源帧率 + 1e-6)", async () => {
+test("VC-04 offset 0.35 s (10.5 frames) and 25 fps media: m(n) = floor((offset + rate × n / 30) × source frame rate + 1e-6)", async () => {
   await withSource(async (mod) => {
     const n = range(60);
     assert.deepEqual(await framesAt(mod, 30, n.map((i) => i / 30 + 0.35)), n.map((i) => i + 10));
@@ -102,7 +102,7 @@ test("VC-04 偏移 0.35 s(10.5 帧)与 25 fps 素材:m(n) = floor((offset + rate
   });
 });
 
-test("VC-05 cardSeekTarget:加 2 ms,夹在 [0, 时长 − 0.1 ms];时长未知不夹上限", async () => {
+test("VC-05 cardSeekTarget: add 2 ms, clamp to [0, duration − 0.1 ms]; no upper clamp when the duration is unknown", async () => {
   await withSource(async (mod) => {
     assert.equal(mod.CARD_SEEK_LEAD, 0.002);
     assert.equal(mod.cardSeekTarget(1, 3), 1.002);
@@ -151,7 +151,7 @@ const withVideoFrame = async (fn) => {
 const RATE_HALF = range(60).map((n) => 0.35 + (0.5 * n) / 30);
 const RATE_HALF_WANT = RATE_HALF.map((t) => Math.floor(t * 30 + 1e-6));
 
-test("VC-06 seeked 先于帧槽换帧:等帧槽里的帧时间戳覆盖 currentTime 再取,不取 seek 之前那一帧", async () => {
+test("VC-06 seeked fires before the frame slot swaps frames: wait until the frame timestamp in the frame slot covers currentTime before fetching, and do not fetch the frame from before the seek", async () => {
   await withSource(async (mod) => {
     // 没有 WebCodecs 时退回只等 seeked —— 假元素先确认复现了缺陷
     video = new LaggyVideo(30, 3);
@@ -172,7 +172,7 @@ test("VC-06 seeked 先于帧槽换帧:等帧槽里的帧时间戳覆盖 currentT
   });
 });
 
-test("VC-07 同一素材的两次取帧并发:排队各取各的帧", async () => {
+test("VC-07 two concurrent frame fetches of the same media: queue them, each gets its own frame", async () => {
   await withSource(async (mod) => withVideoFrame(async () => {
     video = new LaggyVideo(30, 3);
     const source = new mod.CardMediaSource();
@@ -183,7 +183,7 @@ test("VC-07 同一素材的两次取帧并发:排队各取各的帧", async () =
   }));
 });
 
-test("VC-08 取帧被取消、seek 还在路上时再取同一时刻:等 seeked 和新帧,不当场取旧帧", async () => {
+test("VC-08 a frame fetch is canceled and the same moment is fetched again while a seek is still in flight: wait for seeked and the new frame, do not fetch the stale frame on the spot", async () => {
   await withSource(async (mod) => withVideoFrame(async () => {
     video = new LaggyVideo(30, 3, { seekMs: 20, slotMs: 25 });
     const source = new mod.CardMediaSource();
@@ -199,7 +199,7 @@ test("VC-08 取帧被取消、seek 还在路上时再取同一时刻:等 seeked 
   }));
 });
 
-test("VC-09 帧时间戳始终对不上 currentTime 的素材:每帧最多等一会儿,连续两帧等满后不再等,照常出帧", async () => {
+test("VC-09 media whose frame timestamps never match currentTime: each frame waits at most a short while, after two consecutive frames wait the full time it stops waiting and outputs frames as usual", async () => {
   await withSource(async (mod) => withVideoFrame(async () => {
     video = new LaggyVideo(30, 3, { tsOffset: 10_000_000 });
     const source = new mod.CardMediaSource();
@@ -207,10 +207,10 @@ test("VC-09 帧时间戳始终对不上 currentTime 的素材:每帧最多等一
     await source.frame(MEDIA, 0.4);
     await source.frame(MEDIA, 0.5);
     const waited = performance.now() - t0;
-    assert.ok(waited >= 900, `前两帧各等满约 500 ms,实际 ${waited.toFixed(0)} ms`);
+    assert.ok(waited >= 900, `the first two frames each waited about 500 ms, actual ${waited.toFixed(0)} ms`);
     const t1 = performance.now();
     await source.frame(MEDIA, 1.0); // 放弃后退回只等 seeked(此时假元素的帧槽还没换,取到的是旧帧,和修之前一样)
-    assert.ok(performance.now() - t1 < 200, "放弃核对后不再等");
+    assert.ok(performance.now() - t1 < 200, "does not wait after giving up the check");
     assert.equal(source.settleWaits, 2);
     // 某一帧当场对上就恢复核对
     video.tsOffset = 0;

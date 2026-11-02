@@ -90,23 +90,23 @@ function HugeCard({ t = 0, playToken }: CardProps<Record<string, never>>) {
 }
 
 export const r6StatefulCard: CardDef<Record<string, never>> = {
-  id: "r6-stateful", name: "R6 推帧卡", description: "R6 探针:stateful 的 DOM 卡,走共享档",
+  id: "r6-stateful", name: "R6 frame-push card", description: "R6 probe: stateful DOM card, uses the shared tier",
   source: "native", frameMode: "stateful", defaults: {}, controls: [], Component: StatefulCard,
 };
 
 export const r6CanvasCard: CardDef<Record<string, never>> = {
-  id: "r6-canvas", name: "R6 画布卡", description: "R6 探针:canvas 卡,体积上限走 1 MB 那一档",
+  id: "r6-canvas", name: "R6 canvas card", description: "R6 probe: canvas card, size limit uses the 1 MB tier",
   source: "native", frameMode: "stateful", defaults: {}, controls: [], Component: CanvasCard,
 };
 
 export const r6UnknownCard: CardDef<Record<string, never>> = {
   // **故意不进审阅表**:真实项目里的定制卡就是这个样子
-  id: "r6-unknown", name: "R6 未审阅卡", description: "R6 探针:审阅表没覆盖,按下层依赖卡处理、只有本地档",
+  id: "r6-unknown", name: "R6 unreviewed card", description: "R6 probe: not covered by the review table, handled as a lower-level dependency card, local tier only",
   source: "native", frameMode: "stateful", defaults: {}, controls: [], Component: UnknownCard,
 };
 
 export const r6HugeCard: CardDef<Record<string, never>> = {
-  id: "r6-huge", name: "R6 超限卡", description: "R6 探针:单帧快照超过 300 KB,落盘但不进就绪索引",
+  id: "r6-huge", name: "R6 oversize card", description: "R6 probe: single-frame snapshot exceeds 300 KB, written to disk but not added to the ready index",
   source: "native", frameMode: "stateful", defaults: {}, controls: [], Component: HugeCard,
 };
 

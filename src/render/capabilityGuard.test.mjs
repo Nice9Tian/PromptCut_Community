@@ -25,7 +25,7 @@ function fakeStage(clips) {
 }
 const readStyle = (el) => el.style ?? {};
 
-test("usesBackdropFilter: none / 空串 不算,任何真值都算", () => {
+test("usesBackdropFilter: none / empty string does not count, any truthy value does", () => {
   const el = (v) => ({ style: { backdropFilter: v }, querySelectorAll: () => [] });
   assert.equal(usesBackdropFilter(el("none"), readStyle), false);
   assert.equal(usesBackdropFilter(el(""), readStyle), false);
@@ -39,15 +39,15 @@ test("usesBackdropFilter: none / 空串 不算,任何真值都算", () => {
   assert.equal(usesBackdropFilter(nested, readStyle), true);
 });
 
-test("needsGuard: 只有审阅表说 independent 的卡要查", () => {
+test("needsGuard: only cards that the review table marks independent need checking", () => {
   assert.equal(needsGuard("punch-pill"), true);
-  assert.equal(needsGuard("particles-snow"), true, "通配命中的粒子卡也算 independent");
-  assert.equal(needsGuard("blur-text"), false, "本来就是 belowDependent,不用查");
-  assert.equal(needsGuard("没这张卡"), false, "unknown 已经是最保守档");
+  assert.equal(needsGuard("particles-snow"), true, "particle cards matched by wildcard also count as independent");
+  assert.equal(needsGuard("blur-text"), false, "already belowDependent, no check needed");
+  assert.equal(needsGuard("no such card"), false, "unknown is already the most conservative tier");
   assert.equal(needsGuard(undefined), false);
 });
 
-test("guardCompositing: 说独立、实际有毛玻璃 → 报警 + 降级 + cardCapabilities 改口", (t) => {
+test("guardCompositing: declared independent but actually has frosted glass → warning + downgrade + cardCapabilities corrected", (t) => {
   resetDegradedCards(); resetGuardScans();
   t.after(() => { resetDegradedCards(); resetGuardScans(); });
   const before = cardCapabilities({ id: "punch-pill", frameMode: "stateful" });
@@ -72,7 +72,7 @@ test("guardCompositing: 说独立、实际有毛玻璃 → 报警 + 降级 + car
   assert.equal(warnings.length, 1);
 });
 
-test("guardCompositing: 干净的独立卡不动它", (t) => {
+test("guardCompositing: a clean independent card is left alone", (t) => {
   resetDegradedCards(); resetGuardScans();
   t.after(() => { resetDegradedCards(); resetGuardScans(); });
   const stage = fakeStage({ c1: [{}, { backdropFilter: "none" }] });

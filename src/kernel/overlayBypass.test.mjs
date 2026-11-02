@@ -14,37 +14,37 @@ import { pixelMapOfClip } from "./pixelMap.mjs";
 import { audioFxOfClip, clipAudioFxAt } from "./audioFx.mjs";
 
 const project = {
-  filters: [{ id: "f1", name: "压暗", ops: [{ kind: "brightness", value: 0.72 }] }],
-  pixelMaps: [{ id: "p1", name: "抠绿", where: "g>0.6", source: { stage: "origin" }, to: { kind: "transparent" }, mode: "continuous" }],
-  audioFx: [{ id: "a1", name: "人声清晰", ops: [{ kind: "gain", values: { db: 3 } }] }],
+  filters: [{ id: "f1", name: "Darken", ops: [{ kind: "brightness", value: 0.72 }] }],
+  pixelMaps: [{ id: "p1", name: "Key out green", where: "g>0.6", source: { stage: "origin" }, to: { kind: "transparent" }, mode: "continuous" }],
+  audioFx: [{ id: "a1", name: "Vocal clarity", ops: [{ kind: "gain", values: { db: 3 } }] }],
 };
 const clip = (extra) => ({ id: "c1", start: 0, end: 2, ...extra });
 
-test("滤镜:挂着就解析得到", () => {
-  assert.equal(filterOfClip(project, clip({ filter: { id: "f1" } }))?.name, "压暗");
+test("Filter: resolves as long as it is attached", () => {
+  assert.equal(filterOfClip(project, clip({ filter: { id: "f1" } }))?.name, "Darken");
 });
 
-test("滤镜:停用之后按没挂算,逐帧数值也没有了", () => {
+test("Filter: once disabled it is treated as not attached, and the per-frame values are gone too", () => {
   const c = clip({ filter: { id: "f1", off: true } });
   assert.equal(filterOfClip(project, c), null);
   assert.equal(clipFilterOpsAt(project, c, 1), null);
 });
 
-test("像素映射:停用之后按没挂算", () => {
-  assert.equal(pixelMapOfClip(project, clip({ pixelMap: { id: "p1" } }))?.name, "抠绿");
+test("Pixel map: once disabled it is treated as not attached", () => {
+  assert.equal(pixelMapOfClip(project, clip({ pixelMap: { id: "p1" } }))?.name, "Key out green");
   assert.equal(pixelMapOfClip(project, clip({ pixelMap: { id: "p1", off: true } })), null);
 });
 
-test("音频效果:停用之后按没挂算,逐帧数值也没有了", () => {
+test("Audio effect: once disabled it is treated as not attached, and the per-frame values are gone too", () => {
   const on = clip({ audioFx: { id: "a1" } });
   const off = clip({ audioFx: { id: "a1", off: true } });
-  assert.equal(audioFxOfClip(project, on)?.name, "人声清晰");
+  assert.equal(audioFxOfClip(project, on)?.name, "Vocal clarity");
   assert.equal(audioFxOfClip(project, off), null);
   assert.notEqual(clipAudioFxAt(project, on, 1), null);
   assert.equal(clipAudioFxAt(project, off, 1), null);
 });
 
-test("停用不动挂载本身:库里的定义、逐段参数都还在", () => {
+test("Disabling does not touch the attachment itself: the definitions in the library and the per-segment params are still there", () => {
   const c = clip({ filter: { id: "f1", params: { amount: 0.4 }, off: true } });
   assert.equal(filterOfClip(project, c), null);
   // 这一段上不生效,但「挂的是哪一条、参数是多少」一个字都没少 —— 启用回来不用重填
@@ -52,13 +52,13 @@ test("停用不动挂载本身:库里的定义、逐段参数都还在", () => {
   assert.equal(project.filters.length, 1);
 });
 
-test("off 为 false 当成没停用(撤销 / 协作合并回来的旧值)", () => {
+test("off set to false counts as not disabled (an old value restored by undo / collaboration merge)", () => {
   assert.equal(filterOfClip(project, clip({ filter: { id: "f1", off: false } }))?.id, "f1");
   assert.equal(pixelMapOfClip(project, clip({ pixelMap: { id: "p1", off: false } }))?.id, "p1");
   assert.equal(audioFxOfClip(project, clip({ audioFx: { id: "a1", off: false } }))?.id, "a1");
 });
 
-test("定义被删了仍然给 null,和停不停用无关", () => {
+test("A deleted definition still yields null, regardless of whether it is disabled", () => {
   const empty = { filters: [], pixelMaps: [], audioFx: [] };
   assert.equal(filterOfClip(empty, clip({ filter: { id: "f1" } })), null);
   assert.equal(pixelMapOfClip(empty, clip({ pixelMap: { id: "p1", off: true } })), null);

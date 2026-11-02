@@ -33,13 +33,13 @@ import { flagArg } from './probe-connect.mjs';
 import { startDevServer, REPO } from '../lib/dev-server.mjs';
 
 const PORT = Number(flagArg('port', 5980));
-if (PORT < 5980 || PORT > 5989) throw new Error(`端口 ${PORT} 不在分给本探针的 5980～5989 里`);
+if (PORT < 5980 || PORT > 5989) throw new Error(`Port ${PORT} is not in the 5980-5989 range assigned to this probe`);
 const OUT = path.resolve(REPO, flagArg('out', 'out/agent-tabs-start-probe'));
 const KEEP = process.argv.includes('--keep');
 const GIVEN_ORIGIN = flagArg('origin', null);
 fs.mkdirSync(OUT, { recursive: true });
 
-const PRESET = '做一个动画告诉我使用软件可以干什么';
+const PRESET = 'Make an animation that tells me what I can do with the software';
 const results = [];
 const check = (name, ok, extra = {}) => {
   const r = { check: name, ok: !!ok, ...extra };
@@ -54,7 +54,7 @@ async function waitFor(fn, ms, what) {
     let v = null;
     try { v = await fn(); } catch { v = null; }
     if (v) return v;
-    if (Date.now() - t0 > ms) throw new Error(`等 ${what} 超时`);
+    if (Date.now() - t0 > ms) throw new Error(`Timed out waiting for ${what}`);
     await sleep(150);
   }
 }
@@ -94,7 +94,7 @@ try {
   page.on('request', (r) => { if (/\/api\/ai\/chat|\/agent\/v1\//.test(r.url())) chatRequests.push(r.url()); });
   await page.setViewport({ width: 1440, height: 900 });
   await page.goto(`${origin}/?editor&aimock=1&nosetup=1`, { waitUntil: 'domcontentloaded' });
-  await waitFor(() => page.$('[data-pc="ai-start"]'), 120_000, '开始页');
+  await waitFor(() => page.$('[data-pc="ai-start"]'), 120_000, 'start page');
   await waitFor(() => page.evaluate(() => !!window.__pcStore), 60_000, 'window.__pcStore');
   await sleep(800);
 
@@ -121,7 +121,7 @@ try {
   const storedList = (pid) => page.evaluate((pid) => localStorage.getItem(`pc.agentTabs:${pid}`), pid);
   // 载入项目后卡片测量遮罩("正在测量卡片")会盖住整个界面几秒:等它撤了再截图
   const shot = async (name, selector = null) => {
-    await waitFor(() => page.evaluate(() => !document.body.innerText.includes('正在测量卡片')), 60_000, '测量遮罩撤掉').catch(() => {});
+    await waitFor(() => page.evaluate(() => !document.body.innerText.includes('Measuring cards')), 60_000, 'measurement overlay removed').catch(() => {});
     await sleep(300);
     return selector ? page.$(selector).then((h) => h?.screenshot({ path: path.join(OUT, name) })) : page.screenshot({ path: path.join(OUT, name) });
   };
@@ -132,14 +132,14 @@ try {
       el.click();
       return true;
     }, sel);
-    if (!ok) throw new Error(`点不到 ${sel}`);
+    if (!ok) throw new Error(`Cannot click ${sel}`);
   };
 
   /* ── S1 新项目进来:开始页,带引导动画 ── */
   const pidA = await projectId();
   const s1rail = await railTabs();
   const s1 = await startState();
-  check('S1.rail-only-start', s1rail.length === 1 && s1rail[0].draft && s1rail[0].label === '开始' && s1rail[0].id.startsWith(`${pidA}_`), { s1rail });
+  check('S1.rail-only-start', s1rail.length === 1 && s1rail[0].draft && s1rail[0].label === 'Start' && s1rail[0].id.startsWith(`${pidA}_`), { s1rail });
   check('S1.start-page-animated', s1.start && s1.animated && s1.orb && s1.cue && s1.guide === 'input', s1);
   check('S1.no-list-stored', (await storedList(pidA)) === null);
   check('S1.no-chat-request', chatRequests.length === 0, { chatRequests });
@@ -147,7 +147,7 @@ try {
 
   /* ── S2 点预设 ── */
   await clickVisible('[data-pc="ai-start-preset"]');
-  await waitFor(async () => (await startState()).text === PRESET, 5000, '预设进编辑框');
+  await waitFor(async () => (await startState()).text === PRESET, 5000, 'preset goes into the input box');
   const s2 = await startState();
   check('S2.preset-in-input', s2.text === PRESET, s2);
   check('S2.send-button-guided', s2.guide === 'send', s2);
@@ -156,17 +156,17 @@ try {
 
   /* ── S3 点发送:这时才建 Agent 1 ── */
   await clickVisible('[data-pc="ai-send"]');
-  await waitFor(async () => (await railTabs()).some((t) => !t.draft), 8000, 'Agent 1 分页');
+  await waitFor(async () => (await railTabs()).some((t) => !t.draft), 8000, 'Agent 1 tab');
   const s3rail = await railTabs();
   check('S3.agent1-created', s3rail.length === 1 && !s3rail[0].draft && s3rail[0].label === 'Agent 1' && s3rail[0].id.startsWith(`${pidA}_`), { s3rail });
-  await waitFor(() => page.evaluate((txt) => [...document.querySelectorAll('[data-pc-msg]')].some((n) => n.textContent.includes(txt)), PRESET), 8000, '用户那条消息');
+  await waitFor(() => page.evaluate((txt) => [...document.querySelectorAll('[data-pc-msg]')].some((n) => n.textContent.includes(txt)), PRESET), 8000, 'the user\'s message');
   check('S3.message-sent-in-session', true);
   check('S3.start-page-gone', !(await startState()).start);
   const a1 = s3rail[0].id;
   const stored3 = JSON.parse((await storedList(pidA)) ?? 'null');
   check('S3.list-stored-per-project', !!stored3 && stored3.tabs.length === 1 && stored3.tabs[0].id === a1 && stored3.cleared === false, stored3);
   // 假流跑完,免得关页时弹确认
-  await waitFor(() => page.evaluate(() => !document.querySelector('[data-pc="ai-stop"]')), 30_000, '假流结束');
+  await waitFor(() => page.evaluate(() => !document.querySelector('[data-pc="ai-stop"]')), 30_000, 'fake stream finished');
   await shot('s3-after-send.png');
 
   /* ── S4 项目 A 再开 Agent 2;切到 B;B 点发送;切回 A ── */
@@ -177,8 +177,8 @@ try {
   await shot('s4-rail-a.png', 'nav[data-pc="right-rail"]');
   await shot('s4-page-a.png');
   const projA = await page.evaluate(() => JSON.parse(JSON.stringify(window.__pcStore.getState().project)));
-  await page.evaluate(() => window.__pcStore.actions.newProject('项目 B'));
-  await waitFor(async () => (await railTabs()).some((t) => t.draft), 8000, 'B 的开始页');
+  await page.evaluate(() => window.__pcStore.actions.newProject('Project B'));
+  await waitFor(async () => (await railTabs()).some((t) => t.draft), 8000, 'B\'s start page');
   const pidB = await projectId();
   const s4b = await railTabs();
   const s4bStart = await startState();
@@ -188,13 +188,13 @@ try {
   await shot('s4-page-b.png');
   await clickVisible('[data-pc="ai-start-preset"]');
   await clickVisible('[data-pc="ai-send"]');
-  await waitFor(async () => (await railTabs()).some((t) => !t.draft), 8000, 'B 的 Agent 1');
+  await waitFor(async () => (await railTabs()).some((t) => !t.draft), 8000, 'B\'s Agent 1');
   const s4b2 = await railTabs();
   check('S4.B-agent1', s4b2.length === 1 && s4b2[0].label === 'Agent 1' && s4b2[0].id.startsWith(`${pidB}_`) && s4b2[0].id !== a1, { s4b2 });
   const projB = await page.evaluate(() => JSON.parse(JSON.stringify(window.__pcStore.getState().project)));
-  await waitFor(() => page.evaluate(() => !document.querySelector('[data-pc="ai-stop"]')), 30_000, 'B 假流结束');
+  await waitFor(() => page.evaluate(() => !document.querySelector('[data-pc="ai-stop"]')), 30_000, 'B fake stream finished');
   await page.evaluate((p) => window.__pcStore.actions.loadProject(p), projA);
-  await waitFor(async () => (await railTabs()).length === 2, 8000, '切回 A');
+  await waitFor(async () => (await railTabs()).length === 2, 8000, 'switch back to A');
   const s4a2 = await railTabs();
   check('S4.A-back', s4a2.map((t) => t.label).join() === 'Agent 1,Agent 2' && s4a2.every((t) => t.id.startsWith(`${pidA}_`)), { s4a2 });
   await shot('s4-rail-a-again.png', 'nav[data-pc="right-rail"]');
@@ -214,8 +214,8 @@ try {
     });
     await sleep(400);
   }
-  check('S5.last-close-enabled', lastCloseDisabled[1]?.n === 1 && lastCloseDisabled[1]?.disabled === false && !/至少保留/.test(lastCloseDisabled[1]?.title ?? ''), { lastCloseDisabled });
-  await waitFor(async () => (await railTabs()).every((t) => t.draft), 8000, '回到开始页');
+  check('S5.last-close-enabled', lastCloseDisabled[1]?.n === 1 && lastCloseDisabled[1]?.disabled === false && !/keep at least/.test(lastCloseDisabled[1]?.title ?? ''), { lastCloseDisabled });
+  await waitFor(async () => (await railTabs()).every((t) => t.draft), 8000, 'back to the start page');
   const s5 = await startState();
   const s5rail = await railTabs();
   check('S5.back-to-start-no-animation', s5rail.length === 1 && s5rail[0].draft && s5.start && !s5.animated && !s5.orb && !s5.cue && s5.guide === null, { s5, s5rail });
@@ -223,7 +223,7 @@ try {
   check('S5.cleared-remembered-for-A', !!stored5 && stored5.tabs.length === 0 && stored5.cleared === true, stored5);
   await shot('s5-cleared.png');
   await clickVisible('[data-pc="ai-start-preset"]');
-  await waitFor(async () => (await startState()).text === PRESET, 5000, '关光后预设进编辑框');
+  await waitFor(async () => (await startState()).text === PRESET, 5000, 'preset goes into the input box after the glow is turned off');
   const s5b = await startState();
   check('S5.preset-works-when-cleared', s5b.text === PRESET && s5b.guide === 'send' && !s5b.animated, s5b);
   await shot('s5-cleared-after-preset.png');
@@ -233,22 +233,22 @@ try {
 
   /* ── S6 刷新后把项目载回去 ── */
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await waitFor(() => page.evaluate(() => !!window.__pcStore), 120_000, '刷新后的 store');
+  await waitFor(() => page.evaluate(() => !!window.__pcStore), 120_000, 'store after refresh');
   await sleep(1500);
   await page.evaluate((p) => window.__pcStore.actions.loadProject(p), projA);
-  await waitFor(async () => (await railTabs()).some((t) => t.id.startsWith(`${pidA}_`)), 10_000, '刷新后载入 A');
-  await waitFor(() => page.$('[data-pc="ai-start"]'), 10_000, 'A 的开始页');
+  await waitFor(async () => (await railTabs()).some((t) => t.id.startsWith(`${pidA}_`)), 10_000, 'A loaded after refresh');
+  await waitFor(() => page.$('[data-pc="ai-start"]'), 10_000, 'A\'s start page');
   const s6 = await startState();
   check('S6.A-still-cleared-after-reload', s6.start && !s6.animated && !s6.orb, s6);
   await shot('s6-reload-cleared.png');
   await page.evaluate((p) => window.__pcStore.actions.loadProject(p), projB);
-  await waitFor(async () => (await railTabs()).some((t) => !t.draft && t.id.startsWith(`${pidB}_`)), 10_000, '刷新后载入 B');
+  await waitFor(async () => (await railTabs()).some((t) => !t.draft && t.id.startsWith(`${pidB}_`)), 10_000, 'B loaded after refresh');
   const s6b = await railTabs();
   check('S6.B-agent1-restored-after-reload', s6b.length === 1 && s6b[0].label === 'Agent 1', { s6b });
 
   /* ── S7 减少动效:引导动画全部关掉 ── */
-  await page.evaluate(() => window.__pcStore.actions.newProject('项目 C'));
-  await waitFor(async () => (await startState()).animated, 8000, 'C 的开始页');
+  await page.evaluate(() => window.__pcStore.actions.newProject('Project C'));
+  await waitFor(async () => (await startState()).animated, 8000, 'C\'s start page');
   const anim = () => page.evaluate(() => {
     const name = (sel) => { const n = document.querySelector(sel); return n ? getComputedStyle(n).animationName : null; };
     const composer = [...document.querySelectorAll('[data-pc="ai-composer"]')].find((n) => n.getClientRects().length > 0);

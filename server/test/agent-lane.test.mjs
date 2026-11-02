@@ -60,7 +60,7 @@ function harness() {
   // see_frames 的 agent 批:读帧核心换成「借一下、干一会儿」,看它是不是拿着 runAgentTask 给的 lease 进来
   service.readFramesCore = async (_entry, frames, lane, _signal, _onSession, _onFrame, lease) => {
     assert.equal(lane, 'agent');
-    assert.equal(typeof lease, 'function', 'agent 批必须经 runAgentTask 拿 lease,不能自己 acquire');
+    assert.equal(typeof lease, 'function', 'an agent batch must get its lease via runAgentTask and must not acquire by itself');
     await lease(project);
     log.push('see:start'); await sleep(20); log.push('see:end');
     return new Map(frames.map(n => [n, { buf: Buffer.alloc(0), source: 'mov' }]));
@@ -68,7 +68,7 @@ function harness() {
   return { service, log, stats: () => ({ max, acquires, releases }) };
 }
 
-test('see_frames / layout / entityRects / DOM 查询交错到达时串行执行,同一时刻只有一个任务拿着 bakery', async () => {
+test('when see_frames / layout / entityRects / DOM queries arrive interleaved they run serially, and only one task holds the bakery at any moment', async () => {
   const { service, log, stats } = harness();
   const dom = label => service.runAgentTask(async lease => {
     await lease(project, { asIs: true });
@@ -99,10 +99,10 @@ test('see_frames / layout / entityRects / DOM 查询交错到达时串行执行,
   }
 });
 
-test('编辑器进程(interactive: false)没有 Agent lane:四条路都回 503 NO_AGENT_LANE,不借 bakery', async () => {
+test('the editor process (interactive: false) has no Agent lane: all four routes return 503 NO_AGENT_LANE and do not borrow the bakery', async () => {
   const service = new FramePipeline({ root: '.', origin: () => '', interactive: false });
   service.entry = async () => ({ key: 'k', project, dir: '.', html: new Map(), controls: new Map() });
-  service.acquire = async () => { throw new Error('编辑器进程不该开 Chrome'); };
+  service.acquire = async () => { throw new Error('the editor process must not open Chrome'); };
   for (const run of [
     () => service.runAgentTask(async () => 'x'),
     () => service.layout(project, { t: 0, clipIds: ['card-a'] }),
@@ -113,7 +113,7 @@ test('编辑器进程(interactive: false)没有 Agent lane:四条路都回 503 N
   }
 });
 
-test('一个任务出错不堵后面的任务;出错的任务照样还 bakery', async () => {
+test('a failing task does not block the tasks behind it; the failing task still returns the bakery', async () => {
   const { service, stats } = harness();
   const failed = service.runAgentTask(async lease => { await lease(project); throw new Error('boom'); });
   const next = service.runAgentTask(async lease => { await lease(project); return 'ok'; });
@@ -122,7 +122,7 @@ test('一个任务出错不堵后面的任务;出错的任务照样还 bakery', 
   assert.equal(stats().releases, 2);
 });
 
-test('没借过 bakery 的任务不还(只问素材段的 layout 不开浏览器)', async () => {
+test('a task that never borrowed the bakery does not return it (asking only for the layout of a media clip does not open a browser)', async () => {
   const { service, stats } = harness();
   const mediaOnly = { ...project, tracks: [{ id: 't1', clips: [{ id: 'm1', start: 0, end: 4 }] }] };
   const out = await service.layout(mediaOnly, { t: 0, clipIds: ['m1'] });
@@ -131,7 +131,7 @@ test('没借过 bakery 的任务不还(只问素材段的 layout 不开浏览器
   assert.equal(stats().releases, 0);
 });
 
-test('release(agent) 起 10 分钟空闲计时器,再借就清掉;到点关掉并从 lanes 里删', async () => {
+test('release(agent) starts a 10-minute idle timer, which is cleared on the next borrow; when it expires, the lane is closed and removed from lanes', async () => {
   const service = new FramePipeline({ root: '.', origin: () => '' });
   let closed = 0;
   const session = { bakery: { close: async () => { closed++; } } };

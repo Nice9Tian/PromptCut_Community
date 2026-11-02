@@ -8,7 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
-test("打字的源偏移贯穿时间轴与舞台；不改变其它卡片本地时间", async () => {
+test("the typing source offset runs through the timeline and the stage; it does not change the local time of other cards", async () => {
   const server = await createServer({ root: ROOT, configFile: false, logLevel: "error", server: { middlewareMode: true, hmr: false, ws: false, watch: null }, appType: "custom", optimizeDeps: { noDiscovery: true, include: [] } });
   try {
     const { flattenOverlay } = await server.ssrLoadModule("/src/kernel/project.ts");

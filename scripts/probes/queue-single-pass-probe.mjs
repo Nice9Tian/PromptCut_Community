@@ -42,7 +42,7 @@ const sha = (s) => createHash('sha256').update(s).digest('hex');
 const stripWillChange = (h) => h.replace(/will-change:[^;"]*;?/g, '');
 
 const PROJECT = {
-  id: 'qsp-probe', name: '顺推对照', width: 1920, height: 1080, fps: FPS, duration: SECONDS,
+  id: 'qsp-probe', name: 'Single-pass comparison', width: 1920, height: 1080, fps: FPS, duration: SECONDS,
   themeId: 'dark', media: [], filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {},
   tracks: CARDS.map((cardId, i) => ({ id: `tr-${i}`, name: cardId, hidden: false, clips: [{ id: `clip-${cardId}`, kind: 'card', cardId, start: 0, end: SECONDS, params: {} }] })),
 };
@@ -77,7 +77,7 @@ async function runSide(name, singlePassOff) {
       await fsp.mkdir(dst, { recursive: true });
       for (const n of await fsp.readdir(dir)) if (/^\d+\.html$/.test(n)) await fsp.copyFile(path.join(dir, n), path.join(dst, n));
       side.cards[cardId] = { count: control.count, segs, capabilities: control.capabilities ?? null };
-      log(`${name} ${cardId}: ${segs.map((s) => `${s.range} ${s.ms} ms${s.singlePass ? ' 顺推' : ''}`).join(', ')}`);
+      log(`${name} ${cardId}: ${segs.map((s) => `${s.range} ${s.ms} ms${s.singlePass ? ' single-pass' : ''}`).join(', ')}`);
     }
   } finally {
     side.ms = Date.now() - t0;
@@ -155,7 +155,7 @@ try {
         }
       }
       out.cards[cardId] = row;
-      if (row.missing) fails.push(`${cardId}:缺帧 ${row.missing}`);
+      if (row.missing) fails.push(`${cardId}: missing frames ${row.missing}`);
       if (row.pixelDiffer) {
         // 两边不同:以这张卡的顺序活渲(从第 0 帧起逐帧推、逐帧截图,同导出)为准,看哪边与它一致。
         // 顺推不许在逐批对得上的帧上对不上(那才是退步);逐批本来就对不上、顺推对上了的,是顺推更准
@@ -173,17 +173,17 @@ try {
         // 逐批自己在这些帧里大半都与活渲对不上(预渲染间里本来就不确定的卡,如按 setInterval 走的 E4b 探针卡 `probe-typewriter`):
         // 拿它当参照没有意义,只记不判
         judge.referenceUnstable = judge.batch4Match * 2 < row.differFrames.length;
-        if (judge.referenceUnstable) notes.push(`${cardId}:逐批在不同的 ${row.differFrames.length} 帧里只有 ${judge.batch4Match} 帧与活渲一致:逐批当不了参照(要么逐批本身就错,如 mu-word-rotate;要么这张卡在预渲染间里本来就不确定,如按 setInterval 走的探针卡),只记不判`);
-        else if (judge.regressions.length) fails.push(`${cardId}:顺推在逐批与活渲一致的帧上对不上 ${judge.regressions.length} 帧(${judge.regressions.slice(0, 8).join(',')})`);
+        if (judge.referenceUnstable) notes.push(`${cardId}: per-batch matches the live render in only ${judge.batch4Match} of the ${row.differFrames.length} differing frames, so per-batch cannot serve as the reference (either per-batch itself is wrong, as with mu-word-rotate, or this card is inherently nondeterministic in the prerender room, as with a probe card driven by setInterval); recorded only, not judged`);
+        else if (judge.regressions.length) fails.push(`${cardId}: single-pass mismatches on ${judge.regressions.length} frames where per-batch matches the live render (${judge.regressions.slice(0, 8).join(',')})`);
       }
-      if (!row.singlePass && !(ca.capabilities?.canvasHeavy)) fails.push(`${cardId}:新行为没有走顺推`);
-      log(`${cardId.padEnd(24)} 字节同 ${row.bytesSame} 只差will-change ${row.sameIgnoringWillChange} 像素同 ${row.pixelSame} 像素不同 ${row.pixelDiffer} 缺 ${row.missing}${row.versusLive ? `(不同的帧里与顺序活渲一致:逐批 ${row.versusLive.batch4Match}、顺推 ${row.versusLive.singleMatch}、顺推退步 ${row.versusLive.regressions.length})` : ''}  batch4 ${row.batch4.join('/')} ms  顺推 ${row.single.join('/')} ms`);
+      if (!row.singlePass && !(ca.capabilities?.canvasHeavy)) fails.push(`${cardId}: the new behavior did not take the single-pass path`);
+      log(`${cardId.padEnd(24)} bytes same ${row.bytesSame} same ignoring will-change ${row.sameIgnoringWillChange} pixels same ${row.pixelSame} pixels differ ${row.pixelDiffer} missing ${row.missing}${row.versusLive ? `(among the differing frames, matching the sequential live render: per-batch ${row.versusLive.batch4Match}, single-pass ${row.versusLive.singleMatch}, single-pass regressions ${row.versusLive.regressions.length})` : ''}  batch4 ${row.batch4.join('/')} ms  single-pass ${row.single.join('/')} ms`);
     }
   } finally {
     await bakery.close().catch(() => {});
   }
 } catch (e) {
-  fails.push(`探针异常:${String(e?.stack ?? e).slice(0, 1200)}`);
+  fails.push(`Probe error: ${String(e?.stack ?? e).slice(0, 1200)}`);
 }
 out.fails = fails;
 out.notes = notes;

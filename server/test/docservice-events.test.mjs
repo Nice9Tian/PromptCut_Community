@@ -47,7 +47,7 @@ async function start(t, { contentLimit } = {}) {
 
 const open = (c, projectId = 'P') => ask(c, { type: 'project.open', projectId });
 
-test('DS-E1 创建事件：ack 带 detailKey；项目频道的订阅者收 events.event（不带完整参数），发送方与别的项目收不到；完整参数在内容库 event-detail', async (t) => {
+test('DS-E1 create event: the ack carries detailKey; subscribers of the project channel receive events.event (without the full parameters), while the sender and other projects receive nothing; the full parameters are in the content store event-detail', async (t) => {
   const env = await start(t);
   const agent = await env.connect('user=zoe&role=agent&conv=3');
   const page = await env.connect('user=zoe&role=page');
@@ -55,7 +55,7 @@ test('DS-E1 创建事件：ack 带 detailKey；项目频道的订阅者收 event
   await open(agent);
   await open(page);
   await open(other, 'Q');
-  const detail = { clipId: 'c1', patch: { start: 1.5, text: '标题' } };
+  const detail = { clipId: 'c1', patch: { start: 1.5, text: 'Title' } };
   const ack = await ask(agent, {
     type: 'events.create', projectId: 'P', eventId: 'e-1', tool: 'set_clip', icon: 'edit', target: '/tracks/@t1/clips/@c1',
     args: 'start=1.5', detail, session: 'conv-3',
@@ -67,13 +67,13 @@ test('DS-E1 创建事件：ack 带 detailKey；项目频道的订阅者收 event
     target: '/tracks/@t1/clips/@c1', args: 'start=1.5', detailKey: 'P/e-1',
     actor: { userId: 'zoe@dev-1', deviceId: 'dev-1', role: 'agent', conversation: 3, session: 'conv-3' }, at: T0,
   });
-  assert.deepEqual(await agent.quiet(byType('events.event'), 100), [], '发送方收不到自己的广播');
-  assert.deepEqual(await other.quiet(byType('events.event'), 100), [], '别的项目收不到');
+  assert.deepEqual(await agent.quiet(byType('events.event'), 100), [], 'the sender does not receive its own broadcast');
+  assert.deepEqual(await other.quiet(byType('events.event'), 100), [], 'other projects receive nothing');
   const item = await ask(page, { type: 'content.get', kind: 'event-detail', key: 'P/e-1' });
   assert.deepEqual(item.body, detail);
 });
 
-test('DS-E2 完成事件与文字回复：广播 complete / text；events.list 按 eventId 合并', async (t) => {
+test('DS-E2 completion event and text reply: broadcasts complete / text; events.list merges by eventId', async (t) => {
   const env = await start(t);
   const agent = await env.connect('user=zoe&role=agent&conv=3');
   const page = await env.connect('user=zoe&role=page');
@@ -81,24 +81,24 @@ test('DS-E2 完成事件与文字回复：广播 complete / text；events.list �
   await ask(agent, { type: 'events.create', projectId: 'P', eventId: 'e-1', tool: 'add_clip' });
   await page.next(byType('events.event'));
   env.clock.t = T0 + 420;
-  const ack = await ask(agent, { type: 'events.complete', projectId: 'P', eventId: 'e-1', status: 'ok', summary: '加了 1 张卡', durationMs: 420 });
+  const ack = await ask(agent, { type: 'events.complete', projectId: 'P', eventId: 'e-1', status: 'ok', summary: 'Added 1 card', durationMs: 420 });
   assert.equal(ack.phase, 'complete');
   const done = await page.next(byType('events.event'));
   assert.deepEqual(
     { phase: done.phase, status: done.status, summary: done.summary, durationMs: done.durationMs, at: done.at },
-    { phase: 'complete', status: 'ok', summary: '加了 1 张卡', durationMs: 420, at: T0 + 420 },
+    { phase: 'complete', status: 'ok', summary: 'Added 1 card', durationMs: 420, at: T0 + 420 },
   );
-  await ask(agent, { type: 'events.text', projectId: 'P', eventId: 'm-1', text: '做完了。' });
+  await ask(agent, { type: 'events.text', projectId: 'P', eventId: 'm-1', text: 'Done.' });
   const txt = await page.next(byType('events.event'));
-  assert.deepEqual({ phase: txt.phase, text: txt.text }, { phase: 'text', text: '做完了。' });
+  assert.deepEqual({ phase: txt.phase, text: txt.text }, { phase: 'text', text: 'Done.' });
   const listing = await ask(page, { type: 'events.list', projectId: 'P' });
   assert.deepEqual(listing.items.map((i) => [i.eventId, i.tool, i.status, i.durationMs ?? null, i.text ?? null]), [
     ['e-1', 'add_clip', 'ok', 420, null],
-    ['m-1', null, 'ok', null, '做完了。'],
+    ['m-1', null, 'ok', null, 'Done.'],
   ]);
 });
 
-test('DS-E3 校验与拒绝：坏 status / 缺 tool / 坏 eventId 回 bad-message；详情超过内容库上限回 too-large 且不广播；渲染节点回 forbidden', async (t) => {
+test('DS-E3 validation and rejection: a bad status / missing tool / bad eventId replies bad-message; details over the content store limit reply too-large and are not broadcast; a render node replies forbidden', async (t) => {
   const env = await start(t, { contentLimit: 1024 });
   const agent = await env.connect('user=zoe&role=agent&conv=3');
   const page = await env.connect('user=zoe&role=page');
@@ -117,12 +117,12 @@ test('DS-E3 校验与拒绝：坏 status / 缺 tool / 坏 eventId 回 bad-messag
   assert.deepEqual({ type: big.type, reason: big.reason }, { type: 'error', reason: 'too-large' });
   const f = await ask(node, { type: 'events.create', projectId: 'P', eventId: 'e-n', tool: 'x' });
   assert.deepEqual({ type: f.type, reason: f.reason }, { type: 'error', reason: 'forbidden' });
-  assert.deepEqual(await page.quiet(byType('events.event'), 100), [], '被拒的都不广播');
+  assert.deepEqual(await page.quiet(byType('events.event'), 100), [], 'none of the rejected ones are broadcast');
   const item = await ask(page, { type: 'content.get', kind: 'event-detail', key: 'P/e-big' });
   assert.equal(item.missing, true);
 });
 
-test('DS-E4（第 10 节）内容库与项目日志的 actor 统一为 { userId, deviceId, role, conversation, session }，previousActor 同样带全；事件详情的写入身份是发事件的连接', async (t) => {
+test('DS-E4 (section 10) the actor in the content store and the project log is unified as { userId, deviceId, role, conversation, session }, and previousActor carries all of them too; the write identity of event details is the connection that sent the event', async (t) => {
   const env = await start(t);
   const agent = await env.connect('user=zoe&dev=d1&role=agent&conv=9');
   const page = await env.connect('user=zoe&dev=d1&role=page');
@@ -134,7 +134,7 @@ test('DS-E4（第 10 节）内容库与项目日志的 actor 统一为 { userId,
   const pageActor = { userId: 'zoe@d1', deviceId: 'd1', role: 'page', conversation: null, session: 'tab-1' };
   assert.deepEqual(c1.actor, agentActor);
   const c2 = await agent.quiet(byType('content.changed'), 100);
-  assert.deepEqual(c2, [], 'agent 没 watch');
+  assert.deepEqual(c2, [], 'agent is not watching');
   const rec = env.store.read('content/card-source');
   assert.deepEqual(rec.map((r) => r.actor), [agentActor, pageActor]);
 
@@ -143,10 +143,10 @@ test('DS-E4（第 10 节）内容库与项目日志的 actor 统一为 { userId,
   assert.deepEqual({ key: ch.key, actor: ch.actor, previousActor: ch.previousActor }, { key: 'P/e-9', actor: agentActor, previousActor: null });
   await ask(page, { type: 'content.put', kind: 'event-detail', key: 'P/e-9', body: { a: 2 }, session: 'tab-1' });
   const ch2 = await page.next((m) => m.type === 'content.changed' && m.kind === 'event-detail');
-  assert.deepEqual(ch2.previousActor, agentActor, 'previousActor 带全');
+  assert.deepEqual(ch2.previousActor, agentActor, 'previousActor carries all fields');
 });
 
-test('DS-E5 事件广播只借项目频道：没 open 项目的连接收不到；close 之后也收不到', async (t) => {
+test('DS-E5 event broadcast only reuses the project channel: a connection that has not opened the project receives nothing, and neither does one after close', async (t) => {
   const env = await start(t);
   const agent = await env.connect('user=zoe&role=agent&conv=1');
   const page = await env.connect('user=zoe&role=page');
@@ -160,7 +160,7 @@ test('DS-E5 事件广播只借项目频道：没 open 项目的连接收不到�
   assert.deepEqual(await page.quiet(byType('events.event'), 100), []);
 });
 
-test('DS-E6 组装层按空间配组：共享项目空间里的项目提交与事件不串到 local 空间；/healthz 的 modules 含 events', async (t) => {
+test('DS-E6 the assembly layer sets up a module group per space: project submissions and events in a shared-project space do not leak into the local space; /healthz modules includes events', async (t) => {
   const host = await startSharedService({ mode: 'hosted', isLoopback: (req) => !String(req?.headers?.['sec-websocket-protocol'] ?? '').includes('promptcut.auth.') });
   t.after(() => host.close());
   const P = await createProject(host.base);
@@ -181,9 +181,9 @@ test('DS-E6 组装层按空间配组：共享项目空间里的项目提交与�
   await ask(bob, { type: 'events.create', projectId: pid, eventId: 'e1', tool: 'x', detail: { q: 1 } });
   const ev = await amy.next(byType('events.event'));
   assert.ok(ev.actor.userId.startsWith('bob@'));
-  assert.deepEqual(await local.quiet((m) => m.type === 'project.ops' || m.type === 'events.event', 150), [], 'local 空间收不到');
+  assert.deepEqual(await local.quiet((m) => m.type === 'project.ops' || m.type === 'events.event', 150), [], 'the local space receives nothing');
   const st = await ask(local, { type: 'project.open', projectId: pid });
-  assert.deepEqual({ rev: st.rev, project: st.project }, { rev: 0, project: null }, 'local 空间里同名项目是另一份');
+  assert.deepEqual({ rev: st.rev, project: st.project }, { rev: 0, project: null }, 'a project with the same name in the local space is a separate one');
   const d = await ask(local, { type: 'content.get', kind: 'event-detail', key: `${pid}/e1` });
   assert.equal(d.missing, true);
   const h = await (await fetch(`http://127.0.0.1:${host.port}/healthz`)).json();

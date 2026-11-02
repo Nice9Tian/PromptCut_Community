@@ -84,7 +84,7 @@ function startMain(t, env) {
   t.after(() => { try { child.kill(); } catch { /* 已退 */ } });
   let out = '';
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`main.mjs 没起来：${out.slice(-1500)}`)), 20_000);
+    const timer = setTimeout(() => reject(new Error(`main.mjs did not start: ${out.slice(-1500)}`)), 20_000);
     child.stderr.on('data', (d) => { out += d; });
     child.stdout.on('data', (d) => {
       out += d;
@@ -98,7 +98,7 @@ function startMain(t, env) {
         } catch { /* 半行 */ }
       }
     });
-    child.once('exit', (code) => { clearTimeout(timer); reject(new Error(`main.mjs 退出 ${code}：${out.slice(-1500)}`)); });
+    child.once('exit', (code) => { clearTimeout(timer); reject(new Error(`main.mjs exited ${code}: ${out.slice(-1500)}`)); });
   });
 }
 
@@ -134,7 +134,7 @@ async function hostedWithRoute(t) {
   proxy.routes.set('/hosted', ports.doc);
   proxy.routes.set('/media', ports.asset);
   const res = await fetch(`http://127.0.0.1:${proxy.port}/hosted/healthz`);
-  assert.equal(res.status, 200, '同形路由 /hosted/healthz 通');
+  assert.equal(res.status, 200, 'the same-shape route /hosted/healthz works');
   return { base: `http://127.0.0.1:${proxy.port}/hosted` };
 }
 
@@ -154,15 +154,15 @@ for (const [label, memberEnv, memberArgs] of [
   ['auto', {}, []],
   ['ws', { PROMPTCUT_TRANSPORT: 'ws' }, ['--transport', 'ws']],
 ]) {
-  test(`HT5-${label} 本机托管组合 + 同形 nginx 路由（信任开关 0）：shared-project-probe 的 member 在${label === 'auto' ? '自动' : '强制 ws'}下全部通过`, { skip: SKIP, timeout: 150_000 }, async (t) => {
+  test(`HT5-${label} local hosted setup + same-shape nginx routes (trust switch 0): the member of shared-project-probe passes everything in ${label === 'auto' ? 'auto' : 'forced ws'} mode`, { skip: SKIP, timeout: 150_000 }, async (t) => {
     const hosted = await hostedWithRoute(t);
     const { creator, member } = await creatorAndMember(t, hosted, memberEnv, memberArgs);
-    assert.equal(member.code, 0, `member 退出码 0：${member.out.slice(-3000)}`);
-    assert.equal(member.result?.ok, true, `member ok：${JSON.stringify(member.result)?.slice(0, 2000)}`);
-    assert.ok(member.result.taskDone >= 1, `member 完成了任务：${JSON.stringify(member.result)}`);
-    assert.equal(member.result.media?.loopbackTrusted, false, '信任开关为 0：回环不带票据读素材被拒');
-    assert.equal(creator.code, 0, `creator 退出码 0：${creator.out.slice(-3000)}`);
+    assert.equal(member.code, 0, `member exit code 0: ${member.out.slice(-3000)}`);
+    assert.equal(member.result?.ok, true, `member ok: ${JSON.stringify(member.result)?.slice(0, 2000)}`);
+    assert.ok(member.result.taskDone >= 1, `member completed a task: ${JSON.stringify(member.result)}`);
+    assert.equal(member.result.media?.loopbackTrusted, false, 'trust switch is 0: reading an asset over loopback without a ticket is rejected');
+    assert.equal(creator.code, 0, `creator exit code 0: ${creator.out.slice(-3000)}`);
     assert.equal(creator.result?.ok, true);
-    if (label === 'ws') assert.ok(!member.out.includes('session.fallback'), '强制 ws：没有降级');
+    if (label === 'ws') assert.ok(!member.out.includes('session.fallback'), 'forced ws: no downgrade');
   });
 }

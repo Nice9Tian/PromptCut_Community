@@ -68,11 +68,11 @@ async function until(label, fn, timeoutMs, everyMs = 500) {
     let value = null;
     try { value = await fn(); } catch { value = null; }
     if (value) return value;
-    if (Date.now() > deadline) { fails.push(`超时:${label}`); return null; }
+    if (Date.now() > deadline) { fails.push(`Timeout: ${label}`); return null; }
     await sleep(everyMs);
   }
 }
-const SCENE_NAME = { a: '甲', b: '乙' };
+const SCENE_NAME = { a: 'A', b: 'B' };
 const N = DURATION * FPS;
 const pad = (n) => String(n).padStart(4, '0');
 
@@ -81,9 +81,9 @@ await fs.mkdir(OUT, { recursive: true });
 let dev = null, media = null, bakery = null;
 const pipelines = [];
 try {
-  check(BELOW_STREAMS_DEFAULT === true, '这种流缺省是开的', BELOW_STREAMS_DEFAULT);
-  check(belowStreamsEnabled() === true, '探针里开着');
-  check(BELOW_STREAM_VERSION === 1, '流里放什么的版本是 1', BELOW_STREAM_VERSION);
+  check(BELOW_STREAMS_DEFAULT === true, 'this kind of stream is on by default', BELOW_STREAMS_DEFAULT);
+  check(belowStreamsEnabled() === true, 'on in the probe');
+  check(BELOW_STREAM_VERSION === 1, 'the version of what goes into the stream is 1', BELOW_STREAM_VERSION);
   const ffmpeg = await findFfmpeg();
   let origin = ORIGIN;
   if (!origin) { dev = await startDevServer({ port: PORT, dataDir: path.join(OUT, 'dev-data'), tag: 'belowprobe' }); origin = dev.origin; say('spawn', { pid: dev.pid, port: PORT }); }
@@ -118,8 +118,8 @@ try {
     };
     const t0 = Date.now();
     await pipeline.preload(project);
-    const status = await until(`${tag}:全部分段满密度`, allDense, 900_000, 500);
-    if (!status) throw new Error(`${tag}:生产没做完:${JSON.stringify(producer.status().log.slice(-8))}`);
+    const status = await until(`${tag}: all segments at full density`, allDense, 900_000, 500);
+    if (!status) throw new Error(`${tag}: production did not finish: ${JSON.stringify(producer.status().log.slice(-8))}`);
     run.produceMs = Date.now() - t0;
     out.encoder = status.encoder;
     const row = status.streams.find((s) => s.kind === 'below');
@@ -131,25 +131,25 @@ try {
       files: Object.fromEntries(Object.entries(manifest.segments).map(([n, s]) => [n, { file: s.file, init: s.init, bytes: s.bytes, stride: s.stride }])) };
     run.kinds = status.streams.map((s) => ({ kind: s.kind, clipIds: s.clipIds }));
     say('produced', { tag, ms: run.produceMs, kinds: run.kinds, tight: manifest.tight, below: row.below });
-    check(status.streams.filter((s) => s.kind === 'below').length === 1 && spec.clipIds.length === 1 && spec.clipIds[0] === TARGET, `${tag}:有一条依赖下层的流,挂在毛玻璃卡上`, run.kinds);
-    check(manifest.kind === 'below' && manifest.plane === 'stage', `${tag}:清单里是 below、舞台坐标`, { kind: manifest.kind, plane: manifest.plane });
-    check(JSON.stringify(spec.belowClipIds) === JSON.stringify([...lowerClipIds(kind)].reverse()), `${tag}:算进键里的下层正好是场景里那几层(画家顺序,下面的在前)`, spec.belowClipIds);
-    check(spec.belowScene === false, `${tag}:键没有退回整个项目的键`);
-    check(spec.hasMedia === (kind === 'a'), `${tag}:有画面素材时截图前等素材就位`, spec.hasMedia);
-    check(row.below && row.below.failed === null && row.below.primeLower === false, `${tag}:差分取层的实测没有不过的`, row.below);
-    check(row.below?.checks >= 2 * run.stream.segments, `${tag}:稀疏、满密度两趟的每个分段都实测过`, row.below?.checks);
-    check(row.below?.glassFrames > 0, `${tag}:量到了毛玻璃的外框`, row.below?.glassFrames);
+    check(status.streams.filter((s) => s.kind === 'below').length === 1 && spec.clipIds.length === 1 && spec.clipIds[0] === TARGET, `${tag}: there is one stream that depends on the layers below, attached to the frosted-glass card`, run.kinds);
+    check(manifest.kind === 'below' && manifest.plane === 'stage', `${tag}: the manifest says below, stage coordinates`, { kind: manifest.kind, plane: manifest.plane });
+    check(JSON.stringify(spec.belowClipIds) === JSON.stringify([...lowerClipIds(kind)].reverse()), `${tag}: the lower layers counted into the key are exactly those in the scene (painter's order, lower ones first)`, spec.belowClipIds);
+    check(spec.belowScene === false, `${tag}: the key did not fall back to the whole-project key`);
+    check(spec.hasMedia === (kind === 'a'), `${tag}: with visual media, waits for the media to be in place before the screenshot`, spec.hasMedia);
+    check(row.below && row.below.failed === null && row.below.primeLower === false, `${tag}: none of the measured checks of the differential layer extraction failed`, row.below);
+    check(row.below?.checks >= 2 * run.stream.segments, `${tag}: every segment in both the sparse and full-density passes was measured`, row.below?.checks);
+    check(row.below?.glassFrames > 0, `${tag}: the frosted glass's outer frame was measured`, row.below?.glassFrames);
     // 分段从目标卡自己的第一帧起数(0.2 秒入场 → 第 6 帧),流里没有它入场之前的帧
     const ENTRY = Math.ceil(0.2 * FPS - 1e-9);
     check(spec.originFrame === ENTRY && spec.firstSegment === 0 && manifest.originFrame === ENTRY && ENTRY % SEGMENT_FRAMES !== 0,
-      `${tag}:流的第一帧是毛玻璃卡入场的那一帧(第 ${ENTRY} 帧,不是 15 的倍数),清单记着它`, { originFrame: spec.originFrame, firstSegment: spec.firstSegment, manifest: manifest.originFrame });
-    check(row.below?.absent === 0, `${tag}:截的帧里没有「目标卡不在页面上」的(流不再含入场之前的帧)`, row.below?.absent);
+      `${tag}: the stream's first frame is the frame where the frosted-glass card enters (frame ${ENTRY}, not a multiple of 15), and the manifest records it`, { originFrame: spec.originFrame, firstSegment: spec.firstSegment, manifest: manifest.originFrame });
+    check(row.below?.absent === 0, `${tag}: none of the captured frames is a "target card not on the page" frame (the stream no longer contains frames before the entrance)`, row.below?.absent);
     const lowerCard = kind === 'a' ? 'clip-move' : 'clip-block';
-    check(status.streams.some((s) => s.kind === 'card' && s.clipIds[0] === lowerCard), `${tag}:下层那张独立卡照旧有自己的单卡流`, run.kinds);
+    check(status.streams.some((s) => s.kind === 'card' && s.clipIds[0] === lowerCard), `${tag}: the standalone card below still has its own single-card stream`, run.kinds);
     // 2a. 只含目标卡改动的那一块
     const tight = manifest.tight;
     run.tightShare = tight ? round2(tight.w * tight.h / (width * height)) : null;
-    check(!!tight && tight.w * tight.h < width * height * 0.5, `${tag}:收紧矩形明显小于整幅`, { tight, share: run.tightShare });
+    check(!!tight && tight.w * tight.h < width * height * 0.5, `${tag}: the tight rectangle is clearly smaller than the full frame`, { tight, share: run.tightShare });
 
     // ---------- 2. 两幅导出画面:整幅的、只有下层的
     const emptyUrl = emptyUrlOf(origin, { width, height });
@@ -167,7 +167,7 @@ try {
       const key = `${name}-${frame}`;
       if (cache.has(key)) return cache.get(key);
       const data = decodePngRgba(await fs.readFile(path.join(dir, `${name}-${pad(frame)}.png`)))?.data;
-      if (!data) throw new Error(`解不开 ${name}-${frame}`);
+      if (!data) throw new Error(`cannot decode ${name}-${frame}`);
       cache.set(key, data);
       if (cache.size > 64) cache.delete(cache.keys().next().value);
       return data;
@@ -180,20 +180,20 @@ try {
     let streamBytes = 0;
     for (let n = spec.firstSegment; n <= spec.lastSegment; n++) {
       const seg = manifest.segments[n];
-      if (!check(seg?.stride === 1, `${tag}#${n}:满密度`, seg)) continue;
+      if (!check(seg?.stride === 1, `${tag}#${n}: full density`, seg)) continue;
       const meta = manifest.inits[seg.init];
       const rect = { x: meta.rect.x + spec.offset.x, y: meta.rect.y + spec.offset.y, w: meta.rect.w, h: meta.rect.h };
-      check(JSON.stringify(meta.rect) === JSON.stringify(tight), `${tag}#${n}:用的是收紧矩形`, meta.rect);
+      check(JSON.stringify(meta.rect) === JSON.stringify(tight), `${tag}#${n}: uses the tight rectangle`, meta.rect);
       const init = await fs.readFile(producer.store.initFile(spec.streamKey, seg.init));
       const bytes = await fs.readFile(path.join(producer.store.dir(spec.streamKey), seg.file));
       streamBytes += bytes.length;
       const decoded = await decodeSegment(ffmpeg, init, bytes, dir, `seg-${n}`);
       const frameBytes = rect.w * 2 * (rect.h + 8) * 3;
-      if (!check(decoded.length === seg.samples * frameBytes, `${tag}#${n}:解出 ${seg.samples} 帧`, decoded.length / frameBytes)) continue;
+      if (!check(decoded.length === seg.samples * frameBytes, `${tag}#${n}: decoded ${seg.samples} frames`, decoded.length / frameBytes)) continue;
       // 参照:整幅的导出画面裁到同一个矩形,原样过一遍同一个编码器
       // 第 n 段盖住的帧:从这条流自己的第一帧起数(`src/render/streamSegments.mjs`),末段到它的最后一帧为止
       const firstFrame = streamSegmentFirstFrame(n, spec.originFrame);
-      check(seg.samples === streamSegmentFrameCount(n, spec.originFrame, spec.lastFrame), `${tag}#${n}:样本数 = 这一段盖住的帧数`, { samples: seg.samples, firstFrame, lastFrame: spec.lastFrame });
+      check(seg.samples === streamSegmentFrameCount(n, spec.originFrame, spec.lastFrame), `${tag}#${n}: sample count = number of frames this segment covers`, { samples: seg.samples, firstFrame, lastFrame: spec.lastFrame });
       const plain = openStreamSegmentEncoder(ffmpeg, { encoder: status.encoder, fps: FPS, raw: { width: rect.w, height: rect.h } });
       for (let k = 0; k < seg.samples; k++) await plain.write(cropRgba(await load('whole', firstFrame + k), width, rect));
       const plainParts = splitFmp4((await plain.finish()).bytes);
@@ -225,20 +225,20 @@ try {
       }
     }
     run.streamBytes = streamBytes;
-    run.error = { 盖回去对整幅的导出画面: errorSummary(after), 参照_整幅画面原样过一遍编码器: errorSummary(floor), 对照_七帧以后的整幅画面: errorSummary(other) };
+    run.error = { compositedBackVsFullExportFrame: errorSummary(after), referenceFullFramePassedThroughEncoderAsIs: errorSummary(floor), controlFullFrameSevenFramesLater: errorSummary(other) };
     run.transparent = {
-      入场前的帧: { frames: quiet.before.frames, 不透明度平均: round2(quiet.before.alphaSum / Math.max(1, quiet.before.pixels)), 不透明度最大: quiet.before.alphaMax },
-      收紧矩形里没被改动的像素: { pixels: quiet.unchanged.pixels, 不透明度平均: round2(quiet.unchanged.alphaSum / Math.max(1, quiet.unchanged.pixels)), 超过16的占比: +(quiet.unchanged.over16 / Math.max(1, quiet.unchanged.pixels)).toFixed(4) },
+      framesBeforeEntrance: { frames: quiet.before.frames, opacityMean: round2(quiet.before.alphaSum / Math.max(1, quiet.before.pixels)), opacityMax: quiet.before.alphaMax },
+      unchangedPixelsInTightRect: { pixels: quiet.unchanged.pixels, opacityMean: round2(quiet.unchanged.alphaSum / Math.max(1, quiet.unchanged.pixels)), shareOver16: +(quiet.unchanged.over16 / Math.max(1, quiet.unchanged.pixels)).toFixed(4) },
     };
     say('compare', { tag, ...run.error, transparent: run.transparent });
-    const got = run.error.盖回去对整幅的导出画面, ref = run.error.参照_整幅画面原样过一遍编码器, ctl = run.error.对照_七帧以后的整幅画面;
+    const got = run.error.compositedBackVsFullExportFrame, ref = run.error.referenceFullFramePassedThroughEncoderAsIs, ctl = run.error.controlFullFrameSevenFramesLater;
     const streamFrames = spec.lastFrame - spec.originFrame + 1;
-    check(got.pixels === streamFrames * tight.w * tight.h, `${tag}:这条流的 ${streamFrames} 帧(第 ${spec.originFrame}～${spec.lastFrame} 帧)都比过了`, got.pixels / (tight.w * tight.h));
-    check(got.mean <= ref.mean + 0.5 && got.bad <= ref.bad * 1.25 + got.pixels * 0.001, `${tag}:盖回去和整幅的导出画面的差在编码误差以内(不超过整幅画面原样过一遍编码器的差)`, { got, ref });
-    check(ctl.mean > 3 * got.mean && ctl.bad > 5 * (got.bad + 1), `${tag}:对照(别的时刻的整幅画面)明显更大`, { got, ctl });
-    check(quiet.before.frames === 0, `${tag}:流里没有入场之前的帧`, run.transparent.入场前的帧);
+    check(got.pixels === streamFrames * tight.w * tight.h, `${tag}: all ${streamFrames} frames of this stream (frames ${spec.originFrame}-${spec.lastFrame}) were compared`, got.pixels / (tight.w * tight.h));
+    check(got.mean <= ref.mean + 0.5 && got.bad <= ref.bad * 1.25 + got.pixels * 0.001, `${tag}: the difference between the composited-back result and the full export frame is within encoding error (no more than the difference from passing the full frame through the encoder as is)`, { got, ref });
+    check(ctl.mean > 3 * got.mean && ctl.bad > 5 * (got.bad + 1), `${tag}: the control (full frame from another time) is clearly larger`, { got, ctl });
+    check(quiet.before.frames === 0, `${tag}: the stream has no frames before the entrance`, run.transparent.framesBeforeEntrance);
     check(quiet.unchanged.pixels > 0 && quiet.unchanged.alphaSum / quiet.unchanged.pixels < 1.5 && quiet.unchanged.over16 / quiet.unchanged.pixels < 0.01,
-      `${tag}:收紧矩形里目标卡没有改动的像素解出来是透明的`, run.transparent.收紧矩形里没被改动的像素);
+      `${tag}: pixels in the tight rectangle that the target card did not change decode as transparent`, run.transparent.unchangedPixelsInTightRect);
 
     // ---------- 4. 下层改一张卡:键变,旧分段不再被认;改回来原样认回
     const oldKey = spec.streamKey;
@@ -246,16 +246,16 @@ try {
     const segmentsBefore = producer.stats.segments;
     const editedAt = Date.now();
     await pipeline.preload(edited);
-    const newKey = await until(`${tag}:改了下层以后计划换了一版`, () => { const k = keyOfTarget(); return k && k !== oldKey ? k : null; }, 120_000, 100);
+    const newKey = await until(`${tag}: the plan switched to a new version after the lower layer was changed`, () => { const k = keyOfTarget(); return k && k !== oldKey ? k : null; }, 120_000, 100);
     run.edit = { oldKey, newKey };
-    if (check(!!newKey, `${tag}:下层改一张卡,这条流的键变了`, { oldKey, now: keyOfTarget() })) {
-      check(!producer.streams.has(oldKey), `${tag}:生产者手里不再有旧键的流`);
+    if (check(!!newKey, `${tag}: when one card in the lower layer is edited, this stream's key changes`, { oldKey, now: keyOfTarget() })) {
+      check(!producer.streams.has(oldKey), `${tag}: the producer no longer holds the stream of the old key`);
       const fresh = producer.streams.get(newKey);
       const reused = Object.values(fresh.manifest.segments).filter((s) => Object.values(manifest.segments).some((o) => o.file === s.file));
-      check(reused.length === 0, `${tag}:新键的清单里没有旧分段`, reused.length);
-      const firstLayer = await until(`${tag}:新键的层发出来`, () => layers.find((l) => l.at >= editedAt && l.clipId === TARGET && l.key === newKey), 300_000, 200);
+      check(reused.length === 0, `${tag}: the manifest of the new key has no old segments`, reused.length);
+      const firstLayer = await until(`${tag}: the layer of the new key is sent out`, () => layers.find((l) => l.at >= editedAt && l.clipId === TARGET && l.key === newKey), 300_000, 200);
       const oldAfter = layers.filter((l) => l.at >= editedAt && l.clipId === TARGET && l.key === oldKey);
-      check(!!firstLayer && oldAfter.length === 0, `${tag}:改了以后就绪索引里这张卡的层只发新键,旧键不再发`, { newLayer: !!firstLayer, oldAfter: oldAfter.length });
+      check(!!firstLayer && oldAfter.length === 0, `${tag}: after the edit, the ready index sends this card's layer only with the new key and no longer with the old key`, { newLayer: !!firstLayer, oldAfter: oldAfter.length });
       // 只记录,不当通过条件:被改的那张下层卡自己的单卡流键变没变。乙里它带着强调(阴影),现有的单卡流键不看强调前面那张卡的参数,
       // 所以不变(`main` 上原有的问题,见报告);依赖下层的流的键取的是带整条输入链的缓存内容键,不受它影响
       run.edit.lowerCardStreamKeyChanged = !producer.streams.has(status.streams.find((s) => s.kind === 'card' && s.clipIds[0] === lowerCard)?.streamKey);
@@ -264,38 +264,38 @@ try {
     const producedMid = producer.stats.segments;
     const backAt = Date.now();
     await pipeline.preload(project);
-    const back = await until(`${tag}:改回来以后键回到原来那一个`, () => (keyOfTarget() === oldKey ? oldKey : null), 120_000, 100);
-    if (check(!!back, `${tag}:改回来,键回到原来那一个`, keyOfTarget())) {
+    const back = await until(`${tag}: after reverting, the key returns to the original one`, () => (keyOfTarget() === oldKey ? oldKey : null), 120_000, 100);
+    if (check(!!back, `${tag}: when reverted, the key returns to the original one`, keyOfTarget())) {
       const again = producer.streams.get(oldKey);
       const sameFiles = Object.entries(manifest.segments).every(([n, s]) => again.manifest.segments[n]?.file === s.file && again.manifest.segments[n]?.stride === 1);
-      check(sameFiles, `${tag}:旧分段原样认回(同一批文件)`);
-      const layer = await until(`${tag}:改回来以后旧键的层重新发出来`, () => layers.find((l) => l.at >= backAt && l.clipId === TARGET && l.key === oldKey), 60_000, 200);
-      check(!!layer, `${tag}:改回来以后就绪索引里又是原来那个键`);
+      check(sameFiles, `${tag}: old segments are recognized again as they were (same set of files)`);
+      const layer = await until(`${tag}: after reverting, the layer of the old key is sent out again`, () => layers.find((l) => l.at >= backAt && l.clipId === TARGET && l.key === oldKey), 60_000, 200);
+      check(!!layer, `${tag}: after reverting, the ready index has the original key again`);
       await sleep(1500);
       const remade = Object.entries(again.manifest.segments).filter(([n, s]) => manifest.segments[n]?.file !== s.file).length;
-      check(remade === 0, `${tag}:改回来以后这条流一个分段都没有重产`, remade);
+      check(remade === 0, `${tag}: after reverting, none of this stream's segments were re-produced`, remade);
     }
     run.edit.segmentsProducedWhileEdited = producedMid - segmentsBefore;
     // 在它上面加一张卡:键不变,旧分段照用,一个都不重产
     await pipeline.preload(scenarioProject(kind, { width, height, mediaUrl, edit: 'above' }));
-    const withAbove = await until(`${tag}:上面加了一张卡以后计划换了一版`, () => ([...producer.streams.values()].some((s) => s.spec.clipIds.includes(ABOVE)) ? keyOfTarget() : null), 120_000, 100);
+    const withAbove = await until(`${tag}: the plan switched to a new version after a card was added above`, () => ([...producer.streams.values()].some((s) => s.spec.clipIds.includes(ABOVE)) ? keyOfTarget() : null), 120_000, 100);
     run.edit.keyWithLayerAbove = withAbove;
-    if (check(withAbove === oldKey, `${tag}:在它上面加一张卡,这条流的键不变`, { oldKey, withAbove })) {
+    if (check(withAbove === oldKey, `${tag}: adding a card above it does not change this stream's key`, { oldKey, withAbove })) {
       await sleep(1500);
       const kept = producer.streams.get(oldKey);
       const same = Object.entries(manifest.segments).every(([n, s]) => kept.manifest.segments[n]?.file === s.file);
-      check(same, `${tag}:上面加了一张卡,这条流的分段一个都没有重产`);
+      check(same, `${tag}: after a card was added above, none of this stream's segments were re-produced`);
     }
 
     cache.clear();
-    run.log = producer.status().log.map((l) => l.message).filter((m) => /差分|收紧|失败|没过/.test(m)).slice(-12);
+    run.log = producer.status().log.map((l) => l.message).filter((m) => /differential|tight|failed|did not pass/.test(m)).slice(-12);
     await pipeline.close();
     pipelines.splice(pipelines.indexOf(pipeline), 1);
     dropStreamEncoderSpares();
     if (!KEEP) await fs.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 } catch (error) {
-  fails.push(`异常:${error?.stack || error}`);
+  fails.push(`Exception: ${error?.stack || error}`);
   say('ERROR', { error: String(error?.stack || error) });
 } finally {
   for (const pipeline of pipelines) { try { await pipeline.close(); } catch { /* ignore */ } }

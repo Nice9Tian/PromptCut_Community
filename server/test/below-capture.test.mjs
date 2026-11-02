@@ -76,7 +76,7 @@ function contractAlpha(upperPx, lowerPx) {
 
 /* ------------------------------------------------------------ 算式 */
 
-test('BD-same 两张相同:那一层全透明', () => {
+test('BD-same the two screenshots are identical: that layer is fully transparent', () => {
   const rand = rng(1);
   const pixels = Array.from({ length: 400 }, () => px(Math.floor(rand() * 256), Math.floor(rand() * 256), Math.floor(rand() * 256), Math.floor(rand() * 256)));
   const { out } = solve(pixels, pixels);
@@ -85,7 +85,7 @@ test('BD-same 两张相同:那一层全透明', () => {
   assert.deepEqual([out.width, out.height], [400, 1]);
 });
 
-test('BD-lower-clear 下层全透明:那一层就是带目标卡的画面本身', () => {
+test('BD-lower-clear lower layer fully transparent: that layer is simply the frame with the target card', () => {
   const rand = rng(2);
   const upper = Array.from({ length: 300 }, () => px(Math.floor(rand() * 256), Math.floor(rand() * 256), Math.floor(rand() * 256), 1 + Math.floor(rand() * 255)));
   // 下层全透明时截图里它的颜色恒为 0;颜色是别的值也一样(全透明处颜色不算数)
@@ -99,7 +99,7 @@ test('BD-lower-clear 下层全透明:那一层就是带目标卡的画面本身'
   assert.ok(solve([px(9, 9, 9, 0)], [px(0, 0, 0, 0)]).out.rgba.every(v => v === 0));
 });
 
-test('BD-lower-solid 下层完全不透明、目标卡是一片阴影:那一层是黑色、不透明度就是阴影的深浅,盖回去差不过一级', () => {
+test('BD-lower-solid lower layer fully opaque, target card is a patch of shadow: that layer is black, its opacity is the depth of the shadow, and compositing it back is off by at most one level', () => {
   const rand = rng(3);
   const shade = 0.3;
   const lower = [], upper = [];
@@ -109,16 +109,16 @@ test('BD-lower-solid 下层完全不透明、目标卡是一片阴影:那一层�
     upper.push(toStraight(over({ a: shade, c: [0, 0, 0] }, l)));
   }
   const { layer, errors } = solve(upper, lower);
-  assert.ok(Math.max(...errors) <= 1.5, `盖回去最大差 ${Math.max(...errors)}`);
+  assert.ok(Math.max(...errors) <= 1.5, `Maximum difference after compositing back ${Math.max(...errors)}`);
   // 有一个通道够亮的像素上,不透明度量得准:离 0.3 × 255 = 76.5 不超过 3 级
   const bright = layer.filter((_, i) => Math.max(lower[i][0], lower[i][1], lower[i][2]) >= 128);
   assert.ok(bright.length > 1000);
-  for (const s of bright) assert.ok(Math.abs(s[3] - shade * 255) <= 3, `不透明度 ${s[3]}`);
+  for (const s of bright) assert.ok(Math.abs(s[3] - shade * 255) <= 3, `Opacity ${s[3]}`);
   // 颜色是黑的(预乘以后不超过 2 级)
-  for (const s of bright) assert.ok(Math.max(s[0], s[1], s[2]) * s[3] / 255 <= 2, `颜色 ${s}`);
+  for (const s of bright) assert.ok(Math.max(s[0], s[1], s[2]) * s[3] / 255 <= 2, `Color ${s}`);
 });
 
-test('BD-noise-solid 量化噪声(下层不透明):很暗的通道差一级,不许把整个像素顶成不透明', () => {
+test('BD-noise-solid quantization noise (opaque lower layer): a very dark channel that is off by one level must not push the whole pixel to opaque', () => {
   // 纯绿的下层,红蓝两个通道只有 1、2 级;压暗三成以后它们四舍五入到 0 或 1
   const lower = [px(1, 255, 1, 255), px(2, 255, 0, 255), px(1, 250, 2, 255), px(0, 255, 0, 255)];
   const upper = lower.map(l => toStraight(over({ a: 0.3, c: [0, 0, 0] }, l)));
@@ -128,8 +128,8 @@ test('BD-noise-solid 量化噪声(下层不透明):很暗的通道差一级,不�
   assert.deepEqual(noisy[0], [0, 178, 0, 255]);
   for (const set of [upper, noisy]) {
     const { layer, errors } = solve(set, lower);
-    for (const s of layer) assert.ok(Math.abs(s[3] - 76.5) <= 3, `不透明度 ${s[3]} 应当在 76 上下`);
-    assert.ok(Math.max(...errors) <= 1.5, `盖回去最大差 ${Math.max(...errors)}`);
+    for (const s of layer) assert.ok(Math.abs(s[3] - 76.5) <= 3, `Opacity ${s[3]} should be around 76`);
+    assert.ok(Math.max(...errors) <= 1.5, `Maximum difference after compositing back ${Math.max(...errors)}`);
   }
   // 对照:不放宽(容差 0,即契约原来的算式)时,同样的像素被顶成完全不透明
   const strict = solve(noisy, lower, { tolerance: 0 }).layer;
@@ -137,7 +137,7 @@ test('BD-noise-solid 量化噪声(下层不透明):很暗的通道差一级,不�
   assert.equal(contractAlpha(noisy[0], lower[0]), 1);
 });
 
-test('BD-contract 下层不透明、容差为 0 时,不透明度就是契约第 5.3 节的算式(各条下限里最大的)', () => {
+test('BD-contract with an opaque lower layer and tolerance 0, the opacity is the formula in section 5.3 of the contract (the largest of the individual lower bounds)', () => {
   const rand = rng(4);
   for (let i = 0; i < 500; i++) {
     const l = px(Math.floor(rand() * 256), Math.floor(rand() * 256), Math.floor(rand() * 256), 255);
@@ -152,12 +152,12 @@ test('BD-contract 下层不透明、容差为 0 时,不透明度就是契约第 
     const u = px(Math.floor(rand() * 256), Math.floor(rand() * 256), Math.floor(rand() * 256), 255);
     const relaxed = solve([u], [l]);
     assert.ok(relaxed.layer[0][3] <= Math.round(contractAlpha(u, l) * 255));
-    assert.ok(relaxed.errors[0] <= 1.5, `R ${u} L ${l} 差 ${relaxed.errors[0]}`);
+    assert.ok(relaxed.errors[0] <= 1.5, `R ${u} L ${l} diff ${relaxed.errors[0]}`);
   }
   assert.equal(DIFF_TOLERANCE, 1 / 255);
 });
 
-test('BD-overlay 任意一层盖在任意下层上(不透明、半透明、全透明都有):算出来的那一层盖回去和原画面差在两级以内', () => {
+test('BD-overlay any layer over any lower layer (opaque, semi-transparent and fully transparent all included): the computed layer, composited back, differs from the original frame by at most two levels', () => {
   const rand = rng(5);
   const lower = [], upper = [];
   for (let i = 0; i < 6000; i++) {
@@ -172,61 +172,61 @@ test('BD-overlay 任意一层盖在任意下层上(不透明、半透明、全�
   const { layer, errors } = solve(upper, lower);
   let worst = 0, at = -1;
   errors.forEach((e, i) => { if (e > worst) { worst = e; at = i; } });
-  assert.ok(worst <= 2, `最大差 ${worst.toFixed(2)}:R ${upper[at]} L ${lower[at]} S ${layer[at]}`);
+  assert.ok(worst <= 2, `Maximum difference ${worst.toFixed(2)}: R ${upper[at]} L ${lower[at]} S ${layer[at]}`);
   const mean = errors.reduce((s, e) => s + e, 0) / errors.length;
-  assert.ok(mean <= 0.6, `平均 ${mean}`);
+  assert.ok(mean <= 0.6, `Mean ${mean}`);
 });
 
-test('BD-noise-faint 量化噪声(下层几乎全透明):颜色对不上不许顶出一个不透明的像素', () => {
+test('BD-noise-faint quantization noise (lower layer almost fully transparent): a color mismatch must not produce an opaque pixel', () => {
   // 实测碰到的像素:下层是不透明度 1/255 的蓝,带目标卡的画面是不透明度 1/255 的黑(预乘以后两个都是 0)
   const lower = [px(0, 0, 255, 1), px(0, 64, 128, 4), px(10, 10, 10, 128)];
   const upper = [px(0, 0, 0, 1), px(0, 60, 128, 4), px(9, 9, 9, 128)];
   const { layer, errors } = solve(upper, lower);
-  for (const s of layer) assert.ok(s[3] <= 2, `不透明度 ${s[3]}`);
+  for (const s of layer) assert.ok(s[3] <= 2, `Opacity ${s[3]}`);
   assert.ok(Math.max(...errors) <= 1.5);
   // 对照:契约原来的算式在第一个像素上给出完全不透明(盖回去不透明度差 254 级)
   assert.equal(contractAlpha(upper[0], lower[0]), 1);
 });
 
-test('BD-lower-half 下层半透明、目标卡是真的盖上去的一层:不透明度那条式子和颜色的下限不打架时两条都成立', () => {
+test('BD-lower-half semi-transparent lower layer, the target card is a layer that is really laid on top: when the opacity formula and the color lower bound do not conflict, both hold', () => {
   // 白字(不透明度 0.6)上面压一层深色半透明:R 的不透明度 = a + 0.6 × (1 − a)
   const l = px(255, 255, 255, 153);
   const layer = { a: 0.676, c: [0.04, 0.045, 0.06] };
   const u = toStraight(over(layer, l));
   const got = solve([u], [l]);
-  assert.ok(Math.abs(got.layer[0][3] - 0.676 * 255) <= 2, `不透明度 ${got.layer[0][3]}`);
+  assert.ok(Math.abs(got.layer[0][3] - 0.676 * 255) <= 2, `Opacity ${got.layer[0][3]}`);
   assert.ok(got.errors[0] <= 1.5);
 });
 
-test('BD-glass 毛玻璃的外框里、下层完全不透明的像素:那一层就是带目标卡的画面(不透明);框外和下层不是不透明的像素照常算', () => {
+test('BD-glass pixels inside the outer frame of the frosted glass where the lower layer is fully opaque: that layer is the frame with the target card (opaque); pixels outside the frame and pixels where the lower layer is not opaque are computed as usual', () => {
   // 一行 8 个像素,玻璃盖住中间 4 个(第 2～5 个)
   const lower = [px(200, 30, 30, 255), px(200, 30, 30, 255), px(200, 30, 30, 255), px(40, 200, 40, 255), px(40, 200, 40, 255), px(90, 90, 90, 128), px(40, 200, 40, 255), px(40, 200, 40, 255)];
   const upper = lower.map((l, i) => (i === 2 ? l : toStraight(over({ a: 0.4, c: [0, 0, 0] }, l))));
   const glass = [{ x: 2, y: 0, w: 4, h: 1 }];
   const { layer, errors, out } = solve(upper, lower, { glass });
   // 框里、下层不透明:第 2 个(两张相同)、第 3、4 个 —— 都是 R 本身、不透明度 255
-  for (const i of [2, 3, 4]) assert.deepEqual(layer[i], [upper[i][0], upper[i][1], upper[i][2], 255], `第 ${i} 个`);
+  for (const i of [2, 3, 4]) assert.deepEqual(layer[i], [upper[i][0], upper[i][1], upper[i][2], 255], `Item ${i}`);
   // 框里、下层半透明(第 5 个):不能取 1,照常算
   assert.ok(layer[5][3] < 255 && layer[5][3] > 0);
   // 框外:照最小的不透明度(这里是一层 0.4 的黑,最小的就是它自己)
-  for (const i of [0, 1, 6, 7]) assert.ok(Math.abs(layer[i][3] - 0.4 * 255) <= 4, `第 ${i} 个不透明度 ${layer[i][3]}`);
+  for (const i of [0, 1, 6, 7]) assert.ok(Math.abs(layer[i][3] - 0.4 * 255) <= 4, `Item ${i} opacity ${layer[i][3]}`);
   assert.ok(Math.max(...errors) <= 1.5);
   assert.equal(out.changed, 8);
   // 没有掩码时第 2 个是透明的
   assert.equal(solve(upper, lower).layer[2][3], 0);
 });
 
-test('BD-mask 毛玻璃的掩码:圆角矩形,像素中心在里面的才算;半径超过边长时按比例缩', () => {
+test('BD-mask frosted glass mask: a rounded rectangle, a pixel counts only if its center is inside; when the radius exceeds the side length it is scaled down proportionally', () => {
   const area = { x: 10, y: 20, w: 40, h: 30 };
   const mask = glassMask([{ x: 20, y: 25, w: 20, h: 20, radii: [[8, 8], [8, 8], [8, 8], [8, 8]] }], area);
   const at = (x, y) => mask[(y - area.y) * area.w + (x - area.x)];
-  assert.equal(at(30, 35), 1, '中心');
-  assert.equal(at(20, 35), 1, '左边中点');
-  assert.equal(at(39, 35), 1, '右边最后一列');
-  assert.equal(at(40, 35), 0, '右边外面');
-  assert.equal(at(20, 25), 0, '左上角被圆角切掉');
-  assert.equal(at(39, 44), 0, '右下角被圆角切掉');
-  assert.equal(at(23, 27), 1, '圆角里面');
+  assert.equal(at(30, 35), 1, 'Center');
+  assert.equal(at(20, 35), 1, 'Left edge midpoint');
+  assert.equal(at(39, 35), 1, 'Last column on the right');
+  assert.equal(at(40, 35), 0, 'Outside the right edge');
+  assert.equal(at(20, 25), 0, 'Top-left corner cut off by the rounded corner');
+  assert.equal(at(39, 44), 0, 'Bottom-right corner cut off by the rounded corner');
+  assert.equal(at(23, 27), 1, 'Inside the rounded corner');
   assert.equal(at(19, 35), 0);
   // 没有圆角:整块
   const square = glassMask([{ x: 20, y: 25, w: 20, h: 20 }], area);
@@ -234,13 +234,13 @@ test('BD-mask 毛玻璃的掩码:圆角矩形,像素中心在里面的才算;半
   // 半径比边长的一半还大:缩成一个圆
   const round = glassMask([{ x: 20, y: 25, w: 20, h: 20, radii: [[50, 50], [50, 50], [50, 50], [50, 50]] }], area);
   const filled = round.reduce((s, v) => s + v, 0);
-  assert.ok(Math.abs(filled - Math.PI * 100) <= 12, `圆的面积 ${filled}`);
+  assert.ok(Math.abs(filled - Math.PI * 100) <= 12, `Circle area ${filled}`);
   // 伸到区域外面的部分裁掉;带小数的坐标不出界
   const partial = glassMask([{ x: 0.5, y: 10.25, w: 20.5, h: 15.5 }], area);
   assert.equal(partial.reduce((s, v) => s + v, 0), 11 * 6);
 });
 
-test('BD-crop 只交出一块:和整张算完再裁逐字节相同;矩形不在画面里就抛', () => {
+test('BD-crop hand out only one region: byte-for-byte identical to computing the whole image and then cropping; throws if the rectangle is not in the frame', () => {
   const rand = rng(6);
   const W = 24, H = 16;
   const lower = Buffer.alloc(W * H * 4), upper = Buffer.alloc(W * H * 4);
@@ -257,11 +257,11 @@ test('BD-crop 只交出一块:和整张算完再裁逐字节相同;矩形不在�
   for (let y = 0; y < crop.h; y++) whole.rgba.copy(expected, y * crop.w * 4, ((y + crop.y) * W + crop.x) * 4, ((y + crop.y) * W + crop.x + crop.w) * 4);
   assert.equal(Buffer.compare(part.rgba, expected), 0);
   assert.deepEqual([part.width, part.height], [12, 10]);
-  assert.throws(() => diffLayer(upper, lower, W, H, { crop: { x: 20, y: 0, w: 8, h: 4 } }), /不在画面里/);
-  assert.throws(() => diffLayer(upper.subarray(0, 100), lower, W, H), /比画面小/);
+  assert.throws(() => diffLayer(upper, lower, W, H, { crop: { x: 20, y: 0, w: 8, h: 4 } }), /not in the frame/);
+  assert.throws(() => diffLayer(upper.subarray(0, 100), lower, W, H), /smaller than the frame/);
 });
 
-test('BD-outside 交出去的矩形外面两张有没有不同:回那些像素的包围盒', () => {
+test('BD-outside whether the two screenshots differ outside the handed-out rectangle: returns the bounding box of those pixels', () => {
   const W = 20, H = 12;
   const lower = Buffer.alloc(W * H * 4, 7);
   const crop = { x: 6, y: 4, w: 8, h: 4 };
@@ -277,7 +277,7 @@ test('BD-outside 交出去的矩形外面两张有没有不同:回那些像素�
   assert.deepEqual(changedOutside(upper, lower, W, H, crop), { x: 2, y: 1, w: 16, h: 7 });
 });
 
-test('BD-outside-layer 矩形外面逐字节不同、算出来却仍是全透明的像素不算改到了外面;真有东西的才算', () => {
+test('BD-outside-layer pixels outside the rectangle that differ byte for byte but still compute to fully transparent do not count as changed outside; only pixels with real content count', () => {
   const W = 20, H = 12;
   const crop = { x: 6, y: 4, w: 8, h: 4 };
   // 下层是不透明度 1/255 的蓝(几乎全透明)
@@ -379,7 +379,7 @@ function fakeBakery({ present = () => true, stale = false, drifting = false, stu
         return { screenshotData: 'ok' };
       }
       if (extra.screenshot?.format !== 'png') return {};
-      if (hidden && failLower) throw new Error('截图坏了');
+      if (hidden && failLower) throw new Error('Screenshot failed');
       const drift = drifting ? shots : 0;
       shots++;
       let visible = present(frame) && !hidden;
@@ -409,19 +409,19 @@ const opsOf = (bakery, frame) => {
   return bakery.log.slice(start + 1, next < 0 ? undefined : next);
 };
 
-test('BD-order 取两张的先后:上张、藏、下张、撤;两张之间不推时间;每个分段第一帧多截两张做实测', async () => {
+test('BD-order the order of taking the two screenshots: upper, hide, lower, unhide; time is not advanced between the two; the first frame of each segment takes two extra screenshots for a real measurement', async () => {
   const bakery = fakeBakery();
   const { frames, record } = await capture(bakery, { from: 0, to: 4 });
   // 第 0 帧(分段第一帧):上张(前面没截过,先丢一张)→ 藏 → 下张 → 再截一张(实测)→ 撤 → 再截一张(实测)
   assert.deepEqual(opsOf(bakery, 0), ['shot:0:upper:96x64', 'shot:0:upper:96x64', 'hide:0:target', 'shot:0:lower:96x64', 'shot:0:lower:96x64', 'show:0', 'shot:0:upper:96x64']);
   // 之后每帧:上张 → 藏 → 下张 → 撤
-  for (const f of [1, 2, 3, 4]) assert.deepEqual(opsOf(bakery, f), [`shot:${f}:upper:96x64`, `hide:${f}:target`, `shot:${f}:lower:96x64`, `show:${f}`], `第 ${f} 帧`);
+  for (const f of [1, 2, 3, 4]) assert.deepEqual(opsOf(bakery, f), [`shot:${f}:upper:96x64`, `hide:${f}:target`, `shot:${f}:lower:96x64`, `show:${f}`], `Frame ${f}`);
   // 两张之间没有推过时间:每一次藏和它后面最近的一次撤之间没有 step
   const hideAt = bakery.log.map((op, i) => (op.startsWith('hide:') ? i : -1)).filter(i => i >= 0);
   for (const i of hideAt) {
     const until = bakery.log.findIndex((op, j) => j > i && op.startsWith('show:'));
     assert.ok(until > i);
-    assert.ok(bakery.log.slice(i, until).every(op => !op.startsWith('step:')), '藏着的时候推了时间');
+    assert.ok(bakery.log.slice(i, until).every(op => !op.startsWith('step:')), 'Time was advanced while hidden');
   }
   assert.equal(bakery.log.filter(op => op.startsWith('hide:')).length, bakery.log.filter(op => op.startsWith('show:')).length);
   assert.deepEqual([record.frames, record.checks, record.absent, record.failed, record.primeLower], [5, 1, 0, null, false]);
@@ -432,12 +432,12 @@ test('BD-order 取两张的先后:上张、藏、下张、撤;两张之间不推
     const lower = lowerPixels(f), upper = upperPixels(f);
     let worst = 0;
     for (let i = 0; i < 96 * 64; i++) worst = Math.max(worst, backError(pixelAt(shot.rgba, i), pixelAt(lower, i), pixelAt(upper, i)));
-    assert.ok(worst <= 1.5, `第 ${f} 帧盖回去最大差 ${worst}`);
+    assert.ok(worst <= 1.5, `Frame ${f} maximum difference after compositing back ${worst}`);
     // 目标卡没有改动的地方全透明:框和阴影以外一个不透明的像素都没有
     const box = targetBox(f, false);
     for (let y = 0; y < 64; y++) for (let x = 0; x < 96; x++) {
       const near = x >= box.x - 4 && x < box.x + box.w + 4 && y >= box.y - 4 && y < box.y + box.h + 4;
-      if (!near) assert.equal(shot.rgba[(y * 96 + x) * 4 + 3], 0, `(${x},${y}) 应当透明`);
+      if (!near) assert.equal(shot.rgba[(y * 96 + x) * 4 + 3], 0, `(${x},${y}) should be transparent`);
     }
     // 毛玻璃的框里(下层不透明)是不透明的
     assert.equal(shot.rgba[((box.y + 2) * 96 + box.x + 2) * 4 + 3], 255);
@@ -448,13 +448,13 @@ test('BD-order 取两张的先后:上张、藏、下张、撤;两张之间不推
   assert.deepEqual(opsOf(plain, 0), ['shot:0:upper:96x64', 'shot:0:upper:96x64', 'hide:0:target', 'shot:0:lower:96x64', 'show:0']);
 });
 
-test('BD-absent 目标卡还没入场的帧:什么都不藏,交出一张全透明的;实测留到它在场的第一帧', async () => {
+test('BD-absent frames where the target card has not entered yet: hide nothing, hand out a fully transparent one; the real measurement is left to the first frame where it is present', async () => {
   const bakery = fakeBakery({ present: frame => frame >= 3 });
   const { frames, record } = await capture(bakery, { from: 0, to: 4 });
   for (const f of [0, 1, 2]) {
     assert.ok(frames.get(f).rgba.every(v => v === 0));
-    assert.ok(!opsOf(bakery, f).some(op => op.startsWith('show:')), '没藏就不用撤');
-    assert.equal(opsOf(bakery, f).filter(op => op.includes(':lower:')).length, f === 0 ? 2 : 1, '只有 bakeStream 自己那一次截图');
+    assert.ok(!opsOf(bakery, f).some(op => op.startsWith('show:')), 'No need to unhide if nothing was hidden');
+    assert.equal(opsOf(bakery, f).filter(op => op.includes(':lower:')).length, f === 0 ? 2 : 1, 'Only the one screenshot that bakeStream takes itself');
   }
   assert.deepEqual(opsOf(bakery, 3), ['shot:3:upper:96x64', 'hide:3:target', 'shot:3:lower:96x64', 'shot:3:lower:96x64', 'show:3', 'shot:3:upper:96x64']);
   assert.deepEqual([record.frames, record.absent, record.checks], [5, 3, 1]);
@@ -462,15 +462,15 @@ test('BD-absent 目标卡还没入场的帧:什么都不藏,交出一张全透�
   assert.ok(frames.get(3).rgba.some(v => v !== 0));
 });
 
-test('BD-stale 藏起来以后第一张截到的是旧画面:实测比出来,这个分段失败;这条流以后每张下张先丢一张再截', async () => {
+test('BD-stale the first screenshot after hiding shows the stale frame: the real measurement detects it and this segment fails; from then on this stream discards one screenshot before each lower screenshot', async () => {
   const record = newBelowRecord(), notes = [];
   const bakery = fakeBakery({ stale: true });
   await assert.rejects(capture(bakery, { from: 0, to: 4, record, notes }), e => e.code === 'lower-unstable');
   assert.equal(record.primeLower, true);
-  assert.equal(record.failed, null, '不判死这条流');
+  assert.equal(record.failed, null, 'Do not mark this stream as dead');
   assert.deepEqual(record.last, { frame: 0, lowerStable: false, upperStable: true });
-  assert.ok(notes.some(m => /连截两张不相同/.test(m)));
-  assert.equal(bakery.log.filter(op => op.startsWith('hide:')).length, bakery.log.filter(op => op.startsWith('show:')).length, '失败了也撤掉');
+  assert.ok(notes.some(m => /two consecutive screenshots differ/.test(m)));
+  assert.equal(bakery.log.filter(op => op.startsWith('hide:')).length, bakery.log.filter(op => op.startsWith('show:')).length, 'Unhidden even on failure');
   // 重来:每张下张先丢一张,实测通过,交出来的那一层是对的
   const again = fakeBakery({ stale: true });
   const { frames } = await capture(again, { from: 0, to: 2, record, signature: 'S2' });
@@ -482,12 +482,12 @@ test('BD-stale 藏起来以后第一张截到的是旧画面:实测比出来,这
   assert.ok(worst <= 1.5);
 });
 
-test('BD-drift 下层每多一拍就多走一步的页面:撤掉以后上张变了,这条流判死,不交出算错的帧', async () => {
+test('BD-drift a page whose lower layer advances one more step with every extra tick: after unhiding, the upper screenshot has changed, this stream is marked dead, and no wrongly computed frame is handed out', async () => {
   const record = newBelowRecord(), notes = [];
   const bakery = fakeBakery({ drifting: true });
   await assert.rejects(capture(bakery, { from: 0, to: 4, record, notes }), e => e.code === 'upper-changed');
   assert.equal(record.failed, 'upper-changed');
-  assert.ok(notes.some(m => /不再产/.test(m)));
+  assert.ok(notes.some(m => /no longer produce/.test(m)));
   assert.equal(bakery.log.filter(op => op.startsWith('hide:')).length, bakery.log.filter(op => op.startsWith('show:')).length);
   // 判死以后再来:第一帧就抛,不再藏
   const again = fakeBakery({ drifting: true });
@@ -495,23 +495,23 @@ test('BD-drift 下层每多一拍就多走一步的页面:撤掉以后上张变�
   assert.equal(again.log.filter(op => op.startsWith('hide:')).length, 0);
 });
 
-test('BD-stuck 藏不住、或者藏着的时候截图出错:抛错;藏了的一定撤', async () => {
+test('BD-stuck cannot hide, or the screenshot errors while hidden: throw; anything hidden is always unhidden', async () => {
   const stuck = fakeBakery({ stuck: true });
   await assert.rejects(capture(stuck, { from: 0, to: 1 }), e => e.code === 'not-hidden');
   const broken = fakeBakery({ failLower: true });
-  await assert.rejects(capture(broken, { from: 0, to: 1 }), /截图坏了/);
+  await assert.rejects(capture(broken, { from: 0, to: 1 }), /Screenshot failed/);
   assert.deepEqual(broken.log.filter(op => /^(hide|show):/.test(op)), ['hide:0:target', 'show:0']);
 });
 
-test('BD-rect 交出去的矩形比截图矩形小:两张照旧截整幅,交出去的是裁过的;目标卡改到矩形外面就抛,带上那一块的位置', async () => {
+test('BD-rect the handed-out rectangle is smaller than the screenshot rectangle: both screenshots still capture the whole frame and what is handed out is cropped; throws if the target card changes anything outside the rectangle, carrying the position of that region', async () => {
   const rect = { x: 24, y: 14, w: 40, h: 30 };
   const bakery = fakeBakery();
   const { frames } = await capture(bakery, { from: 0, to: 2, rect });
-  assert.ok(bakery.log.filter(op => op.startsWith('shot:')).every(op => op.endsWith(':96x64')), '截图一直是整幅');
+  assert.ok(bakery.log.filter(op => op.startsWith('shot:')).every(op => op.endsWith(':96x64')), 'Screenshots are always the whole frame');
   const whole = await capture(fakeBakery(), { from: 0, to: 2 });
   for (const f of [0, 1, 2]) {
     assert.deepEqual([frames.get(f).width, frames.get(f).height], [40, 30]);
-    assert.equal(Buffer.compare(frames.get(f).rgba, cropOf(whole.frames.get(f).rgba, rect)), 0, `第 ${f} 帧和整幅算完再裁相同`);
+    assert.equal(Buffer.compare(frames.get(f).rgba, cropOf(whole.frames.get(f).rgba, rect)), 0, `Frame ${f} is identical to computing the whole frame and then cropping`);
   }
   // 目标卡每帧往右挪 2 像素:到第 4 帧阴影的右边出了矩形(矩形右边界是 64,阴影右边到 30 + 8 + 24 + 4 = 66)
   const record = newBelowRecord();
@@ -523,7 +523,7 @@ test('BD-rect 交出去的矩形比截图矩形小:两张照旧截整幅,交出�
   });
   assert.equal(record.overflows, 1);
   assert.equal(record.failed, null);
-  assert.throws(() => belowSegmentCapture(fakeBakery(), { clipId: 'target', view: rect, rect: VIEW }), /不在截图矩形/);
+  assert.throws(() => belowSegmentCapture(fakeBakery(), { clipId: 'target', view: rect, rect: VIEW }), /not in the screenshot rectangle/);
 });
 
 /* ------------------------------------------------------------ 接到生产者上 */
@@ -562,7 +562,7 @@ async function producerFor(project, { below = true } = {}) {
     assert.equal(await producer.runSegment(bakery, task), true);
     await task.job;
     const seg = state.manifest.segments[segment];
-    assert.ok(seg, `分段 ${segment} 落盘了(${producer.log.map(l => l.message).join(' | ')})`);
+    assert.ok(seg, `Segment ${segment} was written to disk (${producer.log.map(l => l.message).join(' | ')})`);
     return seg;
   };
   const close = async () => { await producer.close(); await fs.rm(root, { recursive: true, force: true }); };
@@ -575,12 +575,12 @@ function decode(dir, init, seg) {
   return execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', file, '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'], { maxBuffer: 1 << 28, windowsHide: true });
 }
 
-test('BD-produce 生产者产依赖下层的流:截图恒为整幅、等素材就位;稀疏那一趟量出实体框、第二趟收紧;解出来盖回下层等于带目标卡的画面', { skip: !ffmpegOk }, async () => {
+test('BD-produce the producer produces a below-dependent stream: screenshots are always the whole frame and wait for media to be in place; the sparse pass measures the content box and the second pass tightens it; the decoded result composited back over the lower layer equals the frame with the target card', { skip: !ffmpegOk }, async () => {
   const project = projectOf({ media: true });
   const { producer, specs, stateOf, run, close } = await producerFor(project);
   try {
     const spec = specs.find(s => s.kind === 'below');
-    assert.ok(spec, '计划里有这条流');
+    assert.ok(spec, 'The plan contains this stream');
     assert.equal(spec.hasMedia, true);
     assert.deepEqual(spec.clipIds, ['target']);
     const state = stateOf(spec);
@@ -590,21 +590,21 @@ test('BD-produce 生产者产依赖下层的流:截图恒为整幅、等素材�
     // 实体框:目标卡的框加阴影是 x 26..57、y 16..39;外扩 8、夹回画面、凑成偶数
     assert.deepEqual(state.measured, { x: 26, y: 16, w: 32, h: 24 });
     assert.deepEqual(state.manifest.tight, { x: 18, y: 8, w: 48, h: 40 });
-    assert.ok(bakery.log.filter(op => op.startsWith('shot:')).every(op => op.endsWith(':96x64')), '稀疏那一趟截的是整幅');
-    assert.ok(bakery.log.some(op => op.startsWith('media:')), '截图前等了素材');
+    assert.ok(bakery.log.filter(op => op.startsWith('shot:')).every(op => op.endsWith(':96x64')), 'The sparse pass captures the whole frame');
+    assert.ok(bakery.log.some(op => op.startsWith('media:')), 'Waited for media before the screenshot');
     // 稀疏那一趟每个分段只取分段的第一帧:第 1、3 帧没有取,第 15 帧(第 1 段的第一帧)取了
     assert.ok(!bakery.log.includes('hide:1:target') && !bakery.log.includes('hide:3:target') && bakery.log.includes('hide:0:target') && bakery.log.includes('hide:15:target'));
     const sparseHides = bakery.log.filter(op => op.startsWith('hide:')).length;
-    assert.equal(sparseHides, 4, '四个分段各一张');
+    assert.equal(sparseHides, 4, 'One for each of the four segments');
     // 每个分段的位置矩形记在清单里(平面坐标:这种流是舞台坐标),就是那一张里目标卡改动的那一块
-    for (const n of segments) assert.deepEqual(state.manifest.segments[n].box, { x: 26, y: 16, w: 32, h: 24 }, `分段 ${n} 的位置矩形`);
-    assert.ok(segments.every(n => state.manifest.segments[n].stride === SEGMENT_FRAMES), '稀疏分段的间隔记的是分段的帧数');
+    for (const n of segments) assert.deepEqual(state.manifest.segments[n].box, { x: 26, y: 16, w: 32, h: 24 }, `Position rectangle of segment ${n}`);
+    assert.ok(segments.every(n => state.manifest.segments[n].stride === SEGMENT_FRAMES), 'The stride of a sparse segment records the segment\'s frame count');
     for (const n of segments) await run(bakery, state, n, 1);
-    assert.ok(bakery.log.filter(op => op.startsWith('shot:')).every(op => op.endsWith(':96x64')), '第二趟截的仍是整幅(不把截图矩形收紧)');
+    assert.ok(bakery.log.filter(op => op.startsWith('shot:')).every(op => op.endsWith(':96x64')), 'The second pass still captures the whole frame (the screenshot rectangle is not tightened)');
     const status = producer.status().streams[0];
     assert.equal(status.kind, 'below');
     assert.deepEqual([status.below.failed, status.below.primeLower, status.below.overflows, status.below.absent], [null, false, 0, 0]);
-    assert.equal(status.below.checks, 8, '两趟、每个分段各实测一次');
+    assert.equal(status.below.checks, 8, 'Two passes, each segment gets one real measurement');
     assert.equal(status.below.frames, 4 + 60);
     assert.equal(status.below.glassFrames, 64);
     // 补密以后位置矩形还在(沿用稀疏分段的)
@@ -631,13 +631,13 @@ test('BD-produce 生产者产依赖下层的流:截图恒为整幅、等素材�
     };
     for (let k = 0; k < SEGMENT_FRAMES; k++) {
       const same = errorAgainst(k, 15 + k), other = errorAgainst(k, 15 + k, 15 + ((k + 7) % SEGMENT_FRAMES));
-      assert.ok(same <= 6, `第 ${15 + k} 帧盖回去平均差 ${same.toFixed(2)}`);
-      assert.ok(other > 3 * same && other > 15, `对照(别的时刻)明显更大:${other.toFixed(2)} 对 ${same.toFixed(2)}`);
+      assert.ok(same <= 6, `Frame ${15 + k} mean difference after compositing back ${same.toFixed(2)}`);
+      assert.ok(other > 3 * same && other > 15, `The control (a different moment) is clearly larger: ${other.toFixed(2)} vs ${same.toFixed(2)}`);
     }
   } finally { await close(); }
 });
 
-test('BD-widen 收紧矩形不够大(稀疏那一趟没量到的帧里目标卡走到了外面):放大矩形、这个分段重来,不算失败', { skip: !ffmpegOk }, async () => {
+test('BD-widen the tight rectangle is not big enough (in frames the sparse pass did not measure, the target card moved outside): widen the rectangle and redo this segment, which does not count as a failure', { skip: !ffmpegOk }, async () => {
   const { producer, specs, stateOf, run, close } = await producerFor(projectOf());
   try {
     const spec = specs.find(s => s.kind === 'below');
@@ -650,24 +650,24 @@ test('BD-widen 收紧矩形不够大(稀疏那一趟没量到的帧里目标卡�
     state.manifest.tight = { x: 24, y: 14, w: 60, h: 28 };
     const before = producer.stats.failures;
     await assert.rejects(producer.runSegment(bakery, { state, segment: 0, stride: 1 }), e => e.code === 'below-overflow' && e.cancelled === true);
-    assert.equal(producer.stats.failures, before, '不记失败');
-    assert.ok(state.manifest.tight.x + state.manifest.tight.w >= 86 + 8, `放大到 ${JSON.stringify(state.manifest.tight)}`);
-    assert.ok(producer.log.some(l => /收紧矩形放大到/.test(l.message)));
+    assert.equal(producer.stats.failures, before, 'Not recorded as a failure');
+    assert.ok(state.manifest.tight.x + state.manifest.tight.w >= 86 + 8, `Widened to ${JSON.stringify(state.manifest.tight)}`);
+    assert.ok(producer.log.some(l => /tight rectangle widened to/.test(l.message)));
     assert.equal(state.below.overflows >= 1, true);
-    assert.equal(bakery.streamLease, null, '租约作废,下一次重灌页面');
+    assert.equal(bakery.streamLease, null, 'The lease is voided, and the page is reloaded the next time');
     // 再来:一直放大到装得下为止(每次只多看到一帧),最后产出来
     let seg = null;
     for (let attempt = 0; attempt < 8 && !seg; attempt++) {
       const task = { state, segment: 0, stride: 1 };
       try { if (await producer.runSegment(bakery, task)) { await task.job; seg = state.manifest.segments[0]; } } catch (error) { if (error.code !== 'below-overflow') throw error; }
     }
-    assert.ok(seg && seg.stride === 1, '放大以后产出来了');
+    assert.ok(seg && seg.stride === 1, 'Produced after widening');
     assert.deepEqual(state.manifest.inits[seg.init].rect, state.manifest.tight);
-    assert.ok(state.manifest.tight.x + state.manifest.tight.w >= 30 + 28 + 24 + 4, '装得下第 14 帧的阴影');
+    assert.ok(state.manifest.tight.x + state.manifest.tight.w >= 30 + 28 + 24 + 4, 'Fits the shadow of frame 14');
   } finally { await close(); }
 });
 
-test('BD-noreplay 成员和下层都是 remotion 式的(`replay: false`):接不上前一段也不从挂载帧回放;有 motion 式的下层就回放', { skip: !ffmpegOk }, async () => {
+test('BD-noreplay the member and the lower layers are all remotion-style (`replay: false`): even when it cannot continue from the previous segment it does not replay from the mount frame; with a motion-style lower layer it does replay', { skip: !ffmpegOk }, async () => {
   // 下层是 motion 式的卡:回放
   const stateful = await producerFor(projectOf());
   try {
@@ -675,7 +675,7 @@ test('BD-noreplay 成员和下层都是 remotion 式的(`replay: false`):接不�
     assert.equal(spec.replay, true);
     const bakery = fakeBakery();
     await stateful.run(bakery, stateful.stateOf(spec), 2, SPARSE_STRIDE);
-    assert.ok(bakery.log.includes('step:0') && bakery.log.includes('step:29'), '从挂载帧推到这个分段');
+    assert.ok(bakery.log.includes('step:0') && bakery.log.includes('step:29'), 'Advanced from the mount frame to this segment');
     assert.equal(stateful.producer.status().streams[0].replayedFrames, 30);
   } finally { await stateful.close(); }
   // 下层只有素材(纯素材段按时间直接取帧),目标卡是 remotion 式:不回放
@@ -688,14 +688,14 @@ test('BD-noreplay 成员和下层都是 remotion 式的(`replay: false`):接不�
     const bakery = fakeBakery();
     await direct.run(bakery, direct.stateOf(spec), 2, SPARSE_STRIDE);
     const stepped = bakery.log.filter(op => op.startsWith('step:')).map(op => Number(op.slice(5)));
-    assert.equal(Math.min(...stepped), 30, '直接落在这个分段的第一帧');
+    assert.equal(Math.min(...stepped), 30, 'Lands directly on the first frame of this segment');
     assert.equal(direct.producer.status().streams.find(s => s.kind === 'below').replayedFrames, 0);
     // 两张照样取、实测照样做
     assert.equal(direct.producer.status().streams.find(s => s.kind === 'below').below.checks, 1);
   } finally { await direct.close(); }
 });
 
-test('BD-failed 实测判死的流:自动生产记成失败不再白付一次重灌,队列的任务报不可重试', { skip: !ffmpegOk }, async () => {
+test('BD-failed a stream marked dead by the real measurement: automatic production records it as a failure and no longer wastes another reload, and the queue task is reported as non-retryable', { skip: !ffmpegOk }, async () => {
   const { producer, specs, stateOf, close } = await producerFor(projectOf());
   try {
     const spec = specs.find(s => s.kind === 'below');
@@ -714,11 +714,11 @@ test('BD-failed 实测判死的流:自动生产记成失败不再白付一次重
   } finally { await close(); }
 });
 
-test('BD-draw 要回放的依赖下层的流:推过去而不取图的每一拍都画一张丢掉(稀疏分段里第一帧以外的帧、断租约以后回放的帧),不进编码器;不回放的流不画', { skip: !ffmpegOk }, async () => {
+test('BD-draw a below-dependent stream that needs replay: every tick that is advanced without capturing an image draws one and discards it (frames other than the first frame in a sparse segment, frames replayed after the lease was broken), not fed to the encoder; streams that do not replay draw nothing', { skip: !ffmpegOk }, async () => {
   const { producer, specs, stateOf, run, close } = await producerFor(projectOf({ media: true }));
   try {
     const spec = specs.find(s => s.kind === 'below');
-    assert.equal(spec.replay, true, '下层是 motion 式的卡:要回放');
+    assert.equal(spec.replay, true, 'The lower layer is a motion-style card: needs replay');
     const state = stateOf(spec);
     const bakery = fakeBakery();
     // 画过一张丢掉的帧。换截图矩形时 `bakeStream` 自己也会画一张(在推第一帧之前,帧号还是上一趟留下的),不算:从这一趟推的第一帧之后数
@@ -728,9 +728,9 @@ test('BD-draw 要回放的依赖下层的流:推过去而不取图的每一拍�
     let mark = bakery.log.length;
     await run(bakery, state, 0, SPARSE_STRIDE);
     await run(bakery, state, 1, SPARSE_STRIDE);
-    assert.deepEqual(hides(mark), [0, 15], '取图的只有两个分段的第一帧');
-    assert.deepEqual(draws(mark), [...Array.from({ length: 14 }, (_, i) => 1 + i), ...Array.from({ length: 14 }, (_, i) => 16 + i)], '别的帧各画一张');
-    assert.deepEqual([state.manifest.segments[0].samples, state.manifest.segments[1].samples], [15, 15], '丢掉的那些不进分段:样本数照旧');
+    assert.deepEqual(hides(mark), [0, 15], 'Only the first frames of the two segments capture an image');
+    assert.deepEqual(draws(mark), [...Array.from({ length: 14 }, (_, i) => 1 + i), ...Array.from({ length: 14 }, (_, i) => 16 + i)], 'Every other frame draws one');
+    assert.deepEqual([state.manifest.segments[0].samples, state.manifest.segments[1].samples], [15, 15], 'The discarded ones do not go into the segments: the sample count is unchanged');
     // 满密度、接着租约:每一帧都是要取的,一张都不用丢
     for (const n of [0, 1]) delete state.manifest.segments[n];
     bakery.streamLease = null;
@@ -743,16 +743,16 @@ test('BD-draw 要回放的依赖下层的流:推过去而不取图的每一拍�
     mark = bakery.log.length;
     const before = state.replayedFrames ?? 0;
     await run(bakery, state, 2, 1);
-    assert.deepEqual(draws(mark), Array.from({ length: 30 - spec.mountFrame }, (_, i) => spec.mountFrame + i), '回放的每一帧都画过,第 30 帧起不再丢');
+    assert.deepEqual(draws(mark), Array.from({ length: 30 - spec.mountFrame }, (_, i) => spec.mountFrame + i), 'Every replayed frame was drawn; from frame 30 on nothing is discarded');
     assert.deepEqual(hides(mark), Array.from({ length: 15 }, (_, i) => 30 + i));
     assert.equal(state.manifest.segments[2].samples, 15);
-    assert.equal((state.replayedFrames ?? 0) - before, 30 - spec.mountFrame, '回放的帧数照旧记(丢掉的那些不算取了的帧)');
-    assert.ok(bakery.log.slice(mark).filter(op => op.startsWith('media:')).every(op => Number(op.split(':')[1]) >= 30), '素材只在真要取的帧前面等');
+    assert.equal((state.replayedFrames ?? 0) - before, 30 - spec.mountFrame, 'The replayed frame count is recorded as before (the discarded ones do not count as captured frames)');
+    assert.ok(bakery.log.slice(mark).filter(op => op.startsWith('media:')).every(op => Number(op.split(':')[1]) >= 30), 'Media is waited for only before frames that are really captured');
     assert.equal(producer.status().streams[0].capture.discarded, 28 + 30 - spec.mountFrame);
   } finally { await close(); }
 });
 
-test('BD-card 单卡流走的路不变:每帧只截一张、不藏任何东西、不等素材、截图矩形照旧是它自己的矩形', { skip: !ffmpegOk }, async () => {
+test('BD-card the single-card stream takes the same path as before: only one screenshot per frame, nothing is hidden, no waiting for media, and the screenshot rectangle is still its own rectangle', { skip: !ffmpegOk }, async () => {
   const { producer, specs, stateOf, run, close } = await producerFor(projectOf({ media: true }));
   try {
     const spec = specs.find(s => s.kind === 'card');
@@ -761,7 +761,7 @@ test('BD-card 单卡流走的路不变:每帧只截一张、不藏任何东西�
     const bakery = fakeBakery();
     await run(bakery, state, 0, 1);
     assert.equal(bakery.log.filter(op => /^(hide|show|media):/.test(op)).length, 0);
-    assert.equal(bakery.log.filter(op => op.startsWith('shot:')).length, 16, '第一帧先丢一张,之后每帧一张');
+    assert.equal(bakery.log.filter(op => op.startsWith('shot:')).length, 16, 'Discard one on the first frame first, then one per frame afterwards');
     assert.equal(producer.status().streams.find(s => s.kind === 'card').below, null);
     // 开关关着:计划里没有依赖下层的流
     const off = await producerFor(projectOf({ media: true }), { below: false });
@@ -772,7 +772,7 @@ test('BD-card 单卡流走的路不变:每帧只截一张、不藏任何东西�
 
 /* ------------------------------------------------------------ 键 */
 
-test('BD-keys BELOW_STREAM_VERSION 是 2;capture-below.mjs 进截图代码的指纹(流的 codeVersion),不进生成快照的代码指纹', async () => {
+test('BD-keys BELOW_STREAM_VERSION is 2; capture-below.mjs goes into the screenshot code fingerprint (the stream\'s codeVersion) but not into the code fingerprint for generating snapshots', async () => {
   assert.equal(BELOW_STREAM_VERSION, 2);
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pc-frame-code-below-'));
   try {
@@ -782,7 +782,7 @@ test('BD-keys BELOW_STREAM_VERSION 是 2;capture-below.mjs 进截图代码的指
     const capture0 = captureCode(root), snapshot0 = snapshotCode(root);
     fsSync.writeFileSync(path.join(root, file), 'b');
     invalidateFrameCode(root);
-    assert.notEqual(captureCode(root), capture0, '改了它,流的代码指纹跟着变');
-    assert.equal(snapshotCode(root), snapshot0, '生成快照的代码指纹不变');
+    assert.notEqual(captureCode(root), capture0, 'Changing it changes the stream\'s code fingerprint too');
+    assert.equal(snapshotCode(root), snapshot0, 'The code fingerprint for generating snapshots does not change');
   } finally { invalidateFrameCode(root); await fs.rm(root, { recursive: true, force: true }); }
 });

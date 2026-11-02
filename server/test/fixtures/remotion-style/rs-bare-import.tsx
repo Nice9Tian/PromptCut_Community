@@ -9,9 +9,9 @@ function C({ params, t = 0 }: CardProps<Params>) {
   return <div style={{ position: "absolute", inset: 0, opacity: Math.min(1, t / 0.4) }}>{params.text}{counter.frames}</div>;
 }
 export const card: CardDef<Params> = {
-  id: "rs-bare-import", name: "只有裸导入", description: "remotion 式的框架的示例卡", source: "user",
+  id: "rs-bare-import", name: "Bare import only", description: "Example card for the remotion-style framework", source: "user",
   frameMode: "direct",
   defaults: { text: "" },
-  controls: [{ key: "text", label: "文字", type: "text" }],
+  controls: [{ key: "text", label: "Text", type: "text" }],
   Component: C,
 };

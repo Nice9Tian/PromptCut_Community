@@ -19,7 +19,7 @@ let mod = null;
 let loadError = null;
 try { mod = await import('../asset-announce.mjs'); } catch (err) { loadError = err; }
 function need() {
-  if (loadError) throw new Error(`载不进 server/asset-announce.mjs：${loadError.message}`);
+  if (loadError) throw new Error(`cannot load server/asset-announce.mjs: ${loadError.message}`);
   return mod;
 }
 
@@ -44,7 +44,7 @@ const IFACES = {
   hidden: [v4('10.9.9.9', true)], // internal 的私有地址也不要
 };
 
-test('N1 lanAssetUrls 只取非 internal 的私有网段 IPv4，排序去重；没有 port 返回 []', () => {
+test('N1 lanAssetUrls takes only non-internal private-range IPv4 addresses, sorted and deduplicated; returns [] when there is no port', () => {
   const { lanAssetUrls } = need();
   const urls = lanAssetUrls({ interfaces: IFACES, port: 5173 });
   // 按地址字典序：'10.0.0.10' < '10.0.0.9'
@@ -55,12 +55,12 @@ test('N1 lanAssetUrls 只取非 internal 的私有网段 IPv4，排序去重；�
     'http://172.31.255.254:5173/api/asset',
     'http://192.168.1.20:5173/api/asset',
   ]);
-  assert.deepEqual(lanAssetUrls({ interfaces: IFACES, port: 8080, basePath: '/x/asset' }), urls.map((u) => u.replace(':5173/api/asset', ':8080/x/asset')), 'basePath 可改');
-  assert.deepEqual(lanAssetUrls({ interfaces: IFACES }), [], '没有 port');
-  assert.deepEqual(lanAssetUrls({ interfaces: IFACES, port: undefined }), [], 'port 为 undefined');
+  assert.deepEqual(lanAssetUrls({ interfaces: IFACES, port: 8080, basePath: '/x/asset' }), urls.map((u) => u.replace(':5173/api/asset', ':8080/x/asset')), 'basePath is configurable');
+  assert.deepEqual(lanAssetUrls({ interfaces: IFACES }), [], 'no port');
+  assert.deepEqual(lanAssetUrls({ interfaces: IFACES, port: undefined }), [], 'port is undefined');
   assert.deepEqual(lanAssetUrls({ interfaces: {}, port: 5173 }), []);
-  assert.deepEqual(lanAssetUrls({ interfaces: { lo: IFACES.lo, eth0: [v6('fe80::1')] }, port: 5173 }), [], '只有回环和 IPv6');
-  assert.deepEqual(lanAssetUrls({ interfaces: { a: undefined, b: [v4('192.168.0.2')] }, port: 1 }), ['http://192.168.0.2:1/api/asset'], '网卡表里的 undefined 项跳过');
+  assert.deepEqual(lanAssetUrls({ interfaces: { lo: IFACES.lo, eth0: [v6('fe80::1')] }, port: 5173 }), [], 'only loopback and IPv6');
+  assert.deepEqual(lanAssetUrls({ interfaces: { a: undefined, b: [v4('192.168.0.2')] }, port: 1 }), ['http://192.168.0.2:1/api/asset'], 'undefined entries in the network interface table are skipped');
 
   // 缺省取本机网卡表：结果都是合法的局域网地址
   const real = lanAssetUrls({ port: 5173 });
@@ -114,18 +114,18 @@ const pickAnnounce = (m) => ({ type: m.type, announcerId: m.announcerId, kind: m
  * N2
  * ------------------------------------------------------------------ */
 
-test('N2 startAssetAnnounce 用假端点：每次 onOpen 发一次 service.announce，字段正确；收到 error 只打日志不重试', async () => {
+test('N2 startAssetAnnounce with a fake endpoint: sends service.announce once per onOpen with correct fields; on receiving error it only logs and does not retry', async () => {
   const { startAssetAnnounce } = need();
   const f = fakeFactory();
   const logs = [];
   const token = randomToken();
   const handle = startAssetAnnounce({ url: 'ws://10.0.0.1:8787', token, announcerId: 'asset:pc-1', urls: URLS, createEndpoint: f.createEndpoint, log: (...a) => logs.push(a) });
   assert.equal(typeof handle?.stop, 'function');
-  assert.equal(f.made.length, 1, '建一个端点');
+  assert.equal(f.made.length, 1, 'creates one endpoint');
   const ep = f.made[0];
   assert.equal(ep.options?.url, 'ws://10.0.0.1:8787');
-  assert.equal(ep.options?.token, token, '集群令牌交给端点');
-  assert.deepEqual(announces(ep), [], '连上之前不算发');
+  assert.equal(ep.options?.token, token, 'the cluster token is handed to the endpoint');
+  assert.deepEqual(announces(ep), [], 'nothing counts as sent before it connects');
 
   ep.fireOpen();
   await new Promise((r) => setImmediate(r));
@@ -135,7 +135,7 @@ test('N2 startAssetAnnounce 用假端点：每次 onOpen 发一次 service.annou
   ep.fireClose();
   ep.fireOpen();
   await new Promise((r) => setImmediate(r));
-  assert.equal(announces(ep).length, 2, '每次 onOpen 一次');
+  assert.equal(announces(ep).length, 2, 'once per onOpen');
   assert.deepEqual(pickAnnounce(announces(ep)[1]), pickAnnounce(announces(ep)[0]));
 
   // 收到 error：打日志，不重试
@@ -144,8 +144,8 @@ test('N2 startAssetAnnounce 用假端点：每次 onOpen 发一次 service.annou
   ep.fireMessage({ type: 'error', reason: 'bad-message', detail: 'x' });
   ep.fireMessage({ type: 'error', reason: 'limit' });
   await new Promise((r) => setTimeout(r, 30));
-  assert.equal(ep.delivered.length, before, '收到 error 不重发');
-  assert.ok(logs.length > logsBefore, '收到 error 打日志');
+  assert.equal(ep.delivered.length, before, 'no resend on receiving error');
+  assert.ok(logs.length > logsBefore, 'logs on receiving error');
   // 别的消息（回执、推送）不引起重发
   ep.fireMessage({ type: 'service.announced', announcerId: 'asset:pc-1', kind: 'asset', urls: URLS });
   await new Promise((r) => setTimeout(r, 10));
@@ -153,7 +153,7 @@ test('N2 startAssetAnnounce 用假端点：每次 onOpen 发一次 service.annou
   handle.stop();
 });
 
-test('N2 announcerId 缺省是 asset:<hostname>（契约第 8 节第 1 条）；url 为空时什么都不做', async () => {
+test('N2 announcerId defaults to asset:<hostname> (contract section 8, item 1); does nothing when url is empty', async () => {
   const { startAssetAnnounce } = need();
   const f = fakeFactory();
   const h = startAssetAnnounce({ url: 'wss://docs.example.lan/', token: randomToken(), urls: URLS, createEndpoint: f.createEndpoint, log: () => {} });
@@ -165,7 +165,7 @@ test('N2 announcerId 缺省是 asset:<hostname>（契约第 8 节第 1 条）；
   for (const url of ['', undefined, null]) {
     const g = fakeFactory();
     const e = startAssetAnnounce({ url, token: randomToken(), urls: URLS, createEndpoint: g.createEndpoint, log: () => {} });
-    assert.equal(g.made.length, 0, `url=${JSON.stringify(url)}：不建端点`);
+    assert.equal(g.made.length, 0, `url=${JSON.stringify(url)}: no endpoint created`);
     assert.equal(typeof e?.stop, 'function');
     e.stop();
     assert.deepEqual(g.events, []);
@@ -176,7 +176,7 @@ test('N2 announcerId 缺省是 asset:<hostname>（契约第 8 节第 1 条）；
  * N3
  * ------------------------------------------------------------------ */
 
-test('N3 urls 为空不登记（打一行 log）；stop() 先发 service.withdraw 再关', async () => {
+test('N3 empty urls are not registered (logs one line); stop() sends service.withdraw first, then closes', async () => {
   const { startAssetAnnounce } = need();
 
   // urls 为空
@@ -185,8 +185,8 @@ test('N3 urls 为空不登记（打一行 log）；stop() 先发 service.withdra
   const h = startAssetAnnounce({ url: 'ws://10.0.0.1:8787', token: randomToken(), urls: [], createEndpoint: f.createEndpoint, log: (...a) => logs.push(a) });
   for (const ep of f.made) ep.fireOpen();
   await new Promise((r) => setImmediate(r));
-  for (const ep of f.made) assert.deepEqual(announces(ep), [], 'urls 为空不登记');
-  assert.ok(logs.length >= 1, '打一行 log 说明');
+  for (const ep of f.made) assert.deepEqual(announces(ep), [], 'empty urls are not registered');
+  assert.ok(logs.length >= 1, 'logs one line of explanation');
   h.stop();
 
   // stop()：连着时先 withdraw 再 close
@@ -196,7 +196,7 @@ test('N3 urls 为空不登记（打一行 log）；stop() 先发 service.withdra
   ep.fireOpen();
   await new Promise((r) => setImmediate(r));
   s.stop();
-  assert.deepEqual(g.events, ['send:service.announce', 'send:service.withdraw', 'close'], '先 withdraw 后 close');
+  assert.deepEqual(g.events, ['send:service.announce', 'send:service.withdraw', 'close'], 'withdraw first, then close');
   const w = withdraws(ep)[0];
   assert.deepEqual({ type: w.type, announcerId: w.announcerId, kind: w.kind }, { type: 'service.withdraw', announcerId: 'asset:n3', kind: 'asset' });
   assert.equal(ep.closed, true);
@@ -208,7 +208,7 @@ test('N3 urls 为空不登记（打一行 log）；stop() 先发 service.withdra
   e2.fireOpen();
   e2.fireClose();
   t.stop();
-  assert.deepEqual(withdraws(e2), [], '断着时 withdraw 发不出去');
+  assert.deepEqual(withdraws(e2), [], 'withdraw cannot be sent while disconnected');
   assert.equal(e2.closed, true);
 });
 
@@ -216,7 +216,7 @@ test('N3 urls 为空不登记（打一行 log）；stop() 先发 service.withdra
  * N4
  * ------------------------------------------------------------------ */
 
-test('N4 对真文档服务（端口 0，挂服务地址登记模块）：登记后另一条连接 service.watch { kinds: [asset] } 收到这份地址', async (t) => {
+test('N4 against the real document service (port 0, with the service address registration module mounted): after registration, another connection doing service.watch { kinds: [asset] } receives this address', async (t) => {
   const { startAssetAnnounce } = need();
   const token = randomToken();
   const auth = createClusterAuth({ token });
@@ -238,12 +238,12 @@ test('N4 对真文档服务（端口 0，挂服务地址登记模块）：登记
   try {
     push = await watcher.next(byType('service.endpoints'), 5000);
   } catch {
-    assert.fail(`订阅方没收到登记。登记方日志：${JSON.stringify(logs).slice(0, 600)}`
-      + `（缺省 announcerId 应为 asset:${os.hostname()}；服务地址登记模块的 announcerId 只认 [A-Za-z0-9._:-]{1,128}）`);
+    assert.fail(`The subscriber did not receive the registration. Registrant log: ${JSON.stringify(logs).slice(0, 600)}`
+      + `(default announcerId should be asset:${os.hostname()}; the service address registration module's announcerId accepts only [A-Za-z0-9._:-]{1,128})`);
   }
   assert.equal(push.endpoints.length, 1);
   const id = push.endpoints[0].announcerId;
-  assert.equal(id, `asset:${os.hostname()}`, '缺省 announcerId（契约第 8 节第 1 条）');
+  assert.equal(id, `asset:${os.hostname()}`, 'default announcerId (contract section 8, item 1)');
   assert.deepEqual({ kind: push.endpoints[0].kind, urls: push.endpoints[0].urls }, { kind: 'asset', urls });
 
   // 新来的订阅者在 watch 的回包里就能看到
@@ -259,6 +259,6 @@ test('N4 对真文档服务（端口 0，挂服务地址登记模块）：登记
   handle = null;
   const gone = await watcher.next(byType('service.endpoints'), 5000);
   assert.deepEqual(gone.endpoints, []);
-  await waitFor(() => service.describe().connections === 2, 3000, '登记方的连接关掉');
-  for (const line of logs) assert.ok(!JSON.stringify(line).includes(token), '日志里没有令牌原文');
+  await waitFor(() => service.describe().connections === 2, 3000, 'the registrant\'s connection closes');
+  for (const line of logs) assert.ok(!JSON.stringify(line).includes(token), 'the logs contain no raw token');
 });

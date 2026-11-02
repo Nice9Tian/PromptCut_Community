@@ -67,7 +67,7 @@ async function until(label, fn, timeoutMs, everyMs = 500) {
     let value = null;
     try { value = await fn(); } catch { value = null; }
     if (value) return value;
-    if (Date.now() > deadline) { fails.push(`超时:${label}`); return null; }
+    if (Date.now() > deadline) { fails.push(`Timeout: ${label}`); return null; }
     await new Promise(r => setTimeout(r, everyMs));
   }
 }
@@ -91,12 +91,12 @@ const off = pipeline.readyIndex.subscribe(message => { if (message.type === 'lay
 const started = Date.now();
 try {
   await pipeline.preload(PROJECT);
-  const producer = await until('生产者起来', () => pipeline._streams?.streams.size ? pipeline._streams : null, 120000);
-  if (!producer) throw new Error('生产者没起来');
+  const producer = await until('producer is up', () => pipeline._streams?.streams.size ? pipeline._streams : null, 120000);
+  if (!producer) throw new Error('The producer did not start');
   const expect = GROUP ? 1 : 3;
-  check(producer.streams.size === expect, `流数应当是 ${expect}`, producer.streams.size);
+  check(producer.streams.size === expect, `Stream count should be ${expect}`, producer.streams.size);
   // 全部分段满密度、没有在跑的 worker / 编码
-  const done = await until('全部分段满密度', () => {
+  const done = await until('all segments at full density', () => {
     const status = producer.status();
     if (!status.streams.length) return null;
     for (const s of status.streams) {
@@ -105,8 +105,8 @@ try {
     return !producer.workers.size && !producer.encoding.size ? status : null;
   }, 600000, 1000);
   out.produceMs = Date.now() - started;
-  timings.record('全部分段满密度(从 preload 起)', out.produceMs);
-  if (!done) throw new Error('生产没做完');
+  timings.record('All segments at full density (from preload)', out.produceMs);
+  if (!done) throw new Error('Production did not finish');
   // G6:旧文件延迟 5 秒删除 —— 等 6 秒再看盘
   await new Promise(r => setTimeout(r, 6000));
   const status = producer.status();
@@ -115,16 +115,16 @@ try {
     const diagnostics = pipeline.diagnostics();
     const fingerprint = diagnostics.environment?.fingerprint;
     out.environment = diagnostics.environment ?? null;
-    check(typeof fingerprint === 'string' && /^[0-9a-f]{16}$/.test(fingerprint), 'M4:diagnostics.environment.fingerprint 是 16 位十六进制', out.environment);
+    check(typeof fingerprint === 'string' && /^[0-9a-f]{16}$/.test(fingerprint), 'M4: diagnostics.environment.fingerprint is 16 hex digits', out.environment);
     const badControls = (diagnostics.plans || []).flatMap(p => (p.controls || [])
       .filter(c => c.snapshotKey && !(typeof c.contentKey === 'string' && c.envFingerprint === fingerprint && c.snapshotKey === resultKeyOf(c.contentKey, c.envFingerprint)))
       .map(c => ({ clipId: c.clipId, snapshotKey: c.snapshotKey, contentKey: c.contentKey, envFingerprint: c.envFingerprint })));
-    check((diagnostics.plans || []).some(p => (p.controls || []).some(c => c.snapshotKey)), 'M4:诊断里有带 snapshotKey 的 control', diagnostics.plans);
-    check(badControls.length === 0, 'M4:plans[].controls[] 的 snapshotKey === resultKeyOf(contentKey, envFingerprint),且 envFingerprint 就是本进程的指纹', badControls);
+    check((diagnostics.plans || []).some(p => (p.controls || []).some(c => c.snapshotKey)), 'M4: diagnostics include a control with snapshotKey', diagnostics.plans);
+    check(badControls.length === 0, 'M4: snapshotKey of plans[].controls[] === resultKeyOf(contentKey, envFingerprint), and envFingerprint is this process\'s fingerprint', badControls);
     const listed = diagnostics.streams?.streams ?? [];
     const badStreams = listed.filter(s => !(typeof s.contentKey === 'string' && s.streamKey === resultKeyOf(s.contentKey, fingerprint)))
       .map(s => ({ clipIds: s.clipIds, streamKey: s.streamKey, contentKey: s.contentKey }));
-    check(listed.length > 0 && badStreams.length === 0, 'M4:streams.streams[] 的 streamKey === resultKeyOf(contentKey, environment.fingerprint)', { listed: listed.length, badStreams });
+    check(listed.length > 0 && badStreams.length === 0, 'M4: streamKey of streams.streams[] === resultKeyOf(contentKey, environment.fingerprint)', { listed: listed.length, badStreams });
   }
   out.stats = status.stats;
   out.encoder = status.encoder;
@@ -138,26 +138,26 @@ try {
     const segFiles = files.filter(f => f.endsWith('.m4s'));
     const inits = files.filter(f => f.startsWith('init-'));
     check(Number.isInteger(spec.originFrame) && spec.originFrame === spec.firstFrame && spec.firstSegment === 0 && manifest.originFrame === spec.originFrame,
-      `${spec.clipIds}: 分段从这条流自己的第一帧起数,清单记着这一帧`, { originFrame: spec.originFrame, firstFrame: spec.firstFrame, firstSegment: spec.firstSegment, manifest: manifest.originFrame });
+      `${spec.clipIds}: segments are counted from this stream's own first frame, and the manifest records that frame`, { originFrame: spec.originFrame, firstFrame: spec.firstFrame, firstSegment: spec.firstSegment, manifest: manifest.originFrame });
     const record = { streamKey: spec.streamKey, kind: spec.kind, clipIds: spec.clipIds, originFrame: spec.originFrame, lastFrame: spec.lastFrame, bound: manifest.bound, tight: manifest.tight,
       segments: spec.lastSegment - spec.firstSegment + 1, segFiles: segFiles.length, inits: inits.length, variants: Object.keys(manifest.inits).length,
       encodeMs: [], bytes: [], sparseBytes: {} };
-    check(!files.some(f => f.includes('mfra')), 'mfra 不落盘', files);
-    check(segFiles.length === record.segments, `${spec.clipIds}: 替换后盘上每段只剩一个文件`, { segFiles: segFiles.length, segments: record.segments });
+    check(!files.some(f => f.includes('mfra')), 'mfra is not written to disk', files);
+    check(segFiles.length === record.segments, `${spec.clipIds}: after replacement only one file per segment remains on disk`, { segFiles: segFiles.length, segments: record.segments });
     // 每个变体的 init 逐字节相同:每个分段按清单找自己的 init,再和 ffmpeg 输出里的 ftyp+moov 比 —— 清单里的
     // init 本身就是「第一次编码时截下来的那份」,后续分段编出来的若不同会记成新变体,所以变体数就是判据
-    check(record.variants <= 2, `${spec.clipIds}: 变体数(上界 + 收紧)≤ 2`, record.variants);
+    check(record.variants <= 2, `${spec.clipIds}: variant count (upper bound + tightened) ≤ 2`, record.variants);
     for (let n = spec.firstSegment; n <= spec.lastSegment; n++) {
       const seg = manifest.segments[n];
       const buf = await fs.readFile(path.join(dir, seg.file));
       const info = segmentInfo(buf);
       // 分段从这条流自己的第一帧起数,末段到它的最后一帧为止(`src/render/streamSegments.mjs`)
       const want = streamSegmentFrameCount(n, spec.originFrame, spec.lastFrame);
-      check(want >= 1 && want <= SEGMENT_FRAMES && (n === spec.lastSegment || want === SEGMENT_FRAMES), `${spec.clipIds}#${n}: 只有末段可以不满`, want);
-      check(info.sampleCount === want, `${spec.clipIds}#${n}: 样本数`, { got: info.sampleCount, want });
-      check(info.firstSampleIsSync === true, `${spec.clipIds}#${n}: 首帧 IDR`);
-      check(info.moofs === 1 && topLevelBoxes(buf).every(b => b.type === 'moof' || b.type === 'mdat'), `${spec.clipIds}#${n}: 只有 moof + mdat`);
-      check(buf.length <= 512 * 1024, `${spec.clipIds}#${n}: 分段 ≤ 512 KB`, buf.length);
+      check(want >= 1 && want <= SEGMENT_FRAMES && (n === spec.lastSegment || want === SEGMENT_FRAMES), `${spec.clipIds}#${n}: only the last segment may be partial`, want);
+      check(info.sampleCount === want, `${spec.clipIds}#${n}: sample count`, { got: info.sampleCount, want });
+      check(info.firstSampleIsSync === true, `${spec.clipIds}#${n}: first frame is IDR`);
+      check(info.moofs === 1 && topLevelBoxes(buf).every(b => b.type === 'moof' || b.type === 'mdat'), `${spec.clipIds}#${n}: only moof + mdat`);
+      check(buf.length <= 512 * 1024, `${spec.clipIds}#${n}: segment ≤ 512 KB`, buf.length);
       record.encodeMs.push(seg.encodeMs);
       record.bytes.push(seg.bytes);
     }
@@ -170,19 +170,19 @@ try {
   for (const s of status.streams) out[`resets_${s.clipIds.join('+')}`] = s.resets;
   const bgStatus = status.streams.find(s => s.clipIds.includes('clip-bg'));
   if (bgStatus && !GROUP) check(bgStatus.resets?.sparse === 1 && bgStatus.resets?.dense === 1 && bgStatus.lastSegment - bgStatus.firstSegment + 1 >= 10,
-    '10 个分段的流:稀疏一趟、补密一趟各只付一次换页', bgStatus.resets);
-  check(status.stats.maxAliveEncoders <= 2 * status.pool, '同时存活的分段编码器 ≤ 2 × streamPool', status.stats);
-  check(status.stats.replacedDeleted >= 1, '替换后的旧分段 5 秒内删除', status.stats.replacedDeleted);
+    'Stream of 10 segments: the sparse pass and the density-fill pass each pay for only one page swap', bgStatus.resets);
+  check(status.stats.maxAliveEncoders <= 2 * status.pool, 'Concurrently alive segment encoders ≤ 2 × streamPool', status.stats);
+  check(status.stats.replacedDeleted >= 1, 'Old segments are deleted within 5 seconds after replacement', status.stats.replacedDeleted);
   // 就绪索引
   const byClip = new Map();
   for (const m of layers) byClip.set(m.clipId, m);
   out.layers = [...byClip.values()];
   for (const state of producer.streams.values()) {
     const layer = byClip.get(state.spec.topClipId);
-    check(!!layer && layer.key === state.spec.streamKey, `${state.spec.topClipId}: 索引里有这条流的层`, layer ?? null);
-    if (layer) check(JSON.stringify(layer.ranges) === JSON.stringify([[state.spec.firstSegment, state.spec.lastSegment]]), `${state.spec.topClipId}: 索引区间 = 全部分段`, layer.ranges);
-    if (layer) check(layer.originFrame === state.spec.originFrame, `${state.spec.topClipId}: 层带着这条流的第一帧`, { layer: layer.originFrame, spec: state.spec.originFrame });
-    if (GROUP && layer) check(Array.isArray(layer.groupClipIds) && layer.groupClipIds.length === state.spec.clipIds.length, '组流的层带 groupClipIds', layer);
+    check(!!layer && layer.key === state.spec.streamKey, `${state.spec.topClipId}: the index has a layer for this stream`, layer ?? null);
+    if (layer) check(JSON.stringify(layer.ranges) === JSON.stringify([[state.spec.firstSegment, state.spec.lastSegment]]), `${state.spec.topClipId}: index ranges = all segments`, layer.ranges);
+    if (layer) check(layer.originFrame === state.spec.originFrame, `${state.spec.topClipId}: the layer carries this stream's first frame`, { layer: layer.originFrame, spec: state.spec.originFrame });
+    if (GROUP && layer) check(Array.isArray(layer.groupClipIds) && layer.groupClipIds.length === state.spec.clipIds.length, 'The group stream\'s layer carries groupClipIds', layer);
   }
   // 隔离:绿色粒子背景那条流(单卡流)里不能有金句药丸的蓝色
   if (!GROUP) {
@@ -206,9 +206,9 @@ try {
       }
       out[`isolation_${name}`] = { width: W, height: H, bluePixels: blue, opaquePixels: opaque, rect: meta.rect };
     }
-    if (out.isolation_bg) check(out.isolation_bg.bluePixels === 0, '粒子背景流里没有金句药丸的像素', out.isolation_bg);
-    if (out.isolation_pill) check(out.isolation_pill.bluePixels > 1000, '金句药丸流里有它自己的蓝色像素', out.isolation_pill);
-    if (pill) check(pill.manifest.tight && pill.manifest.tight.w * pill.manifest.tight.h < pill.manifest.bound.w * pill.manifest.bound.h, '框比画面小的卡:收紧矩形小于上界', { bound: pill.manifest.bound, tight: pill.manifest.tight });
+    if (out.isolation_bg) check(out.isolation_bg.bluePixels === 0, 'No punchline pill pixels in the particle background stream', out.isolation_bg);
+    if (out.isolation_pill) check(out.isolation_pill.bluePixels > 1000, 'The punchline pill stream has its own blue pixels', out.isolation_pill);
+    if (pill) check(pill.manifest.tight && pill.manifest.tight.w * pill.manifest.tight.h < pill.manifest.bound.w * pill.manifest.bound.h, 'Card whose frame is smaller than the picture: the tight rectangle is smaller than the upper bound', { bound: pill.manifest.bound, tight: pill.manifest.tight });
   }
   // 编码耗时(只记录;原验收门槛「一条 1080p 流 15 帧分段编码 ≤ 300 ms,前提:没有别的编码器争 CPU」已不作通过条件):
   // 先把 15 张 PNG 截在内存里,再一次性喂给编码器计时(G0-b 的量法,和出帧不重叠)
@@ -254,17 +254,17 @@ try {
       }
       const alpha = { mean: +(sum / n).toFixed(4), max };
       out.bench.push({ clipId, rect, captureMsFor15: captureMs, encodeMs: runs.map(r => r.ms), p50: runs[1].ms, bytes: runs[1].bytes, alpha });
-      check(alpha.mean <= 0.5, `${clipId}: alpha 平均误差 ≤ 0.5 / 255`, alpha);
+      check(alpha.mean <= 0.5, `${clipId}: mean alpha error ≤ 0.5 / 255`, alpha);
     } finally { pipeline.returnStreamBakery(bakery); }
   }
   const bgBench = out.bench.find(b => b.clipId === 'clip-bg');
   // 耗时只记录(verification.md「耗时只记录,不当闸门」):编码 p50 原来是 ≤ 300 ms 的通过条件,现在只记数
   for (const b of out.bench) {
-    timings.record(`${b.clipId} 15 帧分段编码 p50`, b.p50, b.clipId === 'clip-bg' ? { formerLimit: '1080p 全幅流 ≤ 300 ms' } : {});
-    timings.record(`${b.clipId} 15 帧出帧`, b.captureMsFor15);
+    timings.record(`${b.clipId} 15-frame segment encoding p50`, b.p50, b.clipId === 'clip-bg' ? { formerLimit: '1080p full-frame stream ≤ 300 ms' } : {});
+    timings.record(`${b.clipId} 15-frame capture`, b.captureMsFor15);
   }
   for (const item of status.stats.sparseVsDense ?? []) {
-    if (item.sameRect) check(item.sparse <= item.dense, '稀疏分段(每段一张)≤ 满密度 1.0 倍(同一矩形)', item);
+    if (item.sameRect) check(item.sparse <= item.dense, 'Sparse segment (one frame per segment) ≤ 1.0× full density (same rectangle)', item);
   }
   // 组流:分段里恰好是组内那几张卡 —— 药丸的蓝、粒子的绿都在
   if (GROUP) {
@@ -283,7 +283,7 @@ try {
       if (x >= 1300 && a > 100) particles++;
     }
     out.groupContent = { clipIds: state.spec.clipIds, blue, particles };
-    check(blue > 1000 && particles > 100, '组流里恰好是组内那几张卡(药丸的蓝、右边一条里的粒子都在)', out.groupContent);
+    check(blue > 1000 && particles > 100, 'The group stream contains exactly the cards in the group (the pill\'s blue and the particles in the strip on the right are both present)', out.groupContent);
   }
   // G6:单独重新生产第 5 段 —— 把它的签名弄旧,只有这一段重做,索引区间不变,旧文件 5 秒内删
   if (!GROUP) {
@@ -292,7 +292,7 @@ try {
     const segmentsBefore = producer.stats.segments;
     bg.manifest.segments[5] = { ...before, sig: 'stale' };
     producer.kick();
-    const redone = await untilIn(fails, '第 5 段重新生产', () => {
+    const redone = await untilIn(fails, 'Segment 5 re-produced', () => {
       const seg = bg.manifest.segments[5];
       return seg.sig !== 'stale' && !producer.workers.size && !producer.encoding.size ? seg : null;
     }, 120000);
@@ -304,17 +304,17 @@ try {
       oldGone = !(await fs.stat(oldFile).then(() => true, () => false));
       if (!oldGone) await new Promise(r => setTimeout(r, 500));
     }
-    timings.record('G6 替换后旧分段文件删掉', Date.now() - goneT0, { formerLimit: '固定等 6 秒后看盘(设计值 5 秒内删)' });
+    timings.record('G6 old segment file deleted after replacement', Date.now() - goneT0, { formerLimit: 'Fixed wait of 6 seconds, then check the disk (design value: deleted within 5 seconds)' });
     const lastLayer = [...layers].reverse().find(m => m.clipId === 'clip-bg');
     out.resegment = { before: before.file, after: redone?.file, produced: producer.stats.segments - segmentsBefore, oldGone, ranges: lastLayer?.ranges,
       sigOk: redone?.sig === segmentSignature({ streamKey: bg.spec.streamKey, segment: 5, stride: 1, encoder: status.encoder, rect: bg.manifest.tight ?? bg.manifest.bound }) };
-    check(out.resegment.produced === 1 && out.resegment.sigOk, '只重新生产了第 5 段', out.resegment);
-    check(JSON.stringify(out.resegment.ranges) === JSON.stringify([[bg.spec.firstSegment, bg.spec.lastSegment]]), '重新生产第 5 段后索引区间不变', out.resegment);
-    check(oldGone, '替换后旧文件删掉了(用时见 timings)', out.resegment);
+    check(out.resegment.produced === 1 && out.resegment.sigOk, 'Only segment 5 was re-produced', out.resegment);
+    check(JSON.stringify(out.resegment.ranges) === JSON.stringify([[bg.spec.firstSegment, bg.spec.lastSegment]]), 'Index ranges unchanged after segment 5 is re-produced', out.resegment);
+    check(oldGone, 'Old file deleted after replacement (duration in timings)', out.resegment);
   }
   const checkExists = file => fs.access(file).then(() => true, () => false);
-  check(!(await checkExists(path.join(OUT, 'controls-html'))), '帧库下不再生成 controls-html 快照目录');
-  check(!(await checkExists(path.join(OUT, 'controls-local'))), '帧库下不再生成 controls-local 快照目录');
+  check(!(await checkExists(path.join(OUT, 'controls-html'))), 'No controls-html snapshot directory is generated under the frame store anymore');
+  check(!(await checkExists(path.join(OUT, 'controls-local'))), 'No controls-local snapshot directory is generated under the frame store anymore');
   // F5:同一个库根上重起一个 FramePipeline(模拟预渲染进程被杀后拉起)
   {
     const keys = [...producer.streams.keys()];
@@ -328,20 +328,20 @@ try {
       const staged = restarted.readyIndex.stagedKeys().filter(k => k.kind === 'stream').map(k => k.key);
       const beforeProject = seen.filter(m => m.type === 'layer' && m.kind === 'stream').length;
       await restarted.preload(PROJECT);
-      const back = await untilIn(fails, 'F5:重启后每条流的层重新发出', () => {
+      const back = await untilIn(fails, 'F5: after restart each stream\'s layer is re-emitted', () => {
         const got = new Set(seen.filter(m => m.type === 'layer' && m.kind === 'stream').map(m => m.key));
         return keys.every(k => got.has(k)) ? got : null;
       }, 120000);
       await new Promise(r => setTimeout(r, 3000));
       out.restart = { staged: staged.length, streams: keys.length, layersBeforeProject: beforeProject, republished: back ? back.size : 0,
         producedAfterRestart: restarted._streams?.stats.segments ?? null };
-      check(staged.length === keys.length && keys.every(k => staged.includes(k)), 'F5:扫盘把每条流挂在键上', out.restart);
-      check(beforeProject === 0, 'F5:项目到位之前不发 layer', out.restart);
-      check(out.restart.producedAfterRestart === 0, 'F5:重启后一个分段都不重新生产', out.restart);
+      check(staged.length === keys.length && keys.every(k => staged.includes(k)), 'F5: the disk scan attaches each stream to its key', out.restart);
+      check(beforeProject === 0, 'F5: no layer is emitted before the project is in place', out.restart);
+      check(out.restart.producedAfterRestart === 0, 'F5: no segment is re-produced after restart', out.restart);
     } finally { await restarted.close().catch(() => {}); }
   }
 } catch (error) {
-  fails.push(`异常:${error?.stack || error}`);
+  fails.push(`Exception: ${error?.stack || error}`);
 } finally {
   off();
   out.fails = fails;

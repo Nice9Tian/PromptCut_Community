@@ -33,7 +33,7 @@ const PORT = Number(args.includes('--port') ? args[args.indexOf('--port') + 1] :
 const KEEP = args.includes('--keep');
 // 编辑器 + 两个舞台端口占 PORT～PORT+2,要落在同一个 10 口的段里;用户常驻的 5190～5192 与 5580～5599 不用
 const clashes = (p) => (p >= 5190 && p <= 5192) || (p >= 5580 && p <= 5599);
-if (!(PORT >= 1024 && PORT % 10 <= 7) || [PORT, PORT + 1, PORT + 2].some(clashes)) throw new Error(`--port ${PORT} 不行:要在一个 10 口段的前 8 个里(占 PORT～PORT+2),且不碰 5190～5192、5580～5599`);
+if (!(PORT >= 1024 && PORT % 10 <= 7) || [PORT, PORT + 1, PORT + 2].some(clashes)) throw new Error(`--port ${PORT} is not allowed: it must be among the first 8 ports of a 10-port block (using PORT to PORT+2), and must not touch 5190-5192 or 5580-5599`);
 const EDITOR = `http://127.0.0.1:${PORT}`;
 const EXPORT_DIR = path.join(os.tmpdir(), `pc-custom-measure-probe-${Date.now().toString(36)}`);
 const DATA_DIR = path.join(EXPORT_DIR, 'data');
@@ -57,7 +57,7 @@ async function until(label, fn, timeoutMs = 120000, everyMs = 300) {
     let value;
     try { value = await fn(); } catch { value = null; }
     if (value) return value;
-    if (Date.now() > deadline) { fails.push(`超时:${label}`); return null; }
+    if (Date.now() > deadline) { fails.push(`Timeout: ${label}`); return null; }
     await delay(everyMs);
   }
 }
@@ -79,7 +79,7 @@ async function startEditor() {
   const keep = (c) => { editorLog.push(c.toString()); if (editorLog.length > 400) editorLog.shift(); };
   editor.stdout.on('data', keep);
   editor.stderr.on('data', keep);
-  return until('编辑器进程起来', async () => (await fetch(EDITOR + '/api/prerender/info').then((r) => r.ok, () => false)) || null, 120000);
+  return until('editor process is up', async () => (await fetch(EDITOR + '/api/prerender/info').then((r) => r.ok, () => false)) || null, 120000);
 }
 function stopEditor() {
   if (!editor || editor.exitCode !== null || !editor.pid) return;
@@ -120,13 +120,13 @@ let browser = null;
 try {
   /* ---- M1 测试音频 ---- */
   const ffmpeg = findFfmpeg();
-  if (!ffmpeg) throw new Error('找不到 ffmpeg(把它放进 PATH 或设 PROMPTCUT_FFMPEG)');
+  if (!ffmpeg) throw new Error('ffmpeg not found (put it on PATH or set PROMPTCUT_FFMPEG)');
   const wav = path.join(MEDIA_DIR, 'probe-sine.wav');
   const wave = '0.5*sin(2*PI*1000*t)';
   const gen = spawnSync(ffmpeg, ['-hide_banner', '-v', 'error', '-y', '-f', 'lavfi', '-i', `aevalsrc=${wave}|${wave}:s=48000:d=3`, '-c:a', 'pcm_s24le', wav], { windowsHide: true });
-  check(gen.status === 0 && fs.existsSync(wav), 'M1 ffmpeg lavfi 生成了正弦波', { status: gen.status, stderr: String(gen.stderr || '').slice(0, 200) });
+  check(gen.status === 0 && fs.existsSync(wav), 'M1 ffmpeg lavfi generated the sine wave', { status: gen.status, stderr: String(gen.stderr || '').slice(0, 200) });
 
-  if (!(await startEditor())) throw new Error('编辑器进程没起来');
+  if (!(await startEditor())) throw new Error('The editor process did not start');
   browser = await puppeteer.launch({ headless: true, args: [...PROBE_CHROME_ARGS, '--window-position=-32000,-32000', '--no-first-run'] });
   const page = await browser.newPage();
   const pageErrors = [];
@@ -141,41 +141,41 @@ try {
     return { mediaId: media.id, clipId: clip?.id ?? null };
   }, wav);
   out.placed = placed;
-  check(!!placed.clipId, 'M1 素材进了项目、放上了时间轴', placed);
+  check(!!placed.clipId, 'M1 the media got into the project and was placed on the timeline', placed);
 
   /* ---- M2 高档正常测量 ---- */
   const conv = `cmprobe${Date.now().toString(36)}`;
   await register(conv, 'high');
   // 项目经页面(或文档服务的副本)到服务端要一会儿:等到不再是「找不到素材」
-  const media = await until('高档测整个素材', async () => {
+  const media = await until('high tier measures the whole media', async () => {
     const r = await mcpCall('measure_audio_js', { mediaId: placed.mediaId, code: RMS_PEAK }, conv);
-    return r && r.ok === true ? r : (r && !/找不到素材|没有片段|编辑台没有打开/.test(String(r.error || '')) ? r : null);
+    return r && r.ok === true ? r : (r && !/media not found|no clip|editor is not open/.test(String(r.error || '')) ? r : null);
   }, 90000, 1000);
   out.media = media;
-  check(media?.ok === true && media.value?.channels?.length === 2, 'M2 高档:measure_audio_js 测整个素材成功,两个声道', media);
+  check(media?.ok === true && media.value?.channels?.length === 2, 'M2 high tier: measure_audio_js measured the whole media successfully, two channels', media);
   for (const [i, ch] of (media?.value?.channels ?? []).entries()) {
-    check(near(ch.rmsDb, RMS, 0.05), `M2 声道 ${i} 的 RMS 与理论值一致(${RMS.toFixed(3)} dBFS)`, ch);
-    check(near(ch.peakDb, PEAK, 0.1), `M2 声道 ${i} 的峰值与理论值一致(${PEAK.toFixed(3)} dBFS)`, ch);
+    check(near(ch.rmsDb, RMS, 0.05), `M2 channel ${i} RMS matches the theoretical value (${RMS.toFixed(3)} dBFS)`, ch);
+    check(near(ch.peakDb, PEAK, 0.1), `M2 channel ${i} peak matches the theoretical value (${PEAK.toFixed(3)} dBFS)`, ch);
   }
-  check(media?.value?.sampleRate === 16000 && Math.abs((media?.value?.frames ?? 0) - 48000) <= 16, 'M2 缺省 16 kHz、3 秒 = 48000 帧', media?.value && { sr: media.value.sampleRate, frames: media.value.frames });
+  check(media?.value?.sampleRate === 16000 && Math.abs((media?.value?.frames ?? 0) - 48000) <= 16, 'M2 default 16 kHz, 3 seconds = 48000 frames', media?.value && { sr: media.value.sampleRate, frames: media.value.frames });
 
   const clip = await mcpCall('measure_audio_js', { clipId: placed.clipId, mono: true, sampleRate: 48000, code: RMS_PEAK }, conv);
   out.clip = clip;
   check(clip?.ok === true && clip.value?.channels?.length === 1 && near(clip.value.channels[0].rmsDb, RMS, 0.05) && Math.abs(clip.value.frames - 96000) <= 48,
-    'M2 片段档:2 秒、mono、48 kHz,RMS 与理论值一致', clip);
+    'M2 clip mode: 2 seconds, mono, 48 kHz, RMS matches the theoretical value', clip);
   const tl = await mcpCall('measure_audio_js', { scope: 'timeline', start: 1, duration: 2, code: RMS_PEAK }, conv);
   out.timeline = tl;
-  check(tl?.ok === true && near(tl.value?.channels?.[0]?.rmsDb, RMS, 0.1), 'M2 时间轴混音档:第 1～3 秒(那一段在响)RMS 与理论值一致', tl);
+  check(tl?.ok === true && near(tl.value?.channels?.[0]?.rmsDb, RMS, 0.1), 'M2 timeline mix mode: seconds 1 to 3 (where it sounds) RMS matches the theoretical value', tl);
 
   /* ---- M3 低、中档被拒 ---- */
   for (const level of ['low', 'medium']) {
     await register(conv, level);
     const r = await mcpCall('measure_audio_js', { mediaId: placed.mediaId, code: RMS_PEAK }, conv);
     out[`denied_${level}`] = r;
-    check(r?.ok === false && r.creativity?.current === level && r.creativity?.required === 'high' && /写自定义测量代码要「高」/.test(String(r.error)),
-      `M3 对话改成「${level === 'low' ? '低' : '中'}」:measure_audio_js 被拒,回统一格式的越级错误`, r);
+    check(r?.ok === false && r.creativity?.current === level && r.creativity?.required === 'high' && /writing custom measurement code requires "High"/.test(String(r.error)),
+      `M3 chat changed to "${level === 'low' ? 'Low' : 'Medium'}": measure_audio_js is rejected and returns the unified-format level-exceeded error`, r);
     const builtin = await mcpCall('measure_audio', { mediaId: placed.mediaId }, conv);
-    check(builtin && !builtin.creativity && typeof builtin.integrated === 'number', `M3 「${level === 'low' ? '低' : '中'}」档内置的 measure_audio 照常`, builtin && { integrated: builtin.integrated, error: builtin.error });
+    check(builtin && !builtin.creativity && typeof builtin.integrated === 'number', `M3 the built-in measure_audio at the "${level === 'low' ? 'Low' : 'Medium'}" tier works as usual`, builtin && { integrated: builtin.integrated, error: builtin.error });
   }
 
   /* ---- M4 高档的错误路径 ---- */
@@ -184,24 +184,24 @@ try {
   const loop = await mcpCall('measure_audio_js', { mediaId: placed.mediaId, sampleRate: 8000, code: 'while (true) {}', timeoutMs: 2000 }, conv);
   const loopMs = Date.now() - t0;
   out.loop = { ...loop, ms: loopMs };
-  timingLog.record('M4 死循环脚本从调用到被终止', loopMs, { formerLimit: '< 17 秒(脚本时限 2 秒 + 15 秒余量)' });
-  check(loop?.ok === false && loop.kind === 'timeout' && /超过 2 秒,已终止/.test(String(loop.error)), 'M4 死循环被终止,错误写明超时(用时只记录)', out.loop);
+  timingLog.record('M4 infinite-loop script, from call to termination', loopMs, { formerLimit: '< 17 seconds (script limit 2 seconds + 15 seconds margin)' });
+  check(loop?.ok === false && loop.kind === 'timeout' && /exceeded 2 seconds, terminated/.test(String(loop.error)), 'M4 infinite loop is terminated, and the error states a timeout (duration is only recorded)', out.loop);
   t0 = Date.now();
   const alive = await fetch(EDITOR + '/api/prerender/info').then((r) => r.ok, () => false);
-  check(alive && Date.now() - t0 < 5000, 'M4 死循环之后编辑器照常应答', { alive, ms: Date.now() - t0 });
+  check(alive && Date.now() - t0 < 5000, 'M4 the editor still responds normally after the infinite loop', { alive, ms: Date.now() - t0 });
 
   const net = await mcpCall('measure_audio_js', { mediaId: placed.mediaId, sampleRate: 8000, code: `return await fetch(${JSON.stringify(EDITOR + '/api/prerender/info')}).then((r) => r.status);` }, conv);
   out.netLocal = net;
-  check(net?.ok === false && /沙箱里不能联网/.test(String(net.error)), 'M4 联网尝试(本机编辑器的 /api)失败,错误写明不能联网', net);
+  check(net?.ok === false && /cannot access the network in the sandbox/.test(String(net.error)), 'M4 network attempt (this machine\'s editor /api) fails, and the error states that network access is not allowed', net);
   const netOut = await mcpCall('measure_audio_js', { mediaId: placed.mediaId, sampleRate: 8000, code: "try { const r = await fetch('https://example.com/'); return 'leaked ' + r.status; } catch (e) { return 'blocked: ' + e.message; }" }, conv);
   out.netExternal = netOut;
-  check(netOut?.ok === true && /^blocked/.test(String(netOut.value)), 'M4 联网尝试(外网)失败,代码自己接住也只拿到报错', netOut);
-  const thrown = await mcpCall('measure_audio_js', { mediaId: placed.mediaId, sampleRate: 8000, code: 'const x = 1;\nthrow new Error("探针故意的:" + x);' }, conv);
+  check(netOut?.ok === true && /^blocked/.test(String(netOut.value)), 'M4 network attempt (external network) fails, and even when the code catches it, it only gets an error', netOut);
+  const thrown = await mcpCall('measure_audio_js', { mediaId: placed.mediaId, sampleRate: 8000, code: 'const x = 1;\nthrow new Error("deliberate probe error:" + x);' }, conv);
   out.thrown = thrown;
-  check(thrown?.ok === false && /探针故意的:1/.test(String(thrown.error)) && /第 2 行/.test(String(thrown.error)), 'M4 抛异常带报错文字与行号', thrown);
+  check(thrown?.ok === false && /deliberate probe error:1/.test(String(thrown.error)) && /line 2/.test(String(thrown.error)), 'M4 a thrown exception carries the error text and the line number', thrown);
   const again = await mcpCall('measure_audio_js', { mediaId: placed.mediaId, code: RMS_PEAK }, conv);
-  check(again?.ok === true && near(again.value?.channels?.[0]?.rmsDb, RMS, 0.05), 'M4 之后正常测量照常', again && { ok: again.ok, error: again.error });
-  check(pageErrors.length === 0, '页面没有未捕获的异常', pageErrors.slice(0, 5));
+  check(again?.ok === true && near(again.value?.channels?.[0]?.rmsDb, RMS, 0.05), 'M4 normal measurement still works afterwards', again && { ok: again.ok, error: again.error });
+  check(pageErrors.length === 0, 'Page has no uncaught exceptions', pageErrors.slice(0, 5));
 } catch (error) {
   fails.push('exception: ' + (error?.stack || error));
 } finally {
@@ -218,6 +218,6 @@ console.log(JSON.stringify(out, null, 1).slice(0, 6000));
 for (const p of passes) console.log('PASS', p);
 for (const f of fails) console.log('FAIL', f);
 if (fails.length) console.log(editorLog.join('').slice(-3000));
-console.log(fails.length ? `探针未过:${fails.length} 项失败,${passes.length} 项通过` : `探针通过:${passes.length} 项`);
+console.log(fails.length ? `Probe failed: ${fails.length} failed, ${passes.length} passed` : `Probe passed: ${passes.length} checks`);
 timingLog.print();
 process.exit(fails.length ? 1 : 0);

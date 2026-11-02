@@ -56,8 +56,8 @@ const MOTION_FILE = arg('--motion', null);
 
 const say = (step, fields = {}) => process.stderr.write(`${JSON.stringify({ step, t: Date.now(), ...fields })}\n`);
 const die = (message, code = 2) => { process.stdout.write(`${JSON.stringify({ ok: false, fails: [message] })}\n`); process.exit(code); };
-if (!REMOTION_FILE && !MOTION_FILE) die('用法：--remotion <文件> 和/或 --motion <文件>');
-if ([5190, 5191, 5192].some((p) => p >= PORT && p <= PORT + 2) || (PORT >= 5800 && PORT < 6000)) die('这一段端口是用户常驻或别的探针占的，换一个');
+if (!REMOTION_FILE && !MOTION_FILE) die('Usage: --remotion <file> and/or --motion <file>');
+if ([5190, 5191, 5192].some((p) => p >= PORT && p <= PORT + 2) || (PORT >= 5800 && PORT < 6000)) die('This port range is taken by the user\'s always-on dev server or another probe, pick another');
 fs.mkdirSync(OUT, { recursive: true });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -67,7 +67,7 @@ async function waitFor(fn, ms, what) {
     let v = null;
     try { v = await fn(); } catch { v = null; }
     if (v) return v;
-    if (Date.now() - t0 > ms) throw new Error(`等 ${what} 超时(${ms} ms)`);
+    if (Date.now() - t0 > ms) throw new Error(`Timed out waiting for ${what} (${ms} ms)`);
     await sleep(150);
   }
 }
@@ -75,18 +75,18 @@ async function waitFor(fn, ms, what) {
 /** 读一张卡的源码，认出它的 id 和声明的写法 */
 function loadCard(label, file, expectMode) {
   const abs = path.resolve(file);
-  if (!fs.existsSync(abs)) die(`${label}：找不到文件 ${abs}`);
+  if (!fs.existsSync(abs)) die(`${label}: cannot find file ${abs}`);
   const source = fs.readFileSync(abs, 'utf8').replace(/\r\n/g, '\n');
   const id = /\bid:\s*["'`]([^"'`]+)["'`]/.exec(source)?.[1];
   const mode = /\bframeMode:\s*["'`](direct|stateful)["'`]/.exec(source)?.[1] ?? null;
-  if (!id) die(`${label}：源码里读不出 id`);
+  if (!id) die(`${label}: cannot read the id from the source`);
   return { label, file: abs, source, id, mode, expectMode };
 }
 const cardsToCheck = [
   REMOTION_FILE ? loadCard('remotion', REMOTION_FILE, 'direct') : null,
   MOTION_FILE ? loadCard('motion', MOTION_FILE, 'stateful') : null,
 ].filter(Boolean);
-if (cardsToCheck.length === 2 && cardsToCheck[0].id === cardsToCheck[1].id) die('两张卡的 id 相同');
+if (cardsToCheck.length === 2 && cardsToCheck[0].id === cardsToCheck[1].id) die('The two cards have the same id');
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-guide-blind-'));
 const OVERLAY = path.join(TMP, 'card-overrides');
@@ -160,9 +160,9 @@ try {
   const origin = `http://127.0.0.1:${PORT}`;
   const HARNESS = `${origin}/scripts/probes/remotion-style-harness.html?css=1`;
   await waitFor(async () => {
-    if (child.exitCode !== null) throw new Error(`编辑器退出了：${log.join('').slice(-600)}`);
+    if (child.exitCode !== null) throw new Error(`The editor exited: ${log.join('').slice(-600)}`);
     return fetch(HARNESS, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok, () => false);
-  }, 180_000, '编辑器起来');
+  }, 180_000, 'editor started');
 
   browser = await puppeteer.launch({
     headless: true,

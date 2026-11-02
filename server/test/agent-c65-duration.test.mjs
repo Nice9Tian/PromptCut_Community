@@ -39,7 +39,7 @@ const toolDef = (name) => tools.find((t) => t.name === name);
 const clip = (id, start, end) => ({ id, cardId: 'probe', params: {}, start, end });
 const proj = (duration, clips, extra = {}) => ({ name: 'p', duration, tracks: [{ id: 't1', clips }], ...extra });
 
-test('DUR-1 settleDuration:跟内容走、截断保留、改了总时长按改后的推、只改名不碰、空项目保留、至少 1 s', async () => {
+test('DUR-1 settleDuration: follows the content, a truncation is kept, a changed total duration is pushed from the changed value, a rename alone does not touch it, an empty project is kept, at least 1 s', async () => {
   const rules = await import('../../src/kernel/duration.ts').catch(() => null)
     ?? (await createVite({ configFile: false, root: ROOT, logLevel: 'silent', server: { middlewareMode: true, hmr: false, ws: false, watch: null }, appType: 'custom', optimizeDeps: { noDiscovery: true, include: [] } })
       .then(async (v) => { try { return await v.ssrLoadModule('/src/kernel/duration.ts'); } finally { await v.close(); } }));
@@ -65,7 +65,7 @@ test('DUR-1 settleDuration:跟内容走、截断保留、改了总时长按改�
   assert.equal(settleDuration(base, proj(9, [clip('a', 0, 5)]), rules).duration, 5);
 
   // 片段、总时长都没变(只改名):不碰
-  const renamed = { ...base, name: '改名' };
+  const renamed = { ...base, name: 'renamed' };
   assert.equal(settleDuration(base, renamed, rules), renamed);
   // 页面也不会为这次写入跑时间轴的 effect,所以即使改前本来就不一致也不在这里顺手改
   const loose = proj(30, [clip('a', 0, 5)]);
@@ -110,8 +110,8 @@ async function startEnv(t) {
     p.id = projectId;
     p.duration = 5;
     p.tracks = [
-      { id: 't1', name: '画面', clips: [{ id: 'c1', cardId: 'probe', params: {}, start: 0, end: 5 }] },
-      { id: 't2', name: '空', clips: [] },
+      { id: 't1', name: 'Visual', clips: [{ id: 'c1', cardId: 'probe', params: {}, start: 0, end: 5 }] },
+      { id: 't2', name: 'empty', clips: [] },
     ];
     return p;
   }
@@ -152,7 +152,7 @@ async function startEnv(t) {
     closers.push(() => ws.close());
     await new Promise((resolve, reject) => { ws.addEventListener('open', resolve, { once: true }); ws.addEventListener('error', reject, { once: true }); });
     const sent = [];
-    const ds = new DocSync(createEmptyProject('空'), {
+    const ds = new DocSync(createEmptyProject('empty'), {
       projectId, session,
       send: (m) => { if (m.type === 'project.op') sent.push(m); ws.send(JSON.stringify(m)); },
     });
@@ -203,7 +203,7 @@ async function quiet(pg, ms = 300) {
 
 /* ------------------------------------------------------------------ DUR-2 */
 
-test('DUR-2 Agent 加一张超出末尾的卡:总时长随同一次提交跟上;页面不补写;紧接着第二次写入不被拒;三份总时长一致', async (t) => {
+test('DUR-2 Agent adds a card that runs past the end: the total duration follows in the same commit; the page does not write it again; the second write right after is not rejected; the total durations of all three copies agree', async (t) => {
   const env = await startEnv(t);
   const probe = await env.seeded('proj-dur');
   const pg = await env.page('proj-dur');
@@ -213,24 +213,24 @@ test('DUR-2 Agent 加一张超出末尾的卡:总时长随同一次提交跟上;
 
   assert.equal((await ag.call('get_project', {})).rev, 1);
   const added = await ag.call('add_clip', { cardId: 'probe', start: 10, duration: 4, trackId: 't2' });
-  assert.equal(added.rev, 2, '加卡落地为 rev 2');
+  assert.equal(added.rev, 2, 'adding the card lands as rev 2');
 
   // 页面收到 rev 2:按页面的规则算,总时长已经是 14,不补写
   await waitFor(() => pg.ds.rev >= 2, 3000);
   await quiet(pg);
-  assert.equal(pg.commits(), 0, '页面没有补写总时长');
+  assert.equal(pg.commits(), 0, 'the page did not write the total duration again');
   assert.equal(pg.duration(), 14);
 
   const body2 = await probe.open('proj-dur');
-  assert.equal(body2.rev, 2, '文档服务里只有加卡这一次提交');
-  assert.equal(body2.project.duration, 14, '总时长随加卡那一次提交落地');
+  assert.equal(body2.rev, 2, 'the document service has only this one commit, the card addition');
+  assert.equal(body2.project.duration, 14, 'the total duration lands with the card-adding commit');
 
   // 紧接着的第二次写入:期望版本 = 2 = 当前版本,不被拒
   let second;
   try {
     second = await ag.call('update_clip', { clipId: 'c1', opacity: 0.5 });
   } catch (err) {
-    assert.fail(`第二次写入被拒:${err instanceof StaleWriteError ? err.message : err}`);
+    assert.fail(`second write rejected: ${err instanceof StaleWriteError ? err.message : err}`);
   }
   assert.equal(second.rev, 3);
   assert.equal(ag.executor.describe().stats.stale, 0);
@@ -240,13 +240,13 @@ test('DUR-2 Agent 加一张超出末尾的卡:总时长随同一次提交跟上;
   const body3 = await probe.open('proj-dur');
   assert.equal(body3.rev, 3);
   assert.equal(pg.commits(), 0);
-  assert.deepEqual([pg.duration(), body3.project.duration, ag.link.replica.project.duration], [14, 14, 14], '页面、文档服务、Agent 副本的总时长一致');
-  assert.equal(JSON.stringify(pg.ds.project), JSON.stringify(body3.project), '页面与真身逐项相同');
+  assert.deepEqual([pg.duration(), body3.project.duration, ag.link.replica.project.duration], [14, 14, 14], 'the total durations of the page, the document service and the Agent replica agree');
+  assert.equal(JSON.stringify(pg.ds.project), JSON.stringify(body3.project), 'the page and the authoritative copy are identical item by item');
 });
 
 /* ------------------------------------------------------------------ DUR-3 对照 */
 
-test('DUR-3 对照:同样的加卡由不带总时长的写入方提交时,页面按自己的规则补写一次总时长(以前 Agent 就是这样)', async (t) => {
+test('DUR-3 control case: when the same card addition is committed by a writer that does not carry the total duration, the page back-fills the total duration once by its own rules (this is how the Agent used to behave)', async (t) => {
   const env = await startEnv(t);
   const probe = await env.seeded('proj-ctl');
   const pg = await env.page('proj-ctl');
@@ -256,14 +256,14 @@ test('DUR-3 对照:同样的加卡由不带总时长的写入方提交时,页面
   assert.equal(reply.type, 'project.op.ok');
   await waitFor(() => pg.ds.rev >= 2, 3000);
   await quiet(pg);
-  assert.equal(pg.commits(), 1, '页面补写了一次');
+  assert.equal(pg.commits(), 1, 'the page back-filled once');
   const body = await probe.open('proj-ctl');
-  assert.deepEqual([body.rev, body.project.duration], [3, 14], '补写是单独的一次提交(rev 3)');
+  assert.deepEqual([body.rev, body.project.duration], [3, 14], 'the back-fill is a separate commit (rev 3)');
 });
 
 /* ------------------------------------------------------------------ DUR-4 截断 */
 
-test('DUR-4 截断之后:Agent 截断总时长、再加一张超出末尾的卡,总时长保持截断值;页面不补写,下一次写入不被拒', async (t) => {
+test('DUR-4 after truncation: the Agent truncates the total duration and then adds a card that runs past the end, the total duration stays at the truncated value; the page does not back-fill, and the next write is not rejected', async (t) => {
   const env = await startEnv(t);
   const probe = await env.seeded('proj-cut');
   const pg = await env.page('proj-cut');
@@ -274,19 +274,19 @@ test('DUR-4 截断之后:Agent 截断总时长、再加一张超出末尾的卡,
   assert.equal(cut.rev, 2);
   await waitFor(() => pg.ds.rev >= 2, 3000);
   await quiet(pg);
-  assert.deepEqual([pg.duration(), pg.st.durationManual], [3, 3], '页面按远端改动记下手动值');
+  assert.deepEqual([pg.duration(), pg.st.durationManual], [3, 3], 'the page records the manual value according to the remote change');
 
   const added = await ag.call('add_clip', { cardId: 'probe', start: 10, duration: 4, trackId: 't2' });
   assert.equal(added.rev, 3);
   await waitFor(() => pg.ds.rev >= 3, 3000);
   await quiet(pg);
   const again = await ag.call('update_clip', { clipId: 'c1', opacity: 0.4 });
-  assert.equal(again.rev, 4, '下一次写入不被拒');
+  assert.equal(again.rev, 4, 'the next write is not rejected');
   await waitFor(() => pg.ds.rev >= 4, 3000);
   await quiet(pg);
 
   const body = await probe.open('proj-cut');
   assert.equal(body.rev, 4);
-  assert.equal(pg.commits(), 0, '页面一次都没补写');
-  assert.deepEqual([pg.duration(), body.project.duration, ag.link.replica.project.duration], [3, 3, 3], '总时长保持截断值,三份一致');
+  assert.equal(pg.commits(), 0, 'the page did not back-fill even once');
+  assert.deepEqual([pg.duration(), body.project.duration, ag.link.replica.project.duration], [3, 3, 3], 'the total duration stays at the truncated value, all three copies agree');
 });

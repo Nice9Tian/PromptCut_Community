@@ -31,13 +31,13 @@ const legacy = () => ({
   ],
 });
 
-test("cardDefinitions 整个字段删掉,不是只删 python 条目", () => {
+test("The whole cardDefinitions field is removed, not just the python entries", () => {
   const raw = legacy();
   dropPythonNodes(raw);
   assert.equal("cardDefinitions" in raw, false);
 });
 
-test("丢掉 adapter python 的节点,并清掉引用它们的片段 nodeId", () => {
+test("Drop the nodes whose adapter is python, and clear the nodeId of clips that reference them", () => {
   const raw = legacy();
   const dropped = dropPythonNodes(raw);
   assert.equal(dropped, 2);
@@ -54,21 +54,21 @@ test("丢掉 adapter python 的节点,并清掉引用它们的片段 nodeId", ()
   assert.equal(clips[2].cardId, "punch-pill");
 });
 
-test("没有 python 卡的项目一张都不丢,cardDefinitions 照样不留", () => {
+test("A project with no python cards drops none, and cardDefinitions is still not kept", () => {
   const raw = { cardNodes: [{ id: "chrome-a", adapter: "chrome" }], tracks: [{ id: "main", clips: [{ id: "a", mediaId: "m" }] }] };
   assert.equal(dropPythonNodes(raw), 0);
   assert.deepEqual(raw.cardNodes.map((n) => n.id), ["chrome-a"]);
   assert.equal(raw.tracks[0].clips[0].mediaId, "m");
 });
 
-test("空的 / 不是对象的输入不报错", () => {
+test("Empty / non-object input does not throw", () => {
   assert.equal(dropPythonNodes(null), 0);
   assert.equal(dropPythonNodes(undefined), 0);
   assert.equal(dropPythonNodes("not a project"), 0);
   assert.equal(dropPythonNodes({}), 0);
 });
 
-test("通知栏只说一次,句子里的 N 就是丢掉的张数", () => {
+test("The notification bar says it only once, and N in the sentence is the number of dropped cards", () => {
   takePythonDrops();
   const raw = legacy();
   publishPythonDrop(dropPythonNodes(raw));

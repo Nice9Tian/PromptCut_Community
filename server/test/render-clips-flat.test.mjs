@@ -18,28 +18,28 @@ function project({ innerText = 'h', extra = [] } = {}) {
       { id: 'tb', clips: [card('top', 0, 10)] },
     ],
     cuts: [
-      { id: 'A', name: '剪辑1' },
-      { id: 'B', name: '剪辑2', duration: 8, tracks: [
+      { id: 'A', name: 'Cut 1' },
+      { id: 'B', name: 'Cut 2', duration: 8, tracks: [
         { id: 'b1', clips: [card('H', 0, 8, { params: { text: innerText } }), ...extra] },
         { id: 'b2', clips: [seg('SC', 'C', 0, 8), { id: 'v', cardId: 'video', mediaId: 'm', start: 0, end: 8 }] },
       ] },
-      { id: 'C', name: '剪辑3', duration: 8, tracks: [{ id: 'c1', clips: [card('X', 0, 8)] }] },
+      { id: 'C', name: 'Cut 3', duration: 8, tracks: [{ id: 'c1', clips: [card('X', 0, 8)] }] },
     ],
   };
 }
 
-test('没有剪辑段的项目:与 renderableClips 逐项相同', () => {
+test('a project without cut segments: identical to renderableClips item by item', () => {
   const p = { tracks: [{ id: 't', clips: [card('a', 0, 1), card('b', 1, 2), { id: 'v', cardId: 'video', start: 0, end: 1 }] }] };
   assert.deepEqual(renderClipsOf(p, ['a', 'v'], { kernel }), renderableClips(p, ['a', 'v']));
   const picker = createRenderClipPicker(kernel);
   assert.deepEqual(picker.pick(p, ['b']), ['b']);
 });
 
-test('写到被引用剪辑里的卡:两个实例都收(任意深度);素材不收', () => {
+test('cards written into a referenced cut: both instances are collected (at any depth); media is not collected', () => {
   const p = project();
   const before = renderClipsOf(project(), [], { kernel, before: null });
-  assert.ok(before.includes('S~H') && before.includes('S2~H') && before.includes('S~SC~X'), '没有上一次的签名表时全收');
-  assert.ok(!before.some((id) => id.endsWith('~v')), '素材片段不收');
+  assert.ok(before.includes('S~H') && before.includes('S2~H') && before.includes('S~SC~X'), 'with no previous signature table, collect everything');
+  assert.ok(!before.some((id) => id.endsWith('~v')), 'media clips are not collected');
   const picker = createRenderClipPicker(kernel);
   picker.prime(p);
   assert.deepEqual(picker.pick(p, ['H']).sort(), ['S2~H', 'S~H']);
@@ -47,7 +47,7 @@ test('写到被引用剪辑里的卡:两个实例都收(任意深度);素材不�
   assert.deepEqual(picker.pick(p, ['top']), ['top']);
 });
 
-test('ops 里点不出片段 id 的改动(切激活剪辑、别的剪辑整段改):按摊平视图的签名比出来', () => {
+test('changes in ops that cannot name a clip id (switching the active cut, a whole-cut rewrite of another cut): worked out by comparing the signatures of the flattened view', () => {
   const picker = createRenderClipPicker(kernel);
   picker.prime(project());
   // 剪辑2 里那张卡改了文字,这次写入报上来的片段 id 是空的

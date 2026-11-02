@@ -39,7 +39,7 @@ async function main() {
     const { done } = startRun({
       provider: 'api',
       apiConfig: { vendor: 'mock', model: 'mock-1' },
-      prompt: '时间轴上有什么',
+      prompt: 'What is on the timeline',
       systemPrompt: '测试',
       cwd: cwdMock,
       callTool: async (name, _args) => {
@@ -98,7 +98,7 @@ async function main() {
       await tool.execute({ command: 'create', path: 'test.txt', file_text: 'fail' });
       throw new Error('should fail on existing file');
     } catch (e) {
-      if (!e.message.includes('文件已存在')) throw e;
+      if (!e.message.includes('File already exists')) throw e;
     }
     
     // 3. str_replace 唯一命中 → 内容变了; 命中 0 次 / 多次抛错
@@ -109,7 +109,7 @@ async function main() {
       await tool.execute({ command: 'str_replace', path: 'test.txt', old_str: 'foo', new_str: 'bar' });
       throw new Error('should fail on 0 matches');
     } catch (e) {
-      if (!e.message.includes('没有找到要替换的内容')) throw e;
+      if (!e.message.includes('No content to replace was found')) throw e;
     }
     
     // 4. insert 在第 1 行后插入 → 行数加一且位置正确
@@ -133,7 +133,7 @@ async function main() {
       await tool.execute({ command: 'undo_edit', path: 'test.txt' });
       throw new Error('should fail on empty stack');
     } catch (e) {
-      if (!e.message.includes('没有可撤销的编辑')) throw e;
+      if (!e.message.includes('No edit to undo')) throw e;
     }
     
     // 6. 越界路径全部被拒
@@ -143,7 +143,7 @@ async function main() {
         await tool.execute({ command: 'view', path: ep });
         throw new Error(`should block evil path: ${ep}`);
       } catch (e) {
-        if (!e.message.includes('路径越界')) throw new Error(`Wrong error message for evil path ${ep}: ${e.message}`);
+        if (!e.message.includes('Path out of bounds')) throw new Error(`Wrong error message for evil path ${ep}: ${e.message}`);
       }
     }
     
@@ -279,7 +279,7 @@ async function main() {
     if (doneEvent.usage.input !== 10 || (vendor !== 'openai' ? doneEvent.usage.output !== 20 : doneEvent.usage.output !== 20)) throw new Error('Usage parsing failed');
 
     if (callCount !== 2) throw new Error(`Expected exactly 2 fetch calls, got ${callCount}`);
-    if (events.some(e => e.type === 'status' && e.text && e.text.includes('已达工具调用上限'))) throw new Error('Hit max iterations limit incorrectly');
+    if (events.some(e => e.type === 'status' && e.text && e.text.includes('Tool call limit reached'))) throw new Error('Hit max iterations limit incorrectly');
 
     fs.unlinkSync(historyFile);
     fs.rmSync(cwd, { recursive: true, force: true });

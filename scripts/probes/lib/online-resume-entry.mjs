@@ -25,7 +25,7 @@ export const SHARED_RESUME_KEY = 'pc.shared.resume';
 export async function resumeRecord({ base, derivationBase = base, projectId, name, username, password, deviceId, as = 'member', mode = 'free' }) {
   let key = null;
   await buildAuthProtocols({ base: derivationBase, projectId, username, deviceId, deviceName: 'probe-resume', as, password, role: 'page', onKey: (k) => { key = k; } });
-  if (typeof key !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(key)) throw new Error('派生不出项目口令的 K');
+  if (typeof key !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(key)) throw new Error('Cannot derive K for the project passphrase');
   return { candidate: { where: 'hosted', base: base.endsWith('/') ? base : `${base}/`, projectId, name, mode }, as, username, key };
 }
 
@@ -35,7 +35,7 @@ export async function resumeRecord({ base, derivationBase = base, projectId, nam
  */
 export async function resumeRecordFromInvite({ base, derivationBase = base, code, username, deviceId, as = 'member' }) {
   const red = await redeemInvite({ base: derivationBase, code, username, deviceId });
-  if (typeof red.key !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(red.key)) throw new Error('邀请码兑换不出项目口令的 K');
+  if (typeof red.key !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(red.key)) throw new Error('Redeeming the invite code did not yield K for the project passphrase');
   return { candidate: { where: 'hosted', base: base.endsWith('/') ? base : `${base}/`, projectId: red.projectId, name: red.name, mode: red.mode }, as, username, key: red.key };
 }
 
@@ -52,12 +52,12 @@ export async function plantResume(page, record, storageKey = SHARED_RESUME_KEY) 
  */
 export async function switchSharedInPlace(page, record, storageKey = SHARED_RESUME_KEY) {
   await page.evaluate(async (k, r) => {
-    window.__pcStore?.actions?.newProject?.('未命名');
+    window.__pcStore?.actions?.newProject?.('Untitled');
     sessionStorage.setItem(k, r);
     const resUrl = performance.getEntriesByType('resource').map((e) => e.name).find((n) => /\/assets\/syncManager-.*\.js$/.test(n));
     const mod = await import(resUrl || '/src/editor/sync/syncManager.ts');
     const fn = mod.resumeShared || Object.values(mod).find((v) => typeof v === 'function' && /docProjectId.*candidate\.projectId/.test(String(v)));
-    if (typeof fn !== 'function') throw new Error('找不到 resumeShared');
+    if (typeof fn !== 'function') throw new Error('Cannot find resumeShared');
     await fn();
   }, storageKey, JSON.stringify(record));
 }

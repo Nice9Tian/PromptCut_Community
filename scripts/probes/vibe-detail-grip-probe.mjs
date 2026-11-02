@@ -106,11 +106,11 @@ try {
     tabindex: el.getAttribute('tabindex'), title: el.getAttribute('title'), h: Math.round(el.getBoundingClientRect().height),
   }));
   out.G1 = { ...a11y, gripBottom: g0.grip?.bottom, tlTop: g0.tl?.top, transportBottom: g0.transport?.bottom, defaultH: g0.tl?.h };
-  check(!!g0.grip, 'G1 没有那条缝');
-  check(a11y.role === 'separator' && a11y.orient === 'horizontal', 'G1 role / aria-orientation 不对', a11y);
-  check(a11y.tabindex === '0', 'G1 Tab 不到那条缝', a11y);
-  check(g0.grip && g0.tl && near(g0.grip.bottom, g0.tl.top, 1), 'G1 缝的下沿没贴着时间轴的上沿', out.G1);
-  check(g0.grip && g0.transport && g0.grip.top >= g0.transport.bottom - 1, 'G1 缝没落在传输控件下面', out.G1);
+  check(!!g0.grip, 'G1 the grip is missing');
+  check(a11y.role === 'separator' && a11y.orient === 'horizontal', 'G1 role / aria-orientation is wrong', a11y);
+  check(a11y.tabindex === '0', 'G1 Tab cannot reach the grip', a11y);
+  check(g0.grip && g0.tl && near(g0.grip.bottom, g0.tl.top, 1), 'G1 the grip\'s bottom edge is not flush with the timeline\'s top edge', out.G1);
+  check(g0.grip && g0.transport && g0.grip.top >= g0.transport.bottom - 1, 'G1 the grip is not below the transport controls', out.G1);
 
   /* G2 平时不画线，压上来才亮 */
   const lineOpacity = () => page.$eval(sel('start-detail-grip'), (el) => getComputedStyle(el, '::after').opacity);
@@ -121,21 +121,21 @@ try {
   const hoverOpacity = await lineOpacity();
   await page.screenshot({ path: path.join(OUT, 'grip-hover.png') });
   out.G2 = { idle: idleOpacity, hover: hoverOpacity };
-  check(Number(idleOpacity) === 0, 'G2 没拖的时候那条线就亮着', out.G2);
-  check(Number(hoverOpacity) === 1, 'G2 鼠标压上来那条线没亮', out.G2);
+  check(Number(idleOpacity) === 0, 'G2 the line is already lit when not dragging', out.G2);
+  check(Number(hoverOpacity) === 1, 'G2 the line does not light up when the mouse is over it', out.G2);
 
   /* G3 拖得动 */
   await drag(-120);
   const g1 = await geo();
   out.G3 = { before: { tl: g0.tl?.h, stage: g0.stage?.h }, after: { tl: g1.tl?.h, stage: g1.stage?.h }, overflowY: g1.overflowY };
-  check(near(g1.tl.h, g0.tl.h + 120, 3), 'G3 往上拖 120px，时间轴没高 120', out.G3);
-  check(g1.stage.h < g0.stage.h, 'G3 时间轴高起来了，上面的舞台没跟着矮下去', out.G3);
-  check(g1.overflowY === 0, 'G3 拖完页面纵向溢出了', out.G3);
+  check(near(g1.tl.h, g0.tl.h + 120, 3), 'G3 dragging up 120px did not make the timeline 120 taller', out.G3);
+  check(g1.stage.h < g0.stage.h, 'G3 the timeline got taller, but the stage above did not get shorter accordingly', out.G3);
+  check(g1.overflowY === 0, 'G3 the page overflows vertically after the drag', out.G3);
   await page.screenshot({ path: path.join(OUT, 'grip-tall.png') });
 
   /* G4 记在本机，收起再打开还是这个高 */
   const dragged = g1.tl.h;
-  check(Number(g1.saved) === dragged, 'G4 松手没把高度记进本机', { saved: g1.saved, dragged });
+  check(Number(g1.saved) === dragged, 'G4 the height was not saved locally on release', { saved: g1.saved, dragged });
   await click('start-detail-close');
   await sleep(400);
   await click('start-ext-detail');
@@ -143,7 +143,7 @@ try {
   await sleep(500);
   const g2 = await geo();
   out.G4 = { saved: g1.saved, dragged, reopened: g2.tl?.h };
-  check(near(g2.tl.h, dragged, 2), 'G4 收起再打开，时间轴没回到拖出来的高', out.G4);
+  check(near(g2.tl.h, dragged, 2), 'G4 after collapsing and reopening, the timeline did not return to the dragged height', out.G4);
 
   /* G5 双击复位 */
   const c2 = await gripCenter();
@@ -156,8 +156,8 @@ try {
   await sleep(400);
   const g3 = await geo();
   out.G5 = { reset: g3.tl?.h, defaultH: g0.tl?.h, saved: g3.saved };
-  check(near(g3.tl.h, g0.tl.h, 2), 'G5 双击没回到默认高', out.G5);
-  check(g3.saved === null, 'G5 双击之后本机那一条还在', out.G5);
+  check(near(g3.tl.h, g0.tl.h, 2), 'G5 double-click did not return to the default height', out.G5);
+  check(g3.saved === null, 'G5 the local entry is still there after the double-click', out.G5);
 
   /* G6 键盘 */
   await page.focus(sel('start-detail-grip'));
@@ -170,9 +170,9 @@ try {
   await sleep(300);
   const g5 = await geo();
   out.G6 = { base: g3.tl?.h, up4: g4.tl?.h, shiftDown1: g5.tl?.h, saved: g5.saved };
-  check(near(g4.tl.h, g3.tl.h + 32, 2), 'G6 方向键上四下没加 32', out.G6);
-  check(near(g5.tl.h, g4.tl.h - 32, 2), 'G6 Shift + 方向键下一下没减 32', out.G6);
-  check(Number(g5.saved) === g5.tl.h, 'G6 键盘调完没记进本机', out.G6);
+  check(near(g4.tl.h, g3.tl.h + 32, 2), 'G6 Arrow Up four times did not add 32', out.G6);
+  check(near(g5.tl.h, g4.tl.h - 32, 2), 'G6 Shift + Arrow Down once did not subtract 32', out.G6);
+  check(Number(g5.saved) === g5.tl.h, 'G6 the keyboard adjustment was not saved locally', out.G6);
 
   /* G7 拖到头有界 */
   await drag(-2000);
@@ -182,14 +182,14 @@ try {
   const g7 = await geo();
   await page.screenshot({ path: path.join(OUT, 'grip-short.png') });
   out.G7 = { rootH: g6.root?.h, maxTl: g6.tl?.h, cap: Math.round((g6.root?.h ?? 0) * MAX_RATIO), minTl: g7.tl?.h, stageAtMax: g6.stage?.h };
-  check(g6.tl.h <= Math.round(g6.root.h * MAX_RATIO) + 2, 'G7 往上拖过了这一页的七成', out.G7);
-  check(g6.stage.h > 0, 'G7 拖到头把舞台挤没了', out.G7);
-  check(near(g7.tl.h, MIN_H, 2), 'G7 往下拖没停在最矮 160px', out.G7);
+  check(g6.tl.h <= Math.round(g6.root.h * MAX_RATIO) + 2, 'G7 dragging up went past 70% of this page', out.G7);
+  check(g6.stage.h > 0, 'G7 dragging to the limit squeezed the stage away', out.G7);
+  check(near(g7.tl.h, MIN_H, 2), 'G7 dragging down did not stop at the minimum height of 160px', out.G7);
 
   out.errors = errors;
-  check(errors.length === 0, ' 页面有报错', errors.slice(0, 3));
+  check(errors.length === 0, ' The page has errors', errors.slice(0, 3));
 } catch (e) {
-  fails.push(`跑崩了: ${String(e).slice(0, 300)}`);
+  fails.push(`Run crashed: ${String(e).slice(0, 300)}`);
 } finally {
   await browser.close().catch(() => {});
 }

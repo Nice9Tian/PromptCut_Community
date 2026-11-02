@@ -14,9 +14,9 @@ import { refusingPort } from './fake-ws-kit.mjs';
 
 const listen = server => new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${server.address().port}`)));
 const close = server => new Promise(resolve => server.close(() => resolve()));
-const LAYOUT = { unavailable: { status: 503, code: 'NO_AGENT_LANE', error: '编辑器进程没有 Agent lane' } };
+const LAYOUT = { unavailable: { status: 503, code: 'NO_AGENT_LANE', error: 'editor process has no Agent lane' } };
 
-test('预渲染就绪:请求原样转过去,回应原样带回来', async () => {
+test('prerender ready: the request is forwarded unchanged, the response is returned unchanged', async () => {
   const seen = [];
   const prerender = http.createServer((req, res) => {
     let body = '';
@@ -43,24 +43,24 @@ test('预渲染就绪:请求原样转过去,回应原样带回来', async () => 
   }
 });
 
-test('预渲染没就绪:等满 waitMs 回 503 NO_AGENT_LANE', async () => {
+test('prerender not ready: wait the full waitMs, then respond 503 NO_AGENT_LANE', async () => {
   const editor = http.createServer((req, res) => proxyToPrerender(req, res, { ...LAYOUT, waitMs: 300 }));
   const editorUrl = await listen(editor);
-  setPrerender({ url: null, ready: false, error: '预渲染进程退出' });
+  setPrerender({ url: null, ready: false, error: 'prerender process exited' });
   try {
     const r = await fetch(`${editorUrl}/api/cards/layout`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
     assert.equal(r.status, 503);
     const data = await r.json();
     assert.equal(data.code, 'NO_AGENT_LANE');
     assert.equal(data.retryable, true);
-    assert.match(data.error, /没有 Agent lane/);
+    assert.match(data.error, /has no Agent lane/);
   } finally {
     setPrerender({ url: null, ready: false, error: null });
     await close(editor);
   }
 });
 
-test('预渲染报就绪但连不上:同样回 503 NO_AGENT_LANE;不传 unavailable 的老路由照旧 502 PRERENDER_UNAVAILABLE', async () => {
+test('prerender reports ready but cannot be reached: also responds 503 NO_AGENT_LANE; old routes that do not pass unavailable still respond 502 PRERENDER_UNAVAILABLE', async () => {
   // 连不上的地址由测试自己占着(连上就 RST);不用「关掉的端口」,并行时它可能被别的进程拿去
   const dead = await refusingPort();
   const deadUrl = `http://127.0.0.1:${dead.port}`;

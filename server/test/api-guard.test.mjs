@@ -31,7 +31,7 @@ const { apiGuardPlugin } = await import(pathToFileURL(file).href);
 function handlerOf() {
   let fn;
   apiGuardPlugin().configureServer({ middlewares: { use(f) { fn = f; } } });
-  assert.ok(fn, '插件没有注册中间件');
+  assert.ok(fn, 'The plugin did not register middleware');
   return fn;
 }
 
@@ -49,16 +49,16 @@ function pass(fn, { method = 'POST', url, headers = {} }) {
 
 const SAME = { origin: 'http://127.0.0.1:5190', host: '127.0.0.1:5190' };
 
-test('对话附件上传是原始字节体,同源时必须放行(回归)', async () => {
+test('Chat attachment upload is a raw byte body and must be allowed through when same-origin (regression)', async () => {
   const fn = handlerOf();
   const r = await pass(fn, {
     url: '/api/chats/attach/upload?conversationId=c1&name=x.mp4',
     headers: { ...SAME, 'content-type': 'video/mp4' },
   });
-  assert.equal(r, 'next', '附件上传的 Content-Type 由文件类型决定,不能按 JSON 要求');
+  assert.equal(r, 'next', 'The Content-Type of an attachment upload is determined by the file type and must not be required to be JSON');
 });
 
-test('素材上传、导出媒体、听写上传这几条原始体路由同样放行', async () => {
+test('The raw-body routes for media upload, export media and speech-to-text upload are also allowed through', async () => {
   const fn = handlerOf();
   // 听写那条是诊断报告里抓到的:transcribe_media 上传素材被 403,整个转写起不来
   for (const url of ['/api/media/upload/a.mp4', '/api/export/media/x', '/api/stt/upload/job1/a.mp4', '/api/export/audio-mix/test1']) {
@@ -67,7 +67,7 @@ test('素材上传、导出媒体、听写上传这几条原始体路由同样�
   }
 });
 
-test('普通接口带非 JSON 的 body 要拒:这是挡 CSRF 简单请求的那一道', async () => {
+test('A regular endpoint with a non-JSON body must be rejected: this is the check that blocks CSRF simple requests', async () => {
   const fn = handlerOf();
   const r = await pass(fn, { url: '/api/ai/config', headers: { ...SAME, 'content-type': 'text/plain' } });
   assert.notEqual(r, 'next');
@@ -75,7 +75,7 @@ test('普通接口带非 JSON 的 body 要拒:这是挡 CSRF 简单请求的那�
   assert.match(r.body.error, /application\/json/);
 });
 
-test('跨源请求哪怕是原始体路由也拒', async () => {
+test('Cross-origin requests are rejected even on raw-body routes', async () => {
   const fn = handlerOf();
   const r = await pass(fn, {
     url: '/api/chats/attach/upload?conversationId=c1&name=x.mp4',
@@ -85,13 +85,13 @@ test('跨源请求哪怕是原始体路由也拒', async () => {
   assert.equal(r.status, 403);
 });
 
-test('GET 和不带 body 的 POST 不受 Content-Type 那一道限制', async () => {
+test('GET and POST without a body are not subject to the Content-Type check', async () => {
   const fn = handlerOf();
   assert.equal(await pass(fn, { method: 'GET', url: '/api/collect/status', headers: SAME }), 'next');
   assert.equal(await pass(fn, { url: '/api/shots/install', headers: SAME }), 'next');
 });
 
-test('不是 /api/ 的路径直接放行', async () => {
+test('Paths that are not /api/ are allowed straight through', async () => {
   const fn = handlerOf();
   assert.equal(await pass(fn, { url: '/@media/x.mp4', headers: { 'content-type': 'text/plain' } }), 'next');
 });
@@ -101,7 +101,7 @@ test('不是 /api/ 的路径直接放行', async () => {
 const LAN = { origin: 'http://192.168.1.50:8080', host: '127.0.0.1:5190' };
 const H = 'ab'.repeat(32);
 
-test('素材服务的路由对跨源豁免:分片、对账、收尾、取回、预检', async () => {
+test('Asset service routes are exempt from the cross-origin check: chunk, reconcile, finalize, retrieve, preflight', async () => {
   const fn = handlerOf();
   assert.equal(await pass(fn, { method: 'PUT', url: `/api/asset/media/${H}/0`, headers: { ...LAN, 'content-type': 'application/octet-stream' } }), 'next');
   assert.equal(await pass(fn, { method: 'GET', url: `/api/asset/media/${H}/chunks`, headers: LAN }), 'next');
@@ -110,7 +110,7 @@ test('素材服务的路由对跨源豁免:分片、对账、收尾、取回、�
   assert.equal(await pass(fn, { method: 'OPTIONS', url: `/api/asset/media/${H}/3`, headers: LAN }), 'next');
 });
 
-test('豁免之外的 /api/** 跨源照旧 403(包括编辑器内部的整件上传和长得像的路径)', async () => {
+test('Cross-origin requests to /api/** outside the exemption still get 403 (including the editor\'s internal whole-file upload and look-alike paths)', async () => {
   const fn = handlerOf();
   const denied = [
     { url: '/api/media/upload/x.mp4', headers: { ...LAN, 'content-type': 'video/mp4' } },
@@ -143,7 +143,7 @@ function passFrom(fn, from, { method = 'GET', url, headers = {} }) {
   });
 }
 
-test('局域网设备不带 Origin 打普通接口:默认 403(不然能直接驱动 Agent、读配置)', async () => {
+test('A LAN device hitting a regular endpoint without Origin: 403 by default (otherwise it could directly drive the Agent and read the config)', async () => {
   const fn = handlerOf();
   const prev = process.env.PROMPTCUT_LAN_API;
   delete process.env.PROMPTCUT_LAN_API;
@@ -165,7 +165,7 @@ test('局域网设备不带 Origin 打普通接口:默认 403(不然能直接驱
   }
 });
 
-test('局域网设备打素材服务:放行(素材服务本来就对局域网开放)', async () => {
+test('A LAN device hitting the asset service: allowed (the asset service is open to the LAN by design)', async () => {
   const fn = handlerOf();
   const hash = 'a'.repeat(64);
   for (const url of [`/api/asset/media/${hash}`, `/api/asset/media/${hash}/chunks`, `/api/asset/media/${hash}/0`]) {
@@ -173,14 +173,14 @@ test('局域网设备打素材服务:放行(素材服务本来就对局域网开
   }
 });
 
-test('PROMPTCUT_LAN_API=1 时局域网设备可以打普通接口(其余两道判据照旧)', async () => {
+test('With PROMPTCUT_LAN_API=1 a LAN device can hit regular endpoints (the other two checks apply as before)', async () => {
   const fn = handlerOf();
   const prev = process.env.PROMPTCUT_LAN_API;
   process.env.PROMPTCUT_LAN_API = '1';
   try {
     assert.equal(await passFrom(fn, LAN_CLIENT, { url: '/api/ai/config' }), 'next');
     const r = await passFrom(fn, LAN_CLIENT, { method: 'POST', url: '/api/ai/config', headers: { 'content-type': 'text/plain' } });
-    assert.equal(r.status, 403, '非 JSON 的 body 照样拒');
+    assert.equal(r.status, 403, 'A non-JSON body is still rejected');
   } finally {
     if (prev === undefined) delete process.env.PROMPTCUT_LAN_API; else process.env.PROMPTCUT_LAN_API = prev;
   }

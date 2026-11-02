@@ -13,8 +13,8 @@ const { buildHandoff } = await import("./handoff.ts");
 const u = (text) => ({ id: text, role: "user", text });
 const a = (provider, text, extra = {}) => ({ id: `${provider}-${text}`, role: "assistant", text, runtime: { provider }, ...extra });
 
-test("新模型没有会话:整段对话都摘进去,用户的原话一句不漏", () => {
-  const h = [u("做个东京旅游宣传片"), a("agy", "已加了 10 张卡"), u("根本没有视频和图片"), a("agy", "我去找图")];
+test("New model has no session: excerpt the whole chat, leaving out none of the user's own words", () => {
+  const h = [u("Make a Tokyo travel promo video"), a("agy", "Added 10 cards"), u("There are no videos or images at all"), a("agy", "I'll go look for images")];
   const s = buildHandoff(h, "claude", false);
   assert.match(s, /^\[Background:/);
   assert.match(s, /\[\/Background\]$/);
@@ -23,77 +23,77 @@ test("新模型没有会话:整段对话都摘进去,用户的原话一句不漏
   assert.match(s, /Assistant \(Antigravity\): 我去找图/);
 });
 
-test("有会话:只摘这家最后一次回复之后、别家说的那几轮", () => {
-  const h = [u("一"), a("claude", "C1"), u("二"), a("agy", "G1"), u("三")];
+test("With a session: excerpt only the rounds that other providers spoke after this provider's last reply", () => {
+  const h = [u("One"), a("claude", "C1"), u("Two"), a("agy", "G1"), u("three")];
   const s = buildHandoff(h, "claude", true);
-  assert.doesNotMatch(s, /User: 一/, "claude 自己见过的不重复");
+  assert.doesNotMatch(s, /User: 一/, "What claude itself has already seen is not repeated");
   assert.doesNotMatch(s, /C1/);
   assert.match(s, /User: 二/);
   assert.match(s, /G1/);
 });
 
-test("有会话、中间没有别家说话:不加前情", () => {
-  const h = [u("一"), a("claude", "C1"), u("二"), a("claude", "", { error: "额度熔断" })];
+test("With a session and no other provider speaking in between: no recap added", () => {
+  const h = [u("One"), a("claude", "C1"), u("Two"), a("claude", "", { error: "Quota circuit breaker tripped" })];
   assert.equal(buildHandoff(h, "claude", true), "");
 });
 
-test("空对话、或者只有用户自己的话:不加前情", () => {
+test("Empty chat, or only the user's own words: no recap added", () => {
   assert.equal(buildHandoff([], "claude", false), "");
-  assert.equal(buildHandoff([u("你好")], "claude", false), "");
+  assert.equal(buildHandoff([u("Hello")], "claude", false), "");
 });
 
-test("还在跑的消息不算", () => {
-  const h = [u("一"), a("agy", "半截", { pending: true })];
+test("Messages still running do not count", () => {
+  const h = [u("One"), a("agy", "partial", { pending: true })];
   assert.equal(buildHandoff(h, "claude", false), "");
 });
 
 // 改版后 Agent 可能一个字不写、只交 report_progress。回退后要靠前情把做过的事带给新会话
 const report = (input, name = "mcp__promptcut__report_progress") => ({ kind: "tool", name, input });
 
-test("文字为空时用进度报告代替:只拼非空的组,带阶段名", () => {
+test("When the text is empty, use the progress report instead: join only the non-empty groups, with the stage name", () => {
   const h = [
-    u("给口播加字幕"),
-    a("agy", "", { parts: [report({ final: true, stage: "铺字幕", done: ["加了 3 段字幕"], todo: [], problems: ["第 2 段有底噪"] })] }),
+    u("Add captions to the narration"),
+    a("agy", "", { parts: [report({ final: true, stage: "Place captions", done: ["Added 3 caption segments"], todo: [], problems: ["Segment 2 has background noise"] })] }),
   ];
   const s = buildHandoff(h, "claude", false);
   assert.match(s, /Assistant \(Antigravity\): \[铺字幕\] Done: 加了 3 段字幕; Issues: 第 2 段有底噪/);
-  assert.doesNotMatch(s, /To do/, "空的组不拼");
+  assert.doesNotMatch(s, /To do/, "Empty groups are not joined");
 });
 
-test("只交了报告的回复也算说过话:没会话时 anySpoke、有会话时 othersSpoke 都认", () => {
-  const onlyReport = [u("一"), a("agy", "", { parts: [report({ final: false, done: ["拆好了镜头"] })] })];
+test("A reply that only delivered a report also counts as having spoken: anySpoke (no session) and othersSpoke (with a session) both recognize it", () => {
+  const onlyReport = [u("One"), a("agy", "", { parts: [report({ final: false, done: ["Finished splitting shots"] })] })];
   assert.notEqual(buildHandoff(onlyReport, "claude", false), "", "anySpoke");
-  const h = [u("一"), a("claude", "C1"), u("二"), a("agy", "  ", { parts: [report({ final: true, todo: ["配乐"] })] })];
+  const h = [u("One"), a("claude", "C1"), u("Two"), a("agy", "  ", { parts: [report({ final: true, todo: ["Background music"] })] })];
   const s = buildHandoff(h, "claude", true);
   assert.match(s, /To do: 配乐/, "othersSpoke");
   assert.doesNotMatch(s, /C1/);
 });
 
-test("文字不为空时照旧用文字;旧历史没有 parts 时从 tools 里读报告;几份报告按顺序接起来", () => {
-  const withText = [u("一"), a("agy", "我说了话", { parts: [report({ final: true, done: ["不该出现"] })] })];
+test("When the text is non-empty, use the text as before; when old history has no parts, read the report from tools; several reports are joined in order", () => {
+  const withText = [u("One"), a("agy", "I said something", { parts: [report({ final: true, done: ["Should not appear"] })] })];
   const s1 = buildHandoff(withText, "claude", false);
-  assert.match(s1, /我说了话/);
-  assert.doesNotMatch(s1, /不该出现/);
+  assert.match(s1, /I said something/);
+  assert.doesNotMatch(s1, /Should not appear/);
 
-  const legacy = [u("一"), a("agy", "", { tools: [{ name: "report_progress", input: { final: true, done: ["旧历史里的"] } }] })];
+  const legacy = [u("One"), a("agy", "", { tools: [{ name: "report_progress", input: { final: true, done: ["From old history"] } }] })];
   assert.match(buildHandoff(legacy, "claude", false), /Done: 旧历史里的/);
 
-  const two = [u("一"), a("agy", "", { parts: [report({ final: false, done: ["第一段"] }), report({ final: true, done: ["第二段"] })] })];
+  const two = [u("One"), a("agy", "", { parts: [report({ final: false, done: ["First segment"] }), report({ final: true, done: ["Second segment"] })] })];
   assert.match(buildHandoff(two, "claude", false), /Done: 第一段 \/ Done: 第二段/);
 });
 
-test("报告是空的(或者不是报告工具)还是算没说话", () => {
-  const h = [u("一"), a("agy", "", { parts: [report({ final: true, done: [], todo: [], problems: [] }), report({ final: true, done: ["x"] }, "add_clip")] })];
+test("A report that is empty (or not from the report tool) still counts as not having spoken", () => {
+  const h = [u("One"), a("agy", "", { parts: [report({ final: true, done: [], todo: [], problems: [] }), report({ final: true, done: ["x"] }, "add_clip")] })];
   assert.equal(buildHandoff(h, "claude", false), "");
 });
 
-test("太长:单条截断,总量封顶,留最近的", () => {
+test("Too long: truncate each entry, cap the total, keep the most recent", () => {
   const h = [];
-  for (let i = 0; i < 40; i++) { h.push(u(`第${i}句 ` + "字".repeat(300))); h.push(a("agy", `回${i} ` + "答".repeat(3000))); }
+  for (let i = 0; i < 40; i++) { h.push(u(`Sentence ${i} ` + "x".repeat(300))); h.push(a("agy", `Reply ${i} ` + "A".repeat(3000))); }
   const s = buildHandoff(h, "claude", false, { maxChars: 4000, perMessage: 500 });
-  assert.ok(s.length < 6000, `总长该封顶,实际 ${s.length}`);
-  assert.match(s, /第39句/, "最近的必须在");
-  assert.doesNotMatch(s, /第0句/, "最早的让位");
+  assert.ok(s.length < 6000, `Total length should be capped, actual ${s.length}`);
+  assert.match(s, /Sentence 39/, "The most recent must be included");
+  assert.doesNotMatch(s, /Sentence 0/, "The earliest yields");
   assert.match(s, /\(\d+ earlier items omitted\)/);
   assert.match(s, /\(rest omitted\)/);
 });

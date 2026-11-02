@@ -34,7 +34,7 @@ function checkoutBase(ref) {
   return dir;
 }
 const cur = HERE, base = checkoutBase(BASE_REF);
-console.log(`基准 ${BASE_REF} → ${base}`);
+console.log(`Baseline ${BASE_REF} → ${base}`);
 await import(pathToFileURL(path.join(cur, 'src/testing/registerTs.mjs')).href);
 const load = async (root) => {
   const u = (f) => pathToFileURL(path.join(root, f)).href;
@@ -93,8 +93,8 @@ for (const sped of [false, true]) {
     n++;
     const same = a[k] === b[k];
     if (!same) bad++;
-    console.log(`${same ? '✔' : '✖'} ${sped ? '同项目另有一段 2 倍普通视频' : '整份项目不变速'}:${k} ${same ? '逐字相同' : '不同'}${same ? '' : `\n   基准 ${a[k].slice(0, 300)}\n   当前 ${b[k].slice(0, 300)}`}`);
+    console.log(`${same ? '✔' : '✖'} ${sped ? 'Same project also has a 2x normal video clip' : 'Whole project has no speed change'}:${k} ${same ? 'identical' : 'different'}${same ? '' : `\\n   Baseline ${a[k].slice(0, 300)}\\n   Current ${b[k].slice(0, 300)}`}`);
   }
 }
-console.log(bad ? `✖ ${bad}/${n} 项不同` : `✔ ${n}/${n} 项逐字相同`);
+console.log(bad ? `✖ ${bad}/${n} items differ` : `✔ ${n}/${n} items identical`);
 process.exit(bad ? 1 : 0);

@@ -152,7 +152,7 @@ export async function startServiceHost({
     },
 
     async asset(rel, { method = 'GET', headers = {}, body } = {}) {
-      assert.ok(assetPort, 'startServiceHost 要带 assets: true');
+      assert.ok(assetPort, 'startServiceHost must be called with assets: true');
       const r = await fetch(`http://127.0.0.1:${assetPort}/api/asset/${rel}`, { method, headers, body });
       const buf = Buffer.from(await r.arrayBuffer());
       let json = null;
@@ -208,7 +208,7 @@ export async function serviceProtocolsFor(env, key, { mutate, nonce: givenNonce 
   let nonce = givenNonce;
   if (nonce === undefined) {
     const ch = await serviceChallenge(env, key);
-    assert.equal(ch.status, 200, `服务挑战应 200：${ch.status} ${ch.text}`);
+    assert.equal(ch.status, 200, `service challenge should return 200: ${ch.status} ${ch.text}`);
     nonce = ch.json.nonce;
   }
   let fields = {
@@ -228,7 +228,7 @@ export async function openControl(env, key) {
 /** 控制连接上订阅目录，回完整清单 */
 export async function watchDirectory(control) {
   const r = await ask(control, { type: 'hosted.watch' }, 'hosted.projects');
-  assert.equal(r.type, 'hosted.projects', `hosted.watch 回包：${JSON.stringify(r)}`);
+  assert.equal(r.type, 'hosted.projects', `hosted.watch reply: ${JSON.stringify(r)}`);
   assert.equal(r.full, true);
   return r.projects;
 }
@@ -241,7 +241,7 @@ export function requestServiceTicket(control, projectId, extra = {}) {
 /** 要票据并凭它开数据连接 */
 export async function openData(env, control, projectId) {
   const r = await requestServiceTicket(control, projectId);
-  assert.equal(r.type, 'hosted.ticket.ok', `hosted.ticket 回包：${JSON.stringify(r)}`);
+  assert.equal(r.type, 'hosted.ticket.ok', `hosted.ticket reply: ${JSON.stringify(r)}`);
   const c = await env.open([PROTOCOL, TICKET_PREFIX + r.ticket]);
   c.ticket = r.ticket;
   return c;

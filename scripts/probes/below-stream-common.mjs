@@ -44,7 +44,7 @@ export function scenarioProject(kind, { width, height, mediaUrl = '', edit = nul
   const glass = { id: 'tr-glass', name: 'glass', hidden: false, clips: [
     { id: TARGET, kind: 'card', cardId: 'odometer', start: 0.2, end: DURATION, params: { position: 'left', value: 86420, label: '下层二探针' }, ...glassFrame(width, height) },
   ] };
-  const base = { name: '依赖下层的流探针', width, height, fps: FPS, duration: DURATION, themeId: 'dark', filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {} };
+  const base = { name: 'Below-dependent stream probe', width, height, fps: FPS, duration: DURATION, themeId: 'dark', filters: [], pixelMaps: [], audioFx: [], cardNodes: [], style: {} };
   // 上面的层:右上角一枚小药丸,在毛玻璃卡上面
   const above = edit === 'above' ? [{ id: 'tr-above', name: 'above', hidden: false, clips: [
     { id: ABOVE, kind: 'card', cardId: 'punch-pill', start: 0.5, end: 2, params: { text: '上面的层' },
@@ -87,7 +87,7 @@ export function viteBin() {
 
 /** 在检出根起一台开发服务器(另占 +1、+2 当舞台端口)。回 `{ origin, stop() }`;只收自己起的这棵进程树 */
 export async function startDevServer({ port, dataDir, tag = 'below' }) {
-  if ([5190, 5191, 5192].some((p) => p >= port && p <= port + 2)) throw new Error('这一段是用户常驻的开发服务器的端口,换一个');
+  if ([5190, 5191, 5192].some((p) => p >= port && p <= port + 2)) throw new Error('This port range belongs to the user\'s resident dev servers; use another one');
   const log = [];
   const child = spawn(process.execPath, [viteBin(), '--port', String(port), '--strictPort', '--host', '127.0.0.1'], {
     cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
@@ -106,9 +106,9 @@ export async function startDevServer({ port, dataDir, tag = 'below' }) {
   };
   const deadline = Date.now() + 180_000;
   for (;;) {
-    if (child.exitCode !== null) throw new Error(`dev server 退出了:${log.join('').slice(-600)}`);
+    if (child.exitCode !== null) throw new Error(`dev server exited: ${log.join('').slice(-600)}`);
     if (await fetch(`${origin}/`, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok, () => false)) break;
-    if (Date.now() > deadline) { await stop(); throw new Error(`dev server 没起来:${log.join('').slice(-600)}`); }
+    if (Date.now() > deadline) { await stop(); throw new Error(`dev server did not start: ${log.join('').slice(-600)}`); }
     await sleep(300);
   }
   return { origin, pid: child.pid, stop };

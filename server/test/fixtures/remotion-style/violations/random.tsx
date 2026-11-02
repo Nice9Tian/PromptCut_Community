@@ -7,9 +7,9 @@ function C({ params, t = 0 }: CardProps<Params>) {
   return <div style={{ position: "absolute", inset: 0, opacity: tween(t, { duration: 0.4 }), transform: `translateX(${jitter}px)` }}>{params.text}</div>;
 }
 export const card: CardDef<Params> = {
-  id: "rs-bad-random", name: "不带种子的随机", description: "remotion 式的规矩的违规样例", source: "user",
+  id: "rs-bad-random", name: "Unseeded random", description: "Violation example of the remotion-style rules", source: "user",
   frameMode: "direct",
   defaults: { text: "" },
-  controls: [{ key: "text", label: "文字", type: "text" }],
+  controls: [{ key: "text", label: "Text", type: "text" }],
   Component: C,
 };

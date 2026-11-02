@@ -43,7 +43,7 @@ test("C10-L2-02 Ready on write: once putRange settles it notifies subscribers an
   assert.deepEqual(seen.map((e) => e.ranges), [[[0, 4]], [[0, 9]], [[0, 9], [20, 20]]]);
   off();
   await l2.putRange("R1", 21, 22);
-  assert.equal(seen.length, 3, "退订之后不再通知");
+  assert.equal(seen.length, 3, "No more notifications after unsubscribing");
   l2.close();
   const again = await openL2({ indexedDB: idb });
   assert.deepEqual(await again.getRanges("R1"), [[0, 9], [20, 22]]);

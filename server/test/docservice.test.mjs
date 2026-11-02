@@ -38,7 +38,7 @@ function wsClient(url) {
   });
   const opened = new Promise((resolve, reject) => {
     ws.addEventListener('open', resolve, { once: true });
-    ws.addEventListener('error', () => reject(new Error('连接失败')), { once: true });
+    ws.addEventListener('error', () => reject(new Error('Connection failed')), { once: true });
   });
   const closed = new Promise((resolve) => ws.addEventListener('close', (e) => resolve(e), { once: true }));
   return {
@@ -52,7 +52,7 @@ function wsClient(url) {
         waiters.push(w);
         setTimeout(() => {
           const k = waiters.indexOf(w);
-          if (k >= 0) { waiters.splice(k, 1); reject(new Error('等消息超时')); }
+          if (k >= 0) { waiters.splice(k, 1); reject(new Error('Timed out waiting for a message')); }
         }, ms);
       });
     },
@@ -76,7 +76,7 @@ async function rawClient(port, { path = '/' } = {}) {
         const r = pred();
         if (r !== undefined) { listeners.delete(check); clearTimeout(t); resolve(r); }
       };
-      const t = setTimeout(() => { listeners.delete(check); reject(new Error('等数据超时')); }, ms);
+      const t = setTimeout(() => { listeners.delete(check); reject(new Error('timed out waiting for data')); }, ms);
       listeners.add(check);
       check();
     });
@@ -127,7 +127,7 @@ async function rawClient(port, { path = '/' } = {}) {
   };
 }
 
-test('GET /healthz 报告服务状态', async (t) => {
+test('GET /healthz reports the service status', async (t) => {
   const { service, port } = await startService();
   t.after(() => service.close());
   const res = await fetch(`http://127.0.0.1:${port}/healthz`);
@@ -139,7 +139,7 @@ test('GET /healthz 报告服务状态', async (t) => {
   assert.equal((await fetch(`http://127.0.0.1:${port}/nope`)).status, 404);
 });
 
-test('node.hello 收到队列的 node.welcome，连接记为渲染节点', async (t) => {
+test('node.hello receives node.welcome from the queue, and the connection is recorded as a render node', async (t) => {
   const { service, url, queue } = await startService();
   t.after(() => service.close());
   const c = wsClient(url);
@@ -161,7 +161,7 @@ test('node.hello 收到队列的 node.welcome，连接记为渲染节点', async
   c.ws.close();
 });
 
-test('publisher.hello 记为发布方；同一连接可以既是发布方又是节点', async (t) => {
+test('publisher.hello is recorded as a publisher; one connection can be both a publisher and a node', async (t) => {
   const { service, url } = await startService();
   t.after(() => service.close());
   const c = wsClient(url);
@@ -180,7 +180,7 @@ test('publisher.hello 记为发布方；同一连接可以既是发布方又是�
   c.ws.close();
 });
 
-test('两条连接各自的身份分开记', async (t) => {
+test('the identities of two connections are recorded separately', async (t) => {
   const { service, url } = await startService();
   t.after(() => service.close());
   const page = wsClient(url);
@@ -195,7 +195,7 @@ test('两条连接各自的身份分开记', async (t) => {
   node.ws.close();
 });
 
-test('格式不对的 hello 由队列回 bad-message，不记角色', async (t) => {
+test('a malformed hello gets bad-message from the queue and no role is recorded', async (t) => {
   const { service, url } = await startService();
   t.after(() => service.close());
   const c = wsClient(url);
@@ -208,7 +208,7 @@ test('格式不对的 hello 由队列回 bad-message，不记角色', async (t) 
   c.ws.close();
 });
 
-test('不是 JSON、没有 type、未知 type 各回对应的 error', async (t) => {
+test('not JSON, no type, and an unknown type each reply with the corresponding error', async (t) => {
   const { service, url } = await startService();
   t.after(() => service.close());
   const c = wsClient(url);
@@ -225,7 +225,7 @@ test('不是 JSON、没有 type、未知 type 各回对应的 error', async (t) 
   c.ws.close();
 });
 
-test('没挂队列时队列消息回 queue-unavailable、不记角色；挂上后已有连接按 principal 接进队列', async (t) => {
+test('queue messages reply queue-unavailable and no role is recorded when no queue is mounted; once mounted, existing connections are attached to the queue by principal', async (t) => {
   const { service, url } = await startService({ mount: false, authenticate: () => ({ userId: 'u1', tenantId: 't1' }) });
   t.after(() => service.close());
   const c = wsClient(url);
@@ -245,7 +245,7 @@ test('没挂队列时队列消息回 queue-unavailable、不记角色；挂上�
   const unmount = service.mountRenderQueue(fake);
   const connId = service.describe().conns[0].connId;
   assert.deepEqual(calls[0], ['connect', connId, { userId: 'u1', tenantId: 't1' }]);
-  assert.throws(() => service.mountRenderQueue(fake), /已经挂上/);
+  assert.throws(() => service.mountRenderQueue(fake), /already mounted/);
 
   c.send({ type: 'node.hello', reqId: 'b', nodeId: 'n1', profile: 'pc' });
   assert.equal((await c.next(byReq('b'))).type, 'fake.ack');
@@ -257,13 +257,13 @@ test('没挂队列时队列消息回 queue-unavailable、不记角色；挂上�
   c.ws.close();
 });
 
-test('mountRenderQueue 拒绝缺方法的接口', async (t) => {
+test('mountRenderQueue rejects an interface with missing methods', async (t) => {
   const { service } = await startService({ mount: false });
   t.after(() => service.close());
   assert.throws(() => service.mountRenderQueue({ connect() {}, handle() {} }), TypeError);
 });
 
-test('连接断开时通知队列 disconnect', async (t) => {
+test('the queue is notified with disconnect when a connection drops', async (t) => {
   const { service, url } = await startService({ mount: false });
   t.after(() => service.close());
   const events = [];
@@ -283,21 +283,21 @@ test('连接断开时通知队列 disconnect', async (t) => {
   assert.equal(service.describe().connections, 0);
 });
 
-test('authenticate 返回 null 时握手回 401', async (t) => {
+test('the handshake replies 401 when authenticate returns null', async (t) => {
   const { service, port } = await startService({ authenticate: () => null });
   t.after(() => service.close());
   const r = await rawClient(port);
   assert.equal(r.status, 401);
 });
 
-test('路径不对回 404', async (t) => {
+test('a wrong path replies 404', async (t) => {
   const { service, port } = await startService();
   t.after(() => service.close());
   const r = await rawClient(port, { path: '/other' });
   assert.equal(r.status, 404);
 });
 
-test('帧层：分片文本消息拼起来再处理，ping 回 pong', async (t) => {
+test('frame layer: fragmented text messages are reassembled before handling, ping gets pong', async (t) => {
   const { service, port } = await startService();
   t.after(() => service.close());
   const r = await rawClient(port);
@@ -318,7 +318,7 @@ test('帧层：分片文本消息拼起来再处理，ping 回 pong', async (t) 
   r.sock.destroy();
 });
 
-test('帧层：不带掩码的帧以 1002 关闭', async (t) => {
+test('frame layer: an unmasked frame closes with 1002', async (t) => {
   const { service, port } = await startService();
   t.after(() => service.close());
   const r = await rawClient(port);
@@ -329,7 +329,7 @@ test('帧层：不带掩码的帧以 1002 关闭', async (t) => {
   await r.closed;
 });
 
-test('帧层：超过上限的消息以 1009 关闭；二进制帧以 1003 关闭', async (t) => {
+test('frame layer: a message over the limit closes with 1009; a binary frame closes with 1003', async (t) => {
   const { service, port } = await startService({ maxPayload: 1000 });
   t.after(() => service.close());
   const big = await rawClient(port);
@@ -344,7 +344,7 @@ test('帧层：超过上限的消息以 1009 关闭；二进制帧以 1003 关�
   await bin.closed;
 });
 
-test('帧层：不合法的 UTF-8 以 1007 关闭', async (t) => {
+test('frame layer: invalid UTF-8 closes with 1007', async (t) => {
   const { service, port } = await startService();
   t.after(() => service.close());
   const r = await rawClient(port);
@@ -354,7 +354,7 @@ test('帧层：不合法的 UTF-8 以 1007 关闭', async (t) => {
   await r.closed;
 });
 
-test('心跳：不回 pong 的连接被断开，并通知队列', async (t) => {
+test('heartbeat: a connection that does not reply pong is dropped and the queue is notified', async (t) => {
   const { service, port } = await startService({ mount: false, heartbeatMs: 40 });
   t.after(() => service.close());
   const gone = [];
@@ -368,7 +368,7 @@ test('心跳：不回 pong 的连接被断开，并通知队列', async (t) => {
   assert.equal(service.describe().connections, 0);
 });
 
-test('客户端发起关闭：服务端回关闭帧、连接记录清掉', async (t) => {
+test('client-initiated close: the server replies with a close frame and the connection record is cleared', async (t) => {
   const { service, url } = await startService();
   t.after(() => service.close());
   const c = wsClient(url);

@@ -31,7 +31,7 @@ test('directory shape: shared is one level, local is two (entry key / shared key
   assert.throws(() => snapshotDir('R', { tier: 'none', key: 'K' }), /Unknown snapshot tier/);
 });
 
-test('tier follows the contract: all cards return none (2026-10-13 契约 1.1 每张卡的 HTML 快照作废)', () => {
+test('tier follows the contract: all cards return none (2026-10-13 contract 1.1: the HTML snapshot of every card is void)', () => {
   const caps = (compositing, frameMode = 'stateful') => ({ compositing, frameMode });
   assert.equal(snapshotTier(caps('independent')), 'none');
   assert.equal(snapshotTier(caps('sourceDependent')), 'none');
@@ -50,7 +50,7 @@ test('A3c size cap: DOM 300 KB, canvas 1 MB; over-limit frames are diagnosed, no
   assert.equal(snapshotLimit({ compositing: 'independent' }), DOM_SNAPSHOT_LIMIT);
   // canvas 卡的字节大半是 toDataURL 的位图,差异样式内联对它无效 —— 按位图那一档算。
   assert.equal(snapshotLimit({ canvasHeavy: true }), CANVAS_SNAPSHOT_LIMIT);
-  assert.equal(snapshotBytes('数'), 3, 'UTF-8 口径,和落盘的字节完全一致');
+  assert.equal(snapshotBytes('数'), 3, 'UTF-8 basis, exactly the same as the bytes written to disk');
   assert.equal(overSnapshotLimit('x'.repeat(10), {}), null);
   assert.deepEqual(overSnapshotLimit('x'.repeat(DOM_SNAPSHOT_LIMIT + 1), {}), { bytes: DOM_SNAPSHOT_LIMIT + 1, limit: DOM_SNAPSHOT_LIMIT });
   // 同一份超标 DOM 快照放在 canvas 卡上没超
@@ -66,7 +66,7 @@ test('A3c size cap: DOM 300 KB, canvas 1 MB; over-limit frames are diagnosed, no
   assert.equal(store.oversize[0].clipId, 'clip-big');
   assert.equal(store.oversize[0].bytes, DOM_SNAPSHOT_LIMIT + 1);
   assert.equal(store.noteSnapshotSize({ clipId: 'clip-ok', key: 'OK', localFrame: 0, html: 'small', capabilities: {} }), true);
-  assert.equal(store.oversize.length, 1, '合格的帧不记诊断');
+  assert.equal(store.oversize.length, 1, 'Frames within the limit record no diagnostics');
 }));
 
 test('mergeRanges sorts, merges overlaps and closes one-frame gaps', () => {
@@ -85,7 +85,7 @@ test('mergeRanges sorts, merges overlaps and closes one-frame gaps', () => {
 
 test('put/get round-trips raw UTF-8 HTML in the shared tier and misses return null', async () => withRoot(async root => {
   const store = new SnapshotStore(root);
-  const html = '<div data-pc-clip="a">价格 &amp; <span style="width:800px">42</span></div>';
+  const html = '<div data-pc-clip="a">Price &amp; <span style="width:800px">42</span></div>';
   const file = await store.writeSnapshot({ tier: 'shared', key: 'KEY1', localFrame: 0, html });
   assert.equal(file, path.join(root, SHARED_DIR, 'KEY1', '0.html'));
   // 原始 UTF-8,不 base64、不 deflate:盘上这一个文件就是快照本身。
@@ -138,7 +138,7 @@ test('index.json is per key dir, updated per batch, and merges across batches', 
   assert.equal(await store.readSnapshot({ ...target, localFrame: 13 }), 'f13');
 }));
 
-test('R6-14:超限帧记进 index.json 的 oversize,跨进程留得住', async () => withRoot(async root => {
+test('R6-14: over-limit frames are recorded in oversize in index.json and persist across processes', async () => withRoot(async root => {
   const store = new SnapshotStore(root);
   const target = { tier: 'shared', key: 'BIGK' };
   // 一批 4 帧:两帧合格、两帧超限
@@ -238,7 +238,7 @@ test('record routes control HTML into the snapshot store, shared and local side 
 
 // ── T1a 审查 #9:写快照的唯一入口 ─────────────────────────────────────────
 
-test('commitSnapshots: 写帧、判体积、并 index 一步做完,超限帧落盘但进 oversize', () => withRoot(async root => {
+test('commitSnapshots: writing frames, checking size and merging the index are done in one step, and over-limit frames are written to disk but go into oversize', () => withRoot(async root => {
   const store = new SnapshotStore(root);
   const target = { tier: 'shared', key: 'COMMIT' };
   const huge = 'x'.repeat(DOM_SNAPSHOT_LIMIT + 1);
@@ -257,7 +257,7 @@ test('commitSnapshots: 写帧、判体积、并 index 一步做完,超限帧落�
   assert.deepEqual({ count: empty.count, written: empty.written }, { count: 2, written: [] });
 }));
 
-test('batch: 攒满 size 帧交一次;帧要么还在内存里,要么已经落盘且进了 index', () => withRoot(async root => {
+test('batch: hands over once size frames have accumulated; each frame is either still in memory or already on disk and in the index', () => withRoot(async root => {
   const store = new SnapshotStore(root);
   const target = { tier: 'local', entryKey: 'E', key: 'B' };
   const batch = store.batch({ ...target, clipId: 'c', capabilities: {} }, { size: 2 });
@@ -278,7 +278,7 @@ test('batch: 攒满 size 帧交一次;帧要么还在内存里,要么已经落�
   assert.equal(await store.batch({ ...target, key: 'NONE' }).close(), null);
 }));
 
-test('生产代码不直接调 writeSnapshot / updateIndex(只走 commitSnapshots / batch)', async () => {
+test('Production code does not call writeSnapshot / updateIndex directly (only via commitSnapshots / batch)', async () => {
   const serverDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const offenders = [];
   const walk = async dir => {

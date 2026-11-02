@@ -65,7 +65,7 @@ async function main() {
     return;
   }
   const url = opt('--url');
-  if (!url || !/^http:\/\//.test(url)) fail('fake-collect: 只认 http:// 地址');
+  if (!url || !/^http:\/\//.test(url)) fail('fake-collect: only http:// URLs are accepted');
   if (sub === 'probe') {
     let res;
     try { res = await viaProxy(url); } catch (err) { fail(`Unable to download webpage: ${err.message}`); }
@@ -76,7 +76,7 @@ async function main() {
   }
   if (sub === 'download') {
     const outDir = opt('--out-dir');
-    if (!outDir) fail('fake-collect: 要 --out-dir');
+    if (!outDir) fail('fake-collect: --out-dir is required');
     emit({ event: 'start', url, out_dir: outDir, quality: Number(opt('--quality') ?? 1080) });
     const filename = 'Fake Clip [FAKE0001].mp4';
     const file = path.join(outDir, filename);
@@ -108,7 +108,7 @@ async function main() {
     emit({ event: 'done', items: [], site: 'generic', url, warnings: [] });
     return;
   }
-  if (sub === 'install') fail('fake-collect: 云端不该调到 install', 2);
+  if (sub === 'install') fail('fake-collect: the cloud should not call install', 2);
   fail(`fake-collect: unknown subcommand ${sub}`, 2);
 }
 

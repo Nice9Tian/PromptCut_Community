@@ -145,7 +145,7 @@ async function startAttached({ modules, ...options } = {}) {
   // 没挂上（例如 `server` 选项被忽略、自建了服务器）就立刻失败，不让后面的握手一条条等到超时
   if (host.server.listenerCount('upgrade') !== 2) {
     await cleanup();
-    assert.fail(`挂载模式要在宿主上加一个 upgrade 监听，现在宿主有 ${host.server.listenerCount('upgrade')} 个`);
+    assert.fail(`Attached mode must add one upgrade listener on the host, but the host now has ${host.server.listenerCount('upgrade')}`);
   }
   return { host, service, port: host.port, connect, cleanup, logs, health: async () => service.health() };
 }
@@ -182,16 +182,16 @@ async function ask(c, message) {
 
 /** 带超时地等一个 Promise（close() 不能挂住） */
 function within(promise, ms, what) {
-  return Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error(`${what} 超过 ${ms} ms`)), ms))]);
+  return Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error(`${what} exceeded ${ms} ms`)), ms))]);
 }
 
 // ------------------------------------------------------------------ M1
 
-test('M1 挂到现成的 http 服务器上：/docservice 的 WebSocket 能用；/other 的升级仍由原处理器处理，文档服务不碰它', async (t) => {
+test('M1 attached to an existing http server: the /docservice WebSocket works; upgrades for /other are still handled by the original handler, and the document service does not touch it', async (t) => {
   const env = await startAttached();
   t.after(env.cleanup);
-  assert.equal(env.host.server.listenerCount('upgrade'), 2, '文档服务只加一个 upgrade 监听');
-  assert.equal(env.host.server.listenerCount('request'), 1, '文档服务不答 HTTP 请求，不加 request 监听');
+  assert.equal(env.host.server.listenerCount('upgrade'), 2, 'The document service adds only one upgrade listener');
+  assert.equal(env.host.server.listenerCount('request'), 1, 'The document service does not answer HTTP requests and adds no request listener');
 
   // 文档服务的 WebSocket
   const a = await env.connect('alice');
@@ -205,18 +205,18 @@ test('M1 挂到现成的 http 服务器上：/docservice 的 WebSocket 能用；
   // /other：由原处理器处理，文档服务既不回 404 也不关掉它
   const hs = await rawHandshake(env.port, { path: '/other' });
   hs.sock.destroy();
-  assert.equal(hs.status, 101, `/other 的升级应由原处理器回 101：${hs.rawHead}`);
+  assert.equal(hs.status, 101, `The upgrade for /other should be answered with 101 by the original handler: ${hs.rawHead}`);
   assert.equal(hs.headers['x-handled-by'], 'other');
   assert.deepEqual(env.host.other, ['/other']);
   const hs2 = await rawHandshake(env.port, { path: '/other?token=x' });
   hs2.sock.destroy();
-  assert.equal(hs2.headers['x-handled-by'], 'other', '带查询串的 /other 也不碰');
+  assert.equal(hs2.headers['x-handled-by'], 'other', '/other with a query string is also left alone');
 
   // 谁都不认领的路径：文档服务同样不碰（不回 404、不关）
   const silent = await silentUpgrade(env.port, '/nobody');
-  assert.deepEqual(silent, { data: '', closed: false }, '别的路径的升级，文档服务一律不碰');
+  assert.deepEqual(silent, { data: '', closed: false }, 'Upgrades on other paths are never touched by the document service');
   const prefix = await silentUpgrade(env.port, '/docservice-other');
-  assert.deepEqual(prefix, { data: '', closed: false }, '只认 pathname 完全相等的路径');
+  assert.deepEqual(prefix, { data: '', closed: false }, 'Only paths whose pathname is exactly equal are recognized');
 
   // HTTP：宿主照常答，文档服务不答（包括 /healthz）
   assert.deepEqual(await httpGet(env.port, '/healthz'), { status: 200, host: '1', text: 'host:/healthz' });
@@ -228,7 +228,7 @@ test('M1 挂到现成的 http 服务器上：/docservice 的 WebSocket 能用；
 
 // ------------------------------------------------------------------ M2
 
-test('M2 close() 之后宿主服务器仍在监听，别的路径照常；文档服务的连接都断开；upgrade 监听已移除', async (t) => {
+test('M2 after close() the host server is still listening, other paths work as usual; all document service connections are dropped; the upgrade listener is removed', async (t) => {
   const env = await startAttached();
   t.after(env.cleanup);
   const a = await env.connect('alice');
@@ -238,29 +238,29 @@ test('M2 close() 之后宿主服务器仍在监听，别的路径照常；文档
   const requestListeners = env.host.server.listenerCount('request');
 
   await within(Promise.resolve(env.service.close()), 3000, 'close()');
-  const [ca, cb] = await within(Promise.all([a.closed, b.closed]), 3000, '等文档服务的连接断开');
-  assert.ok(ca && cb, '两条连接都收到关闭');
+  const [ca, cb] = await within(Promise.all([a.closed, b.closed]), 3000, 'Waiting for the document service connections to drop');
+  assert.ok(ca && cb, 'Both connections received the close');
 
-  assert.equal(env.host.server.listening, true, '宿主服务器仍在监听');
-  assert.equal(env.host.server.listenerCount('upgrade'), 1, '自己的 upgrade 监听已移除');
-  assert.ok(env.host.server.listeners('upgrade').includes(env.host.hmr), '原处理器还在');
-  assert.equal(env.host.server.listenerCount('request'), requestListeners, 'request 监听不变');
+  assert.equal(env.host.server.listening, true, 'The host server is still listening');
+  assert.equal(env.host.server.listenerCount('upgrade'), 1, 'Its own upgrade listener has been removed');
+  assert.ok(env.host.server.listeners('upgrade').includes(env.host.hmr), 'The original handler is still there');
+  assert.equal(env.host.server.listenerCount('request'), requestListeners, 'The request listeners are unchanged');
   assert.deepEqual(await httpGet(env.port, '/x'), { status: 200, host: '1', text: 'host:/x' });
   const hs = await rawHandshake(env.port, { path: '/other' });
   hs.sock.destroy();
-  assert.equal(hs.headers['x-handled-by'], 'other', '/other 照常');
-  assert.deepEqual(await silentUpgrade(env.port, PATH, 150), { data: '', closed: false }, 'close 之后文档服务不再处理自己的路径');
+  assert.equal(hs.headers['x-handled-by'], 'other', '/other works as usual');
+  assert.deepEqual(await silentUpgrade(env.port, PATH, 150), { data: '', closed: false }, 'After close the document service no longer handles its own path');
 });
 
 // ------------------------------------------------------------------ M3
 
-test('M3 挂载模式下 listen() 抛错；health() 与独立模式 /healthz 的字段相同', async (t) => {
+test('M3 in attached mode listen() throws; health() has the same fields as /healthz in standalone mode', async (t) => {
   const env = await startAttached();
   t.after(env.cleanup);
   // 契约第 10 节第 1 条：同步抛错
-  assert.throws(() => env.service.listen(0, '127.0.0.1'), '挂载模式下 listen() 同步抛错');
-  assert.equal(env.host.server.listening, true, '宿主不受影响');
-  assert.equal(typeof env.service.health, 'function', '挂载模式暴露 health()');
+  assert.throws(() => env.service.listen(0, '127.0.0.1'), 'listen() throws synchronously in attached mode');
+  assert.equal(env.host.server.listening, true, 'The host is unaffected');
+  assert.equal(typeof env.service.health, 'function', 'Attached mode exposes health()');
 
   const solo = await startStandaloneSame();
   t.after(solo.cleanup);
@@ -269,16 +269,16 @@ test('M3 挂载模式下 listen() 抛错；health() 与独立模式 /healthz 的
 
   const h1 = await env.health();
   const h2 = await solo.health();
-  assert.deepEqual(Object.keys(h1).sort(), Object.keys(h2).sort(), '字段相同');
+  assert.deepEqual(Object.keys(h1).sort(), Object.keys(h2).sort(), 'Same fields');
   assert.equal(h1.ok, true);
   assert.equal(h1.service, h2.service);
   assert.equal(h1.protocol, h2.protocol);
-  assert.deepEqual(h1.modules, h2.modules, '模块列表相同');
+  assert.deepEqual(h1.modules, h2.modules, 'Same module list');
   assert.ok(h1.modules.includes('project') && h1.modules.includes('text'));
   assert.equal(h1.connections, 1);
   assert.equal(h2.connections, 1);
   assert.equal(typeof h1.uptimeMs, 'number');
-  assert.deepEqual(JSON.parse(JSON.stringify(h1)), h1, 'health() 可以原样序列化给宿主的路由');
+  assert.deepEqual(JSON.parse(JSON.stringify(h1)), h1, 'health() can be serialized as is for the host\'s route');
 });
 
 // ------------------------------------------------------------------ M4
@@ -295,7 +295,7 @@ async function scenario(env) {
   const okHs = await rawHandshake(env.port, { path: `${PATH}?user=zed`, protocols: ['promptcut.v1'] });
   okHs.sock.destroy();
   out.accepted = [okHs.status, okHs.headers['sec-websocket-protocol']];
-  assert.equal(out.denied, 401, 'authenticate 返回 null → 401');
+  assert.equal(out.denied, 401, 'authenticate returns null → 401');
   assert.deepEqual(out.accepted, [101, 'promptcut.v1']);
 
   const a = await env.connect('alice');
@@ -327,12 +327,12 @@ async function scenario(env) {
   assert.equal((await ask(a, { type: 'text.sub', room: 'r' })).ok, true);
   assert.equal((await ask(b, { type: 'text.sub', room: 'r' })).ok, true);
   out.resub = (await ask(b, { type: 'text.sub', room: 'r' })).ok;
-  assert.equal(out.resub, false, '重复订阅回 false');
+  assert.equal(out.resub, false, 'A repeated subscription returns false');
   const pub = await ask(c, { type: 'text.pub', room: 'r', v: 7 });
   out.published = pub.n;
-  assert.equal(pub.n, 2, 'publish 返回投递数');
+  assert.equal(pub.n, 2, 'publish returns the delivery count');
   assert.deepEqual([(await a.next(byType('text.msg'))).v, (await b.next(byType('text.msg'))).v], [7, 7]);
-  assert.deepEqual(await c.quiet(byType('text.msg'), 100), [], '没订阅的收不到');
+  assert.deepEqual(await c.quiet(byType('text.msg'), 100), [], 'Those not subscribed receive nothing');
 
   // 项目频道：只到 open 了这个项目的连接，actor 来自 principal
   await ask(b, { type: 'project.open', projectId: 'm4-0' });
@@ -342,18 +342,18 @@ async function scenario(env) {
   const revB = await b.next(byType('project.rev'));
   out.rev = [revA.projectRev, revA.actor, revB.projectRev];
   assert.deepEqual(out.rev, [1, { userId: 'carol', session: 's' }, 1]);
-  assert.deepEqual(await c.quiet(byType('project.rev'), 100), [], '发起方没 open 就收不到');
+  assert.deepEqual(await c.quiet(byType('project.rev'), 100), [], 'The initiator does not receive it without having opened it');
 
   // 断开后订阅清空
   a.close();
   await a.closed;
   await sleep(50);
   out.afterClose = (await ask(c, { type: 'text.pub', room: 'r', v: 8 })).n;
-  assert.equal(out.afterClose, 1, '断开的连接不再计入投递');
+  assert.equal(out.afterClose, 1, 'Dropped connections no longer count toward delivery');
   return out;
 }
 
-test('M4 挂载模式与独立模式的模块、频道、鉴权行为相同：同一组 R1、C1 式的断言各跑一遍', async (t) => {
+test('M4 attached mode and standalone mode behave the same for modules, channels, and authentication: the same set of R1 and C1 style assertions runs once in each', async (t) => {
   const attached = await startAttached();
   t.after(attached.cleanup);
   const solo = await startStandaloneSame();
@@ -361,6 +361,6 @@ test('M4 挂载模式与独立模式的模块、频道、鉴权行为相同：�
 
   const r2 = await scenario(solo);
   const r1 = await scenario(attached);
-  assert.deepEqual(r1, r2, '两种模式的记录逐项相同');
-  assert.equal(r1.queue, 'queue-unavailable', '没挂队列时占位模块照旧回 queue-unavailable');
+  assert.deepEqual(r1, r2, 'The records of the two modes are identical item by item');
+  assert.equal(r1.queue, 'queue-unavailable', 'Without a queue attached, the placeholder module still replies queue-unavailable');
 });

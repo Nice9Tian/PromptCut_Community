@@ -96,7 +96,7 @@ async function flakyProxy(target) {
 
 const ff = (args) => {
   const r = spawnSync('ffmpeg', ['-y', '-hide_banner', '-v', 'error', ...args], { windowsHide: true, encoding: 'utf8' });
-  if (r.status !== 0) throw new Error(`ffmpeg 失败:${r.stderr}`);
+  if (r.status !== 0) throw new Error(`ffmpeg failed: ${r.stderr}`);
 };
 const probe = (file) => {
   const r = spawnSync('ffprobe', ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', file], { windowsHide: true, encoding: 'utf8' });
@@ -138,16 +138,16 @@ const rootA = path.join(OUT, 'importer');
 fs.mkdirSync(media.mediaDir(rootA), { recursive: true });
 const originA = await listen(serviceHandler(rootA));
 
-test('T1-1 导入 1080p 晚置 moov 的 MP4:素材原尺寸按 faststart 重封装(编码不变、按输出哈希入库),素材小尺寸 800×450 H.264 faststart;连本地素材服务时队列空操作', { skip: !ffmpegOk && '没有 ffmpeg' }, async () => {
+test('T1-1 import a 1080p MP4 with a late moov: the asset original size is remuxed as faststart (codec unchanged, stored by output hash), the asset small size is 800×450 H.264 faststart; when connected to the local asset service the queue is a no-op', { skip: !ffmpegOk && 'No ffmpeg' }, async () => {
   const srcHash = sha256File(LATE_1080);
-  assert.equal(await tiers.faststartState(LATE_1080), 'needs', '测试素材本身应当缺 faststart');
+  assert.equal(await tiers.faststartState(LATE_1080), 'needs', 'The test asset itself should lack faststart');
   const body = await importFile(originA, LATE_1080);
   assert.equal(body.remux.state, 'remuxed');
   assert.equal(body.remux.from, srcHash);
-  assert.notEqual(body.hash, srcHash, '重封装的结果是新的素材原尺寸,哈希不同');
+  assert.notEqual(body.hash, srcHash, 'The remux result is a new asset original size, with a different hash');
   assert.equal(body.tiers.original, body.hash);
   assert.ok(['pending', 'ready'].includes(body.small));
-  for (const key of Object.keys(body)) assert.ok(RESPONSE_KEYS.has(key), `回包多了字段 ${key}`);
+  for (const key of Object.keys(body)) assert.ok(RESPONSE_KEYS.has(key), `The response has an extra field ${key}`);
 
   const service = await media.mediaTierService(rootA);
   await service.manager.idle();
@@ -190,7 +190,7 @@ test('T1-1 导入 1080p 晚置 moov 的 MP4:素材原尺寸按 faststart 重封�
   assert.equal(again.tiers.small, rec.small);
 });
 
-test('T1-2 ProRes MOV:素材原尺寸仍是 ProRes(只做同容器重封装),素材小尺寸是 H.264', { skip: !ffmpegOk && '没有 ffmpeg' }, async () => {
+test('T1-2 ProRes MOV: the asset original size is still ProRes (only a same-container remux is done), and the asset small size is H.264', { skip: !ffmpegOk && 'No ffmpeg' }, async () => {
   const body = await importFile(originA, PRORES);
   assert.equal(body.ext, 'mov');
   assert.ok(['remuxed', 'faststart'].includes(body.remux.state), JSON.stringify(body.remux));
@@ -203,18 +203,18 @@ test('T1-2 ProRes MOV:素材原尺寸仍是 ProRes(只做同容器重封装),素
   assert.equal(await tiers.faststartState(orig), 'faststart');
   const v = probe(path.join(media.mediaDir(rootA), `${rec.small}.mp4`)).streams.find((s) => s.codec_type === 'video');
   assert.equal(v.codec_name, 'h264');
-  assert.deepEqual([v.width, v.height], [640, 360], '不放大');
+  assert.deepEqual([v.width, v.height], [640, 360], 'No upscaling');
   // 没有音轨也能生成(-map 0:a:0?)
   assert.equal(probe(path.join(media.mediaDir(rootA), `${rec.small}.mp4`)).streams.some((s) => s.codec_type === 'audio'), false);
 });
 
-test('T1-3 已经 faststart 的 MP4 不重封装,哈希就是源文件的 sha256', { skip: !ffmpegOk && '没有 ffmpeg' }, async () => {
+test('T1-3 an MP4 that is already faststart is not remuxed, and its hash is the sha256 of the source file', { skip: !ffmpegOk && 'No ffmpeg' }, async () => {
   const body = await importFile(originA, FASTSTART);
   assert.equal(body.remux.state, 'faststart');
   assert.equal(body.hash, sha256File(FASTSTART));
 });
 
-test('T1-4 只对视频做:图片、音频导入不带 tiers,也不排素材小尺寸', { skip: !ffmpegOk && '没有 ffmpeg' }, async () => {
+test('T1-4 applies to video only: importing images and audio carries no tiers and queues no asset small size', { skip: !ffmpegOk && 'No ffmpeg' }, async () => {
   const png = path.join(fixtures, 'still.png');
   const m4a = path.join(fixtures, 'tone.m4a');
   ff(['-f', 'lavfi', '-i', 'testsrc2=size=320x240', '-frames:v', '1', png]);
@@ -232,7 +232,7 @@ test('T1-4 只对视频做:图片、音频导入不带 tiers,也不排素材小�
   assert.equal('tiers' in plain, false);
 });
 
-test('T1-5 HDR(BT.2020 + PQ 标签完整)走 zscale + tonemap 分支,素材小尺寸标 BT.709', { skip: !ffmpegOk && '没有 ffmpeg' }, async () => {
+test('T1-5 HDR (BT.2020 + PQ tags complete) takes the zscale + tonemap branch, and the asset small size is tagged BT.709', { skip: !ffmpegOk && 'No ffmpeg' }, async () => {
   const info = await tiers.probeMedia('ffprobe', HDR);
   assert.equal(tiers.isHdrPq(info.video), true);
   assert.match(tiers.smallVideoFilter({ hdr: true, video: info.video }), /zscale=tin=smpte2084:pin=bt2020.*tonemap=tonemap=hable/);
@@ -247,7 +247,7 @@ test('T1-5 HDR(BT.2020 + PQ 标签完整)走 zscale + tonemap 分支,素材小�
   assert.equal(tiers.isHdrPq((await tiers.probeMedia('ffprobe', FASTSTART)).video), false);
 });
 
-test('T1-6 素材小尺寸命令:VFR 保留,只丢间隔不足 1/60 s 的帧(120 fps → 60 fps,30 fps 一帧不丢)', { skip: !ffmpegOk && '没有 ffmpeg' }, async () => {
+test('T1-6 asset small size command: VFR is preserved and only frames with an interval shorter than 1/60 s are dropped (120 fps → 60 fps, 30 fps loses no frames)', { skip: !ffmpegOk && 'No ffmpeg' }, async () => {
   const hi = path.join(fixtures, 'hi120.mp4');
   ff(['-f', 'lavfi', '-i', 'testsrc2=size=320x240:rate=120', '-t', '2', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', hi]);
   const out = path.join(OUT, 'hi-small.mp4');
@@ -260,7 +260,7 @@ test('T1-6 素材小尺寸命令:VFR 保留,只丢间隔不足 1/60 s 的帧(120
   assert.equal(Number(probe(out30).streams[0].nb_frames), 30);
 });
 
-test('T1-7 ISO BMFF box 扫描:64 位长度、size=0、分片 MP4、坏长度', async () => {
+test('T1-7 ISO BMFF box scanning: 64-bit length, size=0, fragmented MP4, bad length', async () => {
   const box = (type, payload = 0, { large = false, zero = false } = {}) => {
     if (large) { const b = Buffer.alloc(16 + payload); b.writeUInt32BE(1, 0); b.write(type, 4, 'latin1'); b.writeBigUInt64BE(BigInt(16 + payload), 8); return b; }
     const b = Buffer.alloc(8 + payload); b.writeUInt32BE(zero ? 0 : 8 + payload, 0); b.write(type, 4, 'latin1'); return b;
@@ -275,7 +275,7 @@ test('T1-7 ISO BMFF box 扫描:64 位长度、size=0、分片 MP4、坏长度', 
   assert.equal(await tiers.faststartState(write('f.mp4', [box('ftyp', 8), box('mdat', 10)])), 'unknown');
 });
 
-test('T1-8 重封装失败保留源文件当素材原尺寸,不转码', { skip: !ffmpegOk && '没有 ffmpeg' }, async () => {
+test('T1-8 when the remux fails, the source file is kept as the asset original size, with no transcoding', { skip: !ffmpegOk && 'No ffmpeg' }, async () => {
   const root = path.join(OUT, 'remux-fail');
   const dir = media.mediaDir(root);
   fs.mkdirSync(dir, { recursive: true });
@@ -288,9 +288,9 @@ test('T1-8 重封装失败保留源文件当素材原尺寸,不转码', { skip: 
   const out = await manager.prepareImport(stored);
   assert.equal(out.remux.state, 'failed');
   assert.equal(out.stored.hash, stored.hash);
-  assert.ok(fs.existsSync(stored.path), '源文件还在');
+  assert.ok(fs.existsSync(stored.path), 'The source file is still there');
   assert.equal(sha256File(stored.path), stored.hash);
-  assert.equal(fs.readdirSync(dir).some((n) => n.startsWith('.remux-')), false, '临时文件已删');
+  assert.equal(fs.readdirSync(dir).some((n) => n.startsWith('.remux-')), false, 'The temporary file has been deleted');
   await manager.idle();
   assert.equal(manager.status([stored.hash])[stored.hash].state, 'failed');
 });
@@ -299,7 +299,7 @@ test('T1-8 重封装失败保留源文件当素材原尺寸,不转码', { skip: 
  * T2:断网导入再联网 —— 只补缺片;两档的 chunks 分别 complete;回包、项目记录没有同步字段
  * ======================================================================== */
 
-test('T2-1 经插件接线:连远程素材服务,传到素材原尺寸第 2 片时断网,联网后只补缺的分片;两档 chunks 分别 complete;带票据', { skip: !ffmpegOk && '没有 ffmpeg', timeout: 60_000 }, async () => {
+test('T2-1 wired through the plugin: connected to the remote asset service, the network drops at chunk 2 of the asset original size, and after reconnecting only the missing chunks are filled in; the chunks of both tiers complete separately; with a ticket', { skip: !ffmpegOk && 'No ffmpeg', timeout: 60_000 }, async () => {
   const rootR = path.join(OUT, 'remote');
   fs.mkdirSync(media.mediaDir(rootR), { recursive: true });
   const remote = await listen(serviceHandler(rootR));
@@ -314,7 +314,7 @@ test('T2-1 经插件接线:连远程素材服务,传到素材原尺寸第 2 片�
   assert.equal(set.status, 200);
 
   const srcBytes = fs.statSync(LATE_1080).size;
-  assert.ok(srcBytes > 2 * 8 * 1024 * 1024, `测试素材要超过 2 片,实际 ${srcBytes}`);
+  assert.ok(srcBytes > 2 * 8 * 1024 * 1024, `The test asset must exceed 2 chunks, actual ${srcBytes}`);
   // 素材原尺寸第 1 号分片(第 2 片)一到就断网
   let original = null;
   proxy.state.dropWhen = (req) => original && req.method === 'PUT' && req.url === `/api/asset/media/${original}/1`;
@@ -327,21 +327,21 @@ test('T2-1 经插件接线:连远程素材服务,传到素材原尺寸第 2 片�
   // 等到断网之后客户端的几次重试都失败、队列进了退避
   const t0 = Date.now();
   while (!(service.queue.stats().failures >= 1) && Date.now() - t0 < 20_000) await new Promise((r) => setTimeout(r, 50));
-  assert.ok(service.queue.stats().failures >= 1, '断网应当让这一素材失败一次');
+  assert.ok(service.queue.stats().failures >= 1, 'The network drop should make this asset fail once');
   const before = await chunksOf(`${remote}/api/asset`, original);
-  assert.deepEqual(before.received, [0], '断网前只收到第 0 片');
+  assert.deepEqual(before.received, [0], 'Only chunk 0 was received before the network drop');
   assert.equal(before.complete, false);
-  assert.equal((await chunksOf(`${remote}/api/asset`, small)).complete, true, '素材小尺寸先传,断网前已完整');
+  assert.equal((await chunksOf(`${remote}/api/asset`, small)).complete, true, 'The asset small size is uploaded first and was complete before the network drop');
 
   // 联网,等队列清空(队列退避 5 s 后重试)
   proxy.state.offline = false;
   proxy.state.dropWhen = null;
   let guard;
-  await Promise.race([service.queue.drain(), new Promise((_, rej) => { guard = setTimeout(() => rej(new Error('队列 30 s 没清空')), 30_000); })])
+  await Promise.race([service.queue.drain(), new Promise((_, rej) => { guard = setTimeout(() => rej(new Error('The queue did not drain within 30 s')), 30_000); })])
     .finally(() => clearTimeout(guard));
 
   const puts = proxy.state.log.filter((e) => e.method === 'PUT' && !e.dropped).map((e) => e.path.replace('/api/asset/media/', '').replace(small, 'S').replace(original, 'O'));
-  assert.deepEqual(puts, ['S/0', 'O/0', 'O/1', 'O/2'], `实际 PUT 顺序 ${JSON.stringify(puts)}`);
+  assert.deepEqual(puts, ['S/0', 'O/0', 'O/1', 'O/2'], `Actual PUT order ${JSON.stringify(puts)}`);
   const dropped = proxy.state.log.filter((e) => e.dropped).length;
   assert.ok(dropped >= 1);
   // 两档分别 complete
@@ -355,10 +355,10 @@ test('T2-1 经插件接线:连远程素材服务,传到素材原尺寸第 2 片�
   assert.equal(crypto.createHash('sha256').update(got).digest('hex'), original);
   // 每个请求都带票据(只进 Authorization 头,不进地址)
   const sent = proxy.state.log.filter((e) => !e.dropped);
-  assert.ok(sent.length > 0 && sent.every((e) => e.auth === 'Bearer test-ticket-1'), '每个请求都带 Bearer 票据');
+  assert.ok(sent.length > 0 && sent.every((e) => e.auth === 'Bearer test-ticket-1'), 'Every request carries a Bearer ticket');
   assert.ok(sent.every((e) => !/[?&]t=/.test(e.path)));
   // 回包与本机登记都没有同步状态
-  for (const key of Object.keys(body)) assert.ok(RESPONSE_KEYS.has(key) && !SYNC_WORDS.test(key), `回包字段 ${key}`);
+  for (const key of Object.keys(body)) assert.ok(RESPONSE_KEYS.has(key) && !SYNC_WORDS.test(key), `Response field ${key}`);
   const saved = JSON.parse(fs.readFileSync(path.join(media.mediaDir(rootB), 'tiers.json'), 'utf8'));
   assert.doesNotMatch(JSON.stringify(saved.items[original]), SYNC_WORDS);
   // 队列文件里这一素材已出队
@@ -366,7 +366,7 @@ test('T2-1 经插件接线:连远程素材服务,传到素材原尺寸第 2 片�
   assert.deepEqual(qfile.items, []);
 });
 
-test('T2-3 连远程素材服务时新导入的图片、音频也进上传队列(只有素材原尺寸一档),远端 complete、字节一致;不登记两档状态', { timeout: 30_000 }, async () => {
+test('T2-3 when connected to the remote asset service, newly imported images and audio also enter the upload queue (only the asset original size tier), complete on the remote side with identical bytes; the two-tier status is not registered', { timeout: 30_000 }, async () => {
   const rootR = path.join(OUT, 'remote-still');
   fs.mkdirSync(media.mediaDir(rootR), { recursive: true });
   const remote = await listen(serviceHandler(rootR));
@@ -387,22 +387,22 @@ test('T2-3 连远程素材服务时新导入的图片、音频也进上传队列
   for (const it of files) {
     const body = await importFile(originC, it.f, it.name);
     assert.equal(body.hash, it.hash);
-    assert.equal('tiers' in body, false, '不是视频:回包照旧不带 tiers');
-    assert.equal(service.manager.status([it.hash])[it.hash].state, 'unknown', '不登记两档状态');
+    assert.equal('tiers' in body, false, 'Not a video: the response still carries no tiers');
+    assert.equal(service.manager.status([it.hash])[it.hash].state, 'unknown', 'The two-tier status is not registered');
   }
   let guard;
-  await Promise.race([service.queue.drain(), new Promise((_, rej) => { guard = setTimeout(() => rej(new Error('队列 20 s 没清空')), 20_000); })])
+  await Promise.race([service.queue.drain(), new Promise((_, rej) => { guard = setTimeout(() => rej(new Error('The queue did not drain within 20 s')), 20_000); })])
     .finally(() => clearTimeout(guard));
   for (const it of files) {
     const c = await chunksOf(`${remote}/api/asset`, it.hash);
-    assert.equal(c.complete, true, `${it.name} 在远端 complete`);
+    assert.equal(c.complete, true, `${it.name} is complete on the remote side`);
     const got = Buffer.from(await (await fetch(`${remote}/api/asset/media/${it.hash}`)).arrayBuffer());
-    assert.equal(crypto.createHash('sha256').update(got).digest('hex'), it.hash, `${it.name} 远端字节一致`);
+    assert.equal(crypto.createHash('sha256').update(got).digest('hex'), it.hash, `${it.name} has identical bytes on the remote side`);
   }
   assert.ok(service.queue.stats().done >= 2);
 });
 
-test('T2-2 重启续传:断网时停掉队列(留在 upload-queue.json 里),新建的队列读回来接着传,只补缺片', { timeout: 30_000 }, async () => {
+test('T2-2 resume after restart: when the network drops the queue is stopped (left in upload-queue.json), and a newly created queue reads it back and continues uploading, filling in only the missing chunks', { timeout: 30_000 }, async () => {
   const rootR = path.join(OUT, 'remote-2');
   fs.mkdirSync(media.mediaDir(rootR), { recursive: true });
   const remote = await listen(serviceHandler(rootR));
@@ -429,7 +429,7 @@ test('T2-2 重启续传:断网时停掉队列(留在 upload-queue.json 里),新�
   const t0 = Date.now();
   while (!events.some((e) => e.e === 'upload.retry') && Date.now() - t0 < 10_000) await new Promise((r) => setTimeout(r, 20));
   await q1.stop();
-  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).items.length, 1, '停下时这一素材留在文件里');
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).items.length, 1, 'When stopped, this asset stays in the file');
   assert.deepEqual((await chunksOf(`${remote}/api/asset`, hash)).received, [0, 1]);
 
   proxy.state.offline = false;
@@ -445,12 +445,12 @@ test('T2-2 重启续传:断网时停掉队列(留在 upload-queue.json 里),新�
   // 机器忙时 q2 可能撞上一次连接抖动（代理刚销毁过套接字）而整项重试，第二遍素材原尺寸已齐、tier-done 的 sent 是 []。
   // 判据没放宽：q2 只要重发了第 0、1 片（或根本没发第 2 片），下面两条都会挂。
   const tierDone = events.slice(eventMark).filter((e) => e.e === 'upload.tier-done' && e.hash === hash);
-  assert.ok(tierDone.length >= 1, '重启后素材原尺寸传完');
-  assert.deepEqual([...new Set(tierDone.flatMap((e) => e.sent))].sort(), [2], `重启后只补第 2 片：${JSON.stringify(tierDone.map((e) => e.sent))}`);
+  assert.ok(tierDone.length >= 1, 'After the restart the asset original size finishes uploading');
+  assert.deepEqual([...new Set(tierDone.flatMap((e) => e.sent))].sort(), [2], `After the restart only chunk 2 is filled in: ${JSON.stringify(tierDone.map((e) => e.sent))}`);
   const puts = proxy.state.log.slice(logMark)
     .filter((x) => x.method === 'PUT' && x.path.startsWith(`/api/asset/media/${hash}/`))
     .map((x) => Number(x.path.split('/').at(-1)));
-  assert.deepEqual([...new Set(puts)].sort(), [2], `重启后发往素材服务的素材原尺寸分片只有第 2 片：${JSON.stringify(puts)}`);
+  assert.deepEqual([...new Set(puts)].sort(), [2], `After the restart the only asset original size chunk sent to the asset service is chunk 2: ${JSON.stringify(puts)}`);
   assert.equal((await chunksOf(`${remote}/api/asset`, hash)).complete, true);
   assert.equal((await chunksOf(`${remote}/api/asset`, smallHash)).complete, true);
   assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).items, []);
@@ -485,7 +485,7 @@ function memoryClient({ failOnce = new Set(), delayMs = 5 } = {}) {
 }
 const H = (c) => c.repeat(64);
 
-test('T3-1 所有素材小尺寸先传、再按进队先后传素材原尺寸;轮到的那一档失败时后面的等着(日志顺序核对)', async () => {
+test('T3-1 all asset small sizes are uploaded first, then the asset original sizes in queue order; when the tier whose turn it is fails, the ones behind wait (checked via log order)', async () => {
   const client = memoryClient({ failOnce: new Set([H('b')]) });
   const log = [];
   const q = uq.createUploadQueue({ file: null, target: () => ({ client }), resolveFile: () => HERE, backoff: [20], log: (e, f) => log.push(`${e}:${f.id?.[0] ?? ''}:${f.tier ?? ''}`) });
@@ -508,7 +508,7 @@ test('T3-1 所有素材小尺寸先传、再按进队先后传素材原尺寸;�
   assert.deepEqual(client.calls, [H('a'), H('c'), H('b'), H('d'), H('e')]);
 });
 
-test('T3-2 连本地素材服务(target 回 null)时进队是空操作;队里已有的暂停,换回远程接着传', async () => {
+test('T3-2 when connected to the local asset service (target returns null) enqueueing is a no-op; items already in the queue are paused, and switching back to the remote continues the upload', async () => {
   const client = memoryClient();
   let where = null;
   const q = uq.createUploadQueue({ file: null, target: () => where, resolveFile: () => HERE, backoff: [10] });
@@ -519,7 +519,7 @@ test('T3-2 连本地素材服务(target 回 null)时进队是空操作;队里已
   where = null;
   q.start();
   await new Promise((r) => setTimeout(r, 100));
-  assert.equal(client.calls.length, 0, '换回本机期间不传');
+  assert.equal(client.calls.length, 0, 'No uploads while switched back to local');
   where = { client };
   q.poke();
   await q.drain();
@@ -527,7 +527,7 @@ test('T3-2 连本地素材服务(target 回 null)时进队是空操作;队里已
   assert.deepEqual(client.calls, [H('2')]);
 });
 
-test('T3-3 带宽闸:产物在推或还有等着推的段时,素材的分片等着;产物推完才放行', async () => {
+test('T3-3 bandwidth gate: while output is being pushed or segments are still waiting to be pushed, the chunks of the asset wait; they are released only once the output has been fully pushed', async () => {
   const gate = gateMod.createBandwidthGate({ pollMs: 10 });
   let pendingArtifacts = 2;
   const unregister = gate.artifactDemand(() => pendingArtifacts);
@@ -537,11 +537,11 @@ test('T3-3 带宽闸:产物在推或还有等着推的段时,素材的分片等�
   await q.enqueue({ tiers: [{ tier: 'small', hash: H('5') }, { tier: 'original', hash: H('6') }] });
   q.start();
   await new Promise((r) => setTimeout(r, 80));
-  assert.equal(client.calls.length, 0, '产物还有 2 段没推,素材一片都不发');
+  assert.equal(client.calls.length, 0, '2 segments of the output are still unpushed, so not a single asset chunk is sent');
   const end = gate.beginArtifact();
   pendingArtifacts = 0;
   await new Promise((r) => setTimeout(r, 60));
-  assert.equal(client.calls.length, 0, '产物在推,素材等着');
+  assert.equal(client.calls.length, 0, 'Output is being pushed, the asset waits');
   order.push('artifact');
   end();
   await q.drain();
@@ -551,7 +551,7 @@ test('T3-3 带宽闸:产物在推或还有等着推的段时,素材的分片等�
   assert.deepEqual(client.calls, [H('5'), H('6')]);
 });
 
-test('T3-4 推送队列接在带宽闸上:登记需求、推的时候占着;跨进程探针读 push-queue.json', async () => {
+test('T3-4 the push queue is attached to the bandwidth gate: it registers demand and holds the gate while pushing; a cross-process probe reads push-queue.json', async () => {
   const { createPushQueue } = await import(serverUrl('artifact-push.mjs'));
   const calls = [];
   let provider = null;
@@ -559,15 +559,15 @@ test('T3-4 推送队列接在带宽闸上:登记需求、推的时候占着;跨�
     beginArtifact() { calls.push('begin'); return () => calls.push('end'); },
     artifactDemand(fn) { provider = fn; calls.push('demand'); return () => { provider = null; calls.push('undemand'); }; },
   };
-  const pipeline = { root: null, snapshots() { throw new Error('单测没有帧库'); } };
+  const pipeline = { root: null, snapshots() { throw new Error('No frame store in the unit test'); } };
   const pq = createPushQueue({ pipeline, client: { put() {} }, gate: fakeGate, attach: false, backoff: [60_000] });
   await pq.enqueue({ kind: 'stream', resultKey: 'f'.repeat(64), range: { from: 0, to: 14 } });
   pq.start();
-  assert.equal(provider(), 1, '一段等着推');
+  assert.equal(provider(), 1, 'One segment is waiting to be pushed');
   const t0 = Date.now();
   while (!calls.includes('end') && Date.now() - t0 < 5000) await new Promise((r) => setTimeout(r, 10));
   assert.ok(calls.includes('begin') && calls.includes('end'));
-  assert.equal(provider(), 0, '失败进了退避的段不挡素材');
+  assert.equal(provider(), 0, 'A segment that failed and entered backoff does not block assets');
   await pq.stop();
   assert.ok(calls.includes('undemand'));
 
@@ -577,11 +577,11 @@ test('T3-4 推送队列接在带宽闸上:登记需求、推的时候占着;跨�
   fs.writeFileSync(f, JSON.stringify({ v: 1, items: [{ unit: {}, priority: 0, attempts: 0 }] }));
   assert.equal(gateMod.pushQueueFileProbe(f, { cacheMs: 0 })(), true);
   fs.writeFileSync(f, JSON.stringify({ v: 1, items: [{ unit: {}, priority: 0, attempts: 2 }] }));
-  assert.equal(gateMod.pushQueueFileProbe(f, { cacheMs: 0 })(), false, '都在退避:不算忙');
+  assert.equal(gateMod.pushQueueFileProbe(f, { cacheMs: 0 })(), false, 'All in backoff: not counted as busy');
   fs.writeFileSync(f, JSON.stringify({ v: 1, items: [{ unit: {}, priority: 0, attempts: 0 }] }));
   const old = new Date(Date.now() - 10 * 60_000);
   fs.utimesSync(f, old, old);
-  assert.equal(gateMod.pushQueueFileProbe(f, { cacheMs: 0 })(), false, '久未更新的旧文件不算忙');
+  assert.equal(gateMod.pushQueueFileProbe(f, { cacheMs: 0 })(), false, 'An old file not updated for a long time is not counted as busy');
   assert.equal(gateMod.pushQueueFileProbe(path.join(OUT, 'none.json'), { cacheMs: 0 })(), false);
 });
 
@@ -594,7 +594,7 @@ const three = async (q) => {
   await q.enqueue({ name: 'C', tiers: [{ tier: 'small', hash: H('7') }, { tier: 'original', hash: H('8') }] });
 };
 
-test('T3-5 三个素材一起进队:三份素材小尺寸都先于任何一份素材原尺寸到素材服务', async () => {
+test('T3-5 three assets enter the queue together: all three asset small sizes reach the asset service before any asset original size', async () => {
   const client = memoryClient();
   const q = uq.createUploadQueue({ file: null, target: () => ({ client }), resolveFile: () => HERE, backoff: [10] });
   await three(q);
@@ -605,7 +605,7 @@ test('T3-5 三个素材一起进队:三份素材小尺寸都先于任何一份�
   assert.equal(q.stats().done, 3);
 });
 
-test('T3-6 某份素材小尺寸传失败在退避:任何素材原尺寸都不传,等它重试成功', async () => {
+test('T3-6 when an asset small size fails to upload and is in backoff: no asset original size is uploaded until its retry succeeds', async () => {
   const client = memoryClient({ failOnce: new Set([H('c')]) });
   const log = [];
   const q = uq.createUploadQueue({ file: null, target: () => ({ client }), resolveFile: () => HERE, backoff: [40], log: (e, f) => log.push(`${e}:${f.tier ?? ''}`) });
@@ -615,11 +615,11 @@ test('T3-6 某份素材小尺寸传失败在退避:任何素材原尺寸都不�
   await q.stop();
   assert.deepEqual(client.calls, [H('a'), H('c'), H('7'), H('b'), H('d'), H('8')]);
   const firstOriginal = log.indexOf('upload.tier-start:original');
-  assert.ok(log.indexOf('upload.retry:') >= 0 && log.indexOf('upload.retry:') < firstOriginal, '重试发生在第一份素材原尺寸之前');
-  assert.equal(log.slice(0, firstOriginal).filter((l) => l === 'upload.tier-done:small').length, 3, '第一份素材原尺寸开传前三份素材小尺寸都已传完');
+  assert.ok(log.indexOf('upload.retry:') >= 0 && log.indexOf('upload.retry:') < firstOriginal, 'The retry happens before the first asset original size');
+  assert.equal(log.slice(0, firstOriginal).filter((l) => l === 'upload.tier-done:small').length, 3, 'All three asset small sizes had finished uploading before the first asset original size started');
 });
 
-test('T3-7 正在传素材原尺寸时新进队的素材:它的素材小尺寸排在剩下的素材原尺寸前面;后补上的素材小尺寸也一样', async () => {
+test('T3-7 an asset enqueued while an asset original size is uploading: its asset small size is placed ahead of the remaining asset original sizes; the same holds for an asset small size added later', async () => {
   const client = memoryClient({ delayMs: 20 });
   let q = null;
   let added = false;
@@ -640,7 +640,7 @@ test('T3-7 正在传素材原尺寸时新进队的素材:它的素材小尺寸�
   assert.deepEqual(client.calls, [H('a'), H('c'), H('b'), H('7'), H('1'), H('d'), H('8'), H('2')]);
 });
 
-test('T3-8 应用重启后队列恢复:先把没传完的素材小尺寸传完,再传素材原尺寸;已传完的档不重传', async () => {
+test('T3-8 queue recovery after an app restart: unfinished asset small sizes are uploaded first, then the asset original sizes; tiers already done are not uploaded again', async () => {
   const file = path.join(os.tmpdir(), `pc-upload-order-${process.pid}-${Date.now()}.json`);
   const client = memoryClient({ failOnce: new Set([H('c')]) });
   // 第一个实例:小 A 传完、小 B 失败后退避很久(模拟这时应用被关掉)
@@ -649,8 +649,8 @@ test('T3-8 应用重启后队列恢复:先把没传完的素材小尺寸传完,�
   q1.start();
   for (let i = 0; i < 200 && !q1.stats().failures; i++) await new Promise((r) => setTimeout(r, 10));
   await q1.stop();
-  assert.deepEqual(client.calls, [H('a')], '重启前只传完了 A 的素材小尺寸');
-  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).items.length, 3, '三个素材都还在队列文件里');
+  assert.deepEqual(client.calls, [H('a')], 'Before the restart only the asset small size of A had finished uploading');
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).items.length, 3, 'All three assets are still in the queue file');
   // 第二个实例:同一个队列文件
   const log = [];
   const q2 = uq.createUploadQueue({ file, target: () => ({ client }), resolveFile: () => HERE, backoff: [10], log: (e, f) => { if (e === 'upload.tier-start') log.push(f.tier); } });
@@ -658,8 +658,8 @@ test('T3-8 应用重启后队列恢复:先把没传完的素材小尺寸传完,�
   q2.start();
   await q2.drain();
   await q2.stop();
-  assert.deepEqual(client.calls, [H('a'), H('c'), H('7'), H('b'), H('d'), H('8')], 'A 的素材小尺寸没有重传;剩下两份素材小尺寸先于任何素材原尺寸');
-  assert.deepEqual(log, ['small', 'small', 'small', 'original', 'original', 'original'], '恢复后的派活顺序');
+  assert.deepEqual(client.calls, [H('a'), H('c'), H('7'), H('b'), H('d'), H('8')], 'The asset small size of A was not re-uploaded; the remaining two asset small sizes come before any asset original size');
+  assert.deepEqual(log, ['small', 'small', 'small', 'original', 'original', 'original'], 'Dispatch order after recovery');
   assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).items, []);
   fs.rmSync(file, { force: true });
 });

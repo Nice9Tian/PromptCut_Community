@@ -24,23 +24,23 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 
-test("AIEXT-1 云端 AI 表是静态 import，不许异步换上去", () => {
+test("AIEXT-1 The cloud AI table is a static import and must not be swapped in asynchronously", () => {
   const src = read("src/ai/extensionsBrowser.ts");
   assert.ok(
     src.includes('import * as cloudAi from "#promptcut-cloud-ai"'),
-    "要用静态 import 取云端 AI 表：静态的才会在本模块函数体之前求值完，不存在「之后才换上」",
+    "Use a static import to get the cloud AI table: only a static import finishes evaluating before this module's function bodies run, so there is no \"swapped in later\"",
   );
   assert.ok(
     !src.includes("await import(") && !src.includes("void ensure") && !src.includes("Promise"),
-    "这个文件里不许有异步加载：异步 = 渲染之后才换提供方 = 同一个组件的 hook 数量变化 = React 抛错",
+    "No async loading is allowed in this file: async = provider swapped in after render = the same component's hook count changes = React throws",
   );
 });
 
-test("AIEXT-2 注册在入口，不挂在组件上", () => {
+test("AIEXT-2 Registration happens at the entry point, not on a component", () => {
   const boot = read("src/online/pageBoot.ts");
   assert.ok(
     boot.includes("registerAiCloudProviderFromTable()"),
-    "页面启动序列里要调一次 registerAiCloudProviderFromTable()",
+    "registerAiCloudProviderFromTable() must be called once in the page boot sequence",
   );
 
   // 组件自己不许负责注册：CloudAiPanel 深在树里、还可能懒加载，
@@ -48,21 +48,21 @@ test("AIEXT-2 注册在入口，不挂在组件上", () => {
   const panel = read("src/editor/right/CloudAiPanel.tsx");
   assert.ok(
     !panel.includes("extensionsBrowser"),
-    "CloudAiPanel 不许引 extensionsBrowser：注册要在入口，不是「谁 import 到就注册」",
+    "CloudAiPanel must not import extensionsBrowser: registration belongs at the entry point, not \"whoever imports it registers\"",
   );
 });
 
-test("AIEXT-3 注册排在渲染之前", () => {
+test("AIEXT-3 Registration is ordered before rendering", () => {
   // pageBoot 由 main.tsx 的第二行 import（紧跟渲染时钟），而 createRoot 在 main.tsx 末尾，
   // 所以只要注册写在 pageBoot 里就一定早于渲染。这条盯住 main.tsx 的那个次序没被人调乱。
   const main = read("src/main.tsx");
   const bootAt = main.indexOf("./online/pageBoot");
   const renderAt = main.indexOf("createRoot(");
-  assert.ok(bootAt >= 0, "main.tsx 不再引 ./online/pageBoot 了？启动序列整个没了");
-  assert.ok(renderAt >= 0, "main.tsx 里找不到 createRoot(");
+  assert.ok(bootAt >= 0, "Does main.tsx no longer import ./online/pageBoot? The whole boot sequence is gone");
+  assert.ok(renderAt >= 0, "createRoot( not found in main.tsx");
   assert.ok(
     bootAt < renderAt,
-    "pageBoot 要排在 createRoot 之前：提供方必须在 React 渲染任何东西之前就定下来",
+    "pageBoot must come before createRoot: the provider must be settled before React renders anything",
   );
 });
 

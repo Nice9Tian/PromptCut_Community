@@ -57,7 +57,7 @@ async function until(what, fn, ms = 60_000, every = 200) {
     let v = null;
     try { v = await fn(); } catch (e) { last = String(e?.message ?? e); }
     if (v) return v;
-    if (Date.now() - t0 > ms) { check(`等到:${what}`, false, { last }); return null; }
+    if (Date.now() - t0 > ms) { check(`Waited for: ${what}`, false, { last }); return null; }
     await sleep(every);
   }
 }
@@ -67,7 +67,7 @@ let exitCode = 1;
 try {
   if (MODE === 'run') await run();
   else if (MODE === 'compare') await compare();
-  else throw new Error('用法见文件头:run 或 compare');
+  else throw new Error('Usage is in the file header: run or compare');
   const failed = results.filter((r) => !r.ok);
   console.log(JSON.stringify({ summary: { mode: MODE, checks: results.length, passed: results.length - failed.length, fails: failed.map((r) => r.check) } }));
   exitCode = failed.length ? 1 : 0;
@@ -110,7 +110,7 @@ async function run() {
   for (const d of Object.values(dirs)) fs.mkdirSync(d, { recursive: true });
   // 那一份检出自己的 dev server 辅助(它的 REPO 就是那一份检出)
   const { startDevServer } = await import(pathToFileURL(path.join(TREE, 'scripts', 'lib', 'dev-server.mjs')).href);
-  log('起 dev server', TREE, PORT);
+  log('Start dev server', TREE, PORT);
   const server = await startDevServer({ port: PORT, logFile: path.join(OUT, 'vite.log'), log,
     env: { PROMPTCUT_EXPORT_DIR: dirs.exportDir, PROMPTCUT_DATA_DIR: dirs.dataDir, PROMPTCUT_PROJECTS_DIR: dirs.projectsDir, PROMPTCUT_NO_PORT_FILE: '1', PROMPTCUT_PUSH: '0' } });
   cleanups.push(() => server.stop());
@@ -124,7 +124,7 @@ async function run() {
   await page.evaluateOnNewDocument(AUDIO_HOOK);
   const open = async () => {
     await page.goto(`${server.origin}/?editor&nosetup=1`, { waitUntil: 'domcontentloaded', timeout: 180_000 });
-    await until('编辑器就绪', () => page.evaluate(() => !!window.__pcStore && !!window.__pcIo && !!window.__pcPreviewDiag), 180_000);
+    await until('Editor ready', () => page.evaluate(() => !!window.__pcStore && !!window.__pcIo && !!window.__pcPreviewDiag), 180_000);
   };
   await open();
 
@@ -153,7 +153,7 @@ async function run() {
   fs.writeFileSync(path.join(OUT, 'project.json'), JSON.stringify(project, null, 1));
   const cardClips = project.tracks.flatMap((t) => t.clips).filter((c) => c.cardId);
   const avClips = cardClips.filter((c) => c.cardId === 'av-pulse');
-  note('项目', { kind: KIND, clips: cardClips.map((c) => [c.id, c.cardId, c.start, c.end]) });
+  note('Project', { kind: KIND, clips: cardClips.map((c) => [c.id, c.cardId, c.start, c.end]) });
 
   /** 页面这一侧此刻的判定:身份、测量日志、成本记录、分派表 */
   const judged = () => page.evaluate(async (ids) => {
@@ -190,24 +190,24 @@ async function run() {
       return ok ? j : null;
     }, 180_000, 700);
   };
-  const first = await settled('第一轮测量跑完');
+  const first = await settled('First measurement round finished');
   if (!first) return;
   const audioLog = await page.evaluate(() => window.__pcAudioLog.slice());
   fs.writeFileSync(path.join(OUT, 'judged.json'), JSON.stringify(first, null, 1));
   const av = first.clips.filter((c) => c.cardId === 'av-pulse');
 
   if (KIND === 'av' && EXPECT === 'legacy') {
-    note('改前的对照(不算验收):有声动效卡的身份与判定', { av });
+    note('Comparison before the change (not an acceptance check): identity and verdict of the audio motion graphics card', { av });
   }
   if (KIND === 'av' && EXPECT === 'light') {
-    check('V1 有声动效卡的片段有成本身份、有声明的帧模式', av.length === avClips.length && av.every((c) => typeof c.identityKey === 'string' && c.frameMode === 'direct'), { av });
+    check('V1 Clips of the audio motion graphics card have a cost identity and a declared frame mode', av.length === avClips.length && av.every((c) => typeof c.identityKey === 'string' && c.frameMode === 'direct'), { av });
     const probedIds = new Set(first.probeRun.probed.map((e) => e[0]));
     // 同一个身份键只测一次:两段参数、时长不同,键不同,各测各的
     const keys = new Set(av.map((c) => c.identityKey));
-    check('V2 第一次出现就测:测量日志里有它,成本记录按它的身份键写进去了', av.every((c) => c.record) && [...keys].length === first.probeRun.probed.filter((e) => e[1] === 'av-pulse').length && av.some((c) => probedIds.has(c.id)),
+    check('V2 Measured on first appearance: it is in the measurement log, and the cost record was written under its identity key', av.every((c) => c.record) && [...keys].length === first.probeRun.probed.filter((e) => e[1] === 'av-pulse').length && av.some((c) => probedIds.has(c.id)),
       { probed: first.probeRun.probed, records: av.map((c) => [c.id, c.record]) });
-    check('V3 测量期间不出声:没有新建音频上下文、没有元素开始播放、没有声源启动', audioLog.length === 0, { audioLog });
-    check('V4 测完判轻:分派表里是轻、不在预渲染集合里', av.every((c) => c.verdict === 'light' && c.inPrerenderSet === false), { av: av.map((c) => [c.id, c.verdict, c.inPrerenderSet]) });
+    check('V3 Silent during measurement: no new audio context, no element started playing, no sound source started', audioLog.length === 0, { audioLog });
+    check('V4 Judged light after measurement: light in the dispatch table, not in the prerender set', av.every((c) => c.verdict === 'light' && c.inPrerenderSet === false), { av: av.map((c) => [c.id, c.verdict, c.inPrerenderSet]) });
 
     /* ---- V5 活渲 */
     const target = avClips[0];
@@ -221,7 +221,7 @@ async function run() {
       const playing = window.__pcPreviewDiag();
       actions.pause(); actions.seek(at);
       await wait(600);
-      return { suppressedWhilePlaying: playing.suppressed, text: document.body.innerText.includes('需要本地 PC 渲染辅助') };
+      return { suppressedWhilePlaying: playing.suppressed, text: document.body.innerText.includes('Local PC render helper required') };
     }, target.start + 0.05);
     const stageDom = [];
     for (const frame of page.frames()) {
@@ -236,24 +236,24 @@ async function run() {
       }, target.id).catch(() => null);
       if (hit) stageDom.push({ url: frame.url().slice(0, 80), ...hit });
     }
-    if (!stageDom.length) note('舞台的帧', { frames: page.frames().map((f) => f.url().slice(0, 100)) });
+    if (!stageDom.length) note('Stage frames', { frames: page.frames().map((f) => f.url().slice(0, 100)) });
     await page.screenshot({ path: path.join(OUT, 'V5-preview.png') });
-    check('V5 活渲:播放时不被抑制;舞台上是活组件(圆环在),没有占位符,没有「需要本地 PC 渲染辅助」',
+    check('V5 Live render: not suppressed during playback; the stage has a live component (ring present), no placeholder, no "Local PC render helper required"',
       !live.suppressedWhilePlaying.includes(target.id) && !live.text && stageDom.some((s) => s.ring && s.ring.width > 20 && !s.placeholderShown && !s.suppressed),
       { live, stageDom });
 
     /* ---- V6 重开不重测 */
     await open();
     await page.evaluate((p) => window.__pcStore.actions.loadProject(p), project);
-    const again = await settled('重开后的那一轮跑完');
+    const again = await settled('Round after reopening finished');
     if (again) {
-      check('V6 重开不重测:测量日志里没有有声动效卡,判定仍是轻', again.probeRun.probed.every((e) => e[1] !== 'av-pulse') && again.clips.filter((c) => c.cardId === 'av-pulse').every((c) => c.verdict === 'light' && c.record),
+      check('V6 Reopening does not re-measure: no audio motion graphics card in the measurement log, verdict still light', again.probeRun.probed.every((e) => e[1] !== 'av-pulse') && again.clips.filter((c) => c.cardId === 'av-pulse').every((c) => c.verdict === 'light' && c.record),
         { probed: again.probeRun.probed, av: again.clips.filter((c) => c.cardId === 'av-pulse').map((c) => [c.id, c.verdict]) });
     }
   }
 
   /* ---- V7 导出 */
-  log('导出');
+  log('Export');
   const exported = await page.evaluate(async () => {
     const stages = [];
     try {
@@ -270,10 +270,10 @@ async function run() {
       files.push([name, fs.statSync(from).size]);
     }
   }
-  check('V7 导出成功,成片文件在', exported.ok && files.some((f) => f[0] === 'preview.mp4' && f[1] > 0), { error: exported.error, stages: exported.stages, files });
+  check('V7 Export succeeded, final video file exists', exported.ok && files.some((f) => f[0] === 'preview.mp4' && f[1] > 0), { error: exported.error, stages: exported.stages, files });
   const end = await judged();
   fs.writeFileSync(path.join(OUT, 'result.json'), JSON.stringify({ tree: TREE, kind: KIND, expect: EXPECT, first, end, exported: { ok: exported.ok, stages: exported.stages, files }, errors }, null, 1));
-  note('页面报错', { errors: errors.slice(0, 5) });
+  note('Page errors', { errors: errors.slice(0, 5) });
 }
 
 /* ================================================================== compare */
@@ -287,7 +287,7 @@ async function frameHashes(ffmpeg, file) {
     c.on('close', () => resolve(err));
   });
   const m = /Stream #\d+:\d+.*Video:.*?(\d{2,5})x(\d{2,5})/.exec(probe);
-  if (!m) throw new Error(`读不出画幅:${file}`);
+  if (!m) throw new Error(`Cannot read aspect ratio: ${file}`);
   const frameBytes = Number(m[1]) * Number(m[2]) * 4;
   return new Promise((resolve, reject) => {
     const c = spawn(ffmpeg, ['-v', 'error', '-i', file, '-an', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'], { windowsHide: true });
@@ -301,7 +301,7 @@ async function frameHashes(ffmpeg, file) {
       }
     });
     c.stderr.on('data', (d) => { err += d; });
-    c.on('close', (code) => (code === 0 ? resolve({ hashes, size: `${m[1]}x${m[2]}` }) : reject(new Error(`ffmpeg 解码失败:${err.slice(-300)}`))));
+    c.on('close', (code) => (code === 0 ? resolve({ hashes, size: `${m[1]}x${m[2]}` }) : reject(new Error(`ffmpeg decode failed: ${err.slice(-300)}`))));
   });
 }
 
@@ -321,5 +321,5 @@ async function compare() {
     rows.push({ name, size: a.size, framesA: a.hashes.length, framesB: b.hashes.length, differ, firstDiff, sameBytes,
       distinctA: new Set(a.hashes).size });
   }
-  check('C1 两边每个成片文件帧数相同、逐帧 sha256 相同', rows.length > 0 && rows.every((r) => !r.missing && r.framesA === r.framesB && r.framesA > 0 && r.differ === 0), { rows });
+  check('C1 Each final video file has the same frame count on both sides and the same per-frame sha256', rows.length > 0 && rows.every((r) => !r.missing && r.framesA === r.framesB && r.framesA > 0 && r.differ === 0), { rows });
 }

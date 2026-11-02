@@ -40,10 +40,10 @@ function C({ params }: CardProps<Params>) {
   return <motion.div animate={{ opacity: 1 }}>{params.text}</motion.div>;
 }
 export const priceTag: CardDef<Params> = {
-  id: "price-tag", name: "价格", description: "d", source: "user",
+  id: "price-tag", name: "Price", description: "d", source: "user",
   frameMode: "stateful",
   defaults: { text: "${text}" },
-  controls: [{ key: "text", label: "文字", type: "text" }],
+  controls: [{ key: "text", label: "Text", type: "text" }],
   Component: C,
 };
 `;
@@ -61,22 +61,22 @@ const userDirFiles = (root) => fs.readdirSync(path.join(root, 'src', 'cards', 'u
 
 /* ================================================================== CO1 */
 
-test('CO1 create_card 带 overwrite:改动层里有旧版时,新内容生效,底版不动', () => {
+test('CO1 create_card with overwrite: when the overlay layer has an old version, the new content takes effect and the base copy is untouched', () => {
   const root = checkout('pc-co1-', { [USER_KEY]: cardSource('v1') });
   const overlay = tmp('pc-co1-overlay-');
   put(overlay, USER_KEY, cardSource('v1-edited'));
   withOverlay(overlay, () => {
-    assert.match(readEffective(root, path.join(root, USER_KEY)), /v1-edited/, '前提:生效的是改动层那一份');
+    assert.match(readEffective(root, path.join(root, USER_KEY)), /v1-edited/, 'precondition: the copy in the overlay layer is the effective one');
     const r = cards.createUserCard({ root, id: 'price-tag', source: cardSource('v2'), existingIds: [], overwrite: true });
     assert.equal(r.ok, true, JSON.stringify(r.ok ? {} : r.body));
     assert.equal(r.already, true);
-    assert.match(readEffective(root, path.join(root, USER_KEY)), /"v2"/, '覆盖重写之后生效的是新内容');
-    assert.equal(r.written, path.join(overlay, USER_KEY), '写进改动层');
-    assert.equal(fs.readFileSync(path.join(root, USER_KEY), 'utf8'), cardSource('v1'), '底版不动');
+    assert.match(readEffective(root, path.join(root, USER_KEY)), /"v2"/, 'after the overwrite the new content is the effective one');
+    assert.equal(r.written, path.join(overlay, USER_KEY), 'written into the overlay layer');
+    assert.equal(fs.readFileSync(path.join(root, USER_KEY), 'utf8'), cardSource('v1'), 'the base copy is untouched');
   });
 });
 
-test('CO1b create_card 不带 overwrite:改动层里有这张卡(底版没有)也算已存在,409', () => {
+test('CO1b create_card without overwrite: a card present in the overlay layer (absent from the base copy) also counts as existing, 409', () => {
   const root = checkout('pc-co1b-');
   const overlay = tmp('pc-co1b-overlay-');
   put(overlay, USER_KEY, cardSource('v1'));
@@ -90,7 +90,7 @@ test('CO1b create_card 不带 overwrite:改动层里有这张卡(底版没有)�
 
 /* ================================================================== CO2 */
 
-test('CO2 有改动层时,本机原来没有的用户卡写进改动层,检出目录不多一个文件(内容库同步、打开 .proc、create_card)', () => {
+test('CO2 with an overlay layer, a user card that did not exist on this machine is written into the overlay layer and the checkout directory gains no extra file (content store sync, opening .proc, create_card)', () => {
   const root = checkout('pc-co2-');
   const overlay = tmp('pc-co2-overlay-');
   const history = tmp('pc-co2-history-');
@@ -119,10 +119,10 @@ test('CO2 有改动层时,本机原来没有的用户卡写进改动层,检出�
     assert.equal(created.ok, true, JSON.stringify(created.ok ? {} : created.body));
     assert.equal(created.written, path.join(overlay, 'src/cards/user/ticket.tsx'));
   });
-  assert.deepEqual(userDirFiles(root), before, '检出里的用户卡目录一个文件都没多');
+  assert.deepEqual(userDirFiles(root), before, 'the user card directory in the checkout has no extra file at all');
 });
 
-test('CO2b 改动层里的用户卡(底版没有):按 id 找得到、源码闭包带上它用到的改动层文件、代码身份是定制卡', () => {
+test('CO2b a user card in the overlay layer (absent from the base copy): can be found by id, its source closure includes the overlay layer files it uses, and its code identity is a custom card', () => {
   const root = checkout('pc-co2b-');
   const overlay = tmp('pc-co2b-overlay-');
   put(overlay, USER_KEY, cardSource('v1', 'import { k } from "./price-tag-util";\n'));
@@ -131,19 +131,19 @@ test('CO2b 改动层里的用户卡(底版没有):按 id 找得到、源码闭�
     assert.equal(cards.findCardFile(root, 'price-tag'), USER_KEY);
     assert.deepEqual(cards.importClosure(root, USER_KEY), [USER_KEY, 'src/cards/user/price-tag-util.ts']);
     const id1 = cards.cardCodeIdentity(root, 'price-tag');
-    assert.ok(id1, '找得到定义');
+    assert.ok(id1, 'the definition can be found');
     assert.equal(id1.custom, true);
     // 与「同一份源码放在检出里」算出同一个身份:两台节点一台装在检出、一台装在改动层,仍认同一份代码
     const other = checkout('pc-co2b-other-', { [USER_KEY]: cardSource('v1', 'import { k } from "./price-tag-util";\n'), 'src/cards/user/price-tag-util.ts': 'export const k = 1;\n' });
     const id2 = withOverlay(null, () => cards.cardCodeIdentity(other, 'price-tag'));
     assert.equal(id1.version, id2.version);
   });
-  assert.equal(withOverlay(null, () => cards.findCardFile(root, 'price-tag')), null, '没有改动层就看不见它');
+  assert.equal(withOverlay(null, () => cards.findCardFile(root, 'price-tag')), null, 'without the overlay layer it is invisible');
 });
 
 /* ================================================================== CO3 */
 
-test('CO3 没有改动层(开发期):create_card 与内容库同步照旧写检出目录', () => {
+test('CO3 no overlay layer (development phase): create_card and content store sync write to the checkout directory as before', () => {
   const root = checkout('pc-co3-');
   const history = tmp('pc-co3-history-');
   withOverlay(null, () => {
@@ -161,7 +161,7 @@ test('CO3 没有改动层(开发期):create_card 与内容库同步照旧写检�
 
 /* ================================================================== CO4 */
 
-test('CO4 用户卡装载入口看得见改动层里的卡:清单模块列出底版没有的文件,解析把它们落到仓库里对应的路径', () => {
+test('CO4 the user card loading entry can see cards in the overlay layer: the manifest module lists files absent from the base copy, and resolution maps them to the corresponding paths in the repo', () => {
   const root = checkout('pc-co4-', { 'src/cards/user/in-base.tsx': cardSource('b') });
   const overlay = tmp('pc-co4-overlay-');
   put(overlay, USER_KEY, cardSource('v1', 'import { k } from "./lib/util";\n'));
@@ -183,18 +183,18 @@ test('CO4 用户卡装载入口看得见改动层里的卡:清单模块列出底
     assert.match(code, /import \* as m\d+ from "\/src\/cards\/user\/price-tag\.tsx";/);
     assert.match(code, /import r\d+ from "\/src\/cards\/user\/price-tag\.tsx\?raw";/);
     assert.match(code, /import r\d+ from "\/src\/cards\/user\/lib\/util\.ts\?raw";/);
-    assert.doesNotMatch(code, /import \* as m\d+ from "\/src\/cards\/user\/lib/, '子目录里的是被引用的实现,不当卡收');
+    assert.doesNotMatch(code, /import \* as m\d+ from "\/src\/cards\/user\/lib/, 'files in subdirectories are referenced implementations and are not collected as cards');
     assert.match(code, /overlayModules = \{ "\.\/price-tag\.tsx": m\d+ \}/);
     assert.match(code, /overlayDependencyRaws = \{ "\.\/lib\/util\.ts": r\d+, "\.\/price-tag\.tsx": r\d+ \}/);
 
     const card = posix(path.join(root, USER_KEY));
-    assert.equal(cards.resolveOverlayOnly(root, '/src/cards/user/price-tag.tsx'), card, '根相对');
-    assert.equal(cards.resolveOverlayOnly(root, '/src/cards/user/price-tag.tsx?raw'), `${card}?raw`, '查询串原样带上');
-    assert.equal(cards.resolveOverlayOnly(root, './lib/util', card), posix(path.join(root, 'src/cards/user/lib/util.ts')), '相对导入补扩展名');
-    assert.equal(cards.resolveOverlayOnly(root, card), card, '绝对路径');
-    assert.equal(cards.resolveOverlayOnly(root, '/src/cards/user/in-base.tsx'), null, '底版有的交给 Vite');
-    assert.equal(cards.resolveOverlayOnly(root, '/src/cards/user/nope.tsx'), null, '两边都没有的交给 Vite(照常报找不到)');
-    assert.equal(cards.resolveOverlayOnly(root, '../../kernel/types', card), null, '内核文件不归改动层');
-    assert.equal(cards.resolveOverlayOnly(root, 'motion/react', card), null, '包名交给 Vite');
+    assert.equal(cards.resolveOverlayOnly(root, '/src/cards/user/price-tag.tsx'), card, 'root-relative');
+    assert.equal(cards.resolveOverlayOnly(root, '/src/cards/user/price-tag.tsx?raw'), `${card}?raw`, 'the query string is carried over as is');
+    assert.equal(cards.resolveOverlayOnly(root, './lib/util', card), posix(path.join(root, 'src/cards/user/lib/util.ts')), 'relative imports get the extension filled in');
+    assert.equal(cards.resolveOverlayOnly(root, card), card, 'absolute path');
+    assert.equal(cards.resolveOverlayOnly(root, '/src/cards/user/in-base.tsx'), null, 'files present in the base copy are left to Vite');
+    assert.equal(cards.resolveOverlayOnly(root, '/src/cards/user/nope.tsx'), null, 'files absent from both sides are left to Vite (which reports not found as usual)');
+    assert.equal(cards.resolveOverlayOnly(root, '../../kernel/types', card), null, 'kernel files do not belong to the overlay layer');
+    assert.equal(cards.resolveOverlayOnly(root, 'motion/react', card), null, 'package names are left to Vite');
   });
 });

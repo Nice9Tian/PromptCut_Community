@@ -29,7 +29,7 @@ function store(initial = {}) {
   };
 }
 
-test("aiSession:* 全部清掉,别的偏好一个都不许动", () => {
+test("Clear all aiSession:*, and do not touch any other preference", () => {
   const s = store({
     "aiSession:api": "api-9433c3ac",
     "aiSession:claude": "c-123",
@@ -41,19 +41,19 @@ test("aiSession:* 全部清掉,别的偏好一个都不许动", () => {
   assert.deepEqual(s.keys().sort(), ["aiProvider", "aiShowThinking", "aiViewMode"]);
 });
 
-test("多 Agent 分页的键带 tabId 后缀,也要一起清", () => {
+test("Keys of multi-Agent tabs carry a tabId suffix and must be cleared too", () => {
   const s = store({ "aiSession:api": "a", "aiSession:api:t-2": "b", "aiSession:codex:t-9": "c" });
   resetAiSessionIds(s);
-  assert.deepEqual(s.keys(), [], "带后缀的一个都不能留");
+  assert.deepEqual(s.keys(), [], "None of the suffixed ones may remain");
 });
 
-test("本来就没有会话 id 时什么也不做", () => {
+test("Does nothing when there is no session id to begin with", () => {
   const s = store({ aiProvider: "api" });
   resetAiSessionIds(s);
   assert.deepEqual(s.keys(), ["aiProvider"]);
 });
 
-test("storage 用不了的时候不许把「打开项目」搞挂", () => {
+test("When storage is unavailable, \"Open project\" must not break", () => {
   const boom = {
     get length() { throw new Error("storage disabled"); },
     key: () => { throw new Error("storage disabled"); },
@@ -65,6 +65,6 @@ test("storage 用不了的时候不许把「打开项目」搞挂", () => {
   assert.doesNotThrow(() => resetAiSessionIds(undefined));
 });
 
-test("前缀是对外公开的常量 —— 别处要判断这类键时用同一个", () => {
+test("The prefix is a publicly exported constant: other places that need to identify such keys should use the same one", () => {
   assert.equal(AI_SESSION_PREFIX, "aiSession:");
 });

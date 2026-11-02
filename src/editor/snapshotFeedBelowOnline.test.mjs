@@ -108,7 +108,7 @@ beforeEach(() => {
   now += 10_000;
 });
 
-test("在线来源读出依赖下层的流:播放、暂停、拖动都发 plane: stage 的流平面、被抑制、不读快照;追上以后不抑制、平面照发", async () => {
+test("Online source reads out a below-dependent stream: playback, pause and scrub all send a stream plane with plane: stage and are suppressed, with no snapshot read; once caught up, no suppression and the plane is still sent", async () => {
   const p = project();
   const rk = RK(0xb1);
   plan = heavy("glass");
@@ -124,18 +124,18 @@ test("在线来源读出依赖下层的流:播放、暂停、拖动都发 plane:
   src.focus(at(77), FPS);
   await w.settle(src);
   const want = [{ clipIds: ["glass"], key: rk, ranges: READY, originFrame: 40, plane: "stage" }];
-  assert.deepEqual(snapshotFeedDebug({ project: p, t: at(77), playing: false }).ready.find((r) => r.clipId === "glass").kinds.map((k) => k.kind).sort(), ["html", "stream"], "快照层和流的层都就绪着");
+  assert.deepEqual(snapshotFeedDebug({ project: p, t: at(77), playing: false }).ready.find((r) => r.clipId === "glass").kinds.map((k) => k.kind).sort(), ["html", "stream"], "Both the snapshot layer and the stream layer are ready");
   for (const playing of [true, false]) {
     const head = { project: p, t: at(77), playing };
     const f = planFeed(head);
     assert.deepEqual(f.heavy, ["glass"]);
     assert.deepEqual(f.streamPlanes, want, `playing=${playing}`);
     assert.deepEqual(suppressedAt(head), ["glass"]);
-    assert.equal(f.picks.size, 0, "有流不读快照");
+    assert.equal(f.picks.size, 0, "With a stream, snapshots are not read");
   }
   for (const frame of [55, 69, 70, 100, 144]) {   // 分段的第一帧、最后一帧、下一段的第一帧、中间、就绪范围的最后一帧
     const head = { project: p, t: at(frame), playing: false };
-    assert.deepEqual(streamPlanesAt(head), want, `拖到第 ${frame} 帧`);
+    assert.deepEqual(streamPlanesAt(head), want, `Scrubbed to frame ${frame}`);
     assert.deepEqual(pickForSetTime(head).snapshots, {});
     assert.deepEqual(suppressedAt(head), ["glass"]);
   }
@@ -153,7 +153,7 @@ test("在线来源读出依赖下层的流:播放、暂停、拖动都发 plane:
   src.stop();
 });
 
-test("在线页面改了下层:父页当场不再发旧流;在线来源收到新项目撤掉那一层;层表换成新的一行以后又贴", async () => {
+test("The online page changed the lower layer: the parent page stops sending the old stream on the spot; the online source receives the new project and drops that layer; once the layer table is replaced with a new row, it is pasted again", async () => {
   const p0 = project();
   const rk0 = RK(0xb1), rk1 = RK(0xb2);
   plan = heavy("glass");
@@ -170,7 +170,7 @@ test("在线页面改了下层:父页当场不再发旧流;在线来源收到新
   for (const playing of [false, true]) {
     const head = { project: p1, t: at(77), playing };
     assert.deepEqual(planFeed(head).streamPlanes, [], `playing=${playing}`);
-    assert.deepEqual(suppressedAt(head), ["glass"], "照没有流的重卡办:未 settled 暂停进 scrub,播放进 heavy");
+    assert.deepEqual(suppressedAt(head), ["glass"], "Handled like a heavy card without a stream: when paused and not settled it enters scrub, during playback it enters heavy");
     assert.deepEqual(snapshotFeedDebug(head).staleBelow, ["glass"]);
   }
   // 在线来源收到新项目:那一层撤掉(就绪区间发空),清单也不再给
@@ -179,7 +179,7 @@ test("在线页面改了下层:父页当场不再发旧流;在线来源收到新
   assert.deepEqual(src.debug().staleStreams, ["glass"]);
   assert.deepEqual(planFeed({ project: p1, t: at(77), playing: true }).streamPlanes, []);
   // 上面的层改了不算:回到 p0 的下层、只改标题,旧流照贴
-  const p2 = project((q) => { q.tracks[0].clips[0].params = { text: "换了标题" }; return q; });
+  const p2 = project((q) => { q.tracks[0].clips[0].params = { text: "Changed title" }; return q; });
   src.setInputs(p2);
   assert.equal(streamPlanesAt({ project: p2, t: at(77), playing: true }).length, 1);
   // 切分方按新的一版重产:层表换成新的一行(新键、新签名)
@@ -193,7 +193,7 @@ test("在线页面改了下层:父页当场不再发旧流;在线来源收到新
   src.stop();
 });
 
-test("占解码器预算:层表里另有六条单卡流排在前面,这张卡的流超出预算,不发平面、照旧抑制着", async () => {
+test("Takes up decoder budget: six other single-card streams in the layer table rank ahead, so this card's stream exceeds the budget, no plane is sent and it stays suppressed as before", async () => {
   const extra = Array.from({ length: DECODER_BUDGET }, (_, i) => `x${i}`);
   const p = project((q) => { for (const id of extra) q.tracks.push({ id: `t-${id}`, name: id, clips: [card(id, 0, 10)] }); return q; });
   plan = heavy("glass", ...extra);
@@ -208,7 +208,7 @@ test("占解码器预算:层表里另有六条单卡流排在前面,这张卡的
   const f = planFeed({ project: p, t: at(77), playing: false });
   assert.equal(f.streamPlanes.length, DECODER_BUDGET);
   assert.equal(f.streamPlanes.some((x) => x.clipIds[0] === "glass"), false);
-  assert.ok(f.scrub.includes("glass"), "有流、只是超了预算:照旧抑制着");
+  assert.ok(f.scrub.includes("glass"), "Has a stream, just over budget: still suppressed as before");
   // 少一条别的流:这张卡的进了预算,带着 plane: stage
   plan = heavy("glass", ...extra.slice(1));
   const g = planFeed({ project: p, t: at(77), playing: false });

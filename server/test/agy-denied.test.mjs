@@ -48,7 +48,7 @@ async function run(result, pre = []) {
   return events;
 }
 
-test('被拒 + 什么都没产出:报错误,不许报成功', async () => {
+test('Denied + nothing produced: report an error, never success', async () => {
   const events = await run({
     conversation_id: 'c1',
     status: 'SUCCESS',
@@ -56,34 +56,34 @@ test('被拒 + 什么都没产出:报错误,不许报成功', async () => {
     denied_actions: [{ display_name: 'RunCommand', action: 'run_command' }],
   });
   const err = events.find((e) => e.type === 'error');
-  assert.ok(err, '该有 error 事件 —— 这一轮实际上什么都没做成');
-  assert.equal(events.find((e) => e.type === 'done'), undefined, '不该同时报 done');
-  assert.match(err.message, /RunCommand/, '要说清是哪个动作被拒的');
-  assert.match(err.message, /wait/, '要告诉用户现在有 wait 工具可用,不然他不知道下一步做什么');
+  assert.ok(err, 'There should be an error event: this round actually accomplished nothing');
+  assert.equal(events.find((e) => e.type === 'done'), undefined, 'Should not also report done');
+  assert.match(err.message, /RunCommand/, 'Must say clearly which action was denied');
+  assert.match(err.message, /wait/, 'Must tell the user that the wait tool is available now, otherwise they do not know what to do next');
 });
 
-test('被拒但**有**产出:照常收尾,只提一句 —— 那一轮的成果不能因为一次被拒就作废', async () => {
+test('Denied but **with** output: wrap up as usual and mention it in just one line, since a round\'s results must not be voided by a single denial', async () => {
   const events = await run({
     conversation_id: 'c1',
     status: 'SUCCESS',
-    response: '我已经把素材放进时间轴了。',
+    response: 'I\'ve already put the media on the timeline.',
     denied_actions: [{ display_name: 'RunCommand', action: 'run_command' }],
   });
-  assert.ok(events.some((e) => e.type === 'done'), '有产出就该正常结束');
+  assert.ok(events.some((e) => e.type === 'done'), 'With output it should end normally');
   assert.equal(events.find((e) => e.type === 'error'), undefined);
   assert.ok(
-    events.some((e) => e.type === 'status' && /部分动作被拒绝/.test(e.text)),
-    '仍然要提醒有动作被拒',
+    events.some((e) => e.type === 'status' && /Some actions were denied/.test(e.text)),
+    'Should still warn that an action was denied',
   );
 });
 
-test('没有被拒的动作时,一切照旧', async () => {
-  const events = await run({ conversation_id: 'c1', status: 'SUCCESS', response: '好的' });
+test('When no action is denied, everything stays as before', async () => {
+  const events = await run({ conversation_id: 'c1', status: 'SUCCESS', response: 'OK' });
   assert.ok(events.some((e) => e.type === 'done'));
   assert.equal(events.find((e) => e.type === 'error'), undefined);
 });
 
-test('response 空但流里已经说过话:算有产出,不报错', async () => {
+test('response is empty but the stream has already produced text: counts as output, no error', async () => {
   const events = await run(
     {
       conversation_id: 'c1',
@@ -91,9 +91,9 @@ test('response 空但流里已经说过话:算有产出,不报错', async () => 
       response: '',
       denied_actions: [{ display_name: 'RunCommand' }],
     },
-    [{ event: 'step_update', step_update: { step_type: 'text', text_delta: '我先看看素材。' } }],
+    [{ event: 'step_update', step_update: { step_type: 'text', text_delta: 'Let me look at the media first.' } }],
   );
-  assert.ok(events.some((e) => e.type === 'done'), '流里已经有正文了,不该判成空轮');
+  assert.ok(events.some((e) => e.type === 'done'), 'The stream already has body text, so it must not be judged an empty round');
   assert.equal(events.find((e) => e.type === 'error'), undefined);
 });
 
@@ -102,7 +102,7 @@ test('response 空但流里已经说过话:算有产出,不报错', async () => 
  * 所以形状必须钉住:少一个,自动续跑就静默失效,而失效的表现和以前一模一样
  * (界面上一个错误躺在那儿),不会有人发现。
  */
-test('可续跑的中断要带 retryable 和拼好的 retryPrompt', async () => {
+test('A resumable interruption must carry retryable and an assembled retryPrompt', async () => {
   const events = await run({
     conversation_id: 'c1',
     status: 'SUCCESS',
@@ -114,13 +114,13 @@ test('可续跑的中断要带 retryable 和拼好的 retryPrompt', async () => 
   });
   const err = events.find((e) => e.type === 'error');
   assert.equal(err.retryable, true);
-  assert.ok(err.retryPrompt, '要有拼好的续跑话术');
-  assert.match(err.retryPrompt, /Start-Sleep/, '把被拒的原始说明拼进去 —— 让模型直接看见,不用自己开口问');
-  assert.match(err.retryPrompt, /wait/, '要指出替代方案,不然它只会换个说法再撞一次');
-  assert.match(err.retryPrompt, /接着|继续/, '要说清是接着做,不是重头再来');
+  assert.ok(err.retryPrompt, 'There must be an assembled resume prompt');
+  assert.match(err.retryPrompt, /Start-Sleep/, 'Include the original denial message: the model sees it directly and does not have to ask');
+  assert.match(err.retryPrompt, /wait/, 'Must point out the alternative, otherwise it will only rephrase and run into it again');
+  assert.match(err.retryPrompt, /continue|carry on/, 'Must make clear it is continuing the work, not starting over');
 });
 
-test('续跑话术按被拒的权限类型指路:读文件被拒不能说成 command、不能只给 wait', async () => {
+test('The resume prompt gives directions by the type of the denied permission: a denied file read must not be described as command and must not be given only wait', async () => {
   const events = await run({
     conversation_id: 'c1', status: 'SUCCESS', response: '',
     denied_actions: [{
@@ -129,13 +129,13 @@ test('续跑话术按被拒的权限类型指路:读文件被拒不能说成 com
     }],
   });
   const err = events.find((e) => e.type === 'error');
-  assert.match(err.retryPrompt, /get_project/, '读文件被拒要指到看工程的工具');
-  assert.doesNotMatch(err.retryPrompt, /wait\(/, '跟等待无关,别把它往 wait 上带');
-  assert.match(err.retryPrompt, /换一个内建工具也一样/, '实跑里它被拒一次就换另一个内建工具再撞');
-  assert.doesNotMatch(err.message, /command 权限/);
+  assert.match(err.retryPrompt, /get_project/, 'A denied file read must point to the tool for viewing the project');
+  assert.doesNotMatch(err.retryPrompt, /wait\(/, 'Unrelated to waiting, don\'t steer it toward wait');
+  assert.match(err.retryPrompt, /switching to another built-in tool makes no difference/, 'In real runs, once it is denied it switches to another built-in tool and runs into the same wall again');
+  assert.doesNotMatch(err.message, /command permission/);
 });
 
-test('读网页被拒:指到 web_open / web_read', async () => {
+test('Denied reading a web page: point to web_open / web_read', async () => {
   const events = await run({
     conversation_id: 'c1', status: 'SUCCESS', response: '',
     denied_actions: [{ display_name: 'ReadUrlContent', action: 'read_url_content' }],
@@ -143,16 +143,16 @@ test('读网页被拒:指到 web_open / web_read', async () => {
   assert.match(events.find((e) => e.type === 'error').retryPrompt, /web_open/);
 });
 
-test('不可续跑的错(agy 自己报 ERROR)不带 retryable —— 那种续跑一百次也一样', async () => {
+test('A non-resumable error (agy itself reports ERROR) carries no retryable: resuming it a hundred times gives the same result', async () => {
   const events = await run({ conversation_id: 'c1', status: 'ERROR', error: 'invalid model selection' });
   const err = events.find((e) => e.type === 'error');
   assert.ok(err);
-  assert.notEqual(err.retryable, true, '模型名错了,自动续跑只会空烧额度');
+  assert.notEqual(err.retryable, true, 'The model name is wrong, so automatic resuming only burns quota for nothing');
 });
 
-test('有产出时即使被拒也不带 retryable:没什么可续的', async () => {
+test('With output, even when denied, no retryable is carried: there is nothing to resume', async () => {
   const events = await run({
-    conversation_id: 'c1', status: 'SUCCESS', response: '做完了。',
+    conversation_id: 'c1', status: 'SUCCESS', response: 'Done.',
     denied_actions: [{ display_name: 'RunCommand' }],
   });
   assert.equal(events.find((e) => e.type === 'error'), undefined);
@@ -176,29 +176,29 @@ function toolError(message) {
   }];
 }
 
-test('报错里同时有 permission 和「找不到文件」时,按找不到文件算', async () => {
+test('When the error contains both permission and "cannot find the file", treat it as a missing file', async () => {
   const events = await run(
-    { conversation_id: 'c1', status: 'SUCCESS', response: '换个路径再试。' },
+    { conversation_id: 'c1', status: 'SUCCESS', response: 'Try a different path.' },
     toolError('declaring permissions: cortex tool view_file: convert tool call for permissions: '
       + 'model output error: invalid tool call error (invalid_args) failed to read file: '
       + 'open C:/x/instructions.md: The system cannot find the file specified.'),
   );
   const tr = events.find((e) => e.type === 'tool_result');
-  assert.ok(tr && tr.ok === false, '要当成一次失败的工具调用交回去');
-  assert.match(tr.summary, /cannot find the file/, '把原文给模型,让它自己看出是路径写错了');
-  assert.doesNotMatch(tr.summary, /Antigravity 自己拒绝/, '这不是拒绝,别这么说');
+  assert.ok(tr && tr.ok === false, 'Must be handed back as a failed tool call');
+  assert.match(tr.summary, /cannot find the file/, 'Give the original text to the model so it can see for itself that the path was wrong');
+  assert.doesNotMatch(tr.summary, /Antigravity itself denied/, 'This is not a denial, don\'t say it that way');
   assert.equal(
-    events.find((e) => e.type === 'status' && /弹窗征求同意/.test(e.text)), undefined,
-    '不该冒出权限相关的提示 —— 那会把模型和用户一起带偏',
+    events.find((e) => e.type === 'status' && /pop-up asking for consent/.test(e.text)), undefined,
+    'No permission-related hint should appear: it would mislead the model and the user alike',
   );
 });
 
-test('真正的权限拒绝仍然按拒绝算', async () => {
+test('A real permission denial still counts as a denial', async () => {
   const events = await run(
-    { conversation_id: 'c1', status: 'SUCCESS', response: '好' },
+    { conversation_id: 'c1', status: 'SUCCESS', response: 'OK' },
     toolError('permission check failed for read_file "C:\\x": user denied permission for read_file(C:\\x)'),
   );
   const tr = events.find((e) => e.type === 'tool_result');
   assert.ok(tr && tr.ok === false);
-  assert.match(tr.summary, /Antigravity 自己拒绝/, '这条确实是被拒,要说明是它自家的工具被拒');
+  assert.match(tr.summary, /Antigravity itself denied/, 'This one really was denied, and it must say that it was its own tool that was denied');
 });

@@ -96,18 +96,18 @@ try {
   const missingFromTable = report.inherited.filter((p) => !INHERITED_PROPS.has(p) && !LAYOUT_USED_VALUE_PROPS.has(p));
   const unverified = table.filter((p) => !chromeInherited.has(p) && !chromeNot.has(p));
 
-  console.log(`Chrome 判定:继承 ${report.inherited.length} 个、不继承 ${report.notInherited.length} 个、没定论 ${report.skipped.length} 个`);
-  console.log(`表里 ${table.length} 个;其中 ${table.filter((p) => chromeInherited.has(p)).length} 个被 Chrome 证实继承。`);
-  if (wrongInTable.length) { exitCode = 1; console.log(`\n表里写了但 Chrome 说不继承(${wrongInTable.length}):\n  ${wrongInTable.join(', ')}`); }
-  if (missingFromTable.length) { exitCode = 1; console.log(`\nChrome 说继承但表里没写(${missingFromTable.length}):\n  ${missingFromTable.join(', ')}`); }
-  if (unverified.length) console.log(`\n表里有、探针没定论(候选值都改不动父元素,不算错,${unverified.length}):\n  ${unverified.join(', ')}`);
-  console.log(`\n没定论的属性共 ${skipped.size} 个。`);
+  console.log(`Chrome verdict: ${report.inherited.length} inherited, ${report.notInherited.length} not inherited, ${report.skipped.length} inconclusive`);
+  console.log(`${table.length} in the table; ${table.filter((p) => chromeInherited.has(p)).length} of them confirmed inherited by Chrome.`);
+  if (wrongInTable.length) { exitCode = 1; console.log(`\nListed in the table but Chrome says not inherited (${wrongInTable.length}):\n  ${wrongInTable.join(', ')}`); }
+  if (missingFromTable.length) { exitCode = 1; console.log(`\nChrome says inherited but not listed in the table (${missingFromTable.length}):\n  ${missingFromTable.join(', ')}`); }
+  if (unverified.length) console.log(`\nListed in the table, probe inconclusive (no candidate value could change the parent element, not counted as an error, ${unverified.length}):\n  ${unverified.join(', ')}`);
+  console.log(`\n${skipped.size} properties in total are inconclusive.`);
 
   if (outJson) {
     const file = path.resolve(ROOT, outJson);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, JSON.stringify({ ...report, table, wrongInTable, missingFromTable, unverified }, null, 2), 'utf8');
-    console.log(`\n原始数据写到 ${file}`);
+    console.log(`\nRaw data written to ${file}`);
   }
 } catch (err) {
   console.error(err && err.stack || err);

@@ -76,7 +76,7 @@ const sample = () => ({
 
 // ------------------------------------------------------------------ DS-P1
 
-test('DS-P1 open 没有真身的项目：project null、rev 0、hasBody false、writers 空；旧字段 projectRev / digest / at 照旧', async (t) => {
+test('DS-P1 open on a project with no body: project null, rev 0, hasBody false, writers empty; the old fields projectRev / digest / at unchanged', async (t) => {
   const env = await start(t);
   const a = await env.connect('user=alice&role=page');
   const st = await open(a, 'never');
@@ -89,7 +89,7 @@ test('DS-P1 open 没有真身的项目：project null、rev 0、hasBody false、
 
 // ------------------------------------------------------------------ DS-P2
 
-test('DS-P2 提交：ok 带 rev；project.ops 只发给提交者以外的订阅者，别的项目的订阅者 0 条；open 取回相同内容', async (t) => {
+test('DS-P2 submit: ok carries rev; project.ops goes only to subscribers other than the submitter, and subscribers of other projects get 0 messages; open returns the same content', async (t) => {
   const env = await start(t);
   const a = await env.connect('user=alice&role=page');
   const b = await env.connect('user=bob&role=page');
@@ -107,8 +107,8 @@ test('DS-P2 提交：ok 带 rev；project.ops 只发给提交者以外的订阅�
   assert.deepEqual(seenB.ops, [{ op: 'set', path: '', value: sample() }]);
   assert.deepEqual(seenB.actor, { userId: 'alice@dev-1', deviceId: 'dev-1', role: 'page', conversation: null, session: 'tab-a' });
   assert.equal(seenB.at, T0 + 1000);
-  assert.deepEqual(await opsOf(a), [], '提交者自己收不到 project.ops');
-  assert.deepEqual(await opsOf(other), [], '别的项目的订阅者收不到');
+  assert.deepEqual(await opsOf(a), [], 'the submitter itself does not receive project.ops');
+  assert.deepEqual(await opsOf(other), [], 'subscribers of other projects receive nothing');
 
   const ok2 = await op(b, [{ op: 'set', path: '/tracks/@t1/clips/@c2/end', value: 5 }, { op: 'insert', path: '/tracks/@t2/clips', index: 0, value: { id: 'c9', start: 0, end: 1 } }]);
   assert.equal(ok2.rev, 2);
@@ -119,12 +119,12 @@ test('DS-P2 提交：ok 带 rev；project.ops 只发给提交者以外的订阅�
   assert.equal(st.rev, 2);
   assert.equal(st.hasBody, true);
   assert.equal(JSON.stringify(st.project), JSON.stringify(expected));
-  assert.equal(st.digest, createHash('sha256').update(JSON.stringify(expected)).digest('hex'), 'digest 是真身的 sha256');
+  assert.equal(st.digest, createHash('sha256').update(JSON.stringify(expected)).digest('hex'), 'digest is the sha256 of the body');
 });
 
 // ------------------------------------------------------------------ DS-P3
 
-test('DS-P3 整批原子：后一条走不通 → rejected bad-path（带出错下标），版本不变、不广播；格式不对的操作同样 bad-path；缺 opId 回 bad-message', async (t) => {
+test('DS-P3 the whole batch is atomic: if a later op cannot be applied → rejected bad-path (with the index of the failing op), version unchanged, no broadcast; a malformed op is also bad-path; a missing opId replies bad-message', async (t) => {
   const env = await start(t);
   const a = await env.connect('user=alice&role=page');
   const b = await env.connect('user=bob&role=page');
@@ -141,11 +141,11 @@ test('DS-P3 整批原子：后一条走不通 → rejected bad-path（带出错�
   const r2 = await op(a, [{ op: 'copy', path: '/width' }]);
   assert.deepEqual({ type: r2.type, reason: r2.reason, index: r2.index }, { type: 'project.op.rejected', reason: 'bad-path', index: 0 });
   const r3 = await op(a, []);
-  assert.equal(r3.reason, 'bad-path', '空批');
-  assert.deepEqual(await opsOf(b), [], '被拒的提交不广播');
+  assert.equal(r3.reason, 'bad-path', 'empty batch');
+  assert.deepEqual(await opsOf(b), [], 'a rejected commit is not broadcast');
   const st = await open(b);
   assert.equal(st.rev, 1);
-  assert.equal(st.project.width, 1920, '状态不变');
+  assert.equal(st.project.width, 1920, 'state unchanged');
 
   const e = await ask(a, { type: 'project.op', projectId: 'P', ops: [{ op: 'set', path: '/width', value: 2 }] });
   assert.deepEqual({ type: e.type, reason: e.reason }, { type: 'error', reason: 'bad-message' });
@@ -153,7 +153,7 @@ test('DS-P3 整批原子：后一条走不通 → rejected bad-path（带出错�
 
 // ------------------------------------------------------------------ DS-P4
 
-test('DS-P4 too-large：ops 序列化后超过 256 KiB；forbidden：渲染节点的连接', async (t) => {
+test('DS-P4 too-large: ops exceed 256 KiB once serialized; forbidden: a render node connection', async (t) => {
   const env = await start(t);
   const a = await env.connect('user=alice&role=page');
   await open(a);
@@ -161,7 +161,7 @@ test('DS-P4 too-large：ops 序列化后超过 256 KiB；forbidden：渲染节�
   const r = await op(a, [{ op: 'set', path: '/blob', value: big }]);
   assert.deepEqual({ type: r.type, reason: r.reason, currentRev: r.currentRev }, { type: 'project.op.rejected', reason: 'too-large', currentRev: 0 });
   const ok = await op(a, [{ op: 'set', path: '/blob', value: 'x'.repeat(200 * 1024) }]);
-  assert.equal(ok.type, 'project.op.ok', '256 KiB 以内可以');
+  assert.equal(ok.type, 'project.op.ok', 'up to 256 KiB is allowed');
 
   const n = await env.connect('user=node&role=render');
   const f = await op(n, [{ op: 'set', path: '/x', value: 1 }]);
@@ -170,7 +170,7 @@ test('DS-P4 too-large：ops 序列化后超过 256 KiB；forbidden：渲染节�
 
 // ------------------------------------------------------------------ DS-P5（V3）
 
-test('DS-P5（V3）期望版本：Agent 读后页面改了同一实体，Agent 的写回 stale，since 与实际改动逐条一致；重读后再写成功', async (t) => {
+test('DS-P5 (V3) expected version: after the Agent reads, the page changes the same entity, so the write-back of the Agent is stale and since matches the actual changes one by one; after re-reading, writing succeeds', async (t) => {
   const env = await start(t);
   const page = await env.connect('user=alice&dev=pc&role=page');
   const agent = await env.connect('user=alice&dev=pc&role=agent&conv=7');
@@ -198,7 +198,7 @@ test('DS-P5（V3）期望版本：Agent 读后页面改了同一实体，Agent �
     { rev: 2, opId: p1.opId, actor: pageActor, at: T0 + 5000, paths: ['/tracks/@t1/clips/@c1/start'], entities: ['/tracks/@t1/clips/@c1'] },
     { rev: 3, opId: p2.opId, actor: pageActor, at: T0 + 6000, paths: ['/tracks/@t2/clips/@c7', '/fps'], entities: ['/tracks/@t2/clips/@c7', '/meta/fps'] },
   ]);
-  assert.deepEqual(await opsOf(page), [], '被拒的不广播');
+  assert.deepEqual(await opsOf(page), [], 'rejected ones are not broadcast');
 
   const reread = await open(agent);
   assert.equal(reread.rev, 3);
@@ -213,7 +213,7 @@ test('DS-P5（V3）期望版本：Agent 读后页面改了同一实体，Agent �
 
 // ------------------------------------------------------------------ DS-P6
 
-test('DS-P6 幂等：同一 opId 再提交回当初的 rev（duplicate），不再应用、不广播；先于 expectRev 检查', async (t) => {
+test('DS-P6 idempotency: resubmitting the same opId returns the original rev (duplicate), is not applied again and not broadcast; checked before expectRev', async (t) => {
   const env = await start(t);
   const a = await env.connect('user=alice&role=page');
   const b = await env.connect('user=bob&role=page');
@@ -232,7 +232,7 @@ test('DS-P6 幂等：同一 opId 再提交回当初的 rev（duplicate），不�
 
 // ------------------------------------------------------------------ DS-P7（V4）
 
-test('DS-P7（V4）覆盖通知：覆盖方 ok 带 overwrote、被覆盖方先于 ops 收一条 overwritten；同一身份、超过 10 分钟、退出跟踪的都不通知被覆盖方', async (t) => {
+test('DS-P7 (V4) overwrite notification: ok for the overwriting side carries overwrote, and the overwritten side receives one overwritten before the ops; the overwritten side is not notified when it has the same identity, when more than 10 minutes have passed, or when it has exited tracking', async (t) => {
   const env = await start(t);
   const a = await env.connect('user=alice&dev=pa&role=page');
   const b = await env.connect('user=bob&dev=pb&role=page');
@@ -246,21 +246,21 @@ test('DS-P7（V4）覆盖通知：覆盖方 ok 带 overwrote、被覆盖方先�
   env.clock.t = T0 + 1 * MIN;
   const wa = await op(a, [{ op: 'set', path: '/tracks/@t1/clips/@c1/start', value: 0.25 }], { session: 'sa' });
   await b.next(byType('project.ops'));
-  assert.deepEqual(wa.overwrote, [], '根替换之后同一身份再写：不算覆盖');
+  assert.deepEqual(wa.overwrote, [], 'writing again with the same identity after a root replacement: does not count as an overwrite');
 
   env.clock.t = T0 + 5 * MIN;
   const wb = await op(b, [{ op: 'set', path: '/tracks/@t1/clips/@c1/start', value: 0.75 }], { session: 'sb' });
   assert.deepEqual(wb.overwrote, [{ entity: '/tracks/@t1/clips/@c1', by: actorA, rev: wa.rev, at: T0 + 1 * MIN }]);
   // 被覆盖方：overwritten 在这一版的 ops 之前到
   const first = await a.next((m) => m.type === 'project.overwritten' || m.type === 'project.ops');
-  assert.equal(first.type, 'project.overwritten', '先收 overwritten 再收 ops');
+  assert.equal(first.type, 'project.overwritten', 'overwritten is received before ops');
   assert.deepEqual(
     { entity: first.entity, by: first.by, writer: first.writer, rev: first.rev },
     { entity: '/tracks/@t1/clips/@c1', by: actorB, writer: actorA, rev: wb.rev },
   );
   assert.equal((await a.next(byType('project.ops'))).rev, wb.rev);
-  assert.deepEqual(await a.quiet(byType('project.overwritten'), 100), [], '被覆盖方只收一条');
-  assert.deepEqual(await b.quiet(byType('project.overwritten'), 100), [], '覆盖方不收 overwritten');
+  assert.deepEqual(await a.quiet(byType('project.overwritten'), 100), [], 'the overwritten side receives only one');
+  assert.deepEqual(await b.quiet(byType('project.overwritten'), 100), [], 'the overwriting side does not receive overwritten');
 
   // 超过 10 分钟：不算覆盖
   env.clock.t = T0 + 16 * MIN;
@@ -275,9 +275,9 @@ test('DS-P7（V4）覆盖通知：覆盖方 ok 带 overwrote、被覆盖方先�
   const f = await ask(a, { type: 'project.follow', projectId: 'P', entity: '/tracks/@t1/clips/@c2/end', on: false, session: 'sa' });
   assert.deepEqual({ type: f.type, entity: f.entity, on: f.on }, { type: 'project.following', entity: '/tracks/@t1/clips/@c2', on: false });
   const wb2 = await op(b, [{ op: 'set', path: '/tracks/@t1/clips/@c2/end', value: 4 }], { session: 'sb' });
-  assert.equal(wb2.overwrote.length, 1, '覆盖方照样知道');
+  assert.equal(wb2.overwrote.length, 1, 'the overwriting side still knows');
   assert.equal((await a.next(byType('project.ops'))).rev, wb2.rev);
-  assert.deepEqual(await a.quiet(byType('project.overwritten'), 100), [], '退出跟踪后不收');
+  assert.deepEqual(await a.quiet(byType('project.overwritten'), 100), [], 'not received after exiting tracking');
 
   // 同一用户同一设备、不同页面会话：是另一个写入身份
   const a2 = await env.connect('user=alice&dev=pa&role=page');
@@ -295,7 +295,7 @@ test('DS-P7（V4）覆盖通知：覆盖方 ok 带 overwrote、被覆盖方先�
 
 // ------------------------------------------------------------------ DS-P8
 
-test('DS-P8 落盘：每 N 次提交落快照、日志截断到快照之后；重启读快照再回放，版本、内容、幂等、最近写入者都接得上', async (t) => {
+test('DS-P8 persistence: a snapshot is written every N submissions and the log is truncated to after the snapshot; on restart the snapshot is read and then replayed, and version, content, idempotency and the most recent writer all carry over', async (t) => {
   const dir = tempDir(t, 'pc-c65-');
   const clock = { t: T0 };
   const env = await start(t, { store: createFileStore({ dir, log: () => {} }), clock, options: { snapshotEvery: 5 } });
@@ -308,32 +308,32 @@ test('DS-P8 落盘：每 N 次提交落快照、日志截断到快照之后；�
   }
   const before = await open(a);
   assert.equal(before.rev, 12);
-  assert.ok(existsSync(join(dir, stateBlobName('P'))), `快照文件在：${readdirSync(join(dir, 'projects')).join(', ')}`);
+  assert.ok(existsSync(join(dir, stateBlobName('P'))), `snapshot file is at: ${readdirSync(join(dir, 'projects')).join(', ')}`);
   const snap = JSON.parse(readFileSync(join(dir, stateBlobName('P')), 'utf8'));
-  assert.equal(snap.rev, 10, '第 10 次提交时落的快照');
+  assert.equal(snap.rev, 10, 'the snapshot written at the 10th submission');
   const logLines = readFileSync(join(dir, 'projects', 'P.ops.ndjson'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-  assert.deepEqual(logLines.map((r) => r.rev), [11, 12], '日志截断到快照之后');
-  for (const r of logLines) for (const k of ['projectId', 'rev', 'opId', 'ops', 'actor', 'at', 'entities']) assert.ok(Object.hasOwn(r, k), `日志行缺 ${k}`);
+  assert.deepEqual(logLines.map((r) => r.rev), [11, 12], 'the log is truncated to after the snapshot');
+  for (const r of logLines) for (const k of ['projectId', 'rev', 'opId', 'ops', 'actor', 'at', 'entities']) assert.ok(Object.hasOwn(r, k), `log line is missing ${k}`);
   await env.cleanup();
 
   const env2 = await start(t, { store: createFileStore({ dir, log: () => {} }), clock, options: { snapshotEvery: 5 } });
   const b = await env2.connect('user=bob&role=page');
   const after = await open(b);
   assert.equal(after.rev, 12);
-  assert.equal(JSON.stringify(after.project), JSON.stringify(before.project), '内容逐字节相同');
+  assert.equal(JSON.stringify(after.project), JSON.stringify(before.project), 'content is byte-for-byte identical');
   const dup = await ask(b, { type: 'project.op', projectId: 'P', opId: 'k-3', ops: [{ op: 'set', path: '/x', value: 1 }] });
-  assert.deepEqual({ rev: dup.rev, duplicate: dup.duplicate }, { rev: 4, duplicate: true }, '重启前的 opId 仍认得（快照里的）');
+  assert.deepEqual({ rev: dup.rev, duplicate: dup.duplicate }, { rev: 4, duplicate: true }, 'opIds from before the restart are still recognized (those in the snapshot)');
   const dup2 = await ask(b, { type: 'project.op', projectId: 'P', opId: 'k-11', ops: [{ op: 'set', path: '/x', value: 1 }] });
-  assert.equal(dup2.rev, 12, '重启前的 opId 仍认得（日志回放的）');
+  assert.equal(dup2.rev, 12, 'opIds from before the restart are still recognized (those from log replay)');
   clock.t = T0 + 20_000;
   const w = await op(b, [{ op: 'set', path: '/tracks/@t1/clips/@c1/start', value: 100 }], { session: 'other' });
   assert.equal(w.rev, 13);
-  assert.equal(w.overwrote.length, 1, '最近写入者跨重启保留');
+  assert.equal(w.overwrote.length, 1, 'the most recent writer is preserved across restarts');
 });
 
 // ------------------------------------------------------------------ DS-P9
 
-test('DS-P9 与旧 announce 的关系：没有真身时 announce 照旧发号；有真身后 announce 不发号、摘要以真身为准；当前版本的 M5b 快照由真身发回', async (t) => {
+test('DS-P9 relationship with the old announce: with no body, announce still issues rev numbers as before; once a body exists, announce issues none and the digest follows the body; the M5b snapshot of the current version is sent back from the body', async (t) => {
   const env = await start(t);
   const a = await env.connect('user=alice');
   const b = await env.connect('user=bob');
@@ -345,7 +345,7 @@ test('DS-P9 与旧 announce 的关系：没有真身时 announce 照旧发号；
   assert.equal((await b.next(byType('project.rev'))).projectRev, 1);
 
   const ok = await op(a, [{ op: 'set', path: '', value: sample() }]);
-  assert.equal(ok.rev, 2, '版本号只有一个：接着 announce 的往上加');
+  assert.equal(ok.rev, 2, 'there is only one version number: it continues upward from the one issued by announce');
   const text = JSON.stringify(sample());
   const bodyDigest = createHash('sha256').update(text).digest('hex');
   const an2 = await ask(a, { type: 'project.announce', projectId: 'P', digest: dg });
@@ -355,7 +355,7 @@ test('DS-P9 与旧 announce 的关系：没有真身时 announce 照旧发号；
   );
   const an3 = await ask(a, { type: 'project.announce', projectId: 'P', digest: bodyDigest });
   assert.equal(an3.matches, true);
-  assert.deepEqual(await b.quiet(byType('project.rev'), 100), [], '有真身后 announce 不广播 project.rev');
+  assert.deepEqual(await b.quiet(byType('project.rev'), 100), [], 'once a body exists, announce does not broadcast project.rev');
 
   const reqId = 'snap-1';
   b.send({ type: 'project.snapshot.get', projectId: 'P', projectRev: 2, reqId });
@@ -363,7 +363,7 @@ test('DS-P9 与旧 announce 的关系：没有真身时 announce 照旧发号；
   for (;;) {
     const m = await b.next((x) => x.reqId === reqId);
     if (m.type === 'project.snapshot.end') { assert.equal(m.digest, bodyDigest); break; }
-    assert.equal(m.missing, undefined, '当前版本能取回');
+    assert.equal(m.missing, undefined, 'the current version can be fetched');
     got += m.data;
   }
   assert.equal(got, text);
@@ -373,14 +373,14 @@ test('DS-P9 与旧 announce 的关系：没有真身时 announce 照旧发号；
 
 // ------------------------------------------------------------------ DS-P10
 
-test('DS-P10 大项目：project.upload 分片传整份、project.op 引用它做根替换；别的订阅者收 resync；open 分片发回，拼起来逐字节相同', async (t) => {
+test('DS-P10 large project: project.upload sends the whole thing in parts, and project.op references it to do a root replacement; other subscribers receive resync; open sends it back in parts, and joined together it is byte-for-byte identical', async (t) => {
   const env = await start(t);
   const a = await env.connect('user=alice&role=page');
   const b = await env.connect('user=bob&role=page');
   await open(a);
   await open(b);
   const big = sample();
-  big.tracks[0].clips = Array.from({ length: 6000 }, (_, i) => ({ id: `c${i}`, start: i, end: i + 1, params: { text: `片段 ${i} ${'z'.repeat(100)}` } }));
+  big.tracks[0].clips = Array.from({ length: 6000 }, (_, i) => ({ id: `c${i}`, start: i, end: i + 1, params: { text: `clip ${i} ${'z'.repeat(100)}` } }));
   const text = JSON.stringify(big);
   assert.ok(Buffer.byteLength(text) > 512 * 1024);
   const chunk = 200 * 1024;
@@ -395,7 +395,7 @@ test('DS-P10 大项目：project.upload 分片传整份、project.op 引用它�
   const seen = await b.next(byType('project.ops'));
   assert.deepEqual({ rev: seen.rev, resync: seen.resync, ops: seen.ops }, { rev: 1, resync: true, ops: undefined });
   const reused = await op(a, [{ op: 'set', path: '', upload: 'u1' }]);
-  assert.equal(reused.reason, 'bad-path', '上传用过一次就没了');
+  assert.equal(reused.reason, 'bad-path', 'an upload is gone once used');
 
   const reqId = 'open-big';
   b.send({ type: 'project.open', projectId: 'P', reqId });
@@ -442,7 +442,7 @@ function randomOps(view, rand, tag, n) {
   return [{ op: 'remove', path: `/tracks/@${track.id}/clips/@${clip.id}` }];
 }
 
-test('DS-P11（V2 服务端一侧）两个页面各 200 次随机编辑交错提交：两边按 rev 重建的副本、旁观者、文档服务三份逐字节相同', async (t) => {
+test('DS-P11 (V2, server side) two pages each submit 200 random edits interleaved: the copies rebuilt by rev on both sides, the observer and the document service are byte-for-byte identical (all three)', async (t) => {
   const env = await start(t);
   const init = await env.connect('user=init&role=page');
   await open(init);
@@ -454,7 +454,7 @@ test('DS-P11（V2 服务端一侧）两个页面各 200 次随机编辑交错提
   watcher.ws.addEventListener('message', (e) => {
     const m = JSON.parse(e.data);
     if (m.type !== 'project.ops') return;
-    assert.equal(m.rev, watch.rev + 1, '旁观者按 rev 连续收到');
+    assert.equal(m.rev, watch.rev + 1, 'the observer receives ops in consecutive rev order');
     watch.view = applyOps(watch.view, m.ops).root;
     watch.rev = m.rev;
     watch.order.push(m.actor.session);
@@ -468,11 +468,11 @@ test('DS-P11（V2 服务端一侧）两个页面各 200 次随机编辑交错提
     c.ws.addEventListener('message', (e) => {
       const m = JSON.parse(e.data);
       if (m.type === 'project.ops') {
-        assert.equal(m.rev, me.rev + 1, `${name} 收到的 ops 按 rev 连续`);
+        assert.equal(m.rev, me.rev + 1, `ops received by ${name} are in consecutive rev order`);
         me.view = applyOps(me.view, m.ops).root;
         me.rev = m.rev;
       } else if (m.type === 'project.op.ok' && pending && m.opId === pending.opId) {
-        assert.equal(m.rev, me.rev + 1, `${name} 的 ok 排在它之前的 ops 之后`);
+        assert.equal(m.rev, me.rev + 1, `the ok of ${name} comes after the ops before it`);
         me.view = applyOps(me.view, pending.ops).root;
         me.rev = m.rev;
       }
@@ -484,7 +484,7 @@ test('DS-P11（V2 服务端一侧）两个页面各 200 次随机编辑交错提
       const r = await ask(c, { type: 'project.op', projectId: 'P', opId: pending.opId, session: name, ops }, 5000);
       if (r.type === 'project.op.ok') me.accepted += 1;
       else {
-        assert.equal(r.reason, 'bad-path', `${name} 只会因为别人刚改过而走不通：${JSON.stringify(r)}`);
+        assert.equal(r.reason, 'bad-path', `${name} can only fail because someone else just changed it: ${JSON.stringify(r)}`);
         me.rejected += 1;
       }
       pending = null;
@@ -501,19 +501,19 @@ test('DS-P11（V2 服务端一侧）两个页面各 200 次随机编辑交错提
   })();
   const server = await open(await env.connect('user=check&role=page'));
   assert.equal(server.rev, finalRev);
-  assert.ok(x.accepted > 100 && y.accepted > 100, `大部分落地：${x.accepted}、${y.accepted}（拒 ${x.rejected}、${y.rejected}）`);
+  assert.ok(x.accepted > 100 && y.accepted > 100, `most were applied: ${x.accepted}, ${y.accepted} (rejected ${x.rejected}, ${y.rejected})`);
   const s = JSON.stringify(server.project);
-  assert.equal(JSON.stringify(x.view), s, 'ann 的副本与文档服务逐字节相同');
-  assert.equal(JSON.stringify(y.view), s, 'ben 的副本与文档服务逐字节相同');
-  assert.equal(JSON.stringify(watch.view), s, '旁观者的副本与文档服务逐字节相同');
+  assert.equal(JSON.stringify(x.view), s, 'the copy of ann is byte-for-byte identical to the document service');
+  assert.equal(JSON.stringify(y.view), s, 'the copy of ben is byte-for-byte identical to the document service');
+  assert.equal(JSON.stringify(watch.view), s, 'the copy of the observer is byte-for-byte identical to the document service');
   const switches = watch.order.slice(1).filter((who, i) => who !== watch.order[i]).length;
-  assert.ok(switches >= 50, `两边的提交确实交错落地（相邻两次换人 ${switches} 次）`);
-  t.diagnostic(`交错 ${switches} 次；rev ${finalRev}；ann 落地 ${x.accepted} 拒 ${x.rejected}；ben 落地 ${y.accepted} 拒 ${y.rejected}`);
+  assert.ok(switches >= 50, `the submissions of both sides really were interleaved (adjacent submissions switched sides ${switches} times)`);
+  t.diagnostic(`interleaved ${switches} times; rev ${finalRev}; ann applied ${x.accepted} rejected ${x.rejected}; ben applied ${y.accepted} rejected ${y.rejected}`);
 });
 
 // ------------------------------------------------------------------ DS-P12
 
-test('DS-P12 日志与广播的 actor 取自 principal（M6a 形状 + session），消息里自报的不认；旧式身份照 M5 记 { userId, session }', async (t) => {
+test('DS-P12 the actor in the log and broadcasts comes from principal (M6a shape + session), and a self-reported one in a message is ignored; old-style identities are recorded as { userId, session } per M5', async (t) => {
   const env = await start(t);
   const agent = await env.connect('user=zoe&dev=d9&role=agent&conv=4');
   const legacy = await env.connect('user=old');
