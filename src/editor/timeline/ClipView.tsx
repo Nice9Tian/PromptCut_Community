@@ -422,7 +422,7 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
             {plan.name && (
               <span className="pc-clip-line" data-pc-clip-speed={isSpeedChanged(clip) ? clipSpeed(clip) : undefined}>
                 <span className="nm">{shownLabel}</span>
-                {plan.duration && subtitle ? <span className="du">{` · ${subtitle}`}</span> : null}
+                {plan.duration && subtitle ? <span className="du" data-i18n-data>{` · ${subtitle}`}</span> : null}
               </span>
             )}
             {plan.pill && overlays.length > 0 && <OverlayPill count={overlays.length} onOpenAll={openOverlayList} />}
