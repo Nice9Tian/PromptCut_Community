@@ -8,6 +8,7 @@ import { useOpenGroup } from "./stored";
 import { ANIMATION_GROUPS, ANIMATION_GROUP_IDS } from "./library/groups";
 import { GroupBrowser } from "./library/GroupBrowser";
 import { useCardGroups, useCardLibrary, usePartsList } from "./library/cardGroups";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 「动画」分区:搜索 + 卡片筛选 → 分组(定制卡片 / Magic UI / 自家卡片 / 部件库 / Lottie 动效 / 粒子背景)。
@@ -59,16 +60,16 @@ export function AnimationsSection() {
 
   return (
     <div data-pc="animations" className="pc-left-section">
-      <SectionHead title="动画">
+      <SectionHead title={tr("Animation")}>
         <div className="pc-left-searchrow" ref={scopeWrapRef}>
-          <SearchBox value={search} onChange={setSearch} placeholder="搜索动画、卡片…" dataPc="animations-search" />
+          <SearchBox value={search} onChange={setSearch} placeholder={tr("Search animations, cards…")} dataPc="animations-search" />
           <button
             type="button"
             className={`pc-icon-btn pc-left-filter${narrowed ? " is-narrowed" : ""}`}
             data-pc="scope-toggle"
             aria-pressed={scopeOpen}
             aria-haspopup="dialog"
-            title={narrowed ? "卡片筛选:有档位关着,点开调整" : "卡片筛选:基础 / 自定义 / 项目"}
+            title={narrowed ? tr("Card filter: some tiers are off, click to adjust") : tr("Card filter: basic / custom / project")}
             onClick={() => setScopeOpen((o) => !o)}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -76,9 +77,9 @@ export function AnimationsSection() {
             </svg>
           </button>
           {scopeOpen && (
-            <div className="pc-lib-popover" role="dialog" aria-label="卡片筛选">
-              <div className="pc-lib-popover-title">卡片筛选</div>
-              <div className="pc-lib-popover-hint">关掉哪一档,卡库和 AI 助手看到的卡片同时生效</div>
+            <div className="pc-lib-popover" role="dialog" aria-label={tr("Card filter")}>
+              <div className="pc-lib-popover-title">{tr("Card filter")}</div>
+              <div className="pc-lib-popover-hint">{tr("Turning off a tier takes effect for the cards seen in the card library and by the AI assistant at the same time")}</div>
               <CardScopeBar onChange={cards.setVis} />
             </div>
           )}
@@ -91,7 +92,7 @@ export function AnimationsSection() {
         searching={searching}
         openId={openGroup}
         onOpen={setOpenGroup}
-        noMatch="没有匹配的动画或卡片"
+        noMatch={tr("No matching animations or cards")}
       />
 
       {userMenu && (

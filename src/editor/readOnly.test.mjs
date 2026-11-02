@@ -126,7 +126,7 @@ test("RO6 总时长自动对齐是个写：只读项目里不做（读写照旧�
   const D = await import(srcUrl("editor/timeline/durationSync.ts"));
   const clip = (id, start, end) => ({ id, cardId: "", start, end, params: {} });
   const load = () => {
-    actions.newProject("时长");
+    actions.newProject("Duration");
     const p = getState().project;
     // 内容末尾 4 秒，但项目里记的总时长是 10 秒：对齐的话会改成 4
     stateCore.setProject({ ...p, tracks: [{ ...p.tracks[0], clips: [clip("a", 0, 2), clip("b", 2, 4)] }], duration: 10 }, { undoable: false });

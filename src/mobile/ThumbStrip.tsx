@@ -12,6 +12,7 @@ import type { Transition } from "../kernel/transitions";
 import { boundaryTransition, cardPosAtTime, clipKind, mainTotal, timeAtCardPos } from "./mainContent";
 import { Icon } from "./icons";
 import { fmtDur, tint } from "./ui";
+import { tr as trText } from "../i18n/index.ts";
 
 /** 长按多久才算拿起来换顺序 */
 const LIFT_MS = 350;
@@ -176,16 +177,16 @@ export function ThumbStrip(props: {
   const total = Math.round(mainTotal(clips) * 10) / 10;
   return (
     <>
-      <div className="mainhead"><b>缩略时间轴</b><span data-pcm="main-sum">{clips.length ? `${clips.length} 段 · 共 ${fmtDur(total)}` : "还没有内容，点 ＋ 添加素材"}</span></div>
+      <div className="mainhead"><b>{trText("Thumbnail timeline")}</b><span data-pcm="main-sum">{clips.length ? trText("{0} clips · {1} total", clips.length, fmtDur(total)) : trText("Nothing here yet. Tap + to add media")}</span></div>
       <div className="mainstrip" data-pcm="main-strip">
-        <div className="cf-line" title="当前帧" data-pcm="frame-line" />
+        <div className="cf-line" title={trText("Current frame")} data-pcm="frame-line" />
         <div
           ref={sc}
           className="strip-scroll"
           onPointerDown={onPointerDown}
           onClickCapture={(e) => { if (suppressClick.current) { e.stopPropagation(); e.preventDefault(); } }}
         >
-          <button type="button" className="madd" aria-label="添加素材" title="添加素材" data-pcm="main-add" onClick={props.onAddMedia}><Icon name="plus" /></button>
+          <button type="button" className="madd" aria-label={trText("Add media")} title={trText("Add media")} data-pcm="main-add" onClick={props.onAddMedia}><Icon name="plus" /></button>
           {clips.map((c, i) => {
             const tr = i < clips.length - 1 ? boundaryTransition(project, c, clips[i + 1]) : null;
             // 变速段原声不出(〔裁〕,kernel/clipTime.mjs):和静音一样挂静音图标,时长后面带倍数
@@ -207,8 +208,8 @@ export function ThumbStrip(props: {
               </div>,
               i < clips.length - 1 && (
                 tr
-                  ? <button key={`m-${key}`} type="button" className={selected === tr.id ? "mark has sel" : "mark has"} data-id={tr.id} data-k={i} data-pcm="mark" title="转场">◇</button>
-                  : <button key={`m-${key}`} type="button" className="mark" data-k={i} data-pcm="mark-add" title="添加转场" onClick={() => props.onAddTransition(c, clips[i + 1])}>＋</button>
+                  ? <button key={`m-${key}`} type="button" className={selected === tr.id ? "mark has sel" : "mark has"} data-id={tr.id} data-k={i} data-pcm="mark" title={trText("Transition")}>◇</button>
+                  : <button key={`m-${key}`} type="button" className="mark" data-k={i} data-pcm="mark-add" title={trText("Add transition")} onClick={() => props.onAddTransition(c, clips[i + 1])}>{trText("+")}</button>
               ),
             ];
           })}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { TIER_LABEL, tierName, tierState } from "../online/onlineTier";
 import { stageGate, stepText } from "../online/stageGate";
+import { tr } from "../i18n/index.ts";
 
 /**
  * 三道闸门的只读查看口(`docs/plan/online-browser-task.md` 第三步第 5 条):在线页面地址里带 `?gates=1` 时,在右上角显示当前各闸门的结果与
@@ -30,23 +31,23 @@ export function GateViewer() {
   const g = stageGate();
   const log = g?.snapshot().log;
   const lines: [string, string][] = [
-    ["档位", t.online ? `${TIER_LABEL[tierName(t)]}(${tierName(t)})` : "桌面"],
-    ["舞台闸门", `目标第 ${t.target} 级,到达第 ${t.reached} 级,${t.gate === "done" ? "已走完" : "试的途中"}${t.lowest ? `;最低一档(${t.lowest === "stage" ? "一个舞台都撑不住" : "基准卡跑不动"})` : ""}`],
-    ["身份", t.identity === "phone" ? "手机" : "电脑"],
-    ["基准卡", t.benchmark],
-    ["这次怎么走", g ? `${g.decision.reason}:${g.decision.note}` : "(还没开)"],
-    ["上次崩没崩", g ? (g.judged.crashed ? `崩了,在「${stepText(g.judged.step)}」` : "没崩") : ""],
-    ["此刻的一步", g ? stepText(g.snapshot().step) : ""],
-    ["崩的次数 / 护栏", log ? `${log.device.stage.crashes} 次;${log.device.stage.guardUntil ? `护栏到 ${new Date(log.device.stage.guardUntil).toLocaleTimeString()}` : "没有护栏"}` : ""],
-    ["解码上限调低", log ? `${log.device.media.lowered} 级` : ""],
-    ["测崩的卡", log ? `${log.device.heavyCards.length} 张` : ""],
+    [tr("Tier"), t.online ? `${TIER_LABEL[tierName(t)]}(${tierName(t)})` : tr("Desktop")],
+    [tr("Stage gate"), tr("Target level {0}, reached level {1}, {2}{3}", t.target, t.reached, t.gate === "done" ? tr("completed") : tr("still trying"), t.lowest ? tr("; lowest tier ({0})", t.lowest === "stage" ? tr("cannot sustain even one stage") : tr("baseline card cannot run")) : "")],
+    [tr("Identity"), t.identity === "phone" ? tr("Phone") : tr("Computer")],
+    [tr("Baseline card"), t.benchmark],
+    [tr("Path taken this time"), g ? `${g.decision.reason}:${g.decision.note}` : tr("(not opened yet)")],
+    [tr("Crashed last time?"), g ? (g.judged.crashed ? tr("Crashed at \"{0}\"", stepText(g.judged.step)) : tr("No crash")) : ""],
+    [tr("Current step"), g ? stepText(g.snapshot().step) : ""],
+    [tr("Crash count / guard"), log ? tr("{0} times; {1}", log.device.stage.crashes, log.device.stage.guardUntil ? tr("Guard until {0}", new Date(log.device.stage.guardUntil).toLocaleTimeString()) : tr("No guard")) : ""],
+    [tr("Decode limit lowered"), log ? tr("{0} levels", log.device.media.lowered) : ""],
+    [tr("Cards that crashed in testing"), log ? tr("{0} cards", log.device.heavyCards.length) : ""],
   ];
   return (
     <div data-pc="gate-viewer" style={{
       position: "fixed", top: 8, right: 8, zIndex: 1000, width: open ? 420 : "auto", maxHeight: "80vh", overflow: "auto",
       background: "var(--ui-panel-2)", color: "var(--ui-fg)", border: "1px solid var(--ui-border)", borderRadius: 8, fontSize: 12, padding: 8,
     }}>
-      <button type="button" onClick={() => setOpen((v) => !v)} style={{ fontSize: 12 }}>{open ? "收起闸门查看口" : "闸门查看口"}</button>
+      <button type="button" onClick={() => setOpen((v) => !v)} style={{ fontSize: 12 }}>{open ? tr("Collapse gate viewer") : tr("Gate viewer")}</button>
       {open && (
         <>
           <table style={{ width: "100%", marginTop: 6, borderCollapse: "collapse" }}>
@@ -57,7 +58,7 @@ export function GateViewer() {
             </tbody>
           </table>
           <details style={{ marginTop: 6 }}>
-            <summary>完整记录(JSON)</summary>
+            <summary>{tr("Full record (JSON)")}</summary>
             <pre data-pc="gate-json" style={{ whiteSpace: "pre-wrap", wordBreak: "break-all", fontSize: 11 }}>{JSON.stringify(snap, null, 1)}</pre>
           </details>
         </>

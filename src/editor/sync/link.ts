@@ -25,6 +25,7 @@ import { DocSync, type LocalBackup, type ServerMsg } from "../../store/docsync";
 import type { Project } from "../../kernel/project";
 // @ts-expect-error 无类型声明的 .mjs(浏览器与 Node 通用,只用 WebSocket 与计时器)
 import { createDocEndpoint as createDocEndpointUntyped } from "../../../server/render-node/session-link.mjs";
+import { tr } from "../../i18n/index.ts";
 
 /** 文档服务发来的任意一条消息 */
 export type AnyMsg = { type: string; reqId?: string | number; [k: string]: unknown };
@@ -204,7 +205,7 @@ export class SyncLink {
       /* 已经关了 */
     }
     this.dropRetiring();
-    this.failWaiting("连接已关闭");
+    this.failWaiting(tr("Connection closed"));
   }
 
   private dropRetiring() {
@@ -294,16 +295,16 @@ export class SyncLink {
   request(msg: AnyMsg, timeoutMs = 10_000): Promise<AnyMsg> {
     const reqId = `r${++reqSeq}`;
     return new Promise((resolve, reject) => {
-      if (!this.open) return reject(new Error("没连上文档服务"));
+      if (!this.open) return reject(new Error(tr("Not connected to the document service")));
       const timer = setTimeout(() => {
         this.waiting.delete(reqId);
-        reject(new Error("文档服务没有回应"));
+        reject(new Error(tr("The document service did not respond")));
       }, timeoutMs);
       this.waiting.set(reqId, { resolve, reject, timer });
       if (!this.send({ ...msg, reqId })) {
         clearTimeout(timer);
         this.waiting.delete(reqId);
-        reject(new Error("没连上文档服务"));
+        reject(new Error(tr("Not connected to the document service")));
       }
     });
   }
@@ -357,7 +358,7 @@ export class SyncLink {
       this.open = false;
       this.ds.disconnect();
     }
-    this.failWaiting("连接断了");
+    this.failWaiting(tr("Connection lost"));
     const fatal = this.o.isFatalClose ? this.o.isFatalClose(code, reason) : FATAL_CLOSE.has(code);
     this.o.onClosed?.({ code, reason, fatal, neverOpened: !this.everOpened });
     if (!fatal) this.scheduleRetry();

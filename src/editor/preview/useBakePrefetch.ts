@@ -3,6 +3,7 @@ import { planBakes, defaultBudgetBytes, type BakeMoment, type BakeTier } from ".
 import { clipFingerprint, momentId, publishCoverage, type ClipCoverage } from "./bakeCoverage";
 import { isScrubbing } from "../timeline/useScrub";
 import { prerenderUrl } from "../../render/prerender";
+import { tr as trText } from "../../i18n/index.ts";
 
 /**
  * 空闲时把贴图预先渲好。排队规则见 bakePlan.ts,这里只管**什么时候动手**。
@@ -240,7 +241,7 @@ export function useBakePrefetch({
         signal,
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.ok) throw new Error(data.error || `${url} 失败(HTTP ${res.status})`);
+      if (!res.ok || !data.ok) throw new Error(data.error || trText("{0} failed (HTTP {1})", url, res.status));
       return data;
     };
 

@@ -9,6 +9,7 @@
  */
 import { ALL_ROLES } from "../../ai/roles";
 import "./RoleAvatar.css";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 从字符串定出一个色相。要求只有一条：同一个 id 每次都得到同一个颜色，
@@ -42,7 +43,7 @@ export function RoleAvatar(props: { roleId?: string; size?: number }) {
         color: role ? `hsl(${hue} 60% 88%)` : "var(--ink-muted)",
         fontSize: Math.round(size * 0.55),
       }}
-      title={role ? `${role.name}（${role.capability === "planning" ? "规划" : "执行"}）` : "AI 助手"}
+      title={role ? tr("{0} ({1})", role.name, role.capability === "planning" ? tr("Planning") : tr("Execution")) : tr("AI assistant")}
       aria-label={name}
     >
       {name.slice(0, 1)}
@@ -56,7 +57,7 @@ export function RoleHeader(props: { roleId?: string }) {
   return (
     <div className="pc-role-header">
       <RoleAvatar roleId={props.roleId} />
-      <span className="pc-role-name">{role?.name ?? "AI 助手"}</span>
+      <span className="pc-role-name">{role?.name ?? tr("AI assistant")}</span>
     </div>
   );
 }
@@ -64,5 +65,5 @@ export function RoleHeader(props: { roleId?: string }) {
 /** 只有名字。聊天行左边已经有头像了,气泡里再放一个头像就重复了 */
 export function RoleName(props: { roleId?: string }) {
   const role = props.roleId ? ALL_ROLES.find((r) => r.id === props.roleId) : undefined;
-  return <span className="pc-role-name">{role?.name ?? "AI 助手"}</span>;
+  return <span className="pc-role-name">{role?.name ?? tr("AI assistant")}</span>;
 }

@@ -24,6 +24,7 @@ import { parseCaptions, formatCaptions, isCaptionClip, type CaptionLine } from "
 import type { Project, Track } from "../../kernel/project";
 import { contentEndOf, effectiveDuration } from "../../kernel/duration";
 import { getCard } from "../../kernel/registry";
+import { tr as trText } from "../../i18n/index.ts";
 
 /* ---------------- 形状 ---------------- */
 
@@ -345,7 +346,7 @@ function locateLine(p: Obj, ref: ThingRef, base: CaptionLine | undefined, mine: 
 
 /* ---------------- 称呼 ---------------- */
 
-const quoted = (s: string) => `「${s}」`;
+const quoted = (s: string) => trText("\"{0}\"", s);
 const short = (s: string, n = 24) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 function clipName(c: Obj | undefined, id: string): string {
@@ -357,70 +358,70 @@ function clipName(c: Obj | undefined, id: string): string {
   return typeof c.start === "number" ? `${name} @${c.start.toFixed(1)}s` : name;
 }
 
-const LIB_KIND: Record<string, string> = { media: "素材", filters: "滤镜", pixelMaps: "像素映射", audioFx: "音频效果", cardNodes: "素材效果卡节点" };
+const LIB_KIND: Record<string, string> = { media: trText("media"), filters: trText("Filters"), pixelMaps: trText("Pixel map"), audioFx: trText("Audio effects"), cardNodes: trText("Media effect card nodes") };
 
 /** 一样东西给人看的名字 */
 export function thingLabel(ref: ThingRef, value: unknown): string {
   const v = isObj(value) ? value : undefined;
   const named = (kind: string) => `${kind}${quoted(v && typeof v.name === "string" && v.name.trim() ? v.name.trim() : ref.id)}`;
   switch (ref.kind) {
-    case "clip": return `片段${quoted(clipName(v, ref.id))}`;
+    case "clip": return trText("Clip {0}", quoted(clipName(v, ref.id)));
     case "caption": {
       const l = value as CaptionLine | undefined;
-      return `字幕${quoted(short(l ? l.zh || l.en || lineId(l) : ref.id, 20))}`;
+      return trText("Captions {0}", quoted(short(l ? l.zh || l.en || lineId(l) : ref.id, 20)));
     }
-    case "settings": return "项目设置";
-    case "track": return named("序列");
-    case "cut": return named("剪辑");
-    case "transition": return `转场${quoted(v && typeof v.kind === "string" ? v.kind : ref.id)}`;
-    case "library": return named(LIB_KIND[ref.coll ?? ""] ?? "条目");
-    case "card": return `卡片源码${quoted(ref.id.replace(/^src\//, ""))}`;
+    case "settings": return trText("Project settings");
+    case "track": return named(trText("track"));
+    case "cut": return named(trText("Cut"));
+    case "transition": return trText("Transition {0}", quoted(v && typeof v.kind === "string" ? v.kind : ref.id));
+    case "library": return named(LIB_KIND[ref.coll ?? ""] ?? trText("Items"));
+    case "card": return trText("Card source {0}", quoted(ref.id.replace(/^src\//, "")));
   }
 }
 
 const PROP_LABEL: Record<string, string> = {
-  "@time": "时间", "@track": "所在序列",
-  opacity: "透明度", fadeIn: "淡入", fadeOut: "淡出", label: "名称", mediaOffset: "素材起点", speed: "速度", audioMuted: "静音", audioVolume: "音量",
-  filter: "滤镜", pixelMap: "像素映射", audioFx: "音频效果", emphasis: "强调", motion: "运动轨迹", parts: "部件", cardId: "卡片",
-  mediaId: "素材", cutId: "引用剪辑", cutOffset: "剪辑起点", soundEffect: "音效", embeddedAudio: "内嵌声音", cardAudio: "卡片声音", nodeId: "节点",
-  "frame.x": "位置 X", "frame.y": "位置 Y", "frame.w": "宽", "frame.h": "高", "frame.scale": "缩放", "frame.rotate": "旋转",
-  "frame.anchor": "锚点", "frame.rotateX": "X 轴翻转", "frame.rotateY": "Y 轴翻转", "frame.translateZ": "深度",
+  "@time": trText("Time"), "@track": trText("Track"),
+  opacity: trText("Opacity"), fadeIn: trText("Fade in"), fadeOut: trText("Fade out"), label: trText("Name"), mediaOffset: trText("Media start"), speed: trText("Speed"), audioMuted: trText("Muted"), audioVolume: trText("Volume"),
+  filter: trText("Filters"), pixelMap: trText("Pixel map"), audioFx: trText("Audio effects"), emphasis: trText("emphasis"), motion: trText("Motion path"), parts: trText("part"), cardId: trText("Cards"),
+  mediaId: trText("media"), cutId: trText("Referenced cut"), cutOffset: trText("Cut start"), soundEffect: trText("Sound effect"), embeddedAudio: trText("Embedded audio"), cardAudio: trText("Card audio"), nodeId: trText("Nodes"),
+  "frame.x": trText("Position X"), "frame.y": trText("Position Y"), "frame.w": trText("Width"), "frame.h": trText("High"), "frame.scale": trText("Scale"), "frame.rotate": trText("Rotate"),
+  "frame.anchor": trText("Anchor"), "frame.rotateX": trText("X-axis flip"), "frame.rotateY": trText("Y-axis flip"), "frame.translateZ": trText("Depth"),
 };
-const CAPTION_PROP: Record<string, string> = { time: "时间", zh: "中文", en: "英文" };
+const CAPTION_PROP: Record<string, string> = { time: trText("Time"), zh: trText("Chinese"), en: trText("English") };
 const SETTINGS_PROP: Record<string, string> = {
-  name: "名称", fps: "帧率", width: "宽度", height: "高度", duration: "时长", themeId: "主题", camera3dFov: "三维视角",
-  glRoute: "渲染路线", creativity: "创造力等级", style: "风格",
+  name: trText("Name"), fps: trText("Frame rate"), width: trText("Width"), height: trText("Height"), duration: trText("Duration"), themeId: trText("Theme"), camera3dFov: trText("3D perspective"),
+  glRoute: trText("Render route"), creativity: trText("Creativity level"), style: trText("Style"),
 };
-const TRACK_PROP: Record<string, string> = { name: "名称", hidden: "隐藏", muted: "静音", locked: "锁定" };
-const TRANSITION_PROP: Record<string, string> = { kind: "类型", dur: "时长", aId: "前一段", bId: "后一段", prevB: "原位置" };
+const TRACK_PROP: Record<string, string> = { name: trText("Name"), hidden: trText("Hidden"), muted: trText("Muted"), locked: trText("Locked") };
+const TRANSITION_PROP: Record<string, string> = { kind: "Type", dur: trText("Duration"), aId: trText("Previous segment"), bId: trText("Next segment"), prevB: trText("Original position") };
 
 export function propLabel(kind: ThingKind, prop: string): string {
-  if (prop === "") return "整件";
+  if (prop === "") return trText("Whole item");
   switch (kind) {
     case "clip":
       if (PROP_LABEL[prop]) return PROP_LABEL[prop];
-      if (prop.startsWith("params.")) return `参数${quoted(prop.slice(7))}`;
-      if (prop.startsWith("frame.")) return `画框${quoted(prop.slice(6))}`;
+      if (prop.startsWith("params.")) return trText("Parameter {0}", quoted(prop.slice(7)));
+      if (prop.startsWith("frame.")) return trText("Frame {0}", quoted(prop.slice(6)));
       return prop;
     case "caption": return CAPTION_PROP[prop] ?? prop;
     case "settings": return SETTINGS_PROP[prop] ?? prop;
     case "track": return TRACK_PROP[prop] ?? prop;
-    case "cut": return prop === "name" ? "名称" : prop;
+    case "cut": return prop === "name" ? trText("Name") : prop;
     case "transition": return TRANSITION_PROP[prop] ?? prop;
-    case "library": return prop === "name" ? "名称" : prop;
-    case "card": return "源码";
+    case "library": return prop === "name" ? trText("Name") : prop;
+    case "card": return trText("Source code");
   }
 }
 
 /** 值给人看的样子 */
 export function formatValue(v: unknown, prop = "", names?: (trackId: string) => string | undefined): string {
-  if (v === undefined || v === null) return "无";
+  if (v === undefined || v === null) return trText("none");
   if ((prop === "@time" || prop === "time") && Array.isArray(v) && v.length === 2) {
     const [a, b] = v as number[];
-    return `${num(a)}–${num(b)} 秒`;
+    return trText("{0}–{1} s", num(a), num(b));
   }
-  if (prop === "@track" && typeof v === "string") return `序列${quoted(names?.(v) ?? v)}`;
-  if (typeof v === "boolean") return v ? "开" : "关";
+  if (prop === "@track" && typeof v === "string") return trText("Track {0}", quoted(names?.(v) ?? v));
+  if (typeof v === "boolean") return v ? trText("on") : trText("off");
   if (typeof v === "number") return num(v);
   if (typeof v === "string") return quoted(short(v));
   let s = "";
@@ -608,15 +609,15 @@ export function mergeRows(project: Project, table: MergeThing[]): ThingRow[] {
       let text: string;
       if (t.ref.kind === "card") {
         const d = lineDelta(String(val(c) ?? ""), String(val(mp.mine) ?? ""));
-        text = `源码：我这边的版本比云端现在的多 ${d.added} 行、少 ${d.removed} 行（云端现在是别人改过的版本）`;
+        text = trText("Source: my version has {0} more lines and {1} fewer lines than the cloud's current version (the cloud version was edited by someone else)", d.added, d.removed);
       } else if (t.change === "add") {
-        text = state === "clean" ? "我这边新增的（云端现在没有）" : state === "same" ? "我这边新增的（云端现在已经一样）" : "我这边新增的（云端现在已有另一份）";
+        text = state === "clean" ? trText("Added on my side (not in the cloud yet)") : state === "same" ? trText("Added on my side (the cloud already has the same)") : trText("Added on my side (the cloud already has a different one)");
       } else if (t.change === "delete") {
-        text = state === "clean" ? "我这边删除了（云端现在未改）" : state === "same" ? "我这边删除了（云端现在也没有了）" : "我这边删除了（云端现在已被别人改过）";
+        text = state === "clean" ? trText("Deleted on my side (unchanged in the cloud)") : state === "same" ? trText("Deleted on my side (also gone in the cloud)") : trText("Deleted on my side (the cloud version has since been changed by someone else)");
       } else {
         const from = formatValue(val(mp.base), mp.prop, trackName), to = formatValue(val(mp.mine), mp.prop, trackName);
-        const now = state === "cloud-gone" ? "云端已删除" : `云端现在是 ${formatValue(val(c), mp.prop, trackName)}`;
-        text = `${label} ${from} → ${to}（${now}）`;
+        const now = state === "cloud-gone" ? trText("Deleted in the cloud") : trText("The cloud is now {0}", formatValue(val(c), mp.prop, trackName));
+        text = trText("{0} {1} → {2} ({3})", label, from, to, now);
       }
       return { id: propRowId(t.key, mp.prop), prop: mp.prop, label, text, state, conflict: state === "conflict" || state === "cloud-gone", cloud: c };
     });
@@ -626,7 +627,7 @@ export function mergeRows(project: Project, table: MergeThing[]): ThingRow[] {
       source: t.source,
       label: t.label,
       change: t.change,
-      changeText: t.change === "add" ? "新增" : t.change === "delete" ? "删除" : cloudGone ? "云端已删除" : "修改",
+      changeText: t.change === "add" ? trText("Add") : t.change === "delete" ? trText("Delete") : cloudGone ? trText("Deleted in the cloud") : trText("change"),
       conflict: props.some((r) => r.conflict),
       props,
     };
@@ -718,7 +719,7 @@ export function applyMerge(project: Project, table: MergeThing[], selection: Map
     if (!cutId) return;
     if ((Array.isArray(p.cuts) ? (p.cuts as Obj[]) : []).some((c) => c.id === cutId)) return;
     const dep = pendingAdd("cut", cutId);
-    if (!dep) throw new Skip("所在剪辑云端已不存在");
+    if (!dep) throw new Skip(trText("The containing cut no longer exists in the cloud"));
     writeThing(dep, val(dep.mine) as Obj);
     mark(dep.key, [""]);
   };
@@ -726,7 +727,7 @@ export function applyMerge(project: Project, table: MergeThing[], selection: Map
     const at = trackId ? findTrack(p, trackId) : null;
     if (at) return at.track;
     const dep = trackId ? pendingAdd("track", trackId) : undefined;
-    if (!dep) throw new Skip("所在序列云端已不存在");
+    if (!dep) throw new Skip(trText("Its track no longer exists in the cloud"));
     ensureCut(dep.ref.cutId ?? cutId);
     writeThing(dep, val(dep.mine) as Obj);
     mark(dep.key, [""]);
@@ -737,7 +738,7 @@ export function applyMerge(project: Project, table: MergeThing[], selection: Map
     if (!mediaId) return;
     if ((Array.isArray(p.media) ? (p.media as Obj[]) : []).some((m) => m.id === mediaId)) return;
     const dep = pendingAdd("library", mediaId, "media");
-    if (!dep) throw new Skip("用到的素材云端已不存在");
+    if (!dep) throw new Skip(trText("The media used no longer exists in the cloud"));
     writeThing(dep, val(dep.mine) as Obj);
     mark(dep.key, [""]);
   };
@@ -756,14 +757,14 @@ export function applyMerge(project: Project, table: MergeThing[], selection: Map
         ensureMedia(clip);
         if (at && !opts.move) {
           const others = { ...at.track, clips: (at.track.clips as Obj[]).filter((c) => c.id !== ref.id) };
-          if (overlapsIn(others, clip)) throw new Skip("和同一序列里的片段重叠");
+          if (overlapsIn(others, clip)) throw new Skip(trText("Overlaps a clip in the same track"));
           const list = (at.track.clips as Obj[]).map((c) => (c.id === ref.id ? clip : c));
           sortByStart(list);
           at.track.clips = list;
           return;
         }
         const track = ensureTrack(ref.trackId, ref.cutId);
-        if (overlapsIn(track, clip)) throw new Skip("和同一序列里的片段重叠");
+        if (overlapsIn(track, clip)) throw new Skip(trText("Overlaps a clip in the same track"));
         if (at) at.track.clips = (at.track.clips as Obj[]).filter((c) => c.id !== ref.id);
         const list = [...((track.clips as Obj[] | undefined) ?? []), clip];
         sortByStart(list);
@@ -773,7 +774,7 @@ export function applyMerge(project: Project, table: MergeThing[], selection: Map
       case "caption": {
         const line = value as CaptionLine | undefined;
         const at = locateLine(p, ref, val(t.base) as CaptionLine | undefined, val(t.mine) as CaptionLine | undefined);
-        if (!at) throw new Skip("字幕所在的片段云端已不存在");
+        if (!at) throw new Skip(trText("The clip the captions belong to no longer exists in the cloud"));
         const lines = [...at.lines];
         if (line === undefined) { if (at.index >= 0) lines.splice(at.index, 1); }
         else if (at.index >= 0) lines[at.index] = { ...line };
@@ -805,7 +806,7 @@ export function applyMerge(project: Project, table: MergeThing[], selection: Map
         if (!Array.isArray(home.tracks)) {
           // 剪辑是云端当前激活的那条:内容在项目顶层
           if (ref.cutId && p.activeCutId === ref.cutId) (p.tracks as Obj[]).push({ ...clone(value as Obj), clips: [] });
-          else throw new Skip("所在剪辑云端已不存在");
+          else throw new Skip(trText("The containing cut no longer exists in the cloud"));
           return;
         }
         (home.tracks as Obj[]).push({ ...clone(value as Obj), clips: [] });
@@ -816,7 +817,7 @@ export function applyMerge(project: Project, table: MergeThing[], selection: Map
         const i = cuts.findIndex((c) => c.id === ref.id);
         if (value === undefined) {
           if (i < 0) return;
-          if (p.activeCutId === ref.id) throw new Skip("这条剪辑在云端正被打开着，删不了");
+          if (p.activeCutId === ref.id) throw new Skip(trText("This cut is currently open in the cloud, so it can't be deleted"));
           cuts.splice(i, 1);
           return;
         }
@@ -836,7 +837,7 @@ export function applyMerge(project: Project, table: MergeThing[], selection: Map
         if (home) { home[home.findIndex((x) => x.id === ref.id)] = clone(value as Obj); return; }
         if (ref.cutId) {
           const c = (Array.isArray(p.cuts) ? (p.cuts as Obj[]) : []).find((x) => x.id === ref.cutId);
-          if (!c) throw new Skip("所在剪辑云端已不存在");
+          if (!c) throw new Skip(trText("The containing cut no longer exists in the cloud"));
           if (p.activeCutId !== ref.cutId) { c.transitions = [...((c.transitions as Obj[]) ?? []), clone(value as Obj)]; return; }
         }
         p.transitions = [...((p.transitions as Obj[]) ?? []), clone(value as Obj)];

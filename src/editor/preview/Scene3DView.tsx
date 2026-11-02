@@ -22,6 +22,7 @@ import { currentReadyIndex } from "../snapshotFeed";
 import { setPlan3DView } from "../planDispatch";
 // 棋盘格底和浮层样式在这儿(.pc-3d-checker / .pc-3d-note)。自己引一次,不指望父组件替它引
 import "./preview.css";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 3D 视图:把这一刻画面上的每张卡当成一块**立在空间里的板子**,可以像 Blender 那样绕着看。
@@ -1049,7 +1050,7 @@ export function Scene3DView({ project, t }: Props) {
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.ok) {
           if (dead) return;
-          throw new Error(data.error || `渲染失败(HTTP ${res.status})`);
+          throw new Error(data.error || tr("Render failed (HTTP {0})", res.status));
         }
         for (const b of data.baked ?? []) {
           const a = asks.find((x) => x.clip.id === b.clipId);
@@ -1074,7 +1075,7 @@ export function Scene3DView({ project, t }: Props) {
         if (dead) return;
         // 渲成了就让这个 effect 再跑一轮:刚落地的可能只是粗粒度那张,停住时还要补精确帧
         if (data.baked?.length) setBakeGen((g) => g + 1);
-        if (data.failed?.length) setErr(`${data.failed.length} 张没渲染出来:${data.failed[0].error}`);
+        if (data.failed?.length) setErr(tr("{0} failed to render: {1}", data.failed.length, data.failed[0].error));
       } catch (e: any) {
         // 被 cleanup 掐掉的不算出错:那是用户挪走了播放头,本来就不该再等它
         if (!dead && e?.name !== "AbortError") setErr(String(e?.message || e));
@@ -1162,11 +1163,11 @@ export function Scene3DView({ project, t }: Props) {
           onClick={() => setFrustumOn((v) => !v)}
           title={
             project.camera3dFov
-              ? `画出 2D 页那台相机张开到画幅的四角锥(视角 ${project.camera3dFov}°)—— 用来判断一张卡到底在不在成片画面里`
-              : `画出 2D 页那台相机张开到画幅的四角锥。这个项目没设视角,按默认 ${DEFAULT_FOV_DEG}° 画(和 3D 页开场机位同一台相机)`
+              ? tr("Draws the pyramid that the 2D page camera opens up to the frame edges (field of view {0}°): use it to tell whether a card is actually in the final video frame", project.camera3dFov)
+              : tr("Draws the pyramid that the 2D page camera opens up to the frame edges. This project has no field of view set, so the default {0}° is used (the same camera as the 3D page opening view)", DEFAULT_FOV_DEG)
           }
         >
-          2D 视角框
+          {tr("2D view frame")}
         </button>
       )}
       {(pending > 0 || err) && !playing && (
@@ -1178,13 +1179,13 @@ export function Scene3DView({ project, t }: Props) {
           }}
         >
           {err ?? (bakingAt === null
-            ? `正在渲染 ${pending} 张卡的贴图…色块是占位,渲染好会自动换上`
-            : `正在渲染第 ${bakingAt.toFixed(2)} 秒的画面(共 ${pending} 张)…色块是占位,不是别的时刻的画面`)}
+            ? tr("Rendering textures for {0} cards... color blocks are placeholders and will be replaced automatically once rendered", pending)
+            : tr("Rendering the frame at second {0} ({1} in total)... color blocks are placeholders, not the frame of another moment", bakingAt.toFixed(2), pending))}
         </div>
       )}
       {!mods && !err && (
         <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>
-          <span className="pc-3d-note" style={{ color: "var(--ui-text-2, #94a3b8)" }}>正在加载三维视图…</span>
+          <span className="pc-3d-note" style={{ color: "var(--ui-text-2, #94a3b8)" }}>{tr("Loading 3D view…")}</span>
         </div>
       )}
     </div>

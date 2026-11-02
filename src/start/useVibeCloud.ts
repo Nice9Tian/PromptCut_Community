@@ -23,6 +23,7 @@ import { setCloudVisualScope } from "../editor/right/ToolVisual";
 import { viewableChats } from "./vibeOrg";
 import type { VibeAgent } from "./vibeAgent";
 import type { VibeChat } from "./types";
+import { tr } from "../i18n/index.ts";
 
 /** 这一套占的对话页签号(`useCloudChat` 的本地存储键按它分):和编辑器右栏、手机版的页签互不相干 */
 export const VIBE_TAB = "vibe";
@@ -63,7 +64,7 @@ export function useVibeCloud(o: { connected: boolean; shown: boolean }): VibeClo
     let dead = false;
     void refreshCloudConsent().then(
       (accepted) => { if (!dead) setConsentOpen(!accepted && cloudConsentState().accepted !== true); },
-      (error) => { if (!dead && cloudConsentState().accepted !== true) setConsentError(error instanceof Error ? error.message : "云端账号暂时不可用。"); },
+      (error) => { if (!dead && cloudConsentState().accepted !== true) setConsentError(error instanceof Error ? error.message : tr("The cloud account is temporarily unavailable.")); },
     );
     return () => { dead = true; };
   }, [o.shown, projectId, cloud.available, cloud.accountId, consent.accountId, consent.bindingVersion]);
@@ -71,7 +72,7 @@ export function useVibeCloud(o: { connected: boolean; shown: boolean }): VibeClo
 
   const admit = async (): Promise<boolean | "queue"> => {
     if (!stillCurrent()) return false;
-    if (!cloud.accountId || consent.accountId !== cloud.accountId) { setConsentError("请先登录当前项目的账号。"); return false; }
+    if (!cloud.accountId || consent.accountId !== cloud.accountId) { setConsentError(tr("Please sign in to the account for the current project first.")); return false; }
     const expected = { accountId: cloud.accountId, bindingVersion: consent.bindingVersion };
     try {
       const accepted = await refreshCloudConsent(expected);
@@ -81,7 +82,7 @@ export function useVibeCloud(o: { connected: boolean; shown: boolean }): VibeClo
     } catch (error) {
       if (!stillCurrent()) return false;
       if (chat.outbox.transient(error)) return "queue";
-      setConsentError(error instanceof Error ? error.message : "云端账号暂时不可用。");
+      setConsentError(error instanceof Error ? error.message : tr("The cloud account is temporarily unavailable."));
       setConsentOpen(true);
       return false;
     }
@@ -94,12 +95,12 @@ export function useVibeCloud(o: { connected: boolean; shown: boolean }): VibeClo
     queue: view.queue, senders: view.senders, legacyStreaming: view.streaming,
   });
   const off = !cloud.enabled || chat.info?.enabled === false;
-  const whyNot = !projectId ? "还没有打开项目。"
-    : !cloud.available ? "这个项目所在的托管端没有云端 Agent 服务。"
+  const whyNot = !projectId ? tr("No project is open yet.")
+    : !cloud.available ? tr("The hosted side of this project has no Cloud Agent service.")
     : off ? cloudErrorText("disabled")
-    : ro.locked ? "你在这个项目里只能查看，不能给云端 Agent 发消息。"
-    : policy.creatorReadOnly ? "这是别的成员的私有对话：项目创建者只能看，不能在里面发消息。"
-    : view.revoked ? "这个对话你已经没有读取权限了。"
+    : ro.locked ? tr("You can only view this project, not send messages to the Cloud Agent.")
+    : policy.creatorReadOnly ? tr("This is another member's private chat: the project creator can view it but cannot send messages in it.")
+    : view.revoked ? tr("You no longer have read access to this chat.")
     : null;
 
   /* ---------- 侧栏要的对话 ---------- */
@@ -108,7 +109,7 @@ export function useVibeCloud(o: { connected: boolean; shown: boolean }): VibeClo
     const list = viewableChats(chat.history.items, { accountId: cloud.accountId, creator }, projectId);
     // 刚开的新对话服务端还没有:先在本页列上,发过第一条之后列表里就有了
     if (chat.conversationId && !list.some((c) => c.id === chat.conversationId)) {
-      list.unshift({ id: chat.conversationId, name: chat.messages.length ? "云端对话" : "新对话", projectId, state: "idle", visibility: "shared", readOnly: false, fresh: true });
+      list.unshift({ id: chat.conversationId, name: chat.messages.length ? tr("Cloud chat") : tr("New chat"), projectId, state: "idle", visibility: "shared", readOnly: false, fresh: true });
     }
     return list;
   }, [chat.history.items, chat.conversationId, chat.messages.length, projectId, cloud.accountId, cloud.accountMode, creator, consent.accepted]);
@@ -150,7 +151,7 @@ export function useVibeCloud(o: { connected: boolean; shown: boolean }): VibeClo
     const admitted = await admit();
     if (admitted === "queue" && staged && stillCurrent() && chat.outbox.enqueue(body, undefined, staged)) return true;
     if (admitted !== true || !stillCurrent()) {
-      if (staged) chat.failStaged(staged, "使用云端 Agent 前，请先阅读并确认告知。");
+      if (staged) chat.failStaged(staged, tr("Read and confirm the notice before using Cloud Agent."));
       return false;
     }
     const ok = await chat.send(body, undefined, staged ?? undefined, null, { queueOnNetwork: true });
@@ -164,13 +165,13 @@ export function useVibeCloud(o: { connected: boolean; shown: boolean }): VibeClo
   };
   const stop = async () => {
     if (!cloud.accountMode) { await chat.abort(); return; }
-    if (!policy.canStop || !policy.currentRunId) { chat.notify("只能停止自己发起的任务。"); return; }
+    if (!policy.canStop || !policy.currentRunId) { chat.notify(tr("You can only stop tasks you started.")); return; }
     try {
       await chat.abort(policy.currentRunId, requestId(`stop:${policy.currentRunId}`));
       reqRef.current = null;
       void chat.history.refresh();
     } catch (error) {
-      chat.notify(error instanceof Error ? error.message : "停止请求没有成功，可以再点一次。");
+      chat.notify(error instanceof Error ? error.message : tr("The stop request failed. You can click again."));
     }
   };
   const toggleVisibility = async () => {
@@ -181,18 +182,18 @@ export function useVibeCloud(o: { connected: boolean; shown: boolean }): VibeClo
       reqRef.current = null;
       await chat.history.refresh();
     } catch (error) {
-      chat.notify(error instanceof CloudError ? error.message : "暂时没能切换，可以再点一次。");
+      chat.notify(error instanceof CloudError ? error.message : tr("Couldn't switch for now. You can click again."));
     }
   };
 
   const banner = view.connection === "reconnecting"
-    ? "和云端 Agent 的连接断了，正在重新连接。云端的这一轮仍在继续，连上后会把错过的过程补齐。"
+    ? tr("The connection to the Cloud Agent was lost. Reconnecting. The current turn in the cloud is still running, and the missed progress will be filled in once reconnected.")
     : chat.notice;
 
   return {
     cloud, chat, chats, current,
     me: cloud.accountId, projectId: cloud.projectId,
-    hint: "在云端运行，关闭后继续；重新打开可接着看。",
+    hint: tr("Runs in the cloud and keeps going after you close it; reopen to pick up where you left off."),
     canSend: !whyNot, whyNot,
     streaming: policy.streaming, canStop: policy.canStop,
     // 和编辑器右栏同一个数法(`QueueList.tsx`):执行服务在问时,对话空闲时排第一的那条马上就开始,不算排队
@@ -204,7 +205,7 @@ export function useVibeCloud(o: { connected: boolean; shown: boolean }): VibeClo
       accept: () => {
         void acceptCloudConsent().then(
           () => { setConsentError(null); setConsentOpen(false); },
-          (error) => setConsentError(error instanceof Error ? error.message : "云端账号暂时不可用。"),
+          (error) => setConsentError(error instanceof Error ? error.message : tr("The cloud account is temporarily unavailable.")),
         );
       },
       reject: () => { setConsentError(null); setConsentOpen(false); },

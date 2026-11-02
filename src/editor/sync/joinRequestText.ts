@@ -1,3 +1,4 @@
+import { tr } from "../../i18n/index.ts";
 /**
  * 申请加入与进入方式在界面上说的话(2026-10-22 用户定,`docs/semantics/workflow/project.md`「多用户协作」第 26、27 条、
  * 「过期云端项目转本地」第 44 行)。桌面开始页(`AccountProjects.tsx`)、手机开始页(`src/mobile/MobileStart.tsx`)、
@@ -19,51 +20,51 @@ export interface JoinRequestStatus {
 
 export const JOIN_REQUEST_TEXT = {
   /** 被账号名单挡住(语义原文「你不在这个项目的成员名单中」) */
-  notListed: '你不在这个项目的成员名单中',
+  notListed: tr("You are not on this project's member list"),
   /** 按钮(语义原文) */
-  send: '发送申请',
+  send: tr("Send request"),
   /** 发出之后(语义原文) */
-  sent: '已发送，等创建者通过',
+  sent: tr("Sent. Waiting for the creator to approve"),
   /** 被拒(语义原文) */
-  rejected: '创建者没有通过你的申请',
+  rejected: tr("The creator did not approve your request"),
   /** 被通过、正在进(或接着要输二级密码) */
-  approved: '创建者已通过你的申请',
+  approved: tr("The creator approved your request"),
   /** 重开文件:登录的账号不是成员(语义原文「这个账号不是这个云端项目的成员」) */
-  reopenNotMember: '这个账号不是这个云端项目的成员',
+  reopenNotMember: tr("This account is not a member of this cloud project"),
   /** 从项目直达地址打开、登录的账号还不是成员:链接已填好,由用户自己点加入(`product/platforms.md`「项目直达地址」) */
-  directNotMember: '你还不是这个项目的成员，点「加入并打开项目」加入。',
+  directNotMember: tr("You are not a member of this project yet. Click \"Join and open project\" to join."),
   /** 重开文件时点了「发送申请」之后:通过以后怎么连回去 */
-  reopenSent: '已发送，等创建者通过。通过以后重新打开这个文件，就能连回云端项目。',
+  reopenSent: tr("Sent. Waiting for the creator to approve. Once approved, reopen this file to reconnect to the cloud project."),
   /** 项目设置里的勾选(语义原文「任何知道链接的人都可加入」) */
-  entryLabel: '任何知道链接的人都可加入',
+  entryLabel: tr("Anyone with the link can join"),
   /** 取消勾选后勾选下面那一句:名单就是现在的成员,新人只能申请 */
-  entryListHint: (members: number) => `只允许账号名单（现在的 ${members} 位成员）。新人要发申请，由你在顶栏「成员」里通过。`,
+  entryListHint: (members: number) => tr("Account list only ({0} members now). New people must send a request, which you approve under \"Members\" in the top bar.", members),
   /** 勾着时那一句 */
-  entryLinkHint: '知道项目链接的人登录网站账号后就能加入。',
+  entryLinkHint: tr("Anyone with the project link can join after signing in to their website account."),
   /** 成员浮层里申请那一段的标题 */
-  requestsTitle: (n: number) => `申请加入（${n}）`,
-  approve: '通过',
-  reject: '拒绝',
+  requestsTitle: (n: number) => tr("Join requests ({0})", n),
+  approve: tr("Approve"),
+  reject: tr("Reject"),
   /** 创建者点了「通过」「拒绝」之后的气泡(桌面、手机同一句) */
-  approvedToast: (name: string) => `已通过 ${name} 的申请`,
-  rejectedToast: (name: string) => `已拒绝 ${name} 的申请`,
+  approvedToast: (name: string) => tr("Approved {0}'s request", name),
+  rejectedToast: (name: string) => tr("Rejected {0}'s request", name),
   /** 从「我的项目」列表点进一个设了二级密码、还没输过当前这一版的项目(与凭链接加入时那一句相同) */
-  secondaryRequired: '该项目设置了项目二级密码，请输入二级密码。',
+  secondaryRequired: tr("This project has a secondary project password. Enter the secondary password."),
 } as const;
 
 /** 按本机时区写到分钟:「10月22日 14:05」 */
 function minuteText(ms: number): string {
   const d = new Date(ms);
   const two = (n: number) => String(n).padStart(2, '0');
-  return `${d.getMonth() + 1}月${d.getDate()}日 ${two(d.getHours())}:${two(d.getMinutes())}`;
+  return tr("{0}/{1} {2}:{3}", d.getMonth() + 1, d.getDate(), two(d.getHours()), two(d.getMinutes()));
 }
 /** 「几点之后可以再申请」(次数用完时,由服务端回的 `retryAt` 算出) */
 export function retryAtText(retryAt: number): string {
-  return `${minuteText(retryAt)} 之后可以再申请。`;
+  return tr("You can request again after {0}.", minuteText(retryAt));
 }
 /** 成员浮层里每条申请下面那一行的时间 */
 export function requestedAtText(createdAt: number): string {
-  return `${minuteText(createdAt)} 申请`;
+  return tr("Requested {0}", minuteText(createdAt));
 }
 
 /**
@@ -74,11 +75,11 @@ export function requestedAtText(createdAt: number): string {
 export function reopenNotice(status: JoinRequestStatus): { text: string; canSend: boolean } | null {
   if (status.entry !== 'list' || status.state === 'member') return null;
   const base = JOIN_REQUEST_TEXT.reopenNotMember;
-  if (status.state === 'pending') return { text: `${base}。${JOIN_REQUEST_TEXT.sent}`, canSend: false };
+  if (status.state === 'pending') return { text: tr("{0}. {1}", base, JOIN_REQUEST_TEXT.sent), canSend: false };
   const notice = joinRequestNotice(status);
-  const tail = status.state === 'rejected' ? `。${JOIN_REQUEST_TEXT.rejected}` : '';
+  const tail = status.state === 'rejected' ? tr(". {0}", JOIN_REQUEST_TEXT.rejected) : '';
   if (notice?.canSend) return { text: `${base}${tail}`, canSend: true };
-  return { text: `${base}${tail}${notice?.hint ? `，${notice.hint}` : ''}`, canSend: false };
+  return { text: `${base}${tail}${notice?.hint ? tr(", {0}", notice.hint) : ''}`, canSend: false };
 }
 
 /**

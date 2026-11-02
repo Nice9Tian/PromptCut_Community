@@ -9,6 +9,7 @@ import { usePrerenderBase, withBase } from "../../../render/prerender";
 import { KIND_LABEL, bareToolName, toolKind } from "./iconRuns";
 import "./agent.css";
 import { AgentUndoButton } from "../../sync/AgentUndoButton";
+import { tr } from "../../../i18n/index.ts";
 
 /**
  * 操作详细预览控件:一个 Agent 气泡里**所有**详细内容都在这里展示,一个气泡只放一个。
@@ -56,7 +57,7 @@ type DiffRow = NonNullable<VisualRecord["diff"]>[number];
 
 /** 小结的颜色:ok = 绿 ✓,warn = 报了问题(黄 !),err = 这一轮出错收尾(红 !) */
 export type SummaryTone = "ok" | "warn" | "err";
-export const SUMMARY_TONE_TEXT: Record<SummaryTone, string> = { ok: "没有问题", warn: "有问题要看", err: "出错了" };
+export const SUMMARY_TONE_TEXT: Record<SummaryTone, string> = { ok: tr("No issues"), warn: tr("Issues to review"), err: tr("Error occurred") };
 
 /** 控件要展示的一项,和气泡上的一个图标一一对应(key 相同) */
 export type DetailItem =
@@ -112,8 +113,8 @@ function recordPages(out: DetailPage[], rec: VisualRecord, idBase: string, itemK
       before: rec.before?.gif,
       after: rec.after?.gif,
       // 标签和 ToolVisual 里一致:只有「后」是新加的卡(或 get_gif 的整段动效),只有「前」是删掉的卡
-      beforeLabel: rec.after ? "修改前" : "删掉的卡片",
-      afterLabel: rec.before ? "修改后" : rec.tool === "get_gif" ? "整段动效" : "新加的卡片",
+      beforeLabel: rec.after ? tr("Before") : tr("Deleted card"),
+      afterLabel: rec.before ? tr("After") : rec.tool === "get_gif" ? tr("Full animation") : tr("New card"),
       diff: rec.diff ?? [],
     });
   } else if (rec.diff?.length) {
@@ -232,13 +233,13 @@ function fmtDuration(ms: number): string {
 
 /** 说明行左边那句 */
 function pageCaption(p: DetailPage, item: DetailItem | undefined): string {
-  if (p.kind === "inbound") return `对话 · 收到 ${item?.type === "inbound" ? item.messages.length : 0} 条消息`;
+  if (p.kind === "inbound") return tr("Chat · received {0} messages", item?.type === "inbound" ? item.messages.length : 0);
   // 小结的好坏只靠绿 ✓ / 黄 ! / 红 ! 的颜色和字形表达,不再写「有问题要看」这类字
-  if (p.kind === "summary") return item?.type === "report" ? reportTitle(item.report) : "小结";
+  if (p.kind === "summary") return item?.type === "report" ? reportTitle(item.report) : tr("Summary");
   if (p.kind === "ops") {
     const tools = item?.type === "run" ? item.tools : [];
-    const names = [...new Set(tools.map((t) => bareToolName(t.name)))].join("、") || bareToolName(p.tool);
-    const label = tools.some((t) => t.ok === false) ? "失败" : KIND_LABEL[toolKind(p.tool)];
+    const names = [...new Set(tools.map((t) => bareToolName(t.name)))].join(tr(", ")) || bareToolName(p.tool);
+    const label = tools.some((t) => t.ok === false) ? tr("failed") : KIND_LABEL[toolKind(p.tool)];
     return `${label} · ${names}${tools.length > 1 ? ` ×${tools.length}` : ""}`;
   }
   const kind = KIND_LABEL[toolKind(p.tool)];
@@ -251,7 +252,7 @@ function pageCaption(p: DetailPage, item: DetailItem | undefined): string {
           : p.after
             ? p.afterLabel
             : p.beforeLabel
-        : `参数变化 ${p.diff.length} 项`;
+        : tr("{0} parameters changed", p.diff.length);
   return `${kind} · ${what}`;
 }
 
@@ -537,7 +538,7 @@ export function OpDetailPreview(props: {
     return (
       <>
         {/* D5:同源退回已经删掉,拿不到预渲染的源就没有地址可拼 */}
-        {base === null ? <div className="ai-visual-note">预渲染进程还没就绪,画面取不回来</div> : <PageBody p={p} base={base} loadGif={loading(p.id)} onReady={markReady} />}
+        {base === null ? <div className="ai-visual-note">{tr("The prerender process is not ready yet, can't retrieve the visual")}</div> : <PageBody p={p} base={base} loadGif={loading(p.id)} onReady={markReady} />}
         {call ? (
           <div className="ai-odp-over-head" data-pc="odp-over-head">
             <OpHead t={call} />
@@ -565,7 +566,7 @@ export function OpDetailPreview(props: {
         {!follow ? (
           <button type="button" className="ai-odp-follow" data-pc="odp-follow" onClick={followLatest}>
             <IconFollowLatest />
-            点击跟踪最新
+            {tr("Click to follow latest")}
           </button>
         ) : null}
       </div>
@@ -574,8 +575,8 @@ export function OpDetailPreview(props: {
         className={`ai-carousel-frame${dragging ? " is-dragging" : ""}`}
         tabIndex={0}
         role="group"
-        aria-roledescription="操作详细预览"
-        aria-label={`操作详细预览,第 ${cur + 1} 页,共 ${n} 页`}
+        aria-roledescription={tr("Operation detail preview")}
+        aria-label={tr("Operation detail preview, page {0} of {1}", cur + 1, n)}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={(e) => finish(e, false)}
@@ -593,7 +594,7 @@ export function OpDetailPreview(props: {
           ))}
         </div>
         {/* 当前页还没渲染好:盖一层提示,不露出半截图 */}
-        {!curReady ? <div className="ai-carousel-wait" role="status">画面渲染中…</div> : null}
+        {!curReady ? <div className="ai-carousel-wait" role="status">{tr("Rendering frame…")}</div> : null}
         {cur > 0 ? <span className={`ai-carousel-arrow is-prev${hover === "prev" ? " is-on" : ""}`} aria-hidden>‹</span> : null}
         {cur < n - 1 ? <span className={`ai-carousel-arrow is-next${hover === "next" ? " is-on" : ""}`} aria-hidden>›</span> : null}
       </div>
@@ -610,16 +611,16 @@ export function OpDetailPreview(props: {
                   key={p.id}
                   type="button"
                   className={`ai-carousel-dot${i === cur ? " is-on" : ""}${pending ? " is-pending" : ""}${wantedPage === i ? " is-wanted" : ""}${edge ? " is-edge" : ""}`}
-                  aria-label={pending ? `第 ${i + 1} 页(还在渲染,好了自动切过去)` : `第 ${i + 1} 页`}
+                  aria-label={pending ? tr("Page {0} (still rendering, will switch automatically when ready)", i + 1) : tr("Page {0}", i + 1)}
                   aria-current={i === cur ? "true" : undefined}
-                  title={pending ? "还在渲染,好了自动切过去" : undefined}
+                  title={pending ? tr("Still rendering, will switch automatically when ready") : undefined}
                   onClick={() => go(i, true)}
                 />
               );
             })}
           </div>
           <span className="ai-carousel-count">
-            {wantedPage !== null ? "渲染中… " : ""}
+            {wantedPage !== null ? tr("Rendering… ") : ""}
             {cur + 1} / {n}
           </span>
         </div>
@@ -649,11 +650,11 @@ function short(v: unknown, max = 80): string {
   if (v === null || v === undefined) s = "—";
   else if (typeof v === "string") s = v;
   else if (typeof v === "number" || typeof v === "boolean") s = String(v);
-  else if (Array.isArray(v)) s = `${v.length} 项`;
+  else if (Array.isArray(v)) s = tr("{0} items", v.length);
   else {
     s = Object.entries(v as Record<string, unknown>)
       .filter(([k]) => !HIDDEN_KEYS.has(k))
-      .map(([k, x]) => `${k}: ${x !== null && typeof x === "object" ? (Array.isArray(x) ? `${x.length} 项` : "{…}") : String(x)}`)
+      .map(([k, x]) => `${k}: ${x !== null && typeof x === "object" ? (Array.isArray(x) ? tr("{0} items", x.length) : "{…}") : String(x)}`)
       .join(",");
   }
   s = s.replace(/\s+/g, " ").trim();
@@ -666,7 +667,7 @@ function ShortList({ list, max }: { list: unknown[]; max: number }): JSX.Element
       {list.slice(0, max).map((x, i) => (
         <li key={i}>{short(x)}</li>
       ))}
-      {list.length > max ? <li className="more">还有 {list.length - max} 项</li> : null}
+      {list.length > max ? <li className="more">{tr("{0} more items", list.length - max)}</li> : null}
     </ul>
   );
 }
@@ -675,9 +676,9 @@ function ShortList({ list, max }: { list: unknown[]; max: number }): JSX.Element
 function ResultFields({ value }: { value: unknown }): JSX.Element | null {
   if (value === null || value === undefined || value === "") return null;
   if (typeof value !== "object") return <div className="ai-opcard-text">{short(value, 600)}</div>;
-  if (Array.isArray(value)) return value.length ? <ShortList list={value} max={8} /> : <div className="ai-opcard-text is-faint">没有结果</div>;
+  if (Array.isArray(value)) return value.length ? <ShortList list={value} max={8} /> : <div className="ai-opcard-text is-faint">{tr("No results")}</div>;
   const entries = Object.entries(value as Record<string, unknown>).filter(([k]) => !HIDDEN_KEYS.has(k));
-  if (!entries.length) return <div className="ai-opcard-text is-faint">完成</div>;
+  if (!entries.length) return <div className="ai-opcard-text is-faint">{tr("Done")}</div>;
   return (
     <dl className="ai-opcard-fields">
       {entries.slice(0, 12).map(([k, v]) => (
@@ -686,7 +687,7 @@ function ResultFields({ value }: { value: unknown }): JSX.Element | null {
           <dd>
             {Array.isArray(v) ? (
               <>
-                {v.length} 项
+                {tr("{0} items", v.length)}
                 {v.length ? <ShortList list={v} max={5} /> : null}
               </>
             ) : (
@@ -704,19 +705,20 @@ function paramsLine(input: unknown): string {
   if (!input || typeof input !== "object") return "";
   const entries = Object.entries(input as Record<string, unknown>).filter(([, v]) => v !== undefined && v !== null && v !== "");
   if (!entries.length) return "";
-  return "参数 · " + entries.map(([k, v]) => `${k}: ${short(v, 40)}`).join(" · ");
+  return tr("Parameters · ") + entries.map(([k, v]) => `${k}: ${short(v, 40)}`).join(" · ");
 }
 
 /** 对话 ID 换成页签名;找不到就给个短 ID */
 function agentName(conversationId: unknown): string {
   const id = String(conversationId ?? "");
-  if (!id || id === "未知") return "未知 Agent";
+  // i18n-allow: older records name an unknown writer in Chinese
+  if (!id || id === "unknown" || id === "未知") return tr("Unknown Agent");
   return findTabByConversation(id)?.title ?? `Agent ${id.slice(0, 8)}`;
 }
 
 function errorText(t: ToolCallInfo, res: unknown): string {
   if (res && typeof res === "object" && typeof (res as { error?: unknown }).error === "string") return (res as { error: string }).error;
-  return typeof res === "string" && res ? res : t.summary || "失败了,没有返回原因";
+  return typeof res === "string" && res ? res : t.summary || tr("Failed, no reason returned");
 }
 
 /** 对话类操作(多 Agent 之间):只给内容 */
@@ -727,7 +729,7 @@ function agentContent(t: ToolCallInfo, res: unknown): ReactNode {
     const to = String(input.to ?? "");
     return (
       <>
-        <div className="ai-opcard-to">发给 {to === "all" ? "所有 Agent" : agentName(to)}</div>
+        <div className="ai-opcard-to">{tr("Sent to {0}", to === "all" ? tr("All Agents") : agentName(to))}</div>
         <div className="ai-opcard-text">{String(input.text ?? "")}</div>
       </>
     );
@@ -735,8 +737,7 @@ function agentContent(t: ToolCallInfo, res: unknown): ReactNode {
   if (name === "declare_scope") {
     return (
       <div className="ai-opcard-text">
-        声明范围:{String(input.scope ?? "")}
-        {input.note ? `\n${String(input.note)}` : ""}
+        {tr("Declared scope: {0}{1}", String(input.scope ?? ""), input.note ? `\n${String(input.note)}` : "")}
       </div>
     );
   }
@@ -746,12 +747,12 @@ function agentContent(t: ToolCallInfo, res: unknown): ReactNode {
     return msgs.length ? (
       msgs.map((m, i) => (
         <div key={i} className="ai-opcard-msg">
-          <div className="ai-opcard-to">来自 {agentName(m.from)}</div>
+          <div className="ai-opcard-to">{tr("From {0}", agentName(m.from))}</div>
           <div className="ai-opcard-text">{String(m.text ?? "")}</div>
         </div>
       ))
     ) : (
-      <div className="ai-opcard-text is-faint">没有新消息</div>
+      <div className="ai-opcard-text is-faint">{tr("No new messages")}</div>
     );
   }
   if (name === "list_agents") {
@@ -762,13 +763,13 @@ function agentContent(t: ToolCallInfo, res: unknown): ReactNode {
           <li key={i}>
             {String(a.title ?? "")}
             {a.scope ? ` · ${String(a.scope)}` : ""}
-            {a.you ? "(自己)" : ""}
-            {a.busy ? " · 正在跑" : ""}
+            {a.you ? tr("(you)") : ""}
+            {a.busy ? tr(" · running") : ""}
           </li>
         ))}
       </ul>
     ) : (
-      <div className="ai-opcard-text is-faint">没有别的 Agent</div>
+      <div className="ai-opcard-text is-faint">{tr("No other Agents")}</div>
     );
   }
   return <ResultFields value={res} />;
@@ -780,7 +781,7 @@ function OpHead({ t }: { t: ToolCallInfo }): JSX.Element {
   return (
     <div className="ai-opcard-head">
       <span className={`ai-op ai-op--${kind}${t.ok === false ? " is-err" : ""} ai-opcard-chip`} aria-hidden />
-      <span className="ai-opcard-kind">{t.ok === false ? "失败" : KIND_LABEL[kind]}</span>
+      <span className="ai-opcard-kind">{t.ok === false ? tr("failed") : KIND_LABEL[kind]}</span>
       <span className="ai-opcard-name">{bareToolName(t.name)}</span>
       {typeof t.durationMs === "number" ? <span className="ai-opcard-dur">{fmtDuration(t.durationMs)}</span> : null}
     </div>
@@ -800,7 +801,7 @@ function OpCard({ t }: { t: ToolCallInfo }): JSX.Element {
   const kind = toolKind(t.name);
   const res = t.ok === undefined ? null : parseResult(t.summary);
   let content: ReactNode;
-  if (t.ok === undefined) content = <div className="ai-opcard-text is-faint">进行中…</div>;
+  if (t.ok === undefined) content = <div className="ai-opcard-text is-faint">{tr("In progress…")}</div>;
   else if (t.ok === false) content = <div className="ai-opcard-error">{errorText(t, res)}</div>;
   else if (kind === "agent") content = agentContent(t, res);
   else {
@@ -822,7 +823,7 @@ function OpCard({ t }: { t: ToolCallInfo }): JSX.Element {
 }
 
 function OpCards({ tools }: { tools: ToolCallInfo[] }): JSX.Element {
-  if (!tools.length) return <div className="ai-carousel-note">没有操作记录</div>;
+  if (!tools.length) return <div className="ai-carousel-note">{tr("No operation records")}</div>;
   return (
     <div className="ai-odp-text">
       {tools.map((t, i) => (
@@ -833,9 +834,9 @@ function OpCards({ tools }: { tools: ToolCallInfo[] }): JSX.Element {
 }
 
 const REPORT_GROUPS = [
-  { field: "done", label: "已完成", mark: "✓", cls: "is-done" },
-  { field: "todo", label: "待办", mark: "○", cls: "is-todo" },
-  { field: "problems", label: "问题", mark: "!", cls: "is-problem" },
+  { field: "done", label: tr("Completed"), mark: "✓", cls: "is-done" },
+  { field: "todo", label: tr("To do"), mark: "○", cls: "is-todo" },
+  { field: "problems", label: tr("Problems"), mark: "!", cls: "is-problem" },
 ] as const;
 
 /** 小结页:头一行是绿 ✓ / 黄 ! / 红 ! 的小方块 + 标题(好坏只看颜色和字形,不写字),下面三组条目(空组不显示) */
@@ -862,7 +863,7 @@ function SummaryCard({ report, tone }: { report: ProgressReport; tone: SummaryTo
           </div>
         ))
       ) : (
-        <div className="ai-report-empty">(没有可汇报的内容)</div>
+        <div className="ai-report-empty">{tr("(nothing to report)")}</div>
       )}
     </div>
   );
@@ -876,8 +877,8 @@ function InboundCards({ messages }: { messages: InboundAgentMessage[] }): JSX.El
         <div key={i} className="ai-opcard" data-pc="op-inbound">
           <div className="ai-opcard-head">
             <span className="ai-op ai-op--agent ai-opcard-chip" aria-hidden />
-            <span className="ai-opcard-kind">收到消息</span>
-            <span className="ai-opcard-name is-plain">来自 {agentName(m.from)}</span>
+            <span className="ai-opcard-kind">{tr("Message received")}</span>
+            <span className="ai-opcard-name is-plain">{tr("From {0}", agentName(m.from))}</span>
           </div>
           <div className="ai-opcard-text">{m.text}</div>
         </div>
@@ -933,13 +934,13 @@ function PageImage({ src, label, onSettled }: { src: string; label?: string; onS
     if (el?.complete && el.naturalWidth > 0) onSettled();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  if (bad) return <div className="ai-carousel-note">这张图取不回来了</div>;
+  if (bad) return <div className="ai-carousel-note">{tr("This image could not be retrieved")}</div>;
   return (
     <img
       ref={ref}
       className="ai-carousel-img"
       src={src}
-      alt={label || "画面"}
+      alt={label || tr("Video")}
       draggable={false}
       onLoad={onSettled}
       onError={() => {

@@ -5,6 +5,7 @@ import { closeTab, openTab, openTabs, saveTabs, setTabs, useCutTabsVersion } fro
 import { memberReadOnlyNow } from "../readOnlyCore";
 import { useReadOnly } from "../readOnly";
 import "./cut-tabs.css";
+import { tr } from "../../i18n/index.ts";
 
 /** 胶片:圆角方块里一格画面,两侧各三个齿孔 */
 export function IconFilm({ size = 12 }: { size?: number }) {
@@ -70,7 +71,7 @@ export function CutTabBar() {
   };
 
   return (
-    <div className="pc-tl-cuts" data-pc="cut-tabs" role="tablist" aria-label="打开的剪辑">
+    <div className="pc-tl-cuts" data-pc="cut-tabs" role="tablist" aria-label={tr("Open cuts")}>
       {tabs.map((id) => {
         const c = byId.get(id);
         if (!c) return null;
@@ -80,7 +81,7 @@ export function CutTabBar() {
             onClose={() => close(id)} />
         );
       })}
-      <button type="button" className="pc-tl-cut-add" data-pc="cut-add" title={ro.title("新建剪辑并打开")} aria-label="新建剪辑" disabled={ro.locked}
+      <button type="button" className="pc-tl-cut-add" data-pc="cut-add" title={ro.title(tr("Create a cut and open it"))} aria-label={tr("New cut")} disabled={ro.locked}
         onClick={() => {
           const cut = actions.addCut(undefined, { switchTo: false });
           openCutInTimeline(cut.id);
@@ -119,7 +120,7 @@ function Tab({ id, name, active, canClose, locked, why, editing, onEdit, onDone,
         tabIndex={0}
         aria-selected={active}
         className="pc-tl-cut-main"
-        title={editing ? undefined : locked ? `${name}\n${why}` : `${name}\n单击切换,双击改名`}
+        title={editing ? undefined : locked ? `${name}\n${why}` : tr("{0}\nClick to switch, double-click to rename", name)}
         aria-disabled={locked && !active ? true : undefined}
         onClick={() => { if (!locked && !editing && !active) actions.switchCut(id); }}
         onDoubleClick={() => { if (!locked) onEdit(); }}
@@ -129,7 +130,7 @@ function Tab({ id, name, active, canClose, locked, why, editing, onEdit, onDone,
       >
         <span className="pc-tl-cut-glyph"><IconFilm /></span>
         {editing ? (
-          <input ref={inputRef} className="pc-tl-cut-input" value={draft} aria-label="剪辑名"
+          <input ref={inputRef} className="pc-tl-cut-input" value={draft} aria-label={tr("Cut name")}
             onChange={(e) => setDraft(e.target.value)} onBlur={commit}
             onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") commit(); else if (e.key === "Escape") onDone(); }}
             onClick={(e) => e.stopPropagation()} />
@@ -138,13 +139,13 @@ function Tab({ id, name, active, canClose, locked, why, editing, onEdit, onDone,
         )}
       </div>
       {canClose ? (
-        <button type="button" className="pc-tl-cut-x" data-pc="cut-tab-close" title={locked && active ? why : "关闭这个标签(不删剪辑)"} aria-label={`关闭 ${name} 的标签`}
+        <button type="button" className="pc-tl-cut-x" data-pc="cut-tab-close" title={locked && active ? why : tr("Close this tab (the cut is not deleted)")} aria-label={tr("Close tab for {0}", name)}
           disabled={locked && active}
           onClick={(e) => { e.stopPropagation(); onClose(); }}>
           ×
         </button>
       ) : (
-        <span className="pc-tl-cut-x is-off" title="最后一个标签不能关" aria-hidden="true" />
+        <span className="pc-tl-cut-x is-off" title={tr("The last tab cannot be closed")} aria-hidden="true" />
       )}
     </div>
   );

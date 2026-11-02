@@ -153,7 +153,7 @@ export async function runCardMeasuredHook(info: Omit<CardMeasuredInfo, "round">)
   const hook = cardMeasuredHook;
   if (!hook) return;
   try { await hook({ ...info, round: maskRound }); }
-  catch (err) { console.warn("[probeRunner] 测完一张卡之后的口子出错", err); }
+  catch (err) { console.warn("[probeRunner] Error in the hook after a card is measured", err); }
 }
 
 /* ------------------------------------------------------------------ 身份与设备 */
@@ -676,7 +676,7 @@ async function runLoop(): Promise<void> {
             const { identityKeys } = clipIdentityOf(project);
             const clipIds = Object.keys(identityKeys).filter((id) => identityKeys[id] === job.identityKey);
             try { await hook({ project, clipIds, cardId: job.cardId, identityKey: job.identityKey, round: maskRound, stale: () => gen !== generation }); }
-            catch (err) { console.warn("[probeRunner] 测完一张卡之后的口子出错", err); }
+            catch (err) { console.warn("[probeRunner] Error in the hook after a card is measured", err); }
             if (gen !== generation) break;
           }
         } else {
@@ -701,7 +701,7 @@ async function runLoop(): Promise<void> {
     }
   } catch (err) {
     // 探针挂了不能把编辑器挡在遮罩后面：记一条诊断，放行
-    console.error("[probeRunner] 探针这一轮出错", err);
+    console.error("[probeRunner] Error in this probe round", err);
     queuedIdentity = null; // 暂时的 RPC/存储错误仍允许下一次通知重试。
     settledGeneration = generation;
     setProgress({ running: false, card: null });

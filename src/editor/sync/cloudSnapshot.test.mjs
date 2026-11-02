@@ -20,7 +20,7 @@ const M = await import(srcUrl("editor/sync/mergeItems.ts"));
 
 const clip = (id, start, end, extra = {}) => ({ id, cardId: "", start, end, params: {}, label: id, ...extra });
 const project = () => ({
-  version: 1, id: "p-cloud", name: "云端项目", width: 1920, height: 1080, fps: 30, duration: 10, themeId: "dark", media: [],
+  version: 1, id: "p-cloud", name: "Cloud project", width: 1920, height: 1080, fps: 30, duration: 10, themeId: "dark", media: [],
   tracks: [{ id: "t1", name: "主序列", clips: [clip("c1", 0, 2, { opacity: 0.4 }), clip("c2", 3, 5), clip("c3", 6, 8)] }],
 });
 const edit = (p, fn) => { const q = structuredClone(p); fn(q); return q; };

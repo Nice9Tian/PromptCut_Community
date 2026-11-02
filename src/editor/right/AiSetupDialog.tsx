@@ -12,6 +12,7 @@ import { redactDebug } from "../../ai/debug";
 import { CAPABILITIES } from "../../ai/modelOptions";
 import { setViewMode, useViewPrefs } from "./chat/viewPrefs";
 import type { ProviderInfo, AiProvider, SttInfo, PublicAiConfig, AiConfigPatch, ApiVendor, CliSetupJob, LoginState, KeyKind } from "../../ai/types";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 把「非默认、又容易让排查跑偏」的设置挑成人话，放在诊断报告最前面。
@@ -21,22 +22,22 @@ import type { ProviderInfo, AiProvider, SttInfo, PublicAiConfig, AiConfigPatch, 
  * 而开关本身藏在「更多」里，用户自己都未必记得点过。
  */
 function notableSettings(cfg: PublicAiConfig | null | undefined, current: AiProvider | null): string[] {
-  if (!cfg) return ["拿不到服务端配置（/api/ai/diagnostics 没返回 config），下面的内容可能不全"];
+  if (!cfg) return [tr("Could not get the server config (/api/ai/diagnostics returned no config), the content below may be incomplete")];
   const out: string[] = [];
   if (cfg.toolProtocol) {
-    out.push("⚠ 文本协议模式已开启（默认是关的）——模型改用回复正文里的文本块下达工具调用。工具相关的异常先怀疑这里");
+    out.push(tr("⚠ Text protocol mode is on (off by default): the model issues tool calls through text blocks in the reply body instead. Suspect this first for tool-related problems"));
   }
-  out.push(`当前使用：${current ?? "（还没选）"}；配置里的默认：${cfg.defaultProvider ?? "（未设）"}`);
+  out.push(tr("Currently using: {0}; default in config: {1}", current ?? tr("(not selected yet)"), cfg.defaultProvider ?? tr("(not set)")));
   if (current === "api") {
-    out.push(`API 直连：${cfg.api.vendor}，模型 ${cfg.api.model || "（未填）"}，maxTokens ${cfg.api.maxTokens}`);
+    out.push(tr("Direct API: {0}, model {1}, maxTokens {2}", cfg.api.vendor, cfg.api.model || tr("(not filled in)"), cfg.api.maxTokens));
     // redactDebug 会把 apiKey 整个换成 [REDACTED]，连「到底配没配」都看不出来了。
     // 这两个字段名躲开它的匹配，好让支持能分清「没配 Key」和「Key 不对」。
-    out.push(cfg.api.apiKey.set ? `API Key：已配置，末四位 ${cfg.api.apiKey.last4}` : "API Key：未配置");
-    if (cfg.api.baseUrl) out.push(`走了自定义 baseUrl：${cfg.api.baseUrl}`);
+    out.push(cfg.api.apiKey.set ? tr("API Key: configured, last four {0}", cfg.api.apiKey.last4) : tr("API Key: not configured"));
+    if (cfg.api.baseUrl) out.push(tr("Using custom baseUrl: {0}", cfg.api.baseUrl));
   }
   // 模型清单是空的，面板上就只有「默认」一项可选 —— 用户常报「换不了模型」其实是这个
   for (const id of ["claude", "codex", "agy"] as const) {
-    if (!cfg.cliModels?.[id]) out.push(`${id} 没配模型清单，面板上只会有「默认」一项`);
+    if (!cfg.cliModels?.[id]) out.push(tr("{0} has no model list configured, so the panel will only show \"Default\"", id));
   }
   return out;
 }
@@ -81,26 +82,26 @@ export function AiSetupDialog(props: {
         body: JSON.stringify({ provider, code }), signal: AbortSignal.timeout(15000),
       });
       const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error || "提交失败，请重试");
+      if (!res.ok || !data.ok) throw new Error(data.error || tr("Submit failed, please retry"));
       setAuthCode("");
-      setAuthCodeMsg("已提交，正在确认登录…");
+      setAuthCodeMsg(tr("Submitted, confirming login…"));
     } catch (e) {
-      setAuthCodeMsg(e instanceof Error ? e.message : "提交失败，请重试");
+      setAuthCodeMsg(e instanceof Error ? e.message : tr("Submit failed, please retry"));
     } finally {
       setAuthCodeBusy(false);
     }
   };
   const clearKeyOf = async (kind: KeyKind) => {
     if (!onClearKey) return;
-    if (!confirm(kind === "router" ? "删除 Router 导入的密钥文件?之后要再粘一次分发密文。" : "删除自定义 API 的密钥文件?之后要重新填 Key。")) return;
+    if (!confirm(kind === "router" ? tr("Delete the key file imported by Router? You will need to paste the distribution ciphertext again.") : tr("Delete the key file of the custom API? You will need to enter the Key again."))) return;
     setClearing(kind);
     setClearMsg("");
     try {
       await onClearKey(kind);
-      setClearMsg("密钥文件已删除");
+      setClearMsg(tr("Key file deleted"));
       if (kind === "custom") { setReplaceKey(true); setApiKeyInput(""); }
     } catch (e) {
-      setClearMsg(e instanceof Error ? e.message : "清理失败");
+      setClearMsg(e instanceof Error ? e.message : tr("Cleanup failed"));
     } finally {
       setClearing("");
     }
@@ -269,7 +270,7 @@ export function AiSetupDialog(props: {
       if (data.ok) {
         setAgyPerms((prev) => (prev ? { ...prev, granted: [...prev.granted, ...data.added], missing: [] } : null));
       } else {
-        setAgyPermError(data.error || "授权失败");
+        setAgyPermError(data.error || tr("Authorization failed"));
       }
     } catch (e) {
       setAgyPermError(String(e));
@@ -292,7 +293,7 @@ export function AiSetupDialog(props: {
       setApiKeyInput("");
       setReplaceKey(false);
     } catch (e: unknown) {
-      setSaveError(e instanceof Error ? e.message || "保存失败" : "保存失败");
+      setSaveError(e instanceof Error ? e.message || tr("Save failed") : tr("Save failed"));
     } finally {
       setSaving(false);
     }
@@ -303,9 +304,9 @@ export function AiSetupDialog(props: {
     setModelsMsg("");
     try {
       await onSaveConfig({ cliModels });
-      setModelsMsg("已保存，面板上的模型选择器会立刻用新清单");
+      setModelsMsg(tr("Saved, the model selector on the panel will use the new list immediately"));
     } catch (e) {
-      setModelsMsg(e instanceof Error ? e.message : "保存失败");
+      setModelsMsg(e instanceof Error ? e.message : tr("Save failed"));
     } finally {
       setSavingModels(false);
     }
@@ -317,13 +318,13 @@ export function AiSetupDialog(props: {
     setModelsMsg("");
     try {
       const d = await (await fetch("/api/ai/models?provider=agy")).json();
-      if (!d.ok) throw new Error(d.error || "读不到模型清单");
+      if (!d.ok) throw new Error(d.error || tr("Cannot read the model list"));
       const list: string[] = d.models ?? [];
-      if (list.length === 0) throw new Error("CLI 没有返回任何模型");
+      if (list.length === 0) throw new Error(tr("The CLI returned no models"));
       setCliModels((prev) => ({ ...prev, agy: list.join("|") }));
-      setModelsMsg(`读到 ${list.length} 个模型，确认后点保存`);
+      setModelsMsg(tr("Read {0} models, confirm and click Save", list.length));
     } catch (e) {
-      setModelsMsg(e instanceof Error ? e.message : "读取失败");
+      setModelsMsg(e instanceof Error ? e.message : tr("Read failed"));
     } finally {
       setLoadingAgyModels(false);
     }
@@ -341,13 +342,13 @@ export function AiSetupDialog(props: {
     try {
       await onSaveConfig({ api: { profiles: { custom: { vendor: apiVendor, baseUrl: apiBaseUrl, model: apiModel } } } } as AiConfigPatch);
       const d = await (await fetch("/api/ai/models?provider=api")).json();
-      if (!d.ok) throw new Error(d.error || "读不到模型清单");
+      if (!d.ok) throw new Error(d.error || tr("Cannot read the model list"));
       const list: string[] = d.models ?? [];
-      if (list.length === 0) throw new Error("接口没有返回任何模型");
+      if (list.length === 0) throw new Error(tr("The API returned no models"));
       setApiModel(list.join("|"));
-      setApiModelsMsg(`读到 ${list.length} 个模型，确认后点保存`);
+      setApiModelsMsg(tr("Read {0} models, confirm and click Save", list.length));
     } catch (e) {
-      setApiModelsMsg(e instanceof Error ? e.message : "读取失败");
+      setApiModelsMsg(e instanceof Error ? e.message : tr("Read failed"));
     } finally {
       setLoadingApiModels(false);
     }
@@ -358,9 +359,9 @@ export function AiSetupDialog(props: {
     setQuotaMsg("");
     try {
       await onSaveConfig({ quota: next });
-      setQuotaMsg("已保存");
+      setQuotaMsg(tr("Saved"));
     } catch (e) {
-      setQuotaMsg(e instanceof Error ? e.message : "保存失败");
+      setQuotaMsg(e instanceof Error ? e.message : tr("Save failed"));
     }
   };
 
@@ -369,7 +370,7 @@ export function AiSetupDialog(props: {
     setQuotaBusy((prev) => ({ ...prev, [provider]: true }));
     try {
       const d = await (await fetch(`/api/ai/quota?provider=${provider}${refresh ? "&refresh=1" : ""}`)).json();
-      if (!d.ok) throw new Error(d.error || "查不到额度");
+      if (!d.ok) throw new Error(d.error || tr("Cannot look up quota"));
       setQuotaInfo((prev) => ({ ...prev, [provider]: d.quota }));
     } catch (e) {
       setQuotaInfo((prev) => ({ ...prev, [provider]: { provider, label: provider, supported: true, ok: false, checkedAt: Date.now(), windows: [], maxUsedPercent: null, worst: null, error: e instanceof Error ? e.message : String(e) } }));
@@ -400,15 +401,15 @@ export function AiSetupDialog(props: {
     }
     const v = Number(raw);
     if (!Number.isFinite(v) || v < 0 || v > 100000 || !Number.isInteger(v)) {
-      setDeepRoundsMsg("填 0~100000 的整数，0 表示不限轮次");
+      setDeepRoundsMsg(tr("Enter an integer from 0 to 100000; 0 means unlimited rounds"));
       return;
     }
     if (v === (config?.deepAutoRounds ?? 300)) { setDeepRoundsMsg(""); return; }
     try {
       await onSaveConfig({ deepAutoRounds: v });
-      setDeepRoundsMsg(v === 0 ? "已保存：不限轮次" : `已保存：${v} 轮`);
+      setDeepRoundsMsg(v === 0 ? tr("Saved: unlimited rounds") : tr("Saved: {0} rounds", v));
     } catch (e) {
-      setDeepRoundsMsg(e instanceof Error ? e.message : "保存失败");
+      setDeepRoundsMsg(e instanceof Error ? e.message : tr("Save failed"));
     }
   };
 
@@ -421,7 +422,7 @@ export function AiSetupDialog(props: {
    * 收集期间「正在收集…」显示在底部那行小字上。
    */
   const openDiagnostics = async () => {
-    setDiagState("正在收集…");
+    setDiagState(tr("Collecting…"));
     setDiagReport("");
     let report: string;
     try {
@@ -446,8 +447,8 @@ export function AiSetupDialog(props: {
       );
     } catch (e) {
       const why = e instanceof Error ? e.message : String(e);
-      setDiagState(`收集失败:${why}`);
-      showDiagToast(`诊断信息收集失败:${why}`);
+      setDiagState(tr("Collection failed: {0}", why));
+      showDiagToast(tr("Failed to collect diagnostics: {0}", why));
       return;
     }
     // 收集成功就把报告摆进子窗口,复制 / 保存为文件 / 提交由用户自己挑。
@@ -468,19 +469,19 @@ export function AiSetupDialog(props: {
   const readiness = (entry: SetupEntry): { ok: boolean; label: string; tone: "ok" | "warn" | "idle" } => {
     if (isCliEntry(entry.id)) {
       const p = providers.find((x) => x.id === entry.provider);
-      if (!p?.available) return { ok: false, label: "未安装", tone: "warn" };
-      if (p.auth?.status === 'invalid') return { ok: false, label: '登录已失效', tone: 'warn' };
-      if (p.auth?.loggedIn === true) return { ok: true, label: "已登录", tone: "ok" };
-      if (p.auth?.loggedIn === false) return { ok: false, label: "未登录", tone: "warn" };
-      return { ok: false, label: "登录状态待确认", tone: "idle" };
+      if (!p?.available) return { ok: false, label: tr("Not installed"), tone: "warn" };
+      if (p.auth?.status === 'invalid') return { ok: false, label: tr("Login expired"), tone: 'warn' };
+      if (p.auth?.loggedIn === true) return { ok: true, label: tr("Logged in"), tone: "ok" };
+      if (p.auth?.loggedIn === false) return { ok: false, label: tr("Not logged in"), tone: "warn" };
+      return { ok: false, label: tr("Login status pending confirmation"), tone: "idle" };
     }
-    if (config?.api.apiKey.set) return { ok: true, label: `已配置 ••••${config.api.apiKey.last4}`, tone: "ok" };
-    return { ok: false, label: "未配置", tone: "idle" };
+    if (config?.api.apiKey.set) return { ok: true, label: tr("Configured ••••{0}", config.api.apiKey.last4), tone: "ok" };
+    return { ok: false, label: tr("Not configured"), tone: "idle" };
   };
 
   const renderCliBody = (entry: SetupEntry) => {
     const p = providers.find((x) => x.id === entry.provider);
-    if (!p) return <div className="ais-detail">这一项在本机上没有检测到。</div>;
+    if (!p) return <div className="ais-detail">{tr("This item was not detected on this machine.")}</div>;
     const st = loginState[p.id];
     const job = setupJobs.find((j) => j.provider === p.id);
     const plan = installPlans[p.id];
@@ -492,21 +493,21 @@ export function AiSetupDialog(props: {
         <section className="ais-step">
           <div className="ais-step-head">
             <span className="ais-step-no">1</span>
-            <span className="ais-step-title">安装</span>
+            <span className="ais-step-title">{tr("Install")}</span>
             <span className={p.available ? "ais-status-ok" : "ais-status-err"}>
-              {p.available ? p.version || "已安装(版本未知)" : "未安装"}
+              {p.available ? p.version || tr("Installed (version unknown)") : tr("Not installed")}
             </span>
           </div>
           {!p.available && (
             plan?.command ? (
               <div className="ais-auth-action">
                 <button className="ais-btn ais-primary-btn" disabled={ist === "installing"} onClick={(e) => { e.preventDefault(); onInstall(p.id); }}>
-                  {ist === "installing" ? "安装中…" : ist === "ok" ? "已安装" : ist === "timeout" ? "等太久了,重试" : ist === "failed" ? "重试安装" : "安装"}
+                  {ist === "installing" ? tr("Installing…") : ist === "ok" ? tr("Installed") : ist === "timeout" ? tr("Took too long, retry") : ist === "failed" ? tr("Retry install") : tr("Install")}
                 </button>
-                <span className="ais-detail">{ist === "installing" ? "正在后台安装，完成后会自动检测" : plan.command}</span>
+                <span className="ais-detail">{ist === "installing" ? tr("Installing in the background, it will be detected automatically when done") : plan.command}</span>
               </div>
             ) : (
-              <div className="ais-detail">{plan?.hint || "这一项需要按官方说明手动安装。"}</div>
+              <div className="ais-detail">{plan?.hint || tr("This item must be installed manually following the official instructions.")}</div>
             )
           )}
           {err && <div className="ais-fixhint">{err}</div>}
@@ -515,35 +516,34 @@ export function AiSetupDialog(props: {
         <section className="ais-step">
           <div className="ais-step-head">
             <span className="ais-step-no">2</span>
-            <span className="ais-step-title">登录</span>
+            <span className="ais-step-title">{tr("Log in")}</span>
             {p.auth?.loggedIn === true
-              ? <span className="ais-status-ok">已登录</span>
-              : <span className="ais-status-err">{p.auth?.status === 'invalid' ? '登录已失效' : p.auth?.loggedIn === false ? "未登录" : "待确认"}</span>}
+              ? <span className="ais-status-ok">{tr("Logged in")}</span>
+              : <span className="ais-status-err">{p.auth?.status === 'invalid' ? tr("Login expired") : p.auth?.loggedIn === false ? tr("Not logged in") : tr("Pending confirmation")}</span>}
           </div>
           {(
             <div className="ais-auth-action">
               <button className="ais-btn ais-primary-btn" disabled={!p.available || st === "waiting"} onClick={(e) => { e.preventDefault(); onLogin(p.id); }}>
-                {st === "waiting" ? "等待登录…" : st === "timeout" || st === "failed" ? "重试登录" : p.auth?.loggedIn === true || p.auth?.status === 'invalid' ? '重新登录' : "登录"}
+                {st === "waiting" ? tr("Waiting for login…") : st === "timeout" || st === "failed" ? tr("Retry login") : p.auth?.loggedIn === true || p.auth?.status === 'invalid' ? tr("Log in again") : tr("Log in")}
               </button>
-              {!p.available && <span className="ais-detail">先装好再登录</span>}
+              {!p.available && <span className="ais-detail">{tr("Install it before logging in")}</span>}
             </div>
           )}
-          {p.id === "codex" && <div className="ais-detail">PromptCut 使用独立登录，不受 Codex 桌面应用配置影响。</div>}
+          {p.id === "codex" && <div className="ais-detail">{tr("PromptCut uses a separate login, unaffected by the Codex desktop app configuration.")}</div>}
           {p.auth?.loggedIn === null && p.auth.detail && <div className="ais-detail">{p.auth.detail}</div>}
           {p.auth?.fixHint && <div className="ais-fixhint">{p.auth.fixHint}</div>}
           {p.auth?.persistenceWarning && <div className="ais-fixhint">{p.auth.persistenceWarning}</div>}
           {job && (
             <div className="ais-setup-progress" role="status" aria-live="polite">
               <div className={job.state === "failed" ? "ais-fixhint" : "ais-detail"}>{job.message}</div>
-              {job.state === "running" && <button className="ais-btn" onClick={(e) => { e.preventDefault(); onCancelSetup(p.id); }}>取消</button>}
-              {job.url && <a className="ais-btn" href={job.url} target="_blank" rel="noreferrer">打开登录网页 ↗</a>}
-              {job.deviceCode && <div>登录验证码：<strong>{job.deviceCode}</strong></div>}
+              {job.state === "running" && <button className="ais-btn" onClick={(e) => { e.preventDefault(); onCancelSetup(p.id); }}>{tr("Cancel")}</button>}
+              {job.url && <a className="ais-btn" href={job.url} target="_blank" rel="noreferrer">{tr("Open login page ↗")}</a>}
+              {job.deviceCode && <div>{tr("Login verification code:")}<strong>{job.deviceCode}</strong></div>}
               {job.kind === "login" && job.state === "running" && job.acceptsCode && (
                 <details className="ais-code-paste">
-                  <summary>浏览器没有自动回到软件？粘贴登录网页给的授权码</summary>
+                  <summary>{tr("Browser did not return to the app automatically? Paste the authorization code from the login page")}</summary>
                   <div className="ais-detail">
-                    在登录网页授权后，如果页面显示了一串授权码，复制下来粘贴到这里，再点「提交」。
-                    浏览器已经自动回到软件、这里显示「登录成功」的，不需要填。
+                    {tr("After authorizing on the login page, if the page shows an authorization code, copy it, paste it here, and click \"Submit\". If the browser has already returned to the app automatically and this shows \"Login successful\", you don't need to enter it.")}
                   </div>
                   <div className="ais-api-field ais-code-row">
                     <input
@@ -553,18 +553,18 @@ export function AiSetupDialog(props: {
                       value={authCode}
                       onChange={(e) => setAuthCode(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void submitAuthCode(p.id); } }}
-                      placeholder="粘贴授权码"
+                      placeholder={tr("Paste authorization code")}
                     />
                     <button className="ais-btn ais-primary-btn" disabled={authCodeBusy || !authCode.trim()} onClick={(e) => { e.preventDefault(); void submitAuthCode(p.id); }}>
-                      {authCodeBusy ? "提交中…" : "提交"}
+                      {authCodeBusy ? tr("Submitting…") : tr("Submit")}
                     </button>
                   </div>
                   {authCodeMsg && <div className="ais-detail" role="status">{authCodeMsg}</div>}
                 </details>
               )}
-              {job.kind === "install" && job.logs.length > 0 && <details><summary>查看安装详情</summary><pre>{job.logs.join("")}</pre></details>}
+              {job.kind === "install" && job.logs.length > 0 && <details><summary>{tr("View install details")}</summary><pre>{job.logs.join("")}</pre></details>}
               {p.id === "codex" && job.kind === "login" && job.state === "failed" && (
-                <button className="ais-btn" onClick={(e) => { e.preventDefault(); onLogin(p.id, true); }}>改用设备码登录</button>
+                <button className="ais-btn" onClick={(e) => { e.preventDefault(); onLogin(p.id, true); }}>{tr("Log in with device code instead")}</button>
               )}
             </div>
           )}
@@ -573,10 +573,10 @@ export function AiSetupDialog(props: {
         <section className="ais-step">
           <div className="ais-step-head">
             <span className="ais-step-no">${entry.id === "agy" ? 4 : 3}</span>
-            <span className="ais-step-title">可选模型</span>
+            <span className="ais-step-title">{tr("Optional models")}</span>
           </div>
           <div className="ais-detail">
-            用 <code>|</code> 分开写几个，面板输入框旁边就能切。{CAPABILITIES[entry.provider].modelsHint}
+            {tr("Use")}{" "} <code>|</code> {" "}{tr("List several, and you can switch between them next to the panel input box.{0}", CAPABILITIES[entry.provider].modelsHint)}
           </div>
           <div className="ais-api-field">
             <input
@@ -586,15 +586,15 @@ export function AiSetupDialog(props: {
               onChange={(e) => setCliModels((prev) => ({ ...prev, [entry.id]: e.target.value }))}
             />
             <button className="ais-btn" disabled={savingModels} onClick={(e) => { e.preventDefault(); saveCliModels(); }}>
-              {savingModels ? "保存中…" : "保存"}
+              {savingModels ? tr("Saving…") : tr("Save")}
             </button>
           </div>
           {entry.id === "agy" && (
             <div className="ais-api-field">
               <button className="ais-btn" disabled={loadingAgyModels} onClick={(e) => { e.preventDefault(); loadAgyModels(); }}>
-                {loadingAgyModels ? "读取中…" : "从 CLI 读取"}
+                {loadingAgyModels ? tr("Loading…") : tr("Read from CLI")}
               </button>
-              <span className="ais-detail">跑一次 agy models，把清单填进上面这一栏</span>
+              <span className="ais-detail">{tr("Run agy models once and fill the list into the field above")}</span>
             </div>
           )}
           {modelsMsg && <div className="ais-detail">{modelsMsg}</div>}
@@ -608,28 +608,27 @@ export function AiSetupDialog(props: {
             <section className="ais-step">
               <div className="ais-step-head">
                 <span className="ais-step-no">4</span>
-                <span className="ais-step-title">额度熔断</span>
+                <span className="ais-step-title">{tr("Quota circuit breaker")}</span>
                 {info?.ok
-                  ? <span className={over ? "ais-status-err" : "ais-status-ok"}>{over ? `已用 ${info.maxUsedPercent}%,超线` : `最高已用 ${info.maxUsedPercent}%`}</span>
-                  : <span className="ais-status-err">{busy ? "查询中…" : info ? "查不到" : "未查"}</span>}
+                  ? <span className={over ? "ais-status-err" : "ais-status-ok"}>{over ? tr("{0}% used, over limit", info.maxUsedPercent) : tr("Highest used {0}%", info.maxUsedPercent)}</span>
+                  : <span className="ais-status-err">{busy ? tr("Checking…") : info ? tr("Unavailable") : tr("Not checked")}</span>}
               </div>
               <div className="ais-detail">
-                订阅额度(5 小时 / 每周窗口)用到阈值就中断这一路的对话并报错,免得编排做到一半被 CLI 拒掉。
-                每新增约 {Math.round(quotaCfg.checkEveryBytes / 1024)} KB 的对话上下文会在后台重查一次;查不到用量(没登录、API Key 模式)不拦。
+                {tr("When the subscription quota (5-hour / weekly window) reaches the threshold, the chat on this route is interrupted with an error, so the arrangement isn't rejected by the CLI halfway through. Roughly every {0} KB of new chat context triggers a background recheck; if usage can't be found (not logged in, API Key mode), it doesn't block.", Math.round(quotaCfg.checkEveryBytes / 1024))}
               </div>
               <label className="ais-more-row">
                 <input type="checkbox" checked={quotaCfg.enabled} onChange={(e) => saveQuota({ ...quotaCfg, enabled: e.target.checked })} />
-                <span>启用熔断</span>
+                <span>{tr("Enable circuit breaker")}</span>
               </label>
               <div className="ais-api-field">
-                <label>阈值 %</label>
+                <label>{tr("Threshold %")}</label>
                 <input
                   type="number" min={1} max={100} step={5}
                   value={quotaCfg.thresholdPercent}
                   onChange={(e) => setQuotaCfg({ ...quotaCfg, thresholdPercent: Number(e.target.value) || 80 })}
                   onBlur={() => saveQuota({ ...quotaCfg, thresholdPercent: Math.min(100, Math.max(1, Math.round(quotaCfg.thresholdPercent) || 80)) })}
                 />
-                <label>重查间隔 KB</label>
+                <label>{tr("Recheck interval KB")}</label>
                 <input
                   type="number" min={16} step={64}
                   value={Math.round(quotaCfg.checkEveryBytes / 1024)}
@@ -637,18 +636,18 @@ export function AiSetupDialog(props: {
                   onBlur={() => saveQuota({ ...quotaCfg, checkEveryBytes: Math.max(16 * 1024, Math.round(quotaCfg.checkEveryBytes)) })}
                 />
                 <button className="ais-btn" disabled={busy} onClick={(e) => { e.preventDefault(); void loadQuota(entry.id, true); }}>
-                  {busy ? "查询中…" : "现在查"}
+                  {busy ? tr("Checking…") : tr("Check now")}
                 </button>
               </div>
               {info?.ok && (
                 <div className="ais-detail">
                   {info.windows.map((w) => (
-                    <div key={w.id}>{w.label}:已用 {w.usedPercent}%{w.resetsText ? `,${w.resetsText} 重置` : ""}</div>
+                    <div key={w.id}>{tr("{0}: {1}% used{2}", w.label, w.usedPercent, w.resetsText ? tr(", resets {0}", w.resetsText) : "")}</div>
                   ))}
-                  {info.planType && <div>套餐:{info.planType}</div>}
+                  {info.planType && <div>{tr("Plan: {0}", info.planType)}</div>}
                 </div>
               )}
-              {info && !info.ok && <div className="ais-fixhint">{info.error || "查不到用量"}</div>}
+              {info && !info.ok && <div className="ais-fixhint">{info.error || tr("Usage unavailable")}</div>}
               {quotaMsg && <div className="ais-detail">{quotaMsg}</div>}
             </section>
           );
@@ -658,14 +657,13 @@ export function AiSetupDialog(props: {
           <section className="ais-step">
             <div className="ais-step-head">
               <span className="ais-step-no">3</span>
-              <span className="ais-step-title">授权 PromptCut 工具</span>
+              <span className="ais-step-title">{tr("Authorize PromptCut tools")}</span>
               <button className="ais-btn ais-primary-btn ais-small-btn" disabled={granting || agyPerms.missing.length === 0} onClick={handleGrant}>
-                {agyPerms.missing.length === 0 ? "已授权" : granting ? "授权中..." : "点击授权"}
+                {agyPerms.missing.length === 0 ? tr("Authorized") : granting ? tr("Authorizing...") : tr("Click to authorize")}
               </button>
             </div>
             <div className="ais-agy-perms-desc">
-              {agyPerms.missing.length === 0 ? `已授权 ${agyPerms.total} 个工具。` : `已授权 ${agyPerms.granted.length}/${agyPerms.total} 个工具。`}
-              会在 <code>{agyPerms.path}</code> 的 permissions.allow 里加 {agyPerms.missing.length} 条 mcp(promptcut/...) 规则；已有的规则不会动。
+              {tr("{0} In", agyPerms.missing.length === 0 ? tr("{0} tools authorized.", agyPerms.total) : tr("{0}/{1} tools authorized.", agyPerms.granted.length, agyPerms.total))}{" "} <code>{agyPerms.path}</code> {" "}{tr("'s permissions.allow it will add {0} mcp(promptcut/...) rules; existing rules are left untouched.", agyPerms.missing.length)}
             </div>
             {agyPermError && <div className="ais-status-err">{agyPermError}</div>}
           </section>
@@ -677,8 +675,7 @@ export function AiSetupDialog(props: {
   const renderRouterBody = () => (
     <section className="ais-step">
       <div className="ais-detail">
-        分发方用你的本机识别码把 API 配置加密成一段密文。粘进来就自动解开并保存，
-        密钥全程不以明文出现在聊天记录或磁盘上。
+        {tr("The distributor encrypts the API config into a ciphertext using your machine ID. Paste it in and it is decrypted and saved automatically, so the key never appears in plaintext in the chat history or on disk.")}
       </div>
       <ApiSharePanel
         onSaveConfig={onSaveConfig}
@@ -691,7 +688,7 @@ export function AiSetupDialog(props: {
       {config?.keys?.router?.set && (
         <>
           <div className="ais-api-field">
-            <label>模型</label>
+            <label>{tr("Model")}</label>
             <input
               type="text"
               value={routerModel}
@@ -700,8 +697,7 @@ export function AiSetupDialog(props: {
             />
           </div>
           <div className="ais-detail">
-            分发密文里带的模型可以在这里改、也可以用 <code>|</code> 多写几个备选，面板输入框旁边就能切；
-            厂商 {config.api.profiles?.router?.vendor ?? config.api.vendor}，地址 {config.api.profiles?.router?.baseUrl || "(默认)"}，这两项跟着密文走。
+            {tr("The models carried in the distributed ciphertext can be edited here, or use")}{" "} <code>|</code> {" "}{tr("List several alternatives, and you can switch between them next to the panel input box; vendor {0}, address {1}, these two follow the distribution string.", config.api.profiles?.router?.vendor ?? config.api.vendor, config.api.profiles?.router?.baseUrl || tr("(default)"))}
           </div>
           <div className="ais-api-actions">
             <button
@@ -713,15 +709,15 @@ export function AiSetupDialog(props: {
                 setRouterMsg("");
                 try {
                   await onSaveConfig({ api: { profiles: { router: { model: routerModel } } } });
-                  setRouterMsg("已保存，面板上的模型选择器会立刻用新清单");
+                  setRouterMsg(tr("Saved, the model selector on the panel will use the new list immediately"));
                 } catch (err) {
-                  setRouterMsg(err instanceof Error ? err.message : "保存失败");
+                  setRouterMsg(err instanceof Error ? err.message : tr("Save failed"));
                 } finally {
                   setSavingRouter(false);
                 }
               }}
             >
-              {savingRouter ? "保存中…" : "保存模型清单"}
+              {savingRouter ? tr("Saving…") : tr("Save model list")}
             </button>
             {routerMsg && <span className="ais-detail">{routerMsg}</span>}
           </div>
@@ -733,15 +729,15 @@ export function AiSetupDialog(props: {
   const renderCustomBody = () => (
     <section className="ais-step">
       <div className="ais-api-field">
-        <label>厂商</label>
+        <label>{tr("Vendor")}</label>
         <select value={apiVendor} onChange={(e) => setApiVendor(e.target.value as ApiVendor)}>
           <option value="anthropic">Anthropic</option>
-          <option value="openai">OpenAI 兼容</option>
+          <option value="openai">{tr("OpenAI compatible")}</option>
           <option value="gemini">Gemini</option>
         </select>
       </div>
       <div className="ais-api-field">
-        <label>API 地址</label>
+        <label>{tr("API address")}</label>
         <input
           type="text"
           value={apiBaseUrl}
@@ -750,7 +746,7 @@ export function AiSetupDialog(props: {
         />
       </div>
       <div className="ais-api-field">
-        <label>模型</label>
+        <label>{tr("Model")}</label>
         <input
           type="text"
           value={apiModel}
@@ -760,41 +756,40 @@ export function AiSetupDialog(props: {
       </div>
       <div className="ais-api-field">
         <button className="ais-btn" disabled={loadingApiModels} onClick={(e) => { e.preventDefault(); loadApiModels(); }}>
-          {loadingApiModels ? "读取中…" : "从接口读取"}
+          {loadingApiModels ? tr("Loading…") : tr("Read from API")}
         </button>
-        <span className="ais-detail">打一次 {"{接口地址}"}/v1/models，把清单填进上面这一栏（中转站基本都支持；官方源列的是它自家的模型）</span>
+        <span className="ais-detail">{tr("Calls {0}/v1/models once and fills the list into the field above (most relay services support it; official sources list their own models)", tr("{API address}"))}</span>
       </div>
       {apiModelsMsg && <div className="ais-detail">{apiModelsMsg}</div>}
       <div className="ais-detail">
-        用 <code>|</code> 分开写几个模型，面板输入框旁边就能切；不选就用第一个。
+        {tr("Use")}{" "} <code>|</code> {tr("to separate several models, switchable next to the panel input box; the first one is used if none is selected.")}
       </div>
       <div className="ais-api-field">
         <label>API Key</label>
         {config?.keys?.custom.set && !replaceKey ? (
           <div className="ais-api-saved-key">
-            <span>已保存 ••••{config.keys.custom.last4}{config.api.source === "router" ? "(当前生效的是 Router 导入的那份)" : ""}</span>
+            <span>{tr("Saved ••••{0}{1}", config.keys.custom.last4, config.api.source === "router" ? tr("(the one imported from Router is currently in effect)") : "")}</span>
             <span className="ais-api-saved-acts">
-              <button className="ais-btn" onClick={(e) => { e.preventDefault(); setReplaceKey(true); }}>更换</button>
-              <button className="ais-btn ais-danger-btn" disabled={clearing !== ""} onClick={(e) => { e.preventDefault(); clearKeyOf("custom"); }} title="删除 keys/custom.key">
-                {clearing === "custom" ? "清理中…" : "清理密钥"}
+              <button className="ais-btn" onClick={(e) => { e.preventDefault(); setReplaceKey(true); }}>{tr("Replace")}</button>
+              <button className="ais-btn ais-danger-btn" disabled={clearing !== ""} onClick={(e) => { e.preventDefault(); clearKeyOf("custom"); }} title={tr("Delete keys/custom.key")}>
+                {clearing === "custom" ? tr("Clearing…") : tr("Clear key")}
               </button>
             </span>
           </div>
         ) : (
-          <input type="password" value={apiKeyInput} onChange={(e) => setApiKeyInput(e.target.value)} placeholder="粘贴 API Key" />
+          <input type="password" value={apiKeyInput} onChange={(e) => setApiKeyInput(e.target.value)} placeholder={tr("Paste API Key")} />
         )}
         {clearMsg && <div className="ais-detail">{clearMsg}</div>}
       </div>
       <div className="ais-api-actions">
         <button className="ais-btn ais-primary-btn" onClick={(e) => { e.preventDefault(); handleSaveApi(); }} disabled={saving}>
-          {saving ? "保存中…" : "保存"}
+          {saving ? tr("Saving…") : tr("Save")}
         </button>
-        {saveSuccess && <span className="ais-status-ok">已保存</span>}
+        {saveSuccess && <span className="ais-status-ok">{tr("Saved")}</span>}
         {saveError && <span className="ais-status-err">{saveError}</span>}
       </div>
       <div className="ais-detail">
-        Key 落盘时用本机指纹加密，单独存在 <code>keys/custom.key</code>（和 Router 导入的那份各用各的加密标识，不混用），
-        不会明文躺在配置文件里；它挡的是备份、同步盘、误提交这类外泄，挡不住能在这台机器上跑代码的人。
+        {tr("The key is encrypted with this machine's fingerprint when saved to disk, stored separately in")}{" "} <code>keys/custom.key</code>{tr("(separate from the one imported via Router, each with its own encryption ID, not mixed), so it is never stored in plain text in the config file; it protects against leaks through backups, synced drives and accidental commits, not against anyone who can run code on this machine.")}
       </div>
     </section>
   );
@@ -813,7 +808,7 @@ export function AiSetupDialog(props: {
         )}
         {!entry ? (
           <>
-            <div className="ais-title">选择 AI 助手的驱动方式</div>
+            <div className="ais-title">{tr("Choose how the AI assistant is driven")}</div>
             <div className="ais-grid">
               {SETUP_ENTRIES.map((item) => {
                 const state = readiness(item);
@@ -830,7 +825,7 @@ export function AiSetupDialog(props: {
                     <span className="ais-card-name">{item.name}</span>
                     <span className="ais-card-tagline">{item.tagline}</span>
                     <span className={`ais-card-state is-${state.tone}`}>{state.label}</span>
-                    {isCurrent && <span className="ais-card-current">正在使用</span>}
+                    {isCurrent && <span className="ais-card-current">{tr("In use")}</span>}
                   </button>
                 );
               })}
@@ -840,7 +835,7 @@ export function AiSetupDialog(props: {
               不值得在每个分页的顶栏上常驻一个分段按钮;不收进「更多」,因为它不危险,找得到比防误触要紧。
             */}
             <div className="ais-more ais-display">
-              <div className="ais-more-title">显示</div>
+              <div className="ais-more-title">{tr("Display")}</div>
               <label className="ais-more-row">
                 <input
                   type="checkbox"
@@ -849,9 +844,9 @@ export function AiSetupDialog(props: {
                   onChange={(e) => setViewMode(e.target.checked ? "verbose" : "simple")}
                 />
                 <span className="ais-more-body">
-                  <span className="ais-more-name">详细模式(逐条显示工具调用)</span>
+                  <span className="ais-more-name">{tr("Verbose mode (show tool calls one by one)")}</span>
                   <span className="ais-detail">
-                    关着时按阶段显示操作图标和 Agent 交的报告卡，点图标再看细节；打开后按发生顺序逐条列出每一次工具调用。
+                    {tr("When off, shows action icons by stage and the report cards the Agent hands in; click an icon for details. When on, lists every tool call one by one in the order it happened.")}
                   </span>
                 </span>
               </label>
@@ -863,7 +858,7 @@ export function AiSetupDialog(props: {
             */}
             {moreOpen && (
               <div className="ais-more">
-                <div className="ais-more-title">高级</div>
+                <div className="ais-more-title">{tr("Advanced")}</div>
                 <label className="ais-more-row">
                   <input
                     type="checkbox"
@@ -871,10 +866,9 @@ export function AiSetupDialog(props: {
                     onChange={(e) => handleSaveProtocol(e.target.checked)}
                   />
                   <span className="ais-more-body">
-                    <span className="ais-more-name">文本协议模式</span>
+                    <span className="ais-more-name">{tr("Text protocol mode")}</span>
                     <span className="ais-detail">
-                      只有当这家 CLI 拒绝原生工具时才需要打开。打开后模型改用回复正文里的文本块
-                      下达工具调用，比原生工具慢、也更容易出错。不确定就别动它。
+                      {tr("Only needed when this CLI rejects native tools. When on, the model issues tool calls through text blocks in the reply body instead, which is slower than native tools and more error-prone. If unsure, leave it alone.")}
                     </span>
                   </span>
                 </label>
@@ -895,11 +889,9 @@ export function AiSetupDialog(props: {
                     onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
                   />
                   <span className="ais-more-body">
-                    <span className="ais-more-name">自主轮次{deepRoundsMsg && <span className="ais-more-note">{deepRoundsMsg}</span>}</span>
+                    <span className="ais-more-name">{tr("Autonomous rounds")}{deepRoundsMsg && <span className="ais-more-note">{deepRoundsMsg}</span>}</span>
                     <span className="ais-detail">
-                      输入框旁边按下「深度自主」之后，这一次运行最多跑多少轮模型往返，
-                      同时不再给模型任何关于轮次的提示。<b>填 0 表示不限轮次</b>——
-                      那样它会一直跑到自己认为做完、或者你点停止为止。没按「深度自主」时这个值不起作用。
+                      {tr("After you press \"Deep autonomy\" next to the input box, the maximum number of model round trips for this run, and the model is no longer given any hint about rounds.")}<b>{tr("Enter 0 for unlimited rounds")}</b>{tr(": it then keeps running until it thinks it is done or you click stop. This value has no effect unless \"Deep autonomy\" is pressed.")}
                     </span>
                   </span>
                 </label>
@@ -916,21 +908,21 @@ export function AiSetupDialog(props: {
                   className="ais-btn ais-more-btn"
                   aria-expanded={moreOpen}
                   onClick={() => setMoreOpen((v) => !v)}
-                  title={[toolProtocol ? "文本协议模式开着" : "", roundsChanged ? `自主轮次 ${config?.deepAutoRounds === 0 ? "不限" : config?.deepAutoRounds}` : ""].filter(Boolean).join("；") || undefined}
+                  title={[toolProtocol ? tr("Text protocol mode is on") : "", roundsChanged ? tr("Autonomous rounds {0}", config?.deepAutoRounds === 0 ? tr("unlimited") : config?.deepAutoRounds) : ""].filter(Boolean).join(tr(";")) || undefined}
                 >
-                  更多{(toolProtocol || roundsChanged) && <span className="ais-more-dot" aria-label="有非默认设置">•</span>}
+                  {tr("More")}{(toolProtocol || roundsChanged) && <span className="ais-more-dot" aria-label={tr("Non-default settings")}>•</span>}
                   {moreOpen ? " ▴" : " ▾"}
                 </button>
                 <span className="ais-footer-spacer" />
-                <button className="ais-btn" onClick={onClose}>关闭</button>
+                <button className="ais-btn" onClick={onClose}>{tr("Close")}</button>
               </div>
-              {stt && <div className="ais-stt-info">语音识别: {stt.engine} - {stt.available ? "可用" : `不可用 (${stt.hint})`}</div>}
+              {stt && <div className="ais-stt-info">{tr("Speech-to-text: {0} - {1}", stt.engine, stt.available ? tr("available") : tr("Unavailable ({0})", stt.hint))}</div>}
             </div>
           </>
         ) : (
           <>
             <div className="ais-detail-head">
-              <button className="ais-btn ais-back-btn" onClick={() => goTo(null)}>← 返回</button>
+              <button className="ais-btn ais-back-btn" onClick={() => goTo(null)}>{tr("← Back")}</button>
               <span className="ais-card-icon ais-detail-icon">{entry.icon}</span>
               <div className="ais-detail-titles">
                 <div className="ais-title">{entry.name}</div>
@@ -947,10 +939,10 @@ export function AiSetupDialog(props: {
                 <button
                   className="ais-btn"
                   onClick={openDiagnostics}
-                  disabled={diagState === "正在收集…"}
-                  title="收集本机环境、安装与登录状态(不含密钥),在子窗口里复制 / 存文件 / 提交"
+                  disabled={diagState === tr("Collecting…")}
+                  title={tr("Collect local environment, install and login status (no keys); copy / save to file / submit in the sub-window")}
                 >
-                  {diagState === "正在收集…" ? "收集中…" : "Debugger"}
+                  {diagState === tr("Collecting…") ? tr("Collecting…") : "Debugger"}
                 </button>
                 <span className="ais-use-hint">{diagState || (readiness(entry).ok ? "" : readiness(entry).label)}</span>
                 <button
@@ -958,7 +950,7 @@ export function AiSetupDialog(props: {
                   disabled={!readiness(entry).ok}
                   onClick={() => { writeFace(entry.id); onChoose(entry.provider); }}
                 >
-                  使用这一项
+                  {tr("Use this one")}
                 </button>
               </div>
             </div>
@@ -968,9 +960,9 @@ export function AiSetupDialog(props: {
     </div>
     <ReportDialog
       open={diagOpen}
-      title="环境诊断报告"
-      label="环境诊断"
-      hint="含本机环境、各家 CLI 安装与登录状态;不含密钥,机器码只保留首组"
+      title={tr("Environment diagnostic report")}
+      label={tr("Environment diagnostics")}
+      hint={tr("Includes local environment and install and login status of each CLI; no keys, machine code keeps only the first group")}
       text={diagReport}
       onClose={() => setDiagOpen(false)}
     />

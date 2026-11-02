@@ -3,6 +3,7 @@ import type { JSX } from "react";
 import { closeSkillMode, subscribeSkill } from "../skill/skillMode";
 import { onlinePage, onlineUnsupported } from "../online/pageFlag";
 import "./ModeSwitch.css";
+import { tr } from "../i18n/index.ts";
 
 /**
  * 顶栏的工作方式开关:氛围式 / 传统式 / SKILL(`user-workflow.md`「工作方式」)。
@@ -33,9 +34,9 @@ const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.V
 
 // 顺序照 `user-workflow.md`「工作方式」那张表:氛围式、传统式、SKILL
 const ITEMS: { id: Mode; label: string; hint: string }[] = [
-  { id: "vibe", label: "氛围式", hint: "不打开编辑界面，对着 Agent 说话把片子做出来" },
-  { id: "classic", label: "传统式", hint: "用户和 AI 栏里的 Agent 一起改" },
-  { id: "skill", label: "SKILL", hint: "桌面 APP 里的 Agent 经 MCP 改这个项目" },
+  { id: "vibe", label: tr("Vibe mode"), hint: tr("Make the video by talking to the Agent, without opening the editor") },
+  { id: "classic", label: tr("Classic mode"), hint: tr("You and the Agent in the AI panel edit together") },
+  { id: "skill", label: "SKILL", hint: tr("The Agent in the desktop app edits this project via MCP") },
 ];
 
 export function ModeSwitch(props: { onOpenSkill: () => void; onEnterVibe?: () => void }): JSX.Element {
@@ -78,19 +79,19 @@ export function ModeSwitch(props: { onOpenSkill: () => void; onEnterVibe?: () =>
   /** 每一格的悬停说明。三格之后嵌套三目读不动了,拆出来 */
   const titleOf = (item: (typeof ITEMS)[number], on: boolean): string => {
     if (item.id === "vibe") {
-      return vibeOff ? "这里还接不到氛围式那一屏" : item.hint;
+      return vibeOff ? tr("Can't reach the Vibe mode screen from here yet") : item.hint;
     }
     if (item.id === "skill") {
-      if (!on && onlinePage()) return onlineUnsupported("SKILL 模式");
+      if (!on && onlinePage()) return onlineUnsupported(tr("SKILL mode"));
       return on
-        ? "当前为 SKILL 模式。点这里看接进来的桌面 APP 会话;点「传统式」退出"
-        : "打开 SKILL 对话框:登记到 Claude Code / Codex,进入 SKILL";
+        ? tr("Currently in SKILL mode. Click here to see the connected desktop app sessions; click \"Classic mode\" to exit")
+        : tr("Open the SKILL dialog: register with Claude Code / Codex, enter SKILL mode");
     }
     return item.hint;
   };
 
   return (
-    <div className="pc-modeswitch" role="group" aria-label="工作方式" data-pc="mode-switch">
+    <div className="pc-modeswitch" role="group" aria-label={tr("Working mode")} data-pc="mode-switch">
       {/* 滑块:绝对定位,按选中项的序号平移。三格等宽、滑块宽一格,所以平移 index 个自身宽度就对位 */}
       <span
         className={`pc-modeswitch-thumb${active === "skill" ? " is-skill" : ""}`}

@@ -2,6 +2,7 @@ import type { MediaAsset } from "../../kernel/project";
 import { kindFromExtension, type AssetKind } from "./mediaKinds.ts";
 import { publishMediaMigrations, type MediaKindMigration } from "./mediaMigrationBus.ts";
 import { confirmedMissing } from "../../audio/missingMaterialRecord.ts";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 素材地址在「存盘 → 再打开」之间怎么保持能播。
@@ -44,7 +45,7 @@ function isDurable(url: string): boolean {
   return /^(https?:|data:)/.test(url) || url.startsWith("/");
 }
 
-const MISSING = "(缺失) ";
+const MISSING = tr("(missing) ");
 
 /**
  * 从文件里读回来的素材表 → 能播的素材表。不改入参。

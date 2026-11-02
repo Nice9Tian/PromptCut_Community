@@ -32,9 +32,9 @@ function Page({ s }: { s: HarnessState }) {
     <div className="pcm" data-pc="mobile-ui">
       <div className="editor" data-pcm="editor" data-page="agent">
         <div className="topbar">
-          <button type="button" className="icon-btn" aria-label="返回"><Icon name="back" /></button>
-          <h1>夏日海边 Vlog</h1>
-          <button type="button" className="btn primary" style={{ height: 30, padding: "0 12px" }}>导出</button>
+          <button type="button" className="icon-btn" aria-label="Back"><Icon name="back" /></button>
+          <h1>Summer beach vlog</h1>
+          <button type="button" className="btn primary" style={{ height: 30, padding: "0 12px" }}>Export</button>
         </div>
         <div className="pane-agent">
           <div className="agent-page">
@@ -42,15 +42,15 @@ function Page({ s }: { s: HarnessState }) {
             <AgentChatView
               tabId={s.activeId} shown who={s.tabs.find((t) => t.id === s.activeId)?.title ?? "Agent"} messages={s.messages}
               start={{ draft: s.draft, animated: s.animated, guide: s.guide, onPickPreset: noop }}
-              level="high" levelDisabled={false} onLevel={noop} visLabel="共有对话" canToggleVisibility={false} onToggleVisibility={noop}
+              level="high" levelDisabled={false} onLevel={noop} visLabel="Shared chat" canToggleVisibility={false} onToggleVisibility={noop}
               queued={0} readOnly={false} quotes={s.quotes} onRemoveQuote={noop}
               inputText={s.inputText} onInput={noop} inputDisabled={false} onSend={noop} onStop={noop} stopMode={s.streaming && !s.inputText.trim()} onPickExample={noop}
             />
           </div>
         </div>
         <div className="pager">
-          <button type="button"><span className="ico"><Icon name="pgPreview" /></span><span className="lbl">缩略预览</span></button>
-          <button type="button"><span className="ico"><Icon name="pgTimeline" /></span><span className="lbl">时间轴</span></button>
+          <button type="button"><span className="ico"><Icon name="pgPreview" /></span><span className="lbl">Thumbnail preview</span></button>
+          <button type="button"><span className="ico"><Icon name="pgTimeline" /></span><span className="lbl">Timeline</span></button>
           <button type="button" className="on"><span className="ico"><span className="disc"><Icon name="sparkle" /></span></span><span className="lbl">Agent</span></button>
         </div>
       </div>

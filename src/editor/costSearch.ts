@@ -33,6 +33,7 @@ import { budgetOf } from "../render/pipelinePlan.mjs";
 import { PROBE_MAX_FRAMES, resolveTuning, type PipelineTuning } from "../render/pipelineTuning.mjs";
 import { summarizeProbe } from "../render/probeSummary.mjs";
 import { listSharedCosts, type PageEnvironment, type SharedCostInput, type SharedCostRecord } from "./sharedCosts";
+import { tr } from "../i18n/index.ts";
 
 type Request = (msg: Record<string, unknown>, timeoutMs?: number) => Promise<Record<string, unknown>>;
 type Clip = Project["tracks"][number]["clips"][number];
@@ -409,8 +410,8 @@ export function benchmarkJob(): MeasureJob {
   const fps = BENCHMARK_FPS;
   const clip = { id: "pc-benchmark-clip", cardId: BENCHMARK_CARD_ID, start: 0, end: BENCHMARK_SECONDS, params: {} } as unknown as Clip;
   const project = {
-    version: 1, id: "pc-benchmark", name: "基准卡", width: 1920, height: 1080, fps, duration: BENCHMARK_SECONDS, themeId: "midnight", media: [],
-    tracks: [{ id: "pc-benchmark-track", name: "基准", clips: [clip] }],
+    version: 1, id: "pc-benchmark", name: tr("Baseline card"), width: 1920, height: 1080, fps, duration: BENCHMARK_SECONDS, themeId: "midnight", media: [],
+    tracks: [{ id: "pc-benchmark-track", name: "Baseline", clips: [clip] }],
   } as unknown as Project;
   return { clipId: clip.id, cardId: BENCHMARK_CARD_ID, frameMode: "stateful", canvasHeavy: false, fps, lenSec: BENCHMARK_SECONDS, durationFrames: BENCHMARK_SECONDS * fps, project };
 }

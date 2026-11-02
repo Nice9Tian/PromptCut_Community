@@ -23,6 +23,7 @@ import { cyrb53 } from "../../render/cyrb53.mjs";
 import { cardSourceImports, importSpecifiers, isUserCardEntryKey, parseCardSource, type ParsedCardSource } from "../../kernel/cardSourceParse.mjs";
 import type { BundleResult } from "../../online/cardRuntime/protocol.ts";
 import { setSyncedUserCards, type SyncedUserCard } from "../../kernel/registry";
+import { tr } from "../../i18n/index.ts";
 
 /** 多久重列一次内容库的卡片源码 */
 export const CARD_SOURCE_POLL_MS = 5_000;
@@ -180,7 +181,7 @@ export class OnlineCardSources {
     let timer: ReturnType<typeof setTimeout> | undefined;
     return Promise.race([
       this.deps.request(msg, ms),
-      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("内容库请求超时")), ms); }),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(tr("Content store request timed out"))), ms); }),
     ]).finally(() => { if (timer !== undefined) clearTimeout(timer); });
   }
 
@@ -218,7 +219,7 @@ export class OnlineCardSources {
     if (this.stopped || this.deps.linkKey() !== link) return;
     if (listing?.type !== "content.listing" || !Array.isArray(listing.items)) {
       this.stats.errors++;
-      this.stats.lastError = `回包不对:${String(listing?.type ?? "")}`.slice(0, 160);
+      this.stats.lastError = tr("Bad response: {0}", String(listing?.type ?? "")).slice(0, 160);
       this.settle(false, link);
       return;
     }

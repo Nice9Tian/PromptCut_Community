@@ -91,7 +91,7 @@ async function sendBind(withTicket: boolean): Promise<void> {
     if (generation !== epoch || !now || now.url !== b.url || now.projectId !== b.projectId) return;
     counters.binds++;
     const r = await post("/api/render-node/bind", { url: now.url, projectId: now.projectId, contentId: now.contentId, ...(assetBase ? { assetBase } : {}), ...(ticket ? { ticket } : {}) });
-    if (r && r.ok === false) console.warn("[render-node] 共享配置没交给预渲染进程:", r.error ?? "无回包");
+    if (r && r.ok === false) console.warn("[render-node] shared config was not handed to the prerender process:", r.error ?? "no response");
   });
   bindingWrite = write;
   await write.catch(() => undefined);

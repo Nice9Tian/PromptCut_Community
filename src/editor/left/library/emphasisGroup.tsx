@@ -7,6 +7,7 @@ import { PreviewCard } from "../PreviewCard";
 import { useReadOnly } from "../../readOnly";
 import { ThumbTile } from "./ThumbTile";
 import type { GroupData, GroupItem } from "./groups";
+import { tr as trText } from "../../../i18n/index.ts";
 
 /**
  * 特效 → 强调组:给片段加「阴影」或「描边」。
@@ -20,16 +21,16 @@ import type { GroupData, GroupItem } from "./groups";
 
 /** 粗细:三档就够了,真要精确数值让 Agent 或参数页去调 */
 const SIZES: { key: string; label: string; shadow: number; outline: number }[] = [
-  { key: "s", label: "细", shadow: 10, outline: 3 },
-  { key: "m", label: "中", shadow: 18, outline: 6 },
-  { key: "l", label: "粗", shadow: 30, outline: 12 },
+  { key: "s", label: trText("Thin"), shadow: 10, outline: 3 },
+  { key: "m", label: trText("Medium"), shadow: 18, outline: 6 },
+  { key: "l", label: trText("Thick"), shadow: 30, outline: 12 },
 ];
 
 /** 颜色:黑白之外给一个主题强调色,描边用它做「发光边」很常用 */
 const COLORS: { key: string; label: string; css: string }[] = [
-  { key: "black", label: "黑", css: "#000000" },
-  { key: "white", label: "白", css: "#ffffff" },
-  { key: "accent", label: "强调色", css: "var(--ui-accent, #00dbdb)" },
+  { key: "black", label: trText("Black"), css: "#000000" },
+  { key: "white", label: trText("White"), css: "#ffffff" },
+  { key: "accent", label: trText("Accent color"), css: "var(--ui-accent, #00dbdb)" },
 ];
 
 const KINDS = ["shadow", "outline"] as const;
@@ -93,11 +94,11 @@ export function useEmphasisGroup(q: string, flash: (text: string, ms?: number) =
   const clickKind = (kind: EmphasisKind) => {
     const clipId = selection[0];
     if (!clipId) {
-      flash(`先在时间轴上选中一个片段,再点${EMPHASIS_LABEL[kind]};也可以直接把卡拖到那一段上`);
+      flash(trText("First select a clip on the timeline, then click {0}; or drag the card straight onto that clip", EMPHASIS_LABEL[kind]));
       return;
     }
     const r = actions.setClipEmphasis(clipId, buildEmphasis(kind));
-    flash(r.ok ? `已加${EMPHASIS_LABEL[kind]}:${describeEmphasis(r.emphasis)}` : (r.error ?? "加不上"));
+    flash(r.ok ? trText("Added {0}: {1}", EMPHASIS_LABEL[kind], describeEmphasis(r.emphasis)) : (r.error ?? trText("Can't add")));
   };
 
   const drag = (kind: EmphasisKind) => (e: React.DragEvent) => {
@@ -126,9 +127,7 @@ export function useEmphasisGroup(q: string, flash: (text: string, ms?: number) =
         onDragStart={drag(kind)}
         onDragEnd={clearDragPayload}
         onClick={() => clickKind(kind)}
-        titleAttr={`拖到时间轴上某一段(或选中片段后点一下)。${
-          kind === "shadow" ? "阴影落在画面里不透明部分的下方" : "描边沿着不透明部分的边缘走一圈"
-        }`}
+        titleAttr={trText("Drag onto a clip on the timeline (or select a clip and click once). {0}", kind === "shadow" ? trText("The shadow falls beneath the opaque part of the image") : trText("The outline runs once around the edge of the opaque part"))}
         fill
       />
     ),
@@ -141,7 +140,7 @@ export function useEmphasisGroup(q: string, flash: (text: string, ms?: number) =
 
   const detailTop = (
     <div className="pc-lib-block">
-      <div className="pc-lib-label">粗细</div>
+      <div className="pc-lib-label">{trText("Thickness")}</div>
       <div className="pc-lib-seg">
         {SIZES.map((s) => (
           <button key={s.key} type="button" className={`pc-chip${sizeKey === s.key ? " is-on" : ""}`} aria-pressed={sizeKey === s.key} onClick={() => setSizeKey(s.key)}>
@@ -149,7 +148,7 @@ export function useEmphasisGroup(q: string, flash: (text: string, ms?: number) =
           </button>
         ))}
       </div>
-      <div className="pc-lib-label is-spaced">颜色</div>
+      <div className="pc-lib-label is-spaced">{trText("Color")}</div>
       <div className="pc-lib-seg">
         {COLORS.map((c) => (
           <button
@@ -171,14 +170,14 @@ export function useEmphasisGroup(q: string, flash: (text: string, ms?: number) =
   const detailBottom = (
     <div className="pc-lib-block">
       <div className="pc-lib-label">
-        <span>已加强调</span>
+        <span>{trText("Emphasis added")}</span>
         <span>({marked.length})</span>
       </div>
       {marked.length === 0 ? (
         <div className="pc-left-note">
-          还没有加过。把上面的卡拖到时间轴上任意一段,或选中一段再点卡。
+          {trText("None added yet. Drag a card from above onto any clip on the timeline, or select a clip and then click a card.")}
           <br />
-          两种都是沿着画面里不透明部分的边缘走的,所以透明底的卡片、抠好的人物效果最明显。
+          {trText("Both follow the edge of the opaque part of the image, so cards with a transparent background and cut-out people show the effect best.")}
         </div>
       ) : (
         <div className="pc-lib-rows">
@@ -195,10 +194,10 @@ export function useEmphasisGroup(q: string, flash: (text: string, ms?: number) =
                 title={ro.title()}
                 onClick={() => {
                   actions.setClipEmphasis(clip.id, null);
-                  flash("已去掉强调");
+                  flash(trText("Emphasis removed"));
                 }}
               >
-                去掉
+                {trText("Remove")}
               </button>
             </div>
           ))}
@@ -207,5 +206,5 @@ export function useEmphasisGroup(q: string, flash: (text: string, ms?: number) =
     </div>
   );
 
-  return { items, thumbs, detailTop, detailBottom, emptyDetail: <div className="pc-left-note">没有匹配的强调</div> };
+  return { items, thumbs, detailTop, detailBottom, emptyDetail: <div className="pc-left-note">{trText("No matching emphasis")}</div> };
 }

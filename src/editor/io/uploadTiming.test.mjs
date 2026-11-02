@@ -78,7 +78,7 @@ function sharedHooks({ shared = () => true, respond = (body) => ({ queued: body.
 }
 
 test("UT-1 上传目标就绪之前导入的素材先记下,就绪后补交给上传队列(图片、音频、视频都交)", async () => {
-  actions.newProject("云端项目");
+  actions.newProject("Cloud project");
   const target = slowUploadTarget();
   const { bodies, hooks } = sharedHooks();
   const stop = startTierBackfill(hooks);
@@ -104,7 +104,7 @@ test("UT-1 上传目标就绪之前导入的素材先记下,就绪后补交给�
 });
 
 test("UT-2 上传目标已经就绪时导入的:当场按哈希交一次", async () => {
-  actions.newProject("云端项目");
+  actions.newProject("Cloud project");
   const target = slowUploadTarget();
   target.release();
   await waitFor(() => T.uploadTargetReadyForTest() !== null);
@@ -150,7 +150,7 @@ test("UT-3 不是共享项目:什么都不做;就绪之前离开共享项目:记
 });
 
 test("UT-4 本机就是主机:不记;补交失败的留着,下一次就绪(续签)再交", async () => {
-  actions.newProject("云端项目");
+  actions.newProject("Cloud project");
   {
     // 本机就是主机:挑不到远程素材服务,startUploadTarget(link, null)
     const link = { request: async () => ({ type: "auth.ticket.ok", ticket: "rw", exp: Date.now() + 60_000 }) };
@@ -184,7 +184,7 @@ test("UT-4 本机就是主机:不记;补交失败的留着,下一次就绪(续�
 });
 
 test("UT-5 补交时本机内容库里没有的:列给用户", async () => {
-  actions.newProject("云端项目");
+  actions.newProject("Cloud project");
   const target = slowUploadTarget();
   const { notified, hooks } = sharedHooks({ respond: () => ({ queued: [], missing: [H("a")] }) });
   const stop = startTierBackfill(hooks);

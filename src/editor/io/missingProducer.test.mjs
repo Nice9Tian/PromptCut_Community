@@ -86,7 +86,7 @@ test("说不清的不认定:编辑器进程不应答、接口报错;片段编排
   actions.newProject("说不清");
   const m = actions.addMedia({ kind: "audio", name: "voice.mp3", url: `/@media/${H("a")}`, hash: H("a") });
   const u = actions.addMedia({ kind: "audio", name: "old.mp3", url: fileUrl("C:/m/old.mp3"), path: "C:/m/old.mp3" });
-  const track = actions.addTrack("配音");
+  const track = actions.addTrack("Voiceover");
   actions.addMediaClip(m.id, 2, { trackId: track.id, duration: 3 });
   const clips = JSON.stringify(getState().project.tracks);
   for (const world of [{ down: true }, { localStatus: 500 }, { localStatus: 429 }]) {
@@ -225,7 +225,7 @@ test("检查到一半换了项目(同一份文件进了云端项目、素材号�
   assert.deepEqual(await hashedRun, { missing: [], restored: [] });
   await ingestRun;
   assert.equal(getState().project, after, "新项目一个字段都没被写");
-  assert.equal(getState().project.media.some((m) => m.missingMaterial || m.name.startsWith("(缺失)")), false);
+  assert.equal(getState().project.media.some((m) => m.missingMaterial || m.name.startsWith("(missing)")), false);
   assert.deepEqual(takeMissingMaterials(), []);
 });
 
@@ -274,7 +274,7 @@ test("没读成不认定:原路径 403(不是「不在素材目录」那种)、5
 });
 
 test("缺失素材改名:记录里的名字跟着改,占位不失效,占位上显示新名字;存盘重开仍然对得上", async () => {
-  actions.newProject("改名");
+  actions.newProject("Renamed");
   const m = actions.addMedia({ kind: "video", name: "旧名字.mp4", url: `/@media/${H("a")}`, hash: H("a") });
   editor({});
   await checkHashedMedia(); takeMissingMaterials();

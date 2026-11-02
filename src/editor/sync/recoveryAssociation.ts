@@ -5,6 +5,7 @@ import { convertGoneProject, type GoneProof } from "./cloudGone";
 import { verifiedBase, type CloudSnapshot } from "./cloudSnapshot";
 import { JOIN_REQUEST_TEXT, reopenNotice, type JoinRequestStatus } from "./joinRequestText";
 import { createRequestIds } from "./requestIds";
+import { tr } from "../../i18n/index.ts";
 
 
 export interface CollaborationDescriptor {
@@ -200,7 +201,7 @@ async function notMemberToast(toast: ReopenToast, dismissToast: ((id: number) =>
       const next = reopenNotice(result);
       toast(result.state === "pending" ? JOIN_REQUEST_TEXT.reopenSent : (next?.text ?? JOIN_REQUEST_TEXT.reopenNotMember), "info", 10_000);
     }, (error: { message?: string }) => {
-      toast(error?.message || "申请没有发出去，请重试。", "warn", 10_000);
+      toast(error?.message || tr("The request was not sent. Please try again."), "warn", 10_000);
     }).finally(() => { sending = false; });
   } });
 }
@@ -253,7 +254,7 @@ export async function handleCloudAssociationReopen(
   }
 
   if (!account) {
-    toast("请先登录网站账号；当前以本地副本打开。", "info");
+    toast(tr("Please sign in to your website account first; opening a local copy for now."), "info");
     setCloudAssociation(assoc);
     options.openAsLocal?.(project);
     return { status: "login-required", project };
@@ -283,7 +284,7 @@ export async function handleCloudAssociationReopen(
           const converted = convertGoneProject(project, descriptor, proof);
           setCloudAssociation(null);
           publishGoneConversion({ projectId: converted.project.id!, name: converted.project.name, from: converted.from });
-          toast("这个云端项目已不存在。", "info", 8000);
+          toast(tr("This cloud project no longer exists."), "info", 8000);
           options.openAsLocal?.(converted.project);
           return { status: "converted", project: converted.project };
         }
@@ -297,7 +298,7 @@ export async function handleCloudAssociationReopen(
       }
       // 网络错误或其他临时故障：回退以本地副本打开
       options.openAsLocal?.(project);
-      toast("连不上云端项目，当前以本地副本打开。", "warn", 6000);
+      toast(tr("Can't reach the cloud project; opening a local copy for now."), "warn", 6000);
       return { status: "opened", project };
     }
   }
@@ -328,7 +329,7 @@ export async function handleCloudAssociationReopen(
       });
     } catch {
       options.openAsLocal?.(project);
-      toast("连不上云端项目，当前以本地副本打开。", "warn", 6000);
+      toast(tr("Can't reach the cloud project; opening a local copy for now."), "warn", 6000);
       return { status: "opened", project };
     }
   }
@@ -336,10 +337,10 @@ export async function handleCloudAssociationReopen(
   if (isOfflineModified) {
     if (outcome === "pending-merge") {
       // 另存之后云端被别人改过:修改按另存时的基准逐项比出来放进「冲突合并」,不直接盖上去
-      toast("已连回云端项目。另存之后云端有别人的改动，你的修改已放进「冲突合并」，可以逐项合并。", "info", 8000);
+      toast(tr("Reconnected to the cloud project. Others changed the cloud project after you saved a copy, so your changes were placed in \"Conflict merge\", where you can merge them item by item."), "info", 8000);
       return { status: "pending-merge", project };
     }
-    toast("已连回云端项目，离线修改已合并同步。", "info", 6000);
+    toast(tr("Reconnected to the cloud project; offline changes were merged and synced."), "info", 6000);
     return { status: "merged", project };
   }
 

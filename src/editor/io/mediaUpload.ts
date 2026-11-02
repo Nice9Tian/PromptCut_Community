@@ -8,6 +8,7 @@ import { transcodeVideoSmall, sha256Blob } from "../../online/mediaTranscode";
 import { enqueueOnlineMedia } from "../../online/mediaUploadQueue";
 import { onlinePage } from "../../online/pageFlag";
 import { classifyFileDetailed } from "./mediaKinds";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 在线构建的编译期常量(写法与用意见 `src/online/pageFlag.ts` 的「在线构建剪枝」)。在线浏览器模式没有本机内容库与转码:
@@ -139,7 +140,7 @@ export async function uploadOnlineMediaFile(
       };
     }
   } catch (err) {
-    console.warn(`[io] 在线导入素材异常: ${file.name}`, err);
+    console.warn(`[io] Online media import error: ${file.name}`, err);
     return null;
   }
 }
@@ -156,12 +157,12 @@ export async function uploadMediaFile(
     // tiers=1:视频在服务端做 faststart 判定(缺了就同容器重封装),并在后台生成素材小尺寸(C6.6)
     const res = await fetch(`/api/media/upload/${encodeURIComponent(file.name)}?tiers=1`, { method: "POST", body: file });
     if (!res.ok) {
-      console.warn(`[io] 上传素材失败(HTTP ${res.status}): ${file.name}`);
+      console.warn(`[io] Failed to upload asset (HTTP ${res.status}): ${file.name}`);
       return null;
     }
     const data = await res.json();
     if (!data?.ok || typeof data.hash !== "string") {
-      console.warn(`[io] 上传素材没拿到内容哈希: ${file.name}`);
+      console.warn(`[io] Asset upload did not return a content hash: ${file.name}`);
       return null;
     }
     return {
@@ -175,7 +176,7 @@ export async function uploadMediaFile(
       ...tiersOf(data),
     };
   } catch (err) {
-    console.warn(`[io] 上传素材异常: ${file.name}`, err);
+    console.warn(`[io] Asset upload error: ${file.name}`, err);
     return null;
   }
 }
@@ -212,7 +213,7 @@ export async function adoptServerMediaVerdict(filePath: string): Promise<{ up: U
   try {
     const res = await fetch(`/api/media/adopt?path=${encodeURIComponent(filePath)}&tiers=1`, { method: "POST" });
     if (!res.ok) {
-      console.warn(`[io] 补算素材哈希失败(HTTP ${res.status}): ${filePath}`);
+      console.warn(`[io] Failed to backfill asset hash (HTTP ${res.status}): ${filePath}`);
       const verdict = mediaVerdictOf(res);
       return { up: null, verdict: verdict === "found" ? "unsure" : verdict };
     }
@@ -229,7 +230,7 @@ export async function adoptServerMediaVerdict(filePath: string): Promise<{ up: U
       ...tiersOf(data),
     } };
   } catch (err) {
-    console.warn(`[io] 补算素材哈希异常: ${filePath}`, err);
+    console.warn(`[io] Asset hash backfill error: ${filePath}`, err);
     return { up: null, verdict: "unsure" };
   }
 }
@@ -428,7 +429,7 @@ const sameLoad = (mark: ReturnType<typeof loadMark>) => getState().projectLoadTo
  */
 
 const HASH_RE = /^[0-9a-f]{64}$/i;
-const MISSING_PREFIX = "(缺失) ";
+const MISSING_PREFIX = tr("(missing) ");
 
 /** 这条素材有合法的内容哈希 */
 export function hasMediaHash(m: { hash?: string } | null | undefined): boolean {
@@ -680,7 +681,7 @@ ${m.path}`);
     } else if (answered.has(h) && !unsure.has(h)) {
       // 已经认定过、记录也还对得上的不重复写(保存重开后就是这种:占位一直在,不再弹窗)
       if (m.name.startsWith(MISSING_PREFIX) && confirmedMissing(m)) continue;
-      console.warn(`[io] 缺失素材: ${m.name} (${m.hash})`);
+      console.warn(`[io] Missing asset: ${m.name} (${m.hash})`);
       // 地址留着按哈希的那一个(存盘重开后 restoreMediaUrls 给的也是它,记录才对得上);画面、声音、导出见到记录就不去取它
       const name = m.name.startsWith(MISSING_PREFIX) ? m.name : `${MISSING_PREFIX}${m.name}`;
       actions.updateMedia(m.id, { url, name, missingMaterial: missingRecordOf({ ...m, url, name }) });
@@ -716,7 +717,7 @@ function markMediaMissing(mediaId: string): void {
   if (!fresh || hasMediaHash(fresh) || fresh.pending) return;
   const name = fresh.name.startsWith(MISSING_PREFIX) ? fresh.name : `${MISSING_PREFIX}${fresh.name}`;
   if (name === fresh.name && confirmedMissing(fresh)) return;
-  console.warn(`[io] 缺失素材: ${fresh.name} (${fresh.path || fresh.url})`);
+  console.warn(`[io] Missing asset: ${fresh.name} (${fresh.path || fresh.url})`);
   // 地址不清空:留着原来的读地址(存盘重开后 restoreMediaUrls 按 path 给的还是它),没有就给一个不存在的占位地址
   const url = fresh.url || NOWHERE_URL;
   actions.updateMedia(mediaId, { url, name, missingMaterial: missingRecordOf({ ...fresh, url, name }) });

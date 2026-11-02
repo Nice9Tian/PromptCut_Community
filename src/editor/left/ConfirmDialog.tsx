@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import { tr } from "../../i18n/index.ts";
 
-export function ConfirmDialog({ open, title, message, confirmText="确定", cancelText="取消", onConfirm, onCancel }: { open: boolean, title: string, message: string, confirmText?: string, cancelText?: string, onConfirm: () => void, onCancel: () => void }) {
+export function ConfirmDialog({ open, title, message, confirmText=tr("OK"), cancelText=tr("Cancel"), onConfirm, onCancel }: { open: boolean, title: string, message: string, confirmText?: string, cancelText?: string, onConfirm: () => void, onCancel: () => void }) {
   const cancelBtnRef = useRef<HTMLButtonElement>(null);
   
   const confirmRef = useRef(onConfirm);

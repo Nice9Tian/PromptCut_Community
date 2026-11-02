@@ -15,6 +15,7 @@ import {
   useComposerHeight,
 } from "./composerHeight";
 import "./chat.css";
+import { tr } from "../../../i18n/index.ts";
 
 /**
  * 云端下「一键配特效」置灰的悬停说明。它在本机只是按角色依次发两条消息(`useAiChat.ts` 的 `runWorkflow`),本身云端也做得了;
@@ -22,7 +23,7 @@ import "./chat.css";
  * 而语音识别在云节点上这一版还没接上(`server/agent/service/cloud-tools.mjs` 里 `transcribe_media`、`auto_workflow` 记为「还没接上」)。
  * 接上之后:去掉这里的置灰,`CloudAiPanel` 的 `workflowRoles`、`onRunWorkflow` 改成按角色依次发给云端对话。
  */
-export const CLOUD_NO_WORKFLOW = "一键配特效的第一步要给每个视频做语音识别,云节点上这一版还没接上语音识别(要节点上的 Python 运行环境和语音模型),接上之后才能用。现在可以改用本机接入方式";
+export const CLOUD_NO_WORKFLOW = tr("The first step of one-click effects is running speech recognition on each video. This version of the cloud node does not support speech recognition yet (it needs a Python runtime and a speech model on the node), so the feature is unavailable until it does. For now you can switch to the local connection type");
 
 /** 「✦」菜单里的几样:不常点、但一点就改变这一轮怎么跑的东西,原来挤在顶栏上 */
 export interface ComposerMenuProps {
@@ -134,41 +135,41 @@ function ComposerMenu(props: ComposerMenuProps & { streaming: boolean; readOnly?
         data-pc="ai-menu"
         aria-haspopup="menu"
         aria-expanded={pop.open}
-        aria-label="更多操作"
-        title="更多操作:一键配特效、诊断报告、新对话"
+        aria-label={tr("More actions")}
+        title={tr("More actions: one-click effects, diagnostic report, new chat")}
         onClick={pop.toggle}
       >
         <span aria-hidden="true">✦</span>
       </button>
-      <div className="ai-pop ai-menu" role="menu" aria-label="更多操作" data-pop style={{ display: pop.open ? undefined : "none" }}>
+      <div className="ai-pop ai-menu" role="menu" aria-label={tr("More actions")} data-pop style={{ display: pop.open ? undefined : "none" }}>
         <button
           type="button"
           role="menuitem"
           className="ai-menu-item"
           data-pc="ai-auto-workflow"
-          title={ro.locked ? ro.why : cloudMode ? CLOUD_NO_WORKFLOW : `依次跑：${workflowRoles.map((r) => r.name).join(" → ")}`}
+          title={ro.locked ? ro.why : cloudMode ? CLOUD_NO_WORKFLOW : tr("Runs in order: {0}", workflowRoles.map((r) => r.name).join(" → "))}
           disabled={streaming || cloudMode || ro.locked}
           onClick={pick(onRunWorkflow)}
         >
           <span className="ai-menu-icon" aria-hidden="true" />
-          一键配特效
+          {tr("One-click effects")}
         </button>
         <button
           type="button"
           role="menuitem"
           className="ai-menu-item"
           data-pc="ai-diagnostics"
-          title={cloudMode ? "把这段云端对话的过程、出错原因和客户端信息收成 JSON(不含任何凭证),在子窗口里复制 / 存文件 / 提交" : "把这段对话和每一步执行事件收成 JSON(不含密钥),在子窗口里复制 / 存文件 / 提交"}
+          title={cloudMode ? tr("Collect this cloud chat's progress, error causes and client info into JSON (no credentials included); copy / save to file / submit from a child window") : tr("Collect this chat and every execution event into JSON (no keys included); copy / save to file / submit from a child window")}
           disabled={!canDiagnose}
           onClick={pick(onOpenDiagnostics)}
         >
           <span className="ai-menu-icon" aria-hidden="true">⎘</span>
-          诊断报告
+          {tr("Diagnostic report")}
         </button>
         <div className="ai-menu-sep" role="separator" />
         <button type="button" role="menuitem" className="ai-menu-item" data-pc="ai-new-chat" disabled={ro.locked || !!newChatDisabledReason} title={ro.locked ? ro.title() : newChatDisabledReason ?? undefined} onClick={pick(onNewChat)}>
-          <span className="ai-menu-icon" aria-hidden="true">＋</span>
-          新对话
+          <span className="ai-menu-icon" aria-hidden="true">{tr("+")}</span>
+          {tr("New chat")}
         </button>
       </div>
     </div>
@@ -255,8 +256,8 @@ function ComposerGrip({ boxRef }: { boxRef: RefObject<HTMLDivElement | null> }) 
       data-pc="ai-composer-resize"
       role="separator"
       aria-orientation="horizontal"
-      aria-label="调整输入框高度"
-      title="拖动调整输入框高度,双击复位"
+      aria-label={tr("Resize input box")}
+      title={tr("Drag to resize the input box, double-click to reset")}
       onPointerDown={onPointerDown}
       onDoubleClick={() => resetComposerHeight()}
     >
@@ -288,7 +289,7 @@ export function Composer(props: ComposerProps) {
     onSubmit,
     onStop,
     canStop: canStopProp = true,
-    stopDisabledReason: stopReasonProp = "只能停止自己发起的任务",
+    stopDisabledReason: stopReasonProp = tr("You can only stop tasks you started"),
     streaming,
     hotkeysOff,
     active = true,
@@ -314,7 +315,7 @@ export function Composer(props: ComposerProps) {
   const stopDisabledReason = readOnly ? readOnlyReason : stopReasonProp;
   const cloudOn = !!cloud?.selected;
   /** 附件条上的动词:本机是「导入」,云端是传到云节点的「上传」 */
-  const verb = cloudOn ? "上传" : "导入";
+  const verb = cloudOn ? tr("Upload") : tr("Import");
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (hotkeysOff || !active) return;
@@ -345,7 +346,7 @@ export function Composer(props: ComposerProps) {
             <div
               key={a.id || idx}
               className={`ai-attachment-chip${a.status === "importing" ? " is-importing" : ""}${a.status === "error" ? " is-error" : ""}`}
-              title={a.status === "error" ? (a.error || `${verb}失败`) : a.name}
+              title={a.status === "error" ? (a.error || tr("{0} failed", verb)) : a.name}
               onClick={() => {
                 if (a.status !== "error") return;
                 // 失败的卡片点一下重试:先变回导入中,再重新走一遍导入
@@ -354,11 +355,11 @@ export function Composer(props: ComposerProps) {
             >
               {a.status === "importing" ? <span className="ai-spinner" aria-hidden /> : <span aria-hidden="true">{attachIcon(a.kind)}</span>}
               <span className="ai-attachment-name">{a.name}</span>
-              {a.status === "importing" ? ` · ${verb}中…` : a.status === "error" ? ` · ${verb}失败${cloudOn && a.error ? `:${a.error}` : ""},点击重试` : ""}
+              {a.status === "importing" ? tr(" · {0}ing…", verb) : a.status === "error" ? tr(" · {0} failed{1}, click to retry", verb, cloudOn && a.error ? `:${a.error}` : "") : ""}
               <button
                 type="button"
                 className="ai-attachment-remove"
-                aria-label={`移除 ${a.name}`}
+                aria-label={tr("Remove {0}", a.name)}
                 onClick={(e) => { e.stopPropagation(); onRemoveAttachment(idx); }}
               >
                 ✕
@@ -372,11 +373,11 @@ export function Composer(props: ComposerProps) {
         ref={textareaRef}
         className="ai-composer-input"
         data-pc="ai-input"
-        aria-label="给 AI 发消息"
+        aria-label={tr("Message the AI")}
         value={text}
         onChange={(e) => onTextChange(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder={disabled ? (disabledReason ?? "当前对话已无读取权限") : uploading ? "正在导入..." : streaming ? "Agent 正在运行,Enter 加入队列,Shift+Enter 换行" : "输入消息,Enter 发送,Shift+Enter 换行"}
+        placeholder={disabled ? (disabledReason ?? tr("This chat no longer has read access")) : uploading ? tr("Importing...") : streaming ? tr("Agent is running, Enter to queue, Shift+Enter for new line") : tr("Type a message, Enter to send, Shift+Enter for new line")}
         disabled={uploading || disabled}
       />
 
@@ -386,8 +387,8 @@ export function Composer(props: ComposerProps) {
             type="button"
             className="pc-icon-btn ai-bar-btn"
             data-pc="ai-attach"
-            title={disabled ? (disabledReason ?? "当前对话已无读取权限") : cloudOn ? (cloud!.attachTitle ?? "添加附件") : "添加附件"}
-            aria-label="添加附件"
+            title={disabled ? (disabledReason ?? tr("This chat no longer has read access")) : cloudOn ? (cloud!.attachTitle ?? tr("Add attachment")) : tr("Add attachment")}
+            aria-label={tr("Add attachment")}
             onClick={onPickFiles}
             disabled={uploading || disabled}
           >
@@ -398,8 +399,8 @@ export function Composer(props: ComposerProps) {
           <select
             className="ai-bar-select ai-provider-select"
             data-pc="ai-provider"
-            aria-label="AI 驱动方式"
-            title="驱动方式"
+            aria-label={tr("AI driver")}
+            title={tr("Driver")}
             value={cloudOn ? "cloud" : provider || ""}
             onChange={(e) => {
               const v = e.target.value;
@@ -409,13 +410,13 @@ export function Composer(props: ComposerProps) {
             }}
           >
             {providers.map((p) => (
-              <option key={p.id} value={p.id} disabled={!p.available} title={p.available ? "" : "未安装"}>
+              <option key={p.id} value={p.id} disabled={!p.available} title={p.available ? "" : tr("Not installed")}>
                 {providerLabel(p)}
               </option>
             ))}
             {cloud?.show && (
-              <option value="cloud" disabled={cloud.disabled} title={cloud.disabled ? cloud.disabledReason : "消息发到云端,在云节点上执行;关掉软件也会继续"}>
-                云端
+              <option value="cloud" disabled={cloud.disabled} title={cloud.disabled ? cloud.disabledReason : tr("Messages are sent to the cloud and run on a cloud node; it keeps running even if you close the app")}>
+                {tr("Cloud")}
               </option>
             )}
           </select>
@@ -425,19 +426,19 @@ export function Composer(props: ComposerProps) {
           <>
             {/* 运行中还能接着写:有内容就给「加入队列」(Enter 也是),这一轮落定后按顺序自动发 */}
             {(text.trim().length > 0 || attachments.length > 0) && (
-              <button type="button" className="pc-btn-primary ai-send-btn" data-pc="ai-enqueue" title="Agent 这一轮完成后自动发送(Enter)" disabled={disabled} onClick={() => !disabled && onSubmit(text)}>
-                加入队列
+              <button type="button" className="pc-btn-primary ai-send-btn" data-pc="ai-enqueue" title={tr("Sent automatically after the Agent finishes this round (Enter)")} disabled={disabled} onClick={() => !disabled && onSubmit(text)}>
+                {tr("Queue")}
               </button>
             )}
             <button type="button" className="pc-btn-primary ai-send-btn is-stop" data-pc="ai-stop"
-              title={canStop ? "停止这一轮,已完成的修改保留;排队中的消息暂停发送" : stopDisabledReason}
+              title={canStop ? tr("Stop this round; completed changes are kept; queued messages are paused") : stopDisabledReason}
               aria-label={canStop ? undefined : stopDisabledReason} disabled={!canStop} onClick={onStop}>
-              ■ 停止
+              {tr("■ Stop")}
             </button>
           </>
         ) : (
-          <button type="button" className="pc-btn-primary ai-send-btn" data-pc="ai-send" title={disabled ? (disabledReason ?? "无法发送") : "发送(Enter)"} disabled={disabled} onClick={() => !disabled && onSubmit(text)}>
-            发送
+          <button type="button" className="pc-btn-primary ai-send-btn" data-pc="ai-send" title={disabled ? (disabledReason ?? tr("Cannot send")) : tr("Send (Enter)")} disabled={disabled} onClick={() => !disabled && onSubmit(text)}>
+            {tr("Send")}
           </button>
         )}
       </div>

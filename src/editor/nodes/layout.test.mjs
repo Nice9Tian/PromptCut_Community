@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { graphOf } from "./layout.ts";
 
-const p = { width: 1920, height: 1080, duration: 4, fps: 30, media: [{ id: "m", name: "视频", kind: "video", url: "x" }], tracks: [{ id: "t", name: "轨道", clips: [{ id: "c", mediaId: "m", start: 0, end: 2, params: {}, pixelMap: { id: "pm" } }] }], pixelMaps: [{ id: "pm", name: "换色", source: { stage: "origin" }, where: "1", to: { kind: "color", value: "#fff" }, mode: "continuous" }] };
+const p = { width: 1920, height: 1080, duration: 4, fps: 30, media: [{ id: "m", name: "Video", kind: "video", url: "x" }], tracks: [{ id: "t", name: "Track", clips: [{ id: "c", mediaId: "m", start: 0, end: 2, params: {}, pixelMap: { id: "pm" } }] }], pixelMaps: [{ id: "pm", name: "换色", source: { stage: "origin" }, where: "1", to: { kind: "color", value: "#fff" }, mode: "continuous" }] };
 
 test("node graph lays layers without overlap and highlights active path", () => {
   const g = graphOf(p, 1);

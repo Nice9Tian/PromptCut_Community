@@ -28,7 +28,7 @@ function project(over = {}) {
     media: [{ id: "m1", kind: "video", name: "a.mp4", url: "x" }],
     tracks: [
       { id: "t1", name: "主序列", clips: [clip("c1", 0, 2, { opacity: 0.4 }), clip("c2", 3, 5), clip("c3", 6, 8)] },
-      { id: "t2", name: "字幕", clips: [{ id: "cap", cardId: "caption-track", start: 0, end: 10, params: { lines: "0.00|1.00|你好|hello\n1.00|2.00|世界|world\n3.00|4.00|再见|bye" } }] },
+      { id: "t2", name: "Captions", clips: [{ id: "cap", cardId: "caption-track", start: 0, end: 10, params: { lines: "0.00|1.00|你好|hello\n1.00|2.00|世界|world\n3.00|4.00|再见|bye" } }] },
     ],
     cuts: [{ id: "cutA", name: "剪辑 1" }],
     activeCutId: "cutA",
@@ -50,7 +50,7 @@ test("MI-01 一级按东西分组:每个片段、每条字幕、项目设置各�
   });
   const things = M.diffThings(base, mine, meta());
   const labels = things.map((t) => t.label).sort();
-  assert.deepEqual(labels, ["字幕「你好呀」", "片段「c1 @0.0s」", "片段「c2 @3.0s」", "项目设置"].sort());
+  assert.deepEqual(labels, ["字幕「你好呀」", "片段「c1 @0.0s」", "片段「c2 @3.0s」", "Project settings"].sort());
   const keys = things.map((t) => t.key);
   assert.equal(new Set(keys).size, keys.length, "每样东西一条");
   assert.ok(!things.some((t) => t.key === "offline:clip:cap"), "字幕卡改了一行字幕,不另列整张字幕卡");
@@ -96,7 +96,7 @@ test("MI-04 我删了、别人改了:冲突;「合并」删掉;「删除选中�
   assert.equal(table[0].change, "delete");
   const [row] = M.mergeRows(cloud, table);
   assert.equal(row.conflict, true);
-  assert.equal(row.props[0].text, "我这边删除了（云端现在已被别人改过）");
+  assert.equal(row.props[0].text, "Deleted on my side (the cloud version has since been changed by someone else)");
   // 合并 = 照我这边办:删掉
   const merged = M.applyMerge(cloud, table, all([row]));
   assert.equal(clipIn(merged.project, "c2"), undefined);
@@ -117,7 +117,7 @@ test("MI-05 我改了、别人删了:冲突;「合并」连同我的修改恢复
   const cloud = edit(base, (p) => { p.tracks[0].clips = p.tracks[0].clips.filter((c) => c.id !== "c3"); });
   const table = M.diffThings(base, mine, meta());
   const [row] = M.mergeRows(cloud, table);
-  assert.equal(row.changeText, "云端已删除");
+  assert.equal(row.changeText, "Deleted in the cloud");
   assert.ok(row.props.every((x) => x.conflict && x.text.endsWith("（云端已删除）")), JSON.stringify(row.props));
   const merged = M.applyMerge(cloud, table, all([row]));
   const back = clipIn(merged.project, "c3");
@@ -150,7 +150,7 @@ test("MI-06 新增:新片段连带新素材一起并;所在序列不在时如实
   // 序列被别人删了:不硬塞
   const noTrack = edit(base, (p) => { p.tracks = p.tracks.filter((t) => t.id !== "t1"); });
   const f = M.applyMerge(noTrack, table, new Map([[clipRow.key, new Set([""])]]));
-  assert.deepEqual(f.failed.map((x) => x.reason), ["所在序列云端已不存在"]);
+  assert.deepEqual(f.failed.map((x) => x.reason), ["Its track no longer exists in the cloud"]);
   assert.equal(M.removeFromTable(table, f.done).length, 1, "失败的那条留在表里(素材已并,拿掉)");
 });
 
@@ -222,7 +222,7 @@ test("MI-11 同一序列里放不下(重叠)不硬塞,如实失败", () => {
   const cloud = edit(base, (p) => { clipIn(p, "c2").start = 2.2; });
   const table = M.diffThings(base, mine, meta());
   const r = M.applyMerge(cloud, table, all(M.mergeRows(cloud, table)));
-  assert.deepEqual(r.failed.map((x) => x.reason), ["和同一序列里的片段重叠"]);
+  assert.deepEqual(r.failed.map((x) => x.reason), ["Overlaps a clip in the same track"]);
   assert.equal(clipIn(r.project, "c1").end, 2);
 });
 
@@ -250,7 +250,7 @@ test("MI-13 卡片源码:一张卡一条、二级是「源码」;总算冲突;�
   const rows = M.mergeRows(base, table);
   const card = rows.find((r) => r.key === thing.key);
   assert.equal(card.label, "卡片源码「cards/user/price-tag.tsx」");
-  assert.deepEqual(card.props.map((p) => p.label), ["源码"]);
+  assert.deepEqual(card.props.map((p) => p.label), ["Source code"]);
   assert.equal(card.props[0].text, "源码：我这边的版本比云端现在的多 1 行、少 2 行（云端现在是别人改过的版本）");
   assert.equal(card.conflict, true, "云端也被别人改过:总算冲突");
   assert.equal(M.selectNonConflict(rows).has(thing.key), false, "选中无冲突项不勾它");

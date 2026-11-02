@@ -11,13 +11,14 @@ import { useReadOnly } from "../editor/readOnly";
 import { activityText, outcomeText, partsOf, runningTool } from "../editor/right/chat/AgentBubble";
 import { Icon } from "./icons";
 import { roundView, splitQuotes, type OpItem, type QuoteRef, type ReportRow } from "./agentView";
+import { tr } from "../i18n/index.ts";
 
 /** 引用标记:气泡上是只读的小标签,输入框上方的标记条里带「✕」 */
 export function RefChip(props: { label: string; onRemove?: () => void }) {
   return (
     <span className="ref" data-pcm={props.onRemove ? "ref-chip" : "ref-tag"}>
       @ {props.label}
-      {props.onRemove && <b role="button" aria-label={`去掉引用 ${props.label}`} data-pcm="ref-remove" onClick={props.onRemove}>✕</b>}
+      {props.onRemove && <b role="button" aria-label={tr("Remove reference {0}", props.label)} data-pcm="ref-remove" onClick={props.onRemove}>✕</b>}
     </span>
   );
 }
@@ -42,8 +43,8 @@ export const UserBubble = memo(function UserBubble({ m }: { m: ChatMessage }) {
         <div className="refs">{quotes.map((q) => <RefChip key={q.id} label={q.label} />)}</div>
       )}
       {rest ? <div className="plain">{rest}</div> : null}
-      {m.sendState === "sending" && <div className="send-state">发送中…</div>}
-      {m.sendState === "accepted" && <div className="send-state">已发出,等待云端开始处理…</div>}
+      {m.sendState === "sending" && <div className="send-state">{tr("Sending…")}</div>}
+      {m.sendState === "accepted" && <div className="send-state">{tr("Sent, waiting for the cloud to start processing…")}</div>}
       {m.sendState === "queued" && <div className="send-state" data-pcm="send-queued">{OUTBOX_TEXT.queued}</div>}
       {m.error && <div className="send-err" data-pcm={failed ? "send-failed" : undefined}>{m.error}</div>}
       {failed && m.resendable && (
@@ -71,13 +72,13 @@ function OpsCard(props: { title: string; items: OpItem[]; reports: { title: stri
   const [open, setOpen] = useState(props.open);
   return (
     <details className="ops" open={open} data-pcm="ops-card" onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}>
-      <summary><span className="chip plum">Agent 操作</span> {props.title}</summary>
+      <summary><span className="chip plum">{tr("Agent actions")}</span> {props.title}</summary>
       <div className="items">
         {props.items.map((it) => <OpRow key={it.key} state={it.state}><b>{it.kind}</b> {it.name}</OpRow>)}
         {props.reports.map((r, i) => (
           <div className="rep" key={i}>
             <div className="rep-title">{r.title}</div>
-            {r.rows.length === 0 && <div className="param-diff">(没有可汇报的内容)</div>}
+            {r.rows.length === 0 && <div className="param-diff">{tr("(nothing to report)")}</div>}
             {r.rows.map((row, j) => <OpRow key={j} state={row.state}>{row.text}</OpRow>)}
           </div>
         ))}
@@ -128,7 +129,7 @@ export function StartHero(props: { animated: boolean; onPickPreset: () => void }
   if (ro.locked) {
     return (
       <div className="start" data-pcm="agent-start" data-animated="0" data-readonly="1">
-        <div className="start-title">只能查看</div>
+        <div className="start-title">{tr("View only")}</div>
         <div className="start-hint">{ro.why}</div>
         <button type="button" className="preset" data-pcm="agent-start-preset" disabled title={ro.why}>{START_PRESET}</button>
       </div>
@@ -143,8 +144,8 @@ export function StartHero(props: { animated: boolean; onPickPreset: () => void }
           <span className="core"><Icon name="sparkle" /></span>
         </div>
       )}
-      <div className="start-title">{animated ? "从这里开始" : "开始"}</div>
-      <div className="start-hint">{animated ? "在下面的输入框里写下你想做的片子,或者点这一句:" : "在下面的输入框里写下你想做的,或者点这一句:"}</div>
+      <div className="start-title">{animated ? tr("Start here") : tr("Start")}</div>
+      <div className="start-hint">{animated ? tr("Write the video you want to make in the box below, or click this line:") : tr("Write what you want to make in the box below, or click this line:")}</div>
       <button type="button" className="preset" data-pcm="agent-start-preset" onClick={onPickPreset}>{START_PRESET}</button>
       {animated && <div className="cue" data-pcm="agent-start-cue" aria-hidden="true">⌄</div>}
     </div>
@@ -161,14 +162,14 @@ export function AgentTabsBar(props: { tabs: readonly TabItem[]; activeId: string
           <div key={t.id} role="tab" aria-selected={t.id === props.activeId} className={`atab${t.id === props.activeId ? " on" : ""}`} data-pcm="atab" data-draft={t.draft ? "1" : undefined}
             onClick={() => props.onActivate(t.id)}>
             {t.busy && <i className="dot run" aria-hidden="true" />}
-            <span className="nm">{t.draft ? "开始" : t.title}</span>
+            <span className="nm">{t.draft ? tr("Start") : t.title}</span>
             {t.draft
               ? <span className="x-gap" />
-              : <span className="x" role="button" aria-label={`关闭 ${t.title}`} data-pcm="atab-close" onClick={(e) => { e.stopPropagation(); props.onClose(t.id, t.title); }}>✕</span>}
+              : <span className="x" role="button" aria-label={tr("Close {0}", t.title)} data-pcm="atab-close" onClick={(e) => { e.stopPropagation(); props.onClose(t.id, t.title); }}>✕</span>}
           </div>
         ))}
       </div>
-      <button type="button" className="icon-btn" data-pcm="atab-new" title="新对话" aria-label="新对话" onClick={props.onNew}><Icon name="plus" /></button>
+      <button type="button" className="icon-btn" data-pcm="atab-new" title={tr("New chat")} aria-label={tr("New chat")} onClick={props.onNew}><Icon name="plus" /></button>
     </div>
   );
 }

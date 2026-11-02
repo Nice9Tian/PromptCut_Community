@@ -23,23 +23,24 @@ import { enterShared, ensureDevice, knownCreator, type EnterResult } from "./syn
 import { client, errorStatus, hosted, hostedTarget, route, type Candidate, type FindResult, type SharedMode } from "./sharedApi";
 import { discoverViaEditor, readHostedUrl, uiHostedUrl, writeHostedUrl } from "./SharedDialogs";
 import "./sync.css";
+import { tr } from "../../i18n/index.ts";
 
 /** 表 A（契约第 14 节）：原文照抄 */
 export const JOIN_TEXT = {
-  needName: "请输入项目名",
-  needPassword: "请输入密码",
-  needUsername: "请输入用户名",
-  badUsername: "用户名格式不对（1～64 个字符，不能有控制字符，首尾不能是空格）",
-  noProject: "找不到这个项目，检查一下项目名。",
-  auth: "用户名或密码不对。忘了的话找创建者问一下。",
-  kicked: "你被创建者踢出了这个项目。想回来，找创建者撤销。",
-  inviteInvalid: "这个邀请链接已失效，向创建者要一个新的，或手动填写项目信息。",
-  oldLink: "这是旧版邀请链接，向创建者要一张新的（设置里「作废并重新生成邀请码」），或手动填写项目信息。",
-  rateLimited: (sec: number | null) => (sec ? `尝试次数太多，请 ${sec} 秒后再试。` : "尝试次数太多，请稍后再试。"),
-  offline: "当前没有网络连接。",
-  unreachable: "连不上服务器，请稍后再试。",
-  joining: "正在加入…",
-  badLink: "这不是有效的邀请链接。",
+  needName: tr("Enter a project name"),
+  needPassword: tr("Enter a password"),
+  needUsername: tr("Enter a username"),
+  badUsername: tr("Invalid username format (1-64 characters, no control characters, no leading or trailing spaces)"),
+  noProject: tr("Project not found. Check the project name."),
+  auth: tr("Wrong username or password. If you've forgotten them, ask the creator."),
+  kicked: tr("You were removed from this project by the creator. To come back, ask the creator to revoke it."),
+  inviteInvalid: tr("This invite link is no longer valid. Ask the creator for a new one, or enter the project details manually."),
+  oldLink: tr("This is an old-style invite link. Ask the creator for a new one (\"Revoke and regenerate invite code\" in settings), or enter the project details manually."),
+  rateLimited: (sec: number | null) => (sec ? tr("Too many attempts. Try again in {0} seconds.", sec) : tr("Too many attempts. Please try again later.")),
+  offline: tr("No network connection at the moment."),
+  unreachable: tr("Can't reach the server. Please try again later."),
+  joining: tr("Joining…"),
+  badLink: tr("This is not a valid invite link."),
 } as const;
 
 /** 服务端的用户名规则（`server/auth/protocol.mjs` 的 `isUsername`）：界面只做同样的前置检查 */
@@ -65,7 +66,7 @@ export function hostedCandidate(base: string, p: { projectId: string; name: stri
   return { where: "hosted", base, ws: hostedWsUrlOf(base), projectId: p.projectId, name: p.name, mode: p.mode };
 }
 
-const candidateLabel = (c: Candidate) => (c.where === "hosted" ? `[云端] ${new URL(c.base).host}` : `[本机 · 局域网] 主机：${c.hostDeviceName ?? new URL(c.base).host}`);
+const candidateLabel = (c: Candidate) => (c.where === "hosted" ? tr("[Cloud] {0}", new URL(c.base).host) : tr("[Local · LAN] Host: {0}", c.hostDeviceName ?? new URL(c.base).host));
 
 export function JoinForm({ onJoined }: { onJoined: () => void }) {
   const [invite, setInvite] = useState<InviteState>(null);
@@ -145,7 +146,7 @@ export function JoinForm({ onJoined }: { onJoined: () => void }) {
 
   /** 进入：新开一个空项目当起点（项目内容以文档服务为准），进去了就进编辑器 */
   const enter = async (candidate: Candidate, cred: { as: "member" | "creator"; username: string; password: string; key?: string }) => {
-    newProject("未命名");
+    newProject(tr("Untitled"));
     const r: EnterResult = await enterShared(candidate, cred);
     if (r.ok) {
       setActiveDraftId(null);
@@ -281,37 +282,37 @@ export function JoinForm({ onJoined }: { onJoined: () => void }) {
       </div>
     );
     if (viaInvite) {
-      if (asCreator) return <>{userField("创建者用户名", "创建者的用户名", true)}{pwField("创建者密码", "输入创建者密码")}</>;
+      if (asCreator) return <>{userField(tr("Creator username"), tr("Creator's username"), true)}{pwField(tr("Creator password"), tr("Enter the creator password"))}</>;
       return viaInvite.mode === "free"
-        ? userField("你的用户名", "报上你的名字")
-        : <>{userField("用户名", "输入名单里的用户名")}{pwField("密码", "对应的密码")}</>;
+        ? userField(tr("Your username"), tr("Tell us your name"))
+        : <>{userField(tr("Username"), tr("Enter a username from the list"))}{pwField(tr("password"), tr("The matching password"))}</>;
     }
     return (
       <>
         <div className="pc-sync-field">
-          <label htmlFor="pc-join-name">项目名</label>
-          <input id="pc-join-name" className="pc-dialog-input" data-pc="join-name" value={name} placeholder="创建者告诉你的项目名" maxLength={64}
+          <label htmlFor="pc-join-name">{tr("Project name")}</label>
+          <input id="pc-join-name" className="pc-dialog-input" data-pc="join-name" value={name} placeholder={tr("The project name the creator gave you")} maxLength={64}
             onChange={(e) => setName(e.target.value)} onKeyDown={onEnter} />
         </div>
         {asCreator
-          ? <>{userField("创建者用户名", "创建者的用户名")}{pwField("创建者密码", "输入创建者密码")}</>
-          : <>{userField("你的用户名", "自由进入报上你的名字；限定进入填名单里的用户名")}{pwField("密码", "自由进入填项目密码；限定进入填你在名单里的密码")}</>}
+          ? <>{userField(tr("Creator username"), tr("Creator's username"))}{pwField(tr("Creator password"), tr("Enter the creator password"))}</>
+          : <>{userField(tr("Your username"), tr("Open entry: tell us your name; restricted entry: enter a username from the list"))}{pwField(tr("password"), tr("Open entry: enter the project password; restricted entry: enter your password from the list"))}</>}
       </>
     );
   })();
 
   return (
     <div className="pc-join" data-pc="join-form">
-      {invite?.phase === "checking" ? <div className="pc-sync-hint">正在核对邀请链接…</div> : null}
+      {invite?.phase === "checking" ? <div className="pc-sync-hint">{tr("Checking invite link…")}</div> : null}
       {viaInvite ? (
         <div className="pc-join-project" data-pc="join-invite-project">
-          项目：<b>{viaInvite.name}</b>
-          <span className="pc-sync-hint">{viaInvite.mode === "free" ? "（自由进入，填个用户名就能进）" : "（限定进入，填名单里的用户名和密码）"}</span>
+          {tr("Project: ")}<b>{viaInvite.name}</b>
+          <span className="pc-sync-hint">{viaInvite.mode === "free" ? tr("(open entry: just enter a username to join)") : tr("(restricted entry: enter your username and password from the list)")}</span>
         </div>
       ) : null}
       {choices ? (
         <div className="pc-sync-choices-v" data-pc="join-candidates">
-          <div className="pc-sync-hint">找到几个同名项目，选一个：</div>
+          <div className="pc-sync-hint">{tr("Found several projects with the same name. Pick one:")}</div>
           {choices.map((c) => (
             <button key={c.base + c.projectId} type="button" className="pc-sync-choice" onClick={() => void pick(c)}>
               <span className="pc-sync-choice-dot" />
@@ -327,41 +328,41 @@ export function JoinForm({ onJoined }: { onJoined: () => void }) {
       )}
       <div className="pc-join-actions">
         <button type="button" className="pc-btn pc-btn--primary" data-pc="join-submit" disabled={busy || locked > 0 || invite?.phase === "checking"} onClick={() => void submit()}>
-          {locked > 0 ? `加入 (${locked}s)` : "加入"}
+          {locked > 0 ? tr("Join ({0}s)", locked) : tr("Join")}
         </button>
         <button type="button" className="pc-sync-link-btn" data-pc="join-as-creator" onClick={() => { setAsCreator(!asCreator); setPassword(""); setMsg(null); setChoices(null); }}>
-          {asCreator ? "返回" : "我是创建者"}
+          {asCreator ? tr("Back") : tr("I'm the creator")}
         </button>
         {viaInvite ? (
           <button type="button" className="pc-sync-link-btn" onClick={() => { setInvite(null); setMsg(null); setAsCreator(false); }}>
-            手动填写项目信息
+            {tr("Enter project info manually")}
           </button>
         ) : null}
         {!ONLINE && !viaInvite && hostedTarget ? (
           <button type="button" className="pc-sync-link-btn" onClick={() => setShowServer(!showServer)}>
-            服务器地址
+            {tr("Server address")}
           </button>
         ) : null}
       </div>
       {showServer && !ONLINE && !viaInvite && hostedTarget ? (
         <div className="pc-sync-field">
-          <label htmlFor="pc-join-server">托管地址</label>
+          <label htmlFor="pc-join-server">{tr("Hosted address")}</label>
           <div style={{ display: "flex", gap: 8 }}>
             <input id="pc-join-server" className="pc-dialog-input" value={hostedUrl} onChange={(e) => setHostedUrl(e.target.value)} />
             <button type="button" className="pc-dialog-opt" style={{ height: 30 }} onClick={() => setHostedUrl(hosted.DEFAULT_HOSTED_URL)}>
-              恢复默认
+              {tr("Restore default")}
             </button>
           </div>
         </div>
       ) : null}
       {msg ? <div className={`pc-sync-status-line${msg.tone === "err" ? " is-err" : ""}`} data-pc="join-message" role={msg.tone === "err" ? "alert" : undefined}>{msg.text}</div> : null}
       <div className="pc-join-paste">
-        <label htmlFor="pc-join-link" className="pc-sync-hint">有邀请链接？粘贴在这里：</label>
+        <label htmlFor="pc-join-link" className="pc-sync-hint">{tr("Have an invite link? Paste it here:")}</label>
         <div style={{ display: "flex", gap: 8 }}>
           <input id="pc-join-link" className="pc-dialog-input" data-pc="join-link" value={paste} placeholder="https://…/editor#invite=…"
             onChange={(e) => setPaste(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") usePasted(); }} />
           <button type="button" className="pc-dialog-opt" data-pc="join-link-submit" style={{ height: 30, whiteSpace: "nowrap" }} disabled={!paste.trim() || busy} onClick={usePasted}>
-            用链接加入
+            {tr("Join with link")}
           </button>
         </div>
       </div>

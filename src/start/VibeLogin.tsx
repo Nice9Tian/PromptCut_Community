@@ -21,6 +21,7 @@
 import { useRef } from "react";
 import type { JSX } from "react";
 import { OnlineLogin } from "./OnlineLogin";
+import { tr } from "../i18n/index.ts";
 
 export type LoginIntent =
   | { kind: "login"; name: string; password: string; remember: boolean; link: string }
@@ -54,7 +55,7 @@ export function VibeLogin(props: { busy: boolean; error: string; onIntent: (inte
       }}
     >
       {props.error && <div className="ps-vibe-login-error" role="alert" data-pc="start-login-error">{props.error}</div>}
-      {props.busy && <div className="ps-vibe-login-busy" role="status" data-pc="start-login-busy">正在连接账号服务…</div>}
+      {props.busy && <div className="ps-vibe-login-busy" role="status" data-pc="start-login-busy">{tr("Connecting to the account service…")}</div>}
       <OnlineLogin
         onThirdPartyDone={() => { intent.current = null; props.onIntent({ kind: "third-party", link: linkNow() }); }}
         onDone={() => {

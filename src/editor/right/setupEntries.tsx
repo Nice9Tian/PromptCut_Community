@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 import type { AiProvider } from "../../ai/types";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 设置对话框第一级的五个入口。
@@ -83,11 +84,11 @@ const IconCustom = (
 
 /** 顺序就是界面上的顺序 */
 export const SETUP_ENTRIES: SetupEntry[] = [
-  { id: "codex", provider: "codex", name: "Codex CLI", tagline: "OpenAI 官方命令行", icon: IconCodex },
-  { id: "claude", provider: "claude", name: "Claude Code CLI", tagline: "Anthropic 官方命令行", icon: IconClaude },
-  { id: "agy", provider: "agy", name: "Antigravity CLI", tagline: "Google 的 agentic 命令行", icon: IconAntigravity },
-  { id: "router", provider: "api", name: "PromptCut Router", tagline: "粘一段分发密文，自动配好", icon: IconRouter },
-  { id: "custom", provider: "api", name: "自定义 API", tagline: "自己填地址、模型和 Key", icon: IconCustom },
+  { id: "codex", provider: "codex", name: "Codex CLI", tagline: tr("OpenAI's official CLI"), icon: IconCodex },
+  { id: "claude", provider: "claude", name: "Claude Code CLI", tagline: tr("Anthropic's official CLI"), icon: IconClaude },
+  { id: "agy", provider: "agy", name: "Antigravity CLI", tagline: tr("Google's agentic CLI"), icon: IconAntigravity },
+  { id: "router", provider: "api", name: "PromptCut Router", tagline: tr("Paste a distribution string to configure automatically"), icon: IconRouter },
+  { id: "custom", provider: "api", name: tr("Custom API"), tagline: tr("Enter your own URL, model and key"), icon: IconCustom },
 ];
 
 export const CLI_ENTRY_IDS: SetupEntryId[] = ["codex", "claude", "agy"];

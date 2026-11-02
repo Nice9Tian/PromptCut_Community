@@ -46,12 +46,12 @@ describe("accountExtensions & lanMemberSource seam", () => {
         { username: "老张", role: "creator", online: true },
         { username: "小李", role: "member", online: false },
       ],
-      "我",
+      "Me",
       false,
     );
     assert.deepEqual(
       online.map((m) => m.username),
-      ["老张", "我", "小王"],
+      ["老张", "Me", "小王"],
     );
     assert.deepEqual(
       offline.map((m) => m.username),

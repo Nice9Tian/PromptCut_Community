@@ -1,3 +1,4 @@
+import { tr } from "../i18n/index.ts";
 /**
  * 手机版片段上的叠加卡角标。
  *
@@ -29,7 +30,7 @@ export interface OverlayBadgePlan {
 export function planOverlayBadge(widthPx: number, count: number): OverlayBadgePlan | null {
   if (!(count > 0)) return null;
   return {
-    text: widthPx >= OVM_WIDE_PX ? `叠加 ${count}` : String(count),
+    text: widthPx >= OVM_WIDE_PX ? tr("Overlay {0}", count) : String(count),
     tappable: widthPx >= OVM_TAP_PX,
   };
 }

@@ -3,6 +3,7 @@ import { forgetSaveTarget } from "./proc";
 import { setActiveDraftId } from "./drafts";
 import { actions } from "../../store/project";
 import type { Project } from "../../kernel/project";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 按磁盘路径打开一份 .proc(双击文件、桌面壳的启动参数、Skill 结果链接都走这里)。
@@ -18,7 +19,7 @@ export async function openProcPath(filePath: string): Promise<{ project: Project
     body: JSON.stringify({ path: filePath }),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok || !data.ok) throw new Error(data.error || `打不开这个文件(${res.status})`);
+  if (!res.ok || !data.ok) throw new Error(data.error || tr("Cannot open this file ({0})", res.status));
   const project = loadProc(data.text);
   actions.loadProject(project, data.name);
   // 副本不属于任何草稿:保存时另存为,不会覆盖别人的文件

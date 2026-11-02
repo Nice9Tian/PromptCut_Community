@@ -1,4 +1,5 @@
 import { useRef } from "react";
+import { tr } from "../i18n/index.ts";
 
 /**
  * 面板拖杆。左栏 / 右栏 / 时间轴共用这一根:
@@ -114,7 +115,7 @@ export function ResizeHandle({
       className={`pc-gutter shrink-0 touch-none flex items-center justify-center ${
         axis === "x" ? "w-2 h-full" : "h-2 w-full"
       } ${cursorClass} ${disabledClass}`}
-      title={title ?? (onReset ? "拖动调整大小,双击复位" : "拖动调整大小")}
+      title={title ?? (onReset ? tr("Drag to resize, double-click to reset") : tr("Drag to resize"))}
       onPointerDown={handlePointerDown}
       onDoubleClick={onReset}
       onKeyDown={(e) => {

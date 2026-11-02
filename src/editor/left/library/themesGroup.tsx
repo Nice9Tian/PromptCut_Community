@@ -2,6 +2,7 @@ import { useStore, actions } from "../../../store/project";
 import { themes, type Theme } from "../../../themes";
 import type { GroupData, GroupItem } from "./groups";
 import { useReadOnly } from "../../readOnly";
+import { tr } from "../../../i18n/index.ts";
 
 /** 色块卡的高宽比:上面一排色块,下面名字和一句描述 */
 const TILE_ASPECT = 0.75;
@@ -14,10 +15,10 @@ function ThemeSwatch({ th }: { th: Theme }) {
   const glassBorder = th.vars["glass-border"] || "rgba(255,255,255,0.2)";
   return (
     <span className="pc-lib-theme-swatch">
-      <span className="is-wide" style={{ backgroundColor: accent }} title={`主色: ${accent}`} />
-      <span style={{ backgroundColor: fg }} title={`文字: ${fg}`} />
-      <span style={{ backgroundColor: glassBg }} title={`玻璃底: ${glassBg}`} />
-      <span style={{ backgroundColor: glassBorder }} title={`边线: ${glassBorder}`} />
+      <span className="is-wide" style={{ backgroundColor: accent }} title={tr("Accent: {0}", accent)} />
+      <span style={{ backgroundColor: fg }} title={tr("Text: {0}", fg)} />
+      <span style={{ backgroundColor: glassBg }} title={tr("Glass background: {0}", glassBg)} />
+      <span style={{ backgroundColor: glassBorder }} title={tr("Border: {0}", glassBorder)} />
     </span>
   );
 }
@@ -27,7 +28,7 @@ function ThemeBody({ th, current }: { th: Theme; current: boolean }) {
     <span className="pc-lib-theme-body">
       <span className="pc-lib-theme-name">
         <span className="pc-lib-ellipsis">{th.name}</span>
-        {current && <span className="pc-lib-tag is-accent">当前</span>}
+        {current && <span className="pc-lib-tag is-accent">{tr("Current")}</span>}
       </span>
       <span className="pc-lib-theme-desc">{th.description}</span>
     </span>
@@ -80,5 +81,5 @@ export function useThemesGroup(q: string): GroupData {
     ),
   }));
 
-  return { items, thumbs, emptyDetail: <div className="pc-left-note">没有匹配的主题</div> };
+  return { items, thumbs, emptyDetail: <div className="pc-left-note">{tr("No matching themes")}</div> };
 }

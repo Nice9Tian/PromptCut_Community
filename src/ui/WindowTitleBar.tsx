@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { JSX, MouseEvent as ReactMouseEvent } from "react";
 import { onlineUnsupported } from "../online/pageFlag";
 import "./WindowTitleBar.css";
+import { tr } from "../i18n/index.ts";
 
 /**
  * 在线构建的编译期常量(写法与用意见 `src/online/pageFlag.ts` 的「在线构建剪枝」),值同 `mode.ts` 的 `ONLINE`。
@@ -36,45 +37,45 @@ type MenuId = "file" | "edit" | "view" | "help";
 const menus: Array<{ id: MenuId; label: string; items: Array<{ label: string; command?: string; shortcut?: string; separator?: boolean; desktopOnly?: string }> }> = [
   {
     id: "file",
-    label: "文件",
+    label: tr("file"),
     items: [
-      { label: "新建项目", command: "new-project", shortcut: "Ctrl N", desktopOnly: "新建项目" },
-      { label: "打开项目…", command: "open-project", shortcut: "Ctrl O", desktopOnly: "打开项目" },
-      { label: "保存项目", command: "save-project", shortcut: "Ctrl S", desktopOnly: "保存项目" },
-      { label: "导出视频", command: "export-video", shortcut: "Ctrl E" },
-      { label: "打开导出文件夹", command: "open-export", separator: true, desktopOnly: "打开导出文件夹" },
-      { label: "打开数据目录", command: "open-data", desktopOnly: "打开数据目录" },
-      { label: "存储…", command: "open-storage", desktopOnly: "存储" },
-      { label: "返回首页", command: "go-home", separator: true },
-      { label: "退出", command: "quit", desktopOnly: "退出" },
+      { label: tr("New project"), command: "new-project", shortcut: "Ctrl N", desktopOnly: tr("New project") },
+      { label: tr("Open project…"), command: "open-project", shortcut: "Ctrl O", desktopOnly: tr("Open project") },
+      { label: tr("Save project"), command: "save-project", shortcut: "Ctrl S", desktopOnly: tr("Save project") },
+      { label: tr("Export video"), command: "export-video", shortcut: "Ctrl E" },
+      { label: tr("Open export folder"), command: "open-export", separator: true, desktopOnly: tr("Open export folder") },
+      { label: tr("Open data folder"), command: "open-data", desktopOnly: tr("Open data folder") },
+      { label: tr("Storage…"), command: "open-storage", desktopOnly: tr("Storage") },
+      { label: tr("Back to home"), command: "go-home", separator: true },
+      { label: tr("Exit"), command: "quit", desktopOnly: tr("Exit") },
     ],
   },
   {
     id: "edit",
-    label: "编辑",
+    label: tr("Edit"),
     items: [
-      { label: "撤销", command: "undo", shortcut: "Ctrl Z" },
-      { label: "重做", command: "redo", shortcut: "Ctrl ⇧ Z" },
+      { label: tr("Revoke"), command: "undo", shortcut: "Ctrl Z" },
+      { label: tr("Redo"), command: "redo", shortcut: "Ctrl ⇧ Z" },
     ],
   },
   {
     id: "view",
-    label: "视图",
+    label: tr("View"),
     items: [
-      { label: "皮肤…", command: "open-skin" },
-      { label: "配音设置…", command: "open-voice", desktopOnly: "配音" },
-      { label: "语音识别引擎（库目录）", command: "open-pylibs", separator: true, desktopOnly: "语音识别" },
-      { label: "语音模型目录", command: "open-models", desktopOnly: "语音识别" },
-      { label: "重置 Python 库", command: "reset-pylibs", desktopOnly: "语音识别" },
+      { label: tr("Skin…"), command: "open-skin" },
+      { label: tr("Voiceover settings…"), command: "open-voice", desktopOnly: tr("Voiceover") },
+      { label: tr("Speech recognition engine (library folder)"), command: "open-pylibs", separator: true, desktopOnly: tr("Speech recognition") },
+      { label: tr("Speech model folder"), command: "open-models", desktopOnly: tr("Speech recognition") },
+      { label: tr("Reset Python libraries"), command: "reset-pylibs", desktopOnly: tr("Speech recognition") },
     ],
   },
   {
     id: "help",
-    label: "帮助",
+    label: tr("Help"),
     items: [
-      { label: "快捷键", command: "shortcuts" },
-      { label: "查看运行日志", command: "open-logs", desktopOnly: "查看运行日志" },
-      { label: "关于 PromptCut", command: "about", separator: true },
+      { label: tr("Keyboard shortcuts"), command: "shortcuts" },
+      { label: tr("View run logs"), command: "open-logs", desktopOnly: tr("View run logs") },
+      { label: tr("About PromptCut"), command: "about", separator: true },
     ],
   },
 ];
@@ -216,7 +217,7 @@ function DesktopTitleBar(): JSX.Element {
           <span className="pc-titlebar-resize-ne" onMouseDown={startResize("NorthEast")} />
         </div>
       )}
-      <nav className="pc-titlebar-menus" aria-label="应用菜单">
+      <nav className="pc-titlebar-menus" aria-label={tr("App menu")}>
         {menus.map((menu) => (
           <div className="pc-titlebar-menu-wrap" key={menu.id}>
             <button
@@ -255,10 +256,10 @@ function DesktopTitleBar(): JSX.Element {
         ))}
       </nav>
       <div className="pc-titlebar-spacer" data-tauri-drag-region />
-      <div className="pc-titlebar-window-controls" aria-label="窗口控制">
-        <button type="button" className="pc-window-control" aria-label="最小化" onClick={() => void tauriWindow()?.minimize?.()}>−</button>
-        <button type="button" className="pc-window-control" aria-label="最大化" onClick={() => void tauriWindow()?.toggleMaximize?.()}>□</button>
-        <button type="button" className="pc-window-control pc-window-control--close" aria-label="关闭" onClick={() => void tauriWindow()?.close?.()}>×</button>
+      <div className="pc-titlebar-window-controls" aria-label={tr("Window controls")}>
+        <button type="button" className="pc-window-control" aria-label={tr("Minimize")} onClick={() => void tauriWindow()?.minimize?.()}>−</button>
+        <button type="button" className="pc-window-control" aria-label={tr("Maximize")} onClick={() => void tauriWindow()?.toggleMaximize?.()}>□</button>
+        <button type="button" className="pc-window-control pc-window-control--close" aria-label={tr("Close")} onClick={() => void tauriWindow()?.close?.()}>×</button>
       </div>
     </header>
   );

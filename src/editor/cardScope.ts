@@ -1,5 +1,6 @@
 import type { CardDef } from "../kernel/types";
-import { onlinePage } from "../online/pageFlag.ts"; // 带扩展名:本模块的单测不装解析钩子,直接 import
+import { onlinePage } from "../online/pageFlag.ts";
+import { tr } from "../i18n/index.ts"; // 带扩展名:本模块的单测不装解析钩子,直接 import
 
 /**
  * 卡片库对 Agent 暴露多少 —— 三档,以及每一档能不能关掉。
@@ -52,9 +53,9 @@ export interface CardVisibility {
 export const ALL_GROUPS: BaseGroup[] = ["native", "magicui", "asset"];
 
 export const GROUP_LABEL: Record<BaseGroup, string> = {
-  native: "自家库",
-  magicui: "第三方组件",
-  asset: "Lottie / 粒子",
+  native: tr("Built-in library"),
+  magicui: tr("Third-party components"),
+  asset: tr("Lottie / particles"),
 };
 
 const DEFAULT: CardVisibility = {

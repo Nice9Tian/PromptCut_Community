@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { actions, useStore } from "../../store/project";
 import type { TrackClip } from "../../kernel/project";
 import { CLIP_SPEED_MAX, CLIP_SPEED_MIN, CLIP_SPEED_PRESETS, SPEED_AUDIO_NOTE, SPEED_MUTE_NOTE, clipSpeed, speedChangeNotes, speedLabel } from "../../kernel/clipTime.mjs";
+import { tr } from "../../i18n/index.ts";
 
 /** 改速度的结果说给人听:转场跟着缩了多少、谁跟着挪了、推开了几段(kernel/clipTime.mjs 的 speedChangeNotes) */
 export function speedResultText(r: ReturnType<typeof actions.setClipSpeed>, clipId: string): string | null {
@@ -30,12 +31,12 @@ export function ClipSpeedForm({ clip }: { clip: TrackClip }) {
   return (
     <div className="mt-2 pt-2 pc-left-divider" data-pc="clip-speed">
       <div className="flex items-center gap-2 mb-1">
-        <span className="pc-left-muted shrink-0">速度</span>
+        <span className="pc-left-muted shrink-0">{tr("Speed")}</span>
         <select data-pc="clip-speed-select" value={String(cur)} onChange={(e) => apply(Number(e.target.value))} className="flex-1 pc-left-select is-sm">
           {presets.map((v) => <option key={v} value={String(v)}>{speedLabel(v)}</option>)}
         </select>
         <input data-pc="clip-speed-input" className="w-16 pc-left-input is-sm" inputMode="decimal" type="number" min={CLIP_SPEED_MIN} max={CLIP_SPEED_MAX} step={0.01}
-          title={`手动输入倍率(${CLIP_SPEED_MIN}～${CLIP_SPEED_MAX})`} value={text} onChange={(e) => setText(e.target.value)}
+          title={tr("Enter a rate manually ({0}~{1})", CLIP_SPEED_MIN, CLIP_SPEED_MAX)} value={text} onChange={(e) => setText(e.target.value)}
           onBlur={commitText} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
         <span className="pc-left-faint">×</span>
       </div>

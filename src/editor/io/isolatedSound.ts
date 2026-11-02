@@ -34,7 +34,7 @@ export interface IsolatedSoundLink {
   dispose(): void;
 }
 
-const NO_PROJECT = /没有这一版项目/;
+const NO_PROJECT = /No such project version/;
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
 /** 舞台报来的状态 → 干净的一份(键是卡片 id,值是短字符串);形状不对回 null */

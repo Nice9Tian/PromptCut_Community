@@ -21,7 +21,7 @@ const { rolledBackText } = await import(srcUrl("editor/sync/labels.ts"));
 function project() {
   return {
     version: 1, id: "p", name: "p", width: 1920, height: 1080, fps: 30, duration: 30, themeId: "midnight", media: [],
-    tracks: [{ id: "t1", name: "序列 1", clips: [
+    tracks: [{ id: "t1", name: "Track 1", clips: [
       { id: "c1", cardId: "title", start: 0, end: 2, opacity: 0.4, label: "一", params: { text: "一" } },
       { id: "c2", cardId: "title", start: 3, end: 5, opacity: 1, label: "二", params: { text: "二" } },
     ] }],
@@ -110,5 +110,5 @@ test("UC-04 改密退出触发的撤回到达页面:只是一次远端修改,不
   const kinds = A.notices.slice(before).map((n) => n.kind);
   assert.deepEqual(kinds, ["remote"]);
   assert.equal(rolledBackText("小王"), "小王撤回了内容");
-  assert.equal(rolledBackText(null), "有成员撤回了内容");
+  assert.equal(rolledBackText(null), "A member undid content");
 });

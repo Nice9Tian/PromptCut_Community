@@ -6,6 +6,7 @@ import { TranscribePanel } from "./TranscribePanel";
 import { onlinePage, onlineUnsupported } from "../../online/pageFlag";
 import { ReadOnlyFence } from "../ReadOnlyFence";
 import { useReadOnly } from "../readOnly";
+import { tr as trText } from "../../i18n/index.ts";
 
 /**
  * 字幕分区的主体:一棵两级树。
@@ -83,7 +84,7 @@ export function CaptionsTab({
   /** 把一份文字稿铺成时间轴上的字幕轨(建/复用字幕序列 + 一张字幕卡) */
   const build = (id: string) => {
     const r = actions.buildCaptions(id);
-    setFlash(r.ok ? `已铺 ${r.count} 条字幕到「字幕」序列` : r.reason);
+    setFlash(r.ok ? trText("Placed {0} captions on the \"Captions\" track", r.count) : r.reason);
   };
 
   const nodes = useMemo<CaptionNode[]>(
@@ -111,15 +112,15 @@ export function CaptionsTab({
             </svg>
           </div>
           <div className="pc-left-empty-text">
-            还没有素材。
+            {trText("No media yet.")}
             <br />
-            先在「素材库」导入视频或音频,
+            {trText("First import video or audio in the \"Media library\",")}
             <br />
-            再回来转字幕。
+            {trText("then come back to transcribe captions.")}
           </div>
           {onGoImport && (
             <button type="button" className="pc-left-empty-btn" onClick={onGoImport}>
-              前往导入
+              {trText("Go to import")}
             </button>
           )}
         </div>
@@ -146,12 +147,12 @@ export function CaptionsTab({
       {flash && <div className="pc-left-flash is-top">{flash}</div>}
 
       {nothingTranscribed && !q && (
-        <div className="pc-left-hint is-bar">还没有字幕。点开下面的素材开始转写,或用上面的「导入 .srt / .vtt」导入字幕。</div>
+        <div className="pc-left-hint is-bar">{trText("No captions yet. Click a media item below to start transcribing, or use \"Import .srt / .vtt\" above to import captions.")}</div>
       )}
 
       <div className="flex-1 min-h-0 overflow-y-auto pc-left-scroll" role="tree">
         {visible.length === 0 ? (
-          <div className="p-4 text-center text-xs pc-left-muted">没有匹配的字幕</div>
+          <div className="p-4 text-center text-xs pc-left-muted">{trText("No matching captions")}</div>
         ) : (
           visible.map((node) => (
             <MediaNode
@@ -223,7 +224,7 @@ function MediaNode({
   // 没转写的素材展开就直接给转写面板,原来那个入口不丢
   const showPanel = !transcript || retranscribing;
 
-  const count = filtering && rows.length !== total ? `${rows.length}/${total} 段` : `${total} 段`;
+  const count = filtering && rows.length !== total ? trText("{0}/{1} segments", rows.length, total) : trText("{0} segments", total);
 
   return (
     <div className="pc-left-cap-node" role="treeitem" aria-expanded={open}>
@@ -251,7 +252,7 @@ function MediaNode({
         </span>
         <span className="flex-1 truncate">{media.name}</span>
         <span className="shrink-0 tabular-nums text-[10px] pc-left-faint">
-          {transcript ? count : "未转写"}
+          {transcript ? count : trText("Not transcribed")}
           {media.duration ? ` · ${fmt(media.duration)}` : ""}
         </span>
       </button>
@@ -275,16 +276,16 @@ function MediaNode({
                 className="ml-auto pc-left-btn is-sm"
                 onClick={onBuild}
                 disabled={ro.locked}
-                title={ro.title("把这份文字稿铺成时间轴上的字幕轨")}
+                title={ro.title(trText("Lay this transcript out as a captions track on the timeline"))}
               >
-                铺成字幕轨
+                {trText("Lay out as captions track")}
               </button>
-              <button type="button" className="pc-left-btn is-sm" onClick={onRetranscribe} disabled={onlinePage() || ro.locked} title={ro.locked ? ro.why : onlinePage() ? onlineUnsupported("语音识别") : undefined}>
-                重新转写
+              <button type="button" className="pc-left-btn is-sm" onClick={onRetranscribe} disabled={onlinePage() || ro.locked} title={ro.locked ? ro.why : onlinePage() ? onlineUnsupported(trText("Speech recognition")) : undefined}>
+                {trText("Transcribe again")}
               </button>
             </div>
             {rows.length === 0 ? (
-              <div className="pl-5 pr-2 pb-1.5 text-[11px] pc-left-faint">这份转写里没有匹配的段落</div>
+              <div className="pl-5 pr-2 pb-1.5 text-[11px] pc-left-faint">{trText("No matching passages in this transcript")}</div>
             ) : (
               <div className="pb-1">
                 {rows.map(({ seg, index }) => {
@@ -296,7 +297,7 @@ function MediaNode({
                       type="button"
                       data-pc-caption-seg={index}
                       className={`pc-left-cap-seg${active ? " is-active" : ""}${tl == null ? " is-offline" : ""}`}
-                      title={tl == null ? "这段素材还没放到时间轴上" : "点一下把播放头挪过去"}
+                      title={tl == null ? trText("This media has not been placed on the timeline yet") : trText("Click to move the playhead there")}
                       onClick={() => {
                         onPickSelf();
                         if (tl != null) actions.seek(tl);

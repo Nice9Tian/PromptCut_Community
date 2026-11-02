@@ -16,16 +16,16 @@ const oc = await import(srcUrl("editor/sync/offlineCache.ts"));
 
 test("表 A 五条状态措辞与常驻提示一字不差", () => {
   assert.deepEqual({ ...st.ONLINE_STATUS_TEXT }, {
-    noNetwork: "当前没有网络连接。",
-    docDown: "连不上服务器，请稍后再试。你的修改先留在本页，恢复后会自动提交。",
-    assetDown: "连不上素材服务，素材原尺寸和预渲染结果暂时显示不了。",
-    recovering: "已恢复连接，正在提交离线时的修改…",
-    recovered: "离线时的修改已全部提交。",
+    noNetwork: "No network connection at the moment.",
+    docDown: "Can't connect to the server, please try again later. Your changes stay on this page for now and will be submitted automatically once the connection is restored.",
+    assetDown: "Can't connect to the asset service, so original-size media and prerender output can't be displayed for now.",
+    recovering: "Connection restored. Submitting the changes made while offline…",
+    recovered: "All changes made while offline have been submitted.",
   });
   // 〔裁:2026-10-22 主会话〕按改动存没存下来分两句
   assert.deepEqual({ ...st.OFFLINE_UNSENT_TEXT }, {
-    saved: "当前离线。你的改动已存在本机，连上网络后会合并回项目。",
-    page: "当前离线。你的改动只在这个页面里，关掉页面就会丢失。",
+    saved: "Currently offline. Your changes are saved on this machine and will be merged back into the project once you're back online.",
+    page: "Currently offline. Your changes exist only on this page and will be lost when you close it.",
   });
   assert.equal(st.offlineUnsentText("saved"), st.OFFLINE_UNSENT_TEXT.saved);
   assert.equal(st.offlineUnsentText("page"), st.OFFLINE_UNSENT_TEXT.page);
@@ -48,7 +48,7 @@ test("状态 → 措辞:断网、连不上文档服务、连不上素材服务�
 test("离开编辑界面的确认:问的是「改动只在这个页面里」,不是「项目没保存」", () => {
   assert.equal(st.UNSENT_LEAVE_TEXT, "当前离线，你的改动只在这个页面里。离开编辑界面会丢失它们。继续？");
   // 手机版用自己的确认框(按钮「取消 / 离开」),正文一样、不带那一问
-  assert.equal(st.UNSENT_LEAVE_TEXT, `${st.UNSENT_LEAVE_BODY}继续？`);
+  assert.equal(st.UNSENT_LEAVE_TEXT, `${st.UNSENT_LEAVE_BODY} Continue?`);
   assert.doesNotMatch(st.UNSENT_LEAVE_BODY, /继续/);
   // 在线页面都是云端项目,没有本机草稿(issue #16):这一句里不许再出现「未保存」那套说法
   assert.doesNotMatch(st.UNSENT_LEAVE_TEXT, /未保存|保存项目/);
@@ -71,7 +71,7 @@ test("存不住就说存不住:浏览器给不了存储时,离线改动算「只
   assert.equal(st.offlineStoreOf({ durable: true, account: false, online: false }), "saved");
   assert.equal(st.offlineStoreOf({ durable: true, account: false, online: true }), "page");
   // 存不住那一句气泡:说的是「为什么」,不和常驻提示重样
-  assert.equal(st.UNSENT_NO_STORE_TOAST, "这台浏览器存不下离线时的修改：它们只在这个页面里，关掉页面或离开编辑界面就会丢。");
+  assert.equal(st.UNSENT_NO_STORE_TOAST, "This browser can't store changes made offline: they exist only in this page and will be lost if you close the page or leave the editor.");
   assert.notEqual(st.UNSENT_NO_STORE_TOAST, st.OFFLINE_UNSENT_TEXT.page);
 });
 
@@ -212,7 +212,7 @@ test("备份:缺省的下载走 Blob + <a download> + click(浏览器里),不写
 
 test("断网时导入媒体:只有在线浏览器置灰(浏览器说没网,或连不上文档服务);桌面版照常导入", () => {
   const of = (p) => st.importOfflineOf({ online: true, status: "online", active: true, navigatorOnline: true, ...p });
-  assert.equal(st.IMPORT_OFFLINE_TEXT, "当前离线");
+  assert.equal(st.IMPORT_OFFLINE_TEXT, "You are offline");
   assert.equal(of({}), false);
   assert.equal(of({ navigatorOnline: false }), true);
   assert.equal(of({ status: "offline" }), true);

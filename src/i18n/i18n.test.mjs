@@ -41,3 +41,11 @@ test("table: every row has Chinese and Japanese with the same placeholders as th
     assert.equal(holes(row.ja), holes(en), `Japanese placeholders differ: ${en}`);
   }
 });
+
+test("translate: Chinese text from card code or project data is found by its Chinese wording", () => {
+  const [en, row] = Object.entries(table).find(([, r]) => r.zh && r.ja) ?? [];
+  if (!en) return;
+  assert.equal(translate("en", row.zh), en);
+  assert.equal(translate("ja", row.zh), row.ja);
+  assert.equal(translate("zh-CN", row.zh), row.zh);
+});

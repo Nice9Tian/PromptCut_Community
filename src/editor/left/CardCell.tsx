@@ -7,6 +7,7 @@ import { DEFAULT_CARD_DUR } from "../../kernel/project";
 import { clearDragPayload, MIME_CARD, setDragPayload } from "../dnd";
 import { PreviewCard } from "./PreviewCard";
 import { usePreviewZoom, zoomFor } from "./previewZoom";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 卡片库里的一格:方形预览卡(PreviewCard)。不悬停显示名字和说明,悬停 180ms 后
@@ -71,8 +72,8 @@ export function CardCell({ def, fill, aspect }: { def: CardDef<any>; fill?: bool
     <div ref={viewRef} className="absolute inset-0">
       {!live && (
         <div className="pc-lib-card-text">
-          <div className="pc-lib-card-name">{def.name}</div>
-          <div className="pc-lib-card-desc">{def.description}</div>
+          <div className="pc-lib-card-name">{tr(def.name)}</div>
+          <div className="pc-lib-card-desc">{def.description && tr(def.description)}</div>
         </div>
       )}
       {live && box.w > 0 && box.h > 0 && (
@@ -105,7 +106,7 @@ export function CardCell({ def, fill, aspect }: { def: CardDef<any>; fill?: bool
   return (
     <PreviewCard
       attrs={{ "data-pc-card": def.id }}
-      title={def.name}
+      title={tr(def.name)}
       // 不悬停时名字已经在画面区里,标题条只在动画跑起来之后压在底边
       caption="hover"
       preview={preview}
@@ -116,8 +117,8 @@ export function CardCell({ def, fill, aspect }: { def: CardDef<any>; fill?: bool
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onClick={onClick}
-      error={error ? "没有动效轨,先在时间轴新建一条" : null}
-      titleAttr="点击 = 加到播放头;拖动 = 拖到时间轴的位置"
+      error={error ? tr("No motion track, create one on the timeline first") : null}
+      titleAttr={tr("Click = add at the playhead; drag = drop at a position on the timeline")}
       fill={fill}
       aspect={aspect}
     />

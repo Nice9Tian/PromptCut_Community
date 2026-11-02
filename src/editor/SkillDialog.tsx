@@ -6,6 +6,7 @@ import { openSkillMode, subscribeSkill } from "../skill/skillMode";
 import { shortSessionId, useDesktopSessions } from "../ai/desktopSessions";
 import { operationText } from "./right/DesktopSessionsStrip";
 import "./SkillDialog.css";
+import { tr } from "../i18n/index.ts";
 
 /**
  * SKILL 对话框(计划 `docs/plan/agent-workflow-plan.md` A4;语义 `user-workflow.md`「工作方式」「Agent 接入方式」)。
@@ -33,24 +34,24 @@ interface TargetStatus {
 }
 
 const TARGET_DESC: Record<TargetStatus["target"], string> = {
-  "claude-code": "Claude 桌面版的「Code」与命令行共用这份配置;登记后新开的会话里就有 PromptCut 的工具",
-  codex: "Codex 桌面版与命令行共用这份配置;登记后新开的线程里就有 PromptCut 的工具",
+  "claude-code": tr("The Claude desktop app's \"Code\" and the command line share this config; once registered, new sessions have PromptCut's tools"),
+  codex: tr("The Codex desktop app and the command line share this config; once registered, new threads have PromptCut's tools"),
 };
 
 async function api<T = unknown>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   const data = await res.json().catch(() => ({}));
   if (!res.ok || (data as { ok?: boolean }).ok === false) {
-    throw new Error((data as { error?: string }).error || `请求失败(${res.status})`);
+    throw new Error((data as { error?: string }).error || tr("Request failed ({0})", res.status));
   }
   return data as T;
 }
 
 function statusText(t: TargetStatus): { text: string; tone: "ok" | "warn" | "muted" | "err" } {
   if (t.error) return { text: t.error, tone: "err" };
-  if (t.current) return { text: "已登记", tone: "ok" };
-  if (t.registered) return { text: "已有一条 promptcut 登记,但指向别处(比如另一份安装);点「登记」改成这一份", tone: "warn" };
-  return { text: t.exists ? "未登记" : "未登记(还没有这个配置文件,登记时会新建)", tone: "muted" };
+  if (t.current) return { text: tr("Registered"), tone: "ok" };
+  if (t.registered) return { text: tr("A promptcut entry is already registered but points elsewhere (for example, another install); click \"Register\" to switch it to this one"), tone: "warn" };
+  return { text: t.exists ? tr("Not registered") : tr("Not registered (this config file doesn't exist yet; it will be created on registration)"), tone: "muted" };
 }
 
 export function SkillDialog({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element | null {
@@ -97,26 +98,26 @@ export function SkillDialog({ open, onClose }: { open: boolean; onClose: () => v
 
   const register = (t: TargetStatus) =>
     run(`reg:${t.target}`, async () => {
-      if (!confirm(`把 PromptCut 登记到 ${t.label}:\n\n在 ${t.file} 里写入一条名为 promptcut 的 MCP 服务。\n写之前整份文件先备份,随时可以在这里撤销登记。\n\n继续?`)) return;
+      if (!confirm(tr("Register PromptCut with {0}:\n\nThis writes an MCP server entry named promptcut into {1}.\nThe whole file is backed up first, and you can undo the registration here at any time.\n\nContinue?", t.label, t.file))) return;
       const out = await api<{ backup?: string | null; unchanged?: boolean }>("/api/skill/desktop-register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ target: t.target, action: "register" }),
       });
-      if (out.unchanged) return `${t.label} 已经登记过这一份 PromptCut,没有改动。`;
-      return `已登记到 ${t.label}。新开一个 ${t.label} 的会话就能用了${out.backup ? `(原文件备份在 ${out.backup})` : ""}。`;
+      if (out.unchanged) return tr("{0} already has this PromptCut registered. No changes made.", t.label);
+      return tr("Registered with {0}. Start a new {1} session and it is ready to use{2}.", t.label, t.label, out.backup ? tr("(original file backed up at {0})", out.backup) : "");
     });
 
   const unregister = (t: TargetStatus) =>
     run(`unreg:${t.target}`, async () => {
-      if (!confirm(`从 ${t.label} 撤销登记:把 ${t.file} 里的 promptcut 条目还原成登记之前的样子。\n\n继续?`)) return;
+      if (!confirm(tr("Unregister from {0}: restores the promptcut entry in {1} to what it was before registration.\n\nContinue?", t.label, t.file))) return;
       const out = await api<{ restored?: boolean; unchanged?: boolean }>("/api/skill/desktop-register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ target: t.target, action: "unregister" }),
       });
-      if (out.unchanged) return `${t.label} 里没有 promptcut 条目,不用撤销。`;
-      return out.restored ? `已撤销:${t.label} 里的 promptcut 条目还原成了登记之前的那一条。` : `已撤销:${t.label} 里的 promptcut 条目删掉了。`;
+      if (out.unchanged) return tr("No promptcut entry in {0}; nothing to unregister.", t.label);
+      return out.restored ? tr("Unregistered: the promptcut entry in {0} was restored to the one from before registration.", t.label) : tr("Unregistered: the promptcut entry in {0} was removed.", t.label);
     });
 
   const enter = () =>
@@ -138,13 +139,11 @@ export function SkillDialog({ open, onClose }: { open: boolean; onClose: () => v
         <div id="pc-dialog-title-skill" className="pc-dialog-title">SKILL</div>
 
         <div className="pc-skill-intro">
-          让桌面 APP 里的 Agent(Claude Code、Codex)经 MCP 直接改<b>你现在打开的这个项目</b>:和编辑界面里的你、
-          AI 栏里的 Agent 同时协作,每个会话一个身份,改动都经文档服务落地、可撤销。先登记一次,
-          再进入 SKILL 模式;在桌面 APP 里新开会话,跟它说要做什么。它交的进度会显示在 AI 栏里。
+          {tr("Let the Agent in the desktop app (Claude Code, Codex) directly edit, via MCP, ")}<b>{tr("the project you currently have open")}</b>{tr(": it works at the same time as you in the editor and the Agent in the AI panel, one identity per session, with every change landing through the document service and undoable. Register once, then enter SKILL mode; start a new session in the desktop app and tell it what to do. The progress it reports is shown in the AI panel.")}
         </div>
 
         <div className="pc-dialog-body">
-          <div className="pc-dialog-label">登记到桌面 APP</div>
+          <div className="pc-dialog-label">{tr("Register with the desktop app")}</div>
           <div className="pc-skill-providers">
             {(targets ?? []).map((t) => {
               const st = statusText(t);
@@ -156,33 +155,33 @@ export function SkillDialog({ open, onClose }: { open: boolean; onClose: () => v
                   <code className="pc-skill-target-file" title={t.file}>{t.file}</code>
                   <span className="pc-skill-target-acts">
                     <button type="button" className="pc-dialog-opt" disabled={busy !== "" || t.current} onClick={() => void register(t)}>
-                      {t.registered && !t.current ? "改成这一份" : "登记"}
+                      {t.registered && !t.current ? tr("Switch to this one") : tr("Register")}
                     </button>
                     <button type="button" className="pc-dialog-opt" disabled={busy !== "" || !t.registered} onClick={() => void unregister(t)}>
-                      撤销登记
+                      {tr("Unregister")}
                     </button>
                   </span>
                 </div>
               );
             })}
-            {targets === null && <div className="pc-skill-intro">正在读取登记状态…</div>}
+            {targets === null && <div className="pc-skill-intro">{tr("Reading registration status…")}</div>}
           </div>
         </div>
 
         <div className="pc-dialog-body">
-          <div className="pc-dialog-label">接进来的会话</div>
+          <div className="pc-dialog-label">{tr("Connected sessions")}</div>
           {sessions.length ? (
             <div className="pc-skill-sessions">
               {sessions.map((s) => (
                 <div key={s.id} className="pc-skill-session" data-pc="skill-session">
-                  <b>{s.label || s.vendor || "桌面 APP"}</b>
-                  <span>会话 {shortSessionId(s.id)}</span>
+                  <b>{s.label || s.vendor || tr("Desktop app")}</b>
+                  <span>{tr("Session {0}", shortSessionId(s.id))}</span>
                   <span className="pc-skill-session-op">{operationText(s)}</span>
                 </div>
               ))}
             </div>
           ) : (
-            <div className="pc-skill-intro">还没有桌面 APP 的会话接进来。登记之后在 Claude Code / Codex 里新开一个会话,让它调一次 PromptCut 的工具。</div>
+            <div className="pc-skill-intro">{tr("No desktop app session is connected yet. After registering, start a new session in Claude Code / Codex and have it call a PromptCut tool once.")}</div>
           )}
         </div>
 
@@ -190,13 +189,13 @@ export function SkillDialog({ open, onClose }: { open: boolean; onClose: () => v
 
         <div className="pc-skill-actions" style={{ justifyContent: "flex-end" }}>
           {skillOn ? (
-            <span className="pc-skill-intro" style={{ marginRight: "auto" }}>当前是 SKILL 模式。退出请点顶栏的「传统式」。</span>
+            <span className="pc-skill-intro" style={{ marginRight: "auto" }}>{tr("SKILL mode is active. To exit, click \"Classic mode\" in the top bar.")}</span>
           ) : (
             <button type="button" className="pc-dialog-opt is-on" data-pc="skill-enter" disabled={busy !== ""} onClick={() => void enter()}>
-              进入 SKILL 模式
+              {tr("Enter SKILL mode")}
             </button>
           )}
-          <button type="button" className="pc-dialog-opt" onClick={onClose}>关闭</button>
+          <button type="button" className="pc-dialog-opt" onClick={onClose}>{tr("Close")}</button>
         </div>
       </div>
     </div>,

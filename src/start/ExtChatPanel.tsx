@@ -21,6 +21,7 @@ import type { JSX, ReactNode } from "react";
 import type { ChatMessage } from "../ai/types";
 import { activityText, runningTool } from "../editor/right/chat/AgentBubble";
 import { isUserBubble, ordinals, partsOf, roundView, splitQuotes } from "../mobile/agentView";
+import { tr } from "../i18n/index.ts";
 
 const MARK: Record<string, string> = { done: "✓", run: "…", todo: "·", err: "!", ask: "!" };
 
@@ -64,12 +65,12 @@ function Foldable(props: {
       className={props.className}
       data-folded={props.folded || undefined}
       data-more={more || undefined}
-      title={more ? "点开看全文" : undefined}
+      title={more ? tr("Click to see the full text") : undefined}
       onClick={more ? props.onExpand : undefined}
     >
       {props.children}
       {more && props.hiddenOps > 0 && (
-        <span className="ps-xmore">… 还有 {props.hiddenOps} 条操作</span>
+        <span className="ps-xmore">{tr("… {0} more actions", props.hiddenOps)}</span>
       )}
     </div>
   );
@@ -102,10 +103,10 @@ function PanelAgentMessage(props: { m: ChatMessage; ordinal: number; folded: boo
         </svg>
       </span>
       <Foldable className="ps-xbody" folded={props.folded} hiddenOps={ops.length} onExpand={props.onExpand} mark={text}>
-        <p className="ps-xtext">{text || (live ? "" : "（这一轮没有留下文字）")}</p>
+        <p className="ps-xtext">{text || (live ? "" : tr("(No text was left from this turn)"))}</p>
         {ops.length > 0 && (
           <div className="ps-xops">
-            <div className="ps-xops-head">Agent 操作</div>
+            <div className="ps-xops-head">{tr("Agent actions")}</div>
             <ul className="ps-xops-list">
               {ops.map((it) => (
                 <li key={it.key} data-state={it.state}><span className="ps-op-mark">{MARK[it.state]}</span>{it.kind} · {it.name}</li>
@@ -148,18 +149,18 @@ export function ExtChatPanel(props: {
   return (
     <section className="ps-ext-chat" data-pc="start-ext-chat">
       <div className="ps-ext-chat-head">
-        <span className="ps-ext-chat-title">聊天</span>
+        <span className="ps-ext-chat-title">{tr("Chat")}</span>
         <span className="ps-rail-spacer" />
         <button type="button" className="ps-ext-action" data-pc="start-ext-chat-back"
-          title="收起详细编辑，聊天回到中间大区" onClick={props.onBack}>
-          回到整页
+          title={tr("Collapse detail editing and return the chat to the large middle area")} onClick={props.onBack}>
+          {tr("Back to full page")}
         </button>
       </div>
 
       <div className="ps-ext-chat-list" data-pc="start-ext-chat-list">
         {shown.length === 0 && (
           <p className="ps-ext-todo" data-pc="start-ext-chat-empty">
-            {props.whyNot ?? "这条对话还没有消息，在下面说一句。"}
+            {props.whyNot ?? tr("This chat has no messages yet, say something below.")}
           </p>
         )}
         {shown.map((m) => {
@@ -167,7 +168,7 @@ export function ExtChatPanel(props: {
           if (m.role === "assistant" && m.id === keep && shown.length > 1) {
             return (
               <div key={m.id}>
-                <div className="ps-xlatest">最新一条回复</div>
+                <div className="ps-xlatest">{tr("Latest reply")}</div>
                 <PanelAgentMessage m={m} ordinal={order.get(m.id) ?? 1} folded={false} onExpand={() => expand(m.id)} />
               </div>
             );

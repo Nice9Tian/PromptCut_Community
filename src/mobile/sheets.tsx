@@ -36,12 +36,13 @@ import { ControlField, Slider } from "./controls";
 import { ClipFilterFields, FiltersGrid, filterableClip } from "./filters";
 import { ThumbImg, useThumb } from "./Thumb";
 import type { MembersInfo } from "./useMembers";
+import { tr as trText } from "../i18n/index.ts";
 
 /* ======================== 素材库 ======================== */
 
 export type AssetTab = "video" | "image" | "audio" | "cut";
 const ASSET_TABS: { id: AssetTab; label: string }[] = [
-  { id: "video", label: "视频" }, { id: "image", label: "图片" }, { id: "audio", label: "音频" }, { id: "cut", label: "剪辑" },
+  { id: "video", label: trText("Video") }, { id: "image", label: trText("Images") }, { id: "audio", label: trText("audio") }, { id: "cut", label: trText("Cut") },
 ];
 
 /** 视频 / 图片接到主要内容末尾;声音加到播放头位置 */
@@ -71,7 +72,7 @@ export function AssetsSheet(props: { tab: AssetTab; onTab: (t: AssetTab) => void
     try {
       const r = await importMediaFiles(files);
       const n = r.counts.video + r.counts.audio + r.counts.image;
-      toast(n ? `已导入 ${n} 个素材${r.skipped.length ? `，跳过 ${r.skipped.length} 个认不出的文件` : ""}` : r.rejected[0] ?? "没有能导入的文件");
+      toast(n ? trText("Imported {0} media{1}", n, r.skipped.length ? trText(", skipped {0} unrecognized files", r.skipped.length) : "") : r.rejected[0] ?? trText("No files could be imported"));
       if (r.firstKind) props.onTab(r.firstKind);
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e));
@@ -83,39 +84,39 @@ export function AssetsSheet(props: { tab: AssetTab; onTab: (t: AssetTab) => void
   return (
     <Sheet
       id="assets"
-      title="素材库"
+      title={trText("Media library")}
       tall
       onClose={props.onClose}
-      head={props.tab !== "cut" ? <button type="button" className="chip accent" data-pcm="import" disabled={busy || importOffline} title={importOffline ? IMPORT_OFFLINE_TEXT : undefined} onClick={() => { if (!importOffline) input.current?.click(); }}>{busy ? "导入中…" : importOffline ? `＋ 导入（${IMPORT_OFFLINE_TEXT}）` : "＋ 导入"}</button> : null}
+      head={props.tab !== "cut" ? <button type="button" className="chip accent" data-pcm="import" disabled={busy || importOffline} title={importOffline ? IMPORT_OFFLINE_TEXT : undefined} onClick={() => { if (!importOffline) input.current?.click(); }}>{busy ? trText("Importing…") : importOffline ? trText("+ Import ({0})", IMPORT_OFFLINE_TEXT) : trText("+ Import")}</button> : null}
       tabs={<div className="seg">{ASSET_TABS.map((t) => <button key={t.id} type="button" className={t.id === props.tab ? "on" : undefined} onClick={() => props.onTab(t.id)}>{t.label}</button>)}</div>}
     >
       <input ref={input} type="file" multiple accept={MEDIA_ACCEPT} hidden data-pcm="import-input" onChange={(e) => void onFiles(e.target.files)} />
       {props.tab === "cut" ? (
         <>
-          <div className="hint">点剪辑：缩略时间轴和完整时间轴换成它的内容。</div>
+          <div className="hint">{trText("Tap a cut: the compact timeline and the full timeline switch to its contents.")}</div>
           <div className="grid">
             {cuts.map((c) => (
               <button key={c.id} type="button" className={c.active ? "tile picked" : "tile"} data-pcm="asset-cut" onClick={() => { if (!c.active) props.onSwitchCut(c.id); props.onClose(); }}>
                 <div className="pic"><Icon name="clip" /></div>
-                <div className="cap">{c.name}<small>剪辑</small></div>
+                <div className="cap">{c.name}<small>{trText("Cut")}</small></div>
               </button>
             ))}
           </div>
         </>
       ) : (
         <>
-          <button type="button" className="dropzone" data-pcm="import-dropzone" disabled={busy || importOffline} onClick={() => { if (!importOffline) input.current?.click(); }}>{importOffline ? `＋ 从相册 / 文件导入（${IMPORT_OFFLINE_TEXT}）` : "＋ 从相册 / 文件导入"}</button>
-          <div className="hint">{props.tab === "audio" ? "点一下加到播放头位置。" : "点一下接到主要内容末尾。"}</div>
-          {list.length === 0 ? <div className="hint" data-pcm="asset-empty">这个项目里还没有{ASSET_TABS.find((t) => t.id === props.tab)!.label}素材。</div> : (
+          <button type="button" className="dropzone" data-pcm="import-dropzone" disabled={busy || importOffline} onClick={() => { if (!importOffline) input.current?.click(); }}>{importOffline ? trText("+ Import from photos / files ({0})", IMPORT_OFFLINE_TEXT) : trText("+ Import from photos / files")}</button>
+          <div className="hint">{props.tab === "audio" ? trText("Tap to add at the playhead position.") : trText("Tap to append to the end of the main content.")}</div>
+          {list.length === 0 ? <div className="hint" data-pcm="asset-empty">{trText("This project has no {0} media yet.", ASSET_TABS.find((t) => t.id === props.tab)!.label)}</div> : (
             <div className="grid">
               {list.map((m) => (
                 <button key={m.id} type="button" className="tile" data-pcm="asset" data-media={m.id} onClick={() => {
                   const clip = placeMedia(m);
-                  if (!clip) { toast("放不下：没有空着的序列"); return; }
+                  if (!clip) { toast(trText("Doesn't fit: no empty track")); return; }
                   props.onPlaced(clip, m);
                 }}>
                   <AssetPic m={m} />
-                  <div className="cap">{m.name}<small>{m.kind === "audio" ? "音频" : m.kind === "image" ? "图片" : "视频"}</small></div>
+                  <div className="cap">{m.name}<small>{m.kind === "audio" ? trText("audio") : m.kind === "image" ? trText("Images") : trText("Video")}</small></div>
                 </button>
               ))}
             </div>
@@ -134,7 +135,7 @@ function AssetPic({ m }: { m: MediaAsset }) {
       {m.kind !== "audio" && <ThumbImg thumb={thumb} />}
       <Icon name={m.kind === "audio" ? "audio" : m.kind === "image" ? "image" : "video"} />
       {m.duration ? <span className="dur">{fmtDur(m.duration)}</span> : null}
-      {m.pending ? <span className="st">上传中</span> : m.transcript ? <span className="st">已转写</span> : null}
+      {m.pending ? <span className="st">{trText("Uploading")}</span> : m.transcript ? <span className="st">{trText("Transcribed")}</span> : null}
     </div>
   );
 }
@@ -143,9 +144,9 @@ function AssetPic({ m }: { m: MediaAsset }) {
 
 export type CardTab = "anim" | "text" | "filter" | "transition";
 const TRANSITION_KINDS: { kind: TransitionKind; name: string; desc: string }[] = [
-  { kind: "crossfade", name: "交叉溶解", desc: "前一段叠着化到后一段" },
-  { kind: "fadeOut", name: "淡出", desc: "前一段结尾淡到黑" },
-  { kind: "fadeIn", name: "淡入", desc: "后一段开头从黑里出来" },
+  { kind: "crossfade", name: trText("crossfade"), desc: trText("The previous clip dissolves into the next one") },
+  { kind: "fadeOut", name: trText("Fade out"), desc: trText("The end of the previous clip fades to black") },
+  { kind: "fadeIn", name: trText("Fade in"), desc: trText("The start of the next clip emerges from black") },
 ];
 
 /** 一段是不是文字卡:有一个叫 text 的文字参数 */
@@ -175,15 +176,15 @@ export function CardsSheet(props: { tab: CardTab; onTab: (t: CardTab) => void; t
   const cards = props.tab === "text" ? all.filter(isTextCard) : all.filter((c) => !isTextCard(c));
   const tr = props.transition;
   const hint = props.tab === "transition"
-    ? tr?.replace ? "换一个转场：点一种，替换当前这一处。" : tr ? "点一种转场，加到这两段之间。" : "先在缩略时间轴上点两段之间的 ＋，再选转场。"
-    : props.tab === "filter" ? null : "点一张卡片，加到播放头所在位置。";
+    ? tr?.replace ? trText("Swap the transition: tap one to replace the current one.") : tr ? trText("Tap a transition to add it between these two clips.") : trText("First tap the + between two clips on the mini timeline, then pick a transition.")
+    : props.tab === "filter" ? null : trText("Tap a card to add it at the playhead.");
   return (
     <Sheet
       id="cards"
-      title="卡片（特效 / 动效）"
+      title={trText("Cards (effects / motion graphics)")}
       tall
       onClose={props.onClose}
-      tabs={<div className="seg">{([["anim", "动效"], ["text", "文字"], ["filter", "滤镜"], ["transition", "转场"]] as const).map(([id, label]) => <button key={id} type="button" className={id === props.tab ? "on" : undefined} onClick={() => props.onTab(id)}>{label}</button>)}</div>}
+      tabs={<div className="seg">{([["anim", trText("Motion graphics")], ["text", trText("Text")], ["filter", trText("Filters")], ["transition", trText("Transition")]] as const).map(([id, label]) => <button key={id} type="button" className={id === props.tab ? "on" : undefined} onClick={() => props.onTab(id)}>{label}</button>)}</div>}
     >
       {hint && <div className="hint" data-pcm="cards-hint">{hint}</div>}
       {props.tab === "filter" ? <FiltersGrid /> : props.tab === "transition" ? (
@@ -194,7 +195,7 @@ export function CardsSheet(props: { tab: CardTab; onTab: (t: CardTab) => void; t
               if (tr.replace?.kind === k.kind) { props.onClose(); return; }
               const r = applyTransition(tr, k.kind, tr.replace?.dur);
               if (!r.ok) { toast(r.error); return; }
-              toast(tr.replace ? `已换成「${k.name}」` : `已加上「${k.name}」`);
+              toast(tr.replace ? trText("Replaced with \"{0}\"", k.name) : trText("Added \"{0}\"", k.name));
               props.onClose();
             }}>
               <div className="pic"><Icon name="card" /></div>
@@ -202,13 +203,13 @@ export function CardsSheet(props: { tab: CardTab; onTab: (t: CardTab) => void; t
             </button>
           ))}
         </div>
-      ) : cards.length === 0 ? <div className="hint">没有可用的卡片。</div> : (
+      ) : cards.length === 0 ? <div className="hint">{trText("No cards available.")}</div> : (
         <div className="grid">
           {cards.map((c) => (
             <button key={c.id} type="button" className="tile" data-pcm="card" data-card={c.id} onClick={() => {
               const clip = actions.addCardClip(c.id, getState().t);
-              if (!clip) { toast("放不下：没有空着的序列"); return; }
-              toast(`已加到 ${fmtTc(clip.start)}`);
+              if (!clip) { toast(trText("Doesn't fit: no empty track")); return; }
+              toast(trText("Added at {0}", fmtTc(clip.start)));
               props.onAdded(clip);
             }}>
               <div className="pic" style={{ background: `linear-gradient(135deg, ${tint(c.id)}, var(--shade-art))` }}><Icon name={isTextCard(c) ? "text" : "card"} /></div>
@@ -228,12 +229,12 @@ export function ClipsSheet(props: { onClose: () => void; onSwitched: (name: stri
   const cuts = useMemo(() => listCuts(project), [project]);
   const toast = useToast();
   const summary = (c: (typeof cuts)[number]) => {
-    if (c.active) { const m = mainClipsOf(project); return `${m.length} 段 · 共 ${fmtDur(m.reduce((s, x) => s + x.end - x.start, 0))}`; }
-    return `共 ${fmtDur(c.duration)}`;
+    if (c.active) { const m = mainClipsOf(project); return trText("{0} clips · {1} total", m.length, fmtDur(m.reduce((s, x) => s + x.end - x.start, 0))); }
+    return trText("Total {0}", fmtDur(c.duration));
   };
   return (
-    <Sheet id="clips" title="选择剪辑" onClose={props.onClose}>
-      <div className="hint">选一个剪辑，缩略时间轴就换成它的内容。</div>
+    <Sheet id="clips" title={trText("Select cut")} onClose={props.onClose}>
+      <div className="hint">{trText("Pick a cut and the mini timeline switches to its content.")}</div>
       {cuts.map((c) => (
         <button key={c.id} type="button" className={c.active ? "crow cur" : "crow"} data-pcm="cut-row" data-cut={c.id} onClick={() => {
           if (!c.active) actions.switchCut(c.id);
@@ -242,17 +243,17 @@ export function ClipsSheet(props: { onClose: () => void; onSwitched: (name: stri
         }}>
           <div className="i"><Icon name="clip" /></div>
           <div style={{ flex: 1, minWidth: 0 }}><b>{c.name}</b><div className="hint" style={{ margin: 0 }}>{summary(c)}</div></div>
-          {c.active && <span className="chip accent">当前</span>}
+          {c.active && <span className="chip accent">{trText("Current")}</span>}
         </button>
       ))}
       <button type="button" className="btn" style={{ width: "100%", marginTop: 6 }} data-pcm="cut-new" onClick={() => {
         actions.addCut(undefined, { switchTo: true });
         const now = getState().project;
-        const name = now.cuts?.find((c) => c.id === now.activeCutId)?.name ?? "新剪辑";
-        toast(`已新建“${name}”`);
+        const name = now.cuts?.find((c) => c.id === now.activeCutId)?.name ?? trText("New cut");
+        toast(trText("Created \"{0}\"", name));
         props.onSwitched(name);
         props.onClose();
-      }}>＋ 新建剪辑</button>
+      }}>{trText("+ New cut")}</button>
     </Sheet>
   );
 }
@@ -284,29 +285,29 @@ function OverlaySection({ clip, onQuote }: {
   if (!items.length) return null;
   return (
     <div data-pcm="param-overlays">
-      <div className="hint">叠加卡 · {items.length} 张，从上到下就是处理顺序</div>
+      <div className="hint">{trText("Overlay cards · {0}, processed from top to bottom", items.length)}</div>
       {items.map((it) => (
         <div key={`${it.kind}:${it.refId}`} className={it.off ? "row is-off" : "row"} data-pcm="param-overlay">
           <div className="t">
             <b>{it.name}</b>
-            <small>{OVERLAY_KIND_NAME[it.kind]}{it.value ? ` · ${it.value}` : ""}{it.off ? " · 已停用" : ""}</small>
+            <small>{OVERLAY_KIND_NAME[it.kind]}{it.value ? ` · ${it.value}` : ""}{it.off ? trText(" · Disabled") : ""}</small>
           </div>
           {onQuote && (
             <button type="button" className="icon-btn ref" data-pcm="param-overlay-ref"
-              aria-label={`引用「${it.name}」给 Agent`} title="把这一张引用给 Agent"
+              aria-label={trText("Reference \"{0}\" to the Agent", it.name)} title={trText("Reference this card to the Agent")}
               onClick={() => onQuote(clip, it)}><Icon name="ref" /></button>
           )}
           <button type="button" className="icon-btn danger" data-pcm="param-overlay-detach"
-            aria-label={`摘掉「${it.name}」`} disabled={!it.canDetach}
-            title={it.canDetach ? "从这一段上摘掉" : "这张卡不止一路输入、或者本身就是这一段的内容，接不回去"}
+            aria-label={trText("Detach \"{0}\"", it.name)} disabled={!it.canDetach}
+            title={it.canDetach ? trText("Detach from this clip") : trText("This card has more than one input, or is itself the content of this clip, so it can't be reattached")}
             onClick={() => {
               try { detachOverlay(actions, clip, it, (id) => getCard(id)); }
               catch (e) { toast(e instanceof Error ? e.message : String(e)); }
             }}><Icon name="trash" /></button>
           <button type="button" className={it.off ? "toggle" : "toggle on"} data-pcm="param-overlay-toggle"
-            aria-label={`${it.name}${it.off ? " 已停用" : " 生效中"}`}
+            aria-label={`${it.name}${it.off ? trText(" disabled") : trText(" active")}`}
             disabled={!it.canToggle}
-            title={it.canToggle ? undefined : "素材效果卡的停用要在编辑分区的节点图里改"}
+            title={it.canToggle ? undefined : trText("Disabling a media effect card is done in the node graph of the edit section")}
             onClick={() => setOverlayOff(actions, clip, it, !it.off)} />
         </div>
       ))}
@@ -321,18 +322,18 @@ export function ParamsSheet(props: { target: ParamsTarget; onClose: () => void; 
   const toast = useToast();
   const undoRow = (clipId?: string) => (
     <div className="undo-row">
-      <button type="button" className="btn" data-pcm="params-undo" onClick={() => actions.undo()}><Icon name="undo" />撤销</button>
-      {clipId && <button type="button" className="btn" onClick={() => props.onAskAgent(clipId)}>让 Agent 接着改</button>}
+      <button type="button" className="btn" data-pcm="params-undo" onClick={() => actions.undo()}><Icon name="undo" />{trText("Revoke")}</button>
+      {clipId && <button type="button" className="btn" onClick={() => props.onAskAgent(clipId)}>{trText("Have the Agent keep editing")}</button>}
     </div>
   );
   if ("transitionId" in props.target) {
     const tr = transitionsOf(project).find((x) => x.id === (props.target as { transitionId: string }).transitionId);
-    if (!tr) return <Sheet id="params" title="调整" light onClose={props.onClose}><div className="hint">这处转场已经不在了。</div></Sheet>;
+    if (!tr) return <Sheet id="params" title={trText("Adjust")} light onClose={props.onClose}><div className="hint">{trText("This transition no longer exists.")}</div></Sheet>;
     const name = TRANSITION_KINDS.find((k) => k.kind === tr.kind)!.name;
     return (
-      <Sheet id="params" title={name} light onClose={props.onClose} head={<span className="chip plum">转场</span>}>
-        <div className="wrapnote"><b>转场：</b>把相邻的段绑成一组，想单独挪动先删掉转场。</div>
-        <Slider label="时长" pcm="param-transition-dur" value={tr.dur} min={MIN_TRANSITION_DUR} max={Math.min(4, MAX_TRANSITION_DUR)} step={0.1} unit="s" onCommit={(v) => {
+      <Sheet id="params" title={name} light onClose={props.onClose} head={<span className="chip plum">{trText("Transition")}</span>}>
+        <div className="wrapnote"><b>{trText("Transition:")}</b>{trText("Adjacent clips are bound into a group. To move one on its own, delete the transition first.")}</div>
+        <Slider label={trText("Duration")} pcm="param-transition-dur" value={tr.dur} min={MIN_TRANSITION_DUR} max={Math.min(4, MAX_TRANSITION_DUR)} step={0.1} unit="s" onCommit={(v) => {
           const a = findClip(project, tr.aId)?.clip, b = tr.bId ? findClip(project, tr.bId)?.clip : undefined;
           const target: TransitionTarget | null = tr.kind === "crossfade" ? (a && b ? { a, b, replace: tr } : null)
             : tr.kind === "fadeOut" ? (a ? { a, b: a, replace: tr } : null) : (a ? { a, b: a, replace: tr } : null);
@@ -345,30 +346,30 @@ export function ParamsSheet(props: { target: ParamsTarget; onClose: () => void; 
     );
   }
   const hit = findClip(project, props.target.clipId);
-  if (!hit) return <Sheet id="params" title="调整" light onClose={props.onClose}><div className="hint">这个片段已经不在了。</div></Sheet>;
+  if (!hit) return <Sheet id="params" title={trText("Adjust")} light onClose={props.onClose}><div className="hint">{trText("This clip no longer exists.")}</div></Sheet>;
   const c = hit.clip;
   const kind = clipKind(project, c);
   const def = c.cardId ? getCard(c.cardId) : undefined;
   const len = c.end - c.start;
-  const kindLabel = kind === "card" ? "卡片" : kind === "audio" ? "音频" : kind === "image" ? "图片段" : kind === "cut" ? "剪辑段" : "视频段";
+  const kindLabel = kind === "card" ? trText("Cards") : kind === "audio" ? trText("audio") : kind === "image" ? trText("Image clip") : kind === "cut" ? trText("Cut segment") : trText("Video clip");
   return (
     <Sheet id="params" title={clipName(project, c, (id) => getCard(id)?.name)} light onClose={props.onClose} head={<span className={kind === "card" ? "chip plum" : "chip"}>{kindLabel}</span>}>
       <OverlaySection clip={c} onQuote={props.onQuoteOverlay} />
       {def && def.controls.filter((k) => k.type !== "asset").map((k) => (
         <ControlField key={k.key} ctl={k} value={c.params[k.key] ?? (def.defaults as Record<string, unknown>)[k.key]} onCommit={(v) => actions.setClipParams(c.id, { [k.key]: v })} />
       ))}
-      <Slider label="时长" pcm="param-dur" value={Math.round(len * 10) / 10} min={0.5} max={Math.max(30, Math.ceil(len))} step={0.1} unit="s" onCommit={(v) => {
+      <Slider label={trText("Duration")} pcm="param-dur" value={Math.round(len * 10) / 10} min={0.5} max={Math.max(30, Math.ceil(len))} step={0.1} unit="s" onCommit={(v) => {
         const before = getState().project;
         actions.moveClip(c.id, { end: c.start + v });
-        if (getState().project === before) toast("改不了时长：后面放不下，或这一段挂着转场");
+        if (getState().project === before) toast(trText("Can't change the duration: no room after it, or this clip has a transition attached"));
       }} />
-      {kind !== "audio" && <Slider label="不透明度" pcm="param-opacity" value={Math.round((c.opacity ?? 1) * 100)} min={0} max={100} unit="%" onCommit={(v) => actions.updateClip(c.id, { opacity: v / 100 })} />}
+      {kind !== "audio" && <Slider label={trText("Opacity")} pcm="param-opacity" value={Math.round((c.opacity ?? 1) * 100)} min={0} max={100} unit="%" onCommit={(v) => actions.updateClip(c.id, { opacity: v / 100 })} />}
       {filterableClip(project, c) && <ClipFilterFields clip={c} />}
       {(kind === "video" || kind === "audio") && <>
-        <Slider label="音量" pcm="param-volume" value={Math.round((c.audioVolume ?? 1) * 100)} min={0} max={100} unit="%" onCommit={(v) => actions.setClipVolume(c.id, v / 100)} />
-        {kind === "video" && clipSpeed(c) !== 1 && <div className="wrapnote" data-pcm="param-speed-note"><b>已变速 {speedLabel(clipSpeed(c))}：</b>{SPEED_MUTE_NOTE}</div>}
-        <div className="row"><div className="t">静音此片段<small>画面不受影响；时间轴会醒目标出“已静音”</small></div>
-          <button type="button" className={c.audioMuted ? "toggle on" : "toggle"} aria-label="静音" data-pcm="param-mute" onClick={() => actions.setClipMuted(c.id, !c.audioMuted)} /></div>
+        <Slider label={trText("Volume")} pcm="param-volume" value={Math.round((c.audioVolume ?? 1) * 100)} min={0} max={100} unit="%" onCommit={(v) => actions.setClipVolume(c.id, v / 100)} />
+        {kind === "video" && clipSpeed(c) !== 1 && <div className="wrapnote" data-pcm="param-speed-note"><b>{trText("Speed changed {0}:", speedLabel(clipSpeed(c)))}</b>{SPEED_MUTE_NOTE}</div>}
+        <div className="row"><div className="t">{trText("Mute this clip")}<small>{trText("The picture is unaffected; the timeline clearly marks it as \"Muted\"")}</small></div>
+          <button type="button" className={c.audioMuted ? "toggle on" : "toggle"} aria-label={trText("Muted")} data-pcm="param-mute" onClick={() => actions.setClipMuted(c.id, !c.audioMuted)} /></div>
       </>}
       {undoRow(c.id)}
     </Sheet>
@@ -387,7 +388,7 @@ export function SpeedSheet(props: { clipId: string; onClose: () => void }) {
   const hit = findClip(project, props.clipId);
   const cur = hit ? clipSpeed(hit.clip) : 1;
   const [text, setText] = useState(String(cur));
-  if (!hit) return <Sheet id="speed" title="速度" light onClose={props.onClose}><div className="hint">这个片段已经不在了。</div></Sheet>;
+  if (!hit) return <Sheet id="speed" title={trText("Speed")} light onClose={props.onClose}><div className="hint">{trText("This clip no longer exists.")}</div></Sheet>;
   const c = hit.clip;
   const presets = CLIP_SPEED_PRESETS.includes(cur) ? CLIP_SPEED_PRESETS : [...CLIP_SPEED_PRESETS, cur].sort((a, b) => a - b);
   const pick = (v: number) => {
@@ -395,18 +396,18 @@ export function SpeedSheet(props: { clipId: string; onClose: () => void }) {
     const r = actions.setClipSpeed(c.id, v);
     if (!r.ok) { toast(r.error); return; }
     setText(String(getState().project.tracks.flatMap((t) => t.clips).find((x) => x.id === c.id)?.speed ?? 1));
-    const head = v === 1 ? "已恢复 1×，原声恢复" : `已改成 ${speedLabel(clipSpeed({ speed: v }))}，这一段不出原声`;
+    const head = v === 1 ? trText("Restored to 1×, original audio restored") : trText("Changed to {0}, this clip has no original audio", speedLabel(clipSpeed({ speed: v })));
     // 转场跟着缩了、谁跟着挪了、推开了几段(用户 2026-10-23 定「气泡提示即可」):和桌面同一句(kernel/clipTime.mjs 的 speedChangeNotes)
     const tail = speedChangeNotes(r, c.id);
-    toast(tail ? `${head}；${tail}` : head);
+    toast(tail ? trText("{0}; {1}", head, tail) : head);
   };
   const commitText = () => {
     const v = Number(text.trim().replace(/[×x]$/i, ""));
-    if (!Number.isFinite(v)) { toast("倍率要是数字"); setText(String(cur)); return; }
+    if (!Number.isFinite(v)) { toast(trText("The speed multiplier must be a number")); setText(String(cur)); return; }
     pick(v);
   };
   return (
-    <Sheet id="speed" title={clipName(project, c, (id) => getCard(id)?.name)} light onClose={props.onClose} head={<span className="chip">速度</span>}>
+    <Sheet id="speed" title={clipName(project, c, (id) => getCard(id)?.name)} light onClose={props.onClose} head={<span className="chip">{trText("Speed")}</span>}>
       <div className="seg" data-pcm="speed-presets" style={{ flexWrap: "wrap", rowGap: 6 }}>
         {presets.map((v) => (
           <button key={v} type="button" className={v === cur ? "on" : undefined} data-pcm="speed-preset" data-speed={v} aria-pressed={v === cur} onClick={() => pick(v)}>{speedLabel(v)}</button>
@@ -414,14 +415,14 @@ export function SpeedSheet(props: { clipId: string; onClose: () => void }) {
       </div>
       {/* 手动输入倍率(用户 2026-10-23 定):0.25～4,可带小数;超出范围拒绝并提示,不夹 */}
       <div className="field" data-pcm="speed-custom">
-        <label>自定义倍率<span><input className="num" data-pcm="speed-input" type="number" inputMode="decimal" min={CLIP_SPEED_MIN} max={CLIP_SPEED_MAX} step={0.01} value={text}
+        <label>{trText("Custom speed multiplier")}<span><input className="num" data-pcm="speed-input" type="number" inputMode="decimal" min={CLIP_SPEED_MIN} max={CLIP_SPEED_MAX} step={0.01} value={text}
           onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") commitText(); }} /> ×</span></label>
-        <button type="button" className="btn" data-pcm="speed-apply" onClick={commitText}>应用</button>
+        <button type="button" className="btn" data-pcm="speed-apply" onClick={commitText}>{trText("Apply")}</button>
       </div>
-      <div className="wrapnote" data-pcm="speed-note"><b>声音：</b>{SPEED_MUTE_NOTE}</div>
-      <div className="hint">起点不动，时长按新速度重算：{fmtDur(c.end - c.start)}（素材 {fmtDur((c.end - c.start) * cur)}）。变长碰到后面的段会把它们一起往后推，变短尾部留空；挂着转场时转场跟着片段两端走，装不下时转场跟着缩短并提示。</div>
+      <div className="wrapnote" data-pcm="speed-note"><b>{trText("Sound:")}</b>{SPEED_MUTE_NOTE}</div>
+      <div className="hint">{trText("The start point stays; the duration is recalculated at the new speed: {0} (media {1}). If it gets longer, it pushes the following segments back; if shorter, the tail is left empty. When a transition is attached, it follows the clip's two ends, and if it does not fit it is shortened and you are notified.", fmtDur(c.end - c.start), fmtDur((c.end - c.start) * cur))}</div>
       <div className="undo-row">
-        <button type="button" className="btn" data-pcm="speed-undo" onClick={() => actions.undo()}><Icon name="undo" />撤销</button>
+        <button type="button" className="btn" data-pcm="speed-undo" onClick={() => actions.undo()}><Icon name="undo" />{trText("Revoke")}</button>
       </div>
     </Sheet>
   );
@@ -453,29 +454,29 @@ export function ConflictSheet(props: { onClose: () => void }) {
   const close = () => { setOfflineOpen(false); setMergeOpen(false); props.onClose(); };
   if (paused && !m.hasItems) return <PausedSheet onClose={close} done={props.onClose} />;
   return (
-    <Sheet id="conflict" title="冲突合并" onClose={close} foot={
+    <Sheet id="conflict" title={trText("Merge conflicts")} onClose={close} foot={
       <div className="cf-foot">
         {m.hasItems && <>
-          <button type="button" className="btn primary" data-pcm="cf-merge" disabled={!m.selected || !m.online} onClick={m.merge}>合并</button>
-          <button type="button" className="btn" data-pcm="cf-drop" disabled={!m.selected} onClick={m.remove}>删除选中</button>
+          <button type="button" className="btn primary" data-pcm="cf-merge" disabled={!m.selected || !m.online} onClick={m.merge}>{trText("Merge")}</button>
+          <button type="button" className="btn" data-pcm="cf-drop" disabled={!m.selected} onClick={m.remove}>{trText("Delete selected")}</button>
         </>}
-        <button type="button" className="btn" data-pcm="cf-close" onClick={close}>{m.hasItems ? "下次再说" : "完成"}</button>
+        <button type="button" className="btn" data-pcm="cf-close" onClick={close}>{m.hasItems ? trText("Later") : trText("done")}</button>
       </div>
     }>
-      {!m.hasItems ? <div className="hint" style={{ textAlign: "center", padding: "30px 0" }}>全部处理完了 ✓</div> : <>
-        <div className="hint" data-pcm="cf-summary">{mergeBarText(m.counts)}。勾选要处理的项，可以逐项勾。</div>
+      {!m.hasItems ? <div className="hint" style={{ textAlign: "center", padding: "30px 0" }}>{trText("All done ✓")}</div> : <>
+        <div className="hint" data-pcm="cf-summary">{trText("{0}. Tick the items to process; you can tick them one by one.", mergeBarText(m.counts))}</div>
         <div className="cf-top">
-          <button type="button" className="btn" data-pcm="cf-select-clean" onClick={m.selectNonConflict}>选中无冲突项</button>
-          <button type="button" className="btn" data-pcm="cf-clear" onClick={m.clearAll}>取消全部勾选</button>
+          <button type="button" className="btn" data-pcm="cf-select-clean" onClick={m.selectNonConflict}>{trText("Select non-conflicting items")}</button>
+          <button type="button" className="btn" data-pcm="cf-clear" onClick={m.clearAll}>{trText("Clear all selections")}</button>
         </div>
         {m.rows.map((row) => {
           const state = m.check(row);
           return (
             <div key={row.key} className="cf-group" data-pcm="cf-thing" data-key={row.key}>
               <div className="cf-head">
-                <label><input type="checkbox" aria-label={`勾选${row.label}`} checked={state === "all"} ref={(el) => { if (el) el.indeterminate = state === "some"; }} onChange={() => m.toggleThing(row)} /></label>
+                <label><input type="checkbox" aria-label={trText("Select {0}", row.label)} checked={state === "all"} ref={(el) => { if (el) el.indeterminate = state === "some"; }} onChange={() => m.toggleThing(row)} /></label>
                 <span className="nm">{row.label}<small className="cf-kind">{row.changeText}</small></span>
-                {row.conflict ? <span className="chip warn">有冲突</span> : <span className="chip">无冲突</span>}
+                {row.conflict ? <span className="chip warn">{trText("Conflict")}</span> : <span className="chip">{trText("No conflict")}</span>}
               </div>
               <div className="cf-sub">
                 {row.props.map((p) => (
@@ -489,7 +490,7 @@ export function ConflictSheet(props: { onClose: () => void }) {
           );
         })}
         {m.blocked && <div className="hint cf-warn" data-pcm="cf-blocked">{mergeBlockedText(m.blocked)}</div>}
-        {!m.online && <div className="hint cf-warn" data-pcm="cf-offline">当前离线：可以先「删除选中」，连上后再「合并」。</div>}
+        {!m.online && <div className="hint cf-warn" data-pcm="cf-offline">{trText("You are offline: you can \"Delete selected\" for now, then \"Merge\" once connected.")}</div>}
         {m.note && <div className="hint" role="status" data-pcm="cf-note">{m.note}</div>}
       </>}
     </Sheet>
@@ -501,18 +502,18 @@ function PausedSheet(props: { onClose: () => void; done: () => void }) {
   const summary = pausedSummary();
   const queued = useSync((v) => v.paused?.queued ?? 0);
   return (
-    <Sheet id="conflict" title="冲突合并" onClose={props.onClose} foot={
+    <Sheet id="conflict" title={trText("Merge conflicts")} onClose={props.onClose} foot={
       <div className="cf-foot">
-        <button type="button" className="btn primary" data-pcm="cf-merge" onClick={() => { replayOffline(); props.done(); }}>合并</button>
-        <button type="button" className="btn" data-pcm="cf-drop" onClick={() => { discardOffline(); props.done(); }}>删除全部</button>
-        <button type="button" className="btn" data-pcm="cf-close" onClick={props.onClose}>下次再说</button>
+        <button type="button" className="btn primary" data-pcm="cf-merge" onClick={() => { replayOffline(); props.done(); }}>{trText("Merge")}</button>
+        <button type="button" className="btn" data-pcm="cf-drop" onClick={() => { discardOffline(); props.done(); }}>{trText("Delete all")}</button>
+        <button type="button" className="btn" data-pcm="cf-close" onClick={props.onClose}>{trText("Not now")}</button>
       </div>
     }>
-      <div className="hint">你有 {queued} 步断网期间的修改。这段时间项目有以下改动，可能会和你的修改重叠：</div>
+      <div className="hint">{trText("You have {0} offline changes. The project changed in the meantime in the following ways, which may overlap with your changes:", queued)}</div>
       {summary.map((s, i) => (
         <div key={i} className="cf-group">
-          <div className="cf-head"><span className="nm">{s.who}</span>{s.what.length ? <span className="chip warn">有冲突</span> : <span className="chip">无冲突</span>}</div>
-          <div className="cf-sub">{s.what.length ? s.what.map((w, j) => <span key={j}>{w}</span>) : <span>（没有列出具体位置）</span>}</div>
+          <div className="cf-head"><span className="nm">{s.who}</span>{s.what.length ? <span className="chip warn">{trText("Conflict")}</span> : <span className="chip">{trText("No conflict")}</span>}</div>
+          <div className="cf-sub">{s.what.length ? s.what.map((w, j) => <span key={j}>{w}</span>) : <span>{trText("(no specific locations listed)")}</span>}</div>
         </div>
       ))}
     </Sheet>
@@ -537,12 +538,12 @@ export function MembersSheet(props: { info: MembersInfo; onClose: () => void }) 
         accountMemberAdmin({ op, accountId: row.accountId, joinRequestId: row.joinRequestId, requestId }));
       toast(op === "approve-join" ? JOIN_REQUEST_TEXT.approvedToast(name) : JOIN_REQUEST_TEXT.rejectedToast(name));
     } catch (e) {
-      toast(e instanceof Error && e.message ? e.message : "暂时无法处理这条申请，请重试。");
+      toast(e instanceof Error && e.message ? e.message : trText("Unable to process this request right now. Please try again."));
     } finally { setDeciding(null); info.refresh(); }
   };
   return (
-    <Sheet id="members" title={info.unavailable ? "成员" : `成员：${info.people} 人 · Agent：${info.agents} 个`} onClose={props.onClose}>
-      {info.unavailable && <div className="hint">暂时无法获取项目成员。</div>}
+    <Sheet id="members" title={info.unavailable ? trText("Members") : trText("Members: {0} · Agents: {1}", info.people, info.agents)} onClose={props.onClose}>
+      {info.unavailable && <div className="hint">{trText("Unable to get project members right now.")}</div>}
       {info.requests.length > 0 && <div data-pcm="join-requests">
         <h2 className="sec" style={{ marginTop: 0 }}>{JOIN_REQUEST_TEXT.requestsTitle(info.requests.length)}</h2>
         {info.requests.map((row) => (
@@ -555,18 +556,18 @@ export function MembersSheet(props: { info: MembersInfo; onClose: () => void }) 
               onClick={() => void decide("reject-join", row)}>{JOIN_REQUEST_TEXT.reject}</button>
           </div>
         ))}
-        <h2 className="sec">项目成员</h2>
+        <h2 className="sec">{trText("Project members")}</h2>
       </div>}
       {info.lines.map((l) => (
         <div key={l.key} className="list-row" data-pcm="member-row">
           <div className={l.agent ? "i plum" : "i"}><Icon name={l.agent ? "card" : "person"} /></div>
-          <div className="grow"><b>{l.name}{l.creator ? "（创建者）" : ""}</b><div className="hint" style={{ margin: 0 }}>{l.sub}</div></div>
-          {l.agent ? <span className="chip plum">{l.sub === "云端" ? "云端" : "Agent"}</span> : <i className={l.online ? "dot" : "dot off"} />}
+          <div className="grow"><b>{l.name}{l.creator ? trText(" (creator)") : ""}</b><div className="hint" style={{ margin: 0 }}>{l.sub}</div></div>
+          {l.agent ? <span className="chip plum">{l.sub === trText("Cloud") ? trText("Cloud") : "Agent"}</span> : <i className={l.online ? "dot" : "dot off"} />}
         </div>
       ))}
       {link && <button type="button" className="btn" style={{ width: "100%", marginTop: 6 }} data-pcm="copy-link" onClick={() => {
-        void navigator.clipboard?.writeText(link).then(() => toast("项目链接已复制"), () => toast(link));
-      }}>复制项目链接</button>}
+        void navigator.clipboard?.writeText(link).then(() => toast(trText("Project link copied")), () => toast(link));
+      }}>{trText("Copy project link")}</button>}
     </Sheet>
   );
 }
@@ -585,7 +586,7 @@ export function ExportSheet(props: { onClose: () => void }) {
     if (pending && pending.length) { setRun({ phase: "error", done: 0, total: 1, message: awaitingUploaderMessage(pending) }); return; }
     let target: FileSystemFileHandle | null = null;
     try {
-      target = await pickSaveTarget(`${project.name}.mp4`, "MP4 视频", { "video/mp4": [".mp4"] });
+      target = await pickSaveTarget(`${project.name}.mp4`, trText("MP4 video"), { "video/mp4": [".mp4"] });
     } catch (e) {
       if ((e as Error)?.name === "AbortError") return;
       setRun({ phase: "error", done: 0, total: 1, message: (e as Error).message });
@@ -604,7 +605,7 @@ export function ExportSheet(props: { onClose: () => void }) {
         try { await streamExportFile(id, "preview.mp4", w); await w.close(); } catch (error) { await w.abort?.(); throw error; }
       }
       const note = skippedMedia?.length ? exportSkippedMessage(skippedMedia) : "";
-      setRun((s) => (s ? { ...s, phase: "done", done: s.total, message: note || (target ? `已保存为 ${target.name}` : "已存到浏览器的下载位置") } : s));
+      setRun((s) => (s ? { ...s, phase: "done", done: s.total, message: note || (target ? trText("Saved as {0}", target.name) : trText("Saved to the browser's download location")) } : s));
     } catch (e) {
       const err = e as Error & { cancelled?: boolean };
       setRun((s) => (s ? { ...s, phase: err.cancelled ? "cancelled" : "error", message: err.message } : s));
@@ -614,21 +615,21 @@ export function ExportSheet(props: { onClose: () => void }) {
   };
   const pct = run && run.total > 0 ? Math.min(100, Math.round((run.done / run.total) * 100)) : 0;
   return (
-    <Sheet id="export" title="导出" onClose={() => { if (run?.phase !== "running") props.onClose(); }}>
+    <Sheet id="export" title={trText("Export")} onClose={() => { if (run?.phase !== "running") props.onClose(); }}>
       {(!run || run.phase !== "running") && ([["fast", ONLINE_EXPORT_TEXT.fast, ONLINE_EXPORT_TEXT.fastHint], ["full", ONLINE_EXPORT_TEXT.full, ONLINE_EXPORT_TEXT.fullHint]] as const).map(([mode, name, hint]) => (
         <div key={mode} className="row">
           <div className="t">{name}<small>{hint}</small></div>
-          <button type="button" className="btn primary" data-pcm="export-start" data-mode={mode} onClick={() => void start(mode)}>开始</button>
+          <button type="button" className="btn primary" data-pcm="export-start" data-mode={mode} onClick={() => void start(mode)}>{trText("Start")}</button>
         </div>
       ))}
       {run && (
         <div data-pcm="export-progress" data-phase={run.phase}>
           {run.phase === "running" && <div className="bar"><i style={{ width: `${pct}%` }} /></div>}
           <div className="hint">
-            {run.phase === "running" ? (run.waiting ?? `${run.stage === "sound" ? "生成声音" : "渲染中"} ${pct}%…`)
-              : run.phase === "done" ? `完成 · ${run.message ?? ""}` : run.phase === "cancelled" ? "已取消导出" : `导出失败：${run.message ?? ""}`}
+            {run.phase === "running" ? (run.waiting ?? `${run.stage === "sound" ? trText("Generate sound") : trText("Rendering")} ${pct}%…`)
+              : run.phase === "done" ? trText("Done · {0}", run.message ?? "") : run.phase === "cancelled" ? trText("Export canceled") : trText("Export failed: {0}", run.message ?? "")}
           </div>
-          {run.phase === "running" && <button type="button" className="btn" style={{ width: "100%" }} onClick={() => { if (idRef.current) void cancelExport(idRef.current); }}>取消导出</button>}
+          {run.phase === "running" && <button type="button" className="btn" style={{ width: "100%" }} onClick={() => { if (idRef.current) void cancelExport(idRef.current); }}>{trText("Cancel export")}</button>}
         </div>
       )}
     </Sheet>

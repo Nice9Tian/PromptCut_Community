@@ -113,7 +113,7 @@ test("MP-M3 打开项目后的后台检查:本机项目标「(缺失)」,共享�
   } finally { stop(); }
   // 本机项目:标
   resetTierBackfillForTest();
-  actions.newProject("本机");
+  actions.newProject("Local");
   const b = actions.addMedia({ kind: "audio", name: "voice.mp3", path: p, url: fileUrl(p) });
   seen = null;
   stop = startTierBackfill({ shared: () => false, afterIngest: (r) => { seen = r; } });

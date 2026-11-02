@@ -1,3 +1,4 @@
+import { tr } from "../i18n/index.ts";
 /**
  * 手机版素材格子、缩略卡的真画面(`docs/plan/mobile-online-task.md` 待用户项第 5 条,用户 2026-10-21 定「要」):
  * 视频取首帧(时间轴上的段取它的入点那一帧),图片取缩略图。
@@ -153,18 +154,18 @@ export function createThumbLoader(opts: { grab: Grab; maxActive?: number; cacheM
 
 const withTimeout = <T,>(p: Promise<T>, ms: number, cleanup: () => void): Promise<T> =>
   new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => { cleanup(); reject(new Error("取缩略图超时")); }, ms);
+    const timer = setTimeout(() => { cleanup(); reject(new Error(tr("Thumbnail fetch timed out"))); }, ms);
     p.then((v) => { clearTimeout(timer); resolve(v); }, (e) => { clearTimeout(timer); reject(e); });
   });
 
 function toDataUrl(src: CanvasImageSource, w: number, h: number): string {
   const size = fitSize(w, h);
-  if (!size.w) throw new Error("没有画面尺寸");
+  if (!size.w) throw new Error(tr("No frame size"));
   const canvas = document.createElement("canvas");
   canvas.width = size.w;
   canvas.height = size.h;
   const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("没有 2D 画布");
+  if (!ctx) throw new Error(tr("No 2D canvas"));
   ctx.drawImage(src, 0, 0, size.w, size.h);
   // 跨源又没给 CORS 的画面会污染画布,这里抛错 → 当没取到
   return canvas.toDataURL("image/jpeg", 0.72);
@@ -178,7 +179,7 @@ export const grabFrame: Grab = (url, kind, t) => {
     img.decoding = "async";
     const p = new Promise<string>((resolve, reject) => {
       img.onload = () => { try { resolve(toDataUrl(img, img.naturalWidth, img.naturalHeight)); } catch (e) { reject(e); } };
-      img.onerror = () => reject(new Error("图片解不了"));
+      img.onerror = () => reject(new Error(tr("Image cannot be decoded")));
     });
     img.src = url;
     return withTimeout(p, GRAB_TIMEOUT_MS, () => { img.src = ""; }).finally(() => { img.onload = img.onerror = null; });
@@ -190,7 +191,7 @@ export const grabFrame: Grab = (url, kind, t) => {
   v.preload = "auto";
   const release = () => { v.removeAttribute("src"); try { v.load(); } catch { /* 已经卸了 */ } };
   const p = new Promise<string>((resolve, reject) => {
-    v.onerror = () => reject(new Error("视频解不了"));
+    v.onerror = () => reject(new Error(tr("Video cannot be decoded")));
     v.onloadedmetadata = () => {
       v.onseeked = () => { try { resolve(toDataUrl(v, v.videoWidth, v.videoHeight)); } catch (e) { reject(e); } };
       v.currentTime = seekTarget(t, v.duration);

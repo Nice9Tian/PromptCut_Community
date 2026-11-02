@@ -27,6 +27,7 @@ import { ChatSidePanel } from "./ChatSidePanel";
 import { Composer } from "./Composer";
 import { DetailEdit } from "./DetailEdit";
 import type { VibeAgent } from "./vibeAgent";
+import { tr } from "../i18n/index.ts";
 
 /** 开始页那句话自动发出之前,选区连上之后再等多久(毫秒):给文档服务登记这张页面留的余量 */
 const PENDING_SETTLE_MS = 2000;
@@ -55,8 +56,8 @@ function MyMessage(props: { m: ChatMessage; sender: string | null }): JSX.Elemen
           {quotes.map((q) => `@${q.label} `).join("")}
           {rest}
         </div>
-        {m.sendState === "sending" && <span className="ps-msg-state">发送中…</span>}
-        {m.sendState === "accepted" && <span className="ps-msg-state">已发出，等待云端开始处理…</span>}
+        {m.sendState === "sending" && <span className="ps-msg-state">{tr("Sending…")}</span>}
+        {m.sendState === "accepted" && <span className="ps-msg-state">{tr("Sent, waiting for the cloud to start processing…")}</span>}
         {m.sendState === "queued" && <span className="ps-msg-state">{OUTBOX_TEXT.queued}</span>}
         {m.error && <span className="ps-msg-state is-err" data-pc="start-chat-send-error">{m.error}</span>}
         {failed && m.resendable && (
@@ -85,7 +86,7 @@ function AgentMessage(props: { m: ChatMessage; ordinal: number }): JSX.Element {
         ))}
         {v.hasCard && (
           <div className="ps-actions" data-pc="start-chat-actions">
-            <div className="ps-actions-head">Agent 操作 · {v.title}</div>
+            <div className="ps-actions-head">{tr("Agent action · {0}", v.title)}</div>
             <ul className="ps-actions-list">
               {v.items.map((it) => (
                 <li key={it.key} data-state={it.state}><span className="ps-op-mark">{MARK[it.state]}</span>{it.kind} · {it.name}</li>
@@ -101,7 +102,7 @@ function AgentMessage(props: { m: ChatMessage; ordinal: number }): JSX.Element {
           <div key={s.key} className="ps-msg-text ps-md"><LiveMarkdown text={s.text} live={live && s === lastText} /></div>
         ))}
         {live && <p className="ps-msg-text ps-msg-live" data-pc="start-chat-typing">{activityText(m, runningTool(partsOf(m)))}</p>}
-        {!live && !sayings.length && !v.hasCard && !m.error && !outcome && <p className="ps-msg-text ps-msg-live">（这一轮没有留下文字）</p>}
+        {!live && !sayings.length && !v.hasCard && !m.error && !outcome && <p className="ps-msg-text ps-msg-live">{tr("(no text was left for this turn)")}</p>}
         {m.error && <p className="ps-msg-text ps-msg-err" role="alert" data-pc="start-chat-error">{m.error}</p>}
         {outcome && <p className="ps-msg-text ps-msg-live">{outcome}</p>}
         {m.cloudRender && <p className={`ps-msg-text ps-msg-live${m.cloudRender.state === "failed" || m.cloudRender.state === "unavailable" ? " ps-msg-err" : ""}`}>{m.cloudRender.text}</p>}
@@ -210,9 +211,9 @@ export function ChatView(props: {
   const footNote = note
     || (vibe.whyNot && vibe.projectId ? vibe.whyNot : "")
     // 云端的执行服务没在接活:和编辑器右栏同一句(`CloudAiPanel.tsx` 的 cloud-note)。本机 Agent 没有执行服务,恒为假
-    || (vibe.waitingExecutor ? "消息会持久排队，等待执行服务；重新打开可接着看。" : "")
+    || (vibe.waitingExecutor ? tr("Messages are queued persistently while waiting for the executor service; reopen to pick up where you left off.") : "")
 
-    || (vibe.queued > 0 ? `前面还有 ${vibe.queued} 条在排队，一轮一轮跑。` : "")
+    || (vibe.queued > 0 ? tr("{0} more ahead in the queue, running one turn at a time.", vibe.queued) : "")
     || vibe.hint;
 
   // 同一个输入框,两个落点:要么在聊天列底部,要么在拓展栏那块面板里(见上面 `inPanel`)
@@ -226,7 +227,7 @@ export function ChatView(props: {
       canSend={vibe.canSend}
       canStop={vibe.canStop}
       stopMode={stopMode}
-      placeholder={vibe.canSend ? `对「${props.title}」说点什么` : (vibe.whyNot ?? "")}
+      placeholder={vibe.canSend ? tr("Say something to \"{0}\"", props.title) : (vibe.whyNot ?? "")}
       note={footNote}
       narrow={inPanel}
     />
@@ -246,7 +247,7 @@ export function ChatView(props: {
               onQuote={(q) => {
                 setText((t) => (t.trim() ? `${t.trimEnd()} ${q} ` : `${q} `));
                 area.current?.focus();
-                setNote(`已把「${q}」放进输入框。`);
+                setNote(tr("Put \"{0}\" into the input box.", q));
               }}
             />
           ) : (
@@ -259,7 +260,7 @@ export function ChatView(props: {
                         {START_PRESET}
                       </button>
                     ) : (
-                      <p className="ps-muted">{vibe.whyNot ?? "正在连接云端 Agent…"}</p>
+                      <p className="ps-muted">{vibe.whyNot ?? tr("Connecting to the Cloud Agent…")}</p>
                     )}
                   </div>
                 )}

@@ -30,6 +30,8 @@ import { cutDuration } from "../../kernel/cutSegments";
 import { clipSpeed, isSpeedChanged, speedLabel } from "../../kernel/clipTime.mjs";
 import { openCutInTimeline } from "./CutTabs";
 import { useReadOnly } from "../readOnly";
+import { tr as trText } from "../../i18n/index.ts";
+import { OVERLAY_QUOTE_KIND } from "../../mobile/agentView";
 
 export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
   const [volumeOpen, setVolumeOpen] = useState(false);
@@ -50,7 +52,7 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
   // 剪辑段(kernel/cutSegments.ts):标签跟着被引用剪辑现在的名字走;找不到(悬空引用)就写明
   const cutName = useStore((s) => (clip.cutId ? s.project.cuts?.find((c) => c.id === clip.cutId)?.name ?? null : null));
   const cutTotal = useStore((s) => (clip.cutId ? cutDuration(s.project, clip.cutId) : 0));
-  const label = clip.cutId ? (cutName ? `剪辑 · ${cutName}` : "剪辑 · (已不存在)") : clip.cardId ? clipCardLabel(knownCardName(clip.cardId)) : clip.label;
+  const label = clip.cutId ? (cutName ? trText("Cut · {0}", cutName) : trText("Cut · (no longer exists)")) : clip.cardId ? clipCardLabel(knownCardName(clip.cardId)) : clip.label;
   // 变速的视频段:名字后面带上倍数(kernel/clipTime.mjs),一眼看得出这段改过速度
   const shownLabel = isSpeedChanged(clip) && clip.mediaId ? `${label ?? ""} · ${speedLabel(clipSpeed(clip))}` : label;
   // 这台设备跑不了的卡不挂任何「本地 PC 辅助渲染」的徽标(2026-10-21 用户定:没有这种情况;画面由渲染节点出)
@@ -70,14 +72,14 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
 
   let subtitle = "";
   if (isCaption) {
-    subtitle = capCount > 0 ? `${capCount} 条字幕` : "还没有字幕,右键素材去转写";
+    subtitle = capCount > 0 ? trText("{0} captions", capCount) : trText("No captions yet, right-click the media to transcribe");
   } else if (clip.cardId && paramsView) {
     // 第一个文字控件的值 → 卡片说明;同步来的用户卡(在线页面没有定义)用源码里解析出的视图
     subtitle = clipSubtitleOf(paramsView, clip.params);
   } else if (clip.mediaId) {
-    subtitle = "时长 " + formatTime(clip.end - clip.start);
+    subtitle = trText("Duration ") + formatTime(clip.end - clip.start);
   } else if (clip.cutId) {
-    subtitle = `${(clip.cutOffset ?? 0) > 0 ? `从 ${formatTime(clip.cutOffset ?? 0)} 起 · ` : ""}时长 ${formatTime(clip.end - clip.start)} · 双击打开`;
+    subtitle = trText("{0}Duration {1} · double-click to open", (clip.cutOffset ?? 0) > 0 ? trText("From {0} · ", formatTime(clip.cutOffset ?? 0)) : "", formatTime(clip.end - clip.start));
   }
   // 被引用剪辑事后变短:超出它总时长的那一截透明无声(段的起止不动),斜线标出来
   const cutOverSec = clip.cutId && cutName ? Math.max(0, (clip.end - clip.start) - Math.max(0, cutTotal - (clip.cutOffset ?? 0))) : 0;
@@ -253,7 +255,7 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
     const m = clip.mediaId ? getState().project.media.find((x) => x.id === clip.mediaId) : null;
     return [
       ...(m && m.kind !== "image" && m.transcript
-        ? [{ label: `查看字幕(${m.transcript.segments.length} 段)`, action: () => requestCaptions(m.id) }]
+        ? [{ label: trText("View captions ({0} segments)", m.transcript.segments.length), action: () => requestCaptions(m.id) }]
         : []),
       { label: ro.why, disabled: true, action: () => {} },
     ];
@@ -266,11 +268,11 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
   const plan = planClipLayout(widthPx, rowSize, overlays.length);
 
   /** 停用 / 摘掉这两项:动作本身在 `overlayActions.ts`,手机版「调整」表单用的是同一份 */
-  const lockNote = frozen ? { title: ro.locked ? ro.why : "这条序列锁着" } : null;
+  const lockNote = frozen ? { title: ro.locked ? ro.why : trText("This track is locked") } : null;
   const detachItem = (it: OverlayItem): ContextMenuItem =>
     it.canDetach
       ? {
-          label: "摘掉",
+          label: trText("Detach"),
           danger: true,
           disabled: frozen,
           ...lockNote,
@@ -281,10 +283,10 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
           },
         }
       : {
-          label: "摘掉",
+          label: trText("Detach"),
           danger: true,
           disabled: true,
-          title: "这张卡不止一路输入、或者本身就是这一段的内容，接不回去；请在编辑分区的节点图里改",
+          title: trText("This card has more than one input, or is itself the content of this segment, so it cannot be reconnected; change it in the node graph of the edit section"),
           action: () => {},
         };
 
@@ -295,11 +297,11 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
    * 预览右键「引用到 AI」用的就是它。两边写出来的引用块是同一份 `quoteToken`。
    */
   const quoteThisClip = () =>
-    quoteClip ? quoteClip(clip, label || "片段") : requestQuote({ clipId: clip.id, label: label || "片段" });
+    quoteClip ? quoteClip(clip, label || trText("Clips")) : requestQuote({ clipId: clip.id, label: label || trText("Clips") });
   const quoteThisOverlay = (it: OverlayItem) =>
     quoteOverlay
       ? quoteOverlay(clip, it)
-      : requestQuote({ clipId: overlayQuoteId(clip, it), label: it.name, kind: "叠加卡" });
+      : requestQuote({ clipId: overlayQuoteId(clip, it), label: it.name, kind: OVERLAY_QUOTE_KIND });
 
   /**
    * 停用 / 启用:挂载和逐段参数都留着,只翻 `off` —— 调不出想要的效果时先关掉比一比,
@@ -309,17 +311,17 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
   const toggleItem = (it: OverlayItem): ContextMenuItem =>
     it.canToggle
       ? {
-          label: it.off ? "启用" : "停用",
+          label: it.off ? trText("Enable") : trText("Disable"),
           disabled: frozen,
           ...lockNote,
           action: () => setOverlayOff(actions, clip, it, !it.off),
         }
-      : { label: "停用", disabled: true, title: "素材效果卡的停用要在编辑分区的节点图里改", action: () => {} };
+      : { label: trText("Disable"), disabled: true, title: trText("Disabling a media effect card is done in the node graph of the edit section"), action: () => {} };
 
   /** 这一张能做的事(菜单最里面那一级) */
   const overlayActions = (it: OverlayItem): ContextMenuItem[] => [
-    { label: "引用到输入框", action: () => quoteThisOverlay(it) },
-    { label: "改参数…", hint: it.value, action: () => actions.select([clip.id]) },
+    { label: trText("Quote into input box"), action: () => quoteThisOverlay(it) },
+    { label: trText("Edit parameters…"), hint: it.value, action: () => actions.select([clip.id]) },
     toggleItem(it),
     detachItem(it),
   ];
@@ -329,13 +331,13 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
     overlays.length
       ? overlays.map((it) => ({
           label: `${overlayGlyph(it)} ${it.name}`,
-          hint: it.off ? "已停用" : it.value,
-          title: it.off ? `${OVERLAY_KIND_NAME[it.kind]}：已停用，这一段上不生效` : OVERLAY_KIND_NAME[it.kind],
+          hint: it.off ? trText("Disabled") : it.value,
+          title: it.off ? trText("{0}: disabled, has no effect on this segment", OVERLAY_KIND_NAME[it.kind]) : OVERLAY_KIND_NAME[it.kind],
           dim: it.off,
           action: () => {},
           sub: overlayActions(it),
         }))
-      : [{ label: "这一段还没有挂东西", disabled: true, action: () => {} }];
+      : [{ label: trText("Nothing is attached to this segment yet"), disabled: true, action: () => {} }];
 
   /*
    * 菜单头只在**自己就是整张菜单**的时候写:点带里某一张卡,那一张的菜单是孤零零弹出来的,
@@ -348,7 +350,7 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
   const openOverlayOne = (index: number, at: { x: number; y: number }) => {
     const it = overlays[index];
     if (!it) return;
-    setContextMenu({ ...at, head: { title: it.name, of: label || "片段", trackKind }, items: overlayActions(it) });
+    setContextMenu({ ...at, head: { title: it.name, of: label || trText("Clips"), trackKind }, items: overlayActions(it) });
   };
 
   const clipClasses = [
@@ -378,8 +380,8 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
         data-track-kind={clip.cutId ? "video" : trackKind}
         data-pc-cut-segment={clip.cutId ? clip.cutId : undefined}
         data-audio-muted={muteReason ? "true" : undefined}
-        aria-label={muteReason ? `${label || "片段"}，${muteReason}` : undefined}
-        title={muteReason ? `${label || "片段"}：${muteReason}` : undefined}
+        aria-label={muteReason ? trText("{0}, {1}", label || trText("Clips"), muteReason) : undefined}
+        title={muteReason ? trText("{0}: {1}", label || trText("Clips"), muteReason) : undefined}
         className={clipClasses}
         style={{
           left: `${xOfTime(displayStart, pxPerSec)}px`,
@@ -434,7 +436,7 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
           <div className="pc-clip-fade is-out" style={{ width: (clip.fadeOut ?? 0) * pxPerSec }} aria-hidden="true" />
         )}
         {cutOverSec > 0.01 && (
-          <div className="pc-clip-cut-over" style={{ width: cutOverSec * pxPerSec }} title="被引用的剪辑变短了:这一截透明、无声" aria-hidden="true" />
+          <div className="pc-clip-cut-over" style={{ width: cutOverSec * pxPerSec }} title={trText("The referenced cut got shorter: this part is transparent and silent")} aria-hidden="true" />
         )}
         {lock && (
           <span className="pc-clip-link" title={lock.message}>
@@ -464,58 +466,58 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
           x={contextMenu.x}
           y={contextMenu.y}
           // 带里点出来的菜单自带头和条目(叠加卡那一支);右键片段走下面这份
-          head={contextMenu.head === undefined ? { title: label || "片段" } : contextMenu.head ?? undefined}
+          head={contextMenu.head === undefined ? { title: label || trText("Clips") } : contextMenu.head ?? undefined}
           onClose={() => setContextMenu(null)}
           items={contextMenu.items ?? [
             /*
              * 「引用到输入框」放最上面,而且**只读也给** —— 它不改任何东西,只是把这一段说给 Agent 听,
              * 恰恰是只读成员唯一能做的事。氛围式进 DetailEdit 的输入框,传统式进右边 AI 栏(quoteBus)。
              */
-            { label: "引用到输入框", action: quoteThisClip },
+            { label: trText("Quote into input box"), action: quoteThisClip },
             ...(ro.locked ? readOnlyItems : [
             // 转场在最上面:被绑住的时候用户第一件想做的事就是解开它
             ...myTransitions.map((tr) => ({
-              label: `删除转场:${describeTransition(getState().project, tr)}`,
+              label: trText("Delete transition: {0}", describeTransition(getState().project, tr)),
               action: () => actions.removeTransition(tr.id),
             })),
             ...(clip.emphasis
-              ? [{ label: `去掉强调:${describeEmphasis(clip.emphasis)}`, action: () => actions.setClipEmphasis(clip.id, null) }]
+              ? [{ label: trText("Remove emphasis: {0}", describeEmphasis(clip.emphasis)), action: () => actions.setClipEmphasis(clip.id, null) }]
               : []),
-            ...(clip.cutId && cutName ? [{ label: `打开剪辑「${cutName}」`, action: () => openCutInTimeline(clip.cutId!) }] : []),
+            ...(clip.cutId && cutName ? [{ label: trText("Open cut \"{0}\"", cutName), action: () => openCutInTimeline(clip.cutId!) }] : []),
             // 叠加卡在这里只占一项:停上去才列出这一段挂的全部,再停一张才是它能做的事
             {
-              label: "叠加卡",
-              hint: overlays.length ? `${overlays.length} 张` : "还没有",
+              label: trText("Overlay card"),
+              hint: overlays.length ? trText("{0} cards", overlays.length) : trText("None yet"),
               action: () => {},
               sub: overlayList(),
             },
-            { label: "复制", action: () => actions.duplicateClip(clip.id) },
+            { label: trText("Duplicate"), action: () => actions.duplicateClip(clip.id) },
             ...(hasAudio ? [
-              { label: clip.audioMuted ? "恢复片段声音" : "静音片段", disabled: !!track.locked, action: () => reportAudio(actions.setClipMuted(clip.id, !clip.audioMuted)) },
-              { label: "调整声音音量…", disabled: !!track.locked, action: () => setVolumeOpen(true) },
+              { label: clip.audioMuted ? trText("Unmute clip") : trText("Mute clip"), disabled: !!track.locked, action: () => reportAudio(actions.setClipMuted(clip.id, !clip.audioMuted)) },
+              { label: trText("Adjust volume…"), disabled: !!track.locked, action: () => setVolumeOpen(true) },
             ] : []),
             // 只要声音:画面没了,位置、长度、素材内偏移、淡入淡出都留着;素材库里同时多一份声音素材
-            ...(canBecomeAudio || embeddedAudio ? [{ label: selectedAudioIds.length > 1 ? `分离所选音轨（${selectedAudioIds.length} 段）` : "音画分离", disabled: !!track.locked,
+            ...(canBecomeAudio || embeddedAudio ? [{ label: selectedAudioIds.length > 1 ? trText("Separate selected audio tracks ({0} segments)", selectedAudioIds.length) : trText("Separate audio from video"), disabled: !!track.locked,
               action: () => reportAudio(actions.separateAudios(selectedAudioIds)) }] : []),
-            ...(canBecomeAudio && !embeddedAudio ? [{ label: "转换为声音", action: () => reportAudio(actions.convertClipToAudio(clip.id)) }] : []),
+            ...(canBecomeAudio && !embeddedAudio ? [{ label: trText("Convert to audio"), action: () => reportAudio(actions.convertClipToAudio(clip.id)) }] : []),
             // 有声音的素材段可以直接去转写(图片没有声音,不给这一项)
             ...(() => {
               const media = clip.mediaId ? getState().project.media.find((m) => m.id === clip.mediaId) : null;
               if (!media || media.kind === "image") return [];
               return [{
-                label: media.transcript ? `查看字幕(${media.transcript.segments.length} 段)` : "转写字幕",
+                label: media.transcript ? trText("View captions ({0} segments)", media.transcript.segments.length) : trText("Transcribe captions"),
                 action: () => requestCaptions(media.id),
                 // 在线浏览器模式没有语音识别(C10 契约第 10 节):只能转写的置灰,已有字幕的照常查看
-                ...(!media.transcript && onlinePage() ? { disabled: true, title: onlineUnsupported("语音识别") } : {}),
+                ...(!media.transcript && onlinePage() ? { disabled: true, title: onlineUnsupported(trText("Speech recognition")) } : {}),
               }];
             })(),
             {
-              label: lock ? "在播放头处分割(先删转场)" : "在播放头处分割",
+              label: lock ? trText("Split at playhead (delete transition first)") : trText("Split at playhead"),
               action: () => actions.splitClip(clip.id, getState().t),
               disabled: !!lock || getState().t <= clip.start || getState().t >= clip.end,
             },
             {
-              label: "置顶",
+              label: trText("Bring to front"),
               action: () => {
                 const tracks = getState().project.tracks;
                 // 最上面那条序列就是最上层(和时间轴上看到的一致)
@@ -523,13 +525,13 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
               }
             },
             {
-              label: "置底",
+              label: trText("Send to back"),
               action: () => {
                 const tracks = getState().project.tracks;
                 if (tracks.length > 0) actions.moveClip(clip.id, { trackId: tracks[tracks.length - 1].id });
               }
             },
-            { label: "删除", action: () => actions.removeClip(clip.id) },
+            { label: trText("Delete"), action: () => actions.removeClip(clip.id) },
             ]),
           ]}
         />

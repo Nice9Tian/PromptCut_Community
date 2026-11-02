@@ -4,6 +4,7 @@ import { isViewOnly, viewOnlyReason, viewOnlyText } from "./viewOnly";
 import { actions } from "../../store/project";
 import type { Project } from "../../kernel/project";
 import { onGoneConversion } from "../sync/recoveryAssociation";
+import { tr } from "../../i18n/index.ts";
 
 /** 本地草稿:服务端 `.pc-projects/` 目录里的一个 .proc 文件 */
 export interface DraftInfo {
@@ -21,7 +22,7 @@ export interface DraftInfo {
 async function json<T>(res: Response): Promise<T> {
   const data = await res.json().catch(() => ({}));
   if (!res.ok || (data as { ok?: boolean }).ok === false) {
-    throw new Error((data as { error?: string }).error || `请求失败(${res.status})`);
+    throw new Error((data as { error?: string }).error || tr("Request failed ({0})", res.status));
   }
   return data as T;
 }
@@ -56,11 +57,11 @@ export async function openDraft(id: string): Promise<Project> {
    * 载进内存了,再告诉其中一个「你没抢到」就晚了,它已经能编辑了。
    */
   const lock = await acquireDraftLock(id);
-  if (!lock.ok) throw new Error(lock.error || "这个项目正被另一个 PromptCut 打开");
+  if (!lock.ok) throw new Error(lock.error || tr("This project is open in another PromptCut"));
   const res = await fetch(`/api/projects/${encodeURIComponent(id)}`);
   if (!res.ok) {
     await releaseDraftLock();
-    throw new Error(`打不开这份草稿(${res.status})`);
+    throw new Error(tr("Cannot open this draft ({0})", res.status));
   }
   // 老草稿没有 project.id:拿草稿 id 顶上,和定制卡归属表里的老条目对得上
   const project = loadProc(await res.text(), { legacyId: id });
@@ -71,7 +72,7 @@ export async function openDraft(id: string): Promise<Project> {
 }
 
 export async function deleteDraft(id: string): Promise<void> {
-  if (isViewOnly()) throw new Error(viewOnlyReason() === "read-only-member" ? "你在这个项目里只能查看，删不了它。" : "这是只读查看模式,删不了这个项目");
+  if (isViewOnly()) throw new Error(viewOnlyReason() === "read-only-member" ? tr("You can only view this project, so you cannot delete it.") : tr("This is read-only view mode, so this project cannot be deleted"));
   // 和 saveDraft 一样要带 owner 头:删也是写,无头实例上的写闸认的是这个头。
   // 漏了的话,实例**自己的**页面点删除会被自己的闸拦下。
   await json(await fetch(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" }));

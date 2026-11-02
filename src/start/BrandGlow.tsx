@@ -28,6 +28,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { JSX } from "react";
 import "./brandGlow.css";
+import { tr } from "../i18n/index.ts";
 
 /**
  * 画面参数。调参台（scratchpad 的 make-glow-lab.mjs）直接读这里的数做滑杆，
@@ -106,80 +107,7 @@ const ACCENT_FALLBACK: [number, number, number] = [0, 0.859, 0.859];
 export const VERT = `#version 300 es
 void main(){ vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2); gl_Position = vec4(p*2.0-1.0,0.0,1.0); }`;
 
-export const FRAG = `#version 300 es
-precision highp float;
-out vec4 fragColor;
-
-uniform vec2 uRes;      // 画布的内部像素
-uniform float uPxScale; // 内部像素 / CSS 像素
-/* 循环相位，0→1 走满一圈回到起点 */
-uniform float uLoop;
-
-uniform vec3 uBg;
-uniform vec3 uColA;
-uniform vec3 uColB;
-
-uniform float uAx, uAy, uArx, uAry, uAAlpha, uAStop;
-uniform float uBx, uBy, uBrx, uBry, uBAlpha, uBStop;
-uniform float uGrain, uGrainSize, uDrift;
-uniform float uRefW, uRefH;
-
-float hash(vec2 p) {
-  p = fract(p * vec2(123.34, 456.21));
-  p += dot(p, p + 45.32);
-  return fract(p.x * p.y);
-}
-
-/*
- * 一团 CSS 式的径向光：radial-gradient(rx ry at cx cy, 色 浓度 a0, transparent stop)。
- * CSS 的渐变是在**预乘**的空间里线性插值的，所以色相一路不变，只有 alpha 从 a0 直线降到 0，
- * 到 stop（相对椭圆半径的比例）就没了。这里照这个算，不用 smoothstep，不然和官网对不上。
- */
-float glow(vec2 px, vec2 c, vec2 r, float stop, float a0) {
-  float t = length((px - c) / max(r, vec2(1.0)));
-  return a0 * clamp(1.0 - t / max(stop, 1e-4), 0.0, 1.0);
-}
-
-void main() {
-  float s = max(uPxScale, 1e-4);
-  vec2 cssPx = gl_FragCoord.xy / s;
-  float wCss = uRes.x / s;
-  float hCss = uRes.y / s;
-  // gl_FragCoord 的 y 从下往上数，CSS 从上往下：翻过来，位置参数才和官网写的那组数一个意思
-  cssPx.y = hCss - cssPx.y;
-
-  // 两团朝相反方向飘，错开一点才看得出是两团；drift = 0 时这一项是 0
-  /*
-   * 两团朝相反方向飘，错开一点才看得出是两团；drift = 0 时这一项是 0。
-   *
-   * 两个频率取 4 和 3（原来是 1 和 0.75，比值一样是 0.75，但不是整数倍频）：
-   * 整数倍频才保证 uLoop 走满一圈时两项同时回到出发点 —— 预渲染成视频要靠这一条接上循环。
-   * 快慢没变：一圈的秒数由 LOOK.loopSeconds 定。
-   */
-  vec2 d = uDrift * vec2(sin(uLoop * 6.2831853 * 4.0), cos(uLoop * 6.2831853 * 3.0));
-
-  /*
-   * 以屏幕中心对齐：位置不按当前视口的比例算，而是换算成相对中心的固定像素偏移
-   * （基准视口见组件里的 refW / refH）。视口正好是基准尺寸时结果和「位置 × 视口」相同；
-   * 屏幕小了就是同一张构图的中心裁切。
-   */
-  vec2 mid = vec2(wCss, hCss) * 0.5;
-  vec2 ref = vec2(max(uRefW, 1.0), max(uRefH, 1.0));
-
-  float aA = glow(cssPx, mid + (vec2(uAx, uAy) - 0.5) * ref + d, vec2(uArx, uAry), uAStop, uAAlpha);
-  float aB = glow(cssPx, mid + (vec2(uBx, uBy) - 0.5) * ref - d, vec2(uBrx, uBry), uBStop, uBAlpha);
-
-  // 叠的顺序同官网：CSS 里先写的那层在上面，所以 B 先压在底色上，A 再压上去
-  vec3 col = uBg;
-  col = mix(col, uColB, aB);
-  col = mix(col, uColA, aA);
-
-  // 抖动：深色上的大面积渐变在 8 位里会起一圈圈色带，撒一点噪声把台阶打散
-  float n = hash(floor(gl_FragCoord.xy / max(uGrainSize, 1.0)) + 0.5);
-  col += (n - 0.5) * uGrain;
-
-  fragColor = vec4(max(col, 0.0), 1.0);
-}`;
+export const FRAG = tr("#version 300 es\nprecision highp float;\nout vec4 fragColor;\n\nuniform vec2 uRes;      // internal pixels of the canvas\nuniform float uPxScale; // internal pixels / CSS pixels\n/* loop phase: 0→1 runs one full cycle and returns to the start */\nuniform float uLoop;\n\nuniform vec3 uBg;\nuniform vec3 uColA;\nuniform vec3 uColB;\n\nuniform float uAx, uAy, uArx, uAry, uAAlpha, uAStop;\nuniform float uBx, uBy, uBrx, uBry, uBAlpha, uBStop;\nuniform float uGrain, uGrainSize, uDrift;\nuniform float uRefW, uRefH;\n\nfloat hash(vec2 p) {\n  p = fract(p * vec2(123.34, 456.21));\n  p += dot(p, p + 45.32);\n  return fract(p.x * p.y);\n}\n\n/*\n * A CSS-style radial glow: radial-gradient(rx ry at cx cy, color density a0, transparent stop).\n * CSS gradients interpolate linearly in **premultiplied** space, so the hue stays constant and only alpha falls\n * in a straight line from a0 to 0, reaching nothing at stop (a ratio of the ellipse radius). This computes it the same way,\n * without smoothstep, otherwise it would not match the website.\n */\nfloat glow(vec2 px, vec2 c, vec2 r, float stop, float a0) {\n  float t = length((px - c) / max(r, vec2(1.0)));\n  return a0 * clamp(1.0 - t / max(stop, 1e-4), 0.0, 1.0);\n}\n\nvoid main() {\n  float s = max(uPxScale, 1e-4);\n  vec2 cssPx = gl_FragCoord.xy / s;\n  float wCss = uRes.x / s;\n  float hCss = uRes.y / s;\n  // gl_FragCoord counts y from the bottom up, CSS from the top down: flip it so the position parameters mean the same as the numbers on the website\n  cssPx.y = hCss - cssPx.y;\n\n  // The two blobs drift in opposite directions, offset a little so they read as two blobs; when drift = 0 this term is 0\n  /*\n   * The two blobs drift in opposite directions, offset a little so they read as two blobs; when drift = 0 this term is 0.\n   *\n   * The two frequencies are 4 and 3 (originally 1 and 0.75, same ratio of 0.75, but not integer multiples):\n   * only integer multiples guarantee both terms return to the start together when uLoop completes a full cycle. Prerendering to video relies on this to close the loop.\n   * Speed is unchanged: the seconds per cycle are set by LOOK.loopSeconds.\n   */\n  vec2 d = uDrift * vec2(sin(uLoop * 6.2831853 * 4.0), cos(uLoop * 6.2831853 * 3.0));\n\n  /*\n   * Aligned to the screen center: positions are not computed from the current viewport's proportions, but converted to fixed pixel offsets from the center\n   * (see refW / refH in the component for the reference viewport). When the viewport is exactly the reference size the result equals \"position × viewport\";\n   * on a smaller screen it is a center crop of the same composition.\n   */\n  vec2 mid = vec2(wCss, hCss) * 0.5;\n  vec2 ref = vec2(max(uRefW, 1.0), max(uRefH, 1.0));\n\n  float aA = glow(cssPx, mid + (vec2(uAx, uAy) - 0.5) * ref + d, vec2(uArx, uAry), uAStop, uAAlpha);\n  float aB = glow(cssPx, mid + (vec2(uBx, uBy) - 0.5) * ref - d, vec2(uBrx, uBry), uBStop, uBAlpha);\n\n  // Layer order matches the website: in CSS the layer written first is on top, so B goes onto the base color first, then A on top\n  vec3 col = uBg;\n  col = mix(col, uColB, aB);\n  col = mix(col, uColA, aA);\n\n  // Dithering: large gradients on dark colors show banding in 8 bits, so add a little noise to break up the steps\n  float n = hash(floor(gl_FragCoord.xy / max(uGrainSize, 1.0)) + 0.5);\n  col += (n - 0.5) * uGrain;\n\n  fragColor = vec4(max(col, 0.0), 1.0);\n}");
 
 /** 十六进制 → 0..1 的 RGB */
 function hexToRgb(hex: string, fallback: [number, number, number]): [number, number, number] {
@@ -218,10 +146,10 @@ function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLSh
     // 用满浏览器的上限（Chrome 约 16 个）之后新上下文一建就是坏的 —— 这时日志会是 null。
     // 整页刷新一下就好，不是着色器写错了。
     console.warn(
-      "[BrandGlow] 着色器编译失败：",
+      "[BrandGlow] shader compile failed:",
       gl.getShaderInfoLog(sh),
       "gl.getError=", gl.getError(),
-      "（开发期若日志为 null，多半是热更新累积的 WebGL 上下文超了上限，整页刷新即可）",
+      "(in development, if the log is null, the WebGL context limit was most likely exceeded by accumulated hot reloads; refresh the whole page)",
     );
     gl.deleteShader(sh);
     return null;
@@ -268,7 +196,7 @@ export function BrandGlow(): JSX.Element {
     gl.attachShader(prog, fs);
     gl.linkProgram(prog);
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
-      console.warn("[BrandGlow] 着色器链接失败：", gl.getProgramInfoLog(prog));
+      console.warn("[BrandGlow] shader link failed:", gl.getProgramInfoLog(prog));
       setDead(true);
       return;
     }

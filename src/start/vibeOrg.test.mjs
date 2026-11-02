@@ -19,15 +19,15 @@ const cloud = [
 ];
 const C = 'cloud';
 
-test('VORG-01 没有整理信息时:清单就是云端列表,都没放进分组,不知道的画幅时长缩略图是 null', () => {
+test('VORG-01 with no organization data: the manifest is just the cloud list, nothing is placed in a group, and unknown aspect ratio, duration and thumbnail are null', () => {
   const list = mergeProjects(EMPTY_ORG, cloud);
   assert.deepEqual(list.map((p) => p.id), ['p1', 'p2', 'p3']);
   assert.ok(list.every((p) => p.groupId === null && p.ratio === null && p.duration === null && p.thumb === null));
   assert.equal(list[2].role, 'joined');
 });
 
-test('VORG-02 本机记过的顺序、分组、置顶照用;列表里没有的项目不会凭空出现', () => {
-  let org = addGroup(EMPTY_ORG, '品牌', () => 'aaa').org;
+test('VORG-02 the order, groups and pins recorded on this machine are applied as is; projects not in the list do not appear out of nowhere', () => {
+  let org = addGroup(EMPTY_ORG, 'Brand', () => 'aaa').org;
   org = withProjects(org, [
     { id: 'p3', realm: C, groupId: 'g-aaa', pinned: true },
     { id: 'gone', realm: C, groupId: null },
@@ -41,7 +41,7 @@ test('VORG-02 本机记过的顺序、分组、置顶照用;列表里没有的�
   assert.equal(list[2].archived, true);
 });
 
-test('VORG-03 写回整理信息:这次清单里没有的条目原样留着(列表暂时取不到时不丢)', () => {
+test('VORG-03 writing back organization data: entries missing from this manifest are kept as is (not lost when the list is temporarily unavailable)', () => {
   const org = withProjects(EMPTY_ORG, [{ id: 'a', realm: C, groupId: null }, { id: 'b', realm: C, groupId: null }]);
   const next = withProjects(org, [{ id: 'b', realm: C, groupId: null, pinned: true }]);
   assert.deepEqual(next.projects.map((p) => p.id), ['b', 'a']);
@@ -50,9 +50,9 @@ test('VORG-03 写回整理信息:这次清单里没有的条目原样留着(列�
   assert.equal(org.projects[1].pinned, undefined);
 });
 
-test('VORG-04 删掉分组:里面的项目回到没放进分组;移到不存在的分组也算移出', () => {
+test('VORG-04 deleting a group: its projects return to ungrouped; moving to a nonexistent group also counts as moving out', () => {
   let { org, id } = addGroup(EMPTY_ORG, '  ');
-  assert.equal(org.groups[0].name, '新分组');
+  assert.equal(org.groups[0].name, 'New group');
   const p1 = { id: 'p1', realm: C };
   org = moveProject(org, p1, id).org;
   assert.equal(org.projects[0].groupId, id);
@@ -62,7 +62,7 @@ test('VORG-04 删掉分组:里面的项目回到没放进分组;移到不存在�
   assert.equal(org.projects[0].groupId, null);
 });
 
-test('VORG-05 本机存的东西坏了:当没记过,不抛', () => {
+test('VORG-05 data stored on this machine is corrupted: treated as never recorded, no throw', () => {
   assert.deepEqual(parseOrg('{not json', C), EMPTY_ORG);
   assert.deepEqual(parseOrg(null, C), EMPTY_ORG);
   const odd = parseOrg(JSON.stringify({ groups: [{ id: 'g', name: 'x' }, { id: 3 }], projects: [{ id: 'p', groupId: 'missing', pinned: 'yes' }], chats: [{ id: 'c' }] }), C);
@@ -71,25 +71,25 @@ test('VORG-05 本机存的东西坏了:当没记过,不抛', () => {
   assert.deepEqual(odd.chats, []);
 });
 
-test('VORG-06 别人的私有对话不列出来;创建者能只读地看;自己的私有对话照列', () => {
+test('VORG-06 other people\'s private chats are not listed; the creator can view them read-only; your own private chats are listed as usual', () => {
   const items = [
-    { id: 'c1', title: '共有', state: 'idle', visibility: 'shared', ownerAccountId: 'bob' },
-    { id: 'c2', title: '我的私有', state: 'idle', visibility: 'private', ownerAccountId: 'me' },
-    { id: 'c3', title: 'bob 的私有', state: 'running', visibility: 'private', ownerAccountId: 'bob' },
+    { id: 'c1', title: 'shared', state: 'idle', visibility: 'shared', ownerAccountId: 'bob' },
+    { id: 'c2', title: 'My private', state: 'idle', visibility: 'private', ownerAccountId: 'me' },
+    { id: 'c3', title: 'bob\'s private', state: 'running', visibility: 'private', ownerAccountId: 'bob' },
     { id: 'c4', title: '', state: 'failed' },
   ];
   const member = viewableChats(items, { accountId: 'me', creator: false }, 'p1');
   assert.deepEqual(member.map((c) => c.id), ['c1', 'c2', 'c4']);
   assert.ok(member.every((c) => !c.readOnly));
-  assert.equal(member[2].name, '云端对话');
+  assert.equal(member[2].name, 'Cloud chat');
   const creator = viewableChats(items, { accountId: 'me', creator: true }, 'p1');
   assert.deepEqual(creator.map((c) => c.id), ['c1', 'c2', 'c3', 'c4']);
   assert.equal(creator.find((c) => c.id === 'c3').readOnly, true);
   const nobody = viewableChats(items, { accountId: null, creator: false }, 'p1');
-  assert.deepEqual(nobody.map((c) => c.id), ['c1', 'c4'], '没取到账号时别人的私有一律不列');
+  assert.deepEqual(nobody.map((c) => c.id), ['c1', 'c4'], 'When the account could not be fetched, other people\'s private chats are never listed');
 });
 
-test('VORG-07 对话的置顶、归档按项目分开记', () => {
+test('VORG-07 chat pins and archives are recorded separately per project', () => {
   const chats = viewableChats([{ id: 'a', title: 'A', state: 'idle' }, { id: 'b', title: 'B', state: 'idle' }], { accountId: 'me', creator: false }, 'p1');
   let org = withChats(EMPTY_ORG, 'p1', [{ id: 'b', pinned: true }, { id: 'a', archived: true }]);
   org = withChats(org, 'p2', [{ id: 'a', pinned: true }]);

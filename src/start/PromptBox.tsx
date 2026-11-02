@@ -11,6 +11,7 @@
 import { useRef, useState } from "react";
 import type { JSX } from "react";
 import type { Ratio } from "./types";
+import { tr } from "../i18n/index.ts";
 
 const RATIOS: Ratio[] = ["16:9", "9:16", "1:1"];
 /** 和 CSS 里的 max-height 对齐:再长就自己滚,不把首屏顶走 */
@@ -45,9 +46,9 @@ export function PromptBox(props: { onSubmit: (text: string, ratio: Ratio) => voi
         className="ps-prompt-input"
         data-pc="start-prompt-input"
         value={text}
-        placeholder={props.disabled ?? "说一句你想要的片子：主题、镜头、或者直接把文案贴进来"}
+        placeholder={props.disabled ?? tr("Describe the video you want: a topic, shots, or just paste in your copy")}
         disabled={!!props.disabled}
-        aria-label="描述你想要的片子"
+        aria-label={tr("Describe the video you want")}
         onChange={(e) => {
           setText(e.target.value);
           fit();
@@ -66,10 +67,10 @@ export function PromptBox(props: { onSubmit: (text: string, ratio: Ratio) => voi
           type="button"
           className="ps-chip is-cta"
           data-pc="start-prompt-upload"
-          aria-label="上传素材"
+          aria-label={tr("Upload media")}
           onClick={props.onUpload}
         >
-          <span className="ps-chip-plus" aria-hidden="true">＋</span>素材{props.fileCount ? ` · ${props.fileCount}` : ""}
+          <span className="ps-chip-plus" aria-hidden="true">{tr("+")}</span>{tr("Media{0}", props.fileCount ? ` · ${props.fileCount}` : "")}
         </button>
         {RATIOS.map((r) => (
           <button
@@ -87,8 +88,8 @@ export function PromptBox(props: { onSubmit: (text: string, ratio: Ratio) => voi
           className="ps-prompt-send"
           data-pc="start-prompt-send"
           disabled={!text.trim() || !!props.disabled || props.busy}
-          aria-label="按这句话新建项目"
-          title={props.busy ? "正在新建项目…" : undefined}
+          aria-label={tr("Create a project from this prompt")}
+          title={props.busy ? tr("Creating project…") : undefined}
           onClick={send}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">

@@ -20,7 +20,7 @@ async function render(props) {
     '../../ai/agentTabs': { setTabCreativity() {}, useAgentTabs: () => ({ tabs: [] }) },
     '../../ai/liveChat': { MAIN_TAB: 'main' },
     '../../store/project': { useStore: select => select({ project: null }) },
-    '../../kernel/creativity.mjs': { CREATIVITY_HINT: { high: '' }, CREATIVITY_LABEL: { high: '高' }, CREATIVITY_LEVELS: ['high'],
+    '../../kernel/creativity.mjs': { CREATIVITY_HINT: { high: '' }, CREATIVITY_LABEL: { high: 'High' }, CREATIVITY_LEVELS: ['high'],
       normalizeCreativity: v => v || null, projectCreativity: () => 'high' },
     '../../ui/icons': { IconMore: () => null },
     './chat/usePopover': { usePopover: () => ({ anchorRef: { current: null }, open: false, toggle() {} }) },

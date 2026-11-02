@@ -6,6 +6,7 @@
  */
 import { OrgUnsupportedError, type OrgTransport, type PutResult, type RemoteOrg } from "./orgSync.ts";
 import type { OrgState } from "./vibeOrg.ts";
+import { tr } from "../i18n/index.ts";
 
 /** 账号客户端里用到的两个方法(结构类型,单测里用假的) */
 export interface StartOrgApi {
@@ -24,7 +25,7 @@ export function isUnsupported(e: unknown): boolean {
 export function accountOrgTransport(api: () => StartOrgApi | null): OrgTransport {
   const need = (): StartOrgApi => {
     const a = api();
-    if (!a) throw new Error("账号服务还没就绪");
+    if (!a) throw new Error(tr("The account service isn't ready yet"));
     return a;
   };
   const wrap = async <T>(call: () => Promise<T>): Promise<T> => {

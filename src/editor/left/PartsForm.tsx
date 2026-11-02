@@ -5,6 +5,7 @@ import type { Control, PartInstance } from "../../kernel/types";
 import { addPart, findPart, movePart, removePart, updatePart } from "../../kernel/parts";
 import { allParts, getPart } from "../../kernel/partRegistry";
 import { NumberField } from "../fields/NumberField";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 组合卡的参数面板:一棵部件实例树,每个实例可以改参数、框、进场时机、次序,也能加减部件。
@@ -40,15 +41,15 @@ export function PartsForm({ clip }: { clip: TrackClip }) {
           value={adding}
           onChange={(e) => onAdd(e.target.value)}
           className="flex-1 pc-left-select"
-          title="从部件库里加一个部件到这张卡"
+          title={tr("Add a part from the part library to this card")}
         >
-          <option value="">+ 加部件…</option>
+          <option value="">{tr("+ Add part…")}</option>
           {allParts().map((p) => (
             <option key={p.id} value={p.id}>{p.name} · {p.role}</option>
           ))}
         </select>
       </div>
-      {tree.length === 0 && <div className="px-4 py-3 text-center pc-left-muted">这张组合卡还是空的,从上面挑一个部件加进来</div>}
+      {tree.length === 0 && <div className="px-4 py-3 text-center pc-left-muted">{tr("This composite card is still empty. Pick a part from above to add it")}</div>}
       <PartList clip={clip} tree={tree} list={tree} depth={0} commit={commit} />
       {error && <div className="mx-3 px-2 py-1 rounded border border-red-900 bg-red-950/40 text-red-400 whitespace-pre-wrap">{error}</div>}
     </div>
@@ -79,28 +80,28 @@ function PartRow({ clip, tree, inst, index, count, depth, commit }: { clip: Trac
   return (
     <div data-pc-part-row={inst.id} className="pc-left-box" style={{ marginLeft: 12 + depth * 12, marginRight: 12 }}>
       <div className="flex items-center gap-1 px-2 py-1">
-        <button type="button" className="pc-left-faint w-4" onClick={() => setOpen((o) => !o)} aria-label={open ? "收起" : "展开"}>{open ? "▾" : "▸"}</button>
+        <button type="button" className="pc-left-faint w-4" onClick={() => setOpen((o) => !o)} aria-label={open ? tr("Collapse") : tr("Expand")}>{open ? "▾" : "▸"}</button>
         <span className="flex-1 truncate pc-left-strong font-medium" title={`${inst.partId} · ${inst.id}`}>{inst.label || def?.name || inst.partId}</span>
         <span className="text-[10px] pc-left-faint">{def?.role ?? "?"}</span>
-        <button type="button" className={btn} disabled={index === 0} onClick={() => commit(() => movePart(tree, inst.id, { parentId, index: index - 1 }))} title="往下一层(先画)">↑</button>
-        <button type="button" className={btn} disabled={index >= count - 1} onClick={() => commit(() => movePart(tree, inst.id, { parentId, index: index + 1 }))} title="往上一层(后画)">↓</button>
-        <button type="button" className={`${btn} is-danger-hover`} onClick={() => commit(() => removePart(tree, inst.id))} title="删掉这个部件(连子部件)">✕</button>
+        <button type="button" className={btn} disabled={index === 0} onClick={() => commit(() => movePart(tree, inst.id, { parentId, index: index - 1 }))} title={tr("Move down one layer (drawn first)")}>↑</button>
+        <button type="button" className={btn} disabled={index >= count - 1} onClick={() => commit(() => movePart(tree, inst.id, { parentId, index: index + 1 }))} title={tr("Move up one layer (drawn later)")}>↓</button>
+        <button type="button" className={`${btn} is-danger-hover`} onClick={() => commit(() => removePart(tree, inst.id))} title={tr("Delete this part (including child parts)")}>✕</button>
       </div>
       {open && (
         <div className="flex flex-col gap-1 px-2 pb-2">
           <div className="flex items-center gap-1 pc-left-muted flex-wrap">
-            <span className="w-8">框</span>
+            <span className="w-8">{tr("Box")}</span>
             <span>x</span><NumberField className={num} value={frame?.x ?? 0} onCommit={(v) => setFrame("x", v)} />
             <span>y</span><NumberField className={num} value={frame?.y ?? 0} onCommit={(v) => setFrame("y", v)} />
-            <span>w</span><NumberField className={num} value={frame?.w} placeholder="满" validate={(v) => v > 0} onCommit={(v) => setFrame("w", v)} />
-            <span>h</span><NumberField className={num} value={frame?.h} placeholder="满" validate={(v) => v > 0} onCommit={(v) => setFrame("h", v)} />
-            <button type="button" className={btn} onClick={() => set({ frame: null })} title="清掉框,铺满父框">铺满</button>
+            <span>w</span><NumberField className={num} value={frame?.w} placeholder={tr("full")} validate={(v) => v > 0} onCommit={(v) => setFrame("w", v)} />
+            <span>h</span><NumberField className={num} value={frame?.h} placeholder={tr("full")} validate={(v) => v > 0} onCommit={(v) => setFrame("h", v)} />
+            <button type="button" className={btn} onClick={() => set({ frame: null })} title={tr("Clear the frame and fill the parent frame")}>{tr("Fill")}</button>
           </div>
           <div className="flex items-center gap-1 pc-left-muted">
-            <span className="w-8">进场</span>
+            <span className="w-8">{tr("Enter")}</span>
             <NumberField className={num} min={0} step={50} value={inst.enterMs ?? 0} onCommit={(v) => set({ enterMs: Math.max(0, v) })} />
             <span>ms</span>
-            <span className="ml-2">名字</span>
+            <span className="ml-2">{tr("Name")}</span>
             <input type="text" className="flex-1 pc-left-input is-sm" value={inst.label ?? ""} placeholder={def?.name} onChange={(e) => set({ label: e.target.value })} />
           </div>
           {(def?.controls ?? []).map((ctrl) => (
@@ -112,9 +113,9 @@ function PartRow({ clip, tree, inst, index, count, depth, commit }: { clip: Trac
               value=""
               onChange={(e) => { if (e.target.value) commit(() => addPart(tree, { partId: e.target.value }, getPart, { parentId: inst.id }).tree); }}
               className="pc-left-select is-sm pc-left-faint"
-              title="加一个子部件(它的框相对这个部件的框)"
+              title={tr("Add a child part (its frame is relative to this part's frame)")}
             >
-              <option value="">+ 子部件…</option>
+              <option value="">{tr("+ Child part…")}</option>
               {allParts().map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           )}
@@ -129,24 +130,24 @@ function ControlRow({ ctrl, value, onChange }: { ctrl: Control; value: unknown; 
   const cls = "flex-1 pc-left-input is-sm";
   return (
     <div className="flex items-center gap-2">
-      <div className="w-20 shrink-0 text-[11px] pc-left-muted truncate" title={ctrl.hint ? `${ctrl.label}:${ctrl.hint}` : ctrl.label}>{ctrl.label}</div>
+      <div className="w-20 shrink-0 text-[11px] pc-left-muted truncate" title={ctrl.hint ? `${tr(ctrl.label)}: ${tr(ctrl.hint)}` : tr(ctrl.label)}>{tr(ctrl.label)}</div>
       {ctrl.type === "text" && <input type="text" className={cls} value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} />}
       {ctrl.type === "number" && <NumberField className={cls} value={Number(value ?? 0)} min={ctrl.min} max={ctrl.max} step={ctrl.step} onCommit={onChange} />}
       {ctrl.type === "select" && (
         <select className="flex-1 pc-left-select is-sm" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)}>
-          {ctrl.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          {ctrl.options.map((o) => <option key={o.value} value={o.value}>{tr(o.label)}</option>)}
         </select>
       )}
       {ctrl.type === "color" && (
         <div className="flex flex-1 items-center gap-1">
           <input type="color" value={/^#([0-9A-Fa-f]{3}){1,2}$/.test(String(value ?? "")) ? String(value) : "#ffffff"} onChange={(e) => onChange(e.target.value)} className="pc-left-color is-sm" />
-          <input type="text" className={cls} value={String(value ?? "")} placeholder="留空用主题色" onChange={(e) => onChange(e.target.value)} />
+          <input type="text" className={cls} value={String(value ?? "")} placeholder={tr("Leave empty to use the theme color")} onChange={(e) => onChange(e.target.value)} />
         </div>
       )}
       {ctrl.type === "asset" && (
         <select className="flex-1 pc-left-select is-sm" value={ctrl.options.some((o) => o.value === String(value ?? "")) ? String(value) : ""} onChange={(e) => onChange(e.target.value)}>
-          <option value="">— 不用素材 —</option>
-          {ctrl.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          <option value="">{tr("— No media —")}</option>
+          {ctrl.options.map((o) => <option key={o.value} value={o.value}>{tr(o.label)}</option>)}
         </select>
       )}
     </div>

@@ -63,6 +63,7 @@ import { useVibeCloud } from "./useVibeCloud";
 import { RATIO_SIZE, createWithFreeName, projectNameFromPrompt } from "./format";
 import type { Ratio, VibeChat, VibeGroup, VibeProject } from "./types";
 import "./start.css";
+import { tr } from "../i18n/index.ts";
 
 /** 编辑器页的根路径:在线构建是 `/editor/` */
 const PAGE_BASE = (typeof import.meta.env !== "undefined" && import.meta.env.BASE_URL) || "/";
@@ -81,7 +82,7 @@ function showHomeAddress() {
 const projectSib = (p: VibeProject) => `project:${p.realm}:${p.groupId ?? "loose"}`;
 
 /** 游客没有分组、置顶、归档:只有一个项目,身份也不跨设备,没有地方存云端那一份 */
-const GUEST_ORG_TEXT = "游客只有一个项目，没有分组、置顶和归档。注册一个账号后，可以用云端分组整理项目。";
+const GUEST_ORG_TEXT = tr("A guest can have only one project, with no groups, pinning or archiving. After you sign up for an account, you can organize projects with cloud groups.");
 const chatSib = (c: VibeChat) => `chat:p:${c.projectId}`;
 
 /** 开始页上说的那句话:等项目建好、连上、云端 Agent 就绪之后发出去 */
@@ -143,8 +144,8 @@ function OnlineStartWithAccount(props: {
     if (openId && connectedId !== openId) { setOpenId(null); setChatPage(false); }
   }, [connectedId, openId]);
   useEffect(() => {
-    if (blocked === "kicked") setNotice("你已被移出这个项目。");
-    else if (blocked === "removed") setNotice("你已不在这个项目的成员名单中。");
+    if (blocked === "kicked") setNotice(tr("You have been kicked from this project."));
+    else if (blocked === "removed") setNotice(tr("You are no longer on this project's member list."));
   }, [blocked]);
 
   /**
@@ -172,7 +173,7 @@ function OnlineStartWithAccount(props: {
   const { org, setOrg, status: orgStatus } = useCloudOrg({ scope: orgScope, transport: orgTransport });
   /** 此刻云端分组是不是真存在云端:老服务端(没有这条接口)时界面如实说只记在这台浏览器里 */
   const orgInCloud = CLOUD_ORG_IN_CLOUD && orgStatus !== "unsupported";
-  const orgSyncNote = orgStatus === "pending" ? "云端分组没同步上：改动先记在这台浏览器里，联网后自动补上。" : null;
+  const orgSyncNote = orgStatus === "pending" ? tr("Cloud groups failed to sync: changes are saved in this browser for now and will be applied automatically once you're online.") : null;
   /** 游客动整理信息:不做,说一句为什么。返回 true 表示已拦下 */
   const guestBlocked = (): boolean => {
     if (!ap.guest) return false;
@@ -194,7 +195,7 @@ function OnlineStartWithAccount(props: {
   // 刚连上、列表里还没有的项目(凭链接刚加入、直达地址进的):先按同步状态里的名字列上,列表刷新后以列表为准
   const entries = useMemo(() => {
     if (!openId || cloudEntries.some((c) => c.id === openId)) return cloudEntries;
-    return [{ id: openId, name: shared?.name || "云端项目", role: shared?.creator ? ("owned" as const) : ("joined" as const), realm: "cloud" as const }, ...cloudEntries];
+    return [{ id: openId, name: shared?.name || tr("Cloud project"), role: shared?.creator ? ("owned" as const) : ("joined" as const), realm: "cloud" as const }, ...cloudEntries];
   }, [cloudEntries, openId, shared?.name, shared?.creator]);
   const projects = useMemo(() => mergeProjects(org, entries, seen), [org, entries, seen]);
   const groups = useMemo(() => groupsOf(org), [org]);
@@ -229,7 +230,7 @@ function OnlineStartWithAccount(props: {
   // 聊天页正看着的那条对话。云端对话列表还没读回来(告知还没确认、刚连上)时先当一条新对话显示,告知框就在聊天页上弹
   const openChat: VibeChat | null = chatPage && openId
     ? (chats.find((c) => c.id === vibe.chat.conversationId) ?? vibe.current ??
-      { id: vibe.chat.conversationId || "pending", name: "新对话", projectId: openId, state: "idle", visibility: "shared", readOnly: false, fresh: true })
+      { id: vibe.chat.conversationId || "pending", name: tr("New chat"), projectId: openId, state: "idle", visibility: "shared", readOnly: false, fresh: true })
     : null;
 
   /* ---------------- 两栏自己弹开的时机 ---------------- */
@@ -289,51 +290,51 @@ function OnlineStartWithAccount(props: {
    */
   const copyProjectLink = () => {
     const link = currentAccountProjectLink();
-    if (!link) { pushToast("项目链接暂时取不到：等项目连上再试一次。", "warn"); return; }
+    if (!link) { pushToast(tr("The project link isn't available yet: try again once the project is connected."), "warn"); return; }
     void navigator.clipboard?.writeText(link).then(
-      () => pushToast("项目链接已复制。", "info"),
-      () => pushToast(`项目链接：${link}`, "info", Infinity),
+      () => pushToast(tr("Project link copied."), "info"),
+      () => pushToast(tr("Project link: {0}", link), "info", Infinity),
     );
   };
 
   const openProject = (id: string, intoClassic = false) => {
-    if (!signedIn) { setNotice("先登录账号或以游客身份进入。"); return; }
+    if (!signedIn) { setNotice(tr("Sign in to an account or enter as a guest first.")); return; }
     toClassic.current = intoClassic ? id : null;
     if (openId === id && connectedId === id) { if (intoClassic) props.onEnterEditor(); else setChatPage(true); return; }
     const p = projects.find((x) => x.id === id);
     setNotice("");
     void ap.perform(async () => {
       if (p?.role === "guest") { await ap.openGuestProject(); return; }
-      if (await ap.open(id, p?.name ?? "云端项目") === "secondary-required") setJoin({ askPassword: true });
+      if (await ap.open(id, p?.name ?? tr("Cloud project")) === "secondary-required") setJoin({ askPassword: true });
     });
   };
 
-  const createBlocked = !signedIn ? "先登录账号或以游客身份进入，才能新建云端项目。"
-    : ap.guest && ap.guestProject ? `游客只能建 ${GUEST_LIMITS.projects} 个项目。要建更多，请注册一个账号。`
+  const createBlocked = !signedIn ? tr("Sign in to an account or enter as a guest to create a cloud project.")
+    : ap.guest && ap.guestProject ? tr("Guests can create only {0} project(s). To create more, sign up for an account.", GUEST_LIMITS.projects)
     : null;
 
   /** 新建一个空白云端项目并进去(侧栏「新建项目」、缩略图第一格) */
   const createBlank = () => {
     if (createBlocked) { setNotice(createBlocked); return; }
-    void ap.perform(() => createWithFreeName(n => ap.create(n), "未命名").then(() => undefined));
+    void ap.perform(() => createWithFreeName(n => ap.create(n), tr("Untitled")).then(() => undefined));
   };
 
   /** 开始页说一句话:建项目 → 定画幅 → 传素材 → 进聊天页 → 这句话发给云端 Agent */
   const submitPrompt = async (text: string, ratio: Ratio) => {
     if (createBlocked) { setNotice(createBlocked); return; }
     setCreating(true);
-    setNotice("正在新建项目…");
+    setNotice(tr("Creating project…"));
     const picked = files;
     try {
       await ap.perform(async () => {
         await createWithFreeName(n => ap.create(n), projectNameFromPrompt(text));
         const id = currentDocProjectId() || null;
-        if (!id) throw new Error("项目建好了，但没能打开它。请在左边的项目列表里点它。");
+        if (!id) throw new Error(tr("The project was created but could not be opened. Click it in the project list on the left."));
         if (ratio !== "16:9") actions.setProjectMeta({ ...RATIO_SIZE[ratio] });
         if (picked.length) {
           const r = await importMediaFiles(picked);
           const n = r.counts.video + r.counts.audio + r.counts.image;
-          setNotice(n ? `已把 ${n} 个素材放进项目。` : (r.rejected[0] ?? "挑的文件里没有能导入的素材。"));
+          setNotice(n ? tr("Added {0} media to the project.", n) : (r.rejected[0] ?? tr("None of the chosen files contain media that can be imported.")));
         } else setNotice("");
         setFiles([]);
         setPending({ projectId: id, text });
@@ -409,7 +410,7 @@ function OnlineStartWithAccount(props: {
       if (kind === "group") writeGroups((a) => togglePin(a, id));
       else if (kind === "project") writeProjects((a) => togglePin(a, id));
       else writeChats((a) => togglePin(a, id));
-      setNotice(`置顶只在自己同级里生效，${orgWhereText("cloud", orgInCloud)}。`);
+      setNotice(tr("Pinning only applies among its siblings, {0}.", orgWhereText("cloud", orgInCloud)));
     },
     archive: (kind, id) => {
       if (guestBlocked()) return;
@@ -418,21 +419,21 @@ function OnlineStartWithAccount(props: {
       if (kind === "group") writeGroups((a) => setArchived(a, id, next));
       else if (kind === "project") writeProjects((a) => setArchived(a, id, next));
       else writeChats((a) => setArchived(a, id, next));
-      setNotice(next ? `已归档：收进侧栏最下面「已归档」，那里右键能取消归档。${orgWhereText("cloud", orgInCloud)}，项目本身不受影响。` : "已取消归档。");
+      setNotice(next ? tr("Archived: moved to \"Archived\" at the bottom of the sidebar, where you can right-click to unarchive. {0}, and the project itself is unaffected.", orgWhereText("cloud", orgInCloud)) : tr("Unarchived."));
     },
     remove: (kind, id) => {
       if (kind === "group") {
         const g = groups.find((x) => x.id === id);
-        if (g && confirm(`删除分组「${g.name}」？里面的项目会放回「项目」，项目本身不删。`)) writeGroups((a) => removeById(a, id));
+        if (g && confirm(tr("Delete group \"{0}\"? Its projects will go back to \"Projects\" and are not deleted.", g.name))) writeGroups((a) => removeById(a, id));
         return;
       }
       if (kind === "chat") {
         const c = chats.find((x) => x.id === id);
         if (!c || c.fresh || c.projectId !== openId) return;
-        if (!confirm(`删除对话「${c.name}」？删除后不能恢复。${c.state === "running" ? "对话里还有任务在跑，会先停下；已经落地的修改保留。" : ""}`)) return;
+        if (!confirm(tr("Delete chat \"{0}\"? This can't be undone.{1}", c.name, c.state === "running" ? tr(" A task is still running in this chat and will be stopped first; changes already applied are kept.") : ""))) return;
         void vibe.chat.removeChat(id, crypto.randomUUID()).then(
-          () => setNotice(`已删除对话「${c.name}」。`),
-          (e) => setNotice(failText(e, "删除对话没有成功，可以再试一次。")),
+          () => setNotice(tr("Deleted chat \"{0}\".", c.name)),
+          (e) => setNotice(failText(e, tr("Failed to delete the chat. You can try again."))),
         );
       }
     },
@@ -454,16 +455,16 @@ function OnlineStartWithAccount(props: {
     },
     blocked: (kind, id) => {
       if (kind === "group") return {};
-      if (kind === "project") return { rename: "这一版还不能在这里改云端项目的名字。", remove: "这一版不能在这里删除云端项目。" };
+      if (kind === "project") return { rename: tr("This version can't rename cloud projects here yet."), remove: tr("This version can't delete cloud projects here.") };
       const c = chats.find((x) => x.id === id);
       // 别的项目底下的对话:只能点进去(点了就打开那个项目),整理和删除都要先打开它
       if (chatElsewhere(id)) {
-        const why = "先打开这个项目，才能整理或删除它的对话。";
+        const why = tr("Open this project first to organize or delete its chats.");
         return { rename: why, remove: why, pin: why, archive: why };
       }
       return {
-        rename: "云端对话这一版没有改名入口。",
-        remove: c?.fresh ? "还没发过消息的新对话不用删。" : undefined,
+        rename: tr("This version has no way to rename cloud chats."),
+        remove: c?.fresh ? tr("A new chat with no messages sent doesn't need deleting.") : undefined,
       };
     },
   };
@@ -475,18 +476,18 @@ function OnlineStartWithAccount(props: {
     if (scope.kind === "loose") return live.filter((p) => p.groupId === null);
     return live;
   }, [projects, scope]);
-  const railTitle = scope.kind === "group" ? (groups.find((g) => g.id === scope.id)?.name ?? "分组") : scope.kind === "loose" ? "没放进分组" : "最近项目";
+  const railTitle = scope.kind === "group" ? (groups.find((g) => g.id === scope.id)?.name ?? tr("Group")) : scope.kind === "loose" ? tr("Not in a group") : tr("Recent projects");
 
   const listNotice = !signedIn
-    ? <>还没登录：登录账号或以游客身份进入后，这里列出你的云端项目。<button type="button" className="ps-link" data-pc="start-go-login" onClick={() => setSkipped(false)}>去登录</button></>
-    : ap.guest ? (ap.guestProject ? null : "游客自己能建 1 个项目，建好之后列在这里。")
-    : ap.listError ? <>{ap.listError}<button type="button" className="ps-link" data-pc="start-list-retry" disabled={ap.busy} onClick={() => void ap.refreshLists()}>重试</button></>
-    : !ap.lists ? "正在取项目列表…"
-    : ap.lists.owned.length + ap.lists.joined.length === 0 ? "你还没有云端项目：在中间说一句话，或点「新建项目」。"
+    ? <>{tr("Not signed in: after you sign in to an account or enter as a guest, your cloud projects are listed here.")}<button type="button" className="ps-link" data-pc="start-go-login" onClick={() => setSkipped(false)}>{tr("Sign in")}</button></>
+    : ap.guest ? (ap.guestProject ? null : tr("A guest can create 1 project, which will be listed here once created."))
+    : ap.listError ? <>{ap.listError}<button type="button" className="ps-link" data-pc="start-list-retry" disabled={ap.busy} onClick={() => void ap.refreshLists()}>{tr("Retry")}</button></>
+    : !ap.lists ? tr("Loading project list…")
+    : ap.lists.owned.length + ap.lists.joined.length === 0 ? tr("You have no cloud projects yet: say something in the middle, or click \"New project\".")
     : null;
-  const railEmpty = !signedIn ? "登录之后，这里显示你最近的云端项目。"
-    : ap.listError ? `项目列表暂时取不到：${ap.listError}`
-    : !ap.lists && !ap.guest ? "正在取项目列表…"
+  const railEmpty = !signedIn ? tr("After you sign in, your recent cloud projects show up here.")
+    : ap.listError ? tr("Can't load the project list right now: {0}", ap.listError)
+    : !ap.lists && !ap.guest ? tr("Loading project list…")
     : undefined;
 
   /* ---------------- 登录页 ---------------- */
@@ -496,11 +497,11 @@ function OnlineStartWithAccount(props: {
       // 刚打开页面:先看看官网是不是已经登录了(和官网共用登录),问完之前不闪登录页
       return (
         <div className="ps-vibe-loading" data-pc="start-restoring" role="status">
-          <span className="ps-muted">正在连接账号服务…</span>
+          <span className="ps-muted">{tr("Connecting to the account service…")}</span>
         </div>
       );
     }
-    if (ap.shellOld) return <div className="ps-vibe-loading" role="alert"><span>{ap.error || "账号入口暂时不可用。"}</span></div>;
+    if (ap.shellOld) return <div className="ps-vibe-loading" role="alert"><span>{ap.error || tr("Account sign-in is temporarily unavailable.")}</span></div>;
     return <VibeLogin busy={ap.busy} error={ap.error} onIntent={onIntent} />;
   }
 
@@ -533,7 +534,7 @@ function OnlineStartWithAccount(props: {
           openChat ? (
             <div className="ps-top-title">
               <span className="ps-top-name" data-pc="start-chat-name">{openChat.name}</span>
-              <span className="ps-top-where">项目「{projects.find((p) => p.id === openChat.projectId)?.name ?? shared?.name ?? ""}」</span>
+              <span className="ps-top-where">{tr("Project \"{0}\"", projects.find((p) => p.id === openChat.projectId)?.name ?? shared?.name ?? "")}</span>
             </div>
           ) : null
         }
@@ -544,10 +545,10 @@ function OnlineStartWithAccount(props: {
                 type="button"
                 className="ps-ghost-btn"
                 data-pc="start-copy-link"
-                title="把这个项目的链接发给另一位已登录成员"
+                title={tr("Send this project's link to another signed-in member")}
                 onClick={copyProjectLink}
               >
-                复制项目链接
+                {tr("Copy project link")}
               </button>
               <button
                 type="button"
@@ -555,18 +556,18 @@ function OnlineStartWithAccount(props: {
                 data-pc="start-chat-visibility"
                 aria-pressed={openChat.visibility === "private"}
                 disabled={!vibe.canSwitchVisibility}
-                title={vibe.canSwitchVisibility ? "只有开这个对话的人能在共有和私有之间切换" : openChat.fresh ? "新对话默认共有；发过第一条消息之后能切成私有" : "只有开这个对话的人能在共有和私有之间切换"}
+                title={vibe.canSwitchVisibility ? tr("Only the person who started this chat can switch it between shared and private") : openChat.fresh ? tr("New chats are shared by default; you can make one private after sending the first message") : tr("Only the person who started this chat can switch it between shared and private")}
                 onClick={() => void vibe.toggleVisibility()}
               >
-                {openChat.visibility === "private" ? "私有" : "共有"}
+                {openChat.visibility === "private" ? tr("private") : tr("shared")}
               </button>
               <button
                 type="button"
                 className="ps-chat-ext-btn"
                 data-pc="start-chat-ext-toggle"
                 aria-pressed={panel}
-                aria-label="右侧拓展栏"
-                title="画面、修改前 / 修改后"
+                aria-label={tr("right side panel")}
+                title={tr("Picture, before / after")}
                 onClick={() => setPanel((v) => !v)}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round">
@@ -578,13 +579,13 @@ function OnlineStartWithAccount(props: {
           ) : (
             <>
               <button type="button" className="ps-ghost-btn" data-pc="start-join-open" onClick={() => setJoin((j) => (j ? null : { askPassword: false }))}>
-                用链接加入项目
+                {tr("Join a project with a link")}
               </button>
               <a className="ps-ghost-btn" href={typeof location !== "undefined" ? `${location.origin}/account` : "#"} target="_blank" rel="noopener noreferrer">
-                官网账号与项目列表
+                {tr("Website account and project list")}
               </a>
-              <a className="ps-ghost-btn" href={typeof location !== "undefined" ? `${location.origin}/` : "#"} target="_blank" rel="noopener noreferrer" title="桌面版在官网下载">
-                下载桌面版
+              <a className="ps-ghost-btn" href={typeof location !== "undefined" ? `${location.origin}/` : "#"} target="_blank" rel="noopener noreferrer" title={tr("Download the desktop app from the website")}>
+                {tr("Download the desktop app")}
               </a>
             </>
           )
@@ -650,7 +651,7 @@ function OnlineStartWithAccount(props: {
             if (projectId !== openId) { openProject(projectId); return; }
             // 游客每个项目只能开一个对话（2026-10-23 用户定）：说为什么、怎么才能多开；服务端另有 `guest-chat-limit` 兜底
             if (vibe.chat.history.guest && vibe.chat.history.atLimit) { setNotice(GUEST_CHAT_LIMIT_TEXT); return; }
-            if (vibe.chat.history.atLimit) { setNotice(`这个项目里你已经有 ${vibe.chat.history.ownedCount} 个云端对话，满了不能再新建。删掉几个再试。`); return; }
+            if (vibe.chat.history.atLimit) { setNotice(tr("You already have {0} cloud chats in this project, and the limit is reached. Delete a few and try again.", vibe.chat.history.ownedCount)); return; }
             vibe.chat.newChat();
             setChatPage(true);
           }}
@@ -659,7 +660,7 @@ function OnlineStartWithAccount(props: {
           newGroupBlocked={ap.guest ? GUEST_ORG_TEXT : null}
           onNewGroup={() => {
             if (guestBlocked()) return;
-            const name = prompt(`新分组叫什么？（${groupNoteText("cloud", orgInCloud)}）`, "新分组");
+            const name = prompt(tr("What should the new group be called? ({0})", groupNoteText("cloud", orgInCloud)), tr("New group"));
             if (name === null) return;
             setOrg((o) => addGroup(o, name).org);
           }}
@@ -696,9 +697,9 @@ function OnlineStartWithAccount(props: {
           <main className="ps-main">
             <div className="ps-body">
               <div className="ps-hero">
-                <span className="ps-hero-kicker">由 PromptCut 的 Agent 驱动</span>
-                <h1 className="ps-hero-title">说一句话，先得到一支片子</h1>
-                <span className="ps-hero-sub">写下主题或贴进文案，Agent 建好项目、排好卡片，再由你接着剪。</span>
+                <span className="ps-hero-kicker">{tr("Powered by PromptCut's Agent")}</span>
+                <h1 className="ps-hero-title">{tr("Say one sentence, get a video first")}</h1>
+                <span className="ps-hero-sub">{tr("Write a topic or paste in a script, the Agent builds the project and arranges the cards, and then you carry on editing.")}</span>
               </div>
 
               <PromptBox
@@ -715,10 +716,10 @@ function OnlineStartWithAccount(props: {
                 onChange={(e) => {
                   const list = e.target.files ? [...e.target.files] : [];
                   e.target.value = "";
-                  if (list.length) { setFiles((f) => [...f, ...list]); setNotice(`已挑 ${files.length + list.length} 个素材，发出这句话时一起放进新项目。`); }
+                  if (list.length) { setFiles((f) => [...f, ...list]); setNotice(tr("{0} media selected, they will be put into the new project together when this message is sent.", files.length + list.length)); }
                 }} />
               <p className={`ps-prompt-note${ap.error ? " is-err" : ""}`} role={ap.error ? "alert" : "status"} data-pc="start-notice">
-                {errorLine || (ap.guest ? GUEST_LIMITS_TEXT : openId && !chatPage ? "项目还开着：点左边它底下的对话回去接着聊。" : `行上右键可以置顶、归档、放进云端分组（${orgWhereText("cloud", orgInCloud)}），按住能拖着排序，侧栏右边那条缝能拖宽窄。`)}
+                {errorLine || (ap.guest ? GUEST_LIMITS_TEXT : openId && !chatPage ? tr("The project is still open: click the chat under it on the left to pick up where you left off.") : tr("Right-click a row to pin it, archive it, or move it to a cloud group ({0}). Hold and drag to reorder, and drag the edge on the right of the sidebar to resize it.", orgWhereText("cloud", orgInCloud)))}
               </p>
 
               <ProjectRail

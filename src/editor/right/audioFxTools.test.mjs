@@ -20,9 +20,9 @@ test("音频效果库:建、挂、改、删,门槛、撤销、跨剪辑清理、
       { id: "i", kind: "image", name: "i.jpg", url: "/media/i.jpg" },
     ];
     p.tracks = [
-      { id: "t1", name: "画面", clips: [{ id: "c1", cardId: "", params: {}, mediaId: "v", start: 0, end: 5 }, { id: "c2", cardId: "", params: {}, mediaId: "v", start: 5, end: 10 }] },
-      { id: "t2", name: "卡片", clips: [{ id: "k1", cardId: "caption-track", params: {}, start: 0, end: 5 }] },
-      { id: "t3", name: "声音", muted: true, clips: [{ id: "s1", cardId: "", params: {}, mediaId: "a", start: 0, end: 5 }] },
+      { id: "t1", name: "Video", clips: [{ id: "c1", cardId: "", params: {}, mediaId: "v", start: 0, end: 5 }, { id: "c2", cardId: "", params: {}, mediaId: "v", start: 5, end: 10 }] },
+      { id: "t2", name: "Cards", clips: [{ id: "k1", cardId: "caption-track", params: {}, start: 0, end: 5 }] },
+      { id: "t3", name: "Audio", muted: true, clips: [{ id: "s1", cardId: "", params: {}, mediaId: "a", start: 0, end: 5 }] },
       { id: "t4", name: "图", clips: [{ id: "i1", cardId: "", params: {}, mediaId: "i", start: 0, end: 5 }] },
       { id: "t5", name: "锁住的", locked: true, clips: [{ id: "c3", cardId: "", params: {}, mediaId: "v", start: 0, end: 5 }] },
     ];

@@ -1,3 +1,4 @@
+import { tr } from "../../i18n/index.ts";
 /**
  * 账号云端项目里,卡片源码同步向页面要连接票据时怎么答(桌面版;`cardSync.ts` 的 `hooks.ticket`)。
  *
@@ -32,7 +33,7 @@ export function isTerminalAccountFailure(error: unknown): boolean {
 export function accountCardTicket(o: AccountCardTicketOptions): (projectId: string) => Promise<{ ticket: string; expiresAt: number }> {
   const gone = (): never => {
     o.stop();
-    throw new Error("本页面已经不在这个云端项目里");
+    throw new Error(tr("This page is no longer in this cloud project"));
   };
   return async (projectId) => {
     if (!o.isCurrent()) gone();

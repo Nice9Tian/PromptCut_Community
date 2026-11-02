@@ -114,6 +114,7 @@ import { sourceVersionsOf } from "./costIdentity";
 import { fontFingerprintOf } from "../render/fontFingerprint";
 // @ts-expect-error 无类型声明的 .mjs(浏览器与 Node 通用,只用 WebSocket 与计时器)
 import { createDocEndpoint as createDocEndpointUntyped } from "../../server/render-node/session-link.mjs";
+import { tr } from "../i18n/index.ts";
 
 /** 多久判一次资格、节拍一次(认领与续约由会话自己按间隔节流) */
 export const HOST_TICK_MS = 250;
@@ -239,7 +240,7 @@ async function sha256HexText(text: string): Promise<string> {
 
 async function gunzip(buf: ArrayBuffer): Promise<Uint8Array> {
   const DS = (globalThis as { DecompressionStream?: new (f: string) => TransformStream<Uint8Array, Uint8Array> }).DecompressionStream;
-  if (!DS) throw Object.assign(new Error("浏览器没有 DecompressionStream"), { retryable: false });
+  if (!DS) throw Object.assign(new Error(tr("The browser has no DecompressionStream")), { retryable: false });
   const stream = new Blob([buf]).stream().pipeThrough(new DS("gzip"));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
@@ -321,7 +322,7 @@ export function startBrowserNodeHost(deps: BrowserNodeHostDeps): () => void {
     let tp = performance.now();
     const bytes = ev.htmlGz ? await gunzip(ev.htmlGz) : new Uint8Array(ev.htmlRaw ?? new ArrayBuffer(0));
     notePhase("gunzip", performance.now() - tp);
-    if (bytes.length !== ev.bytes) throw Object.assign(new Error("解压后的快照字节数对不上"), { retryable: true });
+    if (bytes.length !== ev.bytes) throw Object.assign(new Error(tr("Decompressed snapshot byte count does not match")), { retryable: true });
     // 推素材服务:两档并行推(各自至少一次网络往返,互不依赖),两档都推成功才算这一帧做完(c10a 第 9 节)
     tp = performance.now();
     const timed = (k: "snap" | "px", work: Promise<unknown>) => work.then(() => notePhase(k, performance.now() - tp));
@@ -462,7 +463,7 @@ export function startBrowserNodeHost(deps: BrowserNodeHostDeps): () => void {
   }): Promise<{ manifest: Record<string, unknown> } | { yielded: true }> => {
     const stride = Number.isInteger(strideIn) && (strideIn as number) >= 1 ? (strideIn as number) : streamTaskStride(task);
     const plan = streamTaskFrames(task);
-    if (!plan) throw Object.assign(new Error("任务没有 input.stream(切分方没给浏览器那一份的参数)"), { retryable: false });
+    if (!plan) throw Object.assign(new Error(tr("Task has no input.stream (the splitter did not give the browser its share of the parameters)")), { retryable: false });
     const { input } = plan;
     let kept = streamKept.get(task.id);
     if (!kept) {
@@ -551,7 +552,7 @@ export function startBrowserNodeHost(deps: BrowserNodeHostDeps): () => void {
             const local = seg.frames[at];
             /** 这一张连着送几次(满密度时是 1) */
             const repeat = Math.min(stride, seg.frames.length - at);
-            if (signal.aborted) throw Object.assign(new Error("已中止"), { retryable: true });
+            if (signal.aborted) throw Object.assign(new Error(tr("Aborted")), { retryable: true });
             if (yielding()) {
               // 让路:已经满了的分段冲出来(推完才算数),没满的那一段丢掉
               finished = true;
@@ -570,7 +571,7 @@ export function startBrowserNodeHost(deps: BrowserNodeHostDeps): () => void {
               const key = `${session}#${local}`;
               const bitmap = pixelStash.get(key);
               pixelStash.delete(key);
-              if (!bitmap) throw Object.assign(new Error("舞台没有交出这一帧的像素"), { retryable: true });
+              if (!bitmap) throw Object.assign(new Error(tr("The stage did not hand over the pixels of this frame")), { retryable: true });
               stage.frames++;
               stage.ms.push(reply.ms);
               stage.readyMs.push(reply.readyMs);
@@ -601,7 +602,7 @@ export function startBrowserNodeHost(deps: BrowserNodeHostDeps): () => void {
         throw e;
       }
     }
-    for (const s of plan.segments) if (!have(s.index)) throw Object.assign(new Error(`分段 ${s.index} 没出齐`), { retryable: true });
+    for (const s of plan.segments) if (!have(s.index)) throw Object.assign(new Error(tr("Segment {0} is incomplete", s.index)), { retryable: true });
     streamStats.tasks++;
     return { manifest: streamManifest(task as Parameters<typeof streamManifest>[0], parts) as unknown as Record<string, unknown> };
   };
@@ -759,7 +760,7 @@ export function startBrowserNodeHost(deps: BrowserNodeHostDeps): () => void {
   /** 层表在内容库里的键:`layers:<项目 id>`(与在线来源、与渲染节点写的同一个键) */
   const layerMapKey = (project: unknown): string => {
     const id = (project as Project | null)?.id;
-    if (typeof id !== "string" || !id) throw new Error("项目没有 id,写不了层表");
+    if (typeof id !== "string" || !id) throw new Error(tr("The project has no id, cannot write the layer table"));
     return `layers:${id}`;
   };
   const pages = createPageStreams({
@@ -790,19 +791,19 @@ export function startBrowserNodeHost(deps: BrowserNodeHostDeps): () => void {
     lookupOther: streamRangePresent,
     readLayerMap: async (project) => {
       const r = await docRequest({ type: "content.get", kind: "snapshot-manifest", key: layerMapKey(project) });
-      if (r.type !== "content.item") throw new Error(`取层表:${String(r.reason ?? r.type)}`);
+      if (r.type !== "content.item") throw new Error(tr("Fetch layer table: {0}", String(r.reason ?? r.type)));
       return r.missing ? null : (r.body ?? null);
     },
     writeLayerMap: async (project, body) => {
       const r = await docRequest({ type: "content.put", kind: "snapshot-manifest", key: layerMapKey(project), body });
-      if (r.type !== "content.stored") throw new Error(`写层表:${String(r.reason ?? r.type)}`);
+      if (r.type !== "content.stored") throw new Error(tr("Write layer table: {0}", String(r.reason ?? r.type)));
     },
     produce: async ({ task, project, stride, signal, yielding }) => {
       try {
         const out = await bakeStream({ task, project, signal, progress: () => {}, yielding, stride });
         if (!("manifest" in out)) return "yielded";
         // 清单没写进内容库,这一段别人就找不到:按做不成算(已推完的分段留着,下次只差写清单)
-        if (!(await putStreamManifest(task, out.manifest))) throw Object.assign(new Error(`流清单没写进内容库:${manifestStats.lastError ?? "?"}`), { retryable: true });
+        if (!(await putStreamManifest(task, out.manifest))) throw Object.assign(new Error(tr("Stream manifest was not written to the content store: {0}", manifestStats.lastError ?? "?")), { retryable: true });
         streamKept.delete(task.id);
         return "done";
       } finally {
@@ -886,9 +887,9 @@ export function startBrowserNodeHost(deps: BrowserNodeHostDeps): () => void {
     try {
       const r = await docRequest({ type: "auth.ticket", kind: "conn", role: "render", owner: { kind: "browser" } });
       if (r.type === "auth.ticket.ok" && typeof r.ticket === "string") ticket = r.ticket;
-      else lastError = `签 render 票据被拒:${String(r.reason ?? r.type)}`;
+      else lastError = tr("Signing render ticket was refused: {0}", String(r.reason ?? r.type));
     } catch (e) {
-      lastError = `签 render 票据失败:${String((e as Error)?.message ?? e)}`;
+      lastError = tr("Signing render ticket failed: {0}", String((e as Error)?.message ?? e));
     }
     dialing = false;
     if (stopped || fatal || !node || !ticket) { scheduleRedial(); return; }
@@ -897,7 +898,7 @@ export function startBrowserNodeHost(deps: BrowserNodeHostDeps): () => void {
     try {
       e = createDocEndpoint({ url, protocols: () => protocols, transport: "ws", renew: false, backoff: { baseMs: 500, factor: 2, maxMs: 5000, jitter: 0.2 } });
     } catch (err) {
-      lastError = `建 render 会话失败:${String((err as Error)?.message ?? err)}`;
+      lastError = tr("Creating render session failed: {0}", String((err as Error)?.message ?? err));
       scheduleRedial();
       return;
     }
@@ -956,7 +957,7 @@ export function startBrowserNodeHost(deps: BrowserNodeHostDeps): () => void {
       // 块 N:能执行用户卡与素材效果卡时的登记(运行时版本、能力位、卡片代码身份),与文档服务回的 cardEnvFingerprint
       cardInfo: () => getNodeCardInfo(),
       onCardEnvFingerprint: (fp) => setNodeCardEnvFingerprint(fp),
-      onRefused: (reason) => { fatal = `refused-${reason}`; lastError = `报到被拒:${reason}`; teardown(fatal); },
+      onRefused: (reason) => { fatal = `refused-${reason}`; lastError = tr("Check-in refused: {0}", reason); teardown(fatal); },
     });
     redialAt = 0;
     redialDelay = REDIAL_MIN_MS;

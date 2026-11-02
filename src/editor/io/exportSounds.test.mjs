@@ -157,7 +157,7 @@ test('A7 生成中取消:导出与生成都停,正在做的那一段不提交、
   const f = service({ holdComplete: () => new Promise(r => { release = r; }) });
   try {
     sourceVersion = 'v1'; failAudio = null;
-    actions.newProject('取消');
+    actions.newProject('Cancel');
     const a = actions.addCardClip(def.id, 0, { duration: .2, params: { value: .25 } });
     const b = actions.addCardClip(def.id, 1, { duration: .2, params: { value: .5 } });
     const abort = new AbortController(), progress = [];
@@ -196,7 +196,7 @@ test('A9 某一段生成不出来:导出失败并指出是哪个片段;它之后
   const f = service();
   try {
     sourceVersion = 'v1';
-    actions.newProject('失败');
+    actions.newProject('failed');
     const a = actions.addCardClip(def.id, 0, { duration: .2, params: { value: .25 } });
     const bad = actions.addCardClip(def.id, 1, { duration: .2, params: { value: .5 } });
     const c = actions.addCardClip(def.id, 2, { duration: .2, params: { value: .6 } });

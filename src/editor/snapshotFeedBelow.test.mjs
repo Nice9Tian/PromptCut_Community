@@ -41,7 +41,7 @@ function project(edit = (p) => p) {
   const base = {
     version: 1, name: "p", width: 1920, height: 1080, fps: FPS, duration: 20, media: [],
     tracks: [
-      { id: "top", name: "top", clips: [card("title", 0, 10, { params: { text: "标题" } })] },
+      { id: "top", name: "top", clips: [card("title", 0, 10, { params: { text: "Title" } })] },
       { id: "mid", name: "mid", clips: [card("glass", GLASS_START, GLASS_START + 4, { frame: { x: 100, y: 100, w: 600, h: 300 } })] },
       { id: "low", name: "low", clips: [card("mover", 0, 10, { params: { speed: 1 } })] },
     ],

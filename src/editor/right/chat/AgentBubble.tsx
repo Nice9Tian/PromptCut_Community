@@ -7,6 +7,7 @@ import { bareToolName } from "./iconRuns";
 import { isReportTool, parseProgressReport, reportTitle, type ProgressReport } from "../../../ai/progressReport";
 import { isUserMessageCall, sayingsOf } from "../../../ai/userMessages";
 import "./agent.css";
+import { tr } from "../../../i18n/index.ts";
 
 /**
  * 取一条消息的有序片段。新消息自带 parts;旧会话历史里没有,
@@ -61,7 +62,7 @@ export function runningTool(parts: MessagePart[]): ToolCallInfo | null {
 /** 一条没跑完的消息:优先用内核报上来的进度,没有就退回「正在思考 / 正在执行 X」 */
 export function activityText(m: ChatMessage, busyTool: ToolCallInfo | null): string {
   if (m.progress?.text) return m.progress.text;
-  return busyTool ? `正在执行 ${bareToolName(busyTool.name)}` : "正在思考";
+  return busyTool ? tr("Running {0}", bareToolName(busyTool.name)) : tr("Thinking");
 }
 
 /**
@@ -73,10 +74,10 @@ export function progressMeta(m: ChatMessage, liveElapsedMs?: number): string | n
   if (!p?.round) return null;
   // maxRounds 为 null 是「不限轮次」(深度自主 + 自主轮次填 0):Infinity 过一趟 JSON 就是 null。
   // 写成「第 12/? 轮」会让人以为丢了信息,其实是本来就没有分母
-  const bits = [p.maxRounds ? `第 ${p.round}/${p.maxRounds} 轮` : `第 ${p.round} 轮(不限)`];
-  if (p.completed || p.failed) bits.push(`成功 ${p.completed ?? 0}·失败 ${p.failed ?? 0}`);
+  const bits = [p.maxRounds ? tr("Round {0}/{1}", p.round, p.maxRounds) : tr("Round {0} (unlimited)", p.round)];
+  if (p.completed || p.failed) bits.push(tr("Succeeded {0} · Failed {1}", p.completed ?? 0, p.failed ?? 0));
   const elapsed = liveElapsedMs ?? p.elapsedMs;
-  if (elapsed) bits.push(`${Math.floor(elapsed / 1000)} 秒`);
+  if (elapsed) bits.push(tr("{0} s", Math.floor(elapsed / 1000)));
   return bits.join(" · ");
 }
 
@@ -112,13 +113,13 @@ export function LiveProgressMeta({ m }: { m: ChatMessage }) {
  * 用户自己停的只写「已停止」:是他按的,不用解释。
  */
 export const OUTCOME_TEXT: Record<string, string> = {
-  stalled: "检测到重复操作没有进展,已停下来。上面的总结说明了做到哪一步。",
-  round_limit: "已达到本次模型往返轮数上限。已完成的修改保留,可以补充要求后继续。",
-  aborted: "已停止",
+  stalled: tr("Repeated actions were detected with no progress, so it stopped. The summary above explains how far it got."),
+  round_limit: tr("The model round-trip limit for this run was reached. Completed changes are kept; add more instructions to continue."),
+  aborted: tr("Stopped"),
 };
 export function outcomeText(m: ChatMessage): string | null {
   if (!m.outcome || m.outcome === "completed" || m.outcome === "error") return null;
-  return OUTCOME_TEXT[m.outcome] || `本次执行结束于:${m.outcome}`;
+  return OUTCOME_TEXT[m.outcome] || tr("This run ended with: {0}", m.outcome);
 }
 
 /** 简洁模式的一段:几次操作,结尾可能跟着一份报告 */
@@ -155,9 +156,9 @@ export function segmentsOf(parts: MessagePart[]): Segment[] {
 }
 
 const REPORT_GROUPS = [
-  { field: "done", label: "已完成", mark: "✓", cls: "is-done" },
-  { field: "todo", label: "待办", mark: "○", cls: "is-todo" },
-  { field: "problems", label: "问题", mark: "!", cls: "is-problem" },
+  { field: "done", label: tr("Completed"), mark: "✓", cls: "is-done" },
+  { field: "todo", label: tr("To do"), mark: "○", cls: "is-todo" },
+  { field: "problems", label: tr("Problems"), mark: "!", cls: "is-problem" },
 ] as const;
 
 /**
@@ -197,7 +198,7 @@ export function ReportCard({ r, enter }: { r: ProgressReport; enter?: boolean })
           </div>
         ))
       ) : (
-        <div className="ai-report-empty">(没有可汇报的内容)</div>
+        <div className="ai-report-empty">{tr("(nothing to report)")}</div>
       )}
     </div>
   );
@@ -232,7 +233,7 @@ function RawLog({ sections }: { sections: { key: string; parts: MessagePart[]; l
     <div className="ai-rawlog">
       <button type="button" className="ai-rawlog-head" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <span aria-hidden>{open ? "▾" : "▸"}</span>
-        思考与原文
+        {tr("Thinking and raw text")}
       </button>
       {open && (
         <div className="ai-rawlog-body">
@@ -293,7 +294,7 @@ export function AgentBubble(props: {
     >
       {m.roleId && <div className="pc-role-header"><RoleName roleId={m.roleId} /></div>}
       {m.attachments && m.attachments.length > 0 && (
-        <div className="ai-message-attach">[附件: {m.attachments.map((a) => a.name).join(", ")}]</div>
+        <div className="ai-message-attach">{tr("[Attachments: {0}]", m.attachments.map((a) => a.name).join(", "))}</div>
       )}
 
       {sayings.map((s) => (
@@ -303,7 +304,7 @@ export function AgentBubble(props: {
         </div>
       ))}
       {ops > 0 && !m.error && (
-        <div className="ai-saying-none" data-pc="agent-saying-none">做了 {ops} 次操作,详见下方「Agent 操作」</div>
+        <div className="ai-saying-none" data-pc="agent-saying-none">{tr("Did {0} operations, see \"Agent operations\" below", ops)}</div>
       )}
 
       {/* 「正在做什么」和下面那行轮次小字包成一块:气泡里各块之间只靠 gap 隔开,这两行要贴得比 gap 近 */}

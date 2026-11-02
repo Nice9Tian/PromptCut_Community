@@ -13,6 +13,7 @@ import { LogoMark } from "../ui/Logo";
 import { LanguageMenu } from "../ui/LanguageMenu";
 import { MobileJoin } from "./MobileJoin";
 import "./mobileLogin.css";
+import { tr } from "../i18n/index.ts";
 
 export function MobileStart({ onEnterEditor }: { onEnterEditor: () => void }) {
   /*
@@ -62,15 +63,15 @@ export function MobileStart({ onEnterEditor }: { onEnterEditor: () => void }) {
         {err && <div className="err" role="alert" data-pcm="home-error">{err}</div>}
         <form data-pcm="lan-join-form" className="ps-m-login-form" onSubmit={submitLanLink}>
           <div className="ps-m-login-head">
-            <h2 className="sec">加入局域网共享项目</h2>
-            <span className="ps-m-login-sub">扫描电脑端协作面板里的二维码，或粘贴局域网邀请链接进入。</span>
+            <h2 className="sec">{tr("Join a LAN shared project")}</h2>
+            <span className="ps-m-login-sub">{tr("Scan the QR code in the collaboration panel on the computer, or paste a LAN invite link to join.")}</span>
           </div>
           <div className="field">
-            <label>邀请链接</label>
+            <label>{tr("Invite link")}</label>
             <input
               className="text-in"
               data-pcm="join-link"
-              placeholder="粘贴 #invite=… 局域网邀请链接"
+              placeholder={tr("Paste a #invite=… LAN invite link")}
               required
               value={rawLink}
               onChange={(e) => {
@@ -80,10 +81,10 @@ export function MobileStart({ onEnterEditor }: { onEnterEditor: () => void }) {
             />
           </div>
           <button type="submit" className="btn primary" data-pcm="join-submit" disabled={!rawLink.trim()}>
-            下一步
+            {tr("Next")}
           </button>
         </form>
-        <div className="note-mobile">手机端是“看与改”：对话、预览、微调、审阅 Agent 的改动。重型制作（导入大素材、写卡片代码）留给桌面端。</div>
+        <div className="note-mobile">{tr("The mobile app is for viewing and tweaking: chat, preview, fine adjustments, and reviewing the Agent's changes. Heavy production (importing large media, writing card code) is left to the desktop app.")}</div>
       </div>
     </div>
   );

@@ -10,6 +10,7 @@ import { mediaCardUrl } from "../../ai/mediaRef";
 import { getState } from "../../store/project";
 import { importVideoFiles } from "../io";
 import { classifyFile, registerAsset } from "../left/importAssets";
+import { tr } from "../../i18n/index.ts";
 
 export type LibraryOutcome = { inLibrary: { mediaId: string; url: string } } | { libraryError: string };
 
@@ -20,14 +21,14 @@ export const LIBRARY_KINDS: ReadonlyArray<ChatAttachment["kind"]> = ["image", "v
 export async function putInLibrary(file: File): Promise<LibraryOutcome> {
   try {
     const kind = classifyFile(file);
-    if (!kind) return { libraryError: "认不出文件类型" };
+    if (!kind) return { libraryError: tr("Unrecognized file type") };
     const mediaId = kind === "video" ? (await importVideoFiles([file], { place: false }))[0] : await registerAsset(file, kind);
     const media = getState().project.media.find((m) => m.id === mediaId);
     const url = media ? mediaCardUrl(media) : "";
-    if (!mediaId || !url) return { libraryError: "上传到素材服务没有成功" };
+    if (!mediaId || !url) return { libraryError: tr("Upload to the asset service failed") };
     return { inLibrary: { mediaId, url } };
   } catch (err) {
     const text = err instanceof Error ? err.message : String(err);
-    return { libraryError: (text || "放进素材库时出错").replace(/[\r\n\0]+/g, " ").slice(0, 200) };
+    return { libraryError: (text || tr("Error adding to the media library")).replace(/[\r\n\0]+/g, " ").slice(0, 200) };
   }
 }

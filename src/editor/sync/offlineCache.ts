@@ -1,3 +1,4 @@
+import { tr } from "../../i18n/index.ts";
 /**
  * 本机暂存(浏览器本地缓存):断网期间的离线修改与待合并表的本机副本。
  *
@@ -34,7 +35,7 @@ export function idbStore(factory: IdbFactory): KvStore {
       if (!d.objectStoreNames?.contains?.(OFFLINE_DB.store)) d.createObjectStore(OFFLINE_DB.store, { keyPath: "key" });
     };
     req.onsuccess = () => resolve(req.result);
-    req.onerror = () => { opening = null; reject(req.error ?? new Error("IndexedDB 打不开")); };
+    req.onerror = () => { opening = null; reject(req.error ?? new Error(tr("IndexedDB can't be opened"))); };
   });
   const run = async <T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest | void): Promise<T> => {
     const d = await db();
@@ -44,8 +45,8 @@ export function idbStore(factory: IdbFactory): KvStore {
       let result: T;
       if (req) req.onsuccess = () => { result = req.result as T; };
       tx.oncomplete = () => resolve(result);
-      tx.onerror = () => reject(tx.error ?? new Error("IndexedDB 写入失败"));
-      tx.onabort = () => reject(tx.error ?? new Error("IndexedDB 写入被中止"));
+      tx.onerror = () => reject(tx.error ?? new Error(tr("IndexedDB write failed")));
+      tx.onabort = () => reject(tx.error ?? new Error(tr("IndexedDB write aborted")));
     });
   };
   return {

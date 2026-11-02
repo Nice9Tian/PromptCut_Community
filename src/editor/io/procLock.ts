@@ -83,7 +83,7 @@ export async function acquireDraftLock(draftId: string): Promise<LockOutcome> {
       } catch (e) {
         // 外壳这层加固失败不改变结论:Node 那层已经判定锁是我们的了。
         // 记一行,别把用户拦在门外。
-        console.warn("[procLock] 外壳加固失败,只剩 Node 那层保护:", e);
+        console.warn("[procLock] Shell hardening failed, only the Node-level protection remains:", e);
       }
     }
   }

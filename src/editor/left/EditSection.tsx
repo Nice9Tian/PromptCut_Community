@@ -5,13 +5,14 @@ import { readStored, writeStored } from "./stored";
 import { SectionHead } from "./SectionHead";
 import { SoundGenerationControls } from "./SoundEffectForm";
 import { ReadOnlyFence } from "../ReadOnlyFence";
+import { tr } from "../../i18n/index.ts";
 
 type EditTab = "form" | "code" | "nodes";
 
 const EDIT_TABS: { key: EditTab; label: string }[] = [
-  { key: "form", label: "参数" },
-  { key: "code", label: "代码" },
-  { key: "nodes", label: "节点" },
+  { key: "form", label: tr("Parameters") },
+  { key: "code", label: tr("code") },
+  { key: "nodes", label: tr("Nodes") },
 ];
 const EDIT_TAB_KEYS = EDIT_TABS.map((t) => t.key);
 const EDIT_TAB_STORE = "pc.left.editTab";
@@ -30,8 +31,8 @@ export function EditSection() {
 
   return (
     <div data-pc="inspector" className="pc-left-section">
-      <SectionHead title="编辑">
-        <div className="pc-lib-chips" role="tablist" aria-label="编辑分页">
+      <SectionHead title={tr("Edit")}>
+        <div className="pc-lib-chips" role="tablist" aria-label={tr("Edit tabs")}>
           {EDIT_TABS.map((t) => (
             <button
               key={t.key}

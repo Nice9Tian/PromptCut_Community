@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import { ONLINE_EXPORT_TEXT } from "../export/text";
 import type { ExportMode } from "../export/cardLayers";
 import "./ExportDialog.css";
+import { tr } from "../i18n/index.ts";
 
 export type ExportPhase = "asking" | "running" | "done" | "error" | "cancelled";
 
@@ -42,8 +43,8 @@ export interface ExportState {
 
 function fmtDuration(ms: number): string {
   const s = Math.round(ms / 1000);
-  if (s < 60) return `${s} 秒`;
-  return `${Math.floor(s / 60)} 分 ${String(s % 60).padStart(2, "0")} 秒`;
+  if (s < 60) return tr("{0} s", s);
+  return tr("{0} min {1} s", Math.floor(s / 60), String(s % 60).padStart(2, "0"));
 }
 
 export function ExportDialog(props: {
@@ -104,7 +105,7 @@ export function ExportDialog(props: {
             ))}
           </div>
           <div className="pc-export-actions">
-            <button ref={closeRef} className="pc-export-btn" onClick={onClose}>取消</button>
+            <button ref={closeRef} className="pc-export-btn" onClick={onClose}>{tr("Cancel")}</button>
           </div>
         </div>
       </div>
@@ -121,17 +122,17 @@ export function ExportDialog(props: {
         className="pc-export-dialog"
         role="dialog"
         aria-modal="true"
-        aria-label="导出视频"
+        aria-label={tr("Export video")}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="pc-export-title">
-          {state.phase === "running" ? (state.mode === "fast" ? `正在${ONLINE_EXPORT_TEXT.fast}` : state.mode === "full" ? `正在${ONLINE_EXPORT_TEXT.full}` : "正在导出视频") :
-           state.phase === "done" ? "导出完成" :
-           state.phase === "cancelled" ? "已取消导出" : "导出失败"}
+          {state.phase === "running" ? (state.mode === "fast" ? tr("Running {0}", ONLINE_EXPORT_TEXT.fast) : state.mode === "full" ? tr("Running {0}", ONLINE_EXPORT_TEXT.full) : tr("Exporting video")) :
+           state.phase === "done" ? tr("Export complete") :
+           state.phase === "cancelled" ? tr("Export canceled") : tr("Export failed")}
         </div>
 
         <div className="pc-export-target">
-          <span className="pc-export-label">保存到</span>
+          <span className="pc-export-label">{tr("Save to")}</span>
           <span className="pc-export-path" title={state.target}>{state.target}</span>
         </div>
 
@@ -149,22 +150,22 @@ export function ExportDialog(props: {
             <div className="pc-export-meta">
               <span>{pct}%</span>
               <span data-pc="export-stage" data-stage={state.stage ?? "render"}>{state.stage === "sound"
-                ? `生成声音 ${Math.min(state.total, Math.floor(state.done) + 1)} / ${state.total} 段`
-                : `${state.stage === "compose" ? "合成视频" : "渲染卡片"} ${state.done} / ${state.total} 帧`}</span>
-              <span>已用 {fmtDuration(elapsed)}</span>
+                ? tr("Generating audio {0} / {1} segments", Math.min(state.total, Math.floor(state.done) + 1), state.total)
+                : tr("{0} {1} / {2} frames", state.stage === "compose" ? tr("Compositing video") : tr("Rendering cards"), state.done, state.total)}</span>
+              <span>{tr("{0} elapsed", fmtDuration(elapsed))}</span>
             </div>
             {state.waiting ? (
               <div className="pc-export-waiting" data-pc="export-waiting" style={{ whiteSpace: "pre-line" }}>{state.waiting}</div>
             ) : null}
             <div className="pc-export-hint">
-              渲染期间会另开一个隐藏的浏览器逐帧截图，占用较高属正常。
+              {tr("During rendering a separate hidden browser takes a screenshot of each frame, so high resource usage is normal.")}
             </div>
           </>
         )}
 
         {state.phase === "done" && (
           <div className="pc-export-ok">
-            视频已保存。只含卡片的透明层（overlay.mov）在产物目录里。
+            {tr("Video saved. The transparent card-only layer (overlay.mov) is in the output folder.")}
           </div>
         )}
 
@@ -177,7 +178,7 @@ export function ExportDialog(props: {
             改成说清楚现场留下了什么 */}
         {state.phase === "cancelled" && (
           <div className="pc-export-ok">
-            渲染已停止。中间文件已清掉；重新导出会另建一个产物目录。
+            {tr("Render stopped. Intermediate files were removed; exporting again creates a new output folder.")}
           </div>
         )}
 
@@ -187,14 +188,14 @@ export function ExportDialog(props: {
 
         <div className="pc-export-actions">
           {state.phase === "running" ? (
-            <button className="pc-export-btn" onClick={onCancel}>取消导出</button>
+            <button className="pc-export-btn" onClick={onCancel}>{tr("Cancel export")}</button>
           ) : (
             <>
               {state.outDir && (
-                <button className="pc-export-btn" onClick={onReveal}>打开产物目录</button>
+                <button className="pc-export-btn" onClick={onReveal}>{tr("Open output folder")}</button>
               )}
               <button ref={closeRef} className="pc-export-btn pc-export-primary" onClick={onClose}>
-                关闭
+                {tr("Close")}
               </button>
             </>
           )}

@@ -7,6 +7,7 @@ import {
   describe,
   type InstallJob,
 } from "../../ai/sttInstallStore";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 启动一次听写引擎安装,并把进度喂进共享 store。
@@ -25,7 +26,7 @@ export function runSttInstall(engine = "faster-whisper"): StartedInstall {
   // 同一时刻只允许一个安装:pip 装到同一个 target 目录,两个并发会互相踩
   const already = runningJob();
   if (already) {
-    throw new Error(`已经在安装 ${already.engine} 了(${describe(already)}),等它结束再装。`);
+    throw new Error(tr("{0} is already being installed ({1}), wait for it to finish before installing again.", already.engine, describe(already)));
   }
 
   const jobId = `install-${engine}-${Date.now().toString(36)}`;
@@ -38,8 +39,8 @@ export function runSttInstall(engine = "faster-whisper"): StartedInstall {
     feedLine(jobId, line);
   })
     .then((r) => {
-      finishJob(jobId, r.ok, r.ok ? undefined : "pip 退出码非零,详见日志");
-      return { ok: r.ok, error: r.ok ? undefined : "pip 退出码非零,详见日志" };
+      finishJob(jobId, r.ok, r.ok ? undefined : tr("pip exited with a non-zero code, see the log for details"));
+      return { ok: r.ok, error: r.ok ? undefined : tr("pip exited with a non-zero code, see the log for details") };
     })
     .catch((e: unknown) => {
       const error = e instanceof Error ? e.message : String(e);

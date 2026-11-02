@@ -18,6 +18,7 @@ import { client as sharedClient, errorStatus } from "../editor/sync/sharedApi";
 import { JOIN_REQUEST_TEXT, autoJoinKey, joinRequestNotice } from "../editor/sync/joinRequestText";
 import { ensureDevice, enterShared } from "../editor/sync/syncManager";
 import { parseInviteLink } from "../online/invite";
+import { tr } from "../i18n/index.ts";
 
 
 type Ap = AccountProjectsHookResult;
@@ -92,11 +93,11 @@ export function JoinPanel(props: { ap?: Ap | null; askPassword: boolean; onClose
       const outcome = await ap.join(ap.link, pass);
       if (outcome === "secondary-required" || outcome === "bad-secondary") {
         setAskSecondary(true);
-        setMsg(outcome === "bad-secondary" ? "项目二级密码不正确。" : JOIN_REQUEST_TEXT.secondaryRequired);
+        setMsg(outcome === "bad-secondary" ? tr("Incorrect project secondary password.") : JOIN_REQUEST_TEXT.secondaryRequired);
         return;
       }
       if (outcome === "expired") {
-        setMsg("该项目链接已失效，请联系创建者获取最新链接。");
+        setMsg(tr("This project link has expired. Contact the creator for the latest link."));
         return;
       }
       if (outcome === "not-listed") return;
@@ -126,8 +127,8 @@ export function JoinPanel(props: { ap?: Ap | null; askPassword: boolean; onClose
   const busy = lanBusy || Boolean(ap?.busy);
 
   return (
-    <div ref={box} className="ps-menu ps-join" role="dialog" aria-label="用项目链接加入" data-pc="start-join">
-      <div className="ps-menu-head">用项目链接加入</div>
+    <div ref={box} className="ps-menu ps-join" role="dialog" aria-label={tr("Join with a project link")} data-pc="start-join">
+      <div className="ps-menu-head">{tr("Join with a project link")}</div>
       <form
         className="ps-join-form"
         onSubmit={(e) => {
@@ -136,12 +137,12 @@ export function JoinPanel(props: { ap?: Ap | null; askPassword: boolean; onClose
         }}
       >
         <label className="ps-field">
-          项目链接
+          {tr("Project link")}
           <input
             data-pc="start-join-link"
             type="text"
             required
-            placeholder="粘贴别人给你的云端或局域网项目链接"
+            placeholder={tr("Paste the cloud or LAN project link someone gave you")}
             value={link}
             autoFocus
             onChange={(e) => {
@@ -156,12 +157,12 @@ export function JoinPanel(props: { ap?: Ap | null; askPassword: boolean; onClose
         {lanResolved && (
           <>
             <label className="ps-field">
-              你的用户名（项目内显示）
+              {tr("Your username (shown in the project)")}
               <input
                 data-pc="start-join-lan-username"
                 type="text"
                 required
-                placeholder="例如：小李"
+                placeholder={tr("e.g. Alex")}
                 value={lanUsername}
                 onChange={(e) => {
                   setLanUsername(e.target.value);
@@ -171,12 +172,12 @@ export function JoinPanel(props: { ap?: Ap | null; askPassword: boolean; onClose
             </label>
             {lanResolved.mode === "restricted" && (
               <label className="ps-field">
-                项目密码
+                {tr("Project password")}
                 <input
                   data-pc="start-join-lan-password"
                   type="password"
                   required
-                  placeholder="请输入项目密码"
+                  placeholder={tr("Enter the project password")}
                   value={lanPassword}
                   onChange={(e) => {
                     setLanPassword(e.target.value);
@@ -189,19 +190,19 @@ export function JoinPanel(props: { ap?: Ap | null; askPassword: boolean; onClose
         )}
         {askSecondary && !lanResolved && (
           <label className="ps-field">
-            项目二级密码
+            {tr("Project secondary password")}
             <input
               data-pc="start-join-secondary"
               type="password"
               required
-              placeholder="请输入项目二级密码"
+              placeholder={tr("Enter the project secondary password")}
               value={secondary}
               onChange={(e) => setSecondary(e.target.value)}
             />
           </label>
         )}
         {msg && <p className="ps-join-msg" role="alert" data-pc="start-join-msg">{msg}</p>}
-        {!signedIn && <p className="ps-join-msg">先登录账号或以游客身份进入，才能加入别人的项目。</p>}
+        {!signedIn && <p className="ps-join-msg">{tr("Sign in to an account or enter as a guest to join someone else's project.")}</p>}
         {notice && ap?.request && (
           <div className="ps-join-msg" role="status" data-pc="start-join-request" data-state={ap.request.state}>
             <span>{notice.text}</span>
@@ -220,9 +221,9 @@ export function JoinPanel(props: { ap?: Ap | null; askPassword: boolean; onClose
           </div>
         )}
         <div className="ps-join-actions">
-          <button type="button" className="ps-ghost-btn" onClick={props.onClose}>取消</button>
+          <button type="button" className="ps-ghost-btn" onClick={props.onClose}>{tr("Cancel")}</button>
           <button className="ps-primary-btn" data-pc="start-join-submit" disabled={busy || !signedIn || !link.trim()}>
-            {askSecondary ? "验证二级密码并加入" : "加入并打开项目"}
+            {askSecondary ? tr("Verify secondary password and join") : tr("Join and open project")}
           </button>
         </div>
       </form>

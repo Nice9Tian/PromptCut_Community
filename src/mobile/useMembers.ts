@@ -8,6 +8,7 @@ import { MEMBERS_POLL_CLOSED_MS, MEMBERS_POLL_OPEN_MS, getMemberSource, type Acc
 import { useSync } from "../editor/sync/syncManager";
 import { accountMemberCounts, accountMemberState, cloudAgentConns, cloudAgentLabel, isCloudAgentOnly, isCloudAgentRunning, splitMembers, visibleMembers } from "../editor/sync/hostedServices";
 import { useCloudRunning } from "../editor/sync/presence";
+import { tr } from "../i18n/index.ts";
 
 export interface MemberLine {
   key: string;
@@ -58,9 +59,9 @@ export function useMembers(open: boolean): MembersInfo {
       const s = accountMemberState(m.accountId, snap.devices);
       const name = m.accountName ?? m.accountId;
       const me = m.accountId === shared.accountId;
-      lines.push({ key: m.accountId, name: `${name}${me ? "（自己）" : ""}`, sub: s.offlineAgent ? "离线，Agent 在跑" : s.online ? "编辑中" : "离线", me, creator: m.accountId === snap.creatorAccountId, online: s.online, agent: false });
-      s.localAgents.forEach((c, i) => lines.push({ key: `${m.accountId}:a${i}`, name: `${name} · Agent${c.conversation !== undefined ? ` · 对话 ${c.conversation}` : ""}`, sub: "本机", me: false, creator: false, online: true, agent: true }));
-      if (s.cloudRunning) lines.push({ key: `${m.accountId}:cloud`, name: cloudAgentLabel(name), sub: "云端", me: false, creator: false, online: true, agent: true });
+      lines.push({ key: m.accountId, name: `${name}${me ? tr(" (you)") : ""}`, sub: s.offlineAgent ? tr("Offline, Agent running") : s.online ? tr("Editing") : tr("offline"), me, creator: m.accountId === snap.creatorAccountId, online: s.online, agent: false });
+      s.localAgents.forEach((c, i) => lines.push({ key: `${m.accountId}:a${i}`, name: `${name} · Agent${c.conversation !== undefined ? tr(" · chat {0}", c.conversation) : ""}`, sub: tr("Local"), me: false, creator: false, online: true, agent: true }));
+      if (s.cloudRunning) lines.push({ key: `${m.accountId}:cloud`, name: cloudAgentLabel(name), sub: tr("Cloud"), me: false, creator: false, online: true, agent: true });
     }
     const counts = accountMemberCounts(snap);
     return { unavailable: false, people: counts.people, agents: counts.agents, lines, requests: snap.self.creator ? snap.requests ?? [] : [], refresh };
@@ -71,11 +72,11 @@ export function useMembers(open: boolean): MembersInfo {
   for (const r of people) {
     const me = r.username === shared.username && r.deviceId === device?.deviceId;
     const cloudOnly = isCloudAgentOnly(r, running);
-    lines.push({ key: `${r.username}@${r.deviceId}`, name: `${r.displayName || r.username}${me ? "（自己）" : ""}`, sub: cloudOnly ? "离线，Agent 在跑" : r.tags.editing ? "编辑中" : "在看", me, creator: r.creator, online: !cloudOnly, agent: false });
+    lines.push({ key: `${r.username}@${r.deviceId}`, name: `${r.displayName || r.username}${me ? tr(" (you)") : ""}`, sub: cloudOnly ? tr("Offline, Agent running") : r.tags.editing ? tr("Editing") : tr("Viewing"), me, creator: r.creator, online: !cloudOnly, agent: false });
     const local = r.conns.filter((c) => c.role === "agent" && c.service !== "agent");
     const cloud = isCloudAgentRunning(r, running) ? cloudAgentConns(r.conns) : [];
-    local.forEach((c, i) => { agents++; lines.push({ key: `${r.username}@${r.deviceId}:a${i}`, name: `${r.displayName || r.username} · Agent${c.conversation !== undefined ? ` · 第 ${c.conversation} 个对话` : ""}`, sub: "本机", me: false, creator: false, online: true, agent: true }); });
-    cloud.forEach((_c, i) => { agents++; lines.push({ key: `${r.username}@${r.deviceId}:c${i}`, name: cloudAgentLabel(r.displayName || r.username), sub: "云端", me: false, creator: false, online: true, agent: true }); });
+    local.forEach((c, i) => { agents++; lines.push({ key: `${r.username}@${r.deviceId}:a${i}`, name: `${r.displayName || r.username} · Agent${c.conversation !== undefined ? tr(" · chat {0}", c.conversation) : ""}`, sub: tr("Local"), me: false, creator: false, online: true, agent: true }); });
+    cloud.forEach((_c, i) => { agents++; lines.push({ key: `${r.username}@${r.deviceId}:c${i}`, name: cloudAgentLabel(r.displayName || r.username), sub: tr("Cloud"), me: false, creator: false, online: true, agent: true }); });
   }
   return { unavailable: false, people: Math.max(1, lines.filter((l) => !l.agent && l.online).length), agents, lines, requests: [], refresh };
 }

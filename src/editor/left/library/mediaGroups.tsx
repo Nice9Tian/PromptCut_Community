@@ -13,6 +13,7 @@ import { ThumbTile } from "./ThumbTile";
 import type { GroupData, GroupItem } from "./groups";
 import { onlinePage, onlineUnsupported } from "../../../online/pageFlag";
 import { useReadOnly } from "../../readOnly";
+import { tr } from "../../../i18n/index.ts";
 
 /**
  * 素材库的视频 / 图片 / 音频三个组:导入进来的素材。
@@ -23,7 +24,7 @@ import { useReadOnly } from "../../readOnly";
 
 async function measureVideoDimensions(url: string): Promise<{ width: number; height: number }> {
   if (!url) {
-    throw new Error("视频 URL 为空");
+    throw new Error(tr("Video URL is empty"));
   }
   return new Promise((resolve, reject) => {
     const video = document.createElement("video");
@@ -44,7 +45,7 @@ async function measureVideoDimensions(url: string): Promise<{ width: number; hei
 
     const timer = setTimeout(() => {
       cleanup();
-      reject(new Error("读取视频元数据超时"));
+      reject(new Error(tr("Timed out reading video metadata")));
     }, 5000);
 
     video.onloadedmetadata = () => {
@@ -55,14 +56,14 @@ async function measureVideoDimensions(url: string): Promise<{ width: number; hei
       if (width > 0 && height > 0) {
         resolve({ width, height });
       } else {
-        reject(new Error("未能读取到有效的视频尺寸"));
+        reject(new Error(tr("Could not read a valid video size")));
       }
     };
 
     video.onerror = () => {
       clearTimeout(timer);
       cleanup();
-      reject(new Error("加载视频元数据失败"));
+      reject(new Error(tr("Failed to load video metadata")));
     };
 
     video.src = url;
@@ -71,29 +72,29 @@ async function measureVideoDimensions(url: string): Promise<{ width: number; hei
 
 async function measureImageDimensions(url: string): Promise<{ width: number; height: number }> {
   if (!url) {
-    throw new Error("图片 URL 为空");
+    throw new Error(tr("Image URL is empty"));
   }
   return new Promise((resolve, reject) => {
     const img = new Image();
-    const timer = setTimeout(() => reject(new Error("读取图片尺寸超时")), 5000);
+    const timer = setTimeout(() => reject(new Error(tr("Timed out reading image size"))), 5000);
     img.onload = () => {
       clearTimeout(timer);
       if (img.naturalWidth > 0 && img.naturalHeight > 0) {
         resolve({ width: img.naturalWidth, height: img.naturalHeight });
       } else {
-        reject(new Error("未能读取到有效的图片尺寸"));
+        reject(new Error(tr("Could not read a valid image size")));
       }
     };
     img.onerror = () => {
       clearTimeout(timer);
-      reject(new Error("加载图片失败"));
+      reject(new Error(tr("Failed to load image")));
     };
     img.src = url;
   });
 }
 
 /** 空态和「没有匹配的…」里的称呼跟着组走,免得音频组也说「视频」 */
-const KIND_NOUN: Record<MediaAsset["kind"], string> = { video: "视频", audio: "配乐", image: "图片" };
+const KIND_NOUN: Record<MediaAsset["kind"], string> = { video: tr("Video"), audio: tr("Background music"), image: tr("Images") };
 
 /** 时长写成 m:ss(0:13),角标和音频条都用它 */
 export function fmtDur(sec: number | undefined): string {
@@ -107,7 +108,7 @@ const aspectOf = (m: MediaAsset): number | undefined =>
   m.width && m.height && m.width > 0 && m.height > 0 ? m.height / m.width : undefined;
 
 const transcriptNote = (m: MediaAsset): string | undefined =>
-  m.transcript ? `字幕 ${m.transcript.segments.length} 段` : undefined;
+  m.transcript ? tr("Captions: {0} segments", m.transcript.segments.length) : undefined;
 
 function startMediaDrag(e: React.DragEvent, m: MediaAsset) {
   e.dataTransfer.setData(MIME_MEDIA, m.id);
@@ -177,7 +178,7 @@ function MediaTile({ m, onContextMenu }: { m: MediaAsset; onContextMenu: (e: Rea
       onDragStart={(e) => startMediaDrag(e, m)}
       onDragEnd={clearDragPayload}
       onContextMenu={onContextMenu}
-      titleAttr={m.kind === "video" ? "悬停预览;拖动 = 拖到时间轴;右键 = 更多" : "拖动 = 拖到时间轴;右键 = 更多"}
+      titleAttr={m.kind === "video" ? tr("Hover to preview; drag = drag to the timeline; right-click = more") : tr("Drag = drag to the timeline; right-click = more")}
       fill
     />
   );
@@ -259,7 +260,7 @@ function AudioRow({ m, onContextMenu }: { m: MediaAsset; onContextMenu: (e: Reac
       onDragStart={(e) => startMediaDrag(e, m)}
       onDragEnd={clearDragPayload}
       onContextMenu={onContextMenu}
-      title="拖动 = 拖到时间轴;右键 = 转写字幕 / 删除"
+      title={tr("Drag = drop on timeline; right-click = transcribe captions / delete")}
     />
   );
 }
@@ -275,9 +276,9 @@ function EmptyMedia({ noun }: { noun: string }) {
           </svg>
         </div>
         <div className="pc-left-empty-text">
-          还没有导入的{noun}。
+          {tr("No imported {0} yet.", noun)}
           <br />
-          点上面的导入按钮加进来。
+          {tr("Click the import button above to add some.")}
         </div>
       </div>
     </div>
@@ -301,7 +302,7 @@ export function useMediaMenu(flash: (text: string, ms?: number) => void) {
   const closeMenu = useCallback(() => setCtx(null), []);
 
   const guardMenu = (items: ContextMenuItem[]): ContextMenuItem[] =>
-    ro.locked ? items.map((it) => (it.label === "查看字幕" ? it : { ...it, disabled: true, title: ro.why })) : items;
+    ro.locked ? items.map((it) => (it.label === tr("View captions") ? it : { ...it, disabled: true, title: ro.why })) : items;
 
   const handleApplyAspectRatio = async (m: MediaAsset) => {
     try {
@@ -313,7 +314,7 @@ export function useMediaMenu(flash: (text: string, ms?: number) => void) {
         // 最低一档平时不拉原尺寸:素材没记下宽高就不量,照实说
         const policy = mediaTierPolicy();
         const url = policy.smallOnly ? "" : originalMediaUrl(m, policy);
-        if (!url) { alert("这份素材没有记下分辨率，在这台设备上量不了"); return; }
+        if (!url) { alert(tr("This media has no recorded resolution and it can't be measured on this device")); return; }
         const measured = m.kind === "image" ? await measureImageDimensions(url) : await measureVideoDimensions(url);
         width = measured.width;
         height = measured.height;
@@ -321,11 +322,11 @@ export function useMediaMenu(flash: (text: string, ms?: number) => void) {
       if (width > 0 && height > 0) {
         actions.setProjectMeta({ width, height });
       } else {
-        alert("未能获取视频的有效分辨率");
+        alert(tr("Could not get a valid video resolution"));
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      alert(`获取视频分辨率失败: ${msg}`);
+      alert(tr("Failed to get video resolution: {0}", msg));
     }
   };
 
@@ -334,10 +335,10 @@ export function useMediaMenu(flash: (text: string, ms?: number) => void) {
       ? []
       : [
           {
-            label: m.transcript ? "查看字幕" : "转写字幕",
-            hint: m.transcript ? `${m.transcript.segments.length} 段` : undefined,
+            label: m.transcript ? tr("View captions") : tr("Transcribe captions"),
+            hint: m.transcript ? tr("{0} segments", m.transcript.segments.length) : undefined,
             // 在线浏览器模式没有语音识别(C10 契约第 10 节):没有字幕的只能转写,置灰;已有字幕的照常查看
-            ...(!m.transcript && onlinePage() ? { disabled: true, title: onlineUnsupported("语音识别") } : {}),
+            ...(!m.transcript && onlinePage() ? { disabled: true, title: onlineUnsupported(tr("Speech recognition")) } : {}),
             // 走全局入口:左栏切到「字幕」分区、展开抽屉、聚焦这份素材
             onClick: () => requestCaptions(m.id),
           },
@@ -346,15 +347,15 @@ export function useMediaMenu(flash: (text: string, ms?: number) => void) {
     ...(m.kind === "video"
       ? [
           {
-            label: "创建为声音",
-            hint: "音频组",
+            label: tr("Create as sound"),
+            hint: tr("Audio group"),
             onClick: () => {
               const r = actions.audioFromVideo(m.id);
               flash(
                 r.ok
                   ? r.created
-                    ? `已创建「${r.media.name}」,在「音频」组`
-                    : `「${r.media.name}」早就建过了,在「音频」组`
+                    ? tr("Created \"{0}\" in the \"Audio\" group", r.media.name)
+                    : tr("\"{0}\" was already created, in the \"Audio\" group", r.media.name)
                   : r.error,
                 3000,
               );
@@ -366,13 +367,13 @@ export function useMediaMenu(flash: (text: string, ms?: number) => void) {
       ? []
       : [
           {
-            label: m.kind === "image" ? "以图片比例作为项目比例" : "以视频比例作为项目比例",
+            label: m.kind === "image" ? tr("Use image aspect ratio as project aspect ratio") : tr("Use video aspect ratio as project aspect ratio"),
             hint: m.width && m.height && m.width > 0 && m.height > 0 ? `${m.width}x${m.height}` : undefined,
             onClick: () => handleApplyAspectRatio(m),
           },
         ]),
     {
-      label: "删除素材",
+      label: tr("Delete media"),
       danger: true,
       onClick: () => setConfirmDelete({ mediaId: m.id, name: m.name }),
     },
@@ -384,8 +385,8 @@ export function useMediaMenu(flash: (text: string, ms?: number) => void) {
       {confirmDelete && (
         <ConfirmDialog
           open={true}
-          title="删除素材"
-          message={`确定删除「${confirmDelete.name}」?\n时间轴上引用它的片段会一起删除。`}
+          title={tr("Delete media")}
+          message={tr("Delete \"{0}\"?\nClips on the timeline that reference it will be deleted too.", confirmDelete.name)}
           onConfirm={() => {
             actions.removeMedia(confirmDelete.mediaId);
             setConfirmDelete(null);
@@ -423,7 +424,7 @@ export function useMediaGroup(
     return {
       items,
       thumbs,
-      emptyDetail: list.length === 0 ? <EmptyMedia noun={noun} /> : <div className="pc-left-note">没有匹配的{noun}</div>,
+      emptyDetail: list.length === 0 ? <EmptyMedia noun={noun} /> : <div className="pc-left-note">{tr("No matching {0}", noun)}</div>,
     };
   }, [allMedia, kind, q, openMenu, tierPolicy]);
 }

@@ -19,6 +19,7 @@
  */
 import { onLocalCommit } from "../../store/project";
 import { agentToolRunning } from "../userEditing";
+import { tr } from "../../i18n/index.ts";
 
 /** 一样本机写入:现在还有几件没写完 */
 export interface LocalWriteProbe {
@@ -34,14 +35,14 @@ export const QUIET_MS = 300;
 /** 轮询间隔 */
 const POLL_MS = 50;
 
-export const PENDING_OPS_LABEL = "文档服务确认本机的修改";
-export const BACKGROUND_LABEL = "后台任务正在写入项目";
+export const PENDING_OPS_LABEL = tr("The document service confirming local changes");
+export const BACKGROUND_LABEL = tr("A background task is writing to the project");
 
 /** 等文档服务确认超时的说法(沿用原来的那句) */
-export const SETTLE_TIMEOUT_TEXT = "还有修改没等到文档服务确认（可能离线、连接慢，或同步已暂停），这次没有保存。等连上、处理完再保存。";
+export const SETTLE_TIMEOUT_TEXT = tr("Some changes have not been confirmed by the document service (you may be offline, the connection may be slow, or sync may be paused), so nothing was saved this time. Save again once connected and processing has finished.");
 
 export function pendingWritesText(labels: readonly string[]): string {
-  return `还有本机的写入没完成：${labels.join("、")}。原来的文件没有改动，等它们完成后再保存。`;
+  return tr("Some local writes have not finished: {0}. The original file was not changed, save again after they finish.", labels.join(tr(", ")));
 }
 
 /** 等到时限还没写完 */
@@ -77,7 +78,7 @@ export function localCommitSeq(): number {
 
 /** 本机 Agent:有工具正在跑 */
 export const agentToolProbe: LocalWriteProbe = {
-  label: () => "Agent 正在执行的修改",
+  label: () => tr("Changes the Agent is making"),
   count: () => (agentToolRunning() ? 1 : 0),
 };
 
@@ -86,7 +87,7 @@ interface MediaLike { id: string; pending?: boolean }
 /** 素材入库/上传:这台设备正在导入、还没传完的素材 */
 export function mediaImportProbe(media: () => readonly MediaLike[], hasLocalFile: (id: string) => boolean): LocalWriteProbe {
   return {
-    label: (n) => `正在导入的素材（${n} 个）`,
+    label: (n) => tr("Media being imported ({0})", n),
     count: () => media().filter((m) => m.pending && hasLocalFile(m.id)).length,
   };
 }

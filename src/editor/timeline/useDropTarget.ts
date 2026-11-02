@@ -5,12 +5,13 @@ import { useTimelineContext } from "./TimelineContext";
 import { clipAt, planDrop, planTransition, type DropPlan, type DropTarget } from "./dropPlan";
 import { clearDragPayload, getDragPayload, MIME_CARD, MIME_CUT, MIME_MEDIA, type DragPayload } from "../dnd";
 import { memberReadOnlyNow } from "../readOnlyCore";
+import { tr } from "../../i18n/index.ts";
 
 /** 拖动没经过本窗口的 dragstart(跨窗口拖进来)时的兜底:只认得种类,时长用默认值 */
 function fallbackPayload(types: readonly string[]): DragPayload | null {
   const list = Array.from(types);
-  if (list.includes(MIME_CARD)) return { kind: "card", cardId: "", name: "卡片", duration: DEFAULT_CARD_DUR };
-  if (list.includes(MIME_MEDIA)) return { kind: "media", mediaId: "", name: "素材", duration: DEFAULT_MEDIA_DUR };
+  if (list.includes(MIME_CARD)) return { kind: "card", cardId: "", name: tr("Cards"), duration: DEFAULT_CARD_DUR };
+  if (list.includes(MIME_MEDIA)) return { kind: "media", mediaId: "", name: tr("media"), duration: DEFAULT_MEDIA_DUR };
   return null;
 }
 

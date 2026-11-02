@@ -10,6 +10,7 @@
  */
 import { HOSTED_SERVICE_TEXT, hostedOptionRowsOf, hostedOptionText, hostedRowsOf, type HostedOptionName, type HostedServiceName, type HostedView } from "./hostedServices";
 import "./sync.css";
+import { tr } from "../../i18n/index.ts";
 
 export function HostedServiceRows({ where, hosted, creator, busy = false, onToggle, onToggleOption }: {
   where: "lan" | "hosted" | null | undefined;
@@ -40,7 +41,7 @@ export function HostedServiceRows({ where, hosted, creator, busy = false, onTogg
           </label>
           <div className="pc-sync-hint" data-pc={`collab-hosted-${row.service}-hint`}>
             {HOSTED_SERVICE_TEXT[row.service]?.hint(row.enabled)}
-            {creator ? "" : "（只有创建者能改）"}
+            {creator ? "" : tr("(only the creator can change this)")}
           </div>
           {optionRows.filter((o) => o.service === row.service).map((o) => (
             <div
@@ -60,11 +61,11 @@ export function HostedServiceRows({ where, hosted, creator, busy = false, onTogg
                 {o.label}
               </label>
               <div className="pc-sync-hint" data-pc={`collab-hosted-${o.service}-${o.option}-hint`}>
-                {o.notAllowed ? "你的账号没有开启这一项的权限，请联系托管方。" : (
+                {o.notAllowed ? tr("Your account does not have permission to enable this option. Please contact the host.") : (
                   <>
                     {hostedOptionText(o.service, o.option)?.hint(o.enabled)}
-                    {o.parentOff ? "（渲染节点关着，暂不生效）" : ""}
-                    {creator ? "" : "（只有创建者能改）"}
+                    {o.parentOff ? tr("(render node is off, not in effect for now)") : ""}
+                    {creator ? "" : tr("(only the creator can change this)")}
                   </>
                 )}
               </div>

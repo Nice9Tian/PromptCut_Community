@@ -3,6 +3,7 @@ import type { JSX } from "react";
 import type { AiConfigPatch, KeyState } from "../../ai/types";
 import { copyDebugReport } from "../../ai/debug";
 import { decryptConfig, looksLikeShareBlob, type SharedApiConfig } from "../../ai/configShare";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 接收分发来的 API 配置。
@@ -62,10 +63,10 @@ export function ApiSharePanel(props: {
       setParsed(await decryptConfig(text, password));
       setNeedPassphrase(false);
     } catch (e) {
-      const message = e instanceof Error ? e.message : "解不开";
+      const message = e instanceof Error ? e.message : tr("Cannot decrypt");
       setError(message);
       // 口令不对多半是分发方用了约定口令而不是识别码,把输入框放出来
-      if (message.startsWith("解不开")) setNeedPassphrase(true);
+      if (message.startsWith(tr("Cannot decrypt"))) setNeedPassphrase(true);
     } finally {
       setBusy(false);
     }
@@ -100,7 +101,7 @@ export function ApiSharePanel(props: {
       setBlob("");
       setParsed(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "写入配置失败");
+      setError(e instanceof Error ? e.message : tr("Failed to write config"));
     } finally {
       setBusy(false);
     }
@@ -110,33 +111,33 @@ export function ApiSharePanel(props: {
     <div className="ais-share">
       {saved?.set && (
         <div className="ais-api-saved-key">
-          <span>已导入 ••••{saved.last4}{active ? "(当前生效)" : "(当前生效的是自定义 API 那份)"}</span>
+          <span>{tr("Imported ••••{0}{1}", saved.last4, active ? tr("(active)") : tr("(the active one is the custom API entry)"))}</span>
           {onClear && (
-            <button className="ais-btn ais-danger-btn" disabled={!!clearing} onClick={(e) => { e.preventDefault(); onClear(); }} title="删除 keys/router.key">
-              {clearing ? "清理中…" : "清理密钥"}
+            <button className="ais-btn ais-danger-btn" disabled={!!clearing} onClick={(e) => { e.preventDefault(); onClear(); }} title={tr("Delete keys/router.key")}>
+              {clearing ? tr("Clearing…") : tr("Clear key")}
             </button>
           )}
         </div>
       )}
       {clearMsg && <div className="ais-detail">{clearMsg}</div>}
       <div className="ais-share-code">
-        <span className="ais-detail">本机识别码</span>
-        <code>{machineCode ?? "读取中…"}</code>
+        <span className="ais-detail">{tr("Machine ID")}</span>
+        <code>{machineCode ?? tr("Loading…")}</code>
         {machineCode && (
           <button className="ais-btn" onClick={(e) => { e.preventDefault(); copyCode(); }}>
-            {copied ? "已复制" : "复制"}
+            {copied ? tr("Copied") : tr("Duplicate")}
           </button>
         )}
       </div>
       <div className="ais-detail">
-        这串码只代表这台机器,不含任何密钥。把它发给分发方,他用它加密;密文就只有这台机器解得开。
+        {tr("This code identifies only this machine and contains no keys. Send it to the distributor, who encrypts with it; the ciphertext can then only be decrypted on this machine.")}
       </div>
 
       <textarea
         className="ais-share-blob"
         value={blob}
         onChange={(e) => onBlobChange(e.target.value)}
-        placeholder="把分发方给你的密文整段粘贴到这里(以 PCAI1. 开头)"
+        placeholder={tr("Paste the whole ciphertext from the distributor here (starts with PCAI1.)")}
         spellCheck={false}
         rows={3}
       />
@@ -146,29 +147,29 @@ export function ApiSharePanel(props: {
             type="text"
             value={passphrase}
             onChange={(e) => setPassphrase(e.target.value)}
-            placeholder="如果分发方用的是约定口令而不是识别码,填在这里"
+            placeholder={tr("If the distributor used an agreed passphrase instead of the machine ID, enter it here")}
           />
           <button className="ais-btn" disabled={busy || !passphrase} onClick={(e) => { e.preventDefault(); attempt(blob, passphrase); }}>
-            用这个口令再试
+            {tr("Retry with this passphrase")}
           </button>
         </div>
       )}
-      {busy && <div className="ais-detail">正在解密…(要跑一遍慢哈希,大约一两秒)</div>}
+      {busy && <div className="ais-detail">{tr("Decrypting… (runs a slow hash, about a second or two)")}</div>}
       {error && <div className="ais-fixhint">{error}</div>}
-      {done && <span className="ais-status-ok">已导入并保存,可以直接用了</span>}
+      {done && <span className="ais-status-ok">{tr("Imported and saved, ready to use")}</span>}
       {parsed && (
         <div className="ais-share-preview">
-          <div className="ais-detail">解开了,确认无误再写入:</div>
+          <div className="ais-detail">{tr("Decrypted. Confirm it is correct before writing:")}</div>
           <dl>
-            <dt>厂商</dt><dd>{parsed.vendor}</dd>
-            <dt>地址</dt><dd>{parsed.baseUrl || "(默认)"}</dd>
-            <dt>模型</dt><dd>{parsed.model || "(未指定)"}</dd>
+            <dt>{tr("Vendor")}</dt><dd>{parsed.vendor}</dd>
+            <dt>{tr("Address")}</dt><dd>{parsed.baseUrl || tr("(default)")}</dd>
+            <dt>{tr("Model")}</dt><dd>{parsed.model || tr("(not specified)")}</dd>
             <dt>Key</dt><dd>••••{parsed.apiKey.slice(-4)}</dd>
-            {parsed.expiresAt ? <><dt>有效期至</dt><dd>{new Date(parsed.expiresAt).toLocaleDateString()}</dd></> : null}
-            {parsed.note ? <><dt>留言</dt><dd>{parsed.note}</dd></> : null}
+            {parsed.expiresAt ? <><dt>{tr("Valid until")}</dt><dd>{new Date(parsed.expiresAt).toLocaleDateString()}</dd></> : null}
+            {parsed.note ? <><dt>{tr("Message")}</dt><dd>{parsed.note}</dd></> : null}
           </dl>
           <button className="ais-btn ais-primary-btn" disabled={busy} onClick={(e) => { e.preventDefault(); apply(); }}>
-            导入并保存
+            {tr("Import and save")}
           </button>
         </div>
       )}

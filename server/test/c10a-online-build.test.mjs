@@ -99,7 +99,9 @@ it('C10A-API-04 桌面构建照旧：base 是 /，不受在线模式影响', { t
   assert.equal(html.includes('/editor/'), false);
 });
 
-const walkBundle = (dir) => fs.readdirSync(path.join(dir, 'assets')).filter((f) => f.endsWith('.js')).map((f) => path.join(dir, 'assets', f));
+/** The translation table chunk holds every interface string, including ones this build prunes */
+const isTranslationTable = (f) => /^i18n-[\w-]+\.js$/.test(f);
+const walkBundle = (dir) => fs.readdirSync(path.join(dir, 'assets')).filter((f) => f.endsWith('.js') && !isTranslationTable(f)).map((f) => path.join(dir, 'assets', f));
 
 it('C10-MERGE-01 「合并 Skill 结果…」随 SKILL 的三方合并归档(计划 agent-workflow-plan.md A4):在线、桌面两份产物里都没有这一项', { timeout: 240_000 }, async () => {
   await buildOnline();

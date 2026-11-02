@@ -5,6 +5,7 @@ import { SttInstallProgress } from "../SttInstallProgress";
 import { matchInstallJob, useInstallJobs } from "../../../ai/sttInstallStore";
 import { bareToolName, iconRuns, KIND_LABEL, type IconRun } from "./iconRuns";
 import "./agent.css";
+import { tr } from "../../../i18n/index.ts";
 
 /*
  * 动作分类(toolKind / KIND_LABEL)和图标分组(iconRuns)是纯函数,放在 iconRuns.ts 里好直接跑测试;
@@ -76,19 +77,19 @@ export function ToolDetail(props: {
           {visualId ? <ToolVisual id={visualId} /> : null}
           {visualId ? (
             <details className="ai-tool-raw">
-              <summary>原始数据</summary>
-              <div className="ai-tool-label">入参</div>
+              <summary>{tr("Raw data")}</summary>
+              <div className="ai-tool-label">{tr("Input")}</div>
               <pre className="ai-tool-pre">{JSON.stringify(t.input || {}, null, 2)}</pre>
-              <div className="ai-tool-label">结果</div>
+              <div className="ai-tool-label">{tr("Result")}</div>
               <pre className="ai-tool-pre wrap">{t.summary}</pre>
             </details>
           ) : (
             <>
-              <div className="ai-tool-label">入参</div>
+              <div className="ai-tool-label">{tr("Input")}</div>
               <pre className="ai-tool-pre">{JSON.stringify(t.input || {}, null, 2)}</pre>
               {t.summary ? (
                 <>
-                  <div className="ai-tool-label">结果</div>
+                  <div className="ai-tool-label">{tr("Result")}</div>
                   <pre className="ai-tool-pre wrap">{t.summary}</pre>
                 </>
               ) : null}
@@ -213,15 +214,15 @@ export function ToolIcons(props: {
             );
           }
           const n = run.items.length;
-          const names = [...new Set(run.items.map((i) => bareToolName(tools[i].name)))].join("、");
-          const label = run.state === "err" ? "失败" : KIND_LABEL[run.kind];
+          const names = [...new Set(run.items.map((i) => bareToolName(tools[i].name)))].join(tr(", "));
+          const label = run.state === "err" ? tr("failed") : KIND_LABEL[run.kind];
           return (
             <button
               key={key}
               type="button"
               className={`ai-op ai-op--${run.kind} is-${run.state}${state(key)}`}
-              title={`${label}${n > 1 ? ` ×${n}` : ""}：${names}`}
-              aria-label={`${label} ${n} 次${run.state === "run" ? ",有进行中的" : ""}:${names}`}
+              title={tr("{0}{1}: {2}", label, n > 1 ? ` ×${n}` : "", names)}
+              aria-label={tr("{0} {1} times{2}: {3}", label, n, run.state === "run" ? tr(", some in progress") : "", names)}
               data-pc-op={key}
               onClick={() => onToggleIcon(key)}
             >

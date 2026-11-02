@@ -21,6 +21,7 @@
  */
 import { mergeOrg } from "./orgMerge.ts";
 import { emptyOrg, parseOrg, type OrgState } from "./vibeOrg.ts";
+import { tr } from "../i18n/index.ts";
 
 /** 云端回的一份:版本 0、org null 是没存过 */
 export interface RemoteOrg {
@@ -43,7 +44,7 @@ export interface OrgTransport {
 
 /** 服务端还没有云端分组这条路由(404 等):引擎标 `unsupported`,不报错 */
 export class OrgUnsupportedError extends Error {
-  constructor(message = "这台云端服务还不支持云端分组") {
+  constructor(message = tr("This cloud service doesn't support cloud groups yet")) {
     super(message);
     this.name = "OrgUnsupportedError";
   }
@@ -159,7 +160,7 @@ export function createOrgSync(options: OrgSyncOptions): OrgSync {
         if (moved) later(opt.debounceMs);
         return true;
       }
-      if (++conflicts > opt.maxConflicts) throw new Error("云端分组一直在变,这次没合并上");
+      if (++conflicts > opt.maxConflicts) throw new Error(tr("Cloud groups kept changing, so this merge failed"));
       const theirs = readRemote(res.org) ?? emptyOrg("cloud");
       const merged = mergeOrg(meta.base, mine, theirs);
       // 先落本机再重传:合并结果不能只在内存里

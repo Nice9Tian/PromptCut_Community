@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import type { TranscriptSegment } from "../../kernel/project";
 import { sttStatus, sttInstall, transcribeMedia, type SttStatus } from "../io/stt";
 import { onlinePage, onlineUnsupported } from "../../online/pageFlag";
+import { tr } from "../../i18n/index.ts";
 
 interface TranscribePanelProps {
   mediaId: string;
@@ -9,20 +10,22 @@ interface TranscribePanelProps {
 }
 
 const ENGINES = [
-  { value: "faster-whisper", label: "faster-whisper(推荐)" },
+  { value: "faster-whisper", label: tr("faster-whisper (recommended)") },
   { value: "whisper", label: "whisper" },
 ];
 const MODELS = [
-  { value: "tiny", label: "tiny(最快)" },
+  { value: "tiny", label: tr("tiny (fastest)") },
   { value: "base", label: "base" },
-  { value: "small", label: "small(默认)" },
+  { value: "small", label: tr("small (default)") },
   { value: "medium", label: "medium" },
-  { value: "large-v3", label: "large-v3(最精准)" },
+  { value: "large-v3", label: tr("large-v3 (most accurate)") },
 ];
 const LANGUAGES = [
-  { value: "", label: "自动检测" },
+  { value: "", label: tr("Auto-detect") },
+  // i18n-allow: each language is named in itself
   { value: "zh", label: "中文" },
   { value: "en", label: "English" },
+  // i18n-allow: each language is named in itself
   { value: "ja", label: "日本語" },
 ];
 
@@ -94,10 +97,10 @@ export function TranscribePanel({ mediaId, onClose }: TranscribePanelProps) {
       if (ok) {
         await loadStatus();
       } else {
-        setInstallLogs((prev) => [...prev, "[安装失败]"]);
+        setInstallLogs((prev) => [...prev, tr("[Install failed]")]);
       }
     } catch (e: unknown) {
-      setInstallLogs((prev) => [...prev, "[错误] " + String(e)]);
+      setInstallLogs((prev) => [...prev, tr("[Error] ") + String(e)]);
     } finally {
       setInstalling(false);
     }
@@ -145,7 +148,7 @@ export function TranscribePanel({ mediaId, onClose }: TranscribePanelProps) {
     cancelRef.current = true;
     setTranscribing(false);
     // 注意:网络层取消由 fetch 的 AbortController 控制,此处简化
-    setTranscribeError("已取消");
+    setTranscribeError(tr("Cancelled"));
   }
 
   // 判断当前引擎是否已安装
@@ -192,21 +195,21 @@ export function TranscribePanel({ mediaId, onClose }: TranscribePanelProps) {
           type="button"
           className="ml-auto pc-left-btn is-sm"
           onClick={onClose}
-          title="收起转写面板"
+          title={tr("Collapse transcription panel")}
         >
           ✕
         </button>
       </div>
 
       {online && (
-        <button type="button" data-pc="start-transcribe-btn" className="pc-left-btn is-primary is-block mb-2" disabled title={onlineUnsupported("语音识别")}>
-          开始转写
+        <button type="button" data-pc="start-transcribe-btn" className="pc-left-btn is-primary is-block mb-2" disabled title={onlineUnsupported(tr("Speech recognition"))}>
+          {tr("Start transcription")}
         </button>
       )}
 
       {/* 状态区 */}
       {loadingStatus && (
-        <div className="pc-left-faint mb-1">检查引擎状态…</div>
+        <div className="pc-left-faint mb-1">{tr("Checking engine status…")}</div>
       )}
       {statusError && (
         <div className="text-red-400 mb-1 break-all">{statusError}</div>
@@ -215,8 +218,8 @@ export function TranscribePanel({ mediaId, onClose }: TranscribePanelProps) {
         <div className="pc-left-faint mb-1">
           Python {statusData.python ?? "?"} · {engine}{" "}
           {engineInstalled
-            ? <span className="text-green-400">已安装</span>
-            : <span className="text-yellow-400">未安装</span>
+            ? <span className="text-green-400">{tr("Installed")}</span>
+            : <span className="text-yellow-400">{tr("Not installed")}</span>
           }
         </div>
       )}
@@ -229,7 +232,7 @@ export function TranscribePanel({ mediaId, onClose }: TranscribePanelProps) {
           className="pc-left-btn is-primary is-block mb-2"
           onClick={handleInstall}
         >
-          下载引擎 ({engine})
+          {tr("Download engine ({0})", engine)}
         </button>
       )}
 
@@ -242,7 +245,7 @@ export function TranscribePanel({ mediaId, onClose }: TranscribePanelProps) {
           {installLogs.map((l, i) => (
             <div key={i}>{l}</div>
           ))}
-          {installing && <div className="pc-left-faint animate-pulse">安装中…</div>}
+          {installing && <div className="pc-left-faint animate-pulse">{tr("Installing…")}</div>}
         </div>
       )}
 
@@ -254,7 +257,7 @@ export function TranscribePanel({ mediaId, onClose }: TranscribePanelProps) {
               {progress && (
                 <div className="mb-1">
                   <div className="flex justify-between pc-left-faint mb-0.5">
-                    <span>转写中…</span>
+                    <span>{tr("Transcribing…")}</span>
                     <span>{progress.done.toFixed(0)}s / {progress.total.toFixed(0)}s</span>
                   </div>
                   <div className="pc-left-progress">
@@ -266,14 +269,14 @@ export function TranscribePanel({ mediaId, onClose }: TranscribePanelProps) {
                 </div>
               )}
               {!progress && (
-                <div className="pc-left-faint mb-1 animate-pulse">转写中…(正在加载模型)</div>
+                <div className="pc-left-faint mb-1 animate-pulse">{tr("Transcribing… (loading model)")}</div>
               )}
               <button
                 type="button"
                 className="pc-left-btn is-block"
                 onClick={handleCancel}
               >
-                取消
+                {tr("Cancel")}
               </button>
             </>
           ) : (
@@ -283,7 +286,7 @@ export function TranscribePanel({ mediaId, onClose }: TranscribePanelProps) {
               className="pc-left-btn is-primary is-block"
               onClick={handleTranscribe}
             >
-              {totalSegments !== null ? "重新转写" : "开始转写"}
+              {totalSegments !== null ? tr("Transcribe again") : tr("Start transcription")}
             </button>
           )}
         </div>
@@ -305,7 +308,7 @@ export function TranscribePanel({ mediaId, onClose }: TranscribePanelProps) {
       {totalSegments !== null && segments.length > 0 && (
         <div>
           <div className="pc-left-faint mb-0.5">
-            共 {totalSegments} 段(前 {segments.length} 段预览)
+            {tr("{0} segments in total (previewing the first {1})", totalSegments, segments.length)}
           </div>
           {segments.map((seg, i) => (
             <div key={i} className="flex gap-1.5 text-[10px] pc-left-muted py-0.5 pc-left-divider">

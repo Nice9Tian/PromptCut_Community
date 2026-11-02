@@ -32,7 +32,8 @@ export function matchLocale(tag: string): Locale | null {
 
 /** Order: ?lang= in the address (probes and screenshots), the saved choice, the browser's list, English */
 function detectLocale(): Locale {
-  if (typeof document === "undefined") return "en"; // Node: tests and the server always use the source text
+  // Node: tests and the server always use the source text, even when a test fakes a document
+  if (typeof document === "undefined" || typeof location === "undefined" || typeof navigator === "undefined") return "en";
   const fromUrl = new URLSearchParams(location.search).get("lang");
   if (fromUrl) {
     const hit = matchLocale(fromUrl);
@@ -76,6 +77,19 @@ export function switchLocale(next: Locale, url: URL = new URL(location.href)): v
 type Row = { zh: string; ja: string };
 const rows = table as Record<string, Row>;
 
+/**
+ * Card names, parameter labels and other text that comes from card code or project data may still
+ * be the Chinese original. Those are found by their Chinese wording, so the same tr() call keeps
+ * working before and after that code is translated.
+ */
+let byChinese: Map<string, string> | null = null;
+function rowOf(source: string): [string | undefined, Row | undefined] {
+  if (Object.hasOwn(rows, source)) return [source, rows[source]];
+  byChinese ??= new Map(Object.entries(rows).map(([en, row]) => [row.zh, en]));
+  const en = byChinese.get(source);
+  return en === undefined ? [undefined, undefined] : [en, rows[en]];
+}
+
 /** Tells the server which language to answer in (server/i18n.mjs). Installed once, from main.tsx. */
 export function installLocaleHeader(): void {
   const send = window.fetch.bind(window);
@@ -91,8 +105,8 @@ export function installLocaleHeader(): void {
 
 /** Pure lookup, so tests can cover every language without a page. */
 export function translate(target: Locale, source: string, args: ReadonlyArray<unknown> = []): string {
-  const row = Object.hasOwn(rows, source) ? rows[source] : undefined;
-  const text = (target === "zh-CN" ? row?.zh : target === "ja" ? row?.ja : undefined) || source;
+  const [key, row] = rowOf(source);
+  const text = (target === "en" ? key : target === "zh-CN" ? row?.zh : row?.ja) || source;
   if (args.length === 0) return text;
   return text.replace(/\{(\d+)\}/g, (hole, index: string) => (Number(index) < args.length ? String(args[Number(index)]) : hole));
 }

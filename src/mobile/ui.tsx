@@ -3,6 +3,7 @@
  */
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon, type IconName } from "./icons";
+import { tr } from "../i18n/index.ts";
 
 /* ---------------- 提示气泡 ---------------- */
 
@@ -44,7 +45,7 @@ export function ConfirmHost({ children }: { children: ReactNode }) {
           <div>
             <p>{ask.text}</p>
             <div className="acts">
-              <button type="button" className="btn" onClick={() => setAsk(null)}>取消</button>
+              <button type="button" className="btn" onClick={() => setAsk(null)}>{tr("Cancel")}</button>
               <button type="button" className={ask.danger ? "btn danger" : "btn primary"} data-pcm="confirm-ok" onClick={() => { setAsk(null); ask.run(); }}>{ask.ok}</button>
             </div>
           </div>
@@ -117,7 +118,7 @@ export function Sheet(props: {
         <div className="sheet-head" onPointerDown={drag}>
           <h3>{props.title}</h3>
           {props.head}
-          <button type="button" className="icon-btn" aria-label="关闭" onClick={props.onClose}><Icon name="close" /></button>
+          <button type="button" className="icon-btn" aria-label={tr("Close")} onClick={props.onClose}><Icon name="close" /></button>
         </div>
         {props.tabs}
         <div className="sheet-body">{props.children}</div>

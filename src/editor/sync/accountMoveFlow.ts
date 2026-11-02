@@ -24,6 +24,7 @@ import {
   type AbandonResult, type ContentLinkOptions, type MoveAttempt, type MoveResult, type MoveSource, type MoveStage,
 } from "./accountMove";
 import { currentCloudAssociation, setCloudAssociation } from "./recoveryAssociation";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 在线构建的编译期常量(写法与用意见 `src/online/pageFlag.ts` 的「在线构建剪枝」)。在线页面没有编辑器进程,
@@ -316,7 +317,7 @@ async function run(c: AccountCloud, request: MoveRequest): Promise<MoveOutcome> 
       const id = kind === "room" ? ensureActiveDraftId() : getActiveDraftId();
       if (id) await saveDraft(id);
       // 这一次打开期间存过磁盘文件的,那个文件也照现在的样子写一遍(不然它里面还记着已经删掉的房间)
-      if (kind === "room" && hasSaveTarget()) await writeProcToDisk(serializeProc(), `${getState().project.name || "未命名"}.proc`);
+      if (kind === "room" && hasSaveTarget()) await writeProcToDisk(serializeProc(), `${getState().project.name || tr("Untitled")}.proc`);
     },
     enter: async ({ projectId, name, snapshot, kind: from }) => {
       sameAccount();

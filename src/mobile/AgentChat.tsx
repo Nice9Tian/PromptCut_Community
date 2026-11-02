@@ -22,6 +22,7 @@ import { useToast } from "./ui";
 import { AgentChatView } from "./AgentChatView";
 import { addQuote, withQuotes, type QuoteRef } from "./agentView";
 import { readQuote } from "../editor/quoteBus";
+import { tr } from "../i18n/index.ts";
 
 export function AgentChat(props: {
   tabId: string;
@@ -58,7 +59,7 @@ export function AgentChat(props: {
     let dead = false;
     void refreshCloudConsent().then(
       (accepted) => { if (!dead) setConsentOpen(!accepted && cloudConsentState().accepted !== true); },
-      (error) => { if (!dead && cloudConsentState().accepted !== true) setConsentError(error instanceof Error ? error.message : "云端账号暂时不可用。"); },
+      (error) => { if (!dead && cloudConsentState().accepted !== true) setConsentError(error instanceof Error ? error.message : tr("The cloud account is temporarily unavailable.")); },
     );
     return () => { dead = true; };
   }, [shown, cloud.accountMode, cloud.available, cloud.projectId, cloud.accountId, consent.accountId, consent.bindingVersion]);
@@ -68,8 +69,8 @@ export function AgentChat(props: {
     if (!stillCurrent()) return false;
     const expected = cloud.accountId ? { accountId: cloud.accountId, bindingVersion: consent.bindingVersion } : null;
     if (!expected || consent.accountId !== expected.accountId || cloudConsentState().bindingVersion !== expected.bindingVersion) {
-      setConsentError("请先登录当前项目的账号。");
-      toast("请先登录当前项目的账号");
+      setConsentError(tr("Please sign in to the account for the current project first."));
+      toast(tr("Please sign in to the current project's account first"));
       return false;
     }
     try {
@@ -81,7 +82,7 @@ export function AgentChat(props: {
       if (!stillCurrent()) return false;
       // 断网读不到告知:不弹告知框,这条消息排着等网络恢复(恢复后发出之前再核一次告知)
       if (opts?.queueable && chat.outbox.transient(error)) return "queue";
-      setConsentError(error instanceof Error ? error.message : "云端账号暂时不可用。");
+      setConsentError(error instanceof Error ? error.message : tr("The cloud account is temporarily unavailable."));
       setConsentOpen(true);
       return false;
     }
@@ -89,7 +90,7 @@ export function AgentChat(props: {
   const acceptConsent = () => {
     void acceptCloudConsent().then(
       () => { if (stillCurrent()) { setConsentError(null); setConsentOpen(false); } },
-      (error) => { if (stillCurrent()) setConsentError(error instanceof Error ? error.message : "云端账号暂时不可用。"); },
+      (error) => { if (stillCurrent()) setConsentError(error instanceof Error ? error.message : tr("The cloud account is temporarily unavailable.")); },
     );
   };
 
@@ -177,7 +178,7 @@ export function AgentChat(props: {
   }, []);
   const sendNow = async (text: string, staged: string | null, opts?: { queueOnNetwork?: boolean }): Promise<boolean> => {
     if (off || !stillCurrent() || !policy.canSend || view.revoked) {
-      if (staged) chat.failStaged(staged, "现在不能在这个对话里发消息。");
+      if (staged) chat.failStaged(staged, tr("You can't send messages in this chat right now."));
       return false;
     }
     const ok = await chat.send(text, undefined, staged ?? undefined, null, opts);
@@ -196,7 +197,7 @@ export function AgentChat(props: {
     if (creatorReadOnly || view.revoked) return;
     if (off) { chat.notify(cloudErrorText("disabled")); return; }
     // 已有对话、权限还没读回来:先别发(对话可能是别人的私有对话);新对话没有这个问题,不用等
-    if (!metadataReady && hasMessages) { toast("正在确认对话权限,稍等一下再发"); return; }
+    if (!metadataReady && hasMessages) { toast(tr("Checking chat permissions, wait a moment before sending")); return; }
     // 开始页上点发送:这时才建第一个会话,这条消息在里面发出去
     start.commit();
     const text = withQuotes(body, quotes);
@@ -218,7 +219,7 @@ export function AgentChat(props: {
       const admitted = await consentForUse({ queueable: Boolean(staged) });
       if (admitted === "queue" && staged && stillCurrent() && chat.outbox.enqueue(text, undefined, staged)) return;
       if (admitted !== true || !stillCurrent()) {
-        if (staged) chat.failStaged(staged, "使用云端 Agent 前,请先阅读并确认告知。");
+        if (staged) chat.failStaged(staged, tr("Before using the Cloud Agent, please read and confirm the notice."));
         restore();
         return;
       }
@@ -226,7 +227,7 @@ export function AgentChat(props: {
       return;
     }
     if (await consentForUse() !== true || !stillCurrent()) return;
-    if (view.streaming) { toast("上一轮还在进行,等它结束再发"); return; }
+    if (view.streaming) { toast(tr("The previous turn is still running, send again after it finishes")); return; }
     if (!await sendNow(text, null)) return;
     if (stillCurrent()) {
       setInputText((prev) => (prev === sentInput ? "" : prev));
@@ -241,13 +242,13 @@ export function AgentChat(props: {
   };
   const handleStop = async () => {
     if (!cloud.accountMode) { void chat.abort(); return; }
-    if (!policy.canStop || !currentRunId) { toast("只能停止自己发起的任务"); return; }
+    if (!policy.canStop || !currentRunId) { toast(tr("You can only stop tasks you started")); return; }
     try {
       await chat.abort(currentRunId, requestId(`stop:${currentRunId}`));
       reqRef.current = null;
       void chat.history.refresh();
     } catch (error) {
-      if (stillCurrent()) chat.notify(error instanceof Error ? error.message : "停止请求没有成功,可以再点一次。");
+      if (stillCurrent()) chat.notify(error instanceof Error ? error.message : tr("The stop request failed, you can tap again."));
     }
   };
   const toggleVisibility = async () => {
@@ -257,24 +258,24 @@ export function AgentChat(props: {
       await chat.switchVisibility(target, requestId(`vis:${chat.conversationId}:${target}`));
       reqRef.current = null;
       await chat.history.refresh();
-      if (stillCurrent()) toast(target === "private" ? "已切为私有" : "已切为共有");
+      if (stillCurrent()) toast(target === "private" ? tr("Switched to private") : tr("Switched to shared"));
     } catch (error) {
-      if (stillCurrent()) chat.notify(error instanceof CloudError ? error.message : "暂时没能切换,可以再点一次。");
+      if (stillCurrent()) chat.notify(error instanceof CloudError ? error.message : tr("Couldn't switch for now, you can tap again."));
     }
   };
 
   const queued = view.queue?.items.filter((i) => i.state === "queued").length ?? 0;
   const stopMode = streaming && inputText.trim().length === 0;
-  const visLabel = view.revoked ? "已无读取权限" : !metadataReady ? "" : currentMeta ? `${currentMeta.visibility === "private" ? "私有对话" : "共有对话"}${creatorReadOnly ? " · 创建者只读" : ""}` : "新对话 · 默认共有";
+  const visLabel = view.revoked ? tr("Read access revoked") : !metadataReady ? "" : currentMeta ? `${currentMeta.visibility === "private" ? tr("Private chat") : tr("Shared chat")}${creatorReadOnly ? tr(" · creator read-only") : ""}` : tr("New chat · shared by default");
 
   const banners = (
     <>
-      {!cloud.available && <div className="note" data-pcm="agent-note">这个项目所在的托管端没有云端 Agent 服务。</div>}
+      {!cloud.available && <div className="note" data-pcm="agent-note">{tr("The hosting side of this project has no Cloud Agent service.")}</div>}
       {cloud.available && off && <div className="note" data-pcm="agent-note">{cloudErrorText("disabled")}
         {cloud.accountMode && creator && <button type="button" className="btn" disabled={enabling} data-pcm="agent-enable"
-          onClick={() => { setEnabling(true); void setAccountAgentEnabled(true).catch((e) => chat.notify(e instanceof Error ? e.message : "暂时无法开启云端 Agent。")).finally(() => setEnabling(false)); }}>开启云端 Agent</button>}
+          onClick={() => { setEnabling(true); void setAccountAgentEnabled(true).catch((e) => chat.notify(e instanceof Error ? e.message : tr("Unable to enable the Cloud Agent right now."))).finally(() => setEnabling(false)); }}>{tr("Enable Cloud Agent")}</button>}
       </div>}
-      {view.connection === "reconnecting" && <div className="note" data-pcm="agent-note">和云端 Agent 的连接断了,正在重新连接。云端的这一轮仍在继续,连上后会把错过的过程补齐。</div>}
+      {view.connection === "reconnecting" && <div className="note" data-pcm="agent-note">{tr("The connection to the Cloud Agent dropped and is reconnecting. This round is still running in the cloud, and the missed progress will be filled in once reconnected.")}</div>}
       {chat.notice && <div className="note warn" data-pcm="agent-notice" role="alert" onClick={chat.clearNotice}>{chat.notice}</div>}
     </>
   );

@@ -27,6 +27,7 @@ import { Logo } from "../ui/Logo";
 import { BrandLoop } from "./BrandLoop";
 import { createAccountClient, type CloudAccountClient } from "../editor/sync/accountExtensions";
 import { ensureDevice } from "../editor/sync/syncManager";
+import { tr } from "../i18n/index.ts";
 
 /**
  * Google 自己的脚本。`hl` 要带上：不带的话按钮文案跟浏览器语言走，中文界面上会冒出日文
@@ -135,12 +136,12 @@ export function OnlineLogin(props: { onDone: () => void; onThirdPartyDone?: () =
 
       try { await loadGsi(); } catch {
         // 连不上 Google（断网、被挡、脚本被拦）不该把人堵在这一页：说一句，账号密码和游客照常可用
-        if (alive) setGoogle({ kind: "unavailable", message: "连不上 Google，请用账号名和密码，或以游客身份进入。" });
+        if (alive) setGoogle({ kind: "unavailable", message: tr("Can't reach Google. Use an account name and password, or enter as a guest.") });
         return;
       }
       const api = await gsiApi();
       if (!alive) return;
-      if (!api || !slot.current) return setGoogle({ kind: "unavailable", message: "Google 登录没能装载，请用账号名和密码。" });
+      if (!api || !slot.current) return setGoogle({ kind: "unavailable", message: tr("Google sign-in failed to load. Use an account name and password.") });
 
       api.initialize({
         client_id: google.clientId,
@@ -154,7 +155,7 @@ export function OnlineLogin(props: { onDone: () => void; onThirdPartyDone?: () =
             if (result.kind === "need-name") { setNeedName({ ticket: result.ticket, email: result.email }); return; }
             thirdPartyDone();
           } catch (e) {
-            if (alive) setGoogleError(e instanceof Error ? e.message : "Google 登录失败，请再试一次。");
+            if (alive) setGoogleError(e instanceof Error ? e.message : tr("Google sign-in failed. Please try again."));
           } finally { if (alive) setGoogleBusy(false); }
         },
       });
@@ -167,7 +168,7 @@ export function OnlineLogin(props: { onDone: () => void; onThirdPartyDone?: () =
       window.setTimeout(() => {
         if (!alive) return;
         if ((slot.current?.getBoundingClientRect().height ?? 0) < 20) {
-          setGoogle({ kind: "unavailable", message: "Google 登录没能显示出来，请用账号名和密码，或以游客身份进入。" });
+          setGoogle({ kind: "unavailable", message: tr("Google sign-in failed to display. Use an account name and password, or enter as a guest.") });
         }
       }, BUTTON_WAIT_MS);
     })().catch(() => { if (alive) setGoogle({ kind: "off" }); });
@@ -181,7 +182,7 @@ export function OnlineLogin(props: { onDone: () => void; onThirdPartyDone?: () =
       await client.current.registerWithThirdParty(needName.ticket, googleName.trim(), rememberRef.current);
       thirdPartyDone();
     } catch (e) {
-      setGoogleError(e instanceof Error ? e.message : "建账号失败，请再试一次。");
+      setGoogleError(e instanceof Error ? e.message : tr("Failed to create the account. Please try again."));
     } finally { setGoogleBusy(false); }
   }
 
@@ -191,12 +192,12 @@ export function OnlineLogin(props: { onDone: () => void; onThirdPartyDone?: () =
         <BrandLoop />
         <div>
           <Logo size={26} />
-          <h1 className="ps-login-art-title">打开浏览器就能剪片子</h1>
+          <h1 className="ps-login-art-title">{tr("Edit videos right in your browser")}</h1>
           <p className="ps-login-art-sub">
-            项目、素材和预渲染结果都在云端，换一台设备登录同一个账号，接着上次的地方往下剪。
+            {tr("Your projects, media and prerender output all live in the cloud. Sign in to the same account on another device and pick up the edit where you left off.")}
           </p>
         </div>
-        <span className="ps-login-art-foot">PromptCut · 在线版</span>
+        <span className="ps-login-art-foot">{tr("PromptCut · Online edition")}</span>
       </section>
 
       <section className="ps-login-panel">
@@ -210,34 +211,34 @@ export function OnlineLogin(props: { onDone: () => void; onThirdPartyDone?: () =
           }}
         >
           <div className="ps-login-head">
-            <h2 className="ps-login-title">登录账号</h2>
-            <span className="ps-muted">网站账号和官网通用。</span>
+            <h2 className="ps-login-title">{tr("Sign in")}</h2>
+            <span className="ps-muted">{tr("Your website account works here too.")}</span>
           </div>
 
           <label className="ps-field">
-            账号名
+            {tr("Account name")}
             <input name="username" autoComplete="username" required value={name} onChange={(e) => setName(e.target.value)} />
           </label>
           <label className="ps-field">
-            密码
+            {tr("Password")}
             <input name="password" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
           </label>
 
           <label className="ps-check">
             <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-            记住登录状态
+            {tr("Remember login state")}
           </label>
 
           <button className="ps-primary-btn" data-pc="start-login-submit" disabled={!name || !password}>
-            登录账号
+            {tr("Sign in")}
           </button>
 
           <div className="ps-login-alt">
-            <a className="ps-link" href={`${origin}/account`} target="_blank" rel="noopener noreferrer">注册账号</a>
-            <a className="ps-link" href={`${origin}/account`} target="_blank" rel="noopener noreferrer">忘记密码</a>
+            <a className="ps-link" href={`${origin}/account`} target="_blank" rel="noopener noreferrer">{tr("Sign up")}</a>
+            <a className="ps-link" href={`${origin}/account`} target="_blank" rel="noopener noreferrer">{tr("Forgot password")}</a>
           </div>
 
-          <div className="ps-login-sep">或</div>
+          <div className="ps-login-sep">{tr("or")}</div>
 
           {/*
             第三方登录。语义那条冲突已经解了:`product/document-service.md` 第 66 行 2026-10-23 改成
@@ -254,11 +255,11 @@ export function OnlineLogin(props: { onDone: () => void; onThirdPartyDone?: () =
               // 第一次用这个 Google 账号:Google 不给账号名,网站账号名又全站唯一,所以要用户自己起一个
               <div className="ps-field" data-pc="start-login-google-name">
                 <span className="ps-muted">
-                  {needName.email ? `用 ${needName.email} 登录。` : "就快好了。"}起一个账号名，全站唯一，之后不能改。
+                  {tr("{0}Pick an account name. It must be unique across the site and cannot be changed later.", needName.email ? tr("Signing in with {0}.", needName.email) : tr("Almost done."))}
                 </span>
                 <input
                   autoComplete="username"
-                  placeholder="账号名"
+                  placeholder={tr("Account name")}
                   value={googleName}
                   disabled={googleBusy}
                   onChange={(e) => setGoogleName(e.target.value)}
@@ -271,7 +272,7 @@ export function OnlineLogin(props: { onDone: () => void; onThirdPartyDone?: () =
                   disabled={googleBusy || !googleName.trim()}
                   onClick={() => void createWithGoogle()}
                 >
-                  {googleBusy ? "正在建账号…" : "用这个名字建账号"}
+                  {googleBusy ? tr("Creating account…") : tr("Create account with this name")}
                 </button>
               </div>
             ) : (
@@ -300,15 +301,15 @@ export function OnlineLogin(props: { onDone: () => void; onThirdPartyDone?: () =
                 <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm0 1.8c-4 0-7 2-7 4.4V20h14v-1.8c0-2.4-3-4.4-7-4.4Z" />
               </svg>
             </span>
-            以游客身份进入
+            {tr("Enter as a guest")}
           </button>
 
           {byLink ? (
             <label className="ps-field">
-              项目链接
+              {tr("Project link")}
               <input
                 type="text"
-                placeholder="粘贴别人给你的云端项目链接"
+                placeholder={tr("Paste the cloud project link someone gave you")}
                 value={link}
                 data-pc="start-login-link"
                 onChange={(e) => setLink(e.target.value)}
@@ -316,7 +317,7 @@ export function OnlineLogin(props: { onDone: () => void; onThirdPartyDone?: () =
             </label>
           ) : (
             <button type="button" className="ps-ghost-btn" data-pc="start-login-by-link" onClick={() => setByLink(true)}>
-              用项目链接加入别人的项目
+              {tr("Join someone else's project with a project link")}
             </button>
           )}
 

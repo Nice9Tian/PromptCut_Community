@@ -46,7 +46,7 @@ function fresh(name = "起点") {
 
 /** 本机 Agent 的探测(与 localWrites.ts 的缺省一致,这里写成数据,改前的代码不认它也照样跑得起来) */
 let agentBusy = false;
-const agentProbe = { label: () => "Agent 正在执行的修改", count: () => (agentBusy ? 1 : 0) };
+const agentProbe = { label: () => "Changes the Agent is making", count: () => (agentBusy ? 1 : 0) };
 
 test("本机 Agent 的工具还在跑:保存等它写完再序列化,文件里有它最后那一笔", async () => {
   fresh();
@@ -66,7 +66,7 @@ test("这台设备正在导入的素材:等它传完;别的设备在传的(本�
   const other = actions.addMedia({ kind: "image", name: "别人在传.png", url: "", pending: true });
   const local = new Set([m.id]);
   const mediaProbe = {
-    label: (n) => `正在导入的素材（${n} 个）`,
+    label: (n) => `Media being imported (${n})`,
     count: () => getState().project.media.filter((x) => x.pending && local.has(x.id)).length,
   };
   setTimeout(() => actions.updateMedia(m.id, { pending: undefined, url: "/@media/abc" }), 200);
@@ -111,7 +111,7 @@ test("Agent 一直没写完:到时限不写文件,说清楚在等 Agent;之后�
 test("素材一直没导完:到时限不写文件,提示里有件数", async () => {
   fresh();
   const m = actions.addMedia({ kind: "video", name: "大文件.mp4", url: "", pending: true });
-  const probe = { label: (n) => `正在导入的素材（${n} 个）`, count: () => (getState().project.media.find((x) => x.id === m.id)?.pending ? 1 : 0) };
+  const probe = { label: (n) => `Media being imported (${n})`, count: () => (getState().project.media.find((x) => x.id === m.id)?.pending ? 1 : 0) };
   const { d, written, notes } = deps({ probes: [probe], waitTimeoutMs: 300 });
   assert.equal(await saveProcFile("a.proc", d), "failed");
   assert.equal(written.length, 0);

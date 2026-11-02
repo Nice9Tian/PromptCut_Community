@@ -23,6 +23,7 @@ import { noteRenderNodeAssetBase } from "../sync/renderNodeHandoff";
 import {
   TIERS_KNOWN_LOCAL, TIERS_KNOWN_REMOTE, missingOriginals, originalHashOf, prefetchOrder, smallHashOf, type MissingOriginal,
 } from "../../render/mediaTier";
+import { tr } from "../../i18n/index.ts";
 
 /** 轮询间隔(A1:每 2 秒) */
 export const POLL_MS = 2000;
@@ -64,7 +65,7 @@ let sharedAssetContext: { link: LinkLike; docBase: string; online: boolean; fall
 let discoveryTimer: ReturnType<typeof setTimeout> | null = null;
 let discoveryGeneration = 0;
 export function docRequest(msg: Record<string, unknown>, timeoutMs?: number): Promise<Record<string, unknown>> {
-  if (!docLink) return Promise.reject(new Error("没连上文档服务"));
+  if (!docLink) return Promise.reject(new Error(tr("Not connected to the document service")));
   return docLink.request(msg, timeoutMs);
 }
 export function hasDocLink(): boolean {

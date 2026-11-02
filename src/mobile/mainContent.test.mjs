@@ -81,20 +81,20 @@ test('MCA4 段之间有空档:空档里有别的段就补,补进来的只取落�
   ]);
   const over = mainClipsOf(pip).find((c) => c.id === 'over');
   assert.deepEqual([over.start, over.end, over.mediaOffset], [3, 6, 4]);
-  assert.equal(pip.tracks[0].clips[0].start, 0, '项目里的段没被改');
+  assert.equal(pip.tracks[0].clips[0].start, 0, 'clip in the project was not modified');
 });
 
-test('MCA5 短于门槛的空档不补;声音段、隐藏序列上的段不补', () => {
+test('MCA5 gaps shorter than the gate are not filled; clips that are audio or on hidden tracks are not filled', () => {
   const p = project([
-    { id: 'th', name: '藏', hidden: true, clips: [clip('hid', 4, 10)] },
-    { id: 'ta', name: '声', clips: [clip('music', 0, 12, { cardId: '', mediaId: 'ma' })] },
+    { id: 'th', name: 'H', hidden: true, clips: [clip('hid', 4, 10)] },
+    { id: 'ta', name: 'A', clips: [clip('music', 0, 12, { cardId: '', mediaId: 'ma' })] },
     { id: 't1', name: '上', clips: [clip('blip', 4, 4.3), clip('tail', 10, 12)] },
     { id: 't2', name: '下', clips: [vid('a', 0, 4), vid('b', 4.3, 10)] },
   ]);
   assert.deepEqual(span(mainClipsOf(p)), [['a', 0, 4], ['b', 4.3, 10], ['tail', 10, 12]]);
 });
 
-test('MCA6 时长相同挑序列更靠下的;更长的优先', () => {
+test('MCA6 with equal duration, pick the lower track; the longer one takes priority', () => {
   const tie = project([
     { id: 't1', name: '上', clips: [clip('up', 0, 3)] },
     { id: 't2', name: '下', clips: [clip('down', 0, 3)] },
@@ -107,28 +107,28 @@ test('MCA6 时长相同挑序列更靠下的;更长的优先', () => {
   assert.deepEqual(span(mainClipsOf(longer)), [['long', 0, 5]]);
 });
 
-test('MCA7 有转场:溶解过去的后一段照旧算;只有卡片的溶解也取得到两段', () => {
+test('MCA7 with a transition: the clip after a dissolve still counts; a dissolve with only cards also yields both clips', () => {
   const p = project([
     { id: 't1', name: '上', clips: [vid('v2', 3.5, 7)] },
     { id: 't2', name: '下', clips: [vid('v1', 0, 4)] },
   ], [{ id: 'x', kind: 'crossfade', aId: 'v1', bId: 'v2', dur: 0.5 }]);
-  assert.deepEqual(span(shapeOk(p, '视频溶解', { overlapOk: true })), [['v1', 0, 4], ['v2', 3.5, 7]]);
+  assert.deepEqual(span(shapeOk(p, 'video dissolve', { overlapOk: true })), [['v1', 0, 4], ['v2', 3.5, 7]]);
   const cards = project([
     { id: 't1', name: '上', clips: [clip('k2', 2.5, 6)] },
     { id: 't2', name: '下', clips: [clip('k1', 0, 3)] },
   ], [{ id: 'x', kind: 'crossfade', aId: 'k1', bId: 'k2', dur: 0.5 }]);
-  assert.deepEqual(span(shapeOk(cards, '卡片溶解')), [['k1', 0, 3], ['k2', 3, 6]]);
+  assert.deepEqual(span(shapeOk(cards, 'card dissolve')), [['k1', 0, 3], ['k2', 3, 6]]);
 });
 
-test('MCA8 有剪辑段嵌套:剪辑段是主要内容,前后的卡片补到两端', () => {
+test('MCA8 with a nested cut segment: the cut segment is the main content, and cards before and after fill out to both ends', () => {
   const p = project([
     { id: 't1', name: '上', clips: [clip('open', 0, 2), clip('end', 7, 9)] },
     { id: 't2', name: '下', clips: [clip('k', 2, 7, { cardId: '', cutId: 'k1' })] },
   ]);
-  assert.deepEqual(span(shapeOk(p, '剪辑段')), [['open', 0, 2], ['k', 2, 7], ['end', 7, 9]]);
+  assert.deepEqual(span(shapeOk(p, 'Cut segment')), [['open', 0, 2], ['k', 2, 7], ['end', 7, 9]]);
 });
 
-test('MCA9 换顺序:补进来的段(不在主轨上或只取了一截)不能挪,主轨上的段照常挪', () => {
+test('MCA9 reorder: filled-in clips (not on the main track, or only a slice taken) cannot move; clips on the main track move as usual', () => {
   const p = project([
     { id: 't1', name: '上', clips: [clip('card', 4, 6)] },
     { id: 't2', name: '下', clips: [vid('a', 0, 2), vid('b', 2, 4)] },
@@ -138,16 +138,16 @@ test('MCA9 换顺序:补进来的段(不在主轨上或只取了一截)不能挪
   assert.ok('error' in planReorder(p, ['card', 'a', 'b']));
 });
 
-test('MCA10 一段垫底的长卡片可以在几处空档各补一截,两端都有块', () => {
+test('MCA10 one long backing card can fill several gaps with a slice each, with chunks at both ends', () => {
   const p = project([
     { id: 't1', name: '上', clips: [vid('v1', 2, 5), vid('v2', 7, 10)] },
     { id: 't2', name: '底', clips: [clip('bg', 0, 12)] },
   ]);
   assert.equal(mainTrackOf(p).id, 't1');
-  assert.deepEqual(span(shapeOk(p, '垫底卡片')), [['bg', 0, 2], ['v1', 2, 5], ['bg', 5, 7], ['v2', 7, 10], ['bg', 10, 12]]);
+  assert.deepEqual(span(shapeOk(p, 'backing card')), [['bg', 0, 2], ['v1', 2, 5], ['bg', 5, 7], ['v2', 7, 10], ['bg', 10, 12]]);
 });
 
-test('MCA11 变速把主轨上的段改短:留下的空档照常补块,被补的长卡片只取那一截', () => {
+test('MCA11 a speed change shortens a clip on the main track: the leftover gap is still filled with chunks, and the long card used to fill takes only that slice', () => {
   // 速度（claude/clip-speed，用户 2026-10-23 定）：变短时尾部留空、后面的段不动。
   // 这里模拟 b 由 4～10 提速到 4～7，主轨上留下 7～10 的空档；底下垫着一张 0～10 的卡片。
   const p = project([
@@ -156,29 +156,29 @@ test('MCA11 变速把主轨上的段改短:留下的空档照常补块,被补的
   ]);
   assert.equal(mainTrackOf(p).id, 't2');
   // 空档只补那一截（7～10），不是整张 0～10；同一时刻仍然只有一块
-  assert.deepEqual(span(shapeOk(p, '变速留空')), [['a', 0, 4], ['b', 4, 7], ['bg', 7, 10]]);
+  assert.deepEqual(span(shapeOk(p, 'speed change leaves gap')), [['a', 0, 4], ['b', 4, 7], ['bg', 7, 10]]);
 });
 
-test('MCA12 变速在主轨中间造出空档:没有别的序列盖住时就是空的，两端仍有块', () => {
+test('MCA12 a speed change creates a gap in the middle of the main track: with no other track covering it, it stays empty, and both ends still have chunks', () => {
   // 同样是变短留空，但底下没有垫着的卡片：空档没得补，块数不变、不报错、两端照常有块
   const p = project([
     { id: 't1', name: '主', clips: [vid('a', 0, 4), vid('b', 4, 7, { speed: 2 }), vid('c', 10, 14)] },
   ]);
-  assert.deepEqual(span(shapeOk(p, '中间空档没得补')), [['a', 0, 4], ['b', 4, 7], ['c', 10, 14]]);
+  assert.deepEqual(span(shapeOk(p, 'middle gap cannot be filled')), [['a', 0, 4], ['b', 4, 7], ['c', 10, 14]]);
 });
 
-test('MCA13 短项目的门槛按总长 5% 算:比门槛小的缝不补,比门槛大的缝才补', () => {
+test('MCA13 the gate for a short project is 5% of total length: seams smaller than the gate are not filled, only seams larger than the gate are', () => {
   // 总长 4 秒 → 门槛 min(0.5, 4×0.05) = 0.2 秒。
   // 0.1 秒的缝（相邻两段之间的误差）不该补出碎块；0.5 秒的缝（例如 1 秒的素材改成 2×）该补。
   const tiny = project([
     { id: 't1', name: '底', clips: [clip('bg', 0, 4)] },
     { id: 't2', name: '主', clips: [vid('a', 0, 2), vid('b', 2.1, 4)] },
   ]);
-  assert.deepEqual(span(shapeOk(tiny, '短项目·小缝')), [['a', 0, 2], ['b', 2.1, 4]]);
+  assert.deepEqual(span(shapeOk(tiny, 'short project · small seam')), [['a', 0, 2], ['b', 2.1, 4]]);
 
   const wide = project([
     { id: 't1', name: '底', clips: [clip('bg', 0, 4)] },
     { id: 't2', name: '主', clips: [vid('a', 0, 2), vid('b', 2.5, 4)] },
   ]);
-  assert.deepEqual(span(shapeOk(wide, '短项目·大缝')), [['a', 0, 2], ['bg', 2, 2.5], ['b', 2.5, 4]]);
+  assert.deepEqual(span(shapeOk(wide, 'short project · large seam')), [['a', 0, 2], ['bg', 2, 2.5], ['b', 2.5, 4]]);
 });

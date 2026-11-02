@@ -85,7 +85,7 @@ test("SC-04 被拒、连不上:publish 不抛、回 ok:false;list 抛错", async
   const w = await S.publishSharedCosts({ request: desk, projectId: "sp_zzzzzzzzzzzzzzzzzzzzzzzzzz", environment: ENV, records: [S.toSharedInput(k1("a", 1))] });
   assert.equal(w.ok, false);
   assert.match(w.error, /forbidden/);
-  const dead = async () => { throw new Error("没连上文档服务"); };
+  const dead = async () => { throw new Error("Not connected to the document service"); };
   const w2 = await S.publishSharedCosts({ request: dead, projectId: P.projectId, environment: ENV, records: [S.toSharedInput(k1("a", 1))] });
   assert.equal(w2.ok, false);
   await assert.rejects(S.listSharedCosts({ request: dead, projectId: P.projectId, environment: ENV }), /没连上/);

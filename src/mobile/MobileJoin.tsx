@@ -16,6 +16,7 @@ import { ensureDevice, enterShared } from "../editor/sync/syncManager";
 import { client, errorStatus, type SharedMode } from "../editor/sync/sharedApi";
 import { JOIN_TEXT, hostedCandidate } from "../editor/sync/JoinForm";
 import { LogoMark } from "../ui/Logo";
+import { tr } from "../i18n/index.ts";
 
 type Phase =
   | { kind: "checking" }
@@ -72,7 +73,7 @@ export function MobileJoin({ invite, onJoined }: { invite: { code: string; doc: 
         return;
       }
       // 进去之前先换一份空项目当起点:内容以文档服务为准(同桌面)
-      newProject("未命名");
+      newProject(tr("Untitled"));
       const candidate = hostedCandidate(base, red);
       const cred = red.mode === "free" && red.key
         ? { as: "member" as const, username: user, password: "", key: red.key }
@@ -100,9 +101,9 @@ export function MobileJoin({ invite, onJoined }: { invite: { code: string; doc: 
       <div className="home-body">
         <form className="ps-m-login-form" data-pcm="join-form" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
           <div className="ps-m-login-head">
-            <b>加入项目</b>
+            <b>{tr("Join project")}</b>
             <span className="ps-m-login-sub" data-pcm="join-project">
-              {phase.kind === "checking" ? "正在查这张邀请码…" : phase.kind === "ok" ? `「${phase.name}」` : "这张邀请码用不了"}
+              {phase.kind === "checking" ? tr("Checking this invite code…") : phase.kind === "ok" ? tr("\"{0}\"", phase.name) : tr("This invite code can't be used")}
             </span>
           </div>
 
@@ -111,22 +112,22 @@ export function MobileJoin({ invite, onJoined }: { invite: { code: string; doc: 
           {phase.kind === "ok" && (
             <>
               <div className="field">
-                <label>你的名字</label>
+                <label>{tr("Your name")}</label>
                 <input className="text-in" name="username" autoComplete="nickname" autoFocus value={username}
                   data-pcm="join-username" onChange={(e) => { setUsername(e.target.value); setMsg(""); }} />
               </div>
               {needPassword && (
                 <div className="field">
-                  <label>密码</label>
+                  <label>{tr("Password")}</label>
                   <input className="text-in" name="password" type="password" autoComplete="current-password" value={password}
                     data-pcm="join-password" onChange={(e) => { setPassword(e.target.value); setMsg(""); }} />
                 </div>
               )}
               {msg && <div className="hint" data-pcm="join-msg">{msg}</div>}
               <button type="submit" className="btn primary" data-pcm="join-submit" disabled={busy || !username.trim()}>
-                {busy ? "正在加入…" : "加入"}
+                {busy ? tr("Joining…") : tr("Join")}
               </button>
-              <div className="ps-m-login-alt">和电脑上是同一个项目，改动两边实时同步。</div>
+              <div className="ps-m-login-alt">{tr("This is the same project as on the computer. Changes sync in real time on both sides.")}</div>
             </>
           )}
         </form>

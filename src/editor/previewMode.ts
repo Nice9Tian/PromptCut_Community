@@ -22,6 +22,7 @@ import { ONLINE } from "../online/mode";
 import { singleStageTier, tierStart } from "../online/onlineTier";
 import { onlineStageState, stageLayout } from "../online/stageOrigins";
 import { STAGE_ENTRY_FILE } from "../online/isolation/stageGuard";
+import { tr } from "../i18n/index.ts";
 
 /** 舞台实例名。**只是实例名,和角色无关**(E1):谁当 `front` 由 `setRole` 定 */
 export type StageId = "A" | "B";
@@ -126,7 +127,7 @@ export function stageSrc(id: StageId, opts: { dual?: boolean } = {}): string {
   const dual = opts.dual ?? dualStage();
   const origins = ONLINE ? stageOrigins() : dual ? stageOrigins() : null;
   if (ONLINE && (!origins || !origins[id])) {
-    throw new Error(`[previewMode] 在线舞台未配置跨源隔离源，禁止退回同源舞台: stage ${id}`);
+    throw new Error(tr("[previewMode] The online stage has no cross-origin isolated origin configured, falling back to the same-origin stage is forbidden: stage {0}", id));
   }
   const mode = dual || singleLiveStage() ? "&preview=stage" : previewMode() === "legacy" ? "&preview=legacy" : "";
   // 在线浏览器模式还没有运行期判据,先由编辑页地址上的 `platform=browser` 显式打开、转给舞台(`unsupported` 占位)
@@ -154,7 +155,7 @@ export function stageSrc(id: StageId, opts: { dual?: boolean } = {}): string {
 export function stageTargetOrigin(id: StageId): string {
   const origins = ONLINE ? stageOrigins() : dualStage() ? stageOrigins() : null;
   if (ONLINE && (!origins || !origins[id])) {
-    throw new Error(`[previewMode] 在线舞台未配置跨源隔离源，禁止退回同源舞台: stage ${id}`);
+    throw new Error(tr("[previewMode] The online stage has no cross-origin isolated origin configured, falling back to the same-origin stage is forbidden: stage {0}", id));
   }
   return origins ? origins[id] : location.origin;
 }

@@ -4,6 +4,7 @@ import { allCards } from "./kernel/registry";
 import type { Timeline } from "./kernel/types";
 import { demoTimeline } from "./demo";
 import "./cards";
+import { tr } from "./i18n/index.ts";
 
 /** 原型预览:播放/暂停/拖动 + 每张卡单独重播。时间轴是 demo.ts 里写死的。 */
 export default function App() {
@@ -51,19 +52,19 @@ export default function App() {
   return (
     <div className="flex flex-col h-full p-3 gap-3 select-none">
       <div className="flex items-center gap-3 text-sm">
-        <span className="font-semibold">PromptCut 原型</span>
+        <span className="font-semibold">{tr("PromptCut prototype")}</span>
         <button className="px-3 py-1 rounded bg-neutral-700 hover:bg-neutral-600" onClick={() => setPlaying((p) => !p)}>
-          {playing ? "暂停" : "播放"}
+          {playing ? tr("Pause") : tr("Play")}
         </button>
         <button
           className="px-3 py-1 rounded bg-neutral-700 hover:bg-neutral-600"
           onClick={() => seek(activeClip ? activeClip.start : 0)}
         >
-          重播本卡
+          {tr("Replay this card")}
         </button>
         <span className="tabular-nums w-24">{t.toFixed(2)} s</span>
         <span className="text-neutral-400">{activeClip ? activeClip.cardId : "—"}</span>
-        <span className="ml-auto text-neutral-500">已注册 {allCards().length} 张卡</span>
+        <span className="ml-auto text-neutral-500">{tr("{0} cards registered", allCards().length)}</span>
       </div>
       <input
         type="range"

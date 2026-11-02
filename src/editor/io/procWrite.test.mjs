@@ -20,7 +20,7 @@ mock.module(srcUrl("render/frameClient.ts"), {
     restoreSnapshots: () => {},
     frameRequest: (op, project, extra, signal) => {
       if (archiveMode === "ok") return Promise.resolve({ snapshots: "SNAP" });
-      return new Promise((_, reject) => signal?.addEventListener("abort", () => reject(new Error("帧读取失败")), { once: true }));
+      return new Promise((_, reject) => signal?.addEventListener("abort", () => reject(new Error("Frame read failed")), { once: true }));
     },
   },
 });
@@ -138,7 +138,7 @@ test("保存流程里写到一半出错:提示说清原文件没动、不标已�
   proc.forgetSaveTarget();
   target = fakeFile("流程.proc", "旧的");
   target.failAfterHalf = "设备没有空间";
-  actions.newProject("流程");
+  actions.newProject("process");
   actions.setProjectMeta({ name: "流程改过" });
   const notes = [];
   let drafts = 0;

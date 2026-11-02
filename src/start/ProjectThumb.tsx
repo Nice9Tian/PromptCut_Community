@@ -11,16 +11,17 @@ import type { JSX } from "react";
 import { hueOf } from "./hue";
 import { humanDuration, humanWhen } from "./format";
 import type { Ratio, VibeProject } from "./types";
+import { tr } from "../i18n/index.ts";
 
 const RATIO: Record<Ratio, string> = { "16:9": "16 / 9", "9:16": "9 / 16", "1:1": "1 / 1" };
-const ROLE: Record<VibeProject["role"], string> = { owned: "我创建的", joined: "我加入的", guest: "游客项目" };
+const ROLE: Record<VibeProject["role"], string> = { owned: tr("Created by me"), joined: tr("Joined by me"), guest: tr("Guest project") };
 
 export function ProjectThumb({ project, onOpen }: { project: VibeProject; onOpen: (id: string) => void }): JSX.Element {
   const hue = hueOf(project.id);
   const ratio = project.ratio ?? "16:9";
   const dur = humanDuration(project.duration);
   const when = humanWhen(project.seenAt);
-  const meta = when ? `${ROLE[project.role]} · 上次打开 ${when}` : ROLE[project.role];
+  const meta = when ? tr("{0} · Last opened {1}", ROLE[project.role], when) : ROLE[project.role];
   return (
     <button
       type="button"
@@ -28,7 +29,7 @@ export function ProjectThumb({ project, onOpen }: { project: VibeProject; onOpen
       data-pc="start-project-tile"
       data-project={project.id}
       data-thumb={project.thumb ? "real" : "color"}
-      title={`${project.name}（${meta}）`}
+      title={tr("{0} ({1})", project.name, meta)}
       onClick={() => onOpen(project.id)}
     >
       <span className="ps-frame">
@@ -57,12 +58,12 @@ export function ProjectThumb({ project, onOpen }: { project: VibeProject; onOpen
  */
 export function CreateTile({ onCreate, disabled, title }: { onCreate: () => void; disabled?: boolean; title?: string }): JSX.Element {
   return (
-    <button type="button" className="ps-tile ps-tile-new" data-pc="start-create-tile" aria-label="新建项目" disabled={disabled} title={title} onClick={onCreate}>
+    <button type="button" className="ps-tile ps-tile-new" data-pc="start-create-tile" aria-label={tr("New project")} disabled={disabled} title={title} onClick={onCreate}>
       <span className="ps-frame">
         <span className="ps-tile-new-plus" aria-hidden="true">+</span>
         <span className="ps-tile-new-text">Create A New</span>
       </span>
-      <span className="ps-tile-name">新建项目</span>
+      <span className="ps-tile-name">{tr("New project")}</span>
     </button>
   );
 }

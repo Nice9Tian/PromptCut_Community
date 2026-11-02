@@ -10,12 +10,14 @@ import { SpeakerPicker } from "./SpeakerPicker";
 import { NumberField } from "../fields/NumberField";
 import { useReadOnly } from "../readOnly";
 import { GESTURE_COMMIT_INTERVAL_MS, GESTURE_WINDOW_MS, commitMerged, createLatestThrottle, newGestureKey } from "../fields/mergedEdit";
+import { tr } from "../../i18n/index.ts";
 
 function isSpeakerVideoControl(ctrl: Control): boolean {
   if (ctrl.type !== "text") return false;
   const keyLower = ctrl.key.toLowerCase();
-  const keyMatch = /speaker|speech|talking|talkinghead|cam|video|口播/.test(keyLower);
-  const labelMatch = ctrl.label.includes("口播") || ctrl.label.includes("视频");
+  const keyMatch = /speaker|speech|talking|talkinghead|cam|video|narration/.test(keyLower);
+  // i18n-allow: labels come from card code, and cards written before the English migration use Chinese
+  const labelMatch = /narration|video|口播|视频/i.test(ctrl.label);
   return keyMatch || labelMatch;
 }
 
@@ -113,14 +115,14 @@ export function ParamsForm({ clip, cardDef }: { clip: TrackClip; cardDef: Params
               <div
                 data-pc-drag={ctrl.key}
                 className={`w-20 shrink-0 text-[11px] pc-left-muted truncate select-none${ro.locked ? "" : " cursor-ew-resize"}`}
-                title={ro.locked ? `${ctrl.label}\n${ro.why}` : `${ctrl.label} (左右拖动可以微调)`}
+                title={ro.locked ? `${tr(ctrl.label)}\n${ro.why}` : tr("{0} (drag left or right to fine-tune)", ctrl.label)}
                 onPointerDown={(e) => handlePointerDownNumber(e, ctrl.key, Number(val) || 0, ctrl.step, ctrl.min, ctrl.max)}
               >
-                {ctrl.label}
+                {tr(ctrl.label)}
               </div>
             ) : (
-              <div className="w-20 shrink-0 text-[11px] pc-left-muted truncate" title={ctrl.label}>
-                {ctrl.label}
+              <div className="w-20 shrink-0 text-[11px] pc-left-muted truncate" title={tr(ctrl.label)}>
+                {tr(ctrl.label)}
               </div>
             )}
 
@@ -139,7 +141,7 @@ export function ParamsForm({ clip, cardDef }: { clip: TrackClip; cardDef: Params
                       type="button"
                       data-pc-pick={ctrl.key}
                       onClick={() => setPickerCtrlKey(ctrl.key)}
-                      title="选择口播视频"
+                      title={tr("Select narration video")}
                       className="pc-left-btn is-icon"
                     >
                       …
@@ -176,7 +178,7 @@ export function ParamsForm({ clip, cardDef }: { clip: TrackClip; cardDef: Params
                   className="w-full pc-left-select"
                 >
                   {ctrl.options.map((o: { value: string; label: string }) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
+                    <option key={o.value} value={o.value}>{tr(o.label)}</option>
                   ))}
                 </select>
               )}
@@ -188,18 +190,18 @@ export function ParamsForm({ clip, cardDef }: { clip: TrackClip; cardDef: Params
                     value={ctrl.options.some((o) => o.value === String(val ?? "")) ? String(val) : ""}
                     onChange={e => actions.setClipParams(clip.id, { ...(e.target.value ? ASSET_TARGET[ctrl.kind].extra : {}), [ctrl.key]: e.target.value })}
                     className="w-full pc-left-select"
-                    title="软件自带的素材;要用别的就在下面手填"
+                    title={tr("Built-in media; to use something else, enter it manually below")}
                   >
-                    <option value="">{String(val ?? "").trim() && !ctrl.options.some((o) => o.value === String(val)) ? "(自定义,见下)" : "— 不用素材 —"}</option>
+                    <option value="">{String(val ?? "").trim() && !ctrl.options.some((o) => o.value === String(val)) ? tr("(custom, see below)") : tr("— No media —")}</option>
                     {ctrl.options.map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
+                      <option key={o.value} value={o.value}>{tr(o.label)}</option>
                     ))}
                   </select>
                   <input
                     data-pc-param-custom={ctrl.key}
                     type="text"
                     value={String(val ?? "")}
-                    placeholder="或手填 URL / JSON"
+                    placeholder={tr("Or enter a URL / JSON manually")}
                     onChange={e => actions.setClipParams(clip.id, { [ctrl.key]: e.target.value })}
                     className="w-full pc-left-input"
                   />
@@ -232,7 +234,7 @@ export function ParamsForm({ clip, cardDef }: { clip: TrackClip; cardDef: Params
           onClick={() => actions.setClipParams(clip.id, {}, { merge: false })}
           className="pc-left-btn"
         >
-          重置为默认
+          {tr("Reset to default")}
         </button>
       </div>
 

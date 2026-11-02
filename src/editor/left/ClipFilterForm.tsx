@@ -4,6 +4,7 @@ import type { TrackClip } from "../../kernel/project";
 import { describeFilter, type FilterParamSpec } from "../../kernel/filters.mjs";
 import { createFilterTools } from "../right/filterTools";
 import { NumberField } from "../fields/NumberField";
+import { tr } from "../../i18n/index.ts";
 
 /** 和 Agent 的 apply_filter 同一份校验 */
 const tools = createFilterTools({ getState, actions });
@@ -31,14 +32,14 @@ export function ClipFilterForm({ clip }: { clip: TrackClip }) {
   return (
     <div className="mt-2 pt-2 pc-left-divider" data-pc="clip-filter">
       <div className="flex items-center gap-2 mb-1">
-        <span className="pc-left-muted shrink-0">滤镜</span>
+        <span className="pc-left-muted shrink-0">{tr("Filter")}</span>
         <select
           data-pc="clip-filter-select"
           value={cur?.id ?? ""}
           onChange={(e) => apply(e.target.value)}
           className="flex-1 pc-left-select is-sm"
         >
-          <option value="">无</option>
+          <option value="">{tr("None")}</option>
           {filters.map((f) => (
             <option key={f.id} value={f.id}>
               {f.name}
@@ -46,7 +47,7 @@ export function ClipFilterForm({ clip }: { clip: TrackClip }) {
           ))}
         </select>
       </div>
-      {filters.length === 0 && <div className="pc-left-faint">滤镜库是空的:让 Agent 建一个,会出现在「特效」分区的「滤镜」组</div>}
+      {filters.length === 0 && <div className="pc-left-faint">{tr("The filter library is empty: ask the Agent to create one, and it will appear in the \"Filters\" group of the \"Effects\" section")}</div>}
       {cur && (
         <div className="pc-left-faint mb-1 truncate" title={describeFilter(cur)}>
           {describeFilter(cur)}

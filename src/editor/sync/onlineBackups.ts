@@ -13,6 +13,7 @@
  * 本模块在 Node 单测里也能载入:不在顶层碰 `window` / `document`,下载函数可以注入。
  */
 import type { LocalBackup } from "../../store/docsync";
+import { tr } from "../../i18n/index.ts";
 
 export interface OnlineBackupItem {
   /** 本页里的序号(从 0 起,和 `list()` 的下标一致) */
@@ -45,7 +46,7 @@ export interface OnlineBackups {
 
 /** 文件名里不能有的字符换掉 */
 function safeName(s: string): string {
-  return (s || "未命名项目").replace(/[\\/:*?"<>|\u0000-\u001f]+/g, "_").slice(0, 60);
+  return (s || tr("Untitled project")).replace(/[\\/:*?"<>|\u0000-\u001f]+/g, "_").slice(0, 60);
 }
 
 function stamp(ms: number): string {
@@ -55,8 +56,8 @@ function stamp(ms: number): string {
 }
 
 export function backupFilename(backup: LocalBackup, projectName: string, index: number): string {
-  const what = backup.kind === "overwritten" ? "被覆盖" : "离线丢弃";
-  return `${safeName(projectName)}-备份-${what}-${stamp(backup.at)}-${index + 1}.json`;
+  const what = backup.kind === "overwritten" ? tr("overwritten") : tr("discarded offline");
+  return tr("{0}-backup-{1}-{2}-{3}.json", safeName(projectName), what, stamp(backup.at), index + 1);
 }
 
 /** 浏览器里的缺省下载:Blob + `<a download>` + click,随后释放地址 */

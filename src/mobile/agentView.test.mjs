@@ -23,7 +23,7 @@ test('AV1 引用:发送写成「@卡片 名字(片段 id) 正文」,开头的引
   // 名字里带括号:只认最后一对括号当片段 id
   assert.deepEqual(splitQuotes('@卡片 标题(副本)(c-9) 放大').quotes, [{ label: '标题(副本)', id: 'c-9' }]);
   // 桌面「引用到 AI」插进输入框的写法(引用后一个空格、再写话)
-  assert.deepEqual(splitQuotes('@卡片 数字滚动(c-3) 字号再大点'), { quotes: [{ label: '数字滚动', id: 'c-3' }], rest: '字号再大点' });
+  assert.deepEqual(splitQuotes('@卡片 数字滚动(c-3) 字号再大点'), { quotes: [{ label: 'Number ticker', id: 'c-3' }], rest: '字号再大点' });
   // 只有引用、没有话
   assert.deepEqual(splitQuotes('@卡片 a(b)'), { quotes: [{ label: 'a', id: 'b' }], rest: '' });
   // 引用不在开头的不认(那是用户自己写的)
@@ -31,7 +31,7 @@ test('AV1 引用:发送写成「@卡片 名字(片段 id) 正文」,开头的引
 });
 
 test('AV1b 单张叠加卡的引用写成「@叠加卡 名字(片段id#种类:定义id)」,标记条到发送一路带着级别', () => {
-  const q = { id: 'c1#filter:f1', label: '压暗', kind: '叠加卡' };
+  const q = { id: 'c1#filter:f1', label: '压暗', kind: 'Overlay card' };
   const list = addQuote([], q);
   assert.deepEqual(list, [q], 'addQuote 要把 kind 一起留下,不然发送时又写回「@卡片」');
   assert.equal(withQuotes('调淡一点', list), '@叠加卡 压暗(c1#filter:f1) 调淡一点');
@@ -55,18 +55,18 @@ test('AV3 一轮回复:动手之前的话 → 操作卡片 → 动手之后的�
   const v = roundView(m, 1);
   assert.deepEqual(v.before.map((s) => s.text), ['我先看一下素材']);
   assert.deepEqual(v.after.map((s) => s.text), ['标题放好了']);
-  assert.deepEqual(v.items.map((i) => [i.state, i.kind, i.name]), [['done', '读取', 'list_media'], ['done', '新增', 'add_clip'], ['err', '修改', 'set_clip_param']]);
+  assert.deepEqual(v.items.map((i) => [i.state, i.kind, i.name]), [['done', 'read', 'list_media'], ['done', 'Add', 'add_clip'], ['err', 'change', 'set_clip_param']]);
   assert.equal(v.title, '第 1 轮 · 3 项操作');
   assert.equal(v.hasCard, true);
 });
 
 test('AV4 小结变成卡片里的行;send_message 给用户的话不算操作;没有操作也没有小结就没有卡片', () => {
-  const report = { kind: 'tool', name: 'mcp__promptcut__report_progress', input: { final: true, done: ['加了标题'], todo: ['配乐'], problems: ['字体缺失'] }, ok: true };
+  const report = { kind: 'tool', name: 'mcp__promptcut__report_progress', input: { final: true, done: ['加了标题'], todo: ['Background music'], problems: ['字体缺失'] }, ok: true };
   const v = roundView(asst('a2', [op('add_clip', true), report, say('好了')]), 2);
   assert.equal(v.items.length, 1);
   assert.equal(v.reports.length, 1);
-  assert.equal(v.reports[0].title, '本轮小结');
-  assert.deepEqual(v.reports[0].rows.map((r) => [r.state, r.text]), [['done', '加了标题'], ['todo', '配乐'], ['ask', '字体缺失']]);
+  assert.equal(v.reports[0].title, 'Round summary');
+  assert.deepEqual(v.reports[0].rows.map((r) => [r.state, r.text]), [['done', '加了标题'], ['todo', 'Background music'], ['ask', '字体缺失']]);
   const only = roundView(asst('a3', [say('嗯,我在想')]), 3);
   assert.equal(only.hasCard, false);
   assert.deepEqual(only.before.map((s) => s.text), ['嗯,我在想']);

@@ -3,6 +3,7 @@ import type { ChatSummary } from "../../ai/chatStore";
 import type { CloudChatItem } from "../../ai/chatTypes";
 import { CLOUD_CHAT_TEXT } from "../../ai/chatTexts";
 import "./ChatHistoryDrawer.css";
+import { tr } from "../../i18n/index.ts";
 
 /** 历史列表里「云端」一组(契约 7.4):这位成员在这个项目里的云端对话,在跑的带「进行中」 */
 export interface CloudHistoryGroup {
@@ -44,7 +45,7 @@ export interface ChatHistoryDrawerProps {
   hideLocal?: boolean;
 }
 
-const CLOUD_STATE_TEXT: Record<string, string> = { running: "进行中", interrupted: "已中断", failed: "出错", revoked: "已失效" };
+const CLOUD_STATE_TEXT: Record<string, string> = { running: tr("In progress"), interrupted: tr("Interrupted"), failed: tr("Error"), revoked: tr("Expired") };
 
 /** 格式化会话更新时间：今天的显示 HH:MM，今年的显示 M月D日，更早显示 YYYY-M-D */
 function formatChatTime(timestamp: number): string {
@@ -62,7 +63,7 @@ function formatChatTime(timestamp: number): string {
   }
   const isThisYear = d.getFullYear() === now.getFullYear();
   if (isThisYear) {
-    return `${d.getMonth() + 1}月${d.getDate()}日`;
+    return tr("{0}/{1}", d.getMonth() + 1, d.getDate());
   }
   return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
 }
@@ -89,21 +90,21 @@ export function ChatHistoryDrawer(props: ChatHistoryDrawerProps) {
   const cloudItems = cloud ? cloud.items.filter((c) => !q || c.title.toLowerCase().includes(q)) : [];
 
   return (
-    <div className="chat-history-drawer" role="dialog" aria-label="对话历史">
+    <div className="chat-history-drawer" role="dialog" aria-label={tr("Chat history")}>
       {/* 头部:标题、新对话、关闭 */}
       <div className="chat-drawer-header">
-        <span className="chat-drawer-title">对话历史</span>
+        <span className="chat-drawer-title">{tr("Chat history")}</span>
         <div className="chat-drawer-head-actions">
           {onNewChat && (
             <button type="button" className="chat-drawer-new-btn" data-pc="chat-new" disabled={!!newChatDisabledReason} title={newChatDisabledReason} onClick={onNewChat}>
-              新对话
+              {tr("New chat")}
             </button>
           )}
           <button
             type="button"
             className="chat-drawer-close-btn"
-            title="关闭"
-            aria-label="关闭"
+            title={tr("Close")}
+            aria-label={tr("Close")}
             onClick={onClose}
           >
             ✕
@@ -118,16 +119,16 @@ export function ChatHistoryDrawer(props: ChatHistoryDrawerProps) {
           className="chat-drawer-search-input"
           value={query}
           onChange={(e) => onQueryChange(e.target.value)}
-          placeholder="搜索对话…"
+          placeholder={tr("Search chats…")}
         />
       </div>
 
       {/* 会话列表 */}
       <div className="chat-drawer-list">
         {hideLocal ? null : loading ? (
-          <div className="chat-drawer-empty">读取中…</div>
+          <div className="chat-drawer-empty">{tr("Loading…")}</div>
         ) : items.length === 0 ? (
-          <div className="chat-drawer-empty">还没有历史对话</div>
+          <div className="chat-drawer-empty">{tr("No chat history yet")}</div>
         ) : (
           items.map((item) => {
             const isCurrent = item.id === currentId;
@@ -142,13 +143,13 @@ export function ChatHistoryDrawer(props: ChatHistoryDrawerProps) {
                     {item.title}
                   </div>
                   <div className="chat-drawer-item-meta">
-                    {formatChatTime(item.updatedAt)} · {item.messageCount} 条消息
+                    {tr("{0} · {1} messages", formatChatTime(item.updatedAt), item.messageCount)}
                   </div>
                 </div>
                 <button
                   className="chat-drawer-delete-btn"
-                  title="删除对话"
-                  aria-label="删除对话"
+                  title={tr("Delete chat")}
+                  aria-label={tr("Delete chat")}
                   onClick={(e) => {
                     e.stopPropagation();
                     onDelete(item.id);
@@ -162,12 +163,12 @@ export function ChatHistoryDrawer(props: ChatHistoryDrawerProps) {
         )}
         {cloud && (
           <div className="chat-drawer-group" data-pc="chat-cloud-group">
-            <div className="chat-drawer-group-title">云端{cloud.ownedCount !== undefined && <span data-pc="chat-cloud-count" data-owned={cloud.ownedCount}> · {CLOUD_CHAT_TEXT.countLabel(cloud.ownedCount, cloud.limit)}</span>}</div>
+            <div className="chat-drawer-group-title">{tr("Cloud")}{cloud.ownedCount !== undefined && <span data-pc="chat-cloud-count" data-owned={cloud.ownedCount}> · {CLOUD_CHAT_TEXT.countLabel(cloud.ownedCount, cloud.limit)}</span>}</div>
             {cloud.limitReached && <div className="chat-drawer-limit" data-pc="chat-cloud-limit" role="status">{cloud.limitText ?? CLOUD_CHAT_TEXT.limitHint}</div>}
             {cloud.loading && cloudItems.length === 0 ? (
-              <div className="chat-drawer-empty">读取中…</div>
+              <div className="chat-drawer-empty">{tr("Loading…")}</div>
             ) : cloudItems.length === 0 ? (
-              <div className="chat-drawer-empty">这个项目里还没有云端对话</div>
+              <div className="chat-drawer-empty">{tr("No cloud chats in this project yet")}</div>
             ) : (
               cloudItems.map((item) => (
                 <div
@@ -184,7 +185,7 @@ export function ChatHistoryDrawer(props: ChatHistoryDrawerProps) {
                     </div>
                     <div className="chat-drawer-item-meta">
                       {item.updatedAt ? `${formatChatTime(item.updatedAt)} · ` : ""}
-                      {item.deleting ? CLOUD_CHAT_TEXT.deleting : (CLOUD_STATE_TEXT[item.state] ?? "云端")}
+                      {item.deleting ? CLOUD_CHAT_TEXT.deleting : (CLOUD_STATE_TEXT[item.state] ?? tr("Cloud"))}
                       {item.startedOn ? ` · ${item.startedOn}` : ""}
                     </div>
                   </div>

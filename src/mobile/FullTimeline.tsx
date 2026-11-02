@@ -13,6 +13,7 @@ import { PX_MAX, PX_MIN, TL_PAD, ZOOM_STEP, clampPx, fitPx, playheadX, rulerStep
 import { overlaysOfClip } from "../editor/timeline/overlays";
 import { planOverlayBadge } from "./overlayBadge";
 import { Icon } from "./icons";
+import { tr as trText } from "../i18n/index.ts";
 
 /** 捏合松手后这么久内不把抬手当成点击 */
 const PINCH_GRACE_MS = 350;
@@ -23,10 +24,10 @@ export interface FullTimelineHandle { fit: () => void }
 
 function laneLabel(p: Project, t: Track, i: number): string {
   const kinds = new Set(t.clips.map((c) => clipKind(p, c)));
-  if (kinds.has("video") || kinds.has("image")) return "视";
-  if (kinds.has("cut")) return "剪";
-  if (kinds.has("audio") && kinds.size === 1) return "音";
-  if (kinds.has("card")) return "效";
+  if (kinds.has("video") || kinds.has("image")) return trText("V");
+  if (kinds.has("cut")) return trText("C");
+  if (kinds.has("audio") && kinds.size === 1) return trText("A");
+  if (kinds.has("card")) return trText("FX");
   return String(i + 1);
 }
 
@@ -264,16 +265,16 @@ export const FullTimeline = forwardRef<FullTimelineHandle, {
                           overlaysOfClip(project, c, { cardName: props.cardName }).length,
                         );
                         if (!plan) return null;
-                        const title = `${plan.text.startsWith("叠加") ? plan.text : `叠加卡 ${plan.text} 张`}${plan.tappable ? "，点开在「调整」里改" : "，片段太短，点这一段再用底下的「叠加层」"}`;
+                        const title = `${plan.text.startsWith(trText("Overlay")) ? plan.text : trText("{0} overlay cards", plan.text)}${plan.tappable ? trText(", tap to edit in \"Adjust\"") : trText(", clip is too short, tap this one and use \"Overlays\" below")}`;
                         return plan.tappable
                           ? <button type="button" className="ovm" data-pcm="clip-overlays" title={title}
                               onPointerDown={(e) => e.stopPropagation()}
                               onClick={(e) => { e.stopPropagation(); props.onOverlays(c.id); }}>{plan.text}</button>
                           : <span className="ovm is-flat" data-pcm="clip-overlays" title={title}>{plan.text}</span>;
                       })()}
-                      {c.audioMuted && <span className="mute"><Icon name="mute" />已静音</span>}
+                      {c.audioMuted && <span className="mute"><Icon name="mute" />{trText("Muted")}</span>}
                       {/* 变速段:写明倍数和「无原声」(〔裁〕第一版变速段不出原声,kernel/clipTime.mjs) */}
-                      {!c.audioMuted && clipMakesNoSound(project, c) && <span className="mute" data-pcm="clip-speed" title="变速段不出原声"><Icon name="mute" />{speedLabel(clipSpeed(c))} 无原声</span>}
+                      {!c.audioMuted && clipMakesNoSound(project, c) && <span className="mute" data-pcm="clip-speed" title={trText("Speed-changed clips play no original audio")}><Icon name="mute" />{trText("{0} no original audio", speedLabel(clipSpeed(c)))}</span>}
                       <span className="h r" />
                     </div>
                   );
@@ -286,13 +287,13 @@ export const FullTimeline = forwardRef<FullTimelineHandle, {
       </div>
       <div className="tl-tools">
         <div className="zoom">
-          <button type="button" data-pcm="zoom-out" aria-label="缩小" title="缩小" disabled={px <= PX_MIN + 1e-6} onClick={() => zoomBy(1 / ZOOM_STEP)}><Icon name="minus" /></button>
-          <button type="button" data-pcm="zoom-in" aria-label="放大" title="放大" disabled={px >= PX_MAX - 1e-6} onClick={() => zoomBy(ZOOM_STEP)}><Icon name="plus" /></button>
-          <button type="button" data-pcm="zoom-fit" aria-label="适应宽度" title="适应宽度" onClick={fit}><Icon name="fit" />适应宽度</button>
+          <button type="button" data-pcm="zoom-out" aria-label={trText("Zoom out")} title={trText("Zoom out")} disabled={px <= PX_MIN + 1e-6} onClick={() => zoomBy(1 / ZOOM_STEP)}><Icon name="minus" /></button>
+          <button type="button" data-pcm="zoom-in" aria-label={trText("Zoom in")} title={trText("Zoom in")} disabled={px >= PX_MAX - 1e-6} onClick={() => zoomBy(ZOOM_STEP)}><Icon name="plus" /></button>
+          <button type="button" data-pcm="zoom-fit" aria-label={trText("Fit width")} title={trText("Fit width")} onClick={fit}><Icon name="fit" />{trText("Fit width")}</button>
         </div>
         <span className="spacer" />
-        <button type="button" data-pcm="align-start" disabled={props.locked} title={props.locked ? props.lockedWhy : "起点对齐播放头"} onClick={() => props.onAlign("start")}><Icon name="alignStart" />起点</button>
-        <button type="button" data-pcm="align-end" disabled={props.locked} title={props.locked ? props.lockedWhy : "终点对齐播放头"} onClick={() => props.onAlign("end")}>终点<Icon name="alignEnd" /></button>
+        <button type="button" data-pcm="align-start" disabled={props.locked} title={props.locked ? props.lockedWhy : trText("Align start to playhead")} onClick={() => props.onAlign("start")}><Icon name="alignStart" />{trText("Start")}</button>
+        <button type="button" data-pcm="align-end" disabled={props.locked} title={props.locked ? props.lockedWhy : trText("Align end to playhead")} onClick={() => props.onAlign("end")}>{trText("End")}<Icon name="alignEnd" /></button>
       </div>
     </div>
   );

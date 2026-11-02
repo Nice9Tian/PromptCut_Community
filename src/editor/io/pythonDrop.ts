@@ -1,3 +1,4 @@
+import { tr } from "../../i18n/index.ts";
 /**
  * 旧 `.proc` 里的 Python 卡**不向前兼容**(用户决定,滤镜、转场、音效在内)。
  *
@@ -66,5 +67,5 @@ export function onPythonDrops(listener: () => void): () => void {
 
 /** 通知栏那句话。只有一处,免得两边写得不一样。 */
 export function pythonDropMessage(count: number): string {
-  return `${count} 张 Python 卡已停用，不再显示`;
+  return tr("{0} Python cards were disabled and are no longer shown", count);
 }

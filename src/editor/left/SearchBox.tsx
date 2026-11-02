@@ -1,5 +1,6 @@
 import type { RefObject } from "react";
 import { IconClose, IconSearch } from "../../ui/icons";
+import { tr } from "../../i18n/index.ts";
 
 /** 分区头部的搜索框:放大镜 + 输入框 + 有字时出现的清空钮。Esc 也能清空 */
 export function SearchBox({
@@ -34,7 +35,7 @@ export function SearchBox({
         }}
       />
       {value && (
-        <button type="button" className="pc-left-search-clear" onClick={() => onChange("")} title="清空">
+        <button type="button" className="pc-left-search-clear" onClick={() => onChange("")} title={tr("Clear")}>
           <IconClose size={12} />
         </button>
       )}

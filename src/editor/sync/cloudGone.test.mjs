@@ -16,7 +16,7 @@ const project = () => ({
   id: "old-content-id", name: "旧云端项目", duration: 12, fps: 30, width: 1920, height: 1080,
   media: [{ id: "m1", kind: "video", name: "a.mp4", url: `/@media/${"b".repeat(64)}`, hash: "b".repeat(64), path: "C:/x/a.mp4" }],
   tracks: [{ id: "t1", clips: [{ id: "c1", mediaId: "m1", start: 1, end: 4, mediaOffset: 2, opacity: 0.5, audioVolume: 0.3, fadeIn: 0.2, params: { k: [1, 2] } }] }],
-  cardNodes: [{ id: "n1", adapter: "card", cardId: "user-card", params: { title: "原样" } }], cuts: [{ id: "cut" }], extra: { kept: true },
+  cardNodes: [{ id: "n1", adapter: "card", cardId: "user-card", params: { title: "asIs" } }], cuts: [{ id: "cut" }], extra: { kept: true },
 });
 
 test("内容原样保留、换新的本地项目号、不带任何协作关联", () => {

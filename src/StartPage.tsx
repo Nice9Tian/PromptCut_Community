@@ -35,6 +35,7 @@ function AccountProjectsSlot(props: { online: boolean; onEnterEditor: () => void
 }
 import { OnlineStart } from "./start/OnlineStart";
 import { DesktopStart } from "./start/DesktopStart";
+import { tr } from "./i18n/index.ts";
 
 /** 字节数写成人看的样子。导出产物、预渲染缓存动辄几十 GB,所以到 G 为止 */
 function humanSize(bytes: number): string {
@@ -58,7 +59,7 @@ function humanDate(iso: string): string {
   const sameDay = d.toDateString() === today.toDateString();
   return sameDay
     ? `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`
-    : `${d.getMonth() + 1}月${d.getDate()}日`;
+    : tr("{0}/{1}", d.getMonth() + 1, d.getDate());
 }
 
 /** humanDate 之外再带上时分:同一天导出好几次,只有日期分不出来 */
@@ -86,7 +87,7 @@ const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.V
 function JoinSection(props: { onEnterEditor: () => void }): JSX.Element {
   return (
     <section className="sp-section" data-pc="start-join">
-      <h2 className="sp-section-title">加入别人的项目</h2>
+      <h2 className="sp-section-title">{tr("Join someone else's project")}</h2>
       <JoinForm onJoined={props.onEnterEditor} />
     </section>
   );
@@ -192,7 +193,7 @@ function DesktopClassicPage(props: { onEnterEditor: () => void; onVibe: () => vo
     try {
       setDrafts(await listDrafts());
     } catch (e) {
-      setError(e instanceof Error ? e.message : "读取草稿失败");
+      setError(e instanceof Error ? e.message : tr("Failed to read drafts"));
     } finally {
       setLoading(false);
     }
@@ -201,7 +202,7 @@ function DesktopClassicPage(props: { onEnterEditor: () => void; onVibe: () => vo
   useEffect(() => { void refresh(); }, [refresh]);
 
   const startNew = () => {
-    newProject("未命名");
+    newProject(tr("Untitled"));
     // 新项目还没落盘,进编辑器后由「保存项目」写成草稿
     setActiveDraftId(newDraftId());
     onEnterEditor();
@@ -215,19 +216,19 @@ function DesktopClassicPage(props: { onEnterEditor: () => void; onVibe: () => vo
       setActiveDraftId(id);
       onEnterEditor();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "打开失败");
+      setError(e instanceof Error ? e.message : tr("Failed to open"));
     } finally {
       setBusy("");
     }
   };
 
   const remove = async (draft: DraftInfo) => {
-    if (!confirm(`删除草稿「${draft.name}」？这会删掉磁盘上的 .proc 文件，不能撤销。`)) return;
+    if (!confirm(tr("Delete draft \"{0}\"? This deletes the .proc file on disk and cannot be undone.", draft.name))) return;
     try {
       await deleteDraft(draft.id);
       await refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "删除失败");
+      setError(e instanceof Error ? e.message : tr("Failed to delete"));
     }
   };
 
@@ -243,7 +244,7 @@ function DesktopClassicPage(props: { onEnterEditor: () => void; onVibe: () => vo
       setActiveDraftId(null);
       onEnterEditor();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "这个文件打不开");
+      setError(e instanceof Error ? e.message : tr("This file can't be opened"));
     }
   };
 
@@ -254,35 +255,35 @@ function DesktopClassicPage(props: { onEnterEditor: () => void; onVibe: () => vo
         <Logo size={22} />
         <span className="sp-bar-spacer" />
         {/* 氛围式(`user-workflow.md`「工作方式」第一行):不打开编辑界面,对着 Agent 说话把片子做出来 */}
-        <button className="sp-ghost-btn" data-pc="start-go-vibe" title="不打开编辑界面，对着 Agent 说话把片子做出来" onClick={props.onVibe}>
-          氛围式
+        <button className="sp-ghost-btn" data-pc="start-go-vibe" title={tr("Make the video by talking to the Agent, without opening the editor")} onClick={props.onVibe}>
+          {tr("Vibe mode")}
         </button>
         <button className="sp-ghost-btn" onClick={() => fileInput.current?.click()}>
-          打开项目文件
+          {tr("Open project file")}
         </button>
       </header>
 
       <main className="sp-main">
         <button className="sp-hero" onClick={startNew}>
-          <span className="sp-hero-plus" aria-hidden="true">＋</span>
-          <span className="sp-hero-text">开始创作</span>
-          <span className="sp-hero-sub">新建一个空项目</span>
+          <span className="sp-hero-plus" aria-hidden="true">{tr("+")}</span>
+          <span className="sp-hero-text">{tr("Start creating")}</span>
+          <span className="sp-hero-sub">{tr("Create an empty project")}</span>
         </button>
 
         <AccountProjectsSlot online={false} onEnterEditor={onEnterEditor} />
         <JoinSection onEnterEditor={onEnterEditor} />
 
         <section className="sp-section">
-          <h2 className="sp-section-title">拓展功能</h2>
+          <h2 className="sp-section-title">{tr("Extras")}</h2>
           <ExtensionCards />
         </section>
 
         <section className="sp-section">
           <div className="sp-section-head">
-            <h2 className="sp-section-title">本地草稿</h2>
+            <h2 className="sp-section-title">{tr("Local drafts")}</h2>
             <div className="sp-section-actions">
-              <span className="sp-muted">{loading ? "读取中…" : `${drafts.length} 个`}</span>
-              <button className="sp-ghost-btn" onClick={() => void refresh()}>刷新</button>
+              <span className="sp-muted">{loading ? tr("Loading…") : tr("{0}", drafts.length)}</span>
+              <button className="sp-ghost-btn" onClick={() => void refresh()}>{tr("Refresh")}</button>
             </div>
           </div>
 
@@ -290,7 +291,7 @@ function DesktopClassicPage(props: { onEnterEditor: () => void; onVibe: () => vo
 
           {!loading && drafts.length === 0 && !error && (
             <div className="sp-empty">
-              还没有草稿。点上面的「开始创作」新建一个，编辑器里保存后就会出现在这里。
+              {tr("No drafts yet. Click \"Start creating\" above to make one; once you save in the editor it will show up here.")}
             </div>
           )}
 
@@ -301,12 +302,12 @@ function DesktopClassicPage(props: { onEnterEditor: () => void; onVibe: () => vo
                   className="sp-draft-thumb"
                   disabled={d.broken || busy === d.id}
                   onClick={() => void open(d.id)}
-                  title={d.broken ? "这个文件解析不了" : `打开「${d.name}」`}
+                  title={d.broken ? tr("This file can't be parsed") : tr("Open \"{0}\"", d.name)}
                 >
                   {d.thumbnail
                     ? <img src={d.thumbnail} alt="" />
-                    : <span className="sp-draft-placeholder">{d.broken ? "！" : `${d.clips} 张卡`}</span>}
-                  {busy === d.id && <span className="sp-draft-busy">打开中…</span>}
+                    : <span className="sp-draft-placeholder">{d.broken ? tr("!") : tr("{0} cards", d.clips)}</span>}
+                  {busy === d.id && <span className="sp-draft-busy">{tr("Opening…")}</span>}
                 </button>
                 <div className="sp-draft-meta">
                   <div className="sp-draft-name" title={d.name}>{d.name}</div>
@@ -314,7 +315,7 @@ function DesktopClassicPage(props: { onEnterEditor: () => void; onVibe: () => vo
                     {humanDate(d.updatedAt)} · {humanSize(d.size)} · {humanDuration(d.duration)}
                   </div>
                 </div>
-                <button className="sp-draft-del" title="删除这份草稿" onClick={() => void remove(d)}>
+                <button className="sp-draft-del" title={tr("Delete this draft")} onClick={() => void remove(d)}>
                   ✕
                 </button>
               </div>
@@ -383,7 +384,7 @@ interface ExportItem {
   intermediateBytes: number;
 }
 
-const DELIVERABLE_LABEL: Record<string, string> = { "preview.mp4": "成片", "overlay.mov": "透明层" };
+const DELIVERABLE_LABEL: Record<string, string> = { "preview.mp4": tr("Final video"), "overlay.mov": tr("Transparent layers") };
 
 /**
  * 读一个 JSON 接口。接口不存在时开发服务器可能回首页的 HTML(200)、也可能 404,两种都当取不到;
@@ -392,7 +393,7 @@ const DELIVERABLE_LABEL: Record<string, string> = { "preview.mp4": "成片", "ov
 async function storageJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, { cache: "no-store", ...init });
   const type = res.headers.get("content-type") || "";
-  if (!type.includes("application/json")) throw new Error(res.ok ? "接口不可用" : `HTTP ${res.status}`);
+  if (!type.includes("application/json")) throw new Error(res.ok ? tr("API unavailable") : `HTTP ${res.status}`);
   const body = await res.json() as { ok?: boolean; error?: string } & T;
   if (!res.ok || body.ok === false) throw new Error(body.error || `HTTP ${res.status}`);
   return body;
@@ -413,7 +414,7 @@ function StorageSection(): JSX.Element {
   const loadStorage = useCallback(async () => {
     try {
       const s = await storageJson<StorageInfo>("/api/storage");
-      if (!s.frameLibrary || typeof s.frameLibrary.bytes !== "number") throw new Error("回包不对");
+      if (!s.frameLibrary || typeof s.frameLibrary.bytes !== "number") throw new Error(tr("Bad response"));
       setStorage(s);
       setStorageState("ok");
       // 只在上限变了时改输入框(自动重取时不冲掉用户正在填的数)
@@ -444,7 +445,7 @@ function StorageSection(): JSX.Element {
       const r = await storageJson<{ items: ExportItem[] }>("/api/exports");
       setItems(Array.isArray(r.items) ? r.items : []);
     } catch (e) {
-      setError(`读取导出产物失败：${e instanceof Error ? e.message : String(e)}`);
+      setError(tr("Failed to read export output: {0}", e instanceof Error ? e.message : String(e)));
     } finally {
       setExportsLoading(false);
     }
@@ -476,16 +477,16 @@ function StorageSection(): JSX.Element {
   }, []);
 
   const clearCache = async () => {
-    if (!confirm("清理缓存会删掉预渲染结果（正在打开的项目用到的除外），之后用到时要重新预渲染。继续？")) return;
+    if (!confirm(tr("Clearing the cache deletes prerender output (except what the currently open project uses). It will have to be prerendered again when needed. Continue?"))) return;
     setBusy("clear-cache");
     setError("");
     setNotice("");
     try {
       const r = await storageJson<{ freedBytes: number; removed?: number; skipped?: number }>("/api/storage/clear-cache", { method: "POST" });
-      setNotice(`清理完成，腾出 ${storageSize(r.freedBytes || 0)}${r.skipped ? `；${r.skipped} 项正被使用，没删` : ""}。`);
+      setNotice(tr("Cleanup done, freed {0}{1}.", storageSize(r.freedBytes || 0), r.skipped ? tr("; {0} items in use, not deleted", r.skipped) : ""));
       await loadStorage();
     } catch (e) {
-      setError(`清理缓存失败：${e instanceof Error ? e.message : String(e)}`);
+      setError(tr("Failed to clear cache: {0}", e instanceof Error ? e.message : String(e)));
     } finally {
       setBusy("");
     }
@@ -497,7 +498,7 @@ function StorageSection(): JSX.Element {
     const gb = Number(capGb);
     if (!Number.isFinite(gb) || gb < CAP_MIN_BYTES / GB || gb > capMaxGb) {
       setNotice("");
-      setError(`上限要在 ${CAP_MIN_BYTES / GB} GB 到 ${Number.isFinite(capMaxGb) ? `${capMaxGb} GB（磁盘总容量）` : "磁盘总容量"}之间。`);
+      setError(tr("The limit must be between {0} GB and {1}.", CAP_MIN_BYTES / GB, Number.isFinite(capMaxGb) ? tr("{0} GB (total disk capacity)", capMaxGb) : tr("total disk capacity")));
       return;
     }
     setBusy("cap");
@@ -509,26 +510,26 @@ function StorageSection(): JSX.Element {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ bytes: Math.round(gb * GB) }),
       });
-      setNotice(`缓存上限已改为 ${storageSize(r.capBytes)}。`);
+      setNotice(tr("Cache limit changed to {0}.", storageSize(r.capBytes)));
       await loadStorage();
     } catch (e) {
-      setError(`改上限失败：${e instanceof Error ? e.message : String(e)}`);
+      setError(tr("Failed to change limit: {0}", e instanceof Error ? e.message : String(e)));
     } finally {
       setBusy("");
     }
   };
 
   const act = async (item: ExportItem, action: "delete" | "prune" | "reveal") => {
-    const who = `${item.projectName || "未知项目"}（${item.at ? humanDateTime(item.at) : item.id}）`;
-    if (action === "delete" && !confirm(`删除导出「${who}」？这会删掉磁盘上的文件（${storageSize(item.bytes)}），包括成片与透明层，不能撤销。`)) return;
-    if (action === "prune" && !confirm(`只删「${who}」的中间文件（${storageSize(item.intermediateBytes)}）？成片与透明层留着。这会删掉磁盘上的文件，不能撤销。`)) return;
+    const who = tr("{0} ({1})", item.projectName || tr("Unknown project"), item.at ? humanDateTime(item.at) : item.id);
+    if (action === "delete" && !confirm(tr("Delete export \"{0}\"? This deletes the files on disk ({1}), including the final video and the transparency layer, and cannot be undone.", who, storageSize(item.bytes)))) return;
+    if (action === "prune" && !confirm(tr("Delete only the intermediate files of \"{0}\" ({1})? The final video and transparency layer are kept. This deletes the files on disk and cannot be undone.", who, storageSize(item.intermediateBytes)))) return;
     setBusy(`${action}:${item.id}`);
     setError("");
     setNotice("");
     try {
       const r = await storageJson<{ freedBytes?: number }>(`/api/exports/${encodeURIComponent(item.id)}/${action}`, { method: "POST" });
       if (action !== "reveal") {
-        setNotice(`${action === "delete" ? "已删除" : "已删中间文件"}，腾出 ${storageSize(r.freedBytes || 0)}。`);
+        setNotice(tr("{0}, freed {1}.", action === "delete" ? tr("Deleted") : tr("Deleted intermediate files"), storageSize(r.freedBytes || 0)));
         await loadExports();
       }
     } catch (e) {
@@ -546,9 +547,9 @@ function StorageSection(): JSX.Element {
   return (
     <section ref={sectionRef} className="sp-section" data-pc="start-storage" id="storage">
       <div className="sp-section-head">
-        <h2 className="sp-section-title">存储</h2>
+        <h2 className="sp-section-title">{tr("Storage")}</h2>
         <div className="sp-section-actions">
-          <button className="sp-ghost-btn" onClick={() => void refresh()} disabled={!!busy}>刷新</button>
+          <button className="sp-ghost-btn" onClick={() => void refresh()} disabled={!!busy}>{tr("Refresh")}</button>
         </div>
       </div>
 
@@ -557,24 +558,24 @@ function StorageSection(): JSX.Element {
 
       <div className="sp-storage-cards">
         <div className="sp-storage-card" data-pc="storage-cache">
-          <div className="sp-storage-label">预渲染缓存</div>
-          {storageState === "loading" && <div className="sp-muted">读取中…</div>}
+          <div className="sp-storage-label">{tr("Prerender cache")}</div>
+          {storageState === "loading" && <div className="sp-muted">{tr("Loading…")}</div>}
           {storageState === "unavailable" && (
-            <div className="sp-muted" data-pc="storage-cache-unavailable">暂时取不到。预渲染进程起来后点「刷新」再看。</div>
+            <div className="sp-muted" data-pc="storage-cache-unavailable">{tr("Not available right now. Once the prerender process is up, click \"Refresh\" and check again.")}</div>
           )}
           {storageState === "ok" && fl && (
             <>
               <div className="sp-storage-figure" data-pc="storage-cache-bytes">
-                {storageSize(fl.bytes)} <span className="sp-muted">/ 上限 {storageSize(fl.capBytes)}{fl.capSource === "default" ? "（缺省）" : ""}</span>
+                {storageSize(fl.bytes)} <span className="sp-muted">{tr("/ limit {0}{1}", storageSize(fl.capBytes), fl.capSource === "default" ? tr("(default)") : "")}</span>
               </div>
               <div className="sp-storage-bar" aria-hidden="true"><span style={{ width: `${pct}%` }} /></div>
               {fl.lastEvict && (
                 <div className="sp-muted">
-                  {fl.lastEvict.reason === "clear" ? "上次清理缓存" : "上次自动清理"} {humanDateTime(new Date(fl.lastEvict.at).toISOString())}，腾出 {storageSize(fl.lastEvict.freedBytes)}
+                  {tr("{0} {1}, freed {2}", fl.lastEvict.reason === "clear" ? tr("Last cache cleanup") : tr("Last automatic cleanup"), humanDateTime(new Date(fl.lastEvict.at).toISOString()), storageSize(fl.lastEvict.freedBytes))}
                 </div>
               )}
               <div className="sp-storage-row">
-                <label className="sp-muted" htmlFor="sp-cap-input">上限</label>
+                <label className="sp-muted" htmlFor="sp-cap-input">{tr("Limit")}</label>
                 <input
                   id="sp-cap-input"
                   className="sp-storage-input"
@@ -587,7 +588,7 @@ function StorageSection(): JSX.Element {
                   onChange={(e) => setCapGb(e.target.value)}
                 />
                 <span className="sp-muted">GB</span>
-                <button className="sp-ghost-btn" data-pc="storage-cap-save" disabled={!!busy} onClick={() => void saveCap()}>设定</button>
+                <button className="sp-ghost-btn" data-pc="storage-cap-save" disabled={!!busy} onClick={() => void saveCap()}>{tr("Set")}</button>
               </div>
             </>
           )}
@@ -598,26 +599,26 @@ function StorageSection(): JSX.Element {
               disabled={storageState !== "ok" || !!busy}
               onClick={() => void clearCache()}
             >
-              {busy === "clear-cache" ? "清理中…" : "清理缓存"}
+              {busy === "clear-cache" ? tr("Clearing…") : tr("Clear cache")}
             </button>
           </div>
         </div>
 
         <div className="sp-storage-card" data-pc="storage-exports-total">
-          <div className="sp-storage-label">导出产物</div>
+          <div className="sp-storage-label">{tr("Export output")}</div>
           {exportsLoading && items.length === 0
-            ? <div className="sp-muted">读取中…</div>
+            ? <div className="sp-muted">{tr("Loading…")}</div>
             : (
               <>
-                <div className="sp-storage-figure">{storageSize(exportBytes)} <span className="sp-muted">· {items.length} 份</span></div>
-                <div className="sp-muted">{exportMid > 0 ? `其中中间文件 ${storageSize(exportMid)}，可以只删它们、留下成片与透明层。` : "没有中间文件。"}</div>
+                <div className="sp-storage-figure">{storageSize(exportBytes)} <span className="sp-muted">{tr("· {0} items", items.length)}</span></div>
+                <div className="sp-muted">{exportMid > 0 ? tr("Of this, intermediate files take {0}; you can delete only those and keep the final video and transparency layer.", storageSize(exportMid)) : tr("No intermediate files.")}</div>
               </>
             )}
         </div>
       </div>
 
       {!exportsLoading && items.length === 0 && !error && (
-        <div className="sp-empty">还没有导出。导出完成后每次导出会列在这里。</div>
+        <div className="sp-empty">{tr("No exports yet. Each export will be listed here once it finishes.")}</div>
       )}
 
       {items.length > 0 && (
@@ -627,11 +628,11 @@ function StorageSection(): JSX.Element {
             return (
               <li key={it.id} className="sp-export-row" data-pc="storage-export" data-export-id={it.id}>
                 <div className="sp-export-main">
-                  <div className="sp-export-name" title={it.projectId ? `项目 ${it.projectId}` : it.id}>
-                    {it.projectName || <span className="sp-muted">未知项目</span>}
+                  <div className="sp-export-name" title={it.projectId ? tr("Project {0}", it.projectId) : it.id}>
+                    {it.projectName || <span className="sp-muted">{tr("Unknown project")}</span>}
                     {it.running
-                      ? <span className="sp-export-tag">进行中</span>
-                      : !it.finished && <span className="sp-export-tag is-warn">未完成</span>}
+                      ? <span className="sp-export-tag">{tr("In progress")}</span>
+                      : !it.finished && <span className="sp-export-tag is-warn">{tr("Unfinished")}</span>}
                   </div>
                   <div className="sp-draft-sub">
                     <span title={it.id}>{it.at ? humanDateTime(it.at) : it.id}</span>
@@ -639,19 +640,19 @@ function StorageSection(): JSX.Element {
                     {it.deliverables.map((d) => (
                       <span key={d.name}> · {DELIVERABLE_LABEL[d.name] ?? d.name} {storageSize(d.bytes)}</span>
                     ))}
-                    {it.intermediateBytes > 0 && <span data-pc="storage-export-mid"> · 中间文件 {storageSize(it.intermediateBytes)}</span>}
+                    {it.intermediateBytes > 0 && <span data-pc="storage-export-mid"> {" "}{tr("· Intermediate files {0}", storageSize(it.intermediateBytes))}</span>}
                   </div>
                 </div>
                 <div className="sp-export-actions">
-                  <button className="sp-ghost-btn" data-pc="storage-export-reveal" disabled={rowBusy} onClick={() => void act(it, "reveal")}>打开所在目录</button>
+                  <button className="sp-ghost-btn" data-pc="storage-export-reveal" disabled={rowBusy} onClick={() => void act(it, "reveal")}>{tr("Open containing folder")}</button>
                   {it.intermediateBytes > 0 && !it.running && (
                     <button className="sp-ghost-btn" data-pc="storage-export-prune" disabled={!!busy} onClick={() => void act(it, "prune")}>
-                      {busy === `prune:${it.id}` ? "删除中…" : "只删中间文件"}
+                      {busy === `prune:${it.id}` ? tr("Deleting…") : tr("Delete intermediate files only")}
                     </button>
                   )}
                   {!it.running && (
                     <button className="sp-ghost-btn sp-danger-btn" data-pc="storage-export-delete" disabled={!!busy} onClick={() => void act(it, "delete")}>
-                      {busy === `delete:${it.id}` ? "删除中…" : "删除"}
+                      {busy === `delete:${it.id}` ? tr("Deleting…") : tr("Delete")}
                     </button>
                   )}
                 </div>
@@ -685,7 +686,7 @@ function toneClass(tone: ExtStatusView["tone"]): string {
 
 function failedView(reason: unknown): ExtStatusView {
   return {
-    headline: "读不到状态",
+    headline: tr("Can't read status"),
     note: reason instanceof Error ? reason.message : String(reason),
     tone: "danger",
     offerInstall: false,
@@ -705,15 +706,15 @@ function viewStt(s: SttStatus): ExtStatusView {
   const hit = Object.entries(engines).find(([, e]) => e.installed);
   if (hit) {
     return {
-      headline: "已安装",
-      note: `当前用 ${hit[0]}${hit[1].version ? ` ${hit[1].version}` : ""}`,
+      headline: tr("Installed"),
+      note: tr("Currently using {0}{1}", hit[0], hit[1].version ? ` ${hit[1].version}` : ""),
       tone: "ok",
       offerInstall: false,
     };
   }
   return {
-    headline: "未安装",
-    note: "没有兜底档，装上才能把说的话转成字幕",
+    headline: tr("Not installed"),
+    note: tr("No fallback tier; install it to turn speech into captions"),
     tone: "muted",
     offerInstall: true,
   };
@@ -722,15 +723,15 @@ function viewStt(s: SttStatus): ExtStatusView {
 function viewShots(s: { ready: boolean; engine: string }): ExtStatusView {
   if (s.ready) {
     return {
-      headline: "已安装",
-      note: `当前用 ${s.engine || "TransNetV2"}，硬切和溶解、淡入淡出都认得出`,
+      headline: tr("Installed"),
+      note: tr("Currently using {0}; recognizes hard cuts, dissolves and fades", s.engine || "TransNetV2"),
       tone: "ok",
       offerInstall: false,
     };
   }
   return {
-    headline: "未安装",
-    note: "当前用 ffmpeg scdet，只认硬切，认不出溶解",
+    headline: tr("Not installed"),
+    note: tr("Currently using ffmpeg scdet; recognizes hard cuts only, not dissolves"),
     tone: "muted",
     offerInstall: true,
   };
@@ -739,8 +740,8 @@ function viewShots(s: { ready: boolean; engine: string }): ExtStatusView {
 function viewTrack(s: { ready: boolean; engine: "bootstapir" | "template" | null; reason?: string }): ExtStatusView {
   if (s.ready) {
     return {
-      headline: "已安装",
-      note: `当前用 ${s.engine ?? "bootstapir"}，转向、形变、短暂被挡都跟得住`,
+      headline: tr("Installed"),
+      note: tr("Currently using {0}; keeps tracking through turns, deformation and brief occlusion", s.engine ?? "bootstapir"),
       tone: "ok",
       offerInstall: false,
     };
@@ -749,16 +750,16 @@ function viewTrack(s: { ready: boolean; engine: "bootstapir" | "template" | null
     // ready:false 不等于用不了 —— 这一档是能跑的,写成光秃秃的「未安装」会让人
     // 以为功能是灰的,所以把「还能用」和「什么时候会翻车」一起说清楚。
     return {
-      headline: "未安装",
-      note: "当前用 numpy 模板匹配兜底，照样能追：刚体、纹理清晰的目标追得很准；"
-        + "目标转向、缩放或长时间被挡就会跟丢。装上拓展会稳得多，但要下约 400 MB",
+      headline: tr("Not installed"),
+      note: tr("Currently using numpy template matching as a fallback, which can still track: rigid, clearly textured targets are tracked very accurately;")
+        + tr("The target is lost if it turns, zooms, or stays blocked for long. Installing the extension is much more stable, but it downloads about 400 MB"),
       tone: "muted",
       offerInstall: true,
     };
   }
   return {
-    headline: "用不了",
-    note: s.reason || "两档都起不来，通常是找不到 Python",
+    headline: tr("Unavailable"),
+    note: s.reason || tr("Neither tier would start, usually because Python was not found"),
     tone: "danger",
     offerInstall: false,
   };
@@ -767,8 +768,8 @@ function viewTrack(s: { ready: boolean; engine: "bootstapir" | "template" | null
 function viewSubject(s: { ready: boolean; engine: "light" | "full" | null; reason?: string }): ExtStatusView {
   if (s.engine === "full") {
     return {
-      headline: "已安装",
-      note: "完整档：人脸、人体，还能按任意文字提示找目标（猫、手机、红色的车）",
+      headline: tr("Installed"),
+      note: tr("Full tier: faces and bodies, and it can also find targets from any text prompt (cat, phone, red car)"),
       tone: "ok",
       offerInstall: false,
     };
@@ -777,19 +778,19 @@ function viewSubject(s: { ready: boolean; engine: "light" | "full" | null; reaso
     // light 能用,但和 full 差一整个能力档。写成光秃秃的「已安装」会让人以为
     // 文字提示也能用,结果每次都只回人和脸。
     return {
-      headline: "已安装",
-      note: "轻档：认得出人脸和人体，够用来避开人物；按文字提示找目标要装完整档拓展库包",
+      headline: tr("Installed"),
+      note: tr("Light tier: recognizes faces and bodies, enough to avoid people; finding targets from text prompts requires installing the full tier extension pack"),
       tone: "ok",
       offerInstall: false,
     };
   }
   if (s.reason) {
     // 连 Python 都没有这类环境问题,给安装按钮只会让人再撞一次墙
-    return { headline: "用不了", note: s.reason, tone: "danger", offerInstall: false };
+    return { headline: tr("Unavailable"), note: s.reason, tone: "danger", offerInstall: false };
   }
   return {
-    headline: "未安装",
-    note: "没有兜底档，装上 AI 才知道人在画面哪一边、卡片放哪不挡脸",
+    headline: tr("Not installed"),
+    note: tr("There is no fallback tier. Install AI to know which side of the frame a person is on and where to place cards without covering faces"),
     tone: "muted",
     offerInstall: true,
   };
@@ -813,7 +814,7 @@ function ExtCard(props: {
         <div className="sp-ext-desc">{desc}</div>
         <div className="sp-ext-state">
           {status === null
-            ? <span className="sp-muted">检测中…</span>
+            ? <span className="sp-muted">{tr("Checking…")}</span>
             : <span className={toneClass(status.tone)}>
                 {status.headline}{status.note ? ` · ${status.note}` : ""}
               </span>}
@@ -878,11 +879,11 @@ function viewCollect(s: CollectStatus): ExtStatusView {
   if (s.ready) {
     const bili = s.cookies?.bilibili;
     const login = bili?.loggedIn
-      ? `B 站已登录（用户 ${bili.userId ?? "?"}）`
-      : bili?.expired ? "B 站登录态已过期" : "B 站未登录，最高 1080p";
+      ? tr("Bilibili logged in (user {0})", bili.userId ?? "?")
+      : bili?.expired ? tr("Bilibili login state expired") : tr("Bilibili not logged in, up to 1080p");
     return {
-      headline: "已安装",
-      note: `yt-dlp ${s.ytdlp?.version ?? ""}；${login}`,
+      headline: tr("Installed"),
+      note: tr("yt-dlp {0}; {1}", s.ytdlp?.version ?? "", login),
       tone: "ok",
       offerInstall: false,
     };
@@ -890,15 +891,15 @@ function viewCollect(s: CollectStatus): ExtStatusView {
   if (s.python === false || (s.ytdlp?.installed && !s.ffmpeg)) {
     // 没有内置 Python 或没有 ffmpeg 不是在线装能解决的,给按钮只会让人再撞一次墙
     return {
-      headline: "用不了",
-      note: s.reason || (s.ytdlp?.installed ? "找不到 ffmpeg，视频流和音频流合不起来" : "找不到内置 Python"),
+      headline: tr("Unavailable"),
+      note: s.reason || (s.ytdlp?.installed ? tr("ffmpeg not found, video and audio streams cannot be merged") : tr("Built-in Python not found")),
       tone: "danger",
       offerInstall: false,
     };
   }
   return {
-    headline: "未安装",
-    note: "装上就能把 B 站等网页链接里的视频直接抓进素材库（约 3 MB）",
+    headline: tr("Not installed"),
+    note: tr("Install it to grab videos from web links such as Bilibili straight into the media library (about 3 MB)"),
     tone: "muted",
     offerInstall: true,
   };
@@ -920,8 +921,8 @@ function VoiceCard(): JSX.Element {
         ?? presets.systemVoices[p].find((v) => v.voiceId === id)?.name
         ?? id;
       setStatus(config.apiKey.set
-        ? { headline: "已配置", note: `${presets.labels[p]} · ${voice}`, tone: "ok", offerInstall: false }
-        : { headline: "未配置", note: "填好 API Key，agent 才能配音", tone: "muted", offerInstall: false });
+        ? { headline: tr("Configured"), note: `${presets.labels[p]} · ${voice}`, tone: "ok", offerInstall: false }
+        : { headline: tr("Not configured"), note: tr("Fill in the API Key so the agent can do voiceover"), tone: "muted", offerInstall: false });
     } catch (e) {
       setStatus(failedView(e));
     }
@@ -944,10 +945,10 @@ function VoiceCard(): JSX.Element {
           <path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2" />
         </svg>
       }
-      name="配音"
-      desc="把文字配成语音，云端合成，默认 MiniMax。"
+      name="Voiceover"
+      desc={tr("Turn text into speech with cloud synthesis, MiniMax by default.")}
       status={status}
-      action={<button className="sp-ghost-btn" onClick={openVoiceSettings}>设置</button>}
+      action={<button className="sp-ghost-btn" onClick={openVoiceSettings}>{tr("Settings")}</button>}
     />
   );
 }
@@ -968,7 +969,7 @@ function CollectCard(props: { status: ExtStatusView | null; raw: CollectStatus |
     setTail("");
     void installCollect((line) => setTail(line))
       .then(({ ok, log }) => {
-        if (!ok) setError(log.filter((l) => l.startsWith("[error]")).slice(-1)[0] ?? "安装失败");
+        if (!ok) setError(log.filter((l) => l.startsWith("[error]")).slice(-1)[0] ?? tr("Install failed"));
         return onReload();
       })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
@@ -984,25 +985,25 @@ function CollectCard(props: { status: ExtStatusView | null; raw: CollectStatus |
           <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
         </svg>
       }
-      name="素材收集"
-      desc="给一条 B 站等网页链接，把视频抓进素材库。"
+      name="Media collection"
+      desc={tr("Give a web link such as Bilibili and the video is grabbed into the media library.")}
       status={status}
       action={
         status?.offerInstall && !running
-          ? <button className="sp-ghost-btn" onClick={install} title="约 3 MB">
-              {error ? "重试" : "安装"}
+          ? <button className="sp-ghost-btn" onClick={install} title={tr("About 3 MB")}>
+              {error ? tr("retry") : tr("Install")}
             </button>
           : canLogin
             ? <button className="sp-ghost-btn" onClick={() => openCollectLogin("bilibili", "qr")}
-                title={biliLoggedIn ? "查看登录态、换账号或退出" : "扫码或账号密码登录,拿登录才有的清晰度"}>
-                {biliLoggedIn ? "B 站账号" : "登录 B 站"}
+                title={biliLoggedIn ? tr("View login state, switch account, or log out") : tr("Log in by QR code or account password to get the quality only available when logged in")}>
+                {biliLoggedIn ? tr("Bilibili account") : tr("Log in to Bilibili")}
               </button>
             : null
       }
     >
       {running && (
         <div className="sp-ext-progress">
-          <span className="sp-muted">安装中…{tail ? ` ${tail}` : ""}</span>
+          <span className="sp-muted">{tr("Installing…{0}", tail ? ` ${tail}` : "")}</span>
         </div>
       )}
       {error && <div className="sp-ext-error">{error}</div>}
@@ -1040,14 +1041,14 @@ function SttCard(props: { status: ExtStatusView | null; onReload: () => void | P
           <path d="M12 18v3M8.5 21h7" />
         </svg>
       }
-      name="听写识别"
-      desc="把视频里的话转成字幕，本机跑，不上传。"
+      name="Speech recognition"
+      desc={tr("Turn speech in the video into captions, runs locally, no upload.")}
       status={status}
       action={
         // 判断依据是「有没有在跑」,不是「有没有任务」—— 装完一次之后 store 里会一直留着
         // 那条已完成的记录,拿它当条件会让卡片再也出不来按钮,变成死胡同。
         status?.offerInstall && !running
-          ? <button className="sp-ghost-btn" onClick={install}>{job?.phase === "failed" ? "重试" : "安装"}</button>
+          ? <button className="sp-ghost-btn" onClick={install}>{job?.phase === "failed" ? tr("retry") : tr("Install")}</button>
           : null
       }
     >
@@ -1080,7 +1081,7 @@ function ShotsCard(props: { status: ExtStatusView | null; onReload: () => void |
         // 「依赖装好了但还缺模型」不是失败:模型是我们自己转/官方下的权重,
         // 不在 requirements 里,只随拓展库包发。报成红字会让人以为白装了,
         // 而真正该说的是「去跑那个 .exe」。
-        if (!ok) setError(log.filter((l) => l.startsWith("[error]")).slice(-1)[0] ?? "安装失败");
+        if (!ok) setError(log.filter((l) => l.startsWith("[error]")).slice(-1)[0] ?? tr("Install failed"));
         else if (needsModel) setNeedsPack(true);
         return onReload();
       })
@@ -1096,25 +1097,25 @@ function ShotsCard(props: { status: ExtStatusView | null; onReload: () => void |
           <path d="M10 5v14M14 5v14" />
         </svg>
       }
-      name="镜头识别"
-      desc="找出素材里的镜头切换点，按镜头拆条。"
+      name="Shot detection"
+      desc={tr("Find shot change points in the media and split it by shot.")}
       status={status}
       action={
         status?.offerInstall && !running
-          ? <button className="sp-ghost-btn" onClick={install} title="约 30 MB">
-              {error ? "重试" : "安装"}
+          ? <button className="sp-ghost-btn" onClick={install} title={tr("About 30 MB")}>
+              {error ? tr("retry") : tr("Install")}
             </button>
           : null
       }
     >
       {running && (
         <div className="sp-ext-progress">
-          <span className="sp-muted">安装中…{tail ? ` ${tail}` : ""}</span>
+          <span className="sp-muted">{tr("Installing…{0}", tail ? ` ${tail}` : "")}</span>
         </div>
       )}
       {needsPack && !error && (
         <div className="sp-ext-error">
-          依赖已装好，还差模型文件。它随拓展库包分发，请运行 PromptCut-ext-shots-&lt;版本&gt;.exe
+          {tr("Dependencies are installed, but the model file is still missing. It ships with the extension pack, so run PromptCut-ext-shots-&lt;version&gt;.exe")}
         </div>
       )}
       {error && <div className="sp-ext-error">{error}</div>}
@@ -1133,7 +1134,7 @@ function TrackCard(props: { status: ExtStatusView | null; onReload: () => void |
 
   const install = () => {
     // 400 MB 走的是用户自己的网,开始之前先问一声 —— 点错了退不掉。
-    if (!confirm("运动追踪拓展要下载 torch 和 BootsTAPIR 权重，约 400 MB，要好几分钟。现在装？")) return;
+    if (!confirm(tr("The motion tracking extension needs to download torch and BootsTAPIR weights, about 400 MB, and takes several minutes. Install now?"))) return;
     setRunning(true);
     setError(null);
     setTail("");
@@ -1144,7 +1145,7 @@ function TrackCard(props: { status: ExtStatusView | null; onReload: () => void |
         // 「依赖装好了但还缺模型」不是失败:模型是我们自己转/官方下的权重,
         // 不在 requirements 里,只随拓展库包发。报成红字会让人以为白装了,
         // 而真正该说的是「去跑那个 .exe」。
-        if (!ok) setError(log.filter((l) => l.startsWith("[error]")).slice(-1)[0] ?? "安装失败");
+        if (!ok) setError(log.filter((l) => l.startsWith("[error]")).slice(-1)[0] ?? tr("Install failed"));
         else if (needsModel) setNeedsPack(true);
         return onReload();
       })
@@ -1160,25 +1161,25 @@ function TrackCard(props: { status: ExtStatusView | null; onReload: () => void |
           <path d="M12 2.5v3.2M12 18.3v3.2M2.5 12h3.2M18.3 12h3.2" />
         </svg>
       }
-      name="运动追踪"
-      desc="让文字和贴图跟着画面里的目标走。"
+      name="Motion tracking"
+      desc={tr("Make text and stickers follow a target in the frame.")}
       status={status}
       action={
         status?.offerInstall && !running
-          ? <button className="sp-ghost-btn" onClick={install} title="约 400 MB，要好几分钟">
-              {error ? "重试" : "安装"}
+          ? <button className="sp-ghost-btn" onClick={install} title={tr("About 400 MB, takes several minutes")}>
+              {error ? tr("retry") : tr("Install")}
             </button>
           : null
       }
     >
       {running && (
         <div className="sp-ext-progress">
-          <span className="sp-muted">安装中…{tail ? ` ${tail}` : ""}</span>
+          <span className="sp-muted">{tr("Installing…{0}", tail ? ` ${tail}` : "")}</span>
         </div>
       )}
       {needsPack && !error && (
         <div className="sp-ext-error">
-          依赖已装好，还差 208 MB 的权重文件。它随拓展库包分发，请运行 PromptCut-ext-track-&lt;版本&gt;.exe
+          {tr("Dependencies are installed, but the 208 MB weights file is still missing. It ships with the extension pack, so run PromptCut-ext-track-&lt;version&gt;.exe")}
         </div>
       )}
       {error && <div className="sp-ext-error">{error}</div>}
@@ -1205,7 +1206,7 @@ function SubjectCard(props: { status: ExtStatusView | null; onReload: () => void
         // 「依赖装好了但还缺模型」不是失败:YuNet 和 RT-DETR 的权重不在
         // requirements 里,只随拓展库包发。报成红字会让人以为白装了,
         // 而真正该说的是「去跑那个 .exe」。
-        if (!ok) setError(log.filter((l) => l.startsWith("[error]")).slice(-1)[0] ?? "安装失败");
+        if (!ok) setError(log.filter((l) => l.startsWith("[error]")).slice(-1)[0] ?? tr("Install failed"));
         else if (needsModel) setNeedsPack(true);
         return onReload();
       })
@@ -1223,25 +1224,25 @@ function SubjectCard(props: { status: ExtStatusView | null; onReload: () => void
           <path d="M8.2 17c.5-2 1.9-3 3.8-3s3.3 1 3.8 3" />
         </svg>
       }
-      name="主体检测"
-      desc="看清人在画面哪一边，卡片自动避开人物的脸。"
+      name="Subject detection"
+      desc={tr("See which side of the frame a person is on, and cards automatically avoid their face.")}
       status={status}
       action={
         status?.offerInstall && !running
-          ? <button className="sp-ghost-btn" onClick={install} title="轻档约 30 MB">
-              {error ? "重试" : "安装"}
+          ? <button className="sp-ghost-btn" onClick={install} title={tr("Light tier about 30 MB")}>
+              {error ? tr("retry") : tr("Install")}
             </button>
           : null
       }
     >
       {running && (
         <div className="sp-ext-progress">
-          <span className="sp-muted">安装中…{tail ? ` ${tail}` : ""}</span>
+          <span className="sp-muted">{tr("Installing…{0}", tail ? ` ${tail}` : "")}</span>
         </div>
       )}
       {needsPack && !error && (
         <div className="sp-ext-error">
-          依赖已装好，还差模型文件。它随拓展库包分发，请运行 PromptCut-ext-light-&lt;版本&gt;.exe
+          {tr("Dependencies are installed, but the model file is still missing. It ships with the extension pack, so run PromptCut-ext-light-&lt;version&gt;.exe")}
         </div>
       )}
       {error && <div className="sp-ext-error">{error}</div>}

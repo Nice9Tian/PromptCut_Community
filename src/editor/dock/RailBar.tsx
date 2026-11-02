@@ -12,6 +12,7 @@ import { CUTS_ITEM, agentIdOf, effectiveActive, isSectionItem, plusAnchor, visib
 import { addAgentOnSide, clickRailItem, useRailLayout } from "./railStore";
 import "../right/chat/chat.css";
 import "./dock.css";
+import { tr } from "../../i18n/index.ts";
 
 /** rail 项 56 高 + 4 间距;「+」40 高 + 4 间距(studio.css / dock.css) */
 const SLOT_H = 60;
@@ -19,18 +20,18 @@ const PLUS_H = 44;
 
 /** Agent 项悬停说明末尾补一行状态 */
 const AGENT_STATE_TIP: Record<"busy" | "done" | "interrupted" | "idle", string> = {
-  busy: "正在运行",
-  done: "已完成,等你查看",
-  interrupted: "已中断,等你查看",
+  busy: tr("Running"),
+  done: tr("Finished, waiting for you to review"),
+  interrupted: tr("Interrupted, waiting for you to review"),
   idle: "",
 };
 
 const SECTION_META: Record<SectionId, { label: string; Icon: ComponentType }> = {
-  library: { label: "素材库", Icon: RailIconLibrary },
-  animations: { label: "动画", Icon: RailIconAnimations },
-  effects: { label: "特效", Icon: RailIconEffects },
-  edit: { label: "编辑", Icon: RailIconEdit },
-  captions: { label: "字幕", Icon: RailIconCaptions },
+  library: { label: tr("Media library"), Icon: RailIconLibrary },
+  animations: { label: tr("Animation"), Icon: RailIconAnimations },
+  effects: { label: tr("Effects"), Icon: RailIconEffects },
+  edit: { label: tr("Edit"), Icon: RailIconEdit },
+  captions: { label: tr("Captions"), Icon: RailIconCaptions },
 };
 
 /**
@@ -136,7 +137,7 @@ export function RailBar({ side, part = "head" }: { side: Side; part?: RailPart }
             className={`pc-rail-item${on ? " is-on" : ""}`}
             aria-pressed={on}
             aria-expanded={expanded}
-            title={on ? (collapsed ? `展开「${label}」` : `收起「${label}」`) : label}
+            title={on ? (collapsed ? tr("Expand \"{0}\"", label) : tr("Collapse \"{0}\"", label)) : label}
             {...handlers}
           >
             <Icon />
@@ -155,11 +156,11 @@ export function RailBar({ side, part = "head" }: { side: Side; part?: RailPart }
             className={`pc-rail-item${on ? " is-on" : ""}`}
             aria-current={on ? "page" : undefined}
             aria-expanded={expanded}
-            title={script ? `剧本已写 ${script.length} 字，每轮都会附给 AI` : "写下这条片子要讲什么，AI 每轮都会照着它做"}
+            title={script ? tr("Script has {0} characters, attached to the AI every turn", script.length) : tr("Write down what this video is about, the AI follows it every turn")}
             {...handlers}
           >
             <IconScript />
-            <span>剧本</span>
+            <span>{tr("Script")}</span>
             {script && <i className="pc-rr-dot" aria-hidden="true" />}
           </button>
         </div>
@@ -186,26 +187,26 @@ export function RailBar({ side, part = "head" }: { side: Side; part?: RailPart }
           data-pc-agent-tab={t.id}
           data-pc-agent-state={state}
           data-pc-agent-draft={draft ? "1" : undefined}
-          title={draft ? "开始页:这个项目还没有 Agent 会话,发出第一条消息后才会建立" : stateTip ? `${tabTooltip(t)}
+          title={draft ? tr("Start page: this project has no Agent session yet, one is created after the first message is sent") : stateTip ? `${tabTooltip(t)}
 ${stateTip}` : tabTooltip(t)}
           {...handlers}
         >
           <span className="pc-rr-glyph" aria-hidden="true">{draft ? "✦" : glyphOf(t, index)}</span>
-          <span className="pc-rr-label">{draft ? "开始" : shortLabel(t.title)}</span>
+          <span className="pc-rr-label">{draft ? tr("Start") : shortLabel(t.title)}</span>
           {(state === "done" || state === "interrupted") && <i className={`pc-rr-state is-${state}`} aria-hidden="true" />}
           {t.unread > 0 && (
-            <b className="pc-rr-badge" title={`${t.unread} 条其他 Agent 的消息待处理`}>{t.unread}</b>
+            <b className="pc-rr-badge" title={tr("{0} messages from other Agents pending", t.unread)}>{t.unread}</b>
           )}
         </button>
         {!draft && (
           <button
             type="button"
             className="pc-rr-x"
-            aria-label={`关闭 ${t.title}`}
+            aria-label={tr("Close {0}", t.title)}
             disabled={!closable}
-            title={t.busy ? "还在跑,关掉会中断它" : "关闭这一页"}
+            title={t.busy ? tr("Still running, closing it will interrupt it") : tr("Close this tab")}
             onClick={() => {
-              if (t.busy && !confirm(`${t.title} 还在跑,关掉会中断它。确定关闭?`)) return;
+              if (t.busy && !confirm(tr("{0} is still running and closing it will interrupt it. Close anyway?", t.title))) return;
               closeTab(t.id);
             }}
           >
@@ -224,15 +225,15 @@ ${stateTip}` : tabTooltip(t)}
       className="pc-rail-item pc-dock-add"
       data-pc="agent-tab-add"
       data-pc-dock-add={inMenu ? undefined : side}
-      title="新助手分页"
-      aria-label="新助手分页"
+      title={tr("New assistant tab")}
+      aria-label={tr("New assistant tab")}
       onClick={() => {
         addAgentOnSide(side);
         if (inMenu) setMenuOpen(false);
       }}
     >
       <IconBubblePlus />
-      {inMenu && <span>新助手分页</span>}
+      {inMenu && <span>{tr("New assistant tab")}</span>}
     </button>
   );
   const children: ReactNode[] = [];
@@ -249,7 +250,7 @@ ${stateTip}` : tabTooltip(t)}
         count={hidden.length}
         open={menuOpen}
         hasActive={!!active && hidden.includes(active)}
-        title={`还有 ${hidden.length} 项`}
+        title={tr("{0} more", hidden.length)}
         onToggle={() => setMenuOpen((v) => !v)}
       />,
     );
@@ -260,7 +261,7 @@ ${stateTip}` : tabTooltip(t)}
       className={`pc-rail pc-rail--${side} pc-dock-rail${part === "tail" ? " pc-dock-rail--tail" : ""}`}
       data-pc={part === "tail" ? `${side}-rail-tail` : `${side}-rail`}
       data-pc-dock-rail={side}
-      aria-label={side === "left" ? (part === "tail" ? "左栏剪辑" : "左栏分区") : part === "tail" ? "右栏剪辑" : "右栏分页"}
+      aria-label={side === "left" ? (part === "tail" ? tr("Left rail cuts") : tr("Left rail sections")) : part === "tail" ? tr("Right rail cuts") : tr("Right rail tabs")}
     >
       {/* 时间轴旁边那一截顶上一道小横线,和上半部分分开 */}
       {part === "tail" && <div className="pc-rail-sep pc-dock-tail-sep" aria-hidden="true" />}

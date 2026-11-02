@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { MediaAsset, TrackClip } from "../../kernel/project";
 import { mediaSpanOf } from "../../kernel/clipTime.mjs";
 import { previewCacheKey, usePreviewMediaUrl } from "../media/previewUrl";
+import { tr } from "../../i18n/index.ts";
 
 type Wave = { peaks: number[]; duration: number };
 // Share decoding across all cuts of a source, keeping only compact peaks.
@@ -69,5 +70,5 @@ export function AudioWaveform({ media, clip, width }: { media: MediaAsset; clip:
     const h = Math.max(0.3, peak * 9);
     paths.push(`M${(i + 0.5) / count * 1000},${10 - h}v${h * 2}`);
   }
-  return <svg className="pc-audio-waveform" viewBox="0 0 1000 20" preserveAspectRatio="none" aria-label="音频波形"><path d={paths.join(" ")} stroke="currentColor" strokeWidth="1" vectorEffect="non-scaling-stroke" /></svg>;
+  return <svg className="pc-audio-waveform" viewBox="0 0 1000 20" preserveAspectRatio="none" aria-label={tr("Audio waveform")}><path d={paths.join(" ")} stroke="currentColor" strokeWidth="1" vectorEffect="non-scaling-stroke" /></svg>;
 }

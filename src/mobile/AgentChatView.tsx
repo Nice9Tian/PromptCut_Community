@@ -12,16 +12,17 @@ import { Icon } from "./icons";
 import { useReadOnly } from "../editor/readOnly";
 import { AgentRound, QuoteBar, StartHero, UserBubble } from "./agentParts";
 import { isUserBubble, ordinals, type QuoteRef } from "./agentView";
+import { tr } from "../i18n/index.ts";
 
 /** 演示稿输入框上方那排快捷提问:点一下把这句话放进输入框(不直接发送) */
 export const QUICKS: readonly (readonly [string, string])[] = [
-  ["标题更大气", "把开头的标题做得更大气一点"],
-  ["加转场", "给第二段加一个转场"],
-  ["配乐", "配一段轻松的背景音乐"],
-  ["剪快点", "把整体节奏剪快一点"],
+  [tr("Grander title"), tr("Make the opening title more grand")],
+  [tr("Add transition"), tr("Add a transition to the second clip")],
+  [tr("Background music"), tr("Add some relaxed background music")],
+  [tr("Cut faster"), tr("Make the overall pacing faster")],
 ];
 
-export const PLACEHOLDER = "告诉 Agent 你想怎么改…";
+export const PLACEHOLDER = tr("Tell the Agent what you want to change…");
 
 export interface AgentChatViewProps {
   tabId: string;
@@ -91,14 +92,14 @@ export function AgentChatView(p: AgentChatViewProps) {
   }, [p.shown]);
 
   const hasText = p.inputText.trim().length > 0;
-  const placeholder = p.quotes.length ? `@${p.quotes[0].label} 想怎么改?` : PLACEHOLDER;
+  const placeholder = p.quotes.length ? tr("What would you like to change about @{0}?", p.quotes[0].label) : PLACEHOLDER;
   const empty = !p.start.draft && messages.length === 0;
 
   return (
     <div className="achat" data-pcm="agent-chat" data-tab={p.tabId} data-shown={p.shown ? "1" : "0"} style={p.shown ? undefined : { display: "none" }}>
       {p.dialog}
       <div className="chat-info" data-pcm="chat-info">
-        <span>创造力</span>
+        <span>{tr("Creativity")}</span>
         <div className="level" data-pcm="creativity">
           {CREATIVITY_LEVELS.map((lv: CreativityLevel) => (
             <button key={lv} type="button" className={lv === p.level ? "on" : undefined} data-l={CREATIVITY_LABEL[lv]} disabled={p.levelDisabled || ro.locked}
@@ -107,7 +108,7 @@ export function AgentChatView(p: AgentChatViewProps) {
         </div>
         <span className="spacer" />
         {p.visLabel && (p.canToggleVisibility
-          ? <button type="button" className="chip" data-pcm="vis-chip" title="点一下切换共有 / 私有" onClick={p.onToggleVisibility}>{p.visLabel}</button>
+          ? <button type="button" className="chip" data-pcm="vis-chip" title={tr("Tap to switch between shared / private")} onClick={p.onToggleVisibility}>{p.visLabel}</button>
           : <span className="chip" data-pcm="vis-chip">{p.visLabel}</span>)}
       </div>
 
@@ -118,17 +119,17 @@ export function AgentChatView(p: AgentChatViewProps) {
           <StartHero animated={p.start.animated} onPickPreset={p.start.onPickPreset} />
         ) : empty ? (
           <div className="empty" data-pcm="agent-empty">
-            <div className="hint">这是一个新对话。想让我做点什么?</div>
+            <div className="hint">{tr("This is a new chat. What would you like me to do?")}</div>
             <button type="button" className="preset" data-pcm="agent-empty-example" disabled={ro.locked} title={ro.title()} onClick={() => p.onPickExample(EMPTY_EXAMPLE)}>{EMPTY_EXAMPLE}</button>
           </div>
         ) : messages.map((m) => (isUserBubble(m)
           ? <UserBubble key={m.id} m={m} />
           : m.role === "assistant" ? <AgentRound key={m.id} m={m} ordinal={rounds.get(m.id) ?? 1} open={m.id === latestAssistant} who={p.who} /> : null))}
-        {p.queued > 0 && <div className="queue-note" data-pcm="queue-note">有 {p.queued} 条消息在排队,前面的做完就轮到</div>}
+        {p.queued > 0 && <div className="queue-note" data-pcm="queue-note">{tr("{0} messages are queued; yours runs when the ones ahead finish", p.queued)}</div>}
       </div>
 
       {p.readOnly || ro.locked ? (
-        <div className="composer" data-pcm="agent-composer" data-readonly={ro.locked ? "1" : undefined}><div className="note">{p.readOnly ? "项目创建者可以查看这段私有对话,但不能发送消息。" : ro.why}</div></div>
+        <div className="composer" data-pcm="agent-composer" data-readonly={ro.locked ? "1" : undefined}><div className="note">{p.readOnly ? tr("The project creator can view this private chat but can't send messages.") : ro.why}</div></div>
       ) : (
         <div className="composer" data-pcm="agent-composer" data-guide={p.start.guide ?? undefined}>
           <QuoteBar quotes={p.quotes} onRemove={p.onRemoveQuote} />
@@ -139,10 +140,10 @@ export function AgentChatView(p: AgentChatViewProps) {
           )}
           <div className="in-row">
             <textarea ref={p.inputRef} rows={1} data-pcm="chat-input" value={p.inputText} placeholder={placeholder} disabled={p.inputDisabled}
-              aria-label="告诉 Agent 你想怎么改"
+              aria-label={tr("Tell the Agent what you want to change")}
               onChange={(e) => p.onInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); p.onSend(); } }} />
-            <button type="button" className={`send${p.stopMode ? " is-stop" : ""}`} data-pcm={p.stopMode ? "chat-stop" : "chat-send"} aria-label={p.stopMode ? "停止" : "发送"} data-has-text={hasText ? "1" : "0"}
+            <button type="button" className={`send${p.stopMode ? " is-stop" : ""}`} data-pcm={p.stopMode ? "chat-stop" : "chat-send"} aria-label={p.stopMode ? tr("Stop") : tr("Send")} data-has-text={hasText ? "1" : "0"}
               onClick={() => (p.stopMode ? p.onStop() : p.onSend())}><Icon name={p.stopMode ? "stop" : "send"} /></button>
           </div>
         </div>

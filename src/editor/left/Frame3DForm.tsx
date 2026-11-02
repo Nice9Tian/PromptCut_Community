@@ -5,6 +5,7 @@ import type { ClipFrame } from "../../kernel/types";
 import type { TrackClip } from "../../kernel/project";
 import { NumberField } from "../fields/NumberField";
 import { RangeField } from "../fields/RangeField";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 编辑 → 三维:把这张卡摆进空间。
@@ -75,8 +76,8 @@ export function Frame3DForm({ clip }: { clip: TrackClip }) {
   return (
     <div className="px-3 py-2 flex flex-col gap-2 text-xs pc-left-divider">
       <div className="flex items-center justify-between">
-        <span className="font-semibold pc-left-strong">三维</span>
-        <label className="flex items-center gap-1 pc-left-muted" title="整个项目一档:一个画面只有一台相机">
+        <span className="font-semibold pc-left-strong">{tr("3D")}</span>
+        <label className="flex items-center gap-1 pc-left-muted" title={tr("One setting for the whole project: a frame has only one camera")}>
           <input
             data-pc="frame3d-camera"
             type="checkbox"
@@ -86,7 +87,7 @@ export function Frame3DForm({ clip }: { clip: TrackClip }) {
               actions.setProjectMeta({ camera3dFov: e.target.checked ? (project.camera3dFov ?? DEFAULT_FOV_DEG) : undefined })
             }
           />
-          <span>透视相机</span>
+          <span>{tr("Perspective camera")}</span>
         </label>
       </div>
 
@@ -100,17 +101,17 @@ export function Frame3DForm({ clip }: { clip: TrackClip }) {
           onClick={() => actions.setProjectMeta({ camera3dFov: DEFAULT_FOV_DEG })}
           className="text-left text-[11px] leading-relaxed text-amber-400/90 bg-amber-500/10 border border-amber-500/25 rounded px-2 py-1"
         >
-          相机没开,现在只是把卡斜切了一下,没有近大远小 —— 点这里打开透视。
+          {tr("The camera is off, so the card is only skewed, with no perspective scaling. Click here to turn on perspective.")}
         </button>
       )}
 
-      {row("绕横轴", "rotateX", -180, 180, 1, "°", "正值 = 顶边往里倒、底边朝观众抬起来")}
-      {row("绕纵轴", "rotateY", -180, 180, 1, "°", "正值 = 右边往里转、左边朝观众转过来")}
-      {row("深度", "translateZ", -2000, 1200, 10, "px", "正值朝观众(变大),负值往里(变小)")}
+      {row(tr("Around horizontal axis"), "rotateX", -180, 180, 1, "°", tr("Positive = top edge tilts inward, bottom edge lifts toward the viewer"))}
+      {row(tr("Around vertical axis"), "rotateY", -180, 180, 1, "°", tr("Positive = right side turns inward, left side turns toward the viewer"))}
+      {row(tr("Depth"), "translateZ", -2000, 1200, 10, "px", tr("Positive moves toward the viewer (larger), negative moves inward (smaller)"))}
 
       {on && (
-        <div className="flex items-center gap-2 pc-left-muted" title="越小透视越弱(接近正交),越大越夸张。相机距离由它和画幅推出来,不单独设">
-          <span className="w-14 shrink-0">视角</span>
+        <div className="flex items-center gap-2 pc-left-muted" title={tr("Smaller means weaker perspective (closer to orthographic), larger is more exaggerated. Camera distance is derived from this and the frame size, not set separately")}>
+          <span className="w-14 shrink-0">{tr("Field of view")}</span>
           <RangeField
             attrs={{ "data-pc": "frame3d-fov" }}
             min={MIN_FOV_DEG}
@@ -128,12 +129,12 @@ export function Frame3DForm({ clip }: { clip: TrackClip }) {
       <div className="flex items-center justify-between text-[10px] pc-left-faint">
         <span>
           {on
-            ? `相机距画面 ${Math.round(perspectivePx(stage, fov))}px`
-            : "整个项目共用一台相机"}
+            ? tr("Camera is {0}px from the frame", Math.round(perspectivePx(stage, fov)))
+            : tr("One camera shared by the whole project")}
         </span>
         {is3D && (
           <button type="button" onClick={() => patch(RESET)} className="pc-left-link">
-            归零
+            {tr("Reset")}
           </button>
         )}
       </div>
@@ -144,7 +145,7 @@ export function Frame3DForm({ clip }: { clip: TrackClip }) {
       */}
       {on && f.translateZ >= perspectivePx(stage, fov) && (
         <div className="text-[11px] leading-relaxed text-rose-400/90">
-          深度已经越过相机({Math.round(perspectivePx(stage, fov))}px),这张卡跑到镜头后面去了。往回拉小一点。
+          {tr("Depth has passed the camera ({0}px), so this card is now behind the camera. Pull it back a bit.", Math.round(perspectivePx(stage, fov)))}
         </div>
       )}
     </div>

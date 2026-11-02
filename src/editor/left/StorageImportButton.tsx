@@ -10,6 +10,7 @@ import {
   type StorageConnection,
 } from "../io/storageImport";
 import { getDriveToken, pickDriveFiles, requestDriveAuthCode, forgetDriveToken } from "../io/googlePicker";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 素材页的「从网盘导入」(任务书 `docs/plan/drive-connector-task.md` 第 5 节)。
@@ -82,7 +83,7 @@ export function StorageImportButton({
 
       // 已托管就不把票递下去:拉取方用它自己保管的凭据换票,不受这张票过期的影响
       const managed = !!connectedOf(cfg.kind);
-      flash(`从 ${cfg.label} 导入 ${picked.length} 个文件…${managed ? "（托管授权）" : ""}`);
+      flash(tr("Importing {1} files from {0}…{2}", cfg.label, picked.length, managed ? tr(" (hosted authorization)") : ""));
 
       let firstKind: "video" | "audio" | "image" | null = null;
       const failed: string[] = [];
@@ -92,18 +93,18 @@ export function StorageImportButton({
           if (!firstKind) firstKind = guessKind(file.mimeType, file.name);
         } catch (e) {
           failed.push(`${file.name}:${e instanceof Error ? e.message : String(e)}`);
-          if (e instanceof Error && /401|授权/.test(e.message)) forgetDriveToken();
+          if (e instanceof Error && (/\b401\b/.test(e.message) || (e as { authFailed?: boolean }).authFailed)) forgetDriveToken();
         }
       }
-      if (failed.length) alert(`这些没导进来:\n${failed.join("\n")}`);
+      if (failed.length) alert(tr("These could not be imported:\n{0}", failed.join("\n")));
       const ok = picked.length - failed.length;
       if (ok > 0) {
-        flash(`已从 ${cfg.label} 导入 ${ok} 个`);
+        flash(tr("Imported {1} from {0}", cfg.label, ok));
         if (firstKind) onImported?.(firstKind);
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (!/关闭|popup_closed|取消/.test(msg)) alert(`从网盘导入失败:${msg}`);
+      if (!(e as { closed?: boolean } | null)?.closed && !/popup_closed/.test(msg)) alert(tr("Cloud drive import failed: {0}", msg));
     } finally {
       setBusy(false);
     }
@@ -116,25 +117,25 @@ export function StorageImportButton({
       if (!got) return;                                     // 用户关了授权窗口
       await connectStorage(cfg.kind, got.code, got.codeVerifier);
       await refreshConnections();
-      flash(`${cfg.label} 的授权已交给本机保管`);
+      flash(tr("Authorization for {0} has been handed to this machine for safekeeping", cfg.label));
     } catch (e) {
-      alert(`连接失败:${e instanceof Error ? e.message : String(e)}`);
+      alert(tr("Connection failed: {0}", e instanceof Error ? e.message : String(e)));
     } finally {
       setBusy(false);
     }
   }, [flash, refreshConnections]);
 
   const runDisconnect = useCallback(async (cfg: StorageProviderConfig) => {
-    if (!confirm(`断开 ${cfg.label}？\n\n保管的授权会被删掉，并向 ${cfg.label} 撤销。已经导入的素材不受影响。`)) return;
+    if (!confirm(tr("Disconnect {0}?\n\nThe stored authorization will be deleted and revoked with {1}. Media already imported is not affected.", cfg.label, cfg.label))) return;
     setBusy(true);
     try {
       const out = await disconnectStorage(cfg.kind);
       await refreshConnections();
       flash(out.revoked
-        ? `已断开 ${cfg.label}`
-        : `本机保管的授权已删掉，但 ${cfg.label} 那边没撤成（${out.why ?? "原因不明"}），请到账号页再撤一次`);
+        ? tr("Disconnected {0}", cfg.label)
+        : tr("The authorization stored on this machine was deleted, but revoking it on {0} failed ({1}). Please revoke it again on the account page", cfg.label, out.why ?? tr("unknown reason")));
     } catch (e) {
-      alert(`断开失败:${e instanceof Error ? e.message : String(e)}`);
+      alert(tr("Disconnect failed: {0}", e instanceof Error ? e.message : String(e)));
     } finally {
       setBusy(false);
     }
@@ -152,17 +153,17 @@ export function StorageImportButton({
         type="button"
         className="pc-btn-ghost is-block pc-left-primary"
         data-pc-add="storage"
-        title={disabled ? disabledTitle : "从你的网盘导入素材(授权后只读你当场选中的文件)"}
+        title={disabled ? disabledTitle : tr("Import media from your cloud drive (after authorization, only the files you pick on the spot are read)")}
         disabled={off}
         onClick={() => { setOpen((v) => !v); setManaging(false); }}
       >
         <IconCloud size={16} />
-        <span>{busy ? "从网盘导入中…" : "从网盘导入"}</span>
+        <span>{busy ? tr("Importing from cloud drive…") : tr("Import from cloud drive")}</span>
       </button>
 
       {open && (
         <div className="pc-storage-menu" role="menu">
-          {list.length === 0 && <div className="pc-storage-note">读不到网盘配置</div>}
+          {list.length === 0 && <div className="pc-storage-note">{tr("Cannot read cloud drive config")}</div>}
 
           {!managing && list.map((p) => {
             const conn = connectedOf(p.kind);
@@ -178,8 +179,8 @@ export function StorageImportButton({
               >
                 <span className="pc-storage-name"><ProviderIcon kind={p.kind} />{p.label}</span>
                 {!p.configured
-                  ? <span className="pc-storage-tag">{p.kind === "dropbox" ? "待开放" : "未配置"}</span>
-                  : conn ? <span className="pc-storage-tag">已托管</span> : null}
+                  ? <span className="pc-storage-tag">{p.kind === "dropbox" ? tr("Coming soon") : tr("Not configured")}</span>
+                  : conn ? <span className="pc-storage-tag">{tr("Hosted")}</span> : null}
               </button>
             );
           })}
@@ -188,7 +189,7 @@ export function StorageImportButton({
             <>
               <div className="pc-storage-sep" />
               <button type="button" role="menuitem" className="pc-storage-item" onClick={() => setManaging(true)}>
-                <span>已连接的网盘…</span>
+                <span>{tr("Connected cloud drives…")}</span>
                 <span className="pc-storage-tag">{connections.length}</span>
               </button>
             </>
@@ -197,7 +198,7 @@ export function StorageImportButton({
           {managing && (
             <>
               <div className="pc-storage-note">
-                把长期授权交给本机保管之后，关掉页面也能继续传。授权只覆盖你当场选中的文件。
+                {tr("Once you hand long-term authorization to this machine for safekeeping, uploads continue even after you close the page. The authorization only covers the files you pick on the spot.")}
               </div>
               {list.filter((p) => p.configured).map((p) => {
                 const conn = connectedOf(p.kind);
@@ -206,23 +207,23 @@ export function StorageImportButton({
                     <div className="pc-storage-rowmain">
                       <span className="pc-storage-name"><ProviderIcon kind={p.kind} />{p.label}</span>
                       <span className="pc-storage-tag">
-                        {conn ? `连接于 ${new Date(conn.createdAt).toLocaleDateString()}` : p.canManage ? "未连接" : "不支持托管"}
+                        {conn ? tr("Connected on {0}", new Date(conn.createdAt).toLocaleDateString()) : p.canManage ? tr("Not connected") : tr("Hosting not supported")}
                       </span>
                     </div>
                     {conn
-                      ? <button type="button" className="pc-storage-act" disabled={busy} onClick={() => void runDisconnect(p)}>断开</button>
-                      : <button type="button" className="pc-storage-act" disabled={busy || !p.canManage} title={p.canManage ? undefined : p.manageReason} onClick={() => void runConnect(p)}>连接</button>}
+                      ? <button type="button" className="pc-storage-act" disabled={busy} onClick={() => void runDisconnect(p)}>{tr("Disconnect")}</button>
+                      : <button type="button" className="pc-storage-act" disabled={busy || !p.canManage} title={p.canManage ? undefined : p.manageReason} onClick={() => void runConnect(p)}>{tr("Connect")}</button>}
                   </div>
                 );
               })}
               <div className="pc-storage-sep" />
-              <button type="button" className="pc-storage-item" onClick={() => setManaging(false)}><span>返回</span></button>
+              <button type="button" className="pc-storage-item" onClick={() => setManaging(false)}><span>{tr("Back")}</span></button>
             </>
           )}
 
           {!anyConfigured && (
             <div className="pc-storage-note">
-              在编辑器进程的环境变量里配好 <code>PROMPTCUT_GOOGLE_CLIENT_ID</code> 等三项后可用
+              {tr("Configure in the editor process environment variables:")}{" "} <code>PROMPTCUT_GOOGLE_CLIENT_ID</code> {tr("and two others to enable this")}
             </div>
           )}
         </div>

@@ -1,4 +1,5 @@
 import { useStore } from "../store/project";
+import { tr } from "../i18n/index.ts";
 
 const ONLINE_BUILD = typeof import.meta.env !== "undefined" && import.meta.env.VITE_PC_ONLINE === "1";
 
@@ -16,15 +17,15 @@ export function StatusBar() {
 
   return (
     <div className="pc-statusbar" data-pc="statusbar" role="status" aria-live="polite">
-      <span>{playing ? "播放中" : "就绪"}</span>
+      <span>{playing ? tr("Playing") : tr("Ready")}</span>
       <span>
-        序列 {tracks.length} · {clipCount} 个片段
+        {tr("Tracks {0} · {1} clips", tracks.length, clipCount)}
       </span>
-      <span>时长 {duration.toFixed(2)} s</span>
+      <span>{tr("Duration {0} s", duration.toFixed(2))}</span>
       {!ONLINE_BUILD && (
         <span className="pc-statusbar-right">
           <span className={`pc-statusbar-dot${dirty ? " is-dirty" : ""}`} aria-hidden="true" />
-          {dirty ? "有未保存的改动" : "已保存草稿"}
+          {dirty ? tr("Unsaved changes") : tr("Draft saved")}
         </span>
       )}
     </div>

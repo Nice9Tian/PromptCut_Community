@@ -3,6 +3,7 @@ import { useDragPayload } from "../dnd";
 import { useTimelineContext } from "./TimelineContext";
 import { xOfTime } from "./utils";
 import { useDropTarget } from "./useDropTarget";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 序列之间的插入缝:拖着卡片 / 素材经过两条序列中间时出现一条蓝线,松手就在那个位置插一条新序列。
@@ -44,7 +45,7 @@ function InsertZone({ index }: { index: number }) {
               ? { left: `${xOfTime(plan.start, pxPerSec)}px`, top: 0, transform: "none", translate: "none" }
               : { left: `${xOfTime(plan.start, pxPerSec)}px` }}
           >
-            {plan.label} · 新建序列
+            {tr("{0} · new track", plan.label)}
           </div>
         </>
       )}

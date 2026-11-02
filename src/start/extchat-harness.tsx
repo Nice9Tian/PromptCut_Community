@@ -65,8 +65,8 @@ function Page({ s }: { s: ExtChatHarnessState }) {
       canSend={s.canSend}
       canStop={false}
       stopMode={false}
-      placeholder="对这支片子说点什么"
-      note="在云端运行，关闭后继续；重新打开可接着看。"
+      placeholder="Say something about this video"
+      note="Runs in the cloud and keeps going after you close it; reopen to pick up where you left off."
       narrow
     />
   );
@@ -79,20 +79,20 @@ function Page({ s }: { s: ExtChatHarnessState }) {
               {s.showScrub && (
                 <div className="ps-detail" data-pc="start-detail">
                   <header className="ps-detail-head">
-                    <span className="ps-detail-title">详细编辑</span>
-                    <span className="ps-detail-sub">时间轴可调；右键一张卡可以引用进输入框</span>
+                    <span className="ps-detail-title">Detail editing</span>
+                    <span className="ps-detail-sub">The timeline is adjustable; right-click a card to quote it into the input box</span>
                     <span className="ps-rail-spacer" />
-                    <button type="button" className="ps-mode-btn" data-pc="start-enter-traditional">进入传统式</button>
-                    <button type="button" className="ps-ghost-btn" data-pc="start-detail-close">收起</button>
+                    <button type="button" className="ps-mode-btn" data-pc="start-enter-traditional">Enter Classic mode</button>
+                    <button type="button" className="ps-ghost-btn" data-pc="start-detail-close">Collapse</button>
                   </header>
                   <div className="ps-detail-stage">
                     <div className="ps-stage ps-detail-screen" data-pc="start-detail-stage" style={{ background: "linear-gradient(135deg, #111 40%, #2b2a33 100%)" }} />
                   </div>
                   <div className="ps-detail-transport">
-                    <button type="button" className="ps-detail-play" data-pc="start-detail-play" aria-label="播放">▶</button>
-                    <button type="button" className="ps-ghost-btn" data-pc="start-detail-rewind">回到开头</button>
+                    <button type="button" className="ps-detail-play" data-pc="start-detail-play" aria-label="Play">▶</button>
+                    <button type="button" className="ps-ghost-btn" data-pc="start-detail-rewind">Back to start</button>
                     <input type="range" className="ps-detail-scrub" data-pc="start-detail-scrub" min={0} max={60} step={0.05}
-                      value={detailT} aria-label="进度"
+                      value={detailT} aria-label="progress"
                       onPointerDown={() => window.getSelection()?.removeAllRanges()}
                       onChange={(e) => setDetailT(Number(e.target.value))} />
                     <span className="ps-detail-time">{detailT.toFixed(2)} s / 60.00 s</span>
@@ -101,14 +101,14 @@ function Page({ s }: { s: ExtChatHarnessState }) {
               )}
             </div>
             <aside className="ps-ext" data-pc="start-ext" style={{ flexBasis: `${s.width}px` }}>
-              <FakeSection title="画面" bodyHeight={150}>
+              <FakeSection title="Video" bodyHeight={150}>
                 {s.showScrub ? (
                   <div className="ps-stage ps-ext-frame" data-pc="start-ext-stage" style={{ background: "linear-gradient(135deg, #111 40%, #d8d0c5 60%)" }}>
                     <div className="ps-stage-over">
-                      <button type="button" className="ps-ext-play" data-pc="start-ext-play" aria-label="播放">▶</button>
+                      <button type="button" className="ps-ext-play" data-pc="start-ext-play" aria-label="Play">▶</button>
                       <div className="ps-ext-transport">
                         <input type="range" className="ps-ext-scrub" data-pc="start-ext-scrub" min={0} max={60} step={0.05}
-                          value={extT} aria-label="进度"
+                          value={extT} aria-label="progress"
                           onPointerDown={() => window.getSelection()?.removeAllRanges()}
                           onChange={(e) => setExtT(Number(e.target.value))} />
                         <span className="ps-ext-time">00:{String(Math.floor(extT)).padStart(2, "0")} / 01:00</span>
@@ -117,7 +117,7 @@ function Page({ s }: { s: ExtChatHarnessState }) {
                   </div>
                 ) : undefined}
               </FakeSection>
-              <FakeSection title="修改前 / 修改后" bodyHeight={40} />
+              <FakeSection title="Before / after" bodyHeight={40} />
               <ExtChatPanel messages={s.messages} composer={composer} whyNot={s.whyNot} onBack={noop} />
             </aside>
           </div>

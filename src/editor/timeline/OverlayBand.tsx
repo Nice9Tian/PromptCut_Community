@@ -18,6 +18,7 @@ import type { MouseEvent } from "react";
 import type { OverlayItem } from "./overlays";
 import { BAND_H, OVERLAY_KIND_NAME, overlayGlyph, planBand } from "./overlays";
 import type { RowSize } from "./utils";
+import { tr } from "../../i18n/index.ts";
 
 export interface OverlayBandProps {
   items: OverlayItem[];
@@ -86,8 +87,8 @@ export function OverlayBand({ items, rowSize, avail, countOnly, frozen, onOpenOn
           type="button"
           className={`pc-ov-chip${it.off ? " is-off" : ""}`}
           title={it.off
-            ? `${OVERLAY_KIND_NAME[it.kind]}：${it.name} —— 已停用，这一段上不生效`
-            : `${OVERLAY_KIND_NAME[it.kind]}：${it.name}${it.value ? `（${it.value}）` : ""}`}
+            ? tr("{0}: {1} (disabled, has no effect on this segment)", OVERLAY_KIND_NAME[it.kind], it.name)
+            : tr("{0}: {1}{2}", OVERLAY_KIND_NAME[it.kind], it.name, it.value ? tr(" ({0})", it.value) : "")}
           data-pc-overlay={it.kind}
           {...press((p) => onOpenOne(i, p))}
         >
@@ -99,7 +100,7 @@ export function OverlayBand({ items, rowSize, avail, countOnly, frozen, onOpenOn
         <button
           type="button"
           className="pc-ov-more"
-          title={`${items.length} 张叠加卡，点开挑`}
+          title={tr("{0} overlay cards, click to choose", items.length)}
           data-pc-overlay-more={plan.hidden}
           {...press(onOpenAll)}
         >
@@ -110,8 +111,8 @@ export function OverlayBand({ items, rowSize, avail, countOnly, frozen, onOpenOn
         <button
           type="button"
           className="pc-ov-add"
-          title="这一段挂着什么"
-          aria-label="叠加卡"
+          title={tr("What is attached to this segment")}
+          aria-label={tr("Overlay card")}
           {...press(onOpenAll)}
         >
           ⋯
@@ -132,7 +133,7 @@ export function OverlayPill({ count, onOpenAll }: { count: number; onOpenAll: (a
       ref={ref}
       type="button"
       className="pc-ov-pill"
-      title={`${count} 张叠加卡，点开挑`}
+      title={tr("{0} overlay cards, click to choose", count)}
       data-pc-overlay-more={count}
       {...press(onOpenAll)}
     >

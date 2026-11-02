@@ -23,7 +23,7 @@ const shared = () => !!getSyncView().shared;
 const associated = () => !!getSyncView().association;
 
 const notify = (names: string[]) => {
-  console.warn("[collab] 这些素材传不上去:", names);
+  console.warn("[collab] These assets could not be uploaded:", names);
   pushToast(uploadMissingMessage(names), "warn", Infinity);
 };
 

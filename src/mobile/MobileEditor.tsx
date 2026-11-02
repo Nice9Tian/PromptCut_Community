@@ -38,6 +38,8 @@ import {
 } from "./sheets";
 import { useMembers } from "./useMembers";
 import { useUploadRejectedNotice } from "../editor/left/uploadRejectedNotice";
+import { tr as trText } from "../i18n/index.ts";
+import { OVERLAY_QUOTE_KIND } from "./agentView";
 
 // 探针与测试读写 store 的口子(桌面的时间轴模块装同一个;手机版不挂时间轴模块,这里自己装)
 (window as unknown as { __pcStore?: unknown }).__pcStore = { getState, actions };
@@ -54,7 +56,7 @@ type SheetState =
   | { kind: "export" }
   | null;
 
-const TRANSITION_NAME: Record<Transition["kind"], string> = { crossfade: "交叉溶解", fadeIn: "淡入", fadeOut: "淡出" };
+const TRANSITION_NAME: Record<Transition["kind"], string> = { crossfade: trText("crossfade"), fadeIn: trText("Fade in"), fadeOut: trText("Fade out") };
 const cardName = (id: string) => getCard(id)?.name;
 
 /** 历史记录里本界面的那一层:1 缩略预览,2 时间轴 / Agent 分页 */
@@ -95,7 +97,7 @@ export function MobileEditor() {
   const mainTrack = mainTrackOf(project);
   const selClip = selection[0] && findClip(project, selection[0]) ? selection[0] : null;
   const tr = selTr ? transitionsOf(project).find((x) => x.id === selTr) ?? null : null;
-  const cutName = useMemo(() => listCuts(project).find((c) => c.active)?.name ?? "剪辑", [project]);
+  const cutName = useMemo(() => listCuts(project).find((c) => c.active)?.name ?? trText("Cut"), [project]);
 
   /* ---------- 编辑器基础设施:同 Editor.tsx(不塞演示卡:手机版不放假数据) ---------- */
   useEffect(() => { void startSync().then(() => resumeShared()); }, []);
@@ -156,7 +158,7 @@ export function MobileEditor() {
   };
   /** 问那一句。popstate 里也要用,所以放进 ref:那个处理器只挂一次,捏不到新的闭包 */
   const askLeave = useRef<() => void>(() => {});
-  askLeave.current = () => confirm({ text: UNSENT_LEAVE_BODY, ok: "离开", danger: true, run: leaveNow });
+  askLeave.current = () => confirm({ text: UNSENT_LEAVE_BODY, ok: trText("Leave"), danger: true, run: leaveNow });
   const goHome = () => {
     if (unsentRisk) { askLeave.current(); return; }
     leaveNow();
@@ -173,7 +175,7 @@ export function MobileEditor() {
     const n = editCount.current;
     for (let i = 0; i < n && actions.canUndo(); i++) actions.undo();
     editCount.current = 0;
-    if (n) toast("已放弃本次编辑");
+    if (n) toast(trText("This edit was discarded"));
   };
 
   /* ---------- 选中 ---------- */
@@ -198,11 +200,11 @@ export function MobileEditor() {
   };
   /** 单张叠加卡:引用块比整段细一级(`@叠加卡 名字(片段id#种类:定义id)`,见 editor/quoteBus.ts) */
   const refOverlay = (c: TrackClip, item: OverlayItem) => {
-    setQuote({ clipId: overlayQuoteId(c, item), label: item.name, kind: "叠加卡" });
+    setQuote({ clipId: overlayQuoteId(c, item), label: item.name, kind: OVERLAY_QUOTE_KIND });
     goPage("agent");
   };
   const refTransition = (x: Transition) => {
-    setQuote({ clipId: x.id, label: `转场 ${TRANSITION_NAME[x.kind]}` });
+    setQuote({ clipId: x.id, label: trText("Transition {0}", TRANSITION_NAME[x.kind]) });
     goPage("agent");
   };
   useEffect(() => {
@@ -210,7 +212,7 @@ export function MobileEditor() {
     const q = quote;
     const timer = window.setTimeout(() => {
       window.dispatchEvent(new CustomEvent("pc-quote-clip", { detail: q }));
-      toast(`已引用：${q.label}`);
+      toast(trText("Quoted: {0}", q.label));
       setQuote(null);
     }, 60);
     return () => window.clearTimeout(timer);
@@ -239,38 +241,38 @@ export function MobileEditor() {
       });
     });
     const done = plan.moves.every((m) => Math.abs((findClip(getState().project, m.id)?.clip.start ?? -1) - m.start) < 1e-6);
-    toast(done ? "已调整顺序" : "换顺序没有完全成功，可以撤销");
+    toast(done ? trText("Order changed") : trText("Reordering did not fully succeed, you can undo"));
   };
   const split = (c: TrackClip) => {
     if (ro.locked) { toast(ro.why); return; }
-    if (t <= c.start + 0.05 || t >= c.end - 0.05) { toast("先把播放头移到片段中间"); return; }
+    if (t <= c.start + 0.05 || t >= c.end - 0.05) { toast(trText("Move the playhead to the middle of the clip first")); return; }
     const r = actions.splitClip(c.id, t);
-    toast(r ? "已在播放头处切分" : "切不开：这一段挂着转场，或所在序列锁着");
+    toast(r ? trText("Split at the playhead") : trText("Can't split: this segment has a transition, or its track is locked"));
   };
-  const dup = (c: TrackClip) => { if (ro.locked) { toast(ro.why); return; } const r = actions.duplicateClip(c.id); if (r) { selectClip(r.id); toast("已复制"); } };
-  const del = (c: TrackClip) => ro.locked ? toast(ro.why) : confirm({ text: `删除“${clipName(project, c, cardName)}”？`, ok: "删除", danger: true, run: () => { actions.removeClip(c.id); toast("已删除，可撤销"); } });
-  const mute = (c: TrackClip) => { if (ro.locked) { toast(ro.why); return; } actions.setClipMuted(c.id, !c.audioMuted); toast(c.audioMuted ? "已恢复声音" : "已静音"); };
+  const dup = (c: TrackClip) => { if (ro.locked) { toast(ro.why); return; } const r = actions.duplicateClip(c.id); if (r) { selectClip(r.id); toast(trText("Copied")); } };
+  const del = (c: TrackClip) => ro.locked ? toast(ro.why) : confirm({ text: trText("Delete \"{0}\"?", clipName(project, c, cardName)), ok: trText("Delete"), danger: true, run: () => { actions.removeClip(c.id); toast(trText("Deleted, can be undone")); } });
+  const mute = (c: TrackClip) => { if (ro.locked) { toast(ro.why); return; } actions.setClipMuted(c.id, !c.audioMuted); toast(c.audioMuted ? trText("Sound restored") : trText("Muted")); };
   const align = (which: "start" | "end") => {
     if (ro.locked) { toast(ro.why); return; }
     const c = selClip ? findClip(project, selClip)?.clip : undefined;
-    if (!c) { toast("先选中一个片段"); return; }
-    if (main.some((m) => m.id === c.id)) { toast("主要内容的位置由顺序决定，在缩略时间轴上长按换顺序"); return; }
+    if (!c) { toast(trText("Select a clip first")); return; }
+    if (main.some((m) => m.id === c.id)) { toast(trText("The position of main content is set by its order. Long-press on the thumbnail timeline to reorder")); return; }
     const len = c.end - c.start;
     const start = which === "start" ? t : Math.max(0, t - len);
     const before = getState().project;
     actions.moveClip(c.id, { start, end: start + len });
-    if (getState().project === before) toast("放不下：那里已经有别的片段");
+    if (getState().project === before) toast(trText("Doesn't fit: there is already another clip there"));
   };
   const commitMove = (id: string, patch: { start: number; end: number }) => {
     if (ro.locked) { toast(ro.why); return; }
     const before = getState().project;
     actions.moveClip(id, patch);
-    toast(getState().project === before ? "放不下：和别的片段重叠，或这一段挂着转场" : "已调整（一次拖动 = 一步撤销）");
+    toast(getState().project === before ? trText("Doesn't fit: it overlaps another clip, or this segment has a transition") : trText("Adjusted (one drag = one undo step)"));
   };
-  const delTransition = (x: Transition) => ro.locked ? toast(ro.why) : confirm({ text: `删除转场「${TRANSITION_NAME[x.kind]}」？`, ok: "删除", danger: true, run: () => {
+  const delTransition = (x: Transition) => ro.locked ? toast(ro.why) : confirm({ text: trText("Delete transition \"{0}\"?", TRANSITION_NAME[x.kind]), ok: trText("Delete"), danger: true, run: () => {
     const r = actions.removeTransition(x.id);
     setSelTr(null);
-    toast(r.ok ? (r.note ?? "已删除转场，相关片段解锁了") : r.error);
+    toast(r.ok ? (r.note ?? trText("Transition deleted, the related clips are unlocked")) : r.error);
   } });
   const boundaryOf = (x: Transition): TransitionTarget | null => {
     const i = main.findIndex((c) => c.id === x.aId || c.id === x.bId);
@@ -281,37 +283,37 @@ export function MobileEditor() {
   };
 
   const STD: SubItem[] = [
-    { icon: "video", label: "视频", pcm: "sub-video", run: () => setSheet({ kind: "assets", tab: "video" }) },
-    { icon: "image", label: "图片", pcm: "sub-image", run: () => setSheet({ kind: "assets", tab: "image" }) },
-    { icon: "audio", label: "音频", pcm: "sub-audio", run: () => setSheet({ kind: "assets", tab: "audio" }) },
-    { icon: "clip", label: "剪辑", pcm: "sub-cut", run: () => setSheet({ kind: "clips" }) },
-    { icon: "card", label: "卡片", pcm: "sub-card", run: () => setSheet({ kind: "cards", tab: "anim", transition: null }) },
-    { icon: "text", label: "文字", pcm: "sub-text", run: () => setSheet({ kind: "cards", tab: "text", transition: null }) },
+    { icon: "video", label: trText("Video"), pcm: "sub-video", run: () => setSheet({ kind: "assets", tab: "video" }) },
+    { icon: "image", label: trText("Images"), pcm: "sub-image", run: () => setSheet({ kind: "assets", tab: "image" }) },
+    { icon: "audio", label: trText("audio"), pcm: "sub-audio", run: () => setSheet({ kind: "assets", tab: "audio" }) },
+    { icon: "clip", label: trText("Cut"), pcm: "sub-cut", run: () => setSheet({ kind: "clips" }) },
+    { icon: "card", label: trText("Cards"), pcm: "sub-card", run: () => setSheet({ kind: "cards", tab: "anim", transition: null }) },
+    { icon: "text", label: trText("Text"), pcm: "sub-text", run: () => setSheet({ kind: "cards", tab: "text", transition: null }) },
   ];
   const selClipObj = selClip ? findClip(project, selClip)?.clip ?? null : null;
-  const refItem = (run: () => void): SubItem => ({ icon: "ref", label: "引用", ref: true, pcm: "sub-ref", run });
+  const refItem = (run: () => void): SubItem => ({ icon: "ref", label: trText("Quote"), ref: true, pcm: "sub-ref", run });
   const transitionItems = (x: Transition): SubItem[] => [
     refItem(() => refTransition(x)),
-    { icon: "time", label: "时长·强度", pcm: "sub-tr-time", run: () => setSheet({ kind: "params", target: { transitionId: x.id } }) },
-    { icon: "swap", label: "换转场", pcm: "sub-tr-swap", run: () => setSheet({ kind: "cards", tab: "transition", transition: boundaryOf(x) }) },
-    { icon: "trash", label: "删除", pcm: "sub-tr-del", run: () => delTransition(x) },
+    { icon: "time", label: trText("Duration · intensity"), pcm: "sub-tr-time", run: () => setSheet({ kind: "params", target: { transitionId: x.id } }) },
+    { icon: "swap", label: trText("Change transition"), pcm: "sub-tr-swap", run: () => setSheet({ kind: "cards", tab: "transition", transition: boundaryOf(x) }) },
+    { icon: "trash", label: trText("Delete"), pcm: "sub-tr-del", run: () => delTransition(x) },
   ];
   const clipTools = (c: TrackClip): SubItem[] => {
     const kind = clipKind(project, c);
     const items: SubItem[] = [
       refItem(() => refClip(c)),
-      { icon: "split", label: "分割", pcm: "sub-split", run: () => split(c) },
-      { icon: "copy", label: "复制", pcm: "sub-dup", run: () => dup(c) },
+      { icon: "split", label: trText("Split"), pcm: "sub-split", run: () => split(c) },
+      { icon: "copy", label: trText("Duplicate"), pcm: "sub-dup", run: () => dup(c) },
     ];
     const params = () => setSheet({ kind: "params", target: { clipId: c.id } });
-    const muteItem: SubItem = { icon: "mute", label: c.audioMuted ? "恢复声音" : "静音", pcm: "sub-mute", run: () => mute(c) };
-    if (kind === "card") items.push({ icon: "style", label: "样式", pcm: "sub-style", run: params }, { icon: "opacity", label: "不透明度", pcm: "sub-opacity", run: params });
-    else if (kind === "audio") items.push(muteItem, { icon: "volume", label: "音量", pcm: "sub-volume", run: params });
+    const muteItem: SubItem = { icon: "mute", label: c.audioMuted ? trText("Restore audio") : trText("Muted"), pcm: "sub-mute", run: () => mute(c) };
+    if (kind === "card") items.push({ icon: "style", label: trText("Style"), pcm: "sub-style", run: params }, { icon: "opacity", label: trText("Opacity"), pcm: "sub-opacity", run: params });
+    else if (kind === "audio") items.push(muteItem, { icon: "volume", label: trText("Volume"), pcm: "sub-volume", run: params });
     // 视频段:静音、速度、调整(演示稿 toolsFor 的顺序);「速度」打开速度面板(store 的 setClipSpeed,〔裁〕变速段不出原声)
-    else items.push(...(kind === "video" ? [muteItem, { icon: "speed", label: "速度", pcm: "sub-speed", run: () => setSheet({ kind: "speed", clipId: c.id }) } as SubItem] : []), { icon: "adjust", label: "调整", pcm: "sub-adjust", run: params });
+    else items.push(...(kind === "video" ? [muteItem, { icon: "speed", label: trText("Speed"), pcm: "sub-speed", run: () => setSheet({ kind: "speed", clipId: c.id }) } as SubItem] : []), { icon: "adjust", label: trText("Adjust"), pcm: "sub-adjust", run: params });
     // 叠加层:最窄的片段上角标不吃点击,这里是唯一的入口(`mobile/overlayBadge.ts`)
-    items.push({ icon: "layers", label: "叠加层", pcm: "sub-overlays", run: params });
-    items.push({ icon: "trash", label: "删除", pcm: "sub-del", run: () => del(c) });
+    items.push({ icon: "layers", label: trText("Overlays"), pcm: "sub-overlays", run: params });
+    items.push({ icon: "trash", label: trText("Delete"), pcm: "sub-del", run: () => del(c) });
     return items;
   };
   // 只读时整排子导航栏置灰(都是加素材 / 改片段 / 要给 Agent 发话的入口),悬停写明原因
@@ -320,10 +322,10 @@ export function MobileEditor() {
   const timelineItems: SubItem[] = lockItems(selClipObj ? clipTools(selClipObj) : STD);
 
   const timelineTitle = selClipObj
-    ? `${({ card: "卡片", audio: "音频", image: "图片段", cut: "剪辑段", video: "视频段" } as const)[clipKind(project, selClipObj)]} · ${clipName(project, selClipObj, cardName)}`
-    : `时间轴 · ${cutName}`;
+    ? `${({ card: trText("Cards"), audio: trText("audio"), image: trText("Image clip"), cut: trText("Cut segment"), video: trText("Video clip") } as const)[clipKind(project, selClipObj)]} · ${clipName(project, selClipObj, cardName)}`
+    : trText("Timeline · {0}", cutName);
   const aspect = `${project.width} / ${project.height}`;
-  const memberLabel = members.unavailable ? "成员" : `${members.people} 人 · ${members.agents} Agent`;
+  const memberLabel = members.unavailable ? trText("Members") : trText("{0} people · {1} Agent", members.people, members.agents);
 
   return (
     <div className={`editor${page === "timeline" ? " is-timeline" : ""}`} data-pcm="editor" data-page={page} data-readonly={ro.locked ? "1" : undefined}>
@@ -336,17 +338,17 @@ export function MobileEditor() {
 
       {page === "timeline" ? (
         <div className="topbar edit-head" data-pcm="topbar">
-          <button type="button" className="icon-btn" data-pcm="tl-discard" title="退出（放弃本次编辑）" aria-label="退出" onClick={() => { discardEdits(); goPage("preview"); }}><Icon name="close" /></button>
+          <button type="button" className="icon-btn" data-pcm="tl-discard" title={trText("Exit (discard this edit)")} aria-label={trText("Exit")} onClick={() => { discardEdits(); goPage("preview"); }}><Icon name="close" /></button>
           <h1 data-pcm="edit-title">{timelineTitle}</h1>
-          <button type="button" className="icon-btn ok" data-pcm="tl-done" title="完成" aria-label="完成" onClick={() => goPage("preview")}><Icon name="ok" /></button>
+          <button type="button" className="icon-btn ok" data-pcm="tl-done" title={trText("done")} aria-label={trText("done")} onClick={() => goPage("preview")}><Icon name="ok" /></button>
         </div>
       ) : (
         <div className="topbar" data-pcm="topbar">
           {page === "agent"
-            ? <button type="button" className="icon-btn" data-pcm="top-back" title="返回缩略预览" aria-label="返回" onClick={() => goPage("preview")}><Icon name="back" /></button>
-            : <button type="button" className="icon-btn" data-pcm="top-home" title="主页" aria-label="主页" onClick={goHome}><Icon name="home" /></button>}
+            ? <button type="button" className="icon-btn" data-pcm="top-back" title={trText("Back to thumbnail preview")} aria-label={trText("Back")} onClick={() => goPage("preview")}><Icon name="back" /></button>
+            : <button type="button" className="icon-btn" data-pcm="top-home" title={trText("Home")} aria-label={trText("Home")} onClick={goHome}><Icon name="home" /></button>}
           <h1 data-pcm="project-name">{project.name}</h1>
-          <button type="button" className="btn primary" style={{ height: 30, padding: "0 12px" }} data-pcm="top-export" onClick={() => setSheet({ kind: "export" })}>导出</button>
+          <button type="button" className="btn primary" style={{ height: 30, padding: "0 12px" }} data-pcm="top-export" onClick={() => setSheet({ kind: "export" })}>{trText("Export")}</button>
         </div>
       )}
 
@@ -357,7 +359,7 @@ export function MobileEditor() {
         <div className="cfbar" data-pcm="cfbar">
           <Icon name="warn" />
           <span className="txt" data-pcm="cfbar-text">{conflictBarText(conflicts)}</span>
-          <button type="button" data-pcm="cfbar-open" onClick={() => setSheet({ kind: "conflict" })}>处理</button>
+          <button type="button" data-pcm="cfbar-open" onClick={() => setSheet({ kind: "conflict" })}>{trText("Resolve")}</button>
         </div>
       )}
 
@@ -374,25 +376,25 @@ export function MobileEditor() {
             <div className="stage-btns">
               {/* 没有账号就没有成员,整个入口不画(`product/platforms.md`「局域网里的第二块屏」:手机上不显示成员) */}
               {!members.unavailable && (
-                <StageButton className="sbtn" pcm="members-btn" title="成员" onTap={() => setSheet({ kind: "members" })}>
+                <StageButton className="sbtn" pcm="members-btn" title={trText("Members")} onTap={() => setSheet({ kind: "members" })}>
                   {page === "timeline" ? <><Icon name="members" />{`${members.people}·${members.agents}`}</> : memberLabel}
                   {/* 有新的申请加入时出数字角标(只有创建者看得到申请;2026-10-22 用户定) */}
                   {members.requests.length > 0 && <span className="badge-n" data-pcm="members-request-badge">{members.requests.length}</span>}
                 </StageButton>
               )}
             </div>
-            {running.size > 0 && <div className="agent-flag" data-pcm="agent-flag">Agent 正在改</div>}
+            {running.size > 0 && <div className="agent-flag" data-pcm="agent-flag">{trText("Agent is editing")}</div>}
           </div>
         </div>
       </div>
 
       {page !== "agent" && (
         <div className="transport" data-pcm="transport">
-          <button type="button" className="play" data-pcm="play" aria-label={playing ? "暂停" : "播放"} onClick={() => actions.togglePlay()}><Icon name={playing ? "pause" : "play"} /></button>
+          <button type="button" className="play" data-pcm="play" aria-label={playing ? trText("Pause") : trText("Play")} onClick={() => actions.togglePlay()}><Icon name={playing ? "pause" : "play"} /></button>
           <div className="tc"><b data-pcm="tc-now">{fmtTc(t)}</b> / <span data-pcm="tc-total">{fmtTc(project.duration)}</span></div>
           <span className="spacer" />
-          <button type="button" className="icon-btn" data-pcm="undo" aria-label="撤销" disabled={!actions.canUndo() || ro.locked} title={ro.title("撤销")} onClick={() => { actions.undo(); if (editCount.current > 0) editCount.current--; }}><Icon name="undo" /></button>
-          <button type="button" className="icon-btn" data-pcm="redo" aria-label="重做" disabled={!actions.canRedo() || ro.locked} title={ro.title("重做")} onClick={() => actions.redo()}><Icon name="redo" /></button>
+          <button type="button" className="icon-btn" data-pcm="undo" aria-label={trText("Revoke")} disabled={!actions.canUndo() || ro.locked} title={ro.title(trText("Revoke"))} onClick={() => { actions.undo(); if (editCount.current > 0) editCount.current--; }}><Icon name="undo" /></button>
+          <button type="button" className="icon-btn" data-pcm="redo" aria-label={trText("Redo")} disabled={!actions.canRedo() || ro.locked} title={ro.title(trText("Redo"))} onClick={() => actions.redo()}><Icon name="redo" /></button>
         </div>
       )}
 
@@ -406,8 +408,8 @@ export function MobileEditor() {
             selected={tr?.id ?? selClip}
             onSelect={(s) => {
               if (!s) { selectClip(null); return; }
-              if ("clipId" in s) { selectClip(s.clipId); toast(`已选中第 ${main.findIndex((c) => c.id === s.clipId) + 1} 段 · 再长按这张卡拖动可换顺序`); }
-              else { selectTransition(s.transition); toast(`已选中转场「${TRANSITION_NAME[s.transition.kind]}」`); }
+              if ("clipId" in s) { selectClip(s.clipId); toast(trText("Selected segment {0} · long-press this card again and drag to reorder", main.findIndex((c) => c.id === s.clipId) + 1)); }
+              else { selectTransition(s.transition); toast(trText("Selected transition \"{0}\"", TRANSITION_NAME[s.transition.kind])); }
             }}
             onReorder={reorder}
             onScrub={seek}
@@ -446,17 +448,17 @@ export function MobileEditor() {
       </div>
 
       <div className="pager" data-pcm="pager">
-        <button type="button" className={page === "preview" ? "on" : undefined} data-pcm="pg-preview" onClick={() => goPage("preview")}><span className="ico"><Icon name="pgPreview" /></span><span className="lbl">缩略预览</span></button>
-        <button type="button" className={page === "timeline" ? "on" : undefined} data-pcm="pg-timeline" onClick={() => goPage("timeline")}><span className="ico"><Icon name="pgTimeline" /></span><span className="lbl">时间轴</span></button>
+        <button type="button" className={page === "preview" ? "on" : undefined} data-pcm="pg-preview" onClick={() => goPage("preview")}><span className="ico"><Icon name="pgPreview" /></span><span className="lbl">{trText("Thumbnail preview")}</span></button>
+        <button type="button" className={page === "timeline" ? "on" : undefined} data-pcm="pg-timeline" onClick={() => goPage("timeline")}><span className="ico"><Icon name="pgTimeline" /></span><span className="lbl">{trText("Timeline")}</span></button>
         <button type="button" className={page === "agent" ? "on" : undefined} data-pcm="pg-agent" onClick={() => goPage("agent")}><span className="ico"><span className="disc"><Icon name="sparkle" /></span></span><span className="lbl">Agent</span></button>
       </div>
 
       {sheet?.kind === "assets" && <AssetsSheet tab={sheet.tab} onTab={(tab) => setSheet({ kind: "assets", tab })} onClose={() => setSheet(null)}
-        onSwitchCut={(id) => { actions.switchCut(id); toast("已换成另一条剪辑"); }}
-        onPlaced={(clip, m) => { setSheet(null); if (m.kind !== "audio") selectClip(null); toast(m.kind === "audio" ? `已加到 ${fmtTc(clip.start)}` : `已加到主要内容末尾（第 ${mainClipsOf(getState().project).length} 段）`); }} />}
+        onSwitchCut={(id) => { actions.switchCut(id); toast(trText("Switched to another cut")); }}
+        onPlaced={(clip, m) => { setSheet(null); if (m.kind !== "audio") selectClip(null); toast(m.kind === "audio" ? trText("Added at {0}", fmtTc(clip.start)) : trText("Added to the end of the main content (segment {0})", mainClipsOf(getState().project).length)); }} />}
       {sheet?.kind === "cards" && <CardsSheet tab={sheet.tab} transition={sheet.transition} onTab={(tab) => setSheet({ ...sheet, tab })} onClose={() => setSheet(null)}
         onAdded={(clip) => { setSheet(null); selectClip(clip.id); if (page !== "timeline") goPage("timeline"); }} />}
-      {sheet?.kind === "clips" && <ClipsSheet onClose={() => setSheet(null)} onSwitched={(name) => { selectClip(null); toast(`缩略时间轴已换成“${name}”`); if (page === "timeline") requestAnimationFrame(() => timeline.current?.fit()); }} />}
+      {sheet?.kind === "clips" && <ClipsSheet onClose={() => setSheet(null)} onSwitched={(name) => { selectClip(null); toast(trText("Compact timeline switched to \"{0}\"", name)); if (page === "timeline") requestAnimationFrame(() => timeline.current?.fit()); }} />}
       {sheet?.kind === "params" && <ParamsSheet target={sheet.target} onClose={() => setSheet(null)}
         onAskAgent={(id) => { const c = findClip(getState().project, id)?.clip; if (c) refClip(c); }}
         onQuoteOverlay={(c, item) => { setSheet(null); refOverlay(c, item); }} />}

@@ -24,6 +24,7 @@ import { ExtChatPanel } from "./ExtChatPanel";
 import { EXT_WIDTH } from "./sideWidth";
 import { VibeStage, mmss } from "./VibeStage";
 import { WidthGrip } from "./WidthGrip";
+import { tr } from "../i18n/index.ts";
 
 /**
  * 「这次改动」那一段先归档,默认不显示 —— **这是用户 2026-10-23 要求的**,
@@ -73,29 +74,29 @@ function diffEntries(messages: readonly ChatMessage[]): DiffEntry[] {
 function DiffView(props: { entry: DiffEntry }): JSX.Element {
   const { rec, err } = useVisualRecord(props.entry.visualId);
   const [side, setSide] = useState<"before" | "after">("after");
-  if (err) return <p className="ps-ext-todo" title={err}>取不到这一步的画面：{err}</p>;
-  if (!rec) return <p className="ps-ext-todo">正在取这一步的画面…</p>;
+  if (err) return <p className="ps-ext-todo" title={err}>{tr("Cannot get the visual for this step: {0}", err)}</p>;
+  if (!rec) return <p className="ps-ext-todo">{tr("Getting the picture for this step…")}</p>;
   const before = rec.before?.gif ?? null;
   const after = rec.after?.gif ?? null;
-  if (!before && !after) return <p className="ps-ext-todo">这一步只改了参数，没有前后画面。</p>;
+  if (!before && !after) return <p className="ps-ext-todo">{tr("This step only changed parameters, so there are no before/after pictures.")}</p>;
   const src = side === "before" ? before : after;
   return (
     <>
-      <div className="ps-ext-seg" role="group" aria-label="看改前还是改后">
+      <div className="ps-ext-seg" role="group" aria-label={tr("View before or after the change")}>
         {(["before", "after"] as const).map((s) => (
           <button key={s} type="button" className="ps-ext-seg-btn" data-pc={`start-ext-${s}`} aria-pressed={side === s}
             disabled={!(s === "before" ? before : after)} onClick={() => setSide(s)}>
-            {s === "before" ? "修改前" : "修改后"}
+            {s === "before" ? tr("Before") : tr("After")}
           </button>
         ))}
       </div>
       <div className="ps-ext-frame ps-ext-frame-img">
-        {src ? <img src={src} alt={side === "before" ? "修改前" : "修改后"} /> : <span className="ps-muted">{side === "before" ? "新加的，没有修改前" : "删掉了，没有修改后"}</span>}
-        <span className="ps-ext-frame-tag">{side === "before" ? "修改前" : "修改后"}</span>
+        {src ? <img src={src} alt={side === "before" ? tr("Before") : tr("After")} /> : <span className="ps-muted">{side === "before" ? tr("Newly added, no before version") : tr("Deleted, no after version")}</span>}
+        <span className="ps-ext-frame-tag">{side === "before" ? tr("Before") : tr("After")}</span>
       </div>
       {rec.diff && rec.diff.length > 0 && (
         <p className="ps-ext-note" title={rec.diff.map((d) => `${d.key}: ${d.from} → ${d.to}`).join("\n")}>
-          {rec.diff.slice(0, 3).map((d) => `${d.key}：${d.from} → ${d.to}`).join("；")}
+          {rec.diff.slice(0, 3).map((d) => tr("{0}: {1} → {2}", d.key, d.from, d.to)).join(tr(";"))}
         </p>
       )}
     </>
@@ -132,20 +133,20 @@ export function ChatSidePanel(props: {
   return (
     <aside className="ps-ext" data-pc="start-ext" style={{ flexBasis: `${props.width}px` }}>
       {/* 左边那条缝:平时不画线,鼠标压上来才亮 */}
-      <WidthGrip spec={EXT_WIDTH} side="left" width={props.width} label="拓展栏宽度" pc="start-ext-grip"
+      <WidthGrip spec={EXT_WIDTH} side="left" width={props.width} label={tr("Side panel width")} pc="start-ext-grip"
         onWidth={props.onWidth} onWidthCommit={props.onWidthCommit} onWidthNudge={props.onWidthNudge} />
       {section(
         "play",
-        "画面",
+        tr("Video"),
         open.play,
         () => setOpen((o) => ({ ...o, play: !o.play })),
         props.detailOpen ? (
-          <p className="ps-ext-todo">画面正在「详细编辑」里显示。</p>
+          <p className="ps-ext-todo">{tr("The picture is being shown in \"Detail editing\".")}</p>
         ) : (
           // 播放条叠在画面里(用户 2026-10-23 定):省掉画框下面那一条的高度
           <VibeStage className="ps-ext-frame" pc="start-ext-stage">
             <div className="ps-stage-over">
-              <button type="button" className="ps-ext-play" data-pc="start-ext-play" aria-label={playing ? "暂停" : "播放"} onClick={() => actions.togglePlay()}>
+              <button type="button" className="ps-ext-play" data-pc="start-ext-play" aria-label={playing ? tr("Pause") : tr("Play")} onClick={() => actions.togglePlay()}>
                 {playing ? (
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6.5" y="5" width="4" height="14" rx="1" /><rect x="13.5" y="5" width="4" height="14" rx="1" /></svg>
                 ) : (
@@ -154,28 +155,28 @@ export function ChatSidePanel(props: {
               </button>
               <div className="ps-ext-transport">
                 <input type="range" className="ps-ext-scrub" data-pc="start-ext-scrub" min={0} max={Math.max(0.1, duration)} step={0.05}
-                  value={Math.min(t, duration)} aria-label="进度" onPointerDown={() => window.getSelection()?.removeAllRanges()} onChange={(e) => actions.seek(Number(e.target.value))} />
+                  value={Math.min(t, duration)} aria-label={tr("progress")} onPointerDown={() => window.getSelection()?.removeAllRanges()} onChange={(e) => actions.seek(Number(e.target.value))} />
                 <span className="ps-ext-time">{mmss(t)} / {mmss(duration)}</span>
               </div>
             </div>
           </VibeStage>
         ),
         // 段头右上角那颗:原来这儿是画框里的全屏键,用户 2026-10-23 换成这个
-        <button type="button" className="ps-ext-action" data-pc="start-ext-detail" onClick={props.onDetail}>详细编辑</button>,
+        <button type="button" className="ps-ext-action" data-pc="start-ext-detail" onClick={props.onDetail}>{tr("Detail editing")}</button>,
       )}
 
-      {SHOW_CHANGES && section("changes", "这次改动", open.changes, () => setOpen((o) => ({ ...o, changes: !o.changes })),
-        <p className="ps-ext-todo">（这一段归档了，见文件头）</p>)}
+      {SHOW_CHANGES && section("changes", tr("This change"), open.changes, () => setOpen((o) => ({ ...o, changes: !o.changes })),
+        <p className="ps-ext-todo">{tr("(this section is archived, see the file header)")}</p>)}
 
       {section(
         "diff",
-        "修改前 / 修改后",
+        tr("Before / after"),
         open.diff,
         () => setOpen((o) => ({ ...o, diff: !o.diff })),
         pickedEntry ? (
           <>
             {diffs.length > 1 && (
-              <div className="ps-ext-rows" role="listbox" aria-label="带前后画面的改动">
+              <div className="ps-ext-rows" role="listbox" aria-label={tr("Changes with before/after pictures")}>
                 {diffs.slice(0, 12).map((d) => (
                   <button key={d.key} type="button" className="ps-ext-row-main" data-pc="start-ext-change" data-picked={d.key === pickedEntry.key || undefined}
                     aria-selected={d.key === pickedEntry.key} onClick={() => setPicked(d.key)}>
@@ -187,7 +188,7 @@ export function ChatSidePanel(props: {
             <DiffView key={pickedEntry.key} entry={pickedEntry} />
           </>
         ) : (
-          <p className="ps-ext-todo" data-pc="start-ext-diff-empty">这条对话还没有带前后画面的改动。</p>
+          <p className="ps-ext-todo" data-pc="start-ext-diff-empty">{tr("This chat has no changes with before/after pictures yet.")}</p>
         ),
       )}
 

@@ -66,7 +66,7 @@ test("T2-page 导入回包写进项目:tiers 只有 original / small 两个哈�
 });
 
 test("T1-page 不是视频(回包没有 tiers)就不写 tiers、不去问素材小尺寸", () => {
-  actions.newProject("图片");
+  actions.newProject("Images");
   const m = actions.addMedia({ kind: "image", name: "a.png", url: "", pending: true });
   const realFetch = globalThis.fetch;
   globalThis.fetch = async () => { throw new Error("不该问素材小尺寸"); };

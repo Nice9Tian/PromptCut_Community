@@ -7,6 +7,7 @@ import React, { useEffect, useRef } from "react";
 import { actions } from "../../store/project";
 import { getCard } from "../../kernel/registry";
 import { useReadOnly } from "../readOnly";
+import { tr } from "../../i18n/index.ts";
 
 interface Props {
   x: number;
@@ -84,7 +85,7 @@ export function PreviewContextMenu({ x, y, clipId, cardId, onClose }: Props) {
         onMouseEnter={(e) => (e.currentTarget.style.background = "var(--ui-float, #3a3a3a)")}
         onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
       >
-        引用到 AI
+        {tr("Quote to AI")}
       </div>
       <div
         className="pc-menu-item"
@@ -95,7 +96,7 @@ export function PreviewContextMenu({ x, y, clipId, cardId, onClose }: Props) {
         onMouseEnter={(e) => (e.currentTarget.style.background = "var(--ui-float, #3a3a3a)")}
         onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
       >
-        删除
+        {tr("Delete")}
       </div>
     </div>
   );

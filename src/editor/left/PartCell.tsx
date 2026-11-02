@@ -12,6 +12,7 @@ import { PartTree } from "../../render/PartTree";
 import { themeStyle } from "../../themes";
 import { PreviewCard } from "./PreviewCard";
 import { usePreviewZoom, zoomFor } from "./previewZoom";
+import { tr } from "../../i18n/index.ts";
 
 /**
  * 左栏「部件库」里的一格:和卡片格(CardCell)同一个壳(PreviewCard)、同一套悬停预览。
@@ -68,15 +69,15 @@ export function PartCell({ def, fill, aspect }: { def: PartDef<any>; fill?: bool
       if (sel && isComposite(sel.clip)) {
         const { tree } = addPart(sel.clip.parts ?? [], { partId: def.id }, getPart);
         actions.setClipParts(sel.clip.id, tree);
-        flash("已加进选中的组合卡");
+        flash(tr("Added to the selected composite card"));
         return;
       }
       const tt = Math.round(st.t * 10) / 10;
       const { tree } = addPart([], { partId: def.id }, getPart);
       const clip = actions.addCardClip(COMPOSITE_CARD_ID, tt, { parts: tree });
-      if (!clip) { flash("没有动效轨,先在时间轴新建一条"); return; }
+      if (!clip) { flash(tr("No motion track, create one on the timeline first")); return; }
       actions.select([clip.id]);
-      flash("新建了一张组合卡");
+      flash(tr("Created a new composite card"));
     } catch (e) {
       flash(e instanceof Error ? e.message : String(e));
     }
@@ -88,8 +89,8 @@ export function PartCell({ def, fill, aspect }: { def: PartDef<any>; fill?: bool
     <div ref={viewRef} className="absolute inset-0">
       {!hot && (
         <div className="pc-lib-card-text">
-          <div className="pc-lib-card-name">{def.name}</div>
-          <div className="pc-lib-card-desc">{def.description}</div>
+          <div className="pc-lib-card-name">{tr(def.name)}</div>
+          <div className="pc-lib-card-desc">{def.description && tr(def.description)}</div>
         </div>
       )}
       {hot && box.w > 0 && box.h > 0 && (
@@ -121,7 +122,7 @@ export function PartCell({ def, fill, aspect }: { def: PartDef<any>; fill?: bool
   return (
     <PreviewCard
       attrs={{ "data-pc-part-cell": def.id }}
-      title={def.name}
+      title={tr(def.name)}
       subtitle={def.role}
       caption="hover"
       preview={view}
@@ -130,7 +131,7 @@ export function PartCell({ def, fill, aspect }: { def: PartDef<any>; fill?: bool
       edits
       onClick={onClick}
       error={msg}
-      titleAttr={`${def.description}\n点击 = 加进选中的组合卡;没选中组合卡就在播放头新建一张`}
+      titleAttr={tr("{0}\nClick = add to the selected composite card; if none is selected, create a new one at the playhead", def.description)}
       fill={fill}
       aspect={aspect}
     />

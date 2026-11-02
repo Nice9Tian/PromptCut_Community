@@ -17,7 +17,7 @@ import ts from "typescript";
 
 const vo = await import("./io/viewOnly.ts");
 const core = await import("./readOnlyCore.ts");
-const WHY_MEMBER = "你在这个项目里只能查看，改不了内容。";
+const WHY_MEMBER = "You can only view this project, you cannot change its content.";
 
 /** 在这个权限下跑 fn：'r' = 只读项目（游客），'rw' / null = 照旧，'observe' = ?observe=1 */
 async function under(access, fn) {
@@ -107,7 +107,7 @@ test("RR3 开始页：只读时不放引导动画、预设按钮禁用并说明�
 
 test("RR4 左栏预览卡：只有标了 edits 的卡（点它 / 拖它会改项目）在只读时不接点击和拖动；没标的不受影响", async () => {
   const { PreviewCard } = await load("./left/PreviewCard.tsx", {});
-  const base = { title: "数字滚动", preview: null, draggable: true, onClick() {}, onDragStart() {}, titleAttr: "点击 = 加到播放头" };
+  const base = { title: "Number ticker", preview: null, draggable: true, onClick() {}, onDragStart() {}, titleAttr: "点击 = 加到播放头" };
   const card = (m) => m.match(/<div[^>]*class="pc-lib-card[ "][^>]*>/)[0];
   const ro = card(await under("r", () => html(PreviewCard, { ...base, edits: true })));
   assert.match(ro, /draggable="false"/);
@@ -128,7 +128,7 @@ test("RR4 左栏预览卡：只有标了 edits 的卡（点它 / 拖它会改项
 
 test("RR5 音频条：标了 edits 的在只读时不可拖、不接点击", async () => {
   const { AudioStrip } = await load("./left/library/AudioStrip.tsx", { "../../timeline/AudioWaveform": { loadWave: () => Promise.resolve(null) } });
-  const props = { name: "配乐", className: "is-grab", draggable: true, onClick() {}, onDragStart() {}, edits: true, title: "拖动 = 拖到时间轴" };
+  const props = { name: "Background music", className: "is-grab", draggable: true, onClick() {}, onDragStart() {}, edits: true, title: "拖动 = 拖到时间轴" };
   const strip = (m) => m.match(/<div[^>]*class="pc-lib-strip[^>]*>/)[0];
   const ro = strip(await under("r", () => html(AudioStrip, props)));
   assert.match(ro, /draggable="false"/);
@@ -163,7 +163,7 @@ test("RR7 序列行头：只读时静音 / 隐藏 / 锁定三个按钮禁用，�
     "./useReorder": { useReorderDrag: () => ({ start() {} }), useRowOffset: () => ({ dragging: false, y: 0, animated: false }) },
     "../../ui/icons": { IconVolume: icon, IconVolumeMute: icon, IconDrag: icon, IconEye: icon, IconEyeOff: icon, IconLock: icon, IconUnlock: icon },
   });
-  const render = () => html(TrackHeader, { track: { id: "t1", name: "序列 1", clips: [], muted: false, hidden: false, locked: false }, index: 0 });
+  const render = () => html(TrackHeader, { track: { id: "t1", name: "Track 1", clips: [], muted: false, hidden: false, locked: false }, index: 0 });
   const buttons = (m) => [...m.matchAll(/<button[^>]*>/g)].map((x) => x[0]);
   const ro = buttons(await under("r", render));
   assert.equal(ro.length, 3);
@@ -173,7 +173,7 @@ test("RR7 序列行头：只读时静音 / 隐藏 / 锁定三个按钮禁用，�
   for (const access of ["rw", "observe"]) {
     const b = buttons(await under(access, render));
     assert.ok(b.every((x) => !/disabled/.test(x)), `${access}：按钮可点`);
-    assert.ok(b.some((x) => x.includes("静音序列")), `${access}：悬停还是原来的`);
+    assert.ok(b.some((x) => x.includes("Mute track")), `${access}：悬停还是原来的`);
   }
 });
 

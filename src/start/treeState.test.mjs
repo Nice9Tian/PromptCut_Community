@@ -21,7 +21,7 @@ const projects = () => [
 
 const ids = (list) => list.map((x) => x.id);
 
-test('TREE-01 ordered:置顶的排前面,两段各自保持原来的先后', () => {
+test('TREE-01 ordered: pinned items come first, and each of the two parts keeps its original order', () => {
   const list = [
     { id: 'a' }, { id: 'b', pinned: true }, { id: 'c' }, { id: 'd', pinned: true },
   ];
@@ -30,19 +30,19 @@ test('TREE-01 ordered:置顶的排前面,两段各自保持原来的先后', () 
   assert.deepEqual(ids(ordered([{ id: 'a' }, { id: 'b' }])), ['a', 'b']);
 });
 
-test('TREE-02 visible:归档的不进树', () => {
+test('TREE-02 visible: archived items stay out of the tree', () => {
   const list = [{ id: 'a' }, { id: 'b', archived: true }, { id: 'c', archived: false }];
   assert.deepEqual(ids(visible(list)), ['a', 'c']);
 });
 
-test('TREE-03 reorder:同级之间按 before / after 落位', () => {
+test('TREE-03 reorder: among siblings, items land by before / after', () => {
   // g1 里把 b 挪到 a 前面
   assert.deepEqual(ids(reorder(projects(), sibOf, 'b', 'a', 'before')), ['b', 'a', 'c', 'd', 'e']);
   // g2 里把 c 挪到 d 后面
   assert.deepEqual(ids(reorder(projects(), sibOf, 'c', 'd', 'after')), ['a', 'b', 'd', 'c', 'e']);
 });
 
-test('TREE-04 reorder:不同级之间一律不动(只在同级里排序)', () => {
+test('TREE-04 reorder: items at different levels are never moved (ordering only within the same level)', () => {
   const before = projects();
   // a 在 g1、c 在 g2:跨分组不接
   assert.deepEqual(ids(reorder(before, sibOf, 'a', 'c', 'before')), ids(before));
@@ -53,17 +53,17 @@ test('TREE-04 reorder:不同级之间一律不动(只在同级里排序)', () =>
   assert.deepEqual(ids(reorder(before, sibOf, 'zzz', 'a', 'before')), ids(before));
 });
 
-test('TREE-05 togglePin:来回切,且不原地改原来的对象', () => {
+test('TREE-05 togglePin: toggles back and forth, and does not mutate the original object in place', () => {
   const before = projects();
   const once = togglePin(before, 'b');
   assert.equal(once.find((x) => x.id === 'b').pinned, true);
-  assert.equal(before.find((x) => x.id === 'b').pinned, undefined, '原数组里的对象不能被改掉');
+  assert.equal(before.find((x) => x.id === 'b').pinned, undefined, 'Objects in the original array must not be modified');
   assert.notEqual(once, before);
   assert.equal(togglePin(once, 'b').find((x) => x.id === 'b').pinned, false);
 });
 
-test('TREE-06 rename:去掉首尾空白;空白名字不接受', () => {
-  assert.equal(rename(projects(), 'a', '  新名字  ').find((x) => x.id === 'a').name, '新名字');
+test('TREE-06 rename: trims leading and trailing whitespace; a blank name is rejected', () => {
+  assert.equal(rename(projects(), 'a', '  New name  ').find((x) => x.id === 'a').name, '新名字');
   // 全是空白时原样返回(界面上按「取消」处理)
   const before = projects();
   assert.deepEqual(rename(before, 'a', '   ').map((x) => x.name), before.map((x) => x.name));
@@ -77,14 +77,14 @@ test('TREE-07 setArchived / removeById', () => {
   assert.deepEqual(ids(removeById(projects(), 'c')), ['a', 'b', 'd', 'e']);
 });
 
-test('TREE-08 置顶只对自己同级生效:分组里置顶一个项目,别的分组和分组那一层都不受影响', () => {
+test('TREE-08 pinning only applies within its own level: pinning a project in a group affects neither other groups nor the group level', () => {
   const all = togglePin(projects(), 'd'); // d 在 g2
   const inG1 = ordered(all.filter((p) => p.groupId === 'g1'));
   const inG2 = ordered(all.filter((p) => p.groupId === 'g2'));
   const loose = ordered(all.filter((p) => p.groupId === null));
-  assert.deepEqual(ids(inG2), ['d', 'c'], 'g2 里 d 顶上去了');
-  assert.deepEqual(ids(inG1), ['a', 'b'], 'g1 一点没变');
-  assert.deepEqual(ids(loose), ['e'], '未分组那一级也没变');
+  assert.deepEqual(ids(inG2), ['d', 'c'], 'd moved to the top in g2');
+  assert.deepEqual(ids(inG1), ['a', 'b'], 'g1 is completely unchanged');
+  assert.deepEqual(ids(loose), ['e'], 'The ungrouped level is unchanged too');
 
   // 分组这一层自己排序,和项目的置顶互不相干
   const groups = [{ id: 'g1' }, { id: 'g2', pinned: true }];

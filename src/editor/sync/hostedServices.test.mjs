@@ -39,20 +39,20 @@ test("HR24a 解析 hosted:形状对才收;没有这个字段(放本机、旧托�
 });
 
 test("HR24a 显示条件:只有放云端且 available 才有这一行;缺省勾上(记录里没有算开)", () => {
-  assert.deepEqual(H.hostedRowsOf("hosted", ON), [{ service: "render", label: "托管方的渲染节点", enabled: true }]);
-  assert.deepEqual(H.hostedRowsOf("hosted", OFF), [{ service: "render", label: "托管方的渲染节点", enabled: false }]);
+  assert.deepEqual(H.hostedRowsOf("hosted", ON), [{ service: "render", label: "Host's render node", enabled: true }]);
+  assert.deepEqual(H.hostedRowsOf("hosted", OFF), [{ service: "render", label: "Host's render node", enabled: false }]);
   assert.deepEqual(H.hostedRowsOf("lan", ON), [], "放本机的项目没有这一项");
   assert.deepEqual(H.hostedRowsOf(null, ON), []);
   assert.deepEqual(H.hostedRowsOf("hosted", null), [], "没有 hosted 字段(旧托管端)没有这一项");
   assert.deepEqual(H.hostedRowsOf("hosted", { render: { available: false, enabled: true } }), [], "登记表里没有这个服务");
-  assert.deepEqual(H.hostedRowsOf("hosted", { agent: { available: true, enabled: true } }), [{ service: "agent", label: "云端 Agent", enabled: true }], "云端 Agent 一行:托管端有这个服务才出现,缺省勾上");
+  assert.deepEqual(H.hostedRowsOf("hosted", { agent: { available: true, enabled: true } }), [{ service: "agent", label: "Cloud Agent", enabled: true }], "云端 Agent 一行:托管端有这个服务才出现,缺省勾上");
   assert.deepEqual(H.hostedRowsOf("hosted", { render: { available: true, enabled: true }, agent: { available: true, enabled: false } }).map((r) => [r.service, r.enabled]), [["render", true], ["agent", false]], "两行都在,渲染节点在前");
   assert.deepEqual(H.hostedRowsOf("lan", { agent: { available: true, enabled: true } }), [], "放本机的项目没有云端 Agent 一行");
 });
 
 test("CAU-SW-01 云端 Agent 一行的文案与同组一致;成员行下的云端 Agent 连接与署名", () => {
   const t = H.HOSTED_SERVICE_TEXT.agent;
-  assert.equal(t.label, "云端 Agent");
+  assert.equal(t.label, "Cloud Agent");
   for (const on of [true, false]) for (const f of [t.hint, t.confirm]) assert.ok(f(on).length > 8);
   assert.ok(t.changed(false).length > 8);
   assert.equal(t.changed(true), "", "只在关闭时给别的成员气泡,打开时不提示〔用户 2026-10-07 定〕");
@@ -80,9 +80,9 @@ test("HR24a 成员列表:服务行在成员之后、不计入成员数;服务名
   const { people, services } = H.splitMembers(rows);
   assert.deepEqual(people.map((r) => r.username), ["bob", "alice"]);
   assert.deepEqual(services.map((r) => r.service), ["render"]);
-  assert.equal(H.serviceRowLabel("render"), "托管方的渲染节点");
-  assert.equal(H.serviceRowLabel("something-else"), "托管方的服务");
-  assert.equal(H.serviceRowLabel(undefined), "托管方的服务");
+  assert.equal(H.serviceRowLabel("render"), "Host's render node");
+  assert.equal(H.serviceRowLabel("something-else"), "Host's service");
+  assert.equal(H.serviceRowLabel(undefined), "Host's service");
 });
 
 /** 渲染 HostedServiceRows(TSX 经 vite 的 ssrLoadModule 载入,与 stageLocalOnly.test.mjs 同一做法) */
@@ -160,7 +160,7 @@ test("CAU-SW-02 项目设置里「云端 Agent」一行:放云端且 hosted.agen
   assert.match(asCreator, /AI 栏里选「云端」/, "有一行说明");
   assert.match(agentBoxOf(asCreator), /checked=""/, "缺省勾上");
   assert.doesNotMatch(agentBoxOf(asCreator), /disabled/, "创建者可以改");
-  assert.ok(asCreator.indexOf("托管方的渲染节点") < asCreator.indexOf("云端 Agent"), "与渲染节点的开关放在一起,在它后面");
+  assert.ok(asCreator.indexOf("Host's render node") < asCreator.indexOf("Cloud Agent"), "与渲染节点的开关放在一起,在它后面");
   const asMember = render({ where: "hosted", hosted: BOTH, creator: false });
   assert.match(agentBoxOf(asMember), /disabled=""/, "成员只读");
   const closed = render({ where: "hosted", hosted: { ...BOTH, agent: { available: true, enabled: false } }, creator: false });
@@ -183,7 +183,7 @@ test("CAU-SIGN-01 署名:云端 Agent 的改动别人看到「〈成员名〉的
     // 用户名里带 @ 的:取最后一个 @ 之前
     assert.equal(L.writerLabel({ actor: { ...cloud, userId: "a@b@dev-a" } }, bob), "a@b的云端 Agent");
     // 发起的那台设备上
-    assert.equal(L.writerLabel({ actor: cloud }, { session: "s-alice", userId: "alice@dev-a" }), "你的云端 Agent");
+    assert.equal(L.writerLabel({ actor: cloud }, { session: "s-alice", userId: "alice@dev-a" }), "Your Cloud Agent");
     // 同一位成员在另一台设备上看:按名字说
     assert.equal(L.writerLabel({ actor: cloud }, { session: "s-alice-2", userId: "alice@dev-a2" }), "alice的云端 Agent");
     // 本机 Agent 的说法不变
@@ -269,7 +269,7 @@ test("HS10 解析 hosted:streams 是布尔才收;非布尔丢掉但这个服务�
 });
 
 test("HS10 出现条件:放云端、render.available、文档服务报了 streams(旧托管端不报就不出现);缺省关(记录里没有算关,由文档服务算好再报,页面只照报的值显示)", () => {
-  const opt = (enabled, parentOff = false) => [{ service: "render", option: "streams", label: "生成轨道流", enabled, parentOff }];
+  const opt = (enabled, parentOff = false) => [{ service: "render", option: "streams", label: "Generate track streams", enabled, parentOff }];
   assert.deepEqual(H.hostedOptionRowsOf("hosted", WITH_STREAMS), opt(true));
   assert.deepEqual(H.hostedOptionRowsOf("hosted", STREAMS_OFF), opt(false));
   assert.deepEqual(H.hostedOptionRowsOf("lan", WITH_STREAMS), [], "放本机的项目没有");
@@ -301,13 +301,13 @@ test("HS10 通知落到状态上:认得的才改;旧托管端(没报 streams)、
 
 test("HS10 文案(先照任务书,用户看过截图再定):标签、两个方向的说明、确认弹窗、别的成员的提示只在关闭时", () => {
   const t = H.hostedOptionText("render", "streams");
-  assert.equal(t.label, "生成轨道流");
-  assert.equal(t.hint(true), "托管方的渲染节点为这个项目生成轨道流，重卡在在线浏览器里播放更流畅。");
-  assert.equal(t.hint(false), "没有打开：托管方的渲染节点不为这个项目生成轨道流，播放时用成员们各自设备生成的轨道流。打开后托管方也会生成，重卡在在线浏览器里播放更流畅，会多用云端的渲染时间。");
-  assert.equal(t.confirm(true), "打开后，托管方的渲染节点会为这个项目生成轨道流。");
-  assert.equal(t.confirm(false), "关闭后，托管方的渲染节点不再为这个项目生成轨道流，已经生成的保留。");
+  assert.equal(t.label, "Generate track streams");
+  assert.equal(t.hint(true), "The host's render node generates track streams for this project, so heavy cards play more smoothly in the online browser.");
+  assert.equal(t.hint(false), "Not turned on: the host's render node does not generate track streams for this project, and playback uses the track streams generated on each member's own device. Once turned on, the host generates them too, so heavy cards play more smoothly in the online browser, at the cost of more cloud render time.");
+  assert.equal(t.confirm(true), "Once turned on, the host's render node will generate track streams for this project.");
+  assert.equal(t.confirm(false), "Once turned off, the host's render node no longer generates track streams for this project, and the ones already generated are kept.");
   assert.equal(t.changed(true), "", "打开时不提示,和另两行同一个规矩");
-  assert.equal(t.changed(false), "创建者关闭了轨道流，托管方的渲染节点不再为这个项目生成轨道流。");
+  assert.equal(t.changed(false), "The creator turned off track streams, so the host's render node no longer generates track streams for this project.");
   assert.equal(H.hostedOptionText("render", "nope"), null);
   assert.equal(H.hostedOptionText("agent", "streams"), null);
   assert.equal(H.hostedOptionText(undefined, undefined), null);
@@ -324,7 +324,7 @@ test("HS11 组件:渲染节点那一行下面缩进多一行,按报来的值勾�
   assert.match(box, /checked=""/, "报来是开就勾上");
   assert.doesNotMatch(box, /disabled/, "创建者可以改");
   assert.doesNotMatch(asCreator, /只有创建者能改/);
-  assert.ok(asCreator.indexOf("托管方的渲染节点</label>") < asCreator.indexOf("生成轨道流"), "在渲染节点那一行后面");
+  assert.ok(asCreator.indexOf("托管方的渲染节点</label>") < asCreator.indexOf("Generate track streams"), "在渲染节点那一行后面");
   // 缩进:挂在渲染节点那一行的容器里,带缩进用的类
   assert.match(asCreator, /<div class="pc-collab-hosted-sub" data-pc="collab-hosted-render-streams" data-state="on">/);
 
@@ -422,7 +422,7 @@ test("HS13 账号项目:会话里的 hosted(渲染节点带 streams、云端 Age
   // 新文档服务的会话:`hosted.render` 是 `{ available, enabled, streams }`,`hosted.agent` 多一个 url(界面不看)
   const session = { agent: { available: true, enabled: false, url: "https://example.invalid/agent/v1" }, render: { available: true, enabled: true, streams: false } };
   assert.deepEqual(H.hostedRowsOf("hosted", session).map((r) => [r.service, r.enabled]), [["render", true], ["agent", false]]);
-  assert.deepEqual(H.hostedOptionRowsOf("hosted", session), [{ service: "render", option: "streams", label: "生成轨道流", enabled: false, parentOff: false }]);
+  assert.deepEqual(H.hostedOptionRowsOf("hosted", session), [{ service: "render", option: "streams", label: "Generate track streams", enabled: false, parentOff: false }]);
   const asCreator = render({ where: "hosted", hosted: session, creator: true, onToggleOption: () => {} });
   const box = (html, pc) => html.match(new RegExp(`<input[^>]*data-pc="${pc}"[^>]*>`))?.[0] ?? null;
   assert.doesNotMatch(box(asCreator, "collab-hosted-render-toggle"), /disabled/, "创建者能改渲染节点的开关");
@@ -492,17 +492,17 @@ test("STF2 账号项目:会话里 streamsAllowed 为 false(创建者不在权限
 }));
 
 test("STF3 改开关失败一定有一句看得懂的原因:账号项目照服务端的原因说,不再说「密码错误。」;口令项目照旧", () => {
-  const fallback = (e) => (e === "forbidden" ? "密码错误。" : "没做成，稍后再试。");
-  const denied = Object.assign(new Error("你的账号没有开启这一项的权限，请联系托管方。"), { status: 403, code: "permission-denied" });
+  const fallback = (e) => (e === "forbidden" ? "Wrong password." : "Did not succeed, try again later.");
+  const denied = Object.assign(new Error("Your account does not have permission to enable this option. Please contact the host."), { status: 403, code: "permission-denied" });
   const r = H.accountHostedFailure(denied);
-  assert.deepEqual(r, { ok: false, error: "forbidden", message: "你的账号没有开启这一项的权限，请联系托管方。" });
-  assert.equal(H.hostedFailText(r, "没有这个选项", fallback), "你的账号没有开启这一项的权限，请联系托管方。");
+  assert.deepEqual(r, { ok: false, error: "forbidden", message: "Your account does not have permission to enable this option. Please contact the host." });
+  assert.equal(H.hostedFailText(r, "没有这个选项", fallback), "Your account does not have permission to enable this option. Please contact the host.");
   // 连不上、服务端出错、不认识的异常:也都有一句话,不会是空的
-  assert.equal(H.accountHostedFailure(Object.assign(new Error("连接云端失败，请检查网络后重试。"), { status: 0, code: "network" })).message, "连接云端失败，请检查网络后重试。");
+  assert.equal(H.accountHostedFailure(Object.assign(new Error("Failed to connect to the cloud. Check the network and try again."), { status: 0, code: "network" })).message, "Failed to connect to the cloud. Check the network and try again.");
   assert.equal(H.accountHostedFailure(Object.assign(new Error("云端服务暂时不可用，请稍后重试。"), { status: 503, code: "account-unavailable" })).error, "other");
-  assert.equal(H.accountHostedFailure(new TypeError("boom")).message, "没做成，稍后再试。");
-  assert.equal(H.accountHostedFailure(undefined).message, "没做成，稍后再试。");
+  assert.equal(H.accountHostedFailure(new TypeError("boom")).message, "Did not succeed, try again later.");
+  assert.equal(H.accountHostedFailure(undefined).message, "Did not succeed, try again later.");
   // 口令项目(没有 message):照旧
-  assert.equal(H.hostedFailText({ error: "forbidden" }, "没有这个选项", fallback), "密码错误。");
+  assert.equal(H.hostedFailText({ error: "forbidden" }, "没有这个选项", fallback), "Wrong password.");
   assert.equal(H.hostedFailText({ error: "bad-message" }, "没有这个选项", fallback), "没有这个选项");
 });

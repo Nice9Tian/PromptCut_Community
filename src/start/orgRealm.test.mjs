@@ -28,17 +28,17 @@ function installStorage(initial = {}) {
 }
 
 const localDrafts = [
-  { id: '20261023-aaaaaa', name: '本机草稿甲', role: 'owned', realm: 'local' },
-  { id: '20261023-bbbbbb', name: '本机草稿乙', role: 'owned', realm: 'local' },
+  { id: '20261023-aaaaaa', name: 'Local draft A', role: 'owned', realm: 'local' },
+  { id: '20261023-bbbbbb', name: 'Local draft B', role: 'owned', realm: 'local' },
 ];
 const cloudProjects = [
-  { id: 'cloudproj01', name: '云端项目一', role: 'owned', realm: 'cloud' },
-  { id: 'cloudproj02', name: '云端项目二', role: 'joined', realm: 'cloud' },
+  { id: 'cloudproj01', name: 'Cloud project 1', role: 'owned', realm: 'cloud' },
+  { id: 'cloudproj02', name: 'Cloud project 2', role: 'joined', realm: 'cloud' },
 ];
 const mixed = [...localDrafts, ...cloudProjects];
 
-test('ORGR-01 本地分组只收本机项目:清单里混进云端项目也不出现,放进本地分组的只有本机项目', () => {
-  const { org, id } = addGroup(emptyOrg('local'), '素材', () => 'l1');
+test('ORGR-01 local groups only take local projects: cloud projects mixed into the manifest do not appear, and only local projects get placed into local groups', () => {
+  const { org, id } = addGroup(emptyOrg('local'), 'media', () => 'l1');
   assert.equal(org.realm, 'local');
   const list = mergeProjects(org, mixed);
   assert.deepEqual(list.map((p) => p.id), ['20261023-aaaaaa', '20261023-bbbbbb']);
@@ -53,8 +53,8 @@ test('ORGR-01 本地分组只收本机项目:清单里混进云端项目也不�
   assert.deepEqual(stuffed.projects.map((p) => p.id).sort(), ['20261023-aaaaaa', '20261023-bbbbbb']);
 });
 
-test('ORGR-02 云端分组只收云端项目:清单里混进本机草稿也不出现,放进云端分组的只有云端项目', () => {
-  const { org, id } = addGroup(emptyOrg('cloud'), '客户', () => 'c1');
+test('ORGR-02 cloud groups only take cloud projects: local drafts mixed into the manifest do not appear, and only cloud projects get placed into cloud groups', () => {
+  const { org, id } = addGroup(emptyOrg('cloud'), 'Client', () => 'c1');
   assert.equal(org.realm, 'cloud');
   const list = mergeProjects(org, mixed);
   assert.deepEqual(list.map((p) => p.id), ['cloudproj01', 'cloudproj02']);
@@ -63,20 +63,20 @@ test('ORGR-02 云端分组只收云端项目:清单里混进本机草稿也不�
   assert.equal(out.refused, null);
   assert.equal(out.org.projects[0].groupId, id);
   // 本地那一套的分组也不会被云端这一份收下
-  assert.deepEqual(withGroups(org, [{ id: 'gx', name: '本地来的', realm: 'local' }]).groups, []);
+  assert.deepEqual(withGroups(org, [{ id: 'gx', name: 'From local', realm: 'local' }]).groups, []);
 });
 
-test('ORGR-03 跨着放被拦住并给出说明:本地项目不进云端分组,云端项目不进本地分组;整理信息原样不动', () => {
-  const cloudOrg = addGroup(emptyOrg('cloud'), '客户', () => 'c1');
-  const localOrg = addGroup(emptyOrg('local'), '素材', () => 'l1');
+test('ORGR-03 cross-realm placement is blocked with an explanation: local projects do not go into cloud groups, cloud projects do not go into local groups; the organization data stays untouched', () => {
+  const cloudOrg = addGroup(emptyOrg('cloud'), 'Client', () => 'c1');
+  const localOrg = addGroup(emptyOrg('local'), 'media', () => 'l1');
 
   const a = moveProject(cloudOrg.org, { id: '20261023-aaaaaa', realm: 'local' }, cloudOrg.id);
-  assert.equal(a.refused, '本地项目不能放进云端分组：本地分组装本机的项目，云端分组装云端的项目。');
-  assert.equal(a.org, cloudOrg.org, '拒绝时返回同一个对象:什么都没改');
+  assert.equal(a.refused, 'A local project cannot be placed into a cloud group: local groups hold local projects, and cloud groups hold cloud projects.');
+  assert.equal(a.org, cloudOrg.org, 'On refusal the same object is returned: nothing was changed');
   assert.deepEqual(a.org.projects, []);
 
   const b = moveProject(localOrg.org, { id: 'cloudproj01', realm: 'cloud' }, localOrg.id);
-  assert.equal(b.refused, '云端项目不能放进本地分组：云端分组装云端的项目，本地分组装本机的项目。');
+  assert.equal(b.refused, 'A cloud project cannot be placed into a local group: cloud groups hold cloud projects, and local groups hold local projects.');
   assert.equal(b.org, localOrg.org);
 
   // 「移出分组」(groupId = null)对跨套的项目也一样不许碰这一份
@@ -89,11 +89,11 @@ test('ORGR-03 跨着放被拦住并给出说明:本地项目不进云端分组,�
   assert.notEqual(moveRefusal('local', 'cloud'), moveRefusal('cloud', 'local'));
 });
 
-test('ORGR-04 右键「移到分组」:同一套的分组能点,另一套的分组也列出来、置灰并说明;归档的、已在的不列;已在分组里多一项移出', () => {
+test('ORGR-04 right-click "Move to group": groups of the same realm are clickable, groups of the other realm are also listed, grayed out with an explanation; archived groups and the current group are not listed; a project already in a group gets an extra remove item', () => {
   const groups = [
-    { id: 'gl', name: '本地一', realm: 'local' },
-    { id: 'gc', name: '云端一', realm: 'cloud' },
-    { id: 'gcc', name: '云端旧', realm: 'cloud', archived: true },
+    { id: 'gl', name: 'Local 1', realm: 'local' },
+    { id: 'gc', name: 'Cloud 1', realm: 'cloud' },
+    { id: 'gcc', name: 'Old cloud', realm: 'cloud', archived: true },
   ];
   const localProject = { realm: 'local', groupId: null };
   const t = moveTargetsFor(localProject, groups);
@@ -105,10 +105,10 @@ test('ORGR-04 右键「移到分组」:同一套的分组能点,另一套的分�
   const t2 = moveTargetsFor(cloudProject, groups);
   assert.deepEqual(t2.map((x) => x.id), ['gl', null]);
   assert.equal(t2[0].blocked, moveRefusal('cloud', 'local'));
-  assert.equal(t2[1].blocked, undefined, '移出分组不受限');
+  assert.equal(t2[1].blocked, undefined, 'Removing from a group is not restricted');
 });
 
-test('ORGR-05 两套分组的存储键互不覆盖:前缀不同,任何范围名都撞不到对面去;各写各的,读回来各是各的', () => {
+test('ORGR-05 storage keys of the two group realms never overwrite each other: the prefixes differ, so no scope name can collide with the other side; each writes its own and reads back its own', () => {
   const store = installStorage();
   // 键:前缀分开,哪怕范围名被取成对面的样子
   assert.notEqual(orgKey('local', 'x'), orgKey('cloud', 'x'));
@@ -118,13 +118,13 @@ test('ORGR-05 两套分组的存储键互不覆盖:前缀不同,任何范围名�
   assert.ok(orgKey('cloud', 'z').startsWith('pc.start.org.cloud.'));
 
   // 同一个范围名各存一份:谁也没盖掉谁
-  const l = addGroup(emptyOrg('local'), '本地组', () => 'l1').org;
-  const c = addGroup(emptyOrg('cloud'), '云端组', () => 'c1').org;
+  const l = addGroup(emptyOrg('local'), 'Local group', () => 'l1').org;
+  const c = addGroup(emptyOrg('cloud'), 'Cloud group', () => 'c1').org;
   saveOrg('same', l);
   saveOrg('same', c);
   assert.equal(store.size, 2);
-  assert.deepEqual(loadOrg('local', 'same').groups.map((g) => g.name), ['本地组']);
-  assert.deepEqual(loadOrg('cloud', 'same').groups.map((g) => g.name), ['云端组']);
+  assert.deepEqual(loadOrg('local', 'same').groups.map((g) => g.name), ['Local group']);
+  assert.deepEqual(loadOrg('cloud', 'same').groups.map((g) => g.name), ['Cloud group']);
 
   // 真实的两个范围:桌面版固定一份,云端按账号各一份
   const a1 = cloudOrgScope('acc_000000000000000000000001');
@@ -140,9 +140,9 @@ test('ORGR-05 两套分组的存储键互不覆盖:前缀不同,任何范围名�
   assert.equal(JSON.parse(store.get(orgKey('cloud', a1))).realm, 'cloud');
 });
 
-test('ORGR-06 内容里的标记对不上就不认:云端那份被拷到本地的键、或反过来,读出来是空的,不会把一套当成另一套', () => {
-  const cloudBlob = JSON.stringify(addGroup(emptyOrg('cloud'), '云端组', () => 'c1').org);
-  const localBlob = JSON.stringify(addGroup(emptyOrg('local'), '本地组', () => 'l1').org);
+test('ORGR-06 a mismatched marker in the content is rejected: a key whose cloud copy was copied to local, or the reverse, reads back empty and never treats one realm as the other', () => {
+  const cloudBlob = JSON.stringify(addGroup(emptyOrg('cloud'), 'Cloud group', () => 'c1').org);
+  const localBlob = JSON.stringify(addGroup(emptyOrg('local'), 'Local group', () => 'l1').org);
   installStorage({
     [orgKey('local', LOCAL_ORG_SCOPE)]: cloudBlob, // 云端的内容躺在本地的键里
     [orgKey('cloud', 'acc:me')]: localBlob, // 本地的内容躺在云端的键里
@@ -151,47 +151,47 @@ test('ORGR-06 内容里的标记对不上就不认:云端那份被拷到本地�
   assert.deepEqual(loadOrg('cloud', 'acc:me'), emptyOrg('cloud'));
   assert.deepEqual(parseOrg(cloudBlob, 'local'), emptyOrg('local'));
   assert.deepEqual(parseOrg(localBlob, 'cloud'), emptyOrg('cloud'));
-  assert.equal(parseOrg(cloudBlob, 'cloud').groups[0].name, '云端组');
+  assert.equal(parseOrg(cloudBlob, 'cloud').groups[0].name, 'Cloud group');
   // 每个分组的标记由整份的套给:读出来的分组都带着这一套的 realm
   assert.ok(groupsOf(parseOrg(localBlob, 'local')).every((g) => g.realm === 'local'));
 });
 
-test('ORGR-07 分套之前写的老键(pc.start.org.<范围>,没有套的标记)认一次:桌面版按本地、云端按账号;之后只写新键', () => {
-  const legacy = JSON.stringify({ v: 1, groups: [{ id: 'g-old', name: '老分组' }], projects: [{ id: 'p', groupId: 'g-old' }], chats: [] });
+test('ORGR-07 the old key written before the realm split (pc.start.org.<scope>, no realm marker) is recognized once: desktop app as local, cloud as account; afterwards only the new key is written', () => {
+  const legacy = JSON.stringify({ v: 1, groups: [{ id: 'g-old', name: 'Old group' }], projects: [{ id: 'p', groupId: 'g-old' }], chats: [] });
   const store = installStorage({ 'pc.start.org.desktop': legacy, 'pc.start.org.acc:me': legacy });
   const l = loadOrg('local', LOCAL_ORG_SCOPE);
   const c = loadOrg('cloud', 'acc:me');
   assert.equal(l.realm, 'local');
   assert.equal(c.realm, 'cloud');
-  assert.deepEqual(l.groups.map((g) => g.name), ['老分组']);
-  assert.deepEqual(c.groups.map((g) => g.name), ['老分组']);
+  assert.deepEqual(l.groups.map((g) => g.name), ['Old group']);
+  assert.deepEqual(c.groups.map((g) => g.name), ['Old group']);
   saveOrg(LOCAL_ORG_SCOPE, l);
   assert.ok(store.has(orgKey('local', LOCAL_ORG_SCOPE)));
-  assert.equal(store.get('pc.start.org.desktop'), legacy, '老键不动');
+  assert.equal(store.get('pc.start.org.desktop'), legacy, 'Old key untouched');
   // 新键有了就以新键为准,不再回头读老键
-  saveOrg(LOCAL_ORG_SCOPE, addGroup(l, '新的', () => 'n1').org);
-  assert.deepEqual(loadOrg('local', LOCAL_ORG_SCOPE).groups.map((g) => g.name), ['老分组', '新的']);
+  saveOrg(LOCAL_ORG_SCOPE, addGroup(l, 'New one', () => 'n1').org);
+  assert.deepEqual(loadOrg('local', LOCAL_ORG_SCOPE).groups.map((g) => g.name), ['Old group', 'New one']);
 });
 
-test('ORGR-08 游客没有云端那一份:没有范围就读不到、也存不了(游客不会把整理信息写进任何一套的键)', () => {
+test('ORGR-08 a guest has no cloud copy: without a scope it can neither be read nor saved (a guest never writes organization data into any realm\'s key)', () => {
   const store = installStorage();
   assert.deepEqual(loadOrg('cloud', null), emptyOrg('cloud'));
-  saveOrg(null, addGroup(emptyOrg('cloud'), '不该存', () => 'g1').org);
+  saveOrg(null, addGroup(emptyOrg('cloud'), 'Should not be saved', () => 'g1').org);
   assert.equal(store.size, 0);
 });
 
-test('ORGR-09 云端分组说话:接上云端是「存在云端,换设备也能看到」;探到老服务端改口成只记在这台浏览器里;本地分组不受影响', () => {
+test('ORGR-09 cloud group wording: when connected to the cloud it says "Stored in the cloud, visible on other devices too"; when an old server is detected it changes to saying it is only remembered in this browser; local groups are unaffected', () => {
   assert.equal(CLOUD_ORG_IN_CLOUD, true);
-  assert.equal(orgWhereText('cloud'), '存在云端，换设备也能看到');
-  assert.equal(orgWhereText('cloud', false), '暂时只记在这台浏览器里');
-  assert.equal(orgWhereText('local'), '只记在这台机器上');
-  assert.equal(orgWhereText('local', true), '只记在这台机器上');
-  assert.equal(groupNoteText('cloud'), '云端分组：存在云端，换设备也能看到，只能放云端的项目。');
-  assert.equal(groupNoteText('cloud', false), '云端分组：暂时只记在这台浏览器里，只能放云端的项目。');
-  assert.equal(groupNoteText('local'), '本地分组：只记在这台机器上，只能放本机的项目。');
+  assert.equal(orgWhereText('cloud'), 'Stored in the cloud, visible on other devices too');
+  assert.equal(orgWhereText('cloud', false), 'Only remembered in this browser for now');
+  assert.equal(orgWhereText('local'), 'Only remembered on this machine');
+  assert.equal(orgWhereText('local', true), 'Only remembered on this machine');
+  assert.equal(groupNoteText('cloud'), 'Cloud group: stored in the cloud, visible on other devices too, can only hold cloud projects.');
+  assert.equal(groupNoteText('cloud', false), 'Cloud group: only remembered in this browser for now, can only hold cloud projects.');
+  assert.equal(groupNoteText('local'), 'Local group: only remembered on this machine, can only hold local projects.');
 });
 
-test('ORGR-10 清理:列表里已经没有的项目,没有任何整理信息的条目去掉、对话跟着去掉;有整理信息的留着;列表没取到不清', () => {
+test('ORGR-10 cleanup: for projects no longer in the list, entries with no organization info are removed and their chats are removed with them; entries with organization info are kept; if the list was not fetched, nothing is cleaned', () => {
   const org = {
     ...emptyOrg('cloud'),
     groups: [{ id: 'g', name: '组' }],
@@ -207,6 +207,6 @@ test('ORGR-10 清理:列表里已经没有的项目,没有任何整理信息的�
   const out = pruneOrg(org, new Set(['live']));
   assert.deepEqual(out.projects.map((p) => p.id), ['live', 'gone-grouped', 'gone-pinned', 'gone-archived']);
   assert.deepEqual(out.chats.map((c) => c.id), ['c1', 'c3']);
-  assert.equal(pruneOrg(org, null), org, '列表没取到:不动');
-  assert.equal(pruneOrg(out, new Set(['live'])), out, '没有要清的:返回原对象');
+  assert.equal(pruneOrg(org, null), org, 'List not fetched: leave untouched');
+  assert.equal(pruneOrg(out, new Set(['live'])), out, 'Nothing to clean: return the original object');
 });

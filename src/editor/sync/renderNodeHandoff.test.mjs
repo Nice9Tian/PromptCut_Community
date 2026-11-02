@@ -21,7 +21,7 @@ H.setRenderNodeDeps({ post: async (path, body) => { posts.push({ path, body }); 
   setTimer: (fn, ms) => { const t = { fn, ms, cleared: false }; timers.push(t); return t; }, clearTimer: (t) => { if (t) t.cleared = true; } });
 let signed = 0;
 let refuse = false;
-const hooks = { ticket: async (projectId) => { if (refuse) throw new Error("本页面没有连着这个共享项目"); signed++; return `v1.t${signed}-${projectId}.s`; } };
+const hooks = { ticket: async (projectId) => { if (refuse) throw new Error("This page is not connected to this shared project"); signed++; return `v1.t${signed}-${projectId}.s`; } };
 const B = { url: "wss://site.example/hosted/", projectId: "P1", contentId: "doc-1" };
 
 test("RNH-01 接上共享项目:等挑到素材服务再交,带基址与票据;重复接不再交", async () => {
@@ -66,7 +66,7 @@ test("RNH-03 票据往返:只答本页面连着的项目", async () => {
   assert.deepEqual(posts.at(-1), { path: "/api/render-node/ticket", body: { reqId: "rn2", ticket: `v1.t${signed}-P1.s` } });
   refuse = true;
   await H.answerRenderNodeTicket({ type: "ticket", reqId: "rn3", projectId: "P1" });
-  assert.deepEqual(posts.at(-1), { path: "/api/render-node/ticket", body: { reqId: "rn3", error: "本页面没有连着这个共享项目" } });
+  assert.deepEqual(posts.at(-1), { path: "/api/render-node/ticket", body: { reqId: "rn3", error: "This page is not connected to this shared project" } });
   refuse = false;
 });
 

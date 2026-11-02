@@ -1,3 +1,4 @@
+import { tr } from "../../i18n/index.ts";
 /**
  * 往用户挑的落点写文件,写失败不覆盖上次有效保存(`docs/semantics/mechanism/document-service.md`「保存基准与修改状态检查」:
  * 「失败不覆盖上次有效保存」)。
@@ -13,7 +14,7 @@
 
 /** 写盘那一步出错时的说法:原来的文件没动 */
 export function writeFailedText(reason: string): string {
-  return `写文件时出错：${reason}\n原来的文件没有改动（上一次保存的内容还在），可以继续编辑后再保存。`;
+  return tr("Error writing file: {0}\nThe original file was not changed (the content from the last save is still there), so you can keep editing and save again.", reason);
 }
 
 /** 写盘那一步出错(原文件没动) */

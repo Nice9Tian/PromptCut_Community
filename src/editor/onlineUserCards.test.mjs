@@ -169,7 +169,7 @@ test("OU-05 未知卡片(两边都没有定义):桌面与在线都不测、不�
       D.setPlanCosts([], null);
       D.setPlanProject(p);
       await settle();
-      const tag = online ? "在线" : "桌面";
+      const tag = online ? "在线" : "Desktop";
       assert.equal(CI.clipIdentityOf(p).identityKeys.x, undefined, `${tag}:未知卡片没有身份(测量不挑它)`);
       assert.ok(CI.clipIdentityOf(p).identityKeys.b, `${tag}:内置卡照旧有身份`);
       assert.equal(D.currentPlan().prerenderSet.has("x"), false, `${tag}:不进预渲染集合(清单计划不含它)`);
@@ -206,7 +206,7 @@ test("OU-03 时间轴:标签;不再有「需要本地 PC 渲染辅助」徽标(2
     assert.equal(B.clipCardLabel(R.knownCardName("mine")), "构建时用户卡");
     assert.equal(B.clipCardLabel(R.knownCardName("synced-card")), "探针同步卡");
     assert.equal(B.clipCardLabel(R.knownCardName("builtin")), "名-builtin", "撞车的同步条目忽略");
-    assert.equal(B.clipCardLabel(R.knownCardName("nobody")), "未知卡片");
+    assert.equal(B.clipCardLabel(R.knownCardName("nobody")), "Unknown card");
     assert.equal(B.showLocalPcBadge, undefined, "徽标的判定撤掉了");
   } finally {
     R.setSyncedUserCards([]);
@@ -223,7 +223,7 @@ function fakeContent(items) {
     setFail(v) { fail = v; },
     request: async (msg) => {
       sent.push(msg);
-      if (fail) throw new Error("没连上文档服务");
+      if (fail) throw new Error("Not connected to the document service");
       if (msg.type === "content.list") {
         const keys = [...store.keys()].filter((k) => k.startsWith(msg.prefix)).sort();
         return { type: "content.listing", kind: msg.kind, items: keys.map((key) => ({ key, hash: `h:${store.get(key).length}:${store.get(key).slice(-12)}`, rev: 1 })), truncated: false };
@@ -321,10 +321,10 @@ export const opaque: CardDef = { id: "synced-o", name: "控件认不出", defaul
     await sources.sync();
     const v = R.syncedCardView("synced-p");
     assert.equal(v.name, "带参数的同步卡");
-    assert.equal(v.description, "说明");
+    assert.equal(v.description, "Description");
     assert.deepEqual(v.defaults, { text: "hi", size: 48, side: "l", tint: "#ff0000" });
     assert.deepEqual(v.controls.map((c) => c.type), ["text", "number", "select", "color"]);
-    assert.deepEqual(v.controls[2].options, [{ value: "l", label: "左" }, { value: "r", label: "右" }]);
+    assert.deepEqual(v.controls[2].options, [{ value: "l", label: "Left" }, { value: "r", label: "Right" }]);
     assert.equal(v.controlsIncomplete, false);
     assert.equal(R.syncedCardView("synced-o").controlsIncomplete, true);
     assert.deepEqual(R.syncedCardView("synced-o").controls, []);
@@ -352,7 +352,7 @@ export const c: CardDef = { id: "synced-i", name: "引控件的同步卡", defau
     "src/cards/user/unused.ts": `export const X = 1;\n`,
   });
   const link = { id: 1 };
-  const builtins = (k) => (k === "src/cards/native/hud.ts" ? { hudControls: [{ key: "accent", label: "主色", type: "color" }] } : null);
+  const builtins = (k) => (k === "src/cards/native/hud.ts" ? { hudControls: [{ key: "accent", label: "Primary color", type: "color" }] } : null);
   const sources = new S.OnlineCardSources({ request: content.request, linkKey: () => link, builtins });
   const gets = () => content.sent.filter((m) => m.type === "content.get").map((m) => m.key);
   try {
@@ -372,7 +372,7 @@ export const c: CardDef = { id: "synced-i", name: "引控件的同步卡", defau
     content.store.set("src/cards/user/shared.ts", `export const SHARED = [{ key: "text", label: "文字改了", type: "text" }, { key: "n", label: "数", type: "number" }];\n`);
     await sources.sync();
     assert.deepEqual(gets().slice(3), ["src/cards/user/shared.ts"]);
-    assert.deepEqual(R.syncedCardView("synced-i").controls.map((c) => c.label), ["文字改了", "数", "位置", "主色"]);
+    assert.deepEqual(R.syncedCardView("synced-i").controls.map((c) => c.label), ["文字改了", "数", "Position", "Primary color"]);
     // 缺的文件后来同步上来了:取到、补上,提示撤掉
     content.store.set("src/cards/user/gone.ts", `export const GONE = [];\n`);
     await sources.sync();
