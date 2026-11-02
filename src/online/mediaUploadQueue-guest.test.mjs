@@ -100,7 +100,7 @@ test("游客经在线上传队列传 3 个视频（6 个文件）全收；第 4 
   assert.equal(stats.rejected, 1);
   assert.deepEqual(rejected.map((r) => [r.id, r.code]), [["v-four", "guest-video-limit"]]);
   assert.equal(events.filter((e) => e.event === "upload.retry").length, 0, "被拒的不进退避重试");
-  assert.equal(uploadRejectedText(rejected[0]), "「four.mp4」没有传上云端：游客最多上传 3 条视频。要传更多，请注册一个账号。");
+  assert.equal(uploadRejectedText(rejected[0]), '"four.mp4" was not uploaded to the cloud: Guests can upload at most 3 videos. To upload more, please sign up for an account.');
   // 每一片都带了档位头，和这一档对得上
   const tierByHash = new Map(items.flatMap((it) => it.tiers.map((t) => [t.hash, t.tier])));
   assert.ok(puts.length >= 7);

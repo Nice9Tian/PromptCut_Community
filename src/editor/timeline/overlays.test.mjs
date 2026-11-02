@@ -89,20 +89,20 @@ test("摆得下就全摆,不出 +N", () => {
 });
 
 test("摆不下的收成 +N,高度不随数量涨", () => {
-  const plan = planBand(chips(["压暗", "blur", "暗角"]), 130);
+  const plan = planBand(chips(["压暗", "模糊", "暗角"]), 130);
   assert.equal(plan.shown.length, 2);
   assert.equal(plan.hidden, 1);
 });
 
 test("选中的那一张被挤进 +N 时换到最后一格", () => {
-  const items = chips(["压暗", "blur", "暗角"]);
+  const items = chips(["压暗", "模糊", "暗角"]);
   const plan = planBand(items, 130, 2);
   assert.equal(plan.hidden, 1);
   assert.equal(plan.shown[plan.shown.length - 1].name, "暗角");
 });
 
 test("窄到一张都摆不下时 shown 为空,全进 +N", () => {
-  const plan = planBand(chips(["压暗", "blur"]), 40);
+  const plan = planBand(chips(["压暗", "模糊"]), 40);
   assert.equal(plan.shown.length, 0);
   assert.equal(plan.hidden, 2);
 });

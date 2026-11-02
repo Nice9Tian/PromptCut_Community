@@ -75,7 +75,7 @@ test("PRUNE-05 手机版:系统后退要拦住,用手机版自己的确认框问
   // popstate 是后退发生之后才到的:要留住人就得把那一层压回去,再问
   assert.match(mob, /if \(riskRef\.current && !leaving\.current\) \{[\s\S]*?history\.pushState\(\{ pcm: 1, lvl: 1 \}[\s\S]*?askLeave\.current\(\);/,
     "手机版收到 popstate 要先把这一层压回去再问,不能直接走");
-  assert.match(mob, /confirm\(\{ text: UNSENT_LEAVE_BODY, ok: "离开", danger: true, run: leaveNow \}\)/,
+  assert.match(mob, /confirm\(\{ text: UNSENT_LEAVE_BODY, ok: trText\("Leave"\), danger: true, run: leaveNow \}\)/,
     "用手机版自己的确认框(window.confirm 在手机上体验差、还可能被屏蔽)");
   assert.doesNotMatch(mob, /window\.confirm|confirm\(["「]/, "手机版不许直接用浏览器的 confirm");
 });

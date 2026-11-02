@@ -63,7 +63,7 @@ test('TREE-05 togglePin: toggles back and forth, and does not mutate the origina
 });
 
 test('TREE-06 rename: trims leading and trailing whitespace; a blank name is rejected', () => {
-  assert.equal(rename(projects(), 'a', '  New name  ').find((x) => x.id === 'a').name, '新名字');
+  assert.equal(rename(projects(), 'a', '  New name  ').find((x) => x.id === 'a').name, 'New name');
   // 全是空白时原样返回(界面上按「取消」处理)
   const before = projects();
   assert.deepEqual(rename(before, 'a', '   ').map((x) => x.name), before.map((x) => x.name));

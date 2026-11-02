@@ -159,8 +159,8 @@ test("OCE-G-06 两台舞台都报了能运行才算;有一台说运行不了就�
   const blocked = run([], { available: false, blockedDetail: "隔离尚未就绪" });
   assert.equal(blocked.state, "not-isolated");
   assert.match(ERS.runStateMessage(blocked), /隔离尚未就绪/);
-  assert.match(ERS.runStateMessage({ state: "gpu" }), /图形能力不够/);
-  assert.match(ERS.runStateMessage({ state: "media" }), /解不了这段素材/);
+  assert.match(ERS.runStateMessage({ state: "gpu" }), /graphics capability is not enough/);
+  assert.match(ERS.runStateMessage({ state: "media" }), /cannot decode this media clip/);
 });
 
 test("OCE-G-07 舞台 RPC:两个新方法有时限;两种新事件在事件表里、不分角色", () => {
