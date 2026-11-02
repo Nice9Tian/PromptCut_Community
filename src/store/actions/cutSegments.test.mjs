@@ -11,10 +11,10 @@ const { actions, getState } = await import(srcUrl("store/project.ts"));
 function load() {
   const p = {
     version: 1, id: "p-test", name: "t", width: 1280, height: 720, fps: 30, duration: 20, themeId: "midnight", media: [],
-    tracks: [{ id: "ta", name: "Track 1", clips: [] }, { id: "ta2", name: "Track 2", clips: [] }],
+    tracks: [{ id: "ta", name: "序列 1", clips: [] }, { id: "ta2", name: "序列 2", clips: [] }],
     cuts: [
       { id: "A", name: "剪辑A" },
-      { id: "B", name: "剪辑B", tracks: [{ id: "tb", name: "Track 1", clips: [{ id: "b1", cardId: "", mediaId: "m", start: 0, end: 8, params: {} }] }], duration: 8, transitions: [] },
+      { id: "B", name: "剪辑B", tracks: [{ id: "tb", name: "序列 1", clips: [{ id: "b1", cardId: "", mediaId: "m", start: 0, end: 8, params: {} }] }], duration: 8, transitions: [] },
     ],
     activeCutId: "A",
   };
@@ -27,7 +27,7 @@ test("Placement: default length = total length of the referenced cut; circular r
   const c = actions.addCutSegment("B", 2, { trackId: "ta" });
   assert.deepEqual([c.start, c.end, c.cutId, c.cardId], [2, 10, "B", ""]);
   assert.throws(() => actions.addCutSegment("A", 0, { trackId: "ta2" }), /放进它自己/);
-  assert.equal(actions.cutCycleReason("A"), "Cannot put cut \"Cut A\" into itself");
+  assert.equal(actions.cutCycleReason("A"), "不能把剪辑「剪辑A」放进它自己");
 });
 
 test("Trim head: the offset follows, cannot go back past the start of the referenced cut; the out point cannot exceed the remaining length", () => {

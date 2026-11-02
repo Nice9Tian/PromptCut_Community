@@ -111,9 +111,9 @@ test("XR-05 节点退出了:没有进展满时限报失败;有节点认领着不
   svc.hooks.onSleep = async () => { if (svc.published.length === 1) finishPlan(svc); };
   const statuses = [];
   await assert.rejects(request({ ...svc, deps: { ...svc.deps, stallMs: 5000, taskCheckMs: 2000 } }, { onStatus: (s) => statuses.push(s.phase) }),
-    (e) => e.message === T.ONLINE_EXPORT_TEXT.nodeStalled(5000) && /5 秒没有进展/.test(e.message));
+    (e) => e.message === T.ONLINE_EXPORT_TEXT.nodeStalled(5000) && /no progress for 5 s/.test(e.message));
   assert.ok(statuses.filter((p) => p === "rendering").length >= 4, "到时限之前照常显示在渲");
-  assert.match(T.ONLINE_EXPORT_TEXT.nodeStalled(F.EXPORT_STALL_MS), /3 分钟没有进展/);
+  assert.match(T.ONLINE_EXPORT_TEXT.nodeStalled(F.EXPORT_STALL_MS), /no progress for 3 min/);
   // 有节点认领着:走过两倍时限也不报,清单到了就到齐
   F.resetExportRetry();
   const busy = service({ tick: 1000 });
@@ -171,8 +171,8 @@ test("XR-07 不带输入签名的不用", async () => {
 
 test("XR-08 解出来的宽度和清单里的矩形对不上:报错,不裁", () => {
   assert.equal(S.frameWidthOf(64, { x: 0, y: 0, w: 64, h: 32 }, 12), 64);
-  assert.throws(() => S.frameWidthOf(48, { x: 0, y: 0, w: 64, h: 32 }, 12), /对不上/);
-  assert.throws(() => S.frameWidthOf(80, { x: 0, y: 0, w: 64, h: 32 }, 12), /对不上/);
+  assert.throws(() => S.frameWidthOf(48, { x: 0, y: 0, w: 64, h: 32 }, 12), /does not match the segment/);
+  assert.throws(() => S.frameWidthOf(80, { x: 0, y: 0, w: 64, h: 32 }, 12), /does not match the segment/);
 });
 
 test("XR-09 只为导出的计划并发与限流: 同一项目同一发布方进行中拒绝并发", async () => {
@@ -190,7 +190,7 @@ test("XR-09 只为导出的计划并发与限流: 同一项目同一发布方进
   // 此时并发发起第二个请求：必须被限流拦截
   await assert.rejects(
     request(svc),
-    (err) => err.throttled === true && /同一项目正在等待或执行导出计划/.test(err.message)
+    (err) => err.throttled === true && /already has an export plan waiting or running/.test(err.message)
   );
   // 释放第一个请求让它失败结束
   const rel = release;

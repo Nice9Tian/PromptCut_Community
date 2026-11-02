@@ -58,7 +58,7 @@ test("内嵌卡声音分离明确失败，多选不部分执行，普通视频�
   const failed = actions.separateAudio("av");
   assert.equal(failed.ok, false);
   assert.equal(failed.code, "EMBEDDED_CARD_AUDIO_UNSEPARABLE");
-  assert.match(failed.error, /不能分离音轨/);
+  assert.match(failed.error, /audio track cannot be separated/);
   assert.strictEqual(getState().project, before);
   assert.equal(actions.canUndo(), false);
   const mixed = actions.separateAudios(["v1", "av", "v2"]);
