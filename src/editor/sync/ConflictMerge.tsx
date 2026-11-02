@@ -115,7 +115,7 @@ function DialogBody() {
             </>
           ) : null}
           <span style={{ flex: 1 }} />
-          <button type="button" className="pc-btn" data-pc="merge-close" onClick={close}>{m.hasItems ? tr("Later") : tr("done")}</button>
+          <button type="button" className="pc-btn" data-pc="merge-close" onClick={close}>{m.hasItems ? tr("Later") : tr("Done")}</button>
         </div>
       </div>
     </div>,

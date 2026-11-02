@@ -991,7 +991,7 @@ function CollectCard(props: { status: ExtStatusView | null; raw: CollectStatus |
       action={
         status?.offerInstall && !running
           ? <button className="sp-ghost-btn" onClick={install} title={tr("About 3 MB")}>
-              {error ? tr("retry") : tr("Install")}
+              {error ? tr("Retry") : tr("Install")}
             </button>
           : canLogin
             ? <button className="sp-ghost-btn" onClick={() => openCollectLogin("bilibili", "qr")}
@@ -1048,7 +1048,7 @@ function SttCard(props: { status: ExtStatusView | null; onReload: () => void | P
         // 判断依据是「有没有在跑」,不是「有没有任务」—— 装完一次之后 store 里会一直留着
         // 那条已完成的记录,拿它当条件会让卡片再也出不来按钮,变成死胡同。
         status?.offerInstall && !running
-          ? <button className="sp-ghost-btn" onClick={install}>{job?.phase === "failed" ? tr("retry") : tr("Install")}</button>
+          ? <button className="sp-ghost-btn" onClick={install}>{job?.phase === "failed" ? tr("Retry") : tr("Install")}</button>
           : null
       }
     >
@@ -1103,7 +1103,7 @@ function ShotsCard(props: { status: ExtStatusView | null; onReload: () => void |
       action={
         status?.offerInstall && !running
           ? <button className="sp-ghost-btn" onClick={install} title={tr("About 30 MB")}>
-              {error ? tr("retry") : tr("Install")}
+              {error ? tr("Retry") : tr("Install")}
             </button>
           : null
       }
@@ -1167,7 +1167,7 @@ function TrackCard(props: { status: ExtStatusView | null; onReload: () => void |
       action={
         status?.offerInstall && !running
           ? <button className="sp-ghost-btn" onClick={install} title={tr("About 400 MB, takes several minutes")}>
-              {error ? tr("retry") : tr("Install")}
+              {error ? tr("Retry") : tr("Install")}
             </button>
           : null
       }
@@ -1230,7 +1230,7 @@ function SubjectCard(props: { status: ExtStatusView | null; onReload: () => void
       action={
         status?.offerInstall && !running
           ? <button className="sp-ghost-btn" onClick={install} title={tr("Light tier about 30 MB")}>
-              {error ? tr("retry") : tr("Install")}
+              {error ? tr("Retry") : tr("Install")}
             </button>
           : null
       }

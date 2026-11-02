@@ -40,7 +40,7 @@ function writeOpen(v: boolean) {
 function statusMark(r: EventRecord): { ch: string; cls: string; title: string } {
   if (r.kind === "text") return { ch: "…", cls: "text", title: tr("Text reply") };
   if (r.status === null) return { ch: "●", cls: "running", title: tr("In progress") };
-  if (r.status === "ok") return { ch: "✓", cls: "ok", title: tr("done") };
+  if (r.status === "ok") return { ch: "✓", cls: "ok", title: tr("Done") };
   if (r.status === "cancelled") return { ch: "—", cls: "error", title: tr("Cancelled") };
   return { ch: "✕", cls: "error", title: tr("Error occurred") };
 }

@@ -145,7 +145,7 @@ function AssetPic({ m }: { m: MediaAsset }) {
 
 export type CardTab = "anim" | "text" | "filter" | "transition";
 const TRANSITION_KINDS: { kind: TransitionKind; name: string; desc: string }[] = [
-  { kind: "crossfade", name: trText("crossfade"), desc: trText("The previous clip dissolves into the next one") },
+  { kind: "crossfade", name: trText("Crossfade"), desc: trText("The previous clip dissolves into the next one") },
   { kind: "fadeOut", name: trText("Fade out"), desc: trText("The end of the previous clip fades to black") },
   { kind: "fadeIn", name: trText("Fade in"), desc: trText("The start of the next clip emerges from black") },
 ];
@@ -461,7 +461,7 @@ export function ConflictSheet(props: { onClose: () => void }) {
           <button type="button" className="btn primary" data-pcm="cf-merge" disabled={!m.selected || !m.online} onClick={m.merge}>{trText("Merge")}</button>
           <button type="button" className="btn" data-pcm="cf-drop" disabled={!m.selected} onClick={m.remove}>{trText("Delete selected")}</button>
         </>}
-        <button type="button" className="btn" data-pcm="cf-close" onClick={close}>{m.hasItems ? trText("Later") : trText("done")}</button>
+        <button type="button" className="btn" data-pcm="cf-close" onClick={close}>{m.hasItems ? trText("Later") : trText("Done")}</button>
       </div>
     }>
       {!m.hasItems ? <div className="hint" style={{ textAlign: "center", padding: "30px 0" }}>{trText("All done ✓")}</div> : <>

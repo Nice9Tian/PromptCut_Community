@@ -108,7 +108,7 @@ export const palettes: Palette[] = [
   },
   {
     id: "terminal",
-    name: tr("terminal"),
+    name: tr("Terminal"),
     en: "Terminal",
     blurb: tr("The highest-contrast set: near-black base, mint-green accent, and strokes one step heavier than other themes. Made for keyboard-driven and node-based workflows."),
     dark: {

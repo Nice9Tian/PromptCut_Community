@@ -239,7 +239,7 @@ function pageCaption(p: DetailPage, item: DetailItem | undefined): string {
   if (p.kind === "ops") {
     const tools = item?.type === "run" ? item.tools : [];
     const names = [...new Set(tools.map((t) => bareToolName(t.name)))].join(tr(", ")) || bareToolName(p.tool);
-    const label = tools.some((t) => t.ok === false) ? tr("failed") : KIND_LABEL[toolKind(p.tool)];
+    const label = tools.some((t) => t.ok === false) ? tr("Failed") : KIND_LABEL[toolKind(p.tool)];
     return `${label} · ${names}${tools.length > 1 ? ` ×${tools.length}` : ""}`;
   }
   const kind = KIND_LABEL[toolKind(p.tool)];
@@ -781,7 +781,7 @@ function OpHead({ t }: { t: ToolCallInfo }): JSX.Element {
   return (
     <div className="ai-opcard-head">
       <span className={`ai-op ai-op--${kind}${t.ok === false ? " is-err" : ""} ai-opcard-chip`} aria-hidden />
-      <span className="ai-opcard-kind">{t.ok === false ? tr("failed") : KIND_LABEL[kind]}</span>
+      <span className="ai-opcard-kind">{t.ok === false ? tr("Failed") : KIND_LABEL[kind]}</span>
       <span className="ai-opcard-name">{bareToolName(t.name)}</span>
       {typeof t.durationMs === "number" ? <span className="ai-opcard-dur">{fmtDuration(t.durationMs)}</span> : null}
     </div>

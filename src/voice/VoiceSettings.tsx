@@ -156,7 +156,7 @@ export function VoiceSettings(props: { bare?: boolean; onDirtyChange?: (dirty: b
 
         {P === "minimax" && (
           <>
-            <Field label={tr("model")}>
+            <Field label={tr("Model")}>
               <select className="vs-input" value={draft.minimax.model} onChange={(e) => setField("minimax", { model: e.target.value })}>
                 {presets.models.map((m) => <option key={m} value={m}>{m}</option>)}
               </select>

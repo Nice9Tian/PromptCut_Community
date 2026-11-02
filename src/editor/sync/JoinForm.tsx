@@ -285,7 +285,7 @@ export function JoinForm({ onJoined }: { onJoined: () => void }) {
       if (asCreator) return <>{userField(tr("Creator username"), tr("Creator's username"), true)}{pwField(tr("Creator password"), tr("Enter the creator password"))}</>;
       return viaInvite.mode === "free"
         ? userField(tr("Your username"), tr("Tell us your name"))
-        : <>{userField(tr("Username"), tr("Enter a username from the list"))}{pwField(tr("password"), tr("The matching password"))}</>;
+        : <>{userField(tr("Username"), tr("Enter a username from the list"))}{pwField(tr("Password"), tr("The matching password"))}</>;
     }
     return (
       <>
@@ -296,7 +296,7 @@ export function JoinForm({ onJoined }: { onJoined: () => void }) {
         </div>
         {asCreator
           ? <>{userField(tr("Creator username"), tr("Creator's username"))}{pwField(tr("Creator password"), tr("Enter the creator password"))}</>
-          : <>{userField(tr("Your username"), tr("Open entry: tell us your name; restricted entry: enter a username from the list"))}{pwField(tr("password"), tr("Open entry: enter the project password; restricted entry: enter your password from the list"))}</>}
+          : <>{userField(tr("Your username"), tr("Open entry: tell us your name; restricted entry: enter a username from the list"))}{pwField(tr("Password"), tr("Open entry: enter the project password; restricted entry: enter your password from the list"))}</>}
       </>
     );
   })();

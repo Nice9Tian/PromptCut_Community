@@ -900,7 +900,7 @@ export function TopBar() {
       {/* C · 文件操作条:打开/保存参与中档收起,导出为主按钮永远不收起。
           导入视频已迁到左栏「素材 → 视频」的 + 按钮,顶栏不再重复 */}
       <div className="pc-bar-group">
-        <Btn onClick={goHome} label={tr("home page")} icon={<IconHome />} collapsed={tier !== "wide"} />
+        <Btn onClick={goHome} label={tr("Home")} icon={<IconHome />} collapsed={tier !== "wide"} />
         {/* 新建 / 打开 / 保存 / 项目设置收在这一个按钮里,点开才出子菜单(见 toggleProjMenu) */}
         <button
           ref={projBtnRef}

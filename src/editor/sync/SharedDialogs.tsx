@@ -108,7 +108,7 @@ export function ListEditor(props: {
         ))}
         <div className="pc-sync-list-row">
           <input className="pc-dialog-input" placeholder={tr("Username")} value={props.rowName} onChange={(e) => props.setRowName(e.target.value)} />
-          <input className="pc-dialog-input" type="password" placeholder={tr("password")} value={props.rowPw} onChange={(e) => props.setRowPw(e.target.value)}
+          <input className="pc-dialog-input" type="password" placeholder={tr("Password")} value={props.rowPw} onChange={(e) => props.setRowPw(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") props.onAdd(); }} />
           <button type="button" className="pc-dialog-opt" style={{ height: 26, padding: "0 8px", fontSize: 12 }} onClick={props.onAdd}>
             {tr("Add")}

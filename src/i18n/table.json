@@ -10207,10 +10207,6 @@
   "zh": "一个舞台都撑不住",
   "ja": "ステージを1つも維持できません"
  },
- "change": {
-  "zh": "修改",
-  "ja": "変更"
- },
  "changing this card's parameters": {
   "zh": "修改这张卡的参数",
   "ja": "このカードのパラメーターを変更"
@@ -10223,21 +10219,9 @@
   "zh": "对话",
   "ja": "チャット"
  },
- "code": {
-  "zh": "代码",
-  "ja": "コード"
- },
  "completed": {
   "zh": "已走完",
   "ja": "完了"
- },
- "creator": {
-  "zh": "创建者",
-  "ja": "作成者"
- },
- "crossfade": {
-  "zh": "交叉溶解",
-  "ja": "クロスフェード"
  },
  "deep autonomy": {
   "zh": "深度自主",
@@ -10246,10 +10230,6 @@
  "discarded offline": {
   "zh": "离线丢弃",
   "ja": "オフライン時に破棄"
- },
- "done": {
-  "zh": "完成",
-  "ja": "完了"
  },
  "e.g. Alex": {
   "zh": "例如：小李",
@@ -10267,10 +10247,6 @@
   "zh": "改卡",
   "ja": "カードを編集"
  },
- "emphasis": {
-  "zh": "强调",
-  "ja": "強調"
- },
  "end": {
   "zh": "结尾",
   "ja": "エンディング"
@@ -10279,10 +10255,6 @@
   "zh": "每一轮",
   "ja": "毎ターン"
  },
- "failed": {
-  "zh": "失败",
-  "ja": "失敗"
- },
  "faster-whisper (recommended)": {
   "zh": "faster-whisper(推荐)",
   "ja": "faster-whisper（推奨）"
@@ -10290,10 +10262,6 @@
  "ffmpeg not found, video and audio streams cannot be merged": {
   "zh": "找不到 ffmpeg，视频流和音频流合不起来",
   "ja": "ffmpegが見つからないため、映像ストリームと音声ストリームを結合できません"
- },
- "file": {
-  "zh": "文件",
-  "ja": "ファイル"
  },
  "fonts": {
   "zh": "字体",
@@ -10306,10 +10274,6 @@
  "full": {
   "zh": "满",
   "ja": "満杯"
- },
- "home page": {
-  "zh": "首页",
-  "ja": "ホーム"
  },
  "https://… (no URL set in API settings either)": {
   "zh": "https://…（API 设置里也没填地址）",
@@ -10327,17 +10291,9 @@
   "zh": "素材",
   "ja": "素材"
  },
- "model": {
-  "zh": "模型",
-  "ja": "モデル"
- },
  "narration": {
   "zh": "口播",
   "ja": "ナレーション"
- },
- "new": {
-  "zh": "新建",
-  "ja": "新規"
  },
  "none": {
   "zh": "无",
@@ -10371,14 +10327,6 @@
   "zh": "打包保存项目",
   "ja": "プロジェクトをパッケージ化して保存中"
  },
- "part": {
-  "zh": "部件",
-  "ja": "パーツ"
- },
- "password": {
-  "zh": "密码",
-  "ja": "パスワード"
- },
  "pip exited with a non-zero code, see the log for details": {
   "zh": "pip 退出码非零,详见日志",
   "ja": "pipが0以外のコードで終了しました。詳細はログを確認してください"
@@ -10387,21 +10335,9 @@
   "zh": "私有",
   "ja": "非公開"
  },
- "progress": {
-  "zh": "进度",
-  "ja": "進捗"
- },
- "read": {
-  "zh": "读取",
-  "ja": "読み取り"
- },
  "rejected": {
   "zh": "被拒绝",
   "ja": "拒否されました"
- },
- "retry": {
-  "zh": "重试",
-  "ja": "再試行"
  },
  "right side panel": {
   "zh": "右侧拓展栏",
@@ -14083,10 +14019,6 @@
   "zh": "start 必须在项目时间范围内",
   "ja": ""
  },
- "terminal": {
-  "zh": "终端",
-  "ja": ""
- },
  "text protocol mode": {
   "zh": "文本协议模式",
   "ja": ""
@@ -14134,5 +14066,53 @@
  "Type": {
   "zh": "类型",
   "ja": "種類"
+ },
+ "File": {
+  "zh": "文件",
+  "ja": "ファイル"
+ },
+ "Code": {
+  "zh": "代码",
+  "ja": "コード"
+ },
+ "New": {
+  "zh": "新建",
+  "ja": "新規"
+ },
+ "Progress": {
+  "zh": "进度",
+  "ja": "進捗"
+ },
+ "Terminal": {
+  "zh": "终端",
+  "ja": ""
+ },
+ "Crossfade": {
+  "zh": "交叉溶解",
+  "ja": "クロスフェード"
+ },
+ "Creator": {
+  "zh": "创建者",
+  "ja": "作成者"
+ },
+ "Failed": {
+  "zh": "失败",
+  "ja": "失敗"
+ },
+ "Change": {
+  "zh": "修改",
+  "ja": "変更"
+ },
+ "Read": {
+  "zh": "读取",
+  "ja": "読み取り"
+ },
+ "Emphasis": {
+  "zh": "强调",
+  "ja": "強調"
+ },
+ "Part": {
+  "zh": "部件",
+  "ja": "パーツ"
  }
 }

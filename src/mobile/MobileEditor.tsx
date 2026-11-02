@@ -57,7 +57,7 @@ type SheetState =
   | { kind: "export" }
   | null;
 
-const TRANSITION_NAME: Record<Transition["kind"], string> = { crossfade: trText("crossfade"), fadeIn: trText("Fade in"), fadeOut: trText("Fade out") };
+const TRANSITION_NAME: Record<Transition["kind"], string> = { crossfade: trText("Crossfade"), fadeIn: trText("Fade in"), fadeOut: trText("Fade out") };
 const cardName = (id: string) => shownNameOf(getCard(id)?.name);
 
 /** 历史记录里本界面的那一层:1 缩略预览,2 时间轴 / Agent 分页 */
@@ -341,7 +341,7 @@ export function MobileEditor() {
         <div className="topbar edit-head" data-pcm="topbar">
           <button type="button" className="icon-btn" data-pcm="tl-discard" title={trText("Exit (discard this edit)")} aria-label={trText("Exit")} onClick={() => { discardEdits(); goPage("preview"); }}><Icon name="close" /></button>
           <h1 data-pcm="edit-title">{timelineTitle}</h1>
-          <button type="button" className="icon-btn ok" data-pcm="tl-done" title={trText("done")} aria-label={trText("done")} onClick={() => goPage("preview")}><Icon name="ok" /></button>
+          <button type="button" className="icon-btn ok" data-pcm="tl-done" title={trText("Done")} aria-label={trText("Done")} onClick={() => goPage("preview")}><Icon name="ok" /></button>
         </div>
       ) : (
         <div className="topbar" data-pcm="topbar">

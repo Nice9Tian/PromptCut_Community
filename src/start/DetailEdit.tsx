@@ -134,7 +134,7 @@ export function DetailEdit(props: {
           {tr("Back to start")}
         </button>
         <input type="range" className="ps-detail-scrub" data-pc="start-detail-scrub" min={0} max={duration} step={0.05}
-          value={Math.min(t, duration)} aria-label={tr("progress")} onPointerDown={() => window.getSelection()?.removeAllRanges()} onChange={(e) => actions.seek(Number(e.target.value))} />
+          value={Math.min(t, duration)} aria-label={tr("Progress")} onPointerDown={() => window.getSelection()?.removeAllRanges()} onChange={(e) => actions.seek(Number(e.target.value))} />
         <span className="ps-detail-time">{secs(t)} / {secs(total)}</span>
       </div>
 

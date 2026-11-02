@@ -142,7 +142,7 @@ export function ModelBar(props: {
       <select
         className="ai-bar-select ai-model-select"
         data-pc="ai-model"
-        aria-label={tr("model")}
+        aria-label={tr("Model")}
         value={model}
         disabled={disabled || models.length === 0}
         title={models.length === 0 ? tr("No selectable models configured: {0}", cap.modelsHint) : tr("Model for this run{0}", model ? `:${model}` : "")}

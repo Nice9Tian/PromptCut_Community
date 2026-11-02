@@ -91,7 +91,7 @@ export function Inspector({ tab }: { tab: "form" | "code" }) {
               className="pc-left-select is-sm w-24 shrink-0"
             >
               {user.length > 0 && (
-                <optgroup label={tr("new")}>
+                <optgroup label={tr("New")}>
                   {user.map(c => <option key={c.id} value={c.id}>{tr(c.name)}</option>)}
                 </optgroup>
               )}

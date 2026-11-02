@@ -37,7 +37,7 @@ type MenuId = "file" | "edit" | "view" | "help";
 const menus: Array<{ id: MenuId; label: string; items: Array<{ label: string; command?: string; shortcut?: string; separator?: boolean; desktopOnly?: string }> }> = [
   {
     id: "file",
-    label: tr("file"),
+    label: tr("File"),
     items: [
       { label: tr("New project"), command: "new-project", shortcut: "Ctrl N", desktopOnly: tr("New project") },
       { label: tr("Open project…"), command: "open-project", shortcut: "Ctrl O", desktopOnly: tr("Open project") },

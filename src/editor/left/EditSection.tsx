@@ -11,7 +11,7 @@ type EditTab = "form" | "code" | "nodes";
 
 const EDIT_TABS: { key: EditTab; label: string }[] = [
   { key: "form", label: tr("Parameters") },
-  { key: "code", label: tr("code") },
+  { key: "code", label: tr("Code") },
   { key: "nodes", label: tr("Nodes") },
 ];
 const EDIT_TAB_KEYS = EDIT_TABS.map((t) => t.key);

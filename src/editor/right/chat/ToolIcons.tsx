@@ -215,7 +215,7 @@ export function ToolIcons(props: {
           }
           const n = run.items.length;
           const names = [...new Set(run.items.map((i) => bareToolName(tools[i].name)))].join(tr(", "));
-          const label = run.state === "err" ? tr("failed") : KIND_LABEL[run.kind];
+          const label = run.state === "err" ? tr("Failed") : KIND_LABEL[run.kind];
           return (
             <button
               key={key}

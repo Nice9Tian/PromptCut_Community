@@ -45,7 +45,7 @@ export function CloudModelBar(props: {
         <select
           className="ai-bar-select ai-model-select"
           data-pc="ai-cloud-model"
-          aria-label={tr("model")}
+          aria-label={tr("Model")}
           value={shown}
           disabled={disabled}
           title={tr("Model the cloud uses this time{0}", shown ? `:${shown}` : "")}

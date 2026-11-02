@@ -209,7 +209,7 @@ export function useAudioPresetsGroup(q: string, flash: (text: string, ms?: numbe
             create(preset);
           }
         }}
-        actions={<span className="pc-left-btn is-label">{canApply ? tr("Create and attach to selection") : tr("new")}</span>}
+        actions={<span className="pc-left-btn is-label">{canApply ? tr("Create and attach to selection") : tr("New")}</span>}
       />
     ),
   }));

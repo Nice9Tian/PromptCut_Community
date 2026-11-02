@@ -28,7 +28,7 @@ export function RecoveryActions({ state }: { state: string }) {
       <p className="pc-sync-hint" style={{ overflowWrap: "anywhere" }}>{tr("Service: {0}", association?.service)}<br />{tr("Room: {0}", association?.roomId)}</p>
       {state === "choose-identity" ? identities.map(r => <button key={`${r.profile}:${r.as}:${r.username}`} type="button" disabled={busy} onClick={async () => {
         setBusy(true); try { await chooseRecoveryIdentity(r.as, r.username, r.profile); setOpen(false); } catch { setError(tr("The selected identity could not be restored. Please try again.")); } finally { setBusy(false); }
-      }}>{r.username} · {r.as === "creator" ? tr("creator") : tr("Members")} · {r.profile}</button>) : <>
+      }}>{r.username} · {r.as === "creator" ? tr("Creator") : tr("Members")} · {r.profile}</button>) : <>
         <div className="pc-sync-field"><label htmlFor="pc-recovery-username">{tr("Original username")}</label><input id="pc-recovery-username" className="pc-dialog-input" value={username} required maxLength={64} onChange={e => setUsername(e.target.value)} autoComplete="username" autoFocus placeholder={tr("Enter original username")} /></div>
         <div className="pc-sync-field"><label htmlFor="pc-recovery-password">{tr("Original password")}</label><input id="pc-recovery-password" className="pc-dialog-input" value={password} required type="password" onChange={e => setPassword(e.target.value)} autoComplete="current-password" placeholder={tr("Enter original password")} /></div>
         <label className="pc-sync-hint"><input type="checkbox" checked={creator} onChange={e => setCreator(e.target.checked)} />{tr("Enter as creator")}</label>

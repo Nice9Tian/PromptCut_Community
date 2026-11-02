@@ -76,7 +76,7 @@ function Dialog(props: { site: string; initialMethod: LoginMethod; onClose: () =
         )}
 
         <div className="cl-actions">
-          <button className="cl-btn" onClick={onClose}>{loggedIn ? tr("done") : tr("Cancel")}</button>
+          <button className="cl-btn" onClick={onClose}>{loggedIn ? tr("Done") : tr("Cancel")}</button>
         </div>
       </div>
     </div>,
@@ -234,7 +234,7 @@ function BrowserPane(props: { site: string; onLoggedIn: () => void }) {
           : <>{tr("This opens the site's own login page: account and password, SMS, or QR code all work, and the CAPTCHA is handled there too.")}<b>{tr("Enter your account and password only in that page")}</b>{tr(", PromptCut never handles them. It closes automatically after you log in.")}</>}
       </div>
       {phase === "idle" || phase === "error" ? (
-        <button className="cl-btn is-primary" onClick={() => void open()}>{phase === "error" ? tr("retry") : tr("Open login page")}</button>
+        <button className="cl-btn is-primary" onClick={() => void open()}>{phase === "error" ? tr("Retry") : tr("Open login page")}</button>
       ) : null}
       {showing && <div className="cl-shell-hole" ref={hole} aria-hidden="true" />}
       <div className={`cl-status is-${phase}`}>

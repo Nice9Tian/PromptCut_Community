@@ -56,8 +56,8 @@ export function toolKind(rawName: string): ToolKind {
 export const KIND_LABEL: Record<ToolKind, string> = {
   add: tr("Add"),
   remove: tr("Delete"),
-  edit: tr("change"),
-  read: tr("read"),
+  edit: tr("Change"),
+  read: tr("Read"),
   look: tr("View"),
   download: tr("Collect"),
   ui: tr("UI actions"),
