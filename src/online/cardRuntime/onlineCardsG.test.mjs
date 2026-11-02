@@ -131,7 +131,7 @@ test("OCE-G-04 Page visual execution does not depend on exit capability; site/is
   PG.resetCardExecGateForTest(); assert.equal(PG.cardVisualExecAvailable(),false);
   PG.setCardExecGate({site:true,isolated:true,visual:false});
   assert.equal(PG.cardExecAvailable(),true);assert.equal(PG.cardVisualExecAvailable(),true);assert.equal(PG.cardExecBlockedDetail(),null);
-  PG.setCardExecGate({site:false});assert.equal(PG.cardVisualExecAvailable(),false);assert.match(PG.cardExecBlockedDetail(),/site is not enabled/);
+  PG.setCardExecGate({site:false});assert.equal(PG.cardVisualExecAvailable(),false);assert.match(PG.cardExecBlockedDetail(),/does not have online running of user cards/);
   PG.resetCardExecGateForTest();
 });
 
@@ -159,7 +159,7 @@ test("OCE-G-06 Counts only when both stages report they can run; if one says it 
   const blocked = run([], { available: false, blockedDetail: "Isolation is not ready yet" });
   assert.equal(blocked.state, "not-isolated");
   assert.match(ERS.runStateMessage(blocked), /Isolation is not ready yet/);
-  assert.match(ERS.runStateMessage({ state: "gpu" }), /graphics capability is insufficient/);
+  assert.match(ERS.runStateMessage({ state: "gpu" }), /graphics capability is not enough/);
   assert.match(ERS.runStateMessage({ state: "media" }), /cannot decode this media/);
 });
 

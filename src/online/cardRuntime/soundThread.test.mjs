@@ -162,9 +162,9 @@ test("OCE-A-02 sound thread: load, report the cards that can be synthesized, req
   assert.equal(d.m.message, SE.SOUND_NEEDS_MEDIA);
   // 没有 audio() 的卡、图里没有的节点、没发过的项目、范围不对
   assert.equal((await ask("@clip/c3/card")).m.t, "error");
-  assert.match((await ask("nope")).m.message, /node not found/);
-  assert.match((await ask("@clip/c1/card", 0, 4096, "k-unknown")).m.message, /No such project version/);
-  assert.match((await ask("@clip/c1/card", 0, 0)).m.message, /range is invalid/);
+  assert.match((await ask("nope")).m.message, /Node nope not found/);
+  assert.match((await ask("@clip/c1/card", 0, 4096, "k-unknown")).m.message, /does not have this project revision/);
+  assert.match((await ask("@clip/c1/card", 0, 0)).m.message, /Sound request is out of range/);
 
   // 换代:源码改了(固定 440 Hz),同一份项目按新代码求值
   files.set(`${U}good.tsx`, AV("good", { hz: "440" }));
@@ -270,7 +270,7 @@ test("OCE-A-03 stage-side host: spawn thread, load, request chunks; time limit; 
   // 关掉
   host2.dispose();
   assert.equal(workers.made.at(-1).terminated, true);
-  await assert.rejects(host2.render(req()), /already closed/);
+  await assert.rejects(host2.render(req()), /already been closed/);
   host.dispose();
 });
 
@@ -376,7 +376,7 @@ test("OCE-A-04 editor page dispatch: built-in cards are evaluated in the page, s
     // 宿主回的坏块不要(声音线程回来的东西当不可信输入)
     for (const bad of ["nan", "shape", "type"]) {
       CA.setIsolatedCardAudioHost(fakeIsolated({ bad }));
-      await assert.rejects(CA.requestCardAudio({ project: { ...p }, nodeId: "@clip/s/card", start: 0, count: 64, sampleRate: 48000 }), /sample block returned by the sound thread/, bad);
+      await assert.rejects(CA.requestCardAudio({ project: { ...p }, nodeId: "@clip/s/card", start: 0, count: 64, sampleRate: 48000 }), /Sample chunk returned by the audio thread/, bad);
     }
 
     // 桌面运行环境:不看宿主,同步表为空时与原来相同

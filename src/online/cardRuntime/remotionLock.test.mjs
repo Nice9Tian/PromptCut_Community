@@ -198,7 +198,7 @@ test("RL-05 something that cannot be locked is placed at top level: it throws im
   const { loader, res } = await load({ [entry]: source }, entry);
   assert.equal(res.ok, false);
   assert.equal(res.state.state, "load-error");
-  assert.match(res.state.detail, /buffer\.tsx.*TABLE\.buf.*Float32Array.*cannot be locked read-only/s);
+  assert.match(res.state.detail, /buffer\.tsx.*TABLE\.buf.*Float32Array.*锁不成只读/s);
   assert.deepEqual(loader.cards(), []);
 });
 
