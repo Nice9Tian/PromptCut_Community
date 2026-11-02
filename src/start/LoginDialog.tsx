@@ -262,7 +262,7 @@ export function LoginDialog(props: LoginDialogProps): JSX.Element {
       await client.register(regName.trim(), regPassword);
     } catch (e) {
       hold.current = false;
-      setLocalError(accountErrorText(e, tr("Sign-up failed. Please try again.")));
+      setLocalError(accountErrorText(e, tr("Sign-up failed. Please try again."), { "bad-password": tr("The password must be at least 8 characters.") }));
       setLocalBusy(false);
       return;
     }

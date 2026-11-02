@@ -28,7 +28,7 @@ export type AccountErrorCode = (typeof ACCOUNT_ERROR_CODES)[number];
 export function accountErrorCodeText(code: AccountErrorCode): string {
   switch (code) {
     case "bad-login": return tr("Wrong account name or password.");
-    case "bad-password": return tr("The password must be at least 8 characters.");
+    case "bad-password": return tr("Wrong password.");
     case "bad-name": return tr("That account name can’t be used. Use 3–24 letters, digits, _ or -.");
     case "name-taken": return tr("That account name is taken. Try another one.");
     case "email-taken": return tr("That email is already linked to another account.");
@@ -50,9 +50,12 @@ function codeOf(e: unknown): string | null {
 /**
  * Text for a failure: a known code → interface text; otherwise the server's message; otherwise `fallback`.
  * A `TypeError` from `fetch` (offline, refused) counts as `network`.
+ * `context` overrides a code where the same code means something else on that step: the service's
+ * `bad-password` is "too short" when signing up but "wrong password" when sending the email code.
  */
-export function accountErrorText(e: unknown, fallback: string): string {
+export function accountErrorText(e: unknown, fallback: string, context: Partial<Record<AccountErrorCode, string>> = {}): string {
   const code = codeOf(e);
+  if (code && Object.hasOwn(context, code)) return context[code as AccountErrorCode]!;
   if (code && (ACCOUNT_ERROR_CODES as readonly string[]).includes(code)) return accountErrorCodeText(code as AccountErrorCode);
   if (e instanceof TypeError) return accountErrorCodeText("network");
   if (e instanceof Error && e.message) return e.message;
