@@ -394,7 +394,7 @@ const SETTINGS_PROP: Record<string, string> = {
   glRoute: trText("Render route"), creativity: trText("Creativity level"), style: trText("Style"),
 };
 const TRACK_PROP: Record<string, string> = { name: trText("Name"), hidden: trText("Hidden"), muted: trText("Muted"), locked: trText("Locked") };
-const TRANSITION_PROP: Record<string, string> = { kind: "Type", dur: trText("Duration"), aId: trText("Previous segment"), bId: trText("Next segment"), prevB: trText("Original position") };
+const TRANSITION_PROP: Record<string, string> = { kind: trText("Type"), dur: trText("Duration"), aId: trText("Previous segment"), bId: trText("Next segment"), prevB: trText("Original position") };
 
 export function propLabel(kind: ThingKind, prop: string): string {
   if (prop === "") return trText("Whole item");

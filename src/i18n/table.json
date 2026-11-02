@@ -14138,5 +14138,13 @@
  "⚠ Config changed midway, {0} in total, see messages[].runtime for each message": {
   "zh": "⚠ 中途换过配置，共 {0} 套，逐条见 messages[].runtime",
   "ja": ""
+ },
+ "{0} is not supported in online browser mode yet. Please use it in PromptCut on your computer.": {
+  "zh": "在线浏览器模式暂不支持{0}，请在电脑上的 PromptCut 里使用。",
+  "ja": "オンラインブラウザモードでは{0}はまだ使えません。パソコンの PromptCut でご利用ください。"
+ },
+ "Type": {
+  "zh": "类型",
+  "ja": "種類"
  }
 }

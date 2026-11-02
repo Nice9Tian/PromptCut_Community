@@ -1,7 +1,7 @@
 import { actions, getState, subscribe } from "../../store/project";
 import type { MediaAsset } from "../../kernel/project";
 import { isViewOnly } from "./viewOnly";
-import { confirmedMissing } from "../../audio/missingMaterialRecord";
+import { confirmedMissing, MISSING_NAME_MARK, hasMissingMark, withoutMissingMark } from "../../audio/missingMaterialRecord";
 import { publishMissingMaterials, type MissingMaterialNotice } from "./missingMaterialBus";
 import { onGoneConversion } from "../sync/recoveryAssociation";
 import { transcodeVideoSmall, sha256Blob } from "../../online/mediaTranscode";
@@ -429,7 +429,6 @@ const sameLoad = (mark: ReturnType<typeof loadMark>) => getState().projectLoadTo
  */
 
 const HASH_RE = /^[0-9a-f]{64}$/i;
-const MISSING_PREFIX = tr("(missing) ");
 
 /** 这条素材有合法的内容哈希 */
 export function hasMediaHash(m: { hash?: string } | null | undefined): boolean {
@@ -467,7 +466,7 @@ function hashInUrl(url: string | undefined): string | null {
 
 function uploadNameOf(m: Pick<MediaAsset, "name" | "path">): string {
   const fromPath = m.path ? m.path.split(/[/\\]/).pop() : "";
-  const name = (m.name || "").startsWith(MISSING_PREFIX) ? m.name.slice(MISSING_PREFIX.length) : m.name || "";
+  const name = withoutMissingMark(m.name || "");
   return fromPath || name || "media";
 }
 
@@ -607,7 +606,7 @@ export async function ingestUnhashedMedia(opts: { background?: boolean; markMiss
       // 补上哈希的交给上传队列走 hooks.afterIngest(queueBackfilledMedia),这里不再按「导入」交一遍
       applyUploadedMedia(m.id, fresh.soundOf ? { ...up, tiers: undefined, smallState: undefined } : up, { imported: false });
       // 以前在别的机器上被标过「(缺失)」、现在取到了:去掉标记,连同「确认缺失」的记录(占位随之消失)
-      if (fresh.name.startsWith(MISSING_PREFIX) || fresh.missingMaterial) actions.updateMedia(m.id, { name: nameWithoutMissing(fresh.name), missingMaterial: undefined });
+      if (hasMissingMark(fresh.name) || fresh.missingMaterial) actions.updateMedia(m.id, { name: nameWithoutMissing(fresh.name), missingMaterial: undefined });
       out.ingested.push(m.id);
     }
   }
@@ -674,16 +673,16 @@ ${m.path}`);
     const h = hashOf(m);
     const url = `/@media/${String(m.hash).toLowerCase()}`;
     if (hashPresent.has(h)) {
-      if (m.name.startsWith(MISSING_PREFIX) || !m.url || m.missingMaterial) {
+      if (hasMissingMark(m.name) || !m.url || m.missingMaterial) {
         actions.updateMedia(m.id, { name: nameWithoutMissing(m.name), url: m.url || url, missingMaterial: undefined });
         out.restored.push(m.id);
       }
     } else if (answered.has(h) && !unsure.has(h)) {
       // 已经认定过、记录也还对得上的不重复写(保存重开后就是这种:占位一直在,不再弹窗)
-      if (m.name.startsWith(MISSING_PREFIX) && confirmedMissing(m)) continue;
+      if (hasMissingMark(m.name) && confirmedMissing(m)) continue;
       console.warn(`[io] Missing asset: ${m.name} (${m.hash})`);
       // 地址留着按哈希的那一个(存盘重开后 restoreMediaUrls 给的也是它,记录才对得上);画面、声音、导出见到记录就不去取它
-      const name = m.name.startsWith(MISSING_PREFIX) ? m.name : `${MISSING_PREFIX}${m.name}`;
+      const name = hasMissingMark(m.name) ? m.name : `${MISSING_NAME_MARK}${m.name}`;
       actions.updateMedia(m.id, { url, name, missingMaterial: missingRecordOf({ ...m, url, name }) });
       out.missing.push(m.id);
       notices.push({ id: m.id, name: nameWithoutMissing(m.name), kind: m.kind, ...(changed.has(h) ? { changed: true } : {}) });
@@ -693,7 +692,7 @@ ${m.path}`);
   return out;
 }
 
-const nameWithoutMissing = (name: string) => (name.startsWith(MISSING_PREFIX) ? name.slice(MISSING_PREFIX.length) : name);
+const nameWithoutMissing = withoutMissingMark;
 
 /** 没有哈希、没有路径的素材认定缺失后用的地址:只为不留空(时间轴的出声清单不收空地址的素材),谁也不会真去取它 */
 const NOWHERE_URL = "/@media/__missing__";
@@ -715,7 +714,7 @@ function missingRecordOf(m: MediaAsset): NonNullable<MediaAsset["missingMaterial
 function markMediaMissing(mediaId: string): void {
   const fresh = getState().project.media.find((x) => x.id === mediaId);
   if (!fresh || hasMediaHash(fresh) || fresh.pending) return;
-  const name = fresh.name.startsWith(MISSING_PREFIX) ? fresh.name : `${MISSING_PREFIX}${fresh.name}`;
+  const name = hasMissingMark(fresh.name) ? fresh.name : `${MISSING_NAME_MARK}${fresh.name}`;
   if (name === fresh.name && confirmedMissing(fresh)) return;
   console.warn(`[io] Missing asset: ${fresh.name} (${fresh.path || fresh.url})`);
   // 地址不清空:留着原来的读地址(存盘重开后 restoreMediaUrls 按 path 给的还是它),没有就给一个不存在的占位地址
