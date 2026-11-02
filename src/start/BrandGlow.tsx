@@ -107,7 +107,81 @@ const ACCENT_FALLBACK: [number, number, number] = [0, 0.859, 0.859];
 export const VERT = `#version 300 es
 void main(){ vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2); gl_Position = vec4(p*2.0-1.0,0.0,1.0); }`;
 
-export const FRAG = tr("#version 300 es\nprecision highp float;\nout vec4 fragColor;\n\nuniform vec2 uRes;      // internal pixels of the canvas\nuniform float uPxScale; // internal pixels / CSS pixels\n/* loop phase: 0→1 runs one full cycle and returns to the start */\nuniform float uLoop;\n\nuniform vec3 uBg;\nuniform vec3 uColA;\nuniform vec3 uColB;\n\nuniform float uAx, uAy, uArx, uAry, uAAlpha, uAStop;\nuniform float uBx, uBy, uBrx, uBry, uBAlpha, uBStop;\nuniform float uGrain, uGrainSize, uDrift;\nuniform float uRefW, uRefH;\n\nfloat hash(vec2 p) {\n  p = fract(p * vec2(123.34, 456.21));\n  p += dot(p, p + 45.32);\n  return fract(p.x * p.y);\n}\n\n/*\n * A CSS-style radial glow: radial-gradient(rx ry at cx cy, color density a0, transparent stop).\n * CSS gradients interpolate linearly in **premultiplied** space, so the hue stays constant and only alpha falls\n * in a straight line from a0 to 0, reaching nothing at stop (a ratio of the ellipse radius). This computes it the same way,\n * without smoothstep, otherwise it would not match the website.\n */\nfloat glow(vec2 px, vec2 c, vec2 r, float stop, float a0) {\n  float t = length((px - c) / max(r, vec2(1.0)));\n  return a0 * clamp(1.0 - t / max(stop, 1e-4), 0.0, 1.0);\n}\n\nvoid main() {\n  float s = max(uPxScale, 1e-4);\n  vec2 cssPx = gl_FragCoord.xy / s;\n  float wCss = uRes.x / s;\n  float hCss = uRes.y / s;\n  // gl_FragCoord counts y from the bottom up, CSS from the top down: flip it so the position parameters mean the same as the numbers on the website\n  cssPx.y = hCss - cssPx.y;\n\n  // The two blobs drift in opposite directions, offset a little so they read as two blobs; when drift = 0 this term is 0\n  /*\n   * The two blobs drift in opposite directions, offset a little so they read as two blobs; when drift = 0 this term is 0.\n   *\n   * The two frequencies are 4 and 3 (originally 1 and 0.75, same ratio of 0.75, but not integer multiples):\n   * only integer multiples guarantee both terms return to the start together when uLoop completes a full cycle. Prerendering to video relies on this to close the loop.\n   * Speed is unchanged: the seconds per cycle are set by LOOK.loopSeconds.\n   */\n  vec2 d = uDrift * vec2(sin(uLoop * 6.2831853 * 4.0), cos(uLoop * 6.2831853 * 3.0));\n\n  /*\n   * Aligned to the screen center: positions are not computed from the current viewport's proportions, but converted to fixed pixel offsets from the center\n   * (see refW / refH in the component for the reference viewport). When the viewport is exactly the reference size the result equals \"position × viewport\";\n   * on a smaller screen it is a center crop of the same composition.\n   */\n  vec2 mid = vec2(wCss, hCss) * 0.5;\n  vec2 ref = vec2(max(uRefW, 1.0), max(uRefH, 1.0));\n\n  float aA = glow(cssPx, mid + (vec2(uAx, uAy) - 0.5) * ref + d, vec2(uArx, uAry), uAStop, uAAlpha);\n  float aB = glow(cssPx, mid + (vec2(uBx, uBy) - 0.5) * ref - d, vec2(uBrx, uBry), uBStop, uBAlpha);\n\n  // Layer order matches the website: in CSS the layer written first is on top, so B goes onto the base color first, then A on top\n  vec3 col = uBg;\n  col = mix(col, uColB, aB);\n  col = mix(col, uColA, aA);\n\n  // Dithering: large gradients on dark colors show banding in 8 bits, so add a little noise to break up the steps\n  float n = hash(floor(gl_FragCoord.xy / max(uGrainSize, 1.0)) + 0.5);\n  col += (n - 0.5) * uGrain;\n\n  fragColor = vec4(max(col, 0.0), 1.0);\n}");
+export const FRAG = `#version 300 es
+precision highp float;
+out vec4 fragColor;
+
+uniform vec2 uRes;      // internal pixels of the canvas
+uniform float uPxScale; // internal pixels / CSS pixels
+/* loop phase: 0→1 runs one full cycle and returns to the start */
+uniform float uLoop;
+
+uniform vec3 uBg;
+uniform vec3 uColA;
+uniform vec3 uColB;
+
+uniform float uAx, uAy, uArx, uAry, uAAlpha, uAStop;
+uniform float uBx, uBy, uBrx, uBry, uBAlpha, uBStop;
+uniform float uGrain, uGrainSize, uDrift;
+uniform float uRefW, uRefH;
+
+float hash(vec2 p) {
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 45.32);
+  return fract(p.x * p.y);
+}
+
+/*
+ * A CSS-style radial glow: radial-gradient(rx ry at cx cy, color density a0, transparent stop).
+ * CSS gradients interpolate linearly in **premultiplied** space, so the hue stays constant and only alpha falls
+ * in a straight line from a0 to 0, reaching nothing at stop (a ratio of the ellipse radius). This computes it the same way,
+ * without smoothstep, otherwise it would not match the website.
+ */
+float glow(vec2 px, vec2 c, vec2 r, float stop, float a0) {
+  float t = length((px - c) / max(r, vec2(1.0)));
+  return a0 * clamp(1.0 - t / max(stop, 1e-4), 0.0, 1.0);
+}
+
+void main() {
+  float s = max(uPxScale, 1e-4);
+  vec2 cssPx = gl_FragCoord.xy / s;
+  float wCss = uRes.x / s;
+  float hCss = uRes.y / s;
+  // gl_FragCoord counts y from the bottom up, CSS from the top down: flip it so the position parameters mean the same as the numbers on the website
+  cssPx.y = hCss - cssPx.y;
+
+  // The two blobs drift in opposite directions, offset a little so they read as two blobs; when drift = 0 this term is 0
+  /*
+   * The two blobs drift in opposite directions, offset a little so they read as two blobs; when drift = 0 this term is 0.
+   *
+   * The two frequencies are 4 and 3 (originally 1 and 0.75, same ratio of 0.75, but not integer multiples):
+   * only integer multiples guarantee both terms return to the start together when uLoop completes a full cycle. Prerendering to video relies on this to close the loop.
+   * Speed is unchanged: the seconds per cycle are set by LOOK.loopSeconds.
+   */
+  vec2 d = uDrift * vec2(sin(uLoop * 6.2831853 * 4.0), cos(uLoop * 6.2831853 * 3.0));
+
+  /*
+   * Aligned to the screen center: positions are not computed from the current viewport's proportions, but converted to fixed pixel offsets from the center
+   * (see refW / refH in the component for the reference viewport). When the viewport is exactly the reference size the result equals "position × viewport";
+   * on a smaller screen it is a center crop of the same composition.
+   */
+  vec2 mid = vec2(wCss, hCss) * 0.5;
+  vec2 ref = vec2(max(uRefW, 1.0), max(uRefH, 1.0));
+
+  float aA = glow(cssPx, mid + (vec2(uAx, uAy) - 0.5) * ref + d, vec2(uArx, uAry), uAStop, uAAlpha);
+  float aB = glow(cssPx, mid + (vec2(uBx, uBy) - 0.5) * ref - d, vec2(uBrx, uBry), uBStop, uBAlpha);
+
+  // Layer order matches the website: in CSS the layer written first is on top, so B goes onto the base color first, then A on top
+  vec3 col = uBg;
+  col = mix(col, uColB, aB);
+  col = mix(col, uColA, aA);
+
+  // Dithering: large gradients on dark colors show banding in 8 bits, so add a little noise to break up the steps
+  float n = hash(floor(gl_FragCoord.xy / max(uGrainSize, 1.0)) + 0.5);
+  col += (n - 0.5) * uGrain;
+
+  fragColor = vec4(max(col, 0.0), 1.0);
+}`;
 
 /** 十六进制 → 0..1 的 RGB */
 function hexToRgb(hex: string, fallback: [number, number, number]): [number, number, number] {

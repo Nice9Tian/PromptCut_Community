@@ -130,9 +130,217 @@ export const LOOK = {
  * 生成用户卡源码的脚本要原样拿走它们(`scripts/login-art/make-card.mjs`),
  * 这样屏幕上这一版和预渲染出来的那一版画的是同一段 GLSL,不会各自漂。
  */
-export const VERT = tr("#version 300 es\nvoid main() {\n  // A triangle covering the whole screen: no vertex buffer, coordinates are computed from the vertex ID\n  vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);\n  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n}");
+export const VERT = `#version 300 es
+void main() {
+  // A triangle covering the whole screen: no vertex buffer, coordinates are computed from the vertex ID
+  vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}`;
 
-export const FRAG = tr("#version 300 es\nprecision highp float;\nout vec4 fragColor;\n\nuniform vec2  uRes;\n/* Radius of the circle in the noise domain (noise units). 0 = no motion at all */\nuniform float uSwirl;\n/* Loop phase, 0→1 is one full turn. A full turn lands exactly on the start, so frame 0 and frame N are byte-identical */\nuniform float uLoop;\nuniform vec3  uCool;\nuniform vec3  uWarm;\nuniform float uScale, uYStretch, uSplit, uFalloff, uBlend, uMixWarp, uStreak, uGrain;\nuniform float uAxis, uSeeThrough, uFadeEdge;\nuniform float uRefPx, uPxScale;\n/* Flatten: set to 1 when prerendering to video. Video cannot carry alpha, so the background color is composited in first and the output is opaque; the on-screen version sets 0 and still outputs premultiplied semi-transparent color */\nuniform float uFlatten;\n/* Color laid underneath when flattening (--bg-canvas of the login page) */\nuniform vec3  uBg;\nuniform float uWarpA, uWarpB, uGamma, uGain, uFloor, uRoll, uSat;\nuniform float uStripeN, uStripeSkew, uFrostBlur, uFrost, uMilky, uEdge;\nuniform float uGrainSize, uGrainJitter, uGrainSoft;\n\nfloat hash12(vec2 p) {\n  vec3 p3 = fract(vec3(p.xyx) * 0.1031);\n  p3 += dot(p3, p3.yzx + 33.33);\n  return fract((p3.x + p3.y) * p3.z);\n}\n\nfloat vnoise(vec2 x) {\n  vec2 i = floor(x), f = fract(x);\n  f = f * f * (3.0 - 2.0 * f);\n  float a = hash12(i);\n  float b = hash12(i + vec2(1.0, 0.0));\n  float c = hash12(i + vec2(0.0, 1.0));\n  float d = hash12(i + vec2(1.0, 1.0));\n  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);\n}\n\n/**\n * Noise for the grain: **interpolated**, not floor-ed squares.\n *\n * With floor + hash each cell is a constant and jumps at the borders, which looks like a mosaic (pointed out by the user, 2026-10-23).\n * In vnoise the four corner hashes are interpolated with smoothstep, so cells blend into one continuous surface.\n * When uGrainSoft > 0, a 5-point average (up, down, left, right plus center) is applied once more,\n * which acts like a very light Gaussian and softens the grain further;\n * at 0 only the interpolation layer remains.\n */\nfloat grainNoise(vec2 c, float soft) {\n  float n = vnoise(c);\n  if (soft > 0.001) {\n    float d = soft * 0.5;\n    n = (n + vnoise(c + vec2(d, 0.0)) + vnoise(c - vec2(d, 0.0))\n           + vnoise(c + vec2(0.0, d)) + vnoise(c - vec2(0.0, d))) * 0.2;\n  }\n  return n;\n}\n\nfloat fbm(vec2 p) {\n  float s = 0.0, a = 0.5;\n  for (int i = 0; i < 4; i++) {\n    s += a * vnoise(p);\n    p *= 2.03;\n    a *= 0.5;\n  }\n  return s;\n}\n\nvoid main() {\n  vec2 uv = gl_FragCoord.xy / uRes;\n\n  /*\n   * The texture is anchored to **screen pixels** and does not scale with the size of this block (user decision, 2026-10-23):\n   * widening or heightening the window only \"reveals more\"; it does not stretch the same picture.\n   *\n   * The origin is the split line (the skeleton of the composition) and the vertical midline, so however wide this block is,\n   * the texture near the cool/warm boundary always looks the same, and changes only happen at the two ends.\n   *\n   * First convert gl_FragCoord back to CSS pixels (internal rendering is scaled down by uPxScale), so the texture\n   * thickness is the same on high-DPI and regular screens; uRefPx is the reference size, and changing it scales the whole thing up or down.\n   */\n  vec2 cssPx = gl_FragCoord.xy / max(0.0001, uPxScale);\n  vec2 anchor = vec2(uSplit * uRes.x, 0.5 * uRes.y) / max(0.0001, uPxScale);\n  vec2 p = (cssPx - anchor) / max(1.0, uRefPx) * uScale;\n  p.y *= uYStretch;\n  /*\n   * Time **walks a closed loop** in the noise domain; it does not drift forward forever.\n   *\n   * Why it changed (2026-10-24, user decision: \"the left side is the renderer's prerendered animation\"): the prerender produces a finite-length video\n   * that must loop seamlessly. The old four terms were all forward-only translations like p + t * k, which do not close on the timeline,\n   * so cutting a segment to loop would jump at the seam. Now each term's offset is a periodic function of uLoop,\n   * and uLoop going from 0 to 1 returns exactly to the starting point: frame 0 and frame N are computed byte-identical, and the seam is invisible.\n   *\n   * The path is not a perfect circle but loops within loops (fundamental + second harmonic): a perfect circle looks like spinning in place and the loop is obvious at a glance;\n   * with a second harmonic added, the trajectory is a curled closed curve that travels farther and looks less like circling, while the period is still 1.\n   * The four terms each get a different phase and direction so the four layers do not move together.\n   * Each term subtracts its value at loopAng = 0, so the frame at uLoop = 0 is exactly the same as before this change: the numbers from the tuning bench still work.\n   * (The variable is called loopAng, not a: this shader already has two a's, one of the four corners in the noise at line 166 and the opacity at line 323. Naming it a gives ERROR: a : redefinition, the whole shader fails to compile, and it falls back to the CSS version on the spot.)\n   */\n  float loopAng = 6.2831853 * uLoop;\n  #define LOOPV(ph, dir, amp) (uSwirl * (amp) * (       vec2(sin(loopAng * (dir) + (ph)) - sin(ph), cos(loopAng * (dir) + (ph)) - cos(ph))     + vec2(sin(loopAng * 2.0 * (dir) + (ph)) - sin(ph), cos(loopAng * 2.0 * (dir) + (ph)) - cos(ph)) * 0.45))\n\n  // Two domain warps: the first pushes the coordinates apart, the second pushes the result of the first again.\n  // This is how the \"stirred\" layering in the reference image comes about; a single noise layer cannot produce it\n  vec2 q = vec2(fbm(p + LOOPV(0.0, 1.0, 1.0)), fbm(p + vec2(5.2, 1.3) + LOOPV(2.1, -1.0, 0.7)));\n  vec2 r = vec2(fbm(p + uWarpA * q + vec2(1.7, 9.2) + LOOPV(4.0, 1.0, 0.5)),\n                fbm(p + uWarpA * q + vec2(8.3, 2.8) + LOOPV(5.6, -1.0, 0.4)));\n  // Striped frosted glass: within each diagonal stripe the texture underneath is \"ground down\": one less layer of detail and pushed sideways a bit,\n  // as if seen through frosted glass; between stripes it is clear. This is the shader equivalent of the previous version's backdrop-filter striped frost\n  // (what the user asked for by name was the three things \"flowing aurora + striped frosted glass + grain\", so we cannot keep just two of them)\n  // The stripe profile uses sin, not fract: fract jumps back to 0 at the end, breaking at every stripe seam and looking like window blinds\n  float phase = (uv.x * uStripeN + uv.y * uStripeSkew) * 6.2831853;\n  float frost = smoothstep(-0.85, 0.85, sin(phase));\n  vec2 pw = p + uWarpB * r;\n\n  /*\n   * Frosted stripes: **smear the pixels behind sideways** (average four horizontal neighbor samples), which is exactly what glass does.\n   *\n   * The previous two versions both got it wrong: one blended in noise at another scale (that is ghosting), the other pulled out the detail layer (that is downsampling).\n   * The base image at scale≈0.9 is already smooth with little detail to pull out, so after pulling it out only flat slabs remain, which looks like window blinds.\n   * The radius of a clear stripe is 0, so the four samples land on the same point and the result equals the original image; stripes are therefore continuous with no seams.\n   */\n  /*\n   * Grain: **does not change over time**. Glass is a motionless thing, so of course the grain on its surface does not move either ---\n   * the old version recomputed it every frame (time was in the hash), which looked like the whole screen flickering (pointed out by the user, 2026-10-23).\n   * Coarse grain works by quantizing screen coordinates by uGrainSize: one random number per cell, and the larger the cell the coarser the grain.\n   */\n  // Grain is also computed in CSS pixels, otherwise it would get finer on high-DPI screens\n  vec2 gco = cssPx / max(1.0, uGrainSize);\n  float gn1 = grainNoise(gco, uGrainSoft);\n  float gn2 = grainNoise(gco + 71.3, uGrainSoft);\n\n  float br = frost * uFrost * uFrostBlur;\n  /*\n   * Frost \"perturbation\": each grain samples with an extra offset in its own random direction. Frosted glass scatters light\n   * through tiny bumps on its surface, so the grain has to **take part in the refraction**, rather than being sprinkled over the picture afterwards.\n   * The offset is multiplied by br: on clear stripes br=0, the grain has no effect, and clear areas stay clear.\n   */\n  vec2 jit = vec2(gn1 - 0.5, gn2 - 0.5) * br * uGrainJitter;\n  float f = (fbm(pw + jit + vec2(-1.5 * br, 0.0)) + fbm(pw + jit + vec2(-0.5 * br, 0.0))\n           + fbm(pw + jit + vec2(0.5 * br, 0.0)) + fbm(pw + jit + vec2(1.5 * br, 0.0))) * 0.25;\n\n  // The cool/warm boundary is roughly a vertical line, and noise only nudges it lightly: push too much and the two sides bite into each other.\n  // The reference image is \"cool on the left, warm on the right, a dark band in the middle\", not mixed together\n  // Direction of the color split: uAxis=0 splits horizontally (cool left, warm right), =1 splits vertically (cool top, warm bottom).\n  // When splitting vertically use 1-uv.y so that \"top\" is the cool color\n  float axisC = mix(uv.x, 1.0 - uv.y, clamp(uAxis, 0.0, 1.0));\n  // The boundary is pushed around by noise: the larger uMixWarp, the deeper the two colors bite into each other\n  float split = uSplit + (r.x - 0.5) * uMixWarp;\n  // Half-width of the transition band: uBlend opens from \"a hard edge\" all the way to \"the whole block is transition\"\n  float halfW = mix(0.02, 0.85, clamp(uBlend, 0.0, 1.0));\n  float m = smoothstep(split - halfW, split + halfW, axisC);\n\n  // The dark region in the middle is **not painted on**: each light falls off outward from its own side, and in the middle neither is strong,\n  // so the sum is dark and desaturated. This is how blue and orange mix into a dark color in the reference image (pointed out by the user, 2026-10-23).\n  // The larger uFalloff, the harder the middle drops; at 1 it degrades to plain interpolation and the middle does not darken\n  float wc = pow(clamp(1.0 - m, 0.0, 1.0), uFalloff);\n  float ww = pow(clamp(m, 0.0, 1.0), uFalloff);\n  vec3 base = uCool * wc + uWarm * ww;\n\n  // Light and dark: the dark parts are pushed down hard, so most places are close to black and color lights up only in a few spots. This is the weight of the reference image\n  float lum = pow(clamp(f * 1.18, 0.0, 1.0), uGamma);\n  vec3 col = base * (uFloor + uGain * lum);\n  // Highlight roll-off: bright parts obtained by direct multiplication would blow out into neon, and this step pushes them back down\n  col = col / (1.0 + col * uRoll);\n  // Fine-tune saturation\n  col = mix(vec3(dot(col, vec3(0.299, 0.587, 0.114))), col, uSat);\n\n  // Two things about glass: the frosted face itself is milky (scattering lifts the brightness a little), and where clear stripes meet frosted stripes there is a thin highlight (the glass edge)\n  col *= 1.0 + frost * uMilky;\n  float edge = 1.0 - abs(frost * 2.0 - 1.0);\n  col += pow(edge, 3.0) * uEdge;\n\n  // Fine vertical stripes: one fixed random number per column, more visible toward the right (the fine lines on the right half of the reference poster)\n  float band = hash12(vec2(floor(uv.x * 240.0), 7.0));\n  col *= 1.0 + (band - 0.5) * uStreak * smoothstep(0.18, 0.9, uv.x);\n\n  // Vignette\n  vec2 d = (uv - 0.5) * vec2(1.08, 1.0);\n  col *= 0.30 + 0.70 * smoothstep(1.15, 0.18, length(d));\n\n  // The overlaid grain layer is likewise motionless, and more visible on frosted stripes: it is part of the glass, not film grain laid over the picture\n  col += (gn1 - 0.5) * uGrain * (0.3 + 0.7 * frost);\n\n  /*\n   * The background comes in as alpha (user decision, 2026-10-23): dark areas leave the canvas transparent, letting the page's real background color show through,\n   * instead of painting a fake background color here. The benefit is that changing skins or the background color never requires touching the shader: what shows through is always the real one.\n   * Bright areas are opaque, so colors that should be rich stay rich.\n   */\n  // uSeeThrough acts as a threshold: luminance below it is fully see-through, above it fully opaque.\n  // It used to be written as interpolation, and the darkest spots kept an opacity of (1-uSeeThrough), so dark areas were \"a layer laid over the background\" rather than the background itself\n  float a = uSeeThrough < 0.001 ? 1.0 : smoothstep(0.0, uSeeThrough, lum);\n  // Then fade out along the right edge (basically has no effect when uFadeEdge=0): works with the line above to make the \"right side is the background color\" layout\n  if (uFadeEdge > 0.001) a *= 1.0 - smoothstep(1.0 - uFadeEdge, 1.0, uv.x);\n\n  // Premultiplied output: color is multiplied by alpha first (the context is opened in premultiplied mode).\n  // Straight alpha gets drawn as opaque on the GPU compositing path (the bug the user reported on 2026-10-24)\n  float aOut = clamp(a, 0.0, 1.0);\n  vec3 rgbOut = max(col, 0.0);\n  // The flatten path: composite the background color in and set alpha to 1. Prerendering to video must take this path: video cannot carry alpha,\n  // and the export writes straight-alpha PNGs, so storing premultiplied values directly as straight would leave a ring of red-green fringes on the fade-out edge.\n  fragColor = uFlatten > 0.5\n    ? vec4(mix(uBg, rgbOut, aOut), 1.0)\n    : vec4(rgbOut * aOut, aOut);\n}");
+export const FRAG = `#version 300 es
+precision highp float;
+out vec4 fragColor;
+
+uniform vec2  uRes;
+/* Radius of the circle in the noise domain (noise units). 0 = no motion at all */
+uniform float uSwirl;
+/* Loop phase, 0→1 is one full turn. A full turn lands exactly on the start, so frame 0 and frame N are byte-identical */
+uniform float uLoop;
+uniform vec3  uCool;
+uniform vec3  uWarm;
+uniform float uScale, uYStretch, uSplit, uFalloff, uBlend, uMixWarp, uStreak, uGrain;
+uniform float uAxis, uSeeThrough, uFadeEdge;
+uniform float uRefPx, uPxScale;
+/* Flatten: set to 1 when prerendering to video. Video cannot carry alpha, so the background color is composited in first and the output is opaque; the on-screen version sets 0 and still outputs premultiplied semi-transparent color */
+uniform float uFlatten;
+/* Color laid underneath when flattening (--bg-canvas of the login page) */
+uniform vec3  uBg;
+uniform float uWarpA, uWarpB, uGamma, uGain, uFloor, uRoll, uSat;
+uniform float uStripeN, uStripeSkew, uFrostBlur, uFrost, uMilky, uEdge;
+uniform float uGrainSize, uGrainJitter, uGrainSoft;
+
+float hash12(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+
+float vnoise(vec2 x) {
+  vec2 i = floor(x), f = fract(x);
+  f = f * f * (3.0 - 2.0 * f);
+  float a = hash12(i);
+  float b = hash12(i + vec2(1.0, 0.0));
+  float c = hash12(i + vec2(0.0, 1.0));
+  float d = hash12(i + vec2(1.0, 1.0));
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+/**
+ * Noise for the grain: **interpolated**, not floor-ed squares.
+ *
+ * With floor + hash each cell is a constant and jumps at the borders, which looks like a mosaic (pointed out by the user, 2026-10-23).
+ * In vnoise the four corner hashes are interpolated with smoothstep, so cells blend into one continuous surface.
+ * When uGrainSoft > 0, a 5-point average (up, down, left, right plus center) is applied once more,
+ * which acts like a very light Gaussian and softens the grain further;
+ * at 0 only the interpolation layer remains.
+ */
+float grainNoise(vec2 c, float soft) {
+  float n = vnoise(c);
+  if (soft > 0.001) {
+    float d = soft * 0.5;
+    n = (n + vnoise(c + vec2(d, 0.0)) + vnoise(c - vec2(d, 0.0))
+           + vnoise(c + vec2(0.0, d)) + vnoise(c - vec2(0.0, d))) * 0.2;
+  }
+  return n;
+}
+
+float fbm(vec2 p) {
+  float s = 0.0, a = 0.5;
+  for (int i = 0; i < 4; i++) {
+    s += a * vnoise(p);
+    p *= 2.03;
+    a *= 0.5;
+  }
+  return s;
+}
+
+void main() {
+  vec2 uv = gl_FragCoord.xy / uRes;
+
+  /*
+   * The texture is anchored to **screen pixels** and does not scale with the size of this block (user decision, 2026-10-23):
+   * widening or heightening the window only "reveals more"; it does not stretch the same picture.
+   *
+   * The origin is the split line (the skeleton of the composition) and the vertical midline, so however wide this block is,
+   * the texture near the cool/warm boundary always looks the same, and changes only happen at the two ends.
+   *
+   * First convert gl_FragCoord back to CSS pixels (internal rendering is scaled down by uPxScale), so the texture
+   * thickness is the same on high-DPI and regular screens; uRefPx is the reference size, and changing it scales the whole thing up or down.
+   */
+  vec2 cssPx = gl_FragCoord.xy / max(0.0001, uPxScale);
+  vec2 anchor = vec2(uSplit * uRes.x, 0.5 * uRes.y) / max(0.0001, uPxScale);
+  vec2 p = (cssPx - anchor) / max(1.0, uRefPx) * uScale;
+  p.y *= uYStretch;
+  /*
+   * Time **walks a closed loop** in the noise domain; it does not drift forward forever.
+   *
+   * Why it changed (2026-10-24, user decision: "the left side is the renderer's prerendered animation"): the prerender produces a finite-length video
+   * that must loop seamlessly. The old four terms were all forward-only translations like p + t * k, which do not close on the timeline,
+   * so cutting a segment to loop would jump at the seam. Now each term's offset is a periodic function of uLoop,
+   * and uLoop going from 0 to 1 returns exactly to the starting point: frame 0 and frame N are computed byte-identical, and the seam is invisible.
+   *
+   * The path is not a perfect circle but loops within loops (fundamental + second harmonic): a perfect circle looks like spinning in place and the loop is obvious at a glance;
+   * with a second harmonic added, the trajectory is a curled closed curve that travels farther and looks less like circling, while the period is still 1.
+   * The four terms each get a different phase and direction so the four layers do not move together.
+   * Each term subtracts its value at loopAng = 0, so the frame at uLoop = 0 is exactly the same as before this change: the numbers from the tuning bench still work.
+   * (The variable is called loopAng, not a: this shader already has two a's, one of the four corners in the noise at line 166 and the opacity at line 323. Naming it a gives ERROR: a : redefinition, the whole shader fails to compile, and it falls back to the CSS version on the spot.)
+   */
+  float loopAng = 6.2831853 * uLoop;
+  #define LOOPV(ph, dir, amp) (uSwirl * (amp) * (       vec2(sin(loopAng * (dir) + (ph)) - sin(ph), cos(loopAng * (dir) + (ph)) - cos(ph))     + vec2(sin(loopAng * 2.0 * (dir) + (ph)) - sin(ph), cos(loopAng * 2.0 * (dir) + (ph)) - cos(ph)) * 0.45))
+
+  // Two domain warps: the first pushes the coordinates apart, the second pushes the result of the first again.
+  // This is how the "stirred" layering in the reference image comes about; a single noise layer cannot produce it
+  vec2 q = vec2(fbm(p + LOOPV(0.0, 1.0, 1.0)), fbm(p + vec2(5.2, 1.3) + LOOPV(2.1, -1.0, 0.7)));
+  vec2 r = vec2(fbm(p + uWarpA * q + vec2(1.7, 9.2) + LOOPV(4.0, 1.0, 0.5)),
+                fbm(p + uWarpA * q + vec2(8.3, 2.8) + LOOPV(5.6, -1.0, 0.4)));
+  // Striped frosted glass: within each diagonal stripe the texture underneath is "ground down": one less layer of detail and pushed sideways a bit,
+  // as if seen through frosted glass; between stripes it is clear. This is the shader equivalent of the previous version's backdrop-filter striped frost
+  // (what the user asked for by name was the three things "flowing aurora + striped frosted glass + grain", so we cannot keep just two of them)
+  // The stripe profile uses sin, not fract: fract jumps back to 0 at the end, breaking at every stripe seam and looking like window blinds
+  float phase = (uv.x * uStripeN + uv.y * uStripeSkew) * 6.2831853;
+  float frost = smoothstep(-0.85, 0.85, sin(phase));
+  vec2 pw = p + uWarpB * r;
+
+  /*
+   * Frosted stripes: **smear the pixels behind sideways** (average four horizontal neighbor samples), which is exactly what glass does.
+   *
+   * The previous two versions both got it wrong: one blended in noise at another scale (that is ghosting), the other pulled out the detail layer (that is downsampling).
+   * The base image at scale≈0.9 is already smooth with little detail to pull out, so after pulling it out only flat slabs remain, which looks like window blinds.
+   * The radius of a clear stripe is 0, so the four samples land on the same point and the result equals the original image; stripes are therefore continuous with no seams.
+   */
+  /*
+   * Grain: **does not change over time**. Glass is a motionless thing, so of course the grain on its surface does not move either ---
+   * the old version recomputed it every frame (time was in the hash), which looked like the whole screen flickering (pointed out by the user, 2026-10-23).
+   * Coarse grain works by quantizing screen coordinates by uGrainSize: one random number per cell, and the larger the cell the coarser the grain.
+   */
+  // Grain is also computed in CSS pixels, otherwise it would get finer on high-DPI screens
+  vec2 gco = cssPx / max(1.0, uGrainSize);
+  float gn1 = grainNoise(gco, uGrainSoft);
+  float gn2 = grainNoise(gco + 71.3, uGrainSoft);
+
+  float br = frost * uFrost * uFrostBlur;
+  /*
+   * Frost "perturbation": each grain samples with an extra offset in its own random direction. Frosted glass scatters light
+   * through tiny bumps on its surface, so the grain has to **take part in the refraction**, rather than being sprinkled over the picture afterwards.
+   * The offset is multiplied by br: on clear stripes br=0, the grain has no effect, and clear areas stay clear.
+   */
+  vec2 jit = vec2(gn1 - 0.5, gn2 - 0.5) * br * uGrainJitter;
+  float f = (fbm(pw + jit + vec2(-1.5 * br, 0.0)) + fbm(pw + jit + vec2(-0.5 * br, 0.0))
+           + fbm(pw + jit + vec2(0.5 * br, 0.0)) + fbm(pw + jit + vec2(1.5 * br, 0.0))) * 0.25;
+
+  // The cool/warm boundary is roughly a vertical line, and noise only nudges it lightly: push too much and the two sides bite into each other.
+  // The reference image is "cool on the left, warm on the right, a dark band in the middle", not mixed together
+  // Direction of the color split: uAxis=0 splits horizontally (cool left, warm right), =1 splits vertically (cool top, warm bottom).
+  // When splitting vertically use 1-uv.y so that "top" is the cool color
+  float axisC = mix(uv.x, 1.0 - uv.y, clamp(uAxis, 0.0, 1.0));
+  // The boundary is pushed around by noise: the larger uMixWarp, the deeper the two colors bite into each other
+  float split = uSplit + (r.x - 0.5) * uMixWarp;
+  // Half-width of the transition band: uBlend opens from "a hard edge" all the way to "the whole block is transition"
+  float halfW = mix(0.02, 0.85, clamp(uBlend, 0.0, 1.0));
+  float m = smoothstep(split - halfW, split + halfW, axisC);
+
+  // The dark region in the middle is **not painted on**: each light falls off outward from its own side, and in the middle neither is strong,
+  // so the sum is dark and desaturated. This is how blue and orange mix into a dark color in the reference image (pointed out by the user, 2026-10-23).
+  // The larger uFalloff, the harder the middle drops; at 1 it degrades to plain interpolation and the middle does not darken
+  float wc = pow(clamp(1.0 - m, 0.0, 1.0), uFalloff);
+  float ww = pow(clamp(m, 0.0, 1.0), uFalloff);
+  vec3 base = uCool * wc + uWarm * ww;
+
+  // Light and dark: the dark parts are pushed down hard, so most places are close to black and color lights up only in a few spots. This is the weight of the reference image
+  float lum = pow(clamp(f * 1.18, 0.0, 1.0), uGamma);
+  vec3 col = base * (uFloor + uGain * lum);
+  // Highlight roll-off: bright parts obtained by direct multiplication would blow out into neon, and this step pushes them back down
+  col = col / (1.0 + col * uRoll);
+  // Fine-tune saturation
+  col = mix(vec3(dot(col, vec3(0.299, 0.587, 0.114))), col, uSat);
+
+  // Two things about glass: the frosted face itself is milky (scattering lifts the brightness a little), and where clear stripes meet frosted stripes there is a thin highlight (the glass edge)
+  col *= 1.0 + frost * uMilky;
+  float edge = 1.0 - abs(frost * 2.0 - 1.0);
+  col += pow(edge, 3.0) * uEdge;
+
+  // Fine vertical stripes: one fixed random number per column, more visible toward the right (the fine lines on the right half of the reference poster)
+  float band = hash12(vec2(floor(uv.x * 240.0), 7.0));
+  col *= 1.0 + (band - 0.5) * uStreak * smoothstep(0.18, 0.9, uv.x);
+
+  // Vignette
+  vec2 d = (uv - 0.5) * vec2(1.08, 1.0);
+  col *= 0.30 + 0.70 * smoothstep(1.15, 0.18, length(d));
+
+  // The overlaid grain layer is likewise motionless, and more visible on frosted stripes: it is part of the glass, not film grain laid over the picture
+  col += (gn1 - 0.5) * uGrain * (0.3 + 0.7 * frost);
+
+  /*
+   * The background comes in as alpha (user decision, 2026-10-23): dark areas leave the canvas transparent, letting the page's real background color show through,
+   * instead of painting a fake background color here. The benefit is that changing skins or the background color never requires touching the shader: what shows through is always the real one.
+   * Bright areas are opaque, so colors that should be rich stay rich.
+   */
+  // uSeeThrough acts as a threshold: luminance below it is fully see-through, above it fully opaque.
+  // It used to be written as interpolation, and the darkest spots kept an opacity of (1-uSeeThrough), so dark areas were "a layer laid over the background" rather than the background itself
+  float a = uSeeThrough < 0.001 ? 1.0 : smoothstep(0.0, uSeeThrough, lum);
+  // Then fade out along the right edge (basically has no effect when uFadeEdge=0): works with the line above to make the "right side is the background color" layout
+  if (uFadeEdge > 0.001) a *= 1.0 - smoothstep(1.0 - uFadeEdge, 1.0, uv.x);
+
+  // Premultiplied output: color is multiplied by alpha first (the context is opened in premultiplied mode).
+  // Straight alpha gets drawn as opaque on the GPU compositing path (the bug the user reported on 2026-10-24)
+  float aOut = clamp(a, 0.0, 1.0);
+  vec3 rgbOut = max(col, 0.0);
+  // The flatten path: composite the background color in and set alpha to 1. Prerendering to video must take this path: video cannot carry alpha,
+  // and the export writes straight-alpha PNGs, so storing premultiplied values directly as straight would leave a ring of red-green fringes on the fade-out edge.
+  fragColor = uFlatten > 0.5
+    ? vec4(mix(uBg, rgbOut, aOut), 1.0)
+    : vec4(rgbOut * aOut, aOut);
+}`;
 
 /** 十六进制 → 0..1 的 RGB */
 function hexToRgb(hex: string, fallback: [number, number, number]): [number, number, number] {
