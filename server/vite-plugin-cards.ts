@@ -456,7 +456,7 @@ const VENDORED_ANIMATES = new Set([
 /** 能随安装包分发的许可证 */
 const LICENSE_OK = /\b(MIT|Apache[- ]2\.0|BSD[- ][23][- ]Clause|\bBSD\b|ISC|CC0|Unlicense|0BSD)\b/i;
 /** 明确不能搬的:Commons Clause 禁止再分发组件本身;Hippocratic 非 OSI;GSAP 禁止用于无代码动画工具 */
-const LICENSE_BAD = /Commons[- ]Clause|Hippocratic|Aceternity|\bGSAP\b|proprietary|All rights reserved|专有/i;
+const LICENSE_BAD = /Commons[- ]Clause|Hippocratic|Aceternity|\bGSAP\b|proprietary|All rights reserved|专有/i; // i18n-allow
 
 /* ── 可搬目录:MagicUI 全部组件的原始源码 + 审查门跑出来的档位 ──
  * 放在 server/catalog/magicui/(不在 src 下,tsc 和 vite 都不会去编译那些原始文件)。
@@ -564,7 +564,7 @@ export function translateCardSource(source: string): { source: string; rewrites:
 function provenance(source: string): { declared: boolean; looksVendored: boolean; header: string } {
   const header = source.split('\n').slice(0, 40).join('\n');
   return {
-    declared: /来源\s*[:：]/.test(header) || /@source\b|Source:\s*https?:/i.test(header),
+    declared: /(?:来源|[Ss]ource)\s*[:：]/.test(header) || /@source\b|Source:\s*https?:/i.test(header), // i18n-allow
     // 只认别名和站点/仓库名,不认路径片段 —— 本地的 ../magicui/vendor/cn 也含 "magicui",那是我们自己的
     looksVendored: /@\/lib\/utils|@\/components\/|magicui\.design|magicuidesign|shadcn|aceternity|react-bits/i.test(source),
     header,
@@ -760,7 +760,7 @@ export function checkCardSource(
   }
   // mu- 是 Magic UI 的命名空间。手写的卡不能占;翻译器从 magicui.design 搬来、
   // 文件头声明了来源的可以用 —— 这样 id 前缀仍然可信:mu- 就是「来自 MagicUI」,不论谁搬的。
-  if (id.startsWith('mu-') && !/来源\s*[:：][^\n]*magicui/i.test(source.split('\n').slice(0, 40).join('\n'))) {
+  if (id.startsWith('mu-') && !/(?:来源|source)\s*[:：][^\n]*magicui/i.test(source.split('\n').slice(0, 40).join('\n'))) { // i18n-allow
     errors.push('mu- 前缀留给 Magic UI 适配卡,换一个 id。(从 magicui.design 搬来、文件头写了「来源: …magicui…」的可以用。)');
   }
   // lottie- / particles- 是素材封装卡(src/cards/assets,由素材目录构建时生成)的命名空间,手写的卡不能占

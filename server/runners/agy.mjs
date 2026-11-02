@@ -322,9 +322,9 @@ function _startRun(opts) {
                   * 模型照着这句话去猜权限,怎么试都不对;用户看到的也是一个假的权限故障。
                   * 所以先认「找不到」,认出来就当成一次普通的工具失败,把原文交回去让它换个路径。
                   */
-                 const notFound = /cannot find the file|no such file|not found|ENOENT|系统找不到/i.test(msg);
+                 const notFound = /cannot find the file|no such file|not found|ENOENT|系统找不到/i.test(msg); // i18n-allow
                  const denied = !notFound
-                   && (msg.includes('permission') || msg.includes('权限') || msg.includes('denied') || msg.includes('not allowed'));
+                   && (msg.includes('permission') || msg.includes('权限') || msg.includes('denied') || msg.includes('not allowed')); // i18n-allow
                  /*
                   * 「被拒」要分是谁被拒的,原来一律当成 MCP 被拒,两处都错:
                   *

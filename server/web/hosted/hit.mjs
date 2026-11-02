@@ -62,9 +62,9 @@ function probe(u, mark, positional, tolerance) {
       const words = [el.getAttribute('name'), el.id, el.getAttribute('placeholder'), el.getAttribute('aria-label'), el.getAttribute('title')]
         .filter(Boolean).join(' ').toLowerCase();
       if (type === 'password' || /(^|\s)(current|new)-password(\s|$)/.test(auto)) secret = 'password';
-      else if (/one-time-code/.test(auto) || /验证码|校验码|动态码|captcha|verification\s*code|verify\s*code|\botp\b|\b2fa\b|\bmfa\b|\btotp\b/.test(words)) secret = 'code';
-      else if (/密码|口令|passw|\bpwd\b|passphrase|\bpin\b/.test(words)) secret = 'password';
-      else if (/(^|\s)cc-/.test(auto) || /card.?number|卡号|cvv|cvc|security.?code/.test(words)) secret = 'card';
+      else if (/one-time-code/.test(auto) || /验证码|校验码|动态码|captcha|verification\s*code|verify\s*code|\botp\b|\b2fa\b|\bmfa\b|\btotp\b/.test(words)) secret = 'code'; // i18n-allow
+      else if (/密码|口令|passw|\bpwd\b|passphrase|\bpin\b/.test(words)) secret = 'password'; // i18n-allow
+      else if (/(^|\s)cc-/.test(auto) || /card.?number|卡号|cvv|cvc|security.?code/.test(words)) secret = 'card'; // i18n-allow
       const editable = tag === 'textarea' || el.isContentEditable
         || (tag === 'input' && !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'range', 'color', 'hidden'].includes(type));
       return {
@@ -99,9 +99,9 @@ function focusProbe(u) {
   const words = [el.getAttribute('name'), el.id, el.getAttribute('placeholder'), el.getAttribute('aria-label'), el.getAttribute('title')]
     .filter(Boolean).join(' ').toLowerCase();
   if (type === 'password' || /(^|\s)(current|new)-password(\s|$)/.test(auto)) secret = 'password';
-  else if (/one-time-code/.test(auto) || /验证码|校验码|动态码|captcha|verification\s*code|verify\s*code|\botp\b|\b2fa\b|\bmfa\b|\btotp\b/.test(words)) secret = 'code';
-  else if (/密码|口令|passw|\bpwd\b|passphrase|\bpin\b/.test(words)) secret = 'password';
-  else if (/(^|\s)cc-/.test(auto) || /card.?number|卡号|cvv|cvc|security.?code/.test(words)) secret = 'card';
+  else if (/one-time-code/.test(auto) || /验证码|校验码|动态码|captcha|verification\s*code|verify\s*code|\botp\b|\b2fa\b|\bmfa\b|\btotp\b/.test(words)) secret = 'code'; // i18n-allow
+  else if (/密码|口令|passw|\bpwd\b|passphrase|\bpin\b/.test(words)) secret = 'password'; // i18n-allow
+  else if (/(^|\s)cc-/.test(auto) || /card.?number|卡号|cvv|cvc|security.?code/.test(words)) secret = 'card'; // i18n-allow
   return { ok: true, focused, secret };
 }
 

@@ -30,7 +30,7 @@ function emptyTracks(): Track[] {
 export function nextCutName(cuts: Cut[]): string {
   let max = 0;
   for (const c of cuts) {
-    const m = /^剪辑\s*(\d+)$/.exec(c.name.trim());
+    const m = /^(?:剪辑|Cut)\s*(\d+)$/.exec(c.name.trim()); // i18n-allow
     if (m) max = Math.max(max, parseInt(m[1], 10));
   }
   return `剪辑${max + 1}`;

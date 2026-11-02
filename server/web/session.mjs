@@ -53,8 +53,8 @@ function scanWall() {
   if (has('input[type=password]')) walls.push('login');
   // 站点用的验证码框架:reCAPTCHA / hCaptcha / Cloudflare Turnstile / 极验
   if (has('iframe[src*="recaptcha"],iframe[src*="hcaptcha"],iframe[src*="challenges.cloudflare"],.geetest_panel,#captcha,[class*=captcha]')) walls.push('captcha');
-  if (/扫码登录|扫描二维码|scan (the )?qr/i.test(text)) walls.push('qrcode');
-  if (/(cookie|隐私).{0,12}(政策|设置|同意)|accept (all )?cookies|consent/i.test(text)
+  if (/扫码登录|扫描二维码|scan (the )?qr/i.test(text)) walls.push('qrcode'); // i18n-allow
+  if (/(cookie|隐私).{0,12}(政策|设置|同意)|accept (all )?cookies|consent/i.test(text) // i18n-allow
       && has('button,[role=button]')) walls.push('consent');
   return walls;
 }

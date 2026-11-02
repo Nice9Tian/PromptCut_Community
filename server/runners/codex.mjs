@@ -275,7 +275,7 @@ function _startRun(opts) {
          finish({ type: 'error', message: ev.error?.message || ev.message || 'Codex turn failed' });
       } else if (evType === 'error') {
          const msg = errText(ev.message || ev.error || 'Codex error');
-         if (typeof msg === 'string' && (msg.startsWith('Reconnecting') || msg.includes('重试'))) {
+         if (typeof msg === 'string' && (msg.startsWith('Reconnecting') || msg.includes('重试'))) { // i18n-allow
              safeOnEvent({ type: 'status', text: msg });
          } else {
              finish({ type: 'error', message: msg });

@@ -72,10 +72,10 @@ export function diffScopes(before, after) {
 /** 声明的文字 → 一条条范围(逗号、分号、顿号分开;「(已删)」这类后缀去掉再比) */
 export function splitScopes(text) {
   if (typeof text !== 'string') return [];
-  return text.split(/[,,;;、]/).map((x) => x.trim()).filter(Boolean);
+  return text.split(/[,，;；、]/).map((x) => x.trim()).filter(Boolean); // i18n-allow
 }
 
-const bare = (s) => s.replace(/[((]已删[))]$/, '').trim();
+const bare = (s) => s.replace(/[(（](?:已删|deleted)[)）]$/, '').trim(); // i18n-allow
 
 /** 两段范围文字有没有重叠:同名,或一方是另一方的上级(「剪辑1」包含「剪辑1->序列2」) */
 export function scopeOverlaps(a, b) {

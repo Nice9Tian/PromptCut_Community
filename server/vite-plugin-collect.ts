@@ -165,7 +165,7 @@ function bootstrap(root: string): Promise<{ python: string; env: NodeJS.ProcessE
 function pickError(obj: Record<string, unknown> | undefined, stderrTail: string[], code: number): string {
   const msg = typeof obj?.message === "string" ? obj.message : "";
   if (msg) return msg;
-  const useful = [...stderrTail].reverse().find((l) => /error|失败|找不到|not found/i.test(l));
+  const useful = [...stderrTail].reverse().find((l) => /error|失败|找不到|failed|cannot find|not found/i.test(l)); // i18n-allow
   return useful || `下载进程退出码 ${code}`;
 }
 
