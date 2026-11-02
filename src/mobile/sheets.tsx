@@ -37,6 +37,7 @@ import { ClipFilterFields, FiltersGrid, filterableClip } from "./filters";
 import { ThumbImg, useThumb } from "./Thumb";
 import type { MembersInfo } from "./useMembers";
 import { tr as trText } from "../i18n/index.ts";
+import { shownName, shownNameOf } from "../i18n/names.ts";
 
 /* ======================== 素材库 ======================== */
 
@@ -279,7 +280,7 @@ function OverlaySection({ clip, onQuote }: {
   const project = useStore((s) => s.project);
   const toast = useToast();
   const items = useMemo(
-    () => overlaysOfClip(project, clip, { cardName: (id) => getCard(id)?.name }),
+    () => overlaysOfClip(project, clip, { cardName: (id) => shownNameOf(getCard(id)?.name) }),
     [project, clip],
   );
   if (!items.length) return null;
@@ -353,7 +354,7 @@ export function ParamsSheet(props: { target: ParamsTarget; onClose: () => void; 
   const len = c.end - c.start;
   const kindLabel = kind === "card" ? trText("Cards") : kind === "audio" ? trText("audio") : kind === "image" ? trText("Image clip") : kind === "cut" ? trText("Cut segment") : trText("Video clip");
   return (
-    <Sheet id="params" title={clipName(project, c, (id) => getCard(id)?.name)} light onClose={props.onClose} head={<span className={kind === "card" ? "chip plum" : "chip"}>{kindLabel}</span>}>
+    <Sheet id="params" title={clipName(project, c, (id) => shownNameOf(getCard(id)?.name))} light onClose={props.onClose} head={<span className={kind === "card" ? "chip plum" : "chip"}>{kindLabel}</span>}>
       <OverlaySection clip={c} onQuote={props.onQuoteOverlay} />
       {def && def.controls.filter((k) => k.type !== "asset").map((k) => (
         <ControlField key={k.key} ctl={k} value={c.params[k.key] ?? (def.defaults as Record<string, unknown>)[k.key]} onCommit={(v) => actions.setClipParams(c.id, { [k.key]: v })} />
@@ -407,7 +408,7 @@ export function SpeedSheet(props: { clipId: string; onClose: () => void }) {
     pick(v);
   };
   return (
-    <Sheet id="speed" title={clipName(project, c, (id) => getCard(id)?.name)} light onClose={props.onClose} head={<span className="chip">{trText("Speed")}</span>}>
+    <Sheet id="speed" title={clipName(project, c, (id) => shownNameOf(getCard(id)?.name))} light onClose={props.onClose} head={<span className="chip">{trText("Speed")}</span>}>
       <div className="seg" data-pcm="speed-presets" style={{ flexWrap: "wrap", rowGap: 6 }}>
         {presets.map((v) => (
           <button key={v} type="button" className={v === cur ? "on" : undefined} data-pcm="speed-preset" data-speed={v} aria-pressed={v === cur} onClick={() => pick(v)}>{speedLabel(v)}</button>

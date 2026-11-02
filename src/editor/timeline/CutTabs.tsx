@@ -6,6 +6,7 @@ import { memberReadOnlyNow } from "../readOnlyCore";
 import { useReadOnly } from "../readOnly";
 import "./cut-tabs.css";
 import { tr } from "../../i18n/index.ts";
+import { shownName, shownNameOf } from "../../i18n/names.ts";
 
 /** 胶片:圆角方块里一格画面,两侧各三个齿孔 */
 export function IconFilm({ size = 12 }: { size?: number }) {
@@ -135,7 +136,7 @@ function Tab({ id, name, active, canClose, locked, why, editing, onEdit, onDone,
             onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") commit(); else if (e.key === "Escape") onDone(); }}
             onClick={(e) => e.stopPropagation()} />
         ) : (
-          <span className="pc-tl-cut-name">{name}</span>
+          <span className="pc-tl-cut-name">{shownName(name)}</span>
         )}
       </div>
       {canClose ? (

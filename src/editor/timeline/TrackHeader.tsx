@@ -7,6 +7,7 @@ import { useReorderDrag, useRowOffset } from "./useReorder";
 import { IconVolume, IconVolumeMute, IconDrag, IconEye, IconEyeOff, IconLock, IconUnlock } from "../../ui/icons";
 import { useReadOnly } from "../readOnly";
 import { tr } from "../../i18n/index.ts";
+import { shownName } from "../../i18n/names.ts";
 
 /**
  * 序列行头(配色诊断与修正 v2 整屏)。
@@ -70,7 +71,7 @@ export function TrackHeader({ track, index }: { track: Track; index: number }) {
               onPointerDown={(e) => e.stopPropagation()}
             />
           ) : (
-            track.name
+            shownName(track.name)
           )}
         </div>
         {(track.muted || mutedClips > 0) && <span className="pc-track-mute-summary" title={track.muted ? tr("Whole track is muted") : tr("{0} clips muted; zoom in on the timeline to see each segment's marker", mutedClips)}>

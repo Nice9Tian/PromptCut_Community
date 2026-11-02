@@ -40,6 +40,7 @@ import { useMembers } from "./useMembers";
 import { useUploadRejectedNotice } from "../editor/left/uploadRejectedNotice";
 import { tr as trText } from "../i18n/index.ts";
 import { OVERLAY_QUOTE_KIND } from "./agentView";
+import { shownName, shownNameOf } from "../i18n/names.ts";
 
 // 探针与测试读写 store 的口子(桌面的时间轴模块装同一个;手机版不挂时间轴模块,这里自己装)
 (window as unknown as { __pcStore?: unknown }).__pcStore = { getState, actions };
@@ -57,7 +58,7 @@ type SheetState =
   | null;
 
 const TRANSITION_NAME: Record<Transition["kind"], string> = { crossfade: trText("crossfade"), fadeIn: trText("Fade in"), fadeOut: trText("Fade out") };
-const cardName = (id: string) => getCard(id)?.name;
+const cardName = (id: string) => shownNameOf(getCard(id)?.name);
 
 /** 历史记录里本界面的那一层:1 缩略预览,2 时间轴 / Agent 分页 */
 interface NavState { pcm: 1; lvl: 1 | 2; page?: Page }

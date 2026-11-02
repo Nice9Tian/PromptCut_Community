@@ -25,6 +25,7 @@ import type { Project, Track } from "../../kernel/project";
 import { contentEndOf, effectiveDuration } from "../../kernel/duration";
 import { getCard } from "../../kernel/registry";
 import { tr as trText } from "../../i18n/index.ts";
+import { shownName, shownNameOf } from "../../i18n/names.ts";
 
 /* ---------------- 形状 ---------------- */
 
@@ -352,7 +353,7 @@ const short = (s: string, n = 24) => (s.length > n ? `${s.slice(0, n - 1)}…` :
 function clipName(c: Obj | undefined, id: string): string {
   if (!c) return id;
   let name = "";
-  if (typeof c.cardId === "string" && c.cardId) name = getCard(c.cardId)?.name ?? c.cardId;
+  if (typeof c.cardId === "string" && c.cardId) name = shownNameOf(getCard(c.cardId)?.name) ?? c.cardId;
   else if (typeof c.label === "string" && c.label.trim()) name = c.label.trim();
   if (!name) return id;
   return typeof c.start === "number" ? `${name} @${c.start.toFixed(1)}s` : name;

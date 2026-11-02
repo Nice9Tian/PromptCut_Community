@@ -32,6 +32,7 @@ import { openCutInTimeline } from "./CutTabs";
 import { useReadOnly } from "../readOnly";
 import { tr as trText } from "../../i18n/index.ts";
 import { OVERLAY_QUOTE_KIND } from "../../mobile/agentView";
+import { shownName, shownNameOf } from "../../i18n/names.ts";
 
 export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
   const [volumeOpen, setVolumeOpen] = useState(false);
@@ -52,7 +53,7 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
   // 剪辑段(kernel/cutSegments.ts):标签跟着被引用剪辑现在的名字走;找不到(悬空引用)就写明
   const cutName = useStore((s) => (clip.cutId ? s.project.cuts?.find((c) => c.id === clip.cutId)?.name ?? null : null));
   const cutTotal = useStore((s) => (clip.cutId ? cutDuration(s.project, clip.cutId) : 0));
-  const label = clip.cutId ? (cutName ? trText("Cut · {0}", cutName) : trText("Cut · (no longer exists)")) : clip.cardId ? clipCardLabel(knownCardName(clip.cardId)) : clip.label;
+  const label = clip.cutId ? (cutName ? trText("Cut · {0}", shownName(cutName)) : trText("Cut · (no longer exists)")) : clip.cardId ? clipCardLabel(shownNameOf(knownCardName(clip.cardId)) ?? null) : clip.label;
   // 变速的视频段:名字后面带上倍数(kernel/clipTime.mjs),一眼看得出这段改过速度
   const shownLabel = isSpeedChanged(clip) && clip.mediaId ? `${label ?? ""} · ${speedLabel(clipSpeed(clip))}` : label;
   // 这台设备跑不了的卡不挂任何「本地 PC 辅助渲染」的徽标(2026-10-21 用户定:没有这种情况;画面由渲染节点出)
@@ -95,7 +96,7 @@ export function ClipView({ clip, track }: { clip: TrackClip; track: Track }) {
   const audioFxLib = useStore((s) => s.project.audioFx);
   const nodeLib = useStore((s) => s.project.cardNodes);
   const overlays = useMemo(
-    () => overlaysOfClip(getState().project, clip, { cardName: (id) => knownCardName(id) ?? undefined }),
+    () => overlaysOfClip(getState().project, clip, { cardName: (id) => shownNameOf(knownCardName(id)) }),
     [filterLib, pixelMapLib, audioFxLib, nodeLib, clip.filter, clip.pixelMap, clip.audioFx, clip.nodeId],
   );
 

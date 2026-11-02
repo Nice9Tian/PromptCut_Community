@@ -23,7 +23,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import puppeteer from 'puppeteer';
-import { killTree, startDevServer } from '../lib/dev-server.mjs';
+import { startDevServer } from '../lib/dev-server.mjs';
 import { PROBE_CHROME_ARGS } from './probe-chrome.mjs';
 
 setTimeout(() => { console.error('SCRIPT_TIMEOUT'); process.exit(124); }, 20 * 60_000).unref();
@@ -51,13 +51,16 @@ if (!editor) {
     env: { PROMPTCUT_AI_CONFIG: path.join(box, 'ai.json'), PROMPTCUT_PROJECTS_DIR: path.join(box, 'projects'), PROMPTCUT_CHATS_DIR: path.join(box, 'chats') },
     logFile: path.join(box, 'vite.log'),
   });
-  editor = server.url ?? `http://127.0.0.1:${server.port}`;
+  editor = server.origin;
 }
 
 const browser = await puppeteer.launch({ headless: true, args: [...PROBE_CHROME_ARGS, '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
 
 async function inspect(page) {
   return page.evaluate(() => {
+    // Project names are the user's data, not interface text
+    const names = [...document.querySelectorAll('[data-pc="start-side-project"] .ps-row-name, [data-pc="start-project-tile"] [title]')].map((e) => e.textContent.trim()).filter(Boolean);
+    const strip = (t) => names.reduce((acc, n) => acc.split(n).join(""), t);
     const visible = (e) => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none' && Number(s.opacity) > 0.01; };
     const texts = [];
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -66,11 +69,11 @@ async function inspect(page) {
       const el = n.parentElement;
       if (!t || !el || ['SCRIPT', 'STYLE', 'OPTION', 'CODE', 'PRE'].includes(el.tagName) || !visible(el)) continue;
       if (el.closest('[data-pc="stage-frame"], [data-pc="preview"], [data-pc="language-menu"], [data-i18n-data]')) continue;
-      texts.push(t);
+      texts.push(strip(t));
     }
     for (const el of document.querySelectorAll('[title], [placeholder], [aria-label]')) {
       if (!visible(el) || el.closest('[data-pc="language-menu"]')) continue;
-      for (const a of ['title', 'placeholder', 'aria-label']) { const v = el.getAttribute(a); if (v) texts.push(v); }
+      for (const a of ['title', 'placeholder', 'aria-label']) { const v = el.getAttribute(a); if (v) texts.push(strip(v)); }
     }
     const cut = [];
     for (const el of document.querySelectorAll('button, [role="tab"], [role="menuitem"], a, label, th')) {
@@ -128,7 +131,7 @@ async function walk(locale) {
   await page.evaluate(async (user, agent) => {
     const lc = await import('/src/ai/liveChat.ts');
     const at = await import('/src/ai/agentTabs.ts');
-    lc.getChatStore(at.getActiveTabId()).replace([{ id: 'u', role: 'user', content: user, createdAt: 1 }, { id: 'a', role: 'assistant', content: agent, createdAt: 2 }]);
+    lc.getChatStore(at.getActiveTabId()).replace([{ id: 'u', role: 'user', text: user, parts: [{ type: 'text', text: user }] }, { id: 'a', role: 'assistant', text: agent, parts: [{ type: 'text', text: agent }] }]);
   }, SAMPLE_USER, SAMPLE_AGENT);
   await sleep(1000);
   await shot('chat');
@@ -193,7 +196,7 @@ try {
   fails.push(`walk stopped: ${e.message}`);
 } finally {
   await browser.close();
-  if (server?.pid) killTree(server.pid);
+  server?.stop?.();
 }
 out.ok = fails.length === 0;
 out.fails = [...new Set(fails)];
