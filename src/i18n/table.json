@@ -2371,7 +2371,7 @@
   "zh": "连不上云端，没能确认{0}已删除。本机项目没有改动；稍后再点一次，已经删掉的也不会出错。",
   "ja": "クラウドに接続できなかったため、{0}が削除されたことを確認できませんでした。このマシンのプロジェクトは変更されていません。しばらくしてからもう一度クリックしてください。すでに削除済みのものがあってもエラーにはなりません。"
  },
- "Could not reach the cloud, so the cloud project was not created. {0}Click again later.": {
+ "Could not reach the cloud, so the cloud project was not created. {0} Click again later.": {
   "zh": "连不上云端，云端项目没有建成。{0}稍后再点一次。",
   "ja": "クラウドに接続できなかったため、クラウドプロジェクトは作成されませんでした。{0}しばらくしてからもう一度クリックしてください。"
  },
@@ -4643,7 +4643,7 @@
   "zh": "本机的修改还没保存完，没有开始搬。{0}",
   "ja": "ローカルの変更の保存が完了していないため、移行を開始しませんでした。{0}"
  },
- "Local collaboration is closed, {0}the cloud project has been created, but the last few changes are missing. Sync them again: {1}": {
+ "Local collaboration is closed. {0} The cloud project has been created, but the last few changes are missing. Sync them again: {1}": {
   "zh": "本机协作已关闭，{0}云端项目已建好，但缺最后的几处修改。再补一次：{1}",
   "ja": "ローカル共同編集は終了しました。{0}クラウドプロジェクトは作成されましたが、最後の数件の変更が反映されていません。もう一度同期してください：{1}"
  },
@@ -5083,7 +5083,7 @@
   "zh": "已搬到云端，可以将项目链接发给其他已登录成员。",
   "ja": "クラウドへ移行しました。プロジェクトリンクをログイン済みの他のメンバーに送れます。"
  },
- "Moved to the cloud{0}, but could not enter the cloud project \"{1}\" this time. {2}You can also go back to the start page and open it with the project link.": {
+ "Moved to the cloud{0}, but could not enter the cloud project \"{1}\" this time. {2} You can also go back to the start page and open it with the project link.": {
   "zh": "已搬到云端{0}，但这次没能进入云端项目「{1}」。{2}也可以回开始页用项目链接打开它。",
   "ja": "クラウドへ移行しました{0}。ただし、今回はクラウドプロジェクト「{1}」に入れませんでした。{2}スタートページに戻り、プロジェクトリンクから開くこともできます。"
  },
@@ -8079,7 +8079,7 @@
   "zh": "云端已确认停止请求。正在同步对话状态。",
   "ja": "クラウドが停止リクエストを確認しました。チャットの状態を同期しています。"
  },
- "The cloud content check failed, so the move was stopped. {0}{1}": {
+ "The cloud content check failed, so the move was stopped. {0} {1}": {
   "zh": "云端内容核对没通过，已停下。{0}{1}",
   "ja": "クラウド上の内容の照合に失敗したため、移行を中止しました。{0}{1}"
  },
@@ -8103,7 +8103,7 @@
   "zh": "云端现在是 {0}",
   "ja": "クラウドは現在{0}です"
  },
- "The cloud is temporarily unavailable, so the cloud project was not created. {0}Click again later; no extra project will be created.": {
+ "The cloud is temporarily unavailable, so the cloud project was not created. {0} Click again later; no extra project will be created.": {
   "zh": "云端暂时不可用，云端项目没有建成。{0}稍后再点一次，不会多建一个。",
   "ja": "クラウドが一時的に利用できないため、クラウドプロジェクトは作成されませんでした。{0}しばらくしてからもう一度クリックしてください。余分なプロジェクトは作成されません。"
  },
@@ -8327,11 +8327,11 @@
   "zh": "最后一个标签不能关",
   "ja": "最後のタブは閉じられません"
  },
- "The latest content is already saved in this local file; ": {
+ "The latest content is already saved in this local file.": {
   "zh": "最新内容已存在本机这份文件里；",
   "ja": "最新の内容はこのローカルファイルにすでに保存されています； "
  },
- "The latest content is still in this window and could not be saved to the local file. Please save manually first; ": {
+ "The latest content is still in this window and could not be saved to the local file. Please save manually first.": {
   "zh": "最新内容还在这个窗口里、没能存到本机文件，请先手动保存；",
   "ja": "最新の内容はまだこのウィンドウ内にあり、ローカルファイルに保存できませんでした。先に手動で保存してください； "
  },
@@ -8539,7 +8539,7 @@
   "zh": "项目内容不可读，没有转换",
   "ja": "プロジェクトの内容を読み取れないため、何も変換されていません"
  },
- "The project content was not fully uploaded. {0}{1}": {
+ "The project content was not fully uploaded. {0} {1}": {
   "zh": "项目内容没有传完。{0}{1}",
   "ja": "プロジェクトの内容が最後までアップロードされませんでした。{0}{1}"
  },
@@ -8571,11 +8571,11 @@
   "zh": "项目还开着：点左边它底下的对话回去接着聊。",
   "ja": "プロジェクトはまだ開いています。左側のプロジェクト配下にあるチャットをクリックすると、続きから再開できます。"
  },
- "The project kept being modified (an Agent or tool may still be changing it), and the last changes were not caught up. Local collaboration is closed. {0}Stop it first, then move again: {1}": {
+ "The project kept being modified (an Agent or tool may still be changing it), and the last changes were not caught up. Local collaboration is closed. {0} Stop it first, then move again: {1}": {
   "zh": "项目一直在被修改（可能有 Agent 或工具还在改），最后的修改没有追上。本机协作已关闭，{0}先让它停下，再搬一次：{1}",
   "ja": "プロジェクトが変更され続けており（エージェントやツールがまだ変更している可能性があります）、最後の変更が追いつきませんでした。ローカルの共同編集は終了しています。{0}先にそれを停止してから、もう一度移行してください：{1}"
  },
- "The project kept being modified during the move (an Agent or tool may still be changing it), so the move did not complete. {0}Stop it first, then click again; {1}": {
+ "The project kept being modified during the move (an Agent or tool may still be changing it), so the move did not complete. {0} Stop it first, then click again. {1}": {
   "zh": "搬的过程中项目一直在被修改（可能有 Agent 或工具还在改），没有搬成。{0}先让它停下，再点一次；{1}",
   "ja": "移行中にプロジェクトが変更され続けた（エージェントやツールがまだ変更している可能性があります）ため、移行が完了しませんでした。{0}先にそれを停止してから、もう一度クリックしてください。{1}"
  },
@@ -10363,7 +10363,7 @@
   "zh": "small(默认)",
   "ja": "small（デフォルト）"
  },
- "some": {
+ "Some": {
   "zh": "一些",
   "ja": "一部"
  },
@@ -10643,7 +10643,7 @@
   "zh": "{0} 级",
   "ja": "{0}レベル"
  },
- "{0} media items have not been pulled to this computer yet, so local collaboration was not closed. {1}Click again after the media has finished pulling.": {
+ "{0} media items have not been pulled to this computer yet, so local collaboration was not closed. {1} Click again after the media has finished pulling.": {
   "zh": "有 {0} 个素材还没拉到这台电脑，没有关闭本机协作。{1}等素材拉完再点一次。",
   "ja": "素材{0}件がまだこのコンピューターに取得されていないため、このマシンでの共同編集は終了していません。{1}取得が完了してから、もう一度クリックしてください。"
  },

@@ -976,8 +976,8 @@ const again = tr("In project settings, check \"Multi-user collaboration\", choos
 
 /** Failure after local collaboration was already closed: whether the current content was saved to a local file */
 const savedNote = (r: Extract<MoveResult, { ok: false }>) => (r.localSaved === false
-  ? tr("The latest content is still in this window and could not be saved to the local file. Please save manually first; ")
-  : tr("The latest content is already saved in this local file; "));
+  ? tr("The latest content is still in this window and could not be saved to the local file. Please save manually first.")
+  : tr("The latest content is already saved in this local file."));
 
 /** The sentence shown to the user on failure: states clearly where it stopped and what state the local side is in */
 export function moveFailureText(r: Extract<MoveResult, { ok: false }>, kind: "local" | "room"): string {
@@ -991,8 +991,8 @@ export function moveFailureText(r: Extract<MoveResult, { ok: false }>, kind: "lo
     case "rate-limited": return tr("Too many attempts. Wait 60 seconds and try again. {0}", local);
     case "busy": return tr("Another window is moving this project. Try again when it finishes.");
     case "busy-editing": return r.localClosed
-      ? tr("The project kept being modified (an Agent or tool may still be changing it), and the last changes were not caught up. Local collaboration is closed. {0}Stop it first, then move again: {1}", savedNote(r), again)
-      : tr("The project kept being modified during the move (an Agent or tool may still be changing it), so the move did not complete. {0}Stop it first, then click again; {1}", local, r.cloud ? resume : tr("No extra project will be created."));
+      ? tr("The project kept being modified (an Agent or tool may still be changing it), and the last changes were not caught up. Local collaboration is closed. {0} Stop it first, then move again: {1}", savedNote(r), again)
+      : tr("The project kept being modified during the move (an Agent or tool may still be changing it), so the move did not complete. {0} Stop it first, then click again. {1}", local, r.cloud ? resume : tr("No extra project will be created."));
     case "save-pending": return tr("Local changes have not finished saving, so the move did not start. {0}", local);
     case "too-large": return tr("The project content is too large (about {0} million characters, limit {1} million), so it cannot be moved to the cloud for now. {2}", (Number(r.detail) / 1_000_000 || 0).toFixed(1), (MAX_CONTENT_CHARS / 1_000_000).toFixed(1), local);
     case "name-taken": return tr("This project name is already taken. Please choose another name. {0}", local);
@@ -1000,13 +1000,13 @@ export function moveFailureText(r: Extract<MoveResult, { ok: false }>, kind: "lo
     case "create-refused": return tr("This account cannot create a cloud project right now ({0}). {1}", r.detail || tr("rejected"), local);
     case "version-expired": return ACCOUNT_MOVE_TEXT.versionExpired;
     case "not-account-cloud": return tr("This cloud does not accept projects from website accounts, so nothing was moved. {0}", local);
-    case "network": return r.stage === "create" ? tr("Could not reach the cloud, so the cloud project was not created. {0}Click again later.", local) : tr("Could not reach the cloud, so the move did not start. {0}", local);
-    case "create-failed": return tr("The cloud is temporarily unavailable, so the cloud project was not created. {0}Click again later; no extra project will be created.", local);
-    case "upload-failed": return tr("The project content was not fully uploaded. {0}{1}", local, resume);
-    case "verify-failed": return tr("The cloud content check failed, so the move was stopped. {0}{1}", local, resume);
-    case "media-pull-failed": return tr("{0} media items have not been pulled to this computer yet, so local collaboration was not closed. {1}Click again after the media has finished pulling.", Number(r.detail) || tr("some"), local);
+    case "network": return r.stage === "create" ? tr("Could not reach the cloud, so the cloud project was not created. {0} Click again later.", local) : tr("Could not reach the cloud, so the move did not start. {0}", local);
+    case "create-failed": return tr("The cloud is temporarily unavailable, so the cloud project was not created. {0} Click again later; no extra project will be created.", local);
+    case "upload-failed": return tr("The project content was not fully uploaded. {0} {1}", local, resume);
+    case "verify-failed": return tr("The cloud content check failed, so the move was stopped. {0} {1}", local, resume);
+    case "media-pull-failed": return tr("{0} media items have not been pulled to this computer yet, so local collaboration was not closed. {1} Click again after the media has finished pulling.", Number(r.detail) || tr("Some"), local);
     case "close-failed": return tr("The cloud project has been created and verified, but local collaboration was not closed and it is still the original room. {0}", resume);
-    case "sync-last-failed": return tr("Local collaboration is closed, {0}the cloud project has been created, but the last few changes are missing. Sync them again: {1}", savedNote(r), again);
-    case "enter-failed": return tr("Moved to the cloud{0}, but could not enter the cloud project \"{1}\" this time. {2}You can also go back to the start page and open it with the project link.", r.localClosed ? tr(", local collaboration closed") : "", r.cloud?.name ?? "", again);
+    case "sync-last-failed": return tr("Local collaboration is closed. {0} The cloud project has been created, but the last few changes are missing. Sync them again: {1}", savedNote(r), again);
+    case "enter-failed": return tr("Moved to the cloud{0}, but could not enter the cloud project \"{1}\" this time. {2} You can also go back to the start page and open it with the project link.", r.localClosed ? tr(", local collaboration closed") : "", r.cloud?.name ?? "", again);
   }
 }

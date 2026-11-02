@@ -228,7 +228,7 @@ export function summarizePoints(points) {
 const ENGINE_NOTE = {
   bootstapir: 'BootsTAPIR, arbitrary point tracking; visible being false means the point is occluded or out of frame in that frame',
   template: 'Currently using the template matching fallback (the cloud node has no motion tracking extension installed, or the weights are missing). Rigid targets with clear texture that do not turn can be tracked very accurately,'
-    + 'but once the target turns, scales or is occluded for a long time, tracking is lost; a point with a note field means it could not be tracked at all',
+    + ' but once the target turns, scales or is occluded for a long time, tracking is lost; a point with a note field means it could not be tracked at all',
 };
 
 /** Python error.code → stable error code in jobs table */
@@ -625,7 +625,7 @@ export function createTrackTools({
     let value;
     if (!info) {
       const why = scrubPaths(lastLine(outcome.stderrTail), 200);
-      value = { ready: false, engine: null, reason: `${outcome.timedOut ? 'Status check timed out' : 'The interpreter returned no parseable status'}${why ? `:${why}` : ''}`, hint: MODEL_HINTS.none };
+      value = { ready: false, engine: null, reason: `${outcome.timedOut ? 'Status check timed out' : 'The interpreter returned no parseable status'}${why ? `: ${why}` : ''}`, hint: MODEL_HINTS.none };
     } else {
       value = {
         ready: !!info.ready,
@@ -689,7 +689,7 @@ export function createTrackTools({
 
   function validatePoints(raw) {
     if (!Array.isArray(raw) || raw.length === 0) throw new TrackToolError('TRACK_BAD_POINTS', 'points needs at least one point, written as [[frameNumber, x, y], ...]');
-    if (raw.length > limits.maxPoints) throw new TrackToolError('TRACK_BAD_POINTS', `At most ${limits.maxPoints} points can be tracked at a time, received ${raw.length}. Track them in several batches.`);
+    if (raw.length > limits.maxPoints) throw new TrackToolError('TRACK_BAD_POINTS', `At most ${limits.maxPoints} point${limits.maxPoints === 1 ? '' : 's'} can be tracked at a time, received ${raw.length}. Track them in several batches.`);
     return raw.map((p, i) => {
       if (!Array.isArray(p) || p.length !== 3 || !p.every((v) => typeof v === 'number' && Number.isFinite(v))) {
         throw new TrackToolError('TRACK_BAD_POINTS', `Point ${i} must be written as [frameNumber, x, y], three finite numbers`);
@@ -776,9 +776,9 @@ export function createTrackTools({
   function failureOf(job, run) {
     const code = job.errorCode ?? 'TRACK_FAILED';
     const retry = ['INTERRUPTED_ON_RESTART', 'PROVIDER_CLOSED', 'RUN_CANCELLED', 'FENCE_CANCELLED', 'TRACK_TIMEOUT'].includes(code)
-      ? 'To redo the same tracking, pass force:true in track_points.' : '';
+      ? ' To redo the same tracking, pass force:true in track_points.' : '';
     return new TrackToolError(code.startsWith('TRACK_') ? code : `TRACK_${job.state.toUpperCase()}`,
-      `${errorMessageOf(code)}${run.detail ? `Details: ${run.detail}.` : ''}${retry}`, { jobId: job.jobId, state: job.state, errorCode: code });
+      `${errorMessageOf(code)}${run.detail ? ` Details: ${String(run.detail).replace(/\.$/, '')}.` : ''}${retry}`, { jobId: job.jobId, state: job.state, errorCode: code });
   }
 
   /** Does current version of this asset in project match tracking time (not evaluated if no project view) */

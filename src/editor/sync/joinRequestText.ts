@@ -84,7 +84,7 @@ export function reopenNotice(status: JoinRequestStatus): { text: string; canSend
   const notice = joinRequestNotice(status);
   const tail = status.state === 'rejected' ? tr(". {0}", JOIN_REQUEST_TEXT.rejected) : '';
   if (notice?.canSend) return { text: `${base}${tail}`, canSend: true };
-  return { text: `${base}${tail}${notice?.hint ? tr(", {0}", notice.hint) : ''}`, canSend: false };
+  return { text: `${base}${tail}${notice?.hint ? tr(". {0}", notice.hint) : ''}`, canSend: false };
 }
 
 /**

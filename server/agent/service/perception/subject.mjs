@@ -448,12 +448,12 @@ export function createSubjectTools({
     const autoRaw = k.subjectSampleTimes(media, Number.MAX_SAFE_INTEGER).length;
     let times;
     if (Array.isArray(args?.times) && args.times.length > 0) {
-      if (args.times.length > max) throw new SubjectToolError(`At most ${max} sample times per call (received ${args.times.length}), please split into batches`, 'bad-args');
+      if (args.times.length > max) throw new SubjectToolError(`At most ${max} sample time${max === 1 ? '' : 's'} per call (received ${args.times.length}), please split into batches`, 'bad-args');
       times = args.times.map(Number).filter((t) => Number.isFinite(t) && t >= 0).sort((a, b) => a - b);
     } else times = k.subjectSampleTimes(media);
     if (times.length === 0) throw new SubjectToolError('Cannot compute sample times, the media may have no duration info; you can pass times yourself', 'bad-args');
     const sampledNote = !args?.times && autoRaw > times.length
-      ? `The media is long or its shots are fragmented, so sampling was reduced from ${autoRaw} points to ${times.length} points (limit ${max}); shot-level conclusions will be coarser and more shots will have approximate set to true.`
+      ? `The media is long or its shots are fragmented, so sampling was reduced from ${autoRaw} point${autoRaw === 1 ? '' : 's'} to ${times.length} point${times.length === 1 ? '' : 's'} (limit ${max}); shot-level conclusions will be coarser and more shots will have approximate set to true.`
       : undefined;
     const engine = status.engine;
     const msPerFrame = engine === 'full' ? 3000 : 500;
@@ -495,8 +495,8 @@ export function createSubjectTools({
       engine, etaSeconds,
       ...(staleEngine ? { staleEngine: true, engineNote: 'The previous batch of results was produced with the light tier and cannot answer the prompt, so this run re-detected (not reused)' } : null),
       hint: 'Subject detection has started in background mode, poll that mediaId with list_subjects; '
-        + `Estimated about ${etaSeconds} seconds (engine=${engine}, measured: light about 0.5 s/frame, full about 3 s/frame).`
-        + `${engine === 'full' ? 'the full tier is slow, asking once every 10 seconds is enough' : 'asking once every 3 seconds is enough'}, do not ask every second.`
+        + `estimated about ${etaSeconds} second${etaSeconds === 1 ? '' : 's'} (engine=${engine}, measured: light about 0.5 s/frame, full about 3 s/frame).`
+        + ` ${engine === 'full' ? 'The full tier is slow, asking once every 10 seconds is enough' : 'Asking once every 3 seconds is enough'}, do not ask every second.`
         + ' After it finishes, each shot from list_shots will carry subject and suggestedPosition.',
     };
     if (started.state !== 'queued' || live.has(started.jobId)) {
@@ -620,7 +620,7 @@ export function createSubjectTools({
         return await finishJob(job, ws, track, { state: closing ? 'interrupted' : 'cancelled', errorCode: closing ? 'SERVICE_CLOSING' : 'SUBJECT_CANCELLED', message: closing ? 'Subject detection was interrupted by service shutdown and has no result. You can call detect_subjects(force:true) again.' : 'Subject detection was cancelled.' });
       }
       if (outcome.timedOut) {
-        return await finishJob(job, ws, track, { state: 'error', errorCode: 'SUBJECT_TIMEOUT', message: `Subject detection timed out (over ${Math.round(limitMs / 1000)} seconds) and was force-stopped. You can reduce the number of times, or first confirm the tier with subject_status (the full tier is very slow).` });
+        return await finishJob(job, ws, track, { state: 'error', errorCode: 'SUBJECT_TIMEOUT', message: `Subject detection timed out (over ${Math.round(limitMs / 1000)} second${Math.round(limitMs / 1000) === 1 ? '' : 's'}) and was force-stopped. You can reduce the number of times, or first confirm the tier with subject_status (the full tier is very slow).` });
       }
       if (!resultEvent) {
         const message = scrub(errorEvent?.message || outcome.stderrTail.join('\n').trim() || (outcome.code === 0 ? 'Subject detection returned no result' : `The subject detection process exited abnormally (code ${outcome.code})`), ws).slice(0, 400);
@@ -709,7 +709,7 @@ export function createSubjectTools({
       }
       if (state === 'error' || state === 'cancelled' || state === 'interrupted') {
         const message = row.message || (state === 'interrupted' ? INTERRUPTED : 'The previous subject detection did not succeed.');
-        throw new SubjectToolError(media.subjects ? `${message} (an earlier successful batch of results is still kept in the project; it is not from this run.)` : message, `job-${state}`);
+        throw new SubjectToolError(media.subjects ? `${message} (An earlier successful batch of results is still kept in the project; it is not from this run.)` : message, `job-${state}`);
       }
     }
     if (!media.subjects) return null;
@@ -721,7 +721,7 @@ export function createSubjectTools({
         ? 'Grounding DINO. The label is the noun in the prompt; when the prompt is empty it searches for person . face .'
         : 'The light tier of YuNet + RT-DETR. It only recognizes person and face; the prompt has no effect (it is echoed back unchanged in prompt)',
       ...(s.fellBackFrom
-        ? { fellBackFrom: s.fellBackFrom, fallbackNote: `Was supposed to run the full tier but fell back to light midway: ${s.fallbackReason ?? 'unknown reason'}. So prompt had no effect, and label can only be person / face.` }
+        ? { fellBackFrom: s.fellBackFrom, fallbackNote: `Was supposed to run the full tier but fell back to light midway: ${String(s.fallbackReason ?? 'unknown reason').replace(/\.$/, '')}. So prompt had no effect, and label can only be person / face.` }
         : null),
       prompt: s.prompt,
       width: s.width,
@@ -734,8 +734,8 @@ export function createSubjectTools({
           : { safeSide: sm.safeSide, ...k.suggestPosition(sm.safeSide, sm.occupancy), occupancy: sm.occupancy, boxes: topBoxes(sm.boxes), boxCount: sm.boxes.length }),
       })),
       hint: 'Coordinates are in original video pixels (the same system as width/height). To arrange cards by shot, look at list_shots directly; there each shot already has these samples grouped by shot.'
-        + 'suggestedPosition can be filled directly into a card\'s params.position (it is only ever left / right / bottom, never center); null means all four tiers are occupied by people,'
-        + 'check suggestedOccupancy and warning: at that moment there is no position that avoids covering people. A sample with failed set to true means frame extraction failed, not "there is no person in this frame"; do not draw conclusions from it.',
+        + ' suggestedPosition can be filled directly into a card\'s params.position (it is only ever left / right / bottom, never center); null means all four tiers are occupied by people,'
+        + ' check suggestedOccupancy and warning: at that moment there is no position that avoids covering people. A sample with failed set to true means frame extraction failed, not "there is no person in this frame"; do not draw conclusions from it.',
     };
   }
 
@@ -817,7 +817,7 @@ export function createSubjectTools({
         return;
       }
       if (outcome.timedOut) {
-        installSummary = { state: 'error', finishedAt: now(), message: `Install timed out (over ${Math.round(limits.installMs / 1000)} seconds) and was forcibly terminated.` };
+        installSummary = { state: 'error', finishedAt: now(), message: `Install timed out (over ${Math.round(limits.installMs / 1000)} second${Math.round(limits.installMs / 1000) === 1 ? '' : 's'}) and was forcibly terminated.` };
         await track.patch({ state: 'error', errorCode: 'SUBJECT_TIMEOUT' });
         return;
       }

@@ -72,7 +72,7 @@ export class MediaFramesToolError extends Error {
 }
 
 const MEDIA_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,199}$/;
-const KIND_NAME = { image: 'Image', audio: 'audio', video: 'Video' };
+const KIND_NAME = { image: 'an image', audio: 'audio', video: 'a video' };
 const NOT_CONFIGURED = 'This cloud node has no ffmpeg configured, so the Cloud Agent cannot extract frames into a contact sheet from video media (see_frames source:"media"). View the timeline picture instead, or ask the user to check in PromptCut on their computer.';
 const NO_FFMPEG = 'ffmpeg cannot start on this cloud node, so the Cloud Agent cannot extract frames into a contact sheet from video media (see_frames source:"media"). View the timeline picture instead, or ask the user to check in PromptCut on their computer.';
 
@@ -392,7 +392,7 @@ export function createMediaFramesTools({
       return await readImageMedia(context, media);
     }
     if (media.kind !== 'video') {
-      throw new MediaFramesToolError(`${media.name} is not a video${KIND_NAME[media.kind] ? `(is ${KIND_NAME[media.kind]})` : ''}, so there is no picture to view`, 'media-kind');
+      throw new MediaFramesToolError(`${media.name} is not a video${KIND_NAME[media.kind] ? ` (it is ${KIND_NAME[media.kind]})` : ''}, so there is no picture to view`, 'media-kind');
     }
 
     const ws = await resolveWorkspace(context);
@@ -507,7 +507,7 @@ export function createMediaFramesTools({
             }
             if (end.code !== 0 || !fs.existsSync(outFile)) {
               const tail = scrub(end.stderrTail.slice(-3).join(' '), wsDir).slice(0, 240);
-              throw new Error(`ffmpeg exit code ${end.code}${tail ? `:${tail}` : ''}`);
+              throw new Error(`ffmpeg exit code ${end.code}${tail ? `: ${tail}` : ''}`);
             }
             const base64 = fs.readFileSync(outFile).toString('base64');
             results[i] = { ok: true, frames: spec.frames, __image: { mime: 'image/jpeg', base64 } };
@@ -568,7 +568,7 @@ export function createMediaFramesTools({
         notes.push('Shot detection has not been run on this media, so it is split into 10-second segments below; the boundaries are not real shots.');
       }
       notes.push('Each contact sheet corresponds to the shot with the same index in scenes; cells, row by row from left to right, correspond to the seconds in frames.');
-      notes.push(plan.nextPage ? `${plan.pages - plan.page} more pages: see_frames({ source: "media", mediaId, page: ${plan.nextPage} }).` : 'This is the last page.');
+      notes.push(plan.nextPage ? `${plan.pages - plan.page} more page${plan.pages - plan.page === 1 ? '' : 's'}: see_frames({ source: "media", mediaId, page: ${plan.nextPage} }).` : 'This is the last page.');
       notes.push("If a shot is hard to see: see_frames({ source: 'media', mediaId, scene: index, grid: 9 }).");
       if (!media.transcript) {
         notes.push('This media has not been transcribed yet; to check what is said, run transcribe_media first.');

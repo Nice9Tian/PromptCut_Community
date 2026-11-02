@@ -911,8 +911,8 @@ export function suggestPosition(
     return {
       suggestedPosition: null,
       suggestedOccupancy: Math.round(occ * 100) / 100,
-      warning: `All four tiers are occupied by people (even the emptiest, ${pos}, is ${Math.round(occ * 100)}% people),`
-        + "This shot has no position that avoids covering the person. Consider shrinking the card, lowering its opacity, or placing it on a different shot.",
+      warning: `All four tiers are occupied by people (even the emptiest, ${pos}, is ${Math.round(occ * 100)}% people).`
+        + " This shot has no position that avoids covering the person. Consider shrinking the card, lowering its opacity, or placing it on a different shot.",
     };
   }
   return { suggestedPosition: pos, suggestedOccupancy: Math.round(occ * 100) / 100 };

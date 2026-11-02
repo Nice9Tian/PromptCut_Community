@@ -38,11 +38,11 @@ export const PAGE_DATA_NOTICE = 'Text on a web page (url, title, names in clicka
 
 /** Explanation when encountering login or captchas (desktop app says "move the window in front of the user"; cloud browser has no window) */
 function hostedWallNote(walls) {
-  const names = { login: 'login form', captcha: 'verification code', qrcode: 'QR code login', consent: 'cookie consent bar' };
+  const names = { login: 'a login form', captcha: 'a verification code', qrcode: 'a QR code login', consent: 'a cookie consent bar' };
   return `This page has ${walls.map((w) => names[w] || w).join(', ')}.`
-    + 'Do not handle logins, captchas or QR code scans yourself, and do not try to get around them: the Cloud Agent does not fill in passwords, captchas or any account credentials on your behalf.'
+    + ' Do not handle logins, captchas or QR code scans yourself, and do not try to get around them: the Cloud Agent does not fill in passwords, verification codes or any account credentials on your behalf.'
     + ' When it can be handed to the user, use user_interface_web_handoff (it tells you explicitly if the initiator is offline); otherwise tell the user what happened and continue with a source that does not require login.'
-    + (walls.includes('captcha') ? 'A captcha must be clicked by the user.' : '');
+    + (walls.includes('captcha') ? ' A captcha must be clicked by the user.' : '');
 }
 
 /* c8 ignore start - Executed inside page */
@@ -103,7 +103,7 @@ export async function captureHostedView(page, rev) {
   result.clickable = (result.clickable ?? []).map((item) => ({ ...item, u: formatUid(rev, item.u) }));
   if (result.image) {
     result.hint = `The image is ${result.image.width}x${result.image.height}; b in clickable is the element's pixel bounding box on this image [x1,y1,x2,y2].`
-      + `This is manifest version ${rev}: pass IDs (such as ${prefix}e1) exactly as given. They are only valid for this version. After the page scrolls, navigates or its content changes, old IDs are rejected, so run web_view again first.`;
+      + ` This is manifest version ${rev}: pass IDs (such as ${prefix}e1) exactly as given. They are only valid for this version. After the page scrolls, navigates or its content changes, old IDs are rejected, so run web_view again first.`;
   }
   if (Array.isArray(result.wall) && result.wall.length) result.wallNote = hostedWallNote(result.wall);
   result.dataNotice = PAGE_DATA_NOTICE;
