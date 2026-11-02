@@ -43,8 +43,8 @@ test("C10A-GT-07 在线页面所有舞台一律跨源隔离：未配置舞台源
       // 未配置舞台源：禁止退回同源，直接抛错
       resetOnlineStagesForTest({ origins: null });
       assert.equal(pm.dualStage(), false, `舞台端口表 ${JSON.stringify(ports)}：未配置源不开双舞台`);
-      assert.throws(() => pm.stageSrc("A"), /禁止退回同源舞台/);
-      assert.throws(() => pm.stageTargetOrigin("A"), /禁止退回同源舞台/);
+      assert.throws(() => pm.stageSrc("A"), /falling back to the same-origin stage is forbidden/);
+      assert.throws(() => pm.stageTargetOrigin("A"), /falling back to the same-origin stage is forbidden/);
       assert.equal(pm.interimStage(), false, "interimStage 过渡期已撤销恒为 false");
 
       // 配置了跨源舞台源：即使是单舞台也是跨源加载 stage.html，绝不退回同源

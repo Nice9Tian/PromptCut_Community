@@ -83,13 +83,13 @@ test('源码和参数更新过期，取消/重开时晚到上传不改项目', a
   const f = service(() => new Promise(r => { release = r; }));
   try {
     const clip = fresh(); const snapshot = getState().project;
-    const job = generateCardAudio(clip.id); const rejection = assert.rejects(job, /aborted|已变化/);
+    const job = generateCardAudio(clip.id); const rejection = assert.rejects(job, /aborted|has changed/);
     await until(() => release); assert.equal(cancelCardAudioGeneration(clip.id), true); release(); await rejection;
     assert.equal(getState().project.media.length, 0);
     // 上一趟即使被取消，服务端仍可能收完字节。清理此测试服务的哈希以再次制造在途上传。
     f.complete.clear();
     release = undefined;
-    const another = generateCardAudio(clip.id); const stale = assert.rejects(another, /已变化/);
+    const another = generateCardAudio(clip.id); const stale = assert.rejects(another, /has changed/);
     await until(() => release); actions.loadProject(structuredClone(snapshot)); release(); await stale;
     assert.equal(getState().project.media.length, 0);
   } finally { f.restore(); }
@@ -130,7 +130,7 @@ test('同一片段的新请求替代旧请求，迟到完成最多提交当前�
   const releases = [], f = service(() => new Promise(r => releases.push(r)));
   try {
     const clip = fresh();
-    const first = generateCardAudio(clip.id); const aborted = assert.rejects(first, /aborted|已变化/);
+    const first = generateCardAudio(clip.id); const aborted = assert.rejects(first, /aborted|has changed/);
     await until(() => releases.length === 1);
     actions.setClipParams(clip.id, { value: .75 });
     const second = generateCardAudio(clip.id, { force: true });
@@ -148,7 +148,7 @@ test('卡片生成串行且最多四项，排队取消不上传不落库', async
     const first = generateCardAudio(clips[0].id); await until(() => releases.length === 1);
     const queued = clips.slice(1, 4).map(c => generateCardAudio(c.id));
     const rejected = queued.map(p => assert.rejects(p, /aborted/));
-    await assert.rejects(() => generateCardAudio(clips[4].id), /最多同时排队/);
+    await assert.rejects(() => generateCardAudio(clips[4].id), /At most 4 card audio jobs/);
     assert.equal(releases.length, 1); assert.equal(getState().project.media.length, 0);
     clips.slice(1, 4).forEach(c => assert.equal(cancelCardAudioGeneration(c.id), true));
     await Promise.all(rejected); releases[0](); await first;
@@ -159,7 +159,7 @@ test('超大参数在生成上传前拒绝，保护共享文档的原子提交',
   const f = service();
   try {
     const clip = fresh(); actions.setClipParams(clip.id, { manyEvents: 'x'.repeat(100 * 1024) });
-    await assert.rejects(() => generateCardAudio(clip.id), /记录过大/);
+    await assert.rejects(() => generateCardAudio(clip.id), /parameter record is too large/);
     assert.equal(f.calls.length, 0); assert.equal(getState().project.media.length, 0);
     assert.equal(cancelCardAudioGeneration(clip.id), false);
   } finally { f.restore(); }

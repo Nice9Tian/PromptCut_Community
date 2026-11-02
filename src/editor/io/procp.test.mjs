@@ -319,7 +319,7 @@ test("文件真的不在了:补不上的列在补入库与装包的返回值里,
     assert.deepEqual(missing.map((m) => m.id).sort(), [gone.id, dead.id].sort(), "进不了包的都在清单里");
     assert.equal((await readZip(blob)).length, 2, "编排 + 那一条视频");
     const msg = packMissingMessage(missing);
-    assert.match(msg, /2 条素材/);
+    assert.match(msg, /2 media items/);
     assert.match(msg, /voice-gone\.mp3/);
     assert.match(msg, /· pic\.png/, "名字前的(缺失)标记不重复显示");
     assert.equal(packMissingMessage([]), "");

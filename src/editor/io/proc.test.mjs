@@ -74,7 +74,7 @@ test("通知栏只说一次,句子里的 N 就是丢掉的张数", () => {
   publishPythonDrop(dropPythonNodes(raw));
   const n = takePythonDrops();
   assert.equal(n, 2);
-  assert.equal(pythonDropMessage(n), "2 张 Python 卡已停用，不再显示");
+  assert.equal(pythonDropMessage(n), "2 Python cards were disabled and are no longer shown");
   // 取走之后就空了 —— 同一次加载不会提示第二遍
   assert.equal(takePythonDrops(), 0);
 });
