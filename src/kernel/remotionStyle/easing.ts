@@ -99,7 +99,7 @@ function poly(n: number): EasingFn {
 function describe(value: unknown): string {
   if (typeof value === "string") return JSON.stringify(value);
   if (typeof value === "number" || value == null || typeof value === "boolean") return String(value);
-  return Array.isArray(value) ? "array" : typeof value === "function" ? "function" : "Target";
+  return Array.isArray(value) ? "array" : typeof value === "function" ? "function" : "object";
 }
 
 /**

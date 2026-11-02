@@ -598,7 +598,7 @@ export function annotateBoard(result, { messages = [], scopeChanges = [], overwr
   if (overwrittenBy.length) {
     const shown = cap(overwrittenBy).map((o) => {
       const clip = /\/clips\/@([^/]+)/.exec(o.entity)?.[1];
-      return `${clip ? `clip ${clip}` : o.entity} (overwritten by ${o.who}${o.rev != null ? `,rev ${o.rev}` : ''})`;
+      return `${clip ? `clip ${clip}` : o.entity} (overwritten by ${o.who}${o.rev != null ? `, rev ${o.rev}` : ''})`;
     });
     lines.push(`You wrote ${shown.join(', ')}${more(overwrittenBy)}. Re-read to confirm the current content, coordinate with them if needed, and do not simply revert it.`);
     fields.overwrittenBy = overwrittenBy;

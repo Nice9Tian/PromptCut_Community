@@ -339,7 +339,7 @@ test('store.setClipSpeed with a transition attached: the fade follows the two en
   assert.deepEqual([clip('a').fadeOut, clip('b').fadeIn, clip('a').fadeIn], [0.99, 0.99, 0.5], 'Fades at both ends change along, the 0.5-second fade-in fits and stays');
   assert.equal(getState().project.transitions.find((t) => t.id === 'x').dur, 0.99);
   const { speedChangeNotes } = await import('../../src/kernel/clipTime.mjs');
-  assert.match(speedChangeNotes(r, 'a'), /crossfade shortened accordingly: 1\.00 s → 0\.99 s/);
+  assert.match(speedChangeNotes(r, 'a'), /Crossfade shortened accordingly: 1\.00 s → 0\.99 s/);
   actions.undo();
   assert.deepEqual([span('a'), span('b'), clip('a').fadeOut, getState().project.transitions.find((t) => t.id === 'x').dur], [[0, 4], [3, 7], 1, 1], 'One undo step, the transition comes back too');
 

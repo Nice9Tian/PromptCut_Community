@@ -213,7 +213,7 @@ export function speedChangeNotes(r, clipId) {
   if (moved.includes(clipId)) parts.push("To shorten the crossfade, this segment was shifted later as a whole (content unchanged)");
   if (moved.some((id) => id !== clipId)) parts.push("The other segment of the crossfade was shifted too");
   if (r?.pushed) parts.push(`The following ${r.pushed.clips} segments were pushed later by ${r.pushed.by.toFixed(2)} s`);
-  return parts.length ? parts.join(";") : null;
+  return parts.length ? parts.join("; ") : null;
 }
 
 /** 给人看的倍数:`2×`、`0.5×` */

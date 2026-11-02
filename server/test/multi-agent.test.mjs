@@ -249,7 +249,7 @@ test('MA-S10 annotateBoard places things the same way as A2: the notice goes fir
   assert.equal(annotateBoard(plain, {}), plain);
   const r = annotateBoard({ ok: true, notice: 'User is editing clip c1 (dragging).', rev: 2 }, { overwrittenBy: [{ entity: '/tracks/@t1/clips/@c1', who: 'Agent conv-a(claude)', by: 'agent', rev: 5 }] });
   assert.deepEqual(Object.keys(r).slice(0, 2), ['notice', 'overwrittenBy']);
-  assert.equal(r.notice, 'You wrote clip c1 (overwritten by Agent conv-a(claude),rev 5). Re-read to confirm the current content, coordinate with them if needed, and do not simply revert it.\nUser is editing clip c1 (dragging).');
+  assert.equal(r.notice, 'You wrote clip c1 (overwritten by Agent conv-a(claude), rev 5). Re-read to confirm the current content, coordinate with them if needed, and do not simply revert it.\nUser is editing clip c1 (dragging).');
   assert.equal(r.rev, 2);
   const arr = annotateBoard([1], { messages: [{ from: 'x', text: 'y' }] });
   assert.deepEqual(arr.result, [1]);
@@ -407,8 +407,8 @@ test('MA-S11 to S13 end to end: spawned identities are isolated, the bulletin bo
     await new Promise((r) => setTimeout(r, 200));
     const b2 = await g.call('get_clip', { clipId: 'c1' }, 'conv-b');
     assert.equal(b2.overwrittenBy?.length, 1, JSON.stringify(b2));
-    assert.deepEqual({ entity: b2.overwrittenBy[0].entity, who: b2.overwrittenBy[0].who, by: b2.overwrittenBy[0].by, rev: b2.overwrittenBy[0].rev }, { entity: '/tracks/@t2/clips/@c2', who: 'Agent conv-a(codex)', by: 'agent', rev: a1.rev });
-    assert.match(b2.notice, /^You wrote clip c2 \(overwritten by Agent conv-a\(codex\),rev \d+\)/);
+    assert.deepEqual({ entity: b2.overwrittenBy[0].entity, who: b2.overwrittenBy[0].who, by: b2.overwrittenBy[0].by, rev: b2.overwrittenBy[0].rev }, { entity: '/tracks/@t2/clips/@c2', who: 'Agent conv-a (codex)', by: 'agent', rev: a1.rev });
+    assert.match(b2.notice, /^You wrote clip c2 \(overwritten by Agent conv-a \(codex\), rev \d+\)/);
     const b3 = await g.call('get_clip', { clipId: 'c1' }, 'conv-b');
     assert.equal(b3.overwrittenBy, undefined, 'told only once');
     // 页面(用户)覆盖了 Agent 写的

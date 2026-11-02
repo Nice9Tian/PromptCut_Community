@@ -17165,530 +17165,530 @@
  },
  "Transcribing": {
   "zh": "转写中",
-  "ja": ""
+  "ja": "文字起こし中"
  },
  "Composing cards": {
   "zh": "配卡中",
-  "ja": ""
+  "ja": "カード配置中"
  },
  "Gain": {
   "zh": "增益",
-  "ja": ""
+  "ja": "ゲイン"
  },
  "Raises or lowers the overall level, in decibels. +6 dB is about twice as loud, -6 dB about half; it can go above 0 dB, which is the only way to amplify a sound that is too quiet (clip volume maxes out at 1)": {
   "zh": "整体抬高或压低,单位分贝。+6 dB 约两倍响,-6 dB 约一半;能超过 0 dB,这是把太轻的声音放大的唯一办法(片段音量最大只到 1)",
-  "ja": ""
+  "ja": "全体のレベルをデシベル単位で引き上げ、または引き下げます。+6 dB で約2倍の音量、-6 dB で約半分になります。0 dB を超えることも可能で、小さすぎる音を増幅する唯一の方法です（クリップ音量の最大値は 1 です）。"
  },
  "Decibels": {
   "zh": "分贝",
-  "ja": ""
+  "ja": "デシベル"
  },
  "High-pass": {
   "zh": "高通",
-  "ja": ""
+  "ja": "ハイパス"
  },
  "Filters out low frequencies below freq: removes rumble and handheld wind noise, keeps voices from sounding muffled. Typical for voice: 80~120 Hz": {
   "zh": "滤掉低于 freq 的低频:去隆隆声、去手持风噪、让人声不闷。人声常用 80~120 Hz",
-  "ja": ""
+  "ja": "freq 未満の低域をカットします。ランブルノイズや手持ち撮影時の風切り音を除去し、声のこもりを防ぎます。ボイスでの一般的な設定値: 80〜120 Hz"
  },
  "Cutoff frequency": {
   "zh": "截止频率",
-  "ja": ""
+  "ja": "カットオフ周波数"
  },
  "Low-pass": {
   "zh": "低通",
-  "ja": ""
+  "ja": "ローパス"
  },
  "Filters out high frequencies above freq: removes hiss, gives the muffled feel of \"behind a wall / old radio\". Telephone sound is about 3400 Hz": {
   "zh": "滤掉高于 freq 的高频:去嘶声、做「隔着墙 / 老收音机」的闷感。电话音约 3400 Hz",
-  "ja": ""
+  "ja": "freq を超える高域をカットします。ヒスノイズを除去し、「壁越し／古いラジオ」のようなこもった質感を演出します。電話の音声は約 3400 Hz です。"
  },
  "Peaking EQ": {
   "zh": "峰值均衡",
-  "ja": ""
+  "ja": "ピーキング EQ"
  },
  "Raises or lowers db decibels around freq; the larger q is, the narrower the range. Voice clarity is often boosted 2~4 dB at 2~4 kHz; harsh sibilance is cut a few dB at 6~8 kHz": {
   "zh": "在 freq 附近抬高或压低 db 分贝,q 越大范围越窄。人声清晰度常在 2~4 kHz 抬 2~4 dB;齿音刺耳在 6~8 kHz 压几分贝",
-  "ja": ""
+  "ja": "freq 付近を db デシベル引き上げ、または引き下げます。q が大きいほど帯域が狭くなります。ボイスの明瞭度は 2〜4 kHz で 2〜4 dB 引き上げることが多く、耳障りな歯擦音は 6〜8 kHz で数 dB 引き下げます。"
  },
  "Center frequency": {
   "zh": "中心频率",
-  "ja": ""
+  "ja": "中心周波数"
  },
  "Low shelf": {
   "zh": "低架",
-  "ja": ""
+  "ja": "ローシェルフ"
  },
  "Raises or lowers everything below freq by db decibels: thickens / thins the low end": {
   "zh": "freq 以下整体抬高或压低 db 分贝:加厚 / 减薄低频",
-  "ja": ""
+  "ja": "freq 以下の帯域全体を db デシベル引き上げ、または引き下げます。低域を厚く／すっきりと調整します。"
  },
  "Corner frequency": {
   "zh": "转折频率",
-  "ja": ""
+  "ja": "コーナー周波数"
  },
  "High shelf": {
   "zh": "高架",
-  "ja": ""
+  "ja": "ハイシェルフ"
  },
  "Raises or lowers everything above freq by db decibels: brightens / muffles": {
   "zh": "freq 以上整体抬高或压低 db 分贝:加亮 / 变闷",
-  "ja": ""
+  "ja": "freq 以上の帯域全体を db デシベル引き上げ、または引き下げます。明るい響き／こもった響きに調整します。"
  },
  "Compressor": {
   "zh": "压缩",
-  "ja": ""
+  "ja": "コンプレッサー"
  },
  "Reduces the part above threshold by ratio, evening out sound that swings between loud and quiet (voiceover typically uses threshold -24, ratio 3~4). attack / release are in seconds": {
   "zh": "超过 threshold 的部分按 ratio 压小,让忽大忽小的声音平一些(配音常用 threshold -24、ratio 3~4)。attack / release 是秒",
-  "ja": ""
+  "ja": "threshold を超える部分を ratio の比率で圧縮し、音量のばらつきを均一にします（ボイスオーバーでは通常 threshold: -24、ratio: 3〜4）。attack / release の単位は秒です。"
  },
  "Threshold": {
   "zh": "阈值",
-  "ja": ""
+  "ja": "スレッショルド"
  },
  "Ratio": {
   "zh": "比率",
-  "ja": ""
+  "ja": "レシオ"
  },
  "Knee": {
   "zh": "拐点",
-  "ja": ""
+  "ja": "ニー"
  },
  "Attack": {
   "zh": "起动",
-  "ja": ""
+  "ja": "アタック"
  },
  "Release": {
   "zh": "释放",
-  "ja": ""
+  "ja": "リリース"
  },
  "Limiter": {
   "zh": "限幅",
-  "ja": ""
+  "ja": "リミッター"
  },
  "Pushes peaks down to around ceiling decibels (not a hard wall: compression ratio 20, attack 1 ms, hot signals may exceed it by a few tenths of a dB and transients may slip through), preventing clipping pops. Put it on the loudest segments when the peak exceeds 0 dB after mixing; leave ceiling a margin of -1~-2": {
   "zh": "把峰值压到 ceiling 分贝附近(不是硬墙:压缩比 20、起动 1 ms,热信号会高零点几 dB、瞬态可能穿过去),防削波爆音。混音叠加之后峰值超过 0 dB 时挂在最响的那几段上,ceiling 留 -1~-2 的余量",
-  "ja": ""
+  "ja": "ピークを ceiling デシベル付近に抑え（完全に遮断するハードウォールではなく、圧縮比 20、アタック 1 ms のため、過大信号はコンマ数 dB 超過したりトランジェントがすり抜けたりする場合があります）、クリッピングによる音割れを防ぎます。ミックス後にピークが 0 dB を超える場合は最も音量が大きいセグメントに適用し、ceiling には -1〜-2 のマージンを残してください。"
  },
  "Ceiling": {
   "zh": "上限",
-  "ja": ""
+  "ja": "シーリング"
  },
  "Repeats once every time seconds, feedback is the decay of each repeat, mix is the proportion of echo": {
   "zh": "隔 time 秒重复一次,feedback 是每次重复的衰减,mix 是回声占的比例",
-  "ja": ""
+  "ja": "time 秒ごとに1回繰り返します。feedback は各繰り返しの減衰量、mix はエコーの割合です。"
  },
  "Interval": {
   "zh": "间隔",
-  "ja": ""
+  "ja": "間隔"
  },
  "Feedback": {
   "zh": "反馈",
-  "ja": ""
+  "ja": "フィードバック"
  },
  "Mix": {
   "zh": "混合",
-  "ja": ""
+  "ja": "ミックス"
  },
  "Reverb": {
   "zh": "混响",
-  "ja": ""
+  "ja": "リバーブ"
  },
  "Sense of space. decay is how long the tail is (seconds): small room 0.4, big hall 2~3; mix is the proportion of reverb, usually 0.1~0.25 for voiceover": {
   "zh": "空间感。decay 是尾巴多长(秒):小房间 0.4、大厅 2~3;mix 是混响占的比例,配音一般 0.1~0.25",
-  "ja": ""
+  "ja": "空間感を演出します。decay は余韻の長さ（秒単位）で、小さな部屋なら 0.4、広いホールなら 2〜3 です。mix はリバーブの割合で、ボイスオーバーでは通常 0.1〜0.25 に設定します。"
  },
  "Decay": {
   "zh": "衰减",
-  "ja": ""
+  "ja": "ディケイ"
  },
  "Pan": {
   "zh": "声像",
-  "ja": ""
+  "ja": "パン"
  },
  "-1 full left, 0 center, 1 full right": {
   "zh": "-1 全左、0 居中、1 全右",
-  "ja": ""
+  "ja": "-1 で左端、0 で中央、1 で右端"
  },
  "Voiceover / interview voice: remove low-frequency rumble, boost 2~4 kHz slightly, then compress to even out loud and quiet parts": {
   "zh": "配音 / 采访人声:去低频闷响,2~4 kHz 提一点,再压缩一下让大小声均匀",
-  "ja": ""
+  "ja": "ボイスオーバー／インタビューの声: 低域のこもりを除去し、2〜4 kHz を少し持ち上げてから、コンプレッサーで音量のばらつきを均一にします。"
  },
  "Duck background": {
   "zh": "压低背景",
-  "ja": ""
+  "ja": "背景音を下げる"
  },
  "Make music / ambient sound yield to the voice: lower everything by amount dB (default -12); after attaching, adjust segment by segment as needed": {
   "zh": "配乐 / 环境音给人声让路:整体降 amount 分贝(默认 -12),挂上后按需要逐段改",
-  "ja": ""
+  "ja": "BGM や環境音を声に合わせて抑えます。全体を amount デシベル（デフォルト: -12）引き下げ、適用後は必要に応じてセグメントごとに調整してください。"
  },
  "Telephone": {
   "zh": "电话音",
-  "ja": ""
+  "ja": "電話"
  },
  "Narrow band of 300~3400 Hz, as if coming from a phone / walkie-talkie": {
   "zh": "300~3400 Hz 的窄带,像从电话 / 对讲机里传出来",
-  "ja": ""
+  "ja": "300〜3400 Hz の狭帯域で、電話やトランシーバーから聞こえてくるような音を再現します。"
  },
  "Room reverb": {
   "zh": "房间混响",
-  "ja": ""
+  "ja": "ルームリバーブ"
  },
  "Natural feel of a small space, short tail": {
   "zh": "小空间的自然空间感,尾巴短",
-  "ja": ""
+  "ja": "小さな空間の自然な響きを再現し、余韻は短めです。"
  },
  "Hall reverb": {
   "zh": "大厅混响",
-  "ja": ""
+  "ja": "ホールリバーブ"
  },
  "Wide space, long tail, suits intro / outro text": {
   "zh": "宽阔的空间,尾巴长,适合片头 / 结尾的字",
-  "ja": ""
+  "ja": "広々とした空間で余韻が長く、オープニングやエンディングのテキストに適しています。"
  },
  "Anti-clipping limiter": {
   "zh": "防削波限幅",
-  "ja": ""
+  "ja": "クリッピング防止リミッター"
  },
  "Keeps peaks below -1 dB; attach it to the loudest segments when the mix clips after layering": {
   "zh": "峰值压在 -1 dB 以下,混音叠加后爆音时挂在最响的那几段上",
-  "ja": ""
+  "ja": "ピークを -1 dB 以下に抑えます。ミックスを重ねた後に音割れが生じる場合は、最も音量が大きいセグメントに適用してください。"
  },
  "Muffled through a wall": {
   "zh": "隔墙闷响",
-  "ja": ""
+  "ja": "壁越しのこもり音"
  },
  "Low-pass at 600 Hz, as if heard through a wall / from the next room": {
   "zh": "低通到 600 Hz,像隔着一堵墙 / 从隔壁房间传来",
-  "ja": ""
+  "ja": "600 Hz のローパスフィルターにより、壁越しや隣の部屋から聞こえてくるような音を再現します。"
  },
  "inputs form a cycle, cannot generate": {
   "zh": "输入存在循环，无法生成",
-  "ja": ""
+  "ja": "入力に循環があるため、生成できません"
  },
  "source version is missing, please regenerate locally": {
   "zh": "缺少源码版本，请在本地重新生成",
-  "ja": ""
+  "ja": "ソースのバージョンが見つかりません。ローカルで再生成してください"
  },
  "input media is missing or has no content hash": {
   "zh": "输入素材缺失或没有内容哈希",
-  "ja": ""
+  "ja": "入力素材が見つからないか、コンテンツハッシュがありません"
  },
  "input node has been deleted": {
   "zh": "输入节点已删除",
-  "ja": ""
+  "ja": "入力ノードが削除されています"
  },
  "not generated yet, please generate the card audio first": {
   "zh": "尚未生成，请先生成卡片声音",
-  "ja": ""
+  "ja": "まだ生成されていません。先にカードのオーディオを生成してください"
  },
  "record is invalid, please regenerate": {
   "zh": "记录无效，请重新生成",
-  "ja": ""
+  "ja": "レコードが無効です。再生成してください"
  },
  "out of date (parameters, events, inputs or source have changed), please regenerate": {
   "zh": "已过期（参数、事件、输入或源码已变化），请重新生成",
-  "ja": ""
+  "ja": "期限切れです（パラメーター、イベント、入力、またはソースが変更されました）。再生成してください"
  },
  "prerender output does not cover the current range, please regenerate": {
   "zh": "预渲染结果未覆盖当前范围，请重新生成",
-  "ja": ""
+  "ja": "プリレンダリング結果が現在の範囲をカバーしていません。再生成してください"
  },
  "media is missing, please restore the media or regenerate": {
   "zh": "素材缺失，请恢复素材或重新生成",
-  "ja": ""
+  "ja": "素材が見つかりません。素材を復元するか、再生成してください"
  },
  "The same clip cannot have both an audio media effect card and a visual media effect card, duplicate the clip first": {
   "zh": "同一片段不能同时挂音频素材效果卡和视觉素材效果卡，先复制片段",
-  "ja": ""
+  "ja": "同一のクリップにオーディオ素材エフェクトカードとビジュアル素材エフェクトカードを同時に適用することはできません。先にクリップを複製してください"
  },
  "This segment has no media effect card attached": {
   "zh": "这一段没有挂素材效果卡",
-  "ja": ""
+  "ja": "このセグメントには素材エフェクトカードが適用されていません"
  },
  "This card has no inputs; it is the content of this segment itself, not an overlay. To remove it, delete the segment": {
   "zh": "这张卡没有输入,它本身就是这一段的内容,不是叠加上去的;要去掉请删掉这一段",
-  "ja": ""
+  "ja": "このカードには入力がありません。オーバーレイではなく、このセグメント自体のコンテンツです。削除する場合はセグメントを削除してください"
  },
  "The notation of the dropdown options (options) is not recognized": {
   "zh": "下拉选项(options)的写法认不出",
-  "ja": ""
+  "ja": "ドロップダウンの選択肢（options）の記述形式を認識できません"
  },
  "After a speed change, this video segment plays no original audio (the first version has no speed-changed audio). To hear sound, split the audio from the video; the split-out audio follows the speed change and its pitch shifts. Set it back to 1× to restore.": {
   "zh": "变速后这一段视频不出原声（第一版不做变速声音）；要听声音可以音画分离，分出来的声音跟着变速、会变调。改回 1× 恢复。",
-  "ja": ""
+  "ja": "速度変更後、この動画セグメントでは元の音声が再生されません（初期バージョンでは速度変更された音声に対応していません）。音声を聞くには映像から音声を分離してください。分離した音声は速度変更に追従し、ピッチが変化します。元に戻すには 1× に戻してください。"
  },
  "Audio segments shift in pitch after a speed change (the first version has no pitch-preserving speed change).": {
   "zh": "声音段变速后跟着变调（第一版不做保调变速）。",
-  "ja": ""
+  "ja": "音声セグメントは速度変更後にピッチが変化します（初期バージョンではピッチを維持した速度変更に対応していません）。"
  },
  "To shorten the crossfade, this segment was shifted later as a whole (content unchanged)": {
   "zh": "为了缩短交叉溶解，这一段整体往后挪了（内容不变）",
-  "ja": ""
+  "ja": "クロスディゾルブを短縮するため、このセグメント全体を後ろへ移動しました（内容は変わりません）"
  },
  "The other segment of the crossfade was shifted too": {
   "zh": "交叉溶解的另一段跟着挪了",
-  "ja": ""
+  "ja": "クロスディゾルブのもう一方のセグメントも連動して移動しました"
  },
  "The cut referenced by a cut segment cannot be changed; to replace it, delete this segment and place a new one with add_cut_segment": {
   "zh": "剪辑段引用的剪辑不能改，要换就删掉这段，用 add_cut_segment 放一段新的",
-  "ja": ""
+  "ja": "カットセグメントが参照しているカットは変更できません。置き換えるには、このセグメントを削除し、add_cut_segment で新しいセグメントを配置してください"
  },
  "Cut name cannot be empty": {
   "zh": "剪辑名不能为空",
-  "ja": ""
+  "ja": "カット名は空にできません"
  },
  "This is the last cut and cannot be deleted; to clear it, delete the segments inside": {
   "zh": "这是最后一条剪辑,不能删;要清空的话删掉里面的段就行",
-  "ja": ""
+  "ja": "これは最後のカットであるため削除できません。クリアする場合は中のセグメントを削除してください"
  },
  "Cut segment length must be greater than 0": {
   "zh": "剪辑段的长度要大于 0",
-  "ja": ""
+  "ja": "カットセグメントの長さは 0 より大きい必要があります"
  },
  "Shadow": {
   "zh": "阴影",
-  "ja": ""
+  "ja": "シャドウ"
  },
  "1 = unchanged, <1 darker, >1 brighter (multiplicative)": {
   "zh": "1 = 原样,<1 变暗,>1 变亮(乘法)",
-  "ja": ""
+  "ja": "1 = 変更なし、<1 で暗く、>1 で明るく（乗算）"
  },
  "Contrast": {
   "zh": "对比度",
-  "ja": ""
+  "ja": "コントラスト"
  },
  "1 = unchanged, >1 widens light and dark, <1 pulls toward mid-gray": {
   "zh": "1 = 原样,>1 拉开明暗,<1 压向中灰",
-  "ja": ""
+  "ja": "1 = 変更なし、>1 で明暗差を広げ、<1 で中間グレーに近づけます"
  },
  "Saturation": {
   "zh": "饱和度",
-  "ja": ""
+  "ja": "彩度"
  },
  "0 = colorless, 1 = unchanged, 2 = double": {
   "zh": "0 = 无色,1 = 原样,2 = 两倍",
-  "ja": ""
+  "ja": "0 = 無色、1 = 変更なし、2 = 2倍"
  },
  "Hue": {
   "zh": "色相",
-  "ja": ""
+  "ja": "色相"
  },
  "Hue rotation angle": {
   "zh": "色相旋转角度",
-  "ja": ""
+  "ja": "色相回転角度"
  },
  "Black and white": {
   "zh": "黑白",
-  "ja": ""
+  "ja": "モノクロ"
  },
  "0~1, 1 = fully black and white": {
   "zh": "0~1,1 = 完全黑白",
-  "ja": ""
+  "ja": "0〜1、1 = 完全にモノクロ"
  },
  "Vintage": {
   "zh": "复古",
-  "ja": ""
+  "ja": "ヴィンテージ"
  },
  "0~1, brown tone of old photos": {
   "zh": "0~1,老照片的褐色调",
-  "ja": ""
+  "ja": "0〜1、古い写真のような褐色調"
  },
  "0~1, 1 = negative": {
   "zh": "0~1,1 = 负片",
-  "ja": ""
+  "ja": "0〜1、1 = ネガ反転"
  },
  "Gaussian blur, in pixels within the clip frame (if the frame shrinks the blur shrinks with it; a clip filling the screen uses canvas pixels)": {
   "zh": "高斯模糊,单位是片段框内的像素(框缩小了模糊也跟着缩;铺满画面的段就是画布像素)",
-  "ja": ""
+  "ja": "ガウスぼかし。単位はクリップ枠内のピクセルです（枠が縮小するとぼかしも連動して縮小します。画面全体に広がるクリップはキャンバスピクセルになります）。"
  },
  "One 0~1 sample table per channel (2~33 points, linear interpolation); rgb is a shorthand shared by all three channels": {
   "zh": "每通道一张 0~1 的取样表(2~33 点,线性插值);rgb 是三通道共用的简写",
-  "ja": ""
+  "ja": "チャンネルごとに 0〜1 のサンプリングテーブルを1つ設定します（2〜33点、線形補間）。rgb は3チャンネル共通の省略形です。"
  },
  "Color matrix": {
   "zh": "颜色矩阵",
-  "ja": ""
+  "ja": "カラーマトリクス"
  },
  "values is a row-major 3×3 color mixing matrix (-4~4), offset is the amount added to each channel after mixing (-1~1)": {
   "zh": "values 是行优先 3×3 混色矩阵(-4~4),offset 是混色之后每通道再加的量(-1~1)",
-  "ja": ""
+  "ja": "values は行優先の 3×3 混色マトリクス（-4〜4）、offset は混色後に各チャンネルへ加算される値（-1〜1）です。"
  },
  "The expression must be a string": {
   "zh": "表达式要是字符串",
-  "ja": ""
+  "ja": "式は文字列である必要があります"
  },
  "Expression too complex": {
   "zh": "表达式太复杂了",
-  "ja": ""
+  "ja": "式が複雑すぎます"
  },
  "Incomplete expression": {
   "zh": "表达式不完整",
-  "ja": ""
+  "ja": "式が不完全です"
  },
  "The filter definition must be an object": {
   "zh": "滤镜定义要是一个对象",
-  "ja": ""
+  "ja": "フィルターの定義はオブジェクトである必要があります"
  },
  "ops needs at least one step, e.g. [{ \"kind\": \"brightness\", \"value\": 1.2 }]": {
   "zh": "ops 至少一步,例:[{ \"kind\": \"brightness\", \"value\": 1.2 }]",
-  "ja": ""
+  "ja": "ops には少なくとも1つのステップが必要です。例: [{ \"kind\": \"brightness\", \"value\": 1.2 }]"
  },
  " + offset": {
   "zh": " + 偏移",
-  "ja": ""
+  "ja": " + オフセット"
  },
  "This motion path is empty": {
   "zh": "这条轨迹是空的",
-  "ja": ""
+  "ja": "このモーションパスは空です"
  },
  "The card clip falls outside the range of this motion path": {
   "zh": "卡片段落在这条轨迹的范围之外",
-  "ja": ""
+  "ja": "カードクリップがこのモーションパスの範囲外にあります"
  },
  "Cannot move a part into its own subtree": {
   "zh": "不能把部件挪进它自己的子树",
-  "ja": ""
+  "ja": "パーツをそれ自体のサブツリー内に移動することはできません"
  },
  "A pixel map definition must be an object": {
   "zh": "像素映射定义要是一个对象",
-  "ja": ""
+  "ja": "ピクセルマップの定義はオブジェクトである必要があります"
  },
  "name is required, up to 40 characters": {
   "zh": "name 必填,40 字以内",
-  "ja": ""
+  "ja": "name は必須です（40文字以内）"
  },
  "where is required: write the selection weight using r/g/b/a/luma/x/y/t": {
   "zh": "where 必填:用 r/g/b/a/luma/x/y/t 写选区权重",
-  "ja": ""
+  "ja": "where は必須です。r/g/b/a/luma/x/y/t を使用して選択範囲のウェイトを記述してください"
  },
  "source must be an object": {
   "zh": "source 要是对象",
-  "ja": ""
+  "ja": "source はオブジェクトである必要があります"
  },
  "source.stage must be origin or after_filters": {
   "zh": "source.stage 只能是 origin 或 after_filters",
-  "ja": ""
+  "ja": "source.stage は origin または after_filters である必要があります"
  },
  "mode must be continuous or discrete": {
   "zh": "mode 只能是 continuous 或 discrete",
-  "ja": ""
+  "ja": "mode は continuous または discrete である必要があります"
  },
  "colorSequence requires both from and to": {
   "zh": "colorSequence 要同时提供 from 和 to",
-  "ja": ""
+  "ja": "colorSequence には from と to の両方を指定する必要があります"
  },
  "colorSequence does not need to, or to must be left empty": {
   "zh": "colorSequence 不需要 to,或 to 只能留空",
-  "ja": ""
+  "ja": "colorSequence には to は不要です。または to を空のままにする必要があります"
  },
  "colorSequence with a where other than 1: blending needs the original color, but the whole-frame color grading step has already erased it": {
   "zh": "colorSequence 配上不是 1 的 where:混合要用到原色,而整帧调色那一步已经把原色抹掉了",
-  "ja": ""
+  "ja": "where が 1 以外の colorSequence: ブレンドには元の色が必要ですが、フレーム全体のカラーグレーディング処理ですでに元の色が失われています"
  },
  "colorSequence from is not all grayscale (color picking is RGB nearest neighbor, not a lookup by a single scalar), or to contains semi-transparent colors": {
   "zh": "colorSequence 的 from 不全是灰阶(取色是 RGB 最近邻,不是按一个标量查表),或 to 里有半透明色",
-  "ja": ""
+  "ja": "colorSequence の from がすべてグレースケールではないか（色取得は RGB 最近傍法であり、単一スカラーによる参照ではありません）、または to に半透明色が含まれています"
  },
  "to.a changes alpha, which a curve / matrix cannot do": {
   "zh": "to.a 会改 alpha,曲线 / 矩阵做不到",
-  "ja": ""
+  "ja": "to.a は alpha を変更しますが、カーブ／マトリクスでは変更できません"
  },
  "The channels of to depend on each other: it is neither per-channel self-dependent (curve) nor a linear combination of r/g/b (matrix)": {
   "zh": "to 的通道之间互相依赖:既不是每通道只依赖自己(曲线),也不是 r/g/b 的线性组合(矩阵)",
-  "ja": ""
+  "ja": "to のチャンネル同士が相互依存しています。各チャンネル単独の依存（カーブ）でも、r/g/b の線形結合（マトリクス）でもありません"
  },
  "to is a semi-transparent color, and a curve / matrix cannot change alpha": {
   "zh": "to 是半透明颜色,曲线 / 矩阵改不了 alpha",
-  "ja": ""
+  "ja": "to が半透明色ですが、カーブ／マトリクスでは alpha を変更できません"
  },
  "to is transparent, and a curve / matrix cannot change alpha": {
   "zh": "to 是 transparent,曲线 / 矩阵改不了 alpha",
-  "ja": ""
+  "ja": "to が transparent ですが、カーブ／マトリクスでは alpha を変更できません"
  },
  "to is another media clip, which requires sampling a second texture per pixel": {
   "zh": "to 是另一段素材,要逐像素取第二张纹理",
-  "ja": ""
+  "ja": "to は別の素材クリップであり、ピクセルごとに2枚目のテクスチャをサンプリングする必要があります"
  },
  "The equivalent filter only changes RGB; on semi-transparent pixels the original definition also pushes alpha toward the target color. The two agree when the media is opaque.": {
   "zh": "等价滤镜只改 RGB;原定义在半透明像素上还会把 alpha 一并推向目标色,素材不透明时两者一致。",
-  "ja": ""
+  "ja": "等価なフィルターは RGB のみを変更します。元の定義では半透明ピクセルにおいて alpha も目標の色へ引き寄せられますが、素材が不透明な場合は両者の結果が一致します。"
  },
  "This is whole-frame color grading: where is a constant and to is just a color-to-color function, equivalent to a series of curves / matrix filter steps.": {
   "zh": "这是整帧调色:where 是个常数,to 只是颜色到颜色的函数,等价于一串 curves / matrix 滤镜步骤。",
-  "ja": ""
+  "ja": "これはフレーム全体のカラーグレーディングです。where は定数であり、to は色から色への関数にすぎないため、一連の curves / matrix フィルターステップと同等です。"
  },
  "This shot has no position that avoids covering the person. Consider shrinking the card, lowering its opacity, or placing it on a different shot.": {
   "zh": "这个镜头没有不遮人的位置,考虑缩小卡片、降低不透明度,或者换一个镜头放。",
-  "ja": ""
+  "ja": "このショットには人物と重ならない位置がありません。カードを縮小するか、不透明度を下げるか、別のショットへの配置をご検討ください。"
  },
  "A crossfade needs two different clips": {
   "zh": "交叉溶解要两段不同的片段",
-  "ja": ""
+  "ja": "クロスディゾルブには2つの異なるクリップが必要です"
  },
  "Import failed, nothing was registered as media.": {
   "zh": "导入失败,没有登记成素材。",
-  "ja": ""
+  "ja": "インポートに失敗しました。素材として登録されませんでした。"
  },
  "webgl2 is not available in the Worker": {
   "zh": "Worker 里拿不到 webgl2",
-  "ja": ""
+  "ja": "Worker 内で webgl2 を利用できません"
  },
  "GL Worker error": {
   "zh": "GL Worker 出错",
-  "ja": ""
+  "ja": "GL Worker エラー"
  },
  "GL Worker initialization failed": {
   "zh": "GL Worker 初始化失败",
-  "ja": ""
+  "ja": "GL Worker の初期化に失敗しました"
  },
  "No WebGL2 available": {
   "zh": "没有可用的 WebGL2",
-  "ja": ""
+  "ja": "利用可能な WebGL2 がありません"
  },
  "WebGL2 is not available on the main thread either": {
   "zh": "主线程也拿不到 WebGL2",
-  "ja": ""
+  "ja": "メインスレッドでも WebGL2 を利用できません"
  },
  "Could not get a webgl2 context": {
   "zh": "拿不到 webgl2 上下文",
-  "ja": ""
+  "ja": "webgl2 コンテキストを取得できませんでした"
  },
  "Playback frame is not fully written yet": {
   "zh": "播放帧尚未完整写入",
-  "ja": ""
+  "ja": "再生フレームがまだ完全に書き込まれていません"
  },
  "This runtime has no OffscreenCanvas, so pixel maps cannot be drawn (requires Chrome / WebView2)": {
   "zh": "这个运行环境没有 OffscreenCanvas,画不了像素映射(需要 Chrome / WebView2)",
-  "ja": ""
+  "ja": "この実行環境には OffscreenCanvas がないため、ピクセルマップを描画できません（Chrome / WebView2 が必要です）"
  },
  "Could not get a WebGL2 context, so pixel maps cannot be drawn": {
   "zh": "拿不到 WebGL2 上下文,画不了像素映射",
-  "ja": ""
+  "ja": "WebGL2 コンテキストを取得できないため、ピクセルマップを描画できません"
  },
  "System is loading": {
   "zh": "系统正在加载",
-  "ja": ""
+  "ja": "システムを読み込み中です"
  },
  "The prerender process is not ready yet, and this item needs it to finish.": {
   "zh": "预渲染进程还没就绪,这一项要它才能完成。",
-  "ja": ""
+  "ja": "プリレンダリングプロセスがまだ準備できていません。この項目を完了するにはその完了が必要です。"
  },
  "Asset request timed out": {
   "zh": "素材请求超时",
-  "ja": ""
+  "ja": "アセットのリクエストがタイムアウトしました"
  },
  "This browser has no VideoEncoder": {
   "zh": "这个浏览器没有 VideoEncoder",
-  "ja": ""
+  "ja": "このブラウザには VideoEncoder がありません"
  },
  "Track stream: frame rate required": {
   "zh": "轨道流:要帧率",
-  "ja": ""
+  "ja": "トラックストリーム: フレームレートが必要です"
  },
  "Track stream: this browser cannot encode": {
   "zh": "轨道流:这个浏览器压不了",
-  "ja": ""
+  "ja": "トラックストリーム: このブラウザではエンコードできません"
  }
 }

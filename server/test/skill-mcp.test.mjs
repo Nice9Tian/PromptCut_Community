@@ -363,9 +363,9 @@ test('SM-9 the A3 notice appears in the desktop session result: another desktop 
     b.noteCommit({ rev: 2, opId: 'op1', actor: { role: 'agent', session: 'agent:desk-B' }, before: p0, after: p1 });
     return { ok: true, id: 'x' };
   });
-  assert.match(w.notice, /This write falls within a scope another Agent is editing: "Cut 1->Track 2" that Agent desk-A\(Claude Code\)/);
+  assert.match(w.notice, /This write falls within a scope another Agent is editing: "Cut 1->Track 2" that Agent desk-A \(Claude Code\)/);
   const a = await r.ma.wrap('desk-A', 'get_clip', async () => ({ ok: true }));
-  assert.match(a.notice, /Someone else is editing a scope you declared: Agent desk-B\(Codex\) using add_clip changed Cut 1->Track 2/);
+  assert.match(a.notice, /Someone else is editing a scope you declared: Agent desk-B \(Codex\) using add_clip changed Cut 1->Track 2/);
   // 消息:没有页签可投,带在它下一次工具结果里
   b.deliver({ from: 'desk-B', to: 'desk-A', text: 'I\'ll edit track2' });
   const m = await r.ma.wrap('desk-A', 'get_project', async () => ({ ok: true }));

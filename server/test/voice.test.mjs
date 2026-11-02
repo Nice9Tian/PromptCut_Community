@@ -149,7 +149,7 @@ test('Vidu: parameters are written as strings, as the API requires', async () =>
 
 test('Quota exhaustion is translated into plain language, without naming which relay service', async () => {
   const f = fakeFetch(new Response('{"error":{"message":"Token quota exhausted"}}', { status: 401 }));
-  await assert.rejects(synthesize(ctx(f), { provider: 'minimax', text: 'x', voiceId: 'female-shaonv' }), (e) => e instanceof VoiceError && /quota exhausted/.test(e.message) && !/openlux/i.test(e.message));
+  await assert.rejects(synthesize(ctx(f), { provider: 'minimax', text: 'x', voiceId: 'female-shaonv' }), (e) => e instanceof VoiceError && /run out of quota/.test(e.message) && !/openlux/i.test(e.message));
 });
 
 test('No API Key, no API URL, or overlong text are all blocked before the request is sent', async () => {

@@ -87,7 +87,7 @@ export const WORKER_RULES = [
   '## This run is one round of the review loop',
   'After you deliver, a reviewer will review and a judger will rule. Ending this round yourself does not mean the task is complete; only the judger can declare it complete.',
   '- Do each requirement from the judger one by one, then check the picture with see_frames.',
-  '- When finished, write the delivery summary in the user's language: for each requirement, list what was done / what was not done and why. Do not claim something was done if it was not.',
+  '- When finished, write the delivery summary in the language the user writes in: for each requirement, list what was done / what was not done and why. Do not claim something was done if it was not.',
   '- If something must be handled by the user (QR code login, verification code, a decision needed from the user), call need_user to explain the reason, then stop.',
 ].join('\n');
 

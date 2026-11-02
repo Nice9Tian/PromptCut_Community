@@ -66,7 +66,7 @@ test("checkFade: adding twice, longer than the clip, and an end occupied by a cr
   assert.match(checkFade(p, "a", "fadeIn", 9).error, /longer than the clip itself/);
 
   const withFade = proj([clip("a", 0, 3)], [{ id: "t1", kind: "fadeIn", aId: "a", dur: 0.5 }]);
-  assert.match(checkFade(withFade, "a", "fadeIn", 0.5).error, /already has a Fade in/);
+  assert.match(checkFade(withFade, "a", "fadeIn", 0.5).error, /already has a fade in/);
   // 同一段的淡出没被占,还能加
   assert.equal(checkFade(withFade, "a", "fadeOut", 0.5).ok, true);
 

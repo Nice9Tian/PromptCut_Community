@@ -215,10 +215,10 @@ test('MA-X2 to X4, two members sharing one document service: editing status, sco
       await waitFor(() => A.board().checkMessages('conv-a').messages.length === 1, 20_000, 'A\'s mailbox received it');
       const m = A.board().checkMessages('conv-a').messages[0];
       assert.equal(m.text, 'You take Track 2, I\'ll edit Track 1');
-      assert.match(m.fromLabel, /^Agent conv-b\(codex,on member bob's side\)$/);
+      assert.match(m.fromLabel, /^Agent conv-b \(codex, on member bob's side\)$/);
       // A 的 Agent 下一次工具结果里带上
       const r = await A.call('get_clip', { clipId: 'c1' }, 'conv-a');
-      assert.match(r.notice, /\[Agent conv-b\(codex,on member bob's side\)\] You take Track 2, I'll edit Track 1/);
+      assert.match(r.notice, /\[Agent conv-b \(codex, on member bob's side\)\] You take Track 2, I'll edit Track 1/);
   });
 });
 

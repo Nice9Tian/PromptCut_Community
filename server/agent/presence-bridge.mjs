@@ -121,7 +121,7 @@ export function createPresenceBridge({ link, board, editing = null, conversation
     const local = b.listRaw('').find((a) => a.id === data.to && !a.remote);
     if (!local) return;
     const member = memberOf(from);
-    const who = `Agent ${data.from ?? '?'}(${[data.vendor, member ? `on member ${member}'s side` : null].filter(Boolean).join(',') || 'on another member\'s side'})`;
+    const who = `Agent ${data.from ?? '?'} (${[data.vendor, member ? `on member ${member}'s side` : null].filter(Boolean).join(', ') || 'on another member\'s side'})`;
     b.deliver({ from: typeof data.from === 'string' ? data.from : null, fromLabel: who, to: data.to, text: data.text, hops: data.hops });
   }
 

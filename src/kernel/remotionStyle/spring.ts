@@ -41,7 +41,7 @@ function typeName(value: unknown): string {
   if (value === null) return "null";
   if (typeof value === "number") return "NaN";
   if (Array.isArray(value)) return "array";
-  return ({ undefined: "undefined", string: "string", object: "Target", boolean: "boolean", function: "function", bigint: "bigint", symbol: "symbol" } as Record<string, string>)[typeof value];
+  return ({ undefined: "undefined", string: "string", object: "object", boolean: "boolean", function: "function", bigint: "bigint", symbol: "symbol" } as Record<string, string>)[typeof value];
 }
 
 function resolve(config: SpringConfig | undefined): Resolved {

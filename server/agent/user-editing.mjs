@@ -301,7 +301,7 @@ export function overwroteNotice(view, limits = USER_EDITING_DEFAULTS) {
   const shown = view.slice(0, limits.showMax).map((v) => {
     const what = v.clipId ? `clip ${v.clipId}` : v.entity;
     const ago = Number.isFinite(v.agoMs) ? `, ${Math.max(1, Math.round(v.agoMs / 1000))} s ago` : '';
-    return `${what}(${v.label}${v.rev != null ? `,rev ${v.rev}` : ''}${ago})`;
+    return `${what} (${v.label}${v.rev != null ? `, rev ${v.rev}` : ''}${ago})`;
   });
   const more = view.length > shown.length ? ` and ${view.length} more` : '';
   const hasUser = view.some((v) => v.by === 'user');
